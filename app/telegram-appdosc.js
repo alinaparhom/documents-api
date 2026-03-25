@@ -10,19 +10,53 @@ const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 
 let aiDialogLoader = null;
 
+function ensureAiDialogScriptLoaded() {
+  if (window && typeof window.openAiResponseDialog === 'function') {
+    return Promise.resolve(window.openAiResponseDialog);
+  }
+
+  if (!aiDialogLoader) {
+    aiDialogLoader = new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-ai-dialog-script]');
+      if (existing) {
+        existing.addEventListener('load', () => {
+          if (typeof window.openAiResponseDialog === 'function') {
+            resolve(window.openAiResponseDialog);
+          } else {
+            reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+          }
+        }, { once: true });
+        existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = '/js/documents/app/telegram-ai-response-dialog.js?v=' + encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
+      script.defer = true;
+      script.dataset.aiDialogScript = 'true';
+      script.onload = () => {
+        if (typeof window.openAiResponseDialog === 'function') {
+          resolve(window.openAiResponseDialog);
+        } else {
+          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+        }
+      };
+      script.onerror = () => reject(new Error('Не удалось загрузить скрипт ИИ.'));
+      document.head.appendChild(script);
+    }).catch((error) => {
+      aiDialogLoader = null;
+      throw error;
+    });
+  }
+
+  return aiDialogLoader;
+}
+
 async function openAiDialogSafely(context = {}) {
   try {
-    if (!aiDialogLoader) {
-      aiDialogLoader = import('./telegram-ai-response-dialog.js');
-    }
-    const module = await aiDialogLoader;
-    if (module && typeof module.openAiResponseDialog === 'function') {
-      module.openAiResponseDialog(context);
-      return;
-    }
-    throw new Error('Модуль ИИ-диалога загружен, но функция открытия не найдена.');
+    const openDialog = await ensureAiDialogScriptLoaded();
+    openDialog(context);
   } catch (error) {
-    aiDialogLoader = null;
     if (typeof context.onStatus === 'function') {
       context.onStatus('error', 'Не удалось открыть ИИ-диалог. Обновите страницу.');
     }

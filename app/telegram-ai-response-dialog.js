@@ -57,7 +57,7 @@ function createBubble(text, role) {
   return bubble;
 }
 
-export function openAiResponseDialog(context = {}) {
+function openAiResponseDialog(context = {}) {
   ensureAiDialogStyles();
 
   const existing = document.querySelector(DIALOG_ROOT_SELECTOR);
@@ -166,4 +166,9 @@ export function openAiResponseDialog(context = {}) {
 
   document.addEventListener('keydown', handleEsc);
   setTimeout(() => input.focus(), 0);
+}
+
+
+if (typeof window !== 'undefined') {
+  window.openAiResponseDialog = openAiResponseDialog;
 }
