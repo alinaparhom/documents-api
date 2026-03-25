@@ -12229,6 +12229,33 @@
   }
 
   var aiResponseModalLoader = null;
+  function resolveAiResponseModalScriptUrl() {
+    if (typeof document === 'undefined') {
+      return 'docs-ai-response-modal.js';
+    }
+    var scripts = document.getElementsByTagName('script');
+    for (var i = scripts.length - 1; i >= 0; i -= 1) {
+      var node = scripts[i];
+      var src = node && typeof node.getAttribute === 'function' ? node.getAttribute('src') : '';
+      if (!src || src.indexOf('docs.js') === -1) {
+        continue;
+      }
+      var cleanSrc = String(src).split('#')[0];
+      var query = '';
+      var queryIndex = cleanSrc.indexOf('?');
+      if (queryIndex !== -1) {
+        query = cleanSrc.slice(queryIndex);
+        cleanSrc = cleanSrc.slice(0, queryIndex);
+      }
+      var slashIndex = cleanSrc.lastIndexOf('/');
+      if (slashIndex === -1) {
+        return 'docs-ai-response-modal.js' + query;
+      }
+      return cleanSrc.slice(0, slashIndex + 1) + 'docs-ai-response-modal.js' + query;
+    }
+    return 'docs-ai-response-modal.js';
+  }
+
   function ensureAiResponseModalScript() {
     if (typeof window === 'undefined') {
       return Promise.resolve(false);
@@ -12241,7 +12268,7 @@
     }
     aiResponseModalLoader = new Promise(function(resolve) {
       var script = document.createElement('script');
-      script.src = 'docs-ai-response-modal.js';
+      script.src = resolveAiResponseModalScriptUrl();
       script.async = true;
       script.onload = function() {
         resolve(typeof window.openDocumentsAiResponseModal === 'function');
