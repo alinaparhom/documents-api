@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>Документы • Telegram Mini App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="preload" href="/shrift/Roboto-Regular.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/shrift/RobotoFlex.ttf" as="font" type="font/ttf" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <script src="/cache-version.php"></script>
+    <script>
+      (function attachVersionedStylesheet() {
+        const version = (window.__ASSET_VERSION__ || Date.now()).toString();
+        const stylesheet = document.createElement('link');
+        stylesheet.rel = 'stylesheet';
+        stylesheet.href = '/css/telegram-appdosc.css?v=' + encodeURIComponent(version);
+        document.head.appendChild(stylesheet);
+      })();
+    </script>
+    <noscript>
+      <link rel="stylesheet" href="/css/telegram-appdosc.css" />
+    </noscript>
+  </head>
+  <body>
+    <div class="appdosc" data-app>
+      <header class="appdosc__header">
+        <div class="appdosc__brand">
+          <div class="appdosc__brand-row">
+            <div class="appdosc__brand-user">
+              <span class="appdosc__user-name" data-user-name>Гость</span>
+              <span class="appdosc__user-id" data-user-id>ID не определён</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="appdosc__user" data-user-panel>
+        <div class="appdosc__user-state" data-summary>
+          <span class="appdosc__badge appdosc__badge--neutral" data-total>0 задач</span>
+          <div class="appdosc__summary-status" data-summary-status>
+            <button
+              type="button"
+              class="appdosc__summary-toggle"
+              data-summary-toggle
+              aria-expanded="false"
+              hidden
+            >
+              <span class="appdosc__summary-toggle-label">Статус работ</span>
+              <span class="appdosc__summary-toggle-icon" data-summary-toggle-icon aria-hidden="true">▼</span>
+            </button>
+            <div class="appdosc__summary-actions">
+              <button class="appdosc__refresh" type="button" data-refresh>
+                <span class="appdosc__refresh-icon" aria-hidden="true"></span>
+                <span class="appdosc__refresh-text">Обновить</span>
+              </button>
+            </div>
+            <div class="appdosc__summary-list" data-summary-list>
+              <button
+                type="button"
+                class="appdosc__badge appdosc__badge--distributed"
+                data-status-filter="distributed"
+                aria-pressed="false"
+              >
+                0 распределено
+              </button>
+              <button
+                type="button"
+                class="appdosc__badge appdosc__badge--accent"
+                data-status-filter="accepted"
+                aria-pressed="false"
+              >
+                0 принято в работу
+              </button>
+              <button
+                type="button"
+                class="appdosc__badge appdosc__badge--info"
+                data-status-filter="review"
+                aria-pressed="false"
+              >
+                0 на проверке
+              </button>
+              <button
+                type="button"
+                class="appdosc__badge appdosc__badge--success"
+                data-status-filter="done"
+                aria-pressed="false"
+              >
+                0 выполнено
+              </button>
+              <button
+                type="button"
+                class="appdosc__badge appdosc__badge--danger"
+                data-status-filter="cancelled"
+                aria-pressed="false"
+              >
+                0 отменено
+              </button>
+              <button
+                type="button"
+                class="appdosc__badge appdosc__badge--warn"
+                data-overdue
+                aria-pressed="false"
+              >
+                0 просрочено
+              </button>
+            </div>
+            <div
+              class="appdosc__responsible-panel appdosc__responsible-panel--collapsed"
+              data-responsible-panel
+              hidden
+            >
+              <button
+                type="button"
+                class="appdosc__panel-toggle"
+                data-responsible-toggle
+                aria-expanded="false"
+                aria-controls="appdosc-responsible-list"
+              >
+                <span class="appdosc__responsible-title" data-responsible-title></span>
+                <span
+                  class="appdosc__panel-toggle-icon"
+                  data-responsible-toggle-icon
+                  aria-hidden="true"
+                >▼</span>
+              </button>
+              <div
+                class="appdosc__responsible-list"
+                id="appdosc-responsible-list"
+                data-responsible-list
+                hidden
+              ></div>
+              <div class="appdosc__assignment-history" data-responsible-history hidden></div>
+            </div>
+            <div
+              class="appdosc__responsible-panel appdosc__responsible-panel--collapsed"
+              data-subordinate-panel
+              hidden
+            >
+              <button
+                type="button"
+                class="appdosc__panel-toggle"
+                data-subordinate-toggle
+                aria-expanded="false"
+                aria-controls="appdosc-subordinate-list"
+              >
+                <span class="appdosc__responsible-title" data-subordinate-title></span>
+                <span
+                  class="appdosc__panel-toggle-icon"
+                  data-subordinate-toggle-icon
+                  aria-hidden="true"
+                >▼</span>
+              </button>
+              <div
+                class="appdosc__responsible-list"
+                id="appdosc-subordinate-list"
+                data-subordinate-list
+                hidden
+              ></div>
+              <div class="appdosc__assignment-history" data-subordinate-history hidden></div>
+            </div>
+          </div>
+        </div>
+        <div class="appdosc__user-controls">
+          <div class="appdosc__task-nav" data-task-selector>
+            <label class="appdosc__task-nav-label" for="appdosc-task-select">Перейти к задаче</label>
+            <select
+              class="appdosc__task-nav-select"
+              id="appdosc-task-select"
+              data-task-select
+              aria-label="Перейти к задаче"
+              disabled
+            >
+              <option value="" selected disabled>Выберите задачу из списка</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section class="appdosc__status" aria-live="polite">
+        <div class="appdosc__status-message" data-status hidden></div>
+      </section>
+
+      <main class="appdosc__content">
+        <div class="appdosc__table-card">
+          <div class="appdosc__table-head">
+            <div class="appdosc__table-title">Список задач</div>
+            <div class="appdosc__table-meta" data-updated>Обновление не выполнялось</div>
+          </div>
+          <div class="appdosc__cards" data-cards-container aria-live="polite">
+            <div class="appdosc__cards-placeholder" data-placeholder>Задачи отсутствуют</div>
+          </div>
+        </div>
+      </main>
+
+      <footer class="appdosc__footer">
+        <div class="appdosc__footer-meta" data-organizations>Организаций обработано: 0</div>
+        <div class="appdosc__footer-hint">Если вы не видите задания, откройте мини-приложение из Telegram-чата с ботом.</div>
+      </footer>
+    </div>
+
+    <div class="appdosc-viewer" data-viewer hidden>
+      <div class="appdosc-viewer__backdrop" data-viewer-backdrop></div>
+      <div
+        class="appdosc-viewer__dialog"
+        data-viewer-dialog
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="appdosc-viewer-title"
+      >
+        <header class="appdosc-viewer__header">
+          <div class="appdosc-viewer__title" id="appdosc-viewer-title" data-viewer-title>Документ</div>
+          <div class="appdosc-viewer__controls">
+            <button
+              type="button"
+              class="appdosc-viewer__control"
+              data-viewer-download
+              aria-label="Скачать документ"
+            >
+              Скачать
+            </button>
+            <button
+              type="button"
+              class="appdosc-viewer__control"
+              data-viewer-fit
+              aria-label="Вписать в экран"
+            >
+              Вписать
+            </button>
+            <button
+              type="button"
+              class="appdosc-viewer__control"
+              data-viewer-zoom-out
+              aria-label="Уменьшить масштаб"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              class="appdosc-viewer__control"
+              data-viewer-zoom-in
+              aria-label="Увеличить масштаб"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              class="appdosc-viewer__control"
+              data-viewer-close
+              aria-label="Закрыть просмотр"
+            >
+              Закрыть
+            </button>
+          </div>
+        </header>
+        <div class="appdosc-viewer__body">
+          <div class="appdosc-viewer__tabs" data-viewer-tabs hidden>
+            <div class="appdosc-viewer__tabs-track" data-viewer-tabs-list role="tablist"></div>
+          </div>
+          <div class="appdosc-viewer__content" data-viewer-content>
+            <div class="appdosc-viewer__loader" data-viewer-loader hidden>
+              <div class="appdosc-viewer__loader-card">
+                <div class="appdosc-viewer__loader-spinner">
+                  <svg viewBox="0 0 44 44" class="appdosc-viewer__loader-svg">
+                    <circle cx="22" cy="22" r="18" fill="none" stroke-width="3.5" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <div class="appdosc-viewer__loader-info">
+                  <div class="appdosc-viewer__loader-title" data-viewer-loader-title>Загрузка документа</div>
+                  <div class="appdosc-viewer__loader-step" data-viewer-loader-step>Подготовка…</div>
+                  <div class="appdosc-viewer__loader-bar">
+                    <div class="appdosc-viewer__loader-bar-fill" data-viewer-loader-bar></div>
+                  </div>
+                  <div class="appdosc-viewer__loader-time" data-viewer-loader-time></div>
+                </div>
+              </div>
+            </div>
+            <div class="appdosc-viewer__surface" data-viewer-surface>
+              <div class="appdosc-viewer__pdf" data-viewer-pdf hidden>
+                <div class="appdosc-viewer__pdf-canvas" data-viewer-pdf-canvas></div>
+              </div>
+              <div class="appdosc-viewer__zoom" data-viewer-zoom>
+                <iframe
+                  class="appdosc-viewer__frame"
+                  data-viewer-frame
+                  title="Просмотр документа"
+                  src=""
+                  loading="lazy"
+                  allow="clipboard-read; clipboard-write; fullscreen; autoplay; encrypted-media"
+                  allowfullscreen
+                ></iframe>
+                <img class="appdosc-viewer__image" data-viewer-image alt="" />
+                <video class="appdosc-viewer__video" data-viewer-video controls playsinline preload="metadata"></video>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <template id="appdosc-card-template">
+      <article class="appdosc-card" data-card>
+        <header class="appdosc-card__header" data-card-toggle>
+          <span class="appdosc-card__badge" data-field="entryNumber"></span>
+          <div class="appdosc-card__header-text">
+            <div class="appdosc-card__title" data-field="document">Документ</div>
+            <div class="appdosc-card__subtitle" data-field="organization">Организация</div>
+          </div>
+          <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
+          <span class="appdosc-card__status" data-field="status"></span>
+          <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
+        </header>
+        <dl class="appdosc-card__details">
+          <div class="appdosc-card__detail">
+            <dt>Рег. №</dt>
+            <dd data-field="registry"></dd>
+          </div>
+          <div class="appdosc-card__detail">
+            <dt>Дата регистрации</dt>
+            <dd data-field="registrationDate"></dd>
+          </div>
+          <div class="appdosc-card__detail">
+            <dt>Направление</dt>
+            <dd data-field="direction"></dd>
+          </div>
+          <div class="appdosc-card__detail">
+            <dt>Корреспондент</dt>
+            <dd data-field="correspondent"></dd>
+          </div>
+          <div class="appdosc-card__detail">
+            <dt>Исполнитель</dt>
+            <dd data-field="executor"></dd>
+          </div>
+          <div class="appdosc-card__detail">
+            <dt>Поручение</dt>
+            <dd data-field="instruction"></dd>
+          </div>
+          <div class="appdosc-card__detail">
+            <dt>Ответы исполнителей</dt>
+            <dd data-field="responseSummary"></dd>
+          </div>
+        </dl>
+        <div class="appdosc-card__summary" data-field="summary">
+          <div class="appdosc-card__block-title">Кратко</div>
+          <div class="appdosc-card__block-text" data-field="summaryText"></div>
+        </div>
+        <div class="appdosc-card__resolution" data-field="resolution">
+          <div class="appdosc-card__block-title">Резолюция</div>
+          <div class="appdosc-card__block-text" data-field="resolutionText"></div>
+        </div>
+        <div class="appdosc-card__files" data-files></div>
+        <footer class="appdosc-card__footer">
+          <div class="appdosc-card__deadline">
+            <span class="appdosc-card__deadline-label">Срок</span>
+            <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
+          </div>
+          <div class="appdosc-card__actions">
+            <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
+          </div>
+        </footer>
+        <div class="appdosc-card__instruction" data-card-instruction hidden>
+          <div class="appdosc-card__instruction-label">Поручение</div>
+          <div class="appdosc-card__instruction-body" data-card-instruction-body></div>
+        </div>
+        <div class="appdosc-card__status-controls" data-card-status hidden>
+          <div class="appdosc-card__status-label">Статус задачи</div>
+          <div class="appdosc-card__status-options" data-card-status-options></div>
+        </div>
+        <div class="appdosc-card__due-editor" data-card-due-editor hidden>
+          <label class="appdosc-card__due-label" data-card-due-label>Назначить срок</label>
+          <div class="appdosc-card__due-controls">
+            <input type="date" class="appdosc-card__due-input" data-card-due-input />
+          </div>
+        </div>
+        <div class="appdosc-card__assign" data-card-assign hidden>
+          <div class="appdosc-card__assign-label">Назначить ответственных</div>
+          <div class="appdosc-card__assign-controls">
+            <label class="appdosc-card__assign-selector">
+              <span class="appdosc-card__assign-selector-label">Выбор ответственного</span>
+              <input
+                type="search"
+                class="appdosc-card__assign-search"
+                data-card-assignee-search
+                placeholder="Поиск по ФИО ответственного"
+                aria-label="Поиск по ФИО ответственного"
+                autocomplete="off"
+              />
+              <span class="appdosc-card__assign-search-meta" data-card-assignee-search-meta></span>
+              <select
+                class="appdosc-card__assign-select"
+                data-card-assignee-select
+                aria-label="Выбор ответственного"
+              >
+                <option value="">Выберите ответственного</option>
+              </select>
+            </label>
+            <div class="appdosc-card__assign-entries" data-card-assignee-entries></div>
+            <div class="appdosc-card__assign-bulk">
+              <div class="appdosc-card__assign-bulk-info">
+                <span class="appdosc-card__assign-count" data-card-assign-count>0</span>
+                <span class="appdosc-card__assign-count-label">выбрано</span>
+              </div>
+              <button
+                type="button"
+                class="appdosc-card__action appdosc-card__action--assign"
+                data-card-assign-submit
+                disabled
+              >
+                Назначить выбранных
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="appdosc-card__assign" data-card-subordinates hidden>
+          <div class="appdosc-card__assign-label">Назначить подчинённых</div>
+          <div class="appdosc-card__assign-controls">
+            <label class="appdosc-card__assign-selector">
+              <span class="appdosc-card__assign-selector-label">Выбор подчинённого</span>
+              <input
+                type="search"
+                class="appdosc-card__assign-search"
+                data-card-subordinate-search
+                placeholder="Поиск по ФИО подчинённого"
+                aria-label="Поиск по ФИО подчинённого"
+                autocomplete="off"
+              />
+              <span class="appdosc-card__assign-search-meta" data-card-subordinate-search-meta></span>
+              <select
+                class="appdosc-card__assign-select"
+                data-card-subordinate-select
+                aria-label="Выбор подчинённого"
+              >
+                <option value="">Выберите подчинённого</option>
+              </select>
+            </label>
+            <div class="appdosc-card__assign-entries" data-card-subordinate-entries></div>
+            <div class="appdosc-card__assign-bulk">
+              <div class="appdosc-card__assign-bulk-info">
+                <span class="appdosc-card__assign-count" data-card-subordinate-count>0</span>
+                <span class="appdosc-card__assign-count-label">выбрано</span>
+              </div>
+              <button
+                type="button"
+                class="appdosc-card__action appdosc-card__action--assign"
+                data-card-subordinate-submit
+                disabled
+              >
+                Назначить выбранных
+              </button>
+            </div>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      (function attachVersionedModule() {
+        const version = (window.__ASSET_VERSION__ || Date.now()).toString();
+        const moduleScript = document.createElement('script');
+        moduleScript.type = 'module';
+        moduleScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
+        document.body.appendChild(moduleScript);
+      })();
+    </script>
+  </body>
+</html>
