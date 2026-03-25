@@ -1,4 +1,5 @@
 import { createPdfViewer } from './apppdf.js';
+import { openAiResponseDialog } from './telegram-ai-response-dialog.js';
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
@@ -12670,6 +12671,11 @@ function createResponseUploadControls(task, entry, setStatus) {
   button.className = 'appdosc-card__action appdosc-card__action--response';
   button.textContent = 'Загрузить Ответ';
 
+  const aiButton = document.createElement('button');
+  aiButton.type = 'button';
+  aiButton.className = 'appdosc-card__action appdosc-card__action--response appdosc-card__action--response-ai';
+  aiButton.textContent = 'Ответ с помощью ИИ';
+
   const meta = document.createElement('div');
   meta.className = 'appdosc-card__assign-response-meta';
   meta.textContent = 'Загрузить файл ответа';
@@ -12697,6 +12703,14 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
+  aiButton.addEventListener('click', () => {
+    openAiResponseDialog({
+      task,
+      entry,
+      onStatus: setStatus,
+    });
+  });
+
   input.addEventListener('change', async () => {
     const files = Array.from(input.files || []);
     if (!files.length) {
@@ -12704,6 +12718,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     }
 
     button.disabled = true;
+    aiButton.disabled = true;
     wrapper.dataset.loading = 'true';
     meta.textContent = `Файлов выбрано: ${files.length}`;
 
@@ -12728,12 +12743,13 @@ function createResponseUploadControls(task, entry, setStatus) {
       }
     } finally {
       button.disabled = false;
+      aiButton.disabled = false;
       delete wrapper.dataset.loading;
       input.value = '';
     }
   });
 
-  wrapper.append(button, meta, input);
+  wrapper.append(button, aiButton, meta, input);
   return wrapper;
 }
 
