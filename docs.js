@@ -1924,6 +1924,18 @@
       '.documents-responses-status--pending{background:rgba(245,158,11,0.14);color:#b45309;}' +
       '.documents-responses-empty{padding:18px;text-align:center;color:#64748b;font-size:13px;}' +
       '.documents-responses-danger{color:#dc2626;}' +
+      '.documents-ai-modal{position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,0.2);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;}' +
+      '.documents-ai-modal__panel{width:min(640px,100%);max-height:min(88vh,780px);display:flex;flex-direction:column;gap:12px;background:rgba(255,255,255,0.9);border:1px solid rgba(255,255,255,0.72);border-radius:20px;box-shadow:0 24px 56px rgba(15,23,42,0.2);padding:14px;}' +
+      '.documents-ai-modal__title{font-size:17px;font-weight:700;color:#0f172a;}' +
+      '.documents-ai-modal__desc{font-size:12px;color:#64748b;line-height:1.45;}' +
+      '.documents-ai-modal__field{display:flex;flex-direction:column;gap:6px;}' +
+      '.documents-ai-modal__label{font-size:12px;color:#475569;font-weight:600;}' +
+      '.documents-ai-modal__textarea{width:100%;min-height:110px;resize:vertical;border:1px solid rgba(148,163,184,0.35);border-radius:14px;background:rgba(255,255,255,0.86);padding:12px;font-size:14px;color:#0f172a;box-sizing:border-box;}' +
+      '.documents-ai-modal__textarea:focus{outline:none;border-color:rgba(37,99,235,0.6);box-shadow:0 0 0 3px rgba(37,99,235,0.1);}' +
+      '.documents-ai-modal__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}' +
+      '.documents-ai-modal__button{border:1px solid rgba(148,163,184,0.34);background:rgba(255,255,255,0.72);border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600;color:#334155;cursor:pointer;}' +
+      '.documents-ai-modal__button--primary{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));border-color:transparent;color:#fff;}' +
+      '.documents-ai-modal__button--ghost{background:rgba(59,130,246,0.1);color:#1d4ed8;border-color:rgba(37,99,235,0.3);}' +
       '@media (max-width: 768px){' +
       '.documents-responses-modal{padding:8px;align-items:center;}' +
       '.documents-responses-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
@@ -1932,6 +1944,10 @@
       '.documents-responses-actions .documents-button{flex:1 1 auto;}' +
       '.documents-responses-dropzone{flex-direction:column;align-items:flex-start;}' +
       '.documents-responses-dropzone-badge{white-space:normal;}' +
+      '.documents-ai-modal{padding:8px;align-items:flex-end;}' +
+      '.documents-ai-modal__panel{width:100%;max-height:calc(100vh - 12px);border-radius:18px;padding:12px;}' +
+      '.documents-ai-modal__actions .documents-ai-modal__button{flex:1 1 calc(50% - 8px);}' +
+      '.documents-ai-modal__textarea{min-height:96px;font-size:16px;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px;}' +
       '}';
     document.head.appendChild(style);
@@ -12238,6 +12254,175 @@
     return false;
   }
 
+  function buildAiResponseDraft(prompt, documentTitle) {
+    var topic = prompt ? String(prompt).trim() : '';
+    var taskTitle = documentTitle ? String(documentTitle).trim() : '';
+    var intro = taskTitle ? ('По задаче «' + taskTitle + '».') : 'По задаче.';
+    if (!topic) {
+      return intro + ' Подтверждаю получение и беру в работу. Срок и статус обновлю после проверки материалов.';
+    }
+    return intro + '\n\n' +
+      'Подготовил ответ по запросу: ' + topic + '.\n' +
+      '1) Проверил входные данные и требования.\n' +
+      '2) Выполнил необходимые действия по задаче.\n' +
+      '3) Готов предоставить детали и подтверждающие материалы при необходимости.';
+  }
+
+  function isEditableField(node) {
+    if (!node || !node.tagName) {
+      return false;
+    }
+    var tag = String(node.tagName).toLowerCase();
+    if (tag === 'textarea') {
+      return true;
+    }
+    if (tag === 'input') {
+      var type = node.type ? String(node.type).toLowerCase() : 'text';
+      return ['text', 'search', 'url', 'email', 'tel'].indexOf(type) !== -1;
+    }
+    return Boolean(node.isContentEditable);
+  }
+
+  function applyTextToField(field, text) {
+    if (!field || !text) {
+      return false;
+    }
+    if (typeof field.focus === 'function') {
+      field.focus({ preventScroll: true });
+    }
+    if (field.tagName && (String(field.tagName).toLowerCase() === 'textarea' || String(field.tagName).toLowerCase() === 'input')) {
+      var start = typeof field.selectionStart === 'number' ? field.selectionStart : field.value.length;
+      var end = typeof field.selectionEnd === 'number' ? field.selectionEnd : field.value.length;
+      var current = String(field.value || '');
+      field.value = current.slice(0, start) + text + current.slice(end);
+      var caret = start + text.length;
+      if (typeof field.setSelectionRange === 'function') {
+        field.setSelectionRange(caret, caret);
+      }
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+    if (field.isContentEditable) {
+      field.textContent = String(field.textContent || '') + text;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+    return false;
+  }
+
+  function copyTextToClipboard(text) {
+    if (!text) {
+      return Promise.resolve(false);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(function() { return true; }).catch(function() { return false; });
+    }
+    var temp = document.createElement('textarea');
+    temp.value = text;
+    temp.setAttribute('readonly', 'readonly');
+    temp.style.position = 'fixed';
+    temp.style.opacity = '0';
+    document.body.appendChild(temp);
+    temp.select();
+    var success = false;
+    try {
+      success = document.execCommand('copy');
+    } catch (error) {
+      success = false;
+    }
+    document.body.removeChild(temp);
+    return Promise.resolve(success);
+  }
+
+  function openAiResponseModal(documentTitle) {
+    ensureResponsesStyle();
+    var safeTitle = documentTitle ? String(documentTitle) : '';
+    var previouslyFocused = document.activeElement;
+    var modal = createElement('div', 'documents-ai-modal');
+    var panel = createElement('div', 'documents-ai-modal__panel');
+    var title = createElement('div', 'documents-ai-modal__title', 'Ответ с помощью ИИ');
+    var desc = createElement('div', 'documents-ai-modal__desc', 'Введите короткий запрос, затем нажмите «Сгенерировать». Текст можно сразу вставить в комментарий к задаче.');
+    var promptField = createElement('div', 'documents-ai-modal__field');
+    var promptLabel = createElement('div', 'documents-ai-modal__label', 'Ваш запрос');
+    var promptInput = createElement('textarea', 'documents-ai-modal__textarea');
+    promptInput.placeholder = 'Например: подготовить вежливый ответ о готовности выполнить задачу';
+    var resultField = createElement('div', 'documents-ai-modal__field');
+    var resultLabel = createElement('div', 'documents-ai-modal__label', 'Готовый текст ответа');
+    var resultInput = createElement('textarea', 'documents-ai-modal__textarea');
+    resultInput.placeholder = 'Здесь появится сгенерированный текст';
+    var actions = createElement('div', 'documents-ai-modal__actions');
+    var generateButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--ghost', 'Сгенерировать');
+    var applyButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--primary', 'Использовать текст');
+    var closeButton = createElement('button', 'documents-ai-modal__button', 'Закрыть');
+
+    function closeAiModal() {
+      document.removeEventListener('keydown', onEscape);
+      closeModal(modal);
+    }
+
+    function onEscape(event) {
+      if (event.key === 'Escape') {
+        closeAiModal();
+      }
+    }
+
+    generateButton.type = 'button';
+    generateButton.addEventListener('click', function() {
+      resultInput.value = buildAiResponseDraft(promptInput.value, safeTitle);
+      resultInput.focus({ preventScroll: true });
+      resultInput.select();
+    });
+
+    applyButton.type = 'button';
+    applyButton.addEventListener('click', function() {
+      var text = String(resultInput.value || '').trim();
+      if (!text) {
+        resultInput.focus({ preventScroll: true });
+        return;
+      }
+      var activeField = isEditableField(previouslyFocused) ? previouslyFocused : null;
+      if (applyTextToField(activeField, text)) {
+        showMessage('success', 'Текст вставлен в поле ввода.');
+        closeAiModal();
+        return;
+      }
+      copyTextToClipboard(text).then(function(copied) {
+        if (copied) {
+          showMessage('success', 'Активное поле не найдено. Текст скопирован в буфер обмена.');
+        } else {
+          showMessage('error', 'Не удалось вставить и скопировать текст. Скопируйте вручную.');
+        }
+        closeAiModal();
+      });
+    });
+
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', closeAiModal);
+
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeAiModal();
+      }
+    });
+
+    promptField.appendChild(promptLabel);
+    promptField.appendChild(promptInput);
+    resultField.appendChild(resultLabel);
+    resultField.appendChild(resultInput);
+    actions.appendChild(generateButton);
+    actions.appendChild(applyButton);
+    actions.appendChild(closeButton);
+    panel.appendChild(title);
+    panel.appendChild(desc);
+    panel.appendChild(promptField);
+    panel.appendChild(resultField);
+    panel.appendChild(actions);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+    document.addEventListener('keydown', onEscape);
+    promptInput.focus({ preventScroll: true });
+  }
+
   function openResponseModal(doc) {
     if (!doc || !doc.id) {
       showMessage('error', 'Не удалось определить задачу для ответа.');
@@ -12258,6 +12443,7 @@
     var body = createElement('div', 'documents-responses-body');
     var toolbar = createElement('div', 'documents-responses-toolbar');
     var addButton = createElement('button', 'documents-button documents-button--secondary', 'Выбрать документы');
+    var aiButton = createElement('button', 'documents-button documents-button--secondary', 'Ответ с помощью ИИ');
     var dropzone = createElement('div', 'documents-responses-dropzone');
     var dropzoneCopy = createElement('div', 'documents-responses-dropzone-copy');
     var dropzoneTitle = createElement('div', 'documents-responses-dropzone-title', 'Перетащите файлы сюда');
@@ -12537,6 +12723,12 @@
       hiddenInput.click();
     });
 
+    aiButton.type = 'button';
+    aiButton.addEventListener('click', function() {
+      messageInput.focus({ preventScroll: true });
+      openAiResponseModal(currentDoc && currentDoc.title ? currentDoc.title : (currentDoc && currentDoc.registryNumber ? currentDoc.registryNumber : ''));
+    });
+
     dropzone.tabIndex = 0;
     dropzone.setAttribute('role', 'button');
     dropzone.setAttribute('aria-label', 'Добавить документы перетаскиванием, вставкой или выбором файлов');
@@ -12618,6 +12810,7 @@
     dropzone.appendChild(dropzoneCopy);
     dropzone.appendChild(dropzoneBadge);
     toolbar.appendChild(addButton);
+    toolbar.appendChild(aiButton);
     toolbar.appendChild(dropzone);
     messageBox.appendChild(messageLabel);
     messageBox.appendChild(messageInput);
