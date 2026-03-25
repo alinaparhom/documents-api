@@ -1919,6 +1919,8 @@
       '.documents-responses-status--pending{background:rgba(245,158,11,0.14);color:#b45309;}' +
       '.documents-responses-empty{padding:18px;text-align:center;color:#64748b;font-size:13px;}' +
       '.documents-responses-danger{color:#dc2626;}' +
+      '.documents-responses-actions .documents-button--ai{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));color:#ffffff;border-color:transparent;}' +
+      '.documents-responses-actions .documents-button--ai:hover{filter:brightness(1.03);}' +
       '@media (max-width: 768px){' +
       '.documents-responses-modal{padding:8px;align-items:center;}' +
       '.documents-responses-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
@@ -1930,6 +1932,50 @@
       '.documents-responses-table th,.documents-responses-table td{padding:8px;}' +
       '}';
     document.head.appendChild(style);
+  }
+
+  var aiResponseModalScriptPromise = null;
+
+  function ensureAiResponseModalScript() {
+    if (window.openDocumentsAiResponseModal) {
+      return Promise.resolve(window.openDocumentsAiResponseModal);
+    }
+    if (aiResponseModalScriptPromise) {
+      return aiResponseModalScriptPromise;
+    }
+    aiResponseModalScriptPromise = new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      var version = (window.__ASSET_VERSION__ || Date.now()).toString();
+      script.src = '/docs-ai-response-modal.js?v=' + encodeURIComponent(version);
+      script.async = true;
+      script.onload = function() {
+        if (window.openDocumentsAiResponseModal) {
+          resolve(window.openDocumentsAiResponseModal);
+          return;
+        }
+        aiResponseModalScriptPromise = null;
+        reject(new Error('Модуль ИИ-ответа загружен, но функция не найдена.'));
+      };
+      script.onerror = function() {
+        aiResponseModalScriptPromise = null;
+        reject(new Error('Не удалось загрузить модуль ИИ-ответа.'));
+      };
+      document.head.appendChild(script);
+    });
+    return aiResponseModalScriptPromise;
+  }
+
+  function openAiResponseModal(documentTitle) {
+    ensureAiResponseModalScript()
+      .then(function(openModal) {
+        openModal({
+          documentTitle: documentTitle ? String(documentTitle) : '',
+          apiUrl: API_URL
+        });
+      })
+      .catch(function(error) {
+        showMessage('error', error && error.message ? error.message : 'Не удалось открыть окно ИИ-ответа.');
+      });
   }
 
   function ensureSearchStyles() {
@@ -12248,6 +12294,7 @@
     var header = createElement('div', 'documents-responses-header');
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
+    var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -12549,6 +12596,16 @@
       });
     });
 
+    aiButton.type = 'button';
+    aiButton.addEventListener('click', function() {
+      var titleParts = [
+        currentDoc && currentDoc.title ? currentDoc.title : '',
+        currentDoc && currentDoc.description ? currentDoc.description : '',
+        currentDoc && currentDoc.registryNumber ? ('№ ' + currentDoc.registryNumber) : ''
+      ].filter(Boolean);
+      openAiResponseModal(titleParts.join(' ').trim());
+    });
+
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
       closeModal(modal);
@@ -12560,6 +12617,7 @@
       }
     });
 
+    headerActions.appendChild(aiButton);
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
