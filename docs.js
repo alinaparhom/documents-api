@@ -12229,6 +12229,7 @@
   }
 
   var aiResponseModalLoader = null;
+  var AI_RESPONSE_MODAL_VERSION = '2026-03-25-v2';
   function resolveAiResponseModalScriptUrl() {
     if (typeof document === 'undefined') {
       return 'docs-ai-response-modal.js';
@@ -12260,7 +12261,10 @@
     if (typeof window === 'undefined') {
       return Promise.resolve(false);
     }
-    if (typeof window.openDocumentsAiResponseModal === 'function') {
+    if (
+      typeof window.openDocumentsAiResponseModal === 'function' &&
+      window.__documentsAiResponseModalVersion === AI_RESPONSE_MODAL_VERSION
+    ) {
       return Promise.resolve(true);
     }
     if (aiResponseModalLoader) {
@@ -12268,10 +12272,15 @@
     }
     aiResponseModalLoader = new Promise(function(resolve) {
       var script = document.createElement('script');
-      script.src = resolveAiResponseModalScriptUrl();
+      var baseUrl = resolveAiResponseModalScriptUrl();
+      var separator = baseUrl.indexOf('?') === -1 ? '?' : '&';
+      script.src = baseUrl + separator + 'modal_version=' + encodeURIComponent(AI_RESPONSE_MODAL_VERSION);
       script.async = true;
       script.onload = function() {
-        resolve(typeof window.openDocumentsAiResponseModal === 'function');
+        resolve(
+          typeof window.openDocumentsAiResponseModal === 'function' &&
+          window.__documentsAiResponseModalVersion === AI_RESPONSE_MODAL_VERSION
+        );
       };
       script.onerror = function() {
         resolve(false);
@@ -12605,10 +12614,6 @@
 
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
-      if (typeof window !== 'undefined' && typeof window.openDocumentsAiResponseModal === 'function') {
-        window.openDocumentsAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
-        return;
-      }
       ensureAiResponseModalScript().then(function(isReady) {
         if (!isReady || typeof window.openDocumentsAiResponseModal !== 'function') {
           showMessage('error', 'Не удалось открыть ИИ-окно. Обновите страницу.');

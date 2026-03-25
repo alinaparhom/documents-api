@@ -472,4 +472,5 @@
     modal.appendChild(panel);
     document.body.appendChild(modal);
   };
+  window.__documentsAiResponseModalVersion = '2026-03-25-v2';
 })();
