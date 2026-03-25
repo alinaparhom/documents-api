@@ -8,6 +8,65 @@ const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 
+let aiDialogLoader = null;
+
+function ensureAiDialogScriptLoaded() {
+  if (window && typeof window.openAiResponseDialog === 'function') {
+    return Promise.resolve(window.openAiResponseDialog);
+  }
+
+  if (!aiDialogLoader) {
+    aiDialogLoader = new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-ai-dialog-script]');
+      if (existing) {
+        existing.addEventListener('load', () => {
+          if (typeof window.openAiResponseDialog === 'function') {
+            resolve(window.openAiResponseDialog);
+          } else {
+            reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+          }
+        }, { once: true });
+        existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = '/js/documents/app/telegram-ai-response-dialog.js?v=' + encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
+      script.defer = true;
+      script.dataset.aiDialogScript = 'true';
+      script.onload = () => {
+        if (typeof window.openAiResponseDialog === 'function') {
+          resolve(window.openAiResponseDialog);
+        } else {
+          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+        }
+      };
+      script.onerror = () => reject(new Error('Не удалось загрузить скрипт ИИ.'));
+      document.head.appendChild(script);
+    }).catch((error) => {
+      aiDialogLoader = null;
+      throw error;
+    });
+  }
+
+  return aiDialogLoader;
+}
+
+async function openAiDialogSafely(context = {}) {
+  try {
+    const openDialog = await ensureAiDialogScriptLoaded();
+    openDialog(context);
+  } catch (error) {
+    if (typeof context.onStatus === 'function') {
+      context.onStatus('error', 'Не удалось открыть ИИ-диалог. Обновите страницу.');
+    }
+    logClientEvent('task_view_error', {
+      reason: 'ai_dialog_open_failed',
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 const ALLOWED_LOG_EVENTS = new Set([
   'bootstrap_after_init_telegram',
   'bootstrap_elements_ready',
@@ -12670,6 +12729,11 @@ function createResponseUploadControls(task, entry, setStatus) {
   button.className = 'appdosc-card__action appdosc-card__action--response';
   button.textContent = 'Загрузить Ответ';
 
+  const aiButton = document.createElement('button');
+  aiButton.type = 'button';
+  aiButton.className = 'appdosc-card__action appdosc-card__action--response appdosc-card__action--response-ai';
+  aiButton.textContent = 'Ответ с помощью ИИ';
+
   const meta = document.createElement('div');
   meta.className = 'appdosc-card__assign-response-meta';
   meta.textContent = 'Загрузить файл ответа';
@@ -12697,6 +12761,14 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
+  aiButton.addEventListener('click', () => {
+    openAiDialogSafely({
+      task,
+      entry,
+      onStatus: setStatus,
+    });
+  });
+
   input.addEventListener('change', async () => {
     const files = Array.from(input.files || []);
     if (!files.length) {
@@ -12704,6 +12776,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     }
 
     button.disabled = true;
+    aiButton.disabled = true;
     wrapper.dataset.loading = 'true';
     meta.textContent = `Файлов выбрано: ${files.length}`;
 
@@ -12728,12 +12801,13 @@ function createResponseUploadControls(task, entry, setStatus) {
       }
     } finally {
       button.disabled = false;
+      aiButton.disabled = false;
       delete wrapper.dataset.loading;
       input.value = '';
     }
   });
 
-  wrapper.append(button, meta, input);
+  wrapper.append(button, aiButton, meta, input);
   return wrapper;
 }
 
