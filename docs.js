@@ -1898,11 +1898,6 @@
       '.documents-responses-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}' +
       '.documents-responses-body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:12px;min-height:0;}' +
       '.documents-responses-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:12px;border-radius:18px;background:rgba(248,250,252,0.92);border:1px solid rgba(226,232,240,0.95);}' +
-      '.documents-responses-message{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,0.82);border:1px solid rgba(226,232,240,0.95);}' +
-      '.documents-responses-message-label{font-size:12px;font-weight:700;color:#334155;}' +
-      '.documents-responses-message-input{width:100%;min-height:90px;max-height:180px;resize:vertical;padding:10px 12px;border-radius:12px;border:1px solid rgba(148,163,184,0.4);background:rgba(255,255,255,0.92);font-size:13px;line-height:1.4;color:#0f172a;box-sizing:border-box;}' +
-      '.documents-responses-message-input:focus{outline:none;border-color:rgba(59,130,246,0.5);box-shadow:0 0 0 3px rgba(59,130,246,0.14);}' +
-      '.documents-responses-message-meta{font-size:11px;color:#64748b;}' +
       '.documents-responses-dropzone{position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-radius:18px;border:1px dashed rgba(59,130,246,0.32);background:linear-gradient(135deg, rgba(255,255,255,0.94), rgba(239,246,255,0.96));cursor:pointer;transition:border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;}' +
       '.documents-responses-dropzone:hover,.documents-responses-dropzone:focus-visible{border-color:rgba(37,99,235,0.52);box-shadow:0 10px 24px rgba(37,99,235,0.12);outline:none;transform:translateY(-1px);}' +
       '.documents-responses-dropzone.is-dragover{border-color:rgba(37,99,235,0.78);box-shadow:0 14px 28px rgba(37,99,235,0.18);background:linear-gradient(135deg, rgba(219,234,254,0.95), rgba(239,246,255,0.98));}' +
@@ -12265,13 +12260,6 @@
     var dropzoneBadge = createElement('div', 'documents-responses-dropzone-badge', 'Drag & Drop • Ctrl+V');
     var hint = createElement('div', 'documents-responses-hint', 'Ответы привязаны к задаче и показываются сразу без перезагрузки страницы.');
     var tableWrap = createElement('div', 'documents-responses-table-wrap');
-    var messageBox = createElement('div', 'documents-responses-message');
-    var messageLabel = createElement('div', 'documents-responses-message-label', 'Сообщение к задаче');
-    var messageInput = document.createElement('textarea');
-    messageInput.className = 'documents-responses-message-input';
-    messageInput.placeholder = 'Напишите комментарий. Он сохранится как .txt файл вместе с ответами.';
-    messageInput.maxLength = 5000;
-    var messageMeta = createElement('div', 'documents-responses-message-meta', '0 / 5000 символов');
     var hiddenInput = document.createElement('input');
     hiddenInput.type = 'file';
     hiddenInput.multiple = true;
@@ -12335,8 +12323,7 @@
       syncCurrentDoc();
       tableWrap.innerHTML = '';
       var uploaded = currentDoc && Array.isArray(currentDoc.responses) ? currentDoc.responses.slice() : [];
-      var pendingMessageText = getPendingMessageText();
-      if (!uploaded.length && !pendingFiles.length && !pendingMessageText) {
+      if (!uploaded.length && !pendingFiles.length) {
         tableWrap.appendChild(createElement('div', 'documents-responses-empty', 'Пока нет загруженных ответов. Добавьте документ кнопкой, перетаскиванием или вставкой из буфера.'));
         return;
       }
@@ -12450,38 +12437,12 @@
         tbody.appendChild(row);
       });
 
-      if (pendingMessageText) {
-        var messageRow = createElement('tr', '');
-        var messageNameCell = createElement('td', '');
-        var messageFileBox = createElement('div', 'documents-responses-file');
-        messageFileBox.appendChild(createElement('div', '', buildPendingMessageFileName()));
-        messageFileBox.appendChild(createElement('div', 'documents-responses-meta', pendingMessageText.length + ' символов • локальный txt'));
-        messageNameCell.appendChild(messageFileBox);
-        messageRow.appendChild(messageNameCell);
-        messageRow.appendChild(createElement('td', '', 'Будет сохранён'));
-        var messageStatusCell = createElement('td', '');
-        messageStatusCell.appendChild(createElement('span', 'documents-responses-status documents-responses-status--pending', 'Ожидает'));
-        messageRow.appendChild(messageStatusCell);
-        var messageActionCell = createElement('td', '');
-        var clearMessageButton = createElement('button', 'documents-button documents-button--secondary documents-responses-danger', 'Очистить');
-        clearMessageButton.type = 'button';
-        clearMessageButton.addEventListener('click', function() {
-          messageInput.value = '';
-          updateMessageMeta();
-          renderTable();
-        });
-        messageActionCell.appendChild(clearMessageButton);
-        messageRow.appendChild(messageActionCell);
-        tbody.appendChild(messageRow);
-      }
-
       table.appendChild(tbody);
       tableWrap.appendChild(table);
     }
 
     function uploadPendingFiles() {
-      var pendingMessageText = getPendingMessageText();
-      if (!pendingFiles.length && !pendingMessageText) {
+      if (!pendingFiles.length) {
         return refreshRegistrySilently().then(function() {
           syncCurrentDoc();
           renderTable();
@@ -12497,9 +12458,6 @@
       pendingFiles.forEach(function(file) {
         formData.append('attachments[]', file);
       });
-      if (pendingMessageText) {
-        formData.append('responseMessage', pendingMessageText);
-      }
       appendTelegramUserIdToFormData(formData);
       return fetch(buildApiUrl('response_upload', { organization: state.organization }), {
         method: 'POST',
@@ -12509,8 +12467,6 @@
         .then(handleResponse)
         .then(function(data) {
           pendingFiles = [];
-          messageInput.value = '';
-          updateMessageMeta();
           updateStateFromPayload(data);
           syncCurrentDoc();
           renderTable();
@@ -12604,11 +12560,6 @@
       }
     });
 
-    messageInput.addEventListener('input', function() {
-      updateMessageMeta();
-      renderTable();
-    });
-
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
@@ -12619,10 +12570,6 @@
     dropzone.appendChild(dropzoneBadge);
     toolbar.appendChild(addButton);
     toolbar.appendChild(dropzone);
-    messageBox.appendChild(messageLabel);
-    messageBox.appendChild(messageInput);
-    messageBox.appendChild(messageMeta);
-    toolbar.appendChild(messageBox);
     toolbar.appendChild(hint);
     body.appendChild(toolbar);
     body.appendChild(tableWrap);
@@ -12631,7 +12578,6 @@
     panel.appendChild(hiddenInput);
     modal.appendChild(panel);
     document.body.appendChild(modal);
-    updateMessageMeta();
     renderTable();
     dropzone.focus({ preventScroll: true });
   }
@@ -14474,24 +14420,3 @@
     return loadRegistry(state.organization);
   };
 })();
-    function getPendingMessageText() {
-      return String(messageInput.value || '').trim();
-    }
-
-    function buildPendingMessageFileName() {
-      var current = new Date();
-      var pad = function(value) {
-        return String(value).padStart(2, '0');
-      };
-      return 'Сообщение к задаче ' +
-        current.getFullYear() + '-' +
-        pad(current.getMonth() + 1) + '-' +
-        pad(current.getDate()) + '_' +
-        pad(current.getHours()) + '-' +
-        pad(current.getMinutes()) + '.txt';
-    }
-
-    function updateMessageMeta() {
-      var length = String(messageInput.value || '').trim().length;
-      messageMeta.textContent = length + ' / 5000 символов';
-    }
