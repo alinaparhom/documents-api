@@ -1919,6 +1919,20 @@
       '.documents-responses-status--pending{background:rgba(245,158,11,0.14);color:#b45309;}' +
       '.documents-responses-empty{padding:18px;text-align:center;color:#64748b;font-size:13px;}' +
       '.documents-responses-danger{color:#dc2626;}' +
+      '.documents-responses-actions .documents-button--ai{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));color:#ffffff;border-color:transparent;}' +
+      '.documents-responses-actions .documents-button--ai:hover{filter:brightness(1.03);}' +
+      '.documents-ai-modal{position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,0.2);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;}' +
+      '.documents-ai-modal__panel{width:min(640px,100%);max-height:min(88vh,780px);display:flex;flex-direction:column;gap:12px;background:rgba(255,255,255,0.9);border:1px solid rgba(255,255,255,0.72);border-radius:20px;box-shadow:0 24px 56px rgba(15,23,42,0.2);padding:14px;}' +
+      '.documents-ai-modal__title{font-size:17px;font-weight:700;color:#0f172a;}' +
+      '.documents-ai-modal__desc{font-size:12px;color:#64748b;line-height:1.45;}' +
+      '.documents-ai-modal__field{display:flex;flex-direction:column;gap:6px;}' +
+      '.documents-ai-modal__label{font-size:12px;color:#475569;font-weight:600;}' +
+      '.documents-ai-modal__textarea{width:100%;min-height:110px;resize:vertical;border:1px solid rgba(148,163,184,0.35);border-radius:14px;background:rgba(255,255,255,0.86);padding:12px;font-size:14px;color:#0f172a;box-sizing:border-box;}' +
+      '.documents-ai-modal__textarea:focus{outline:none;border-color:rgba(37,99,235,0.6);box-shadow:0 0 0 3px rgba(37,99,235,0.1);}' +
+      '.documents-ai-modal__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}' +
+      '.documents-ai-modal__button{border:1px solid rgba(148,163,184,0.34);background:rgba(255,255,255,0.72);border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600;color:#334155;cursor:pointer;}' +
+      '.documents-ai-modal__button--primary{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));border-color:transparent;color:#fff;}' +
+      '.documents-ai-modal__button--ghost{background:rgba(59,130,246,0.1);color:#1d4ed8;border-color:rgba(37,99,235,0.3);}' +
       '@media (max-width: 768px){' +
       '.documents-responses-modal{padding:8px;align-items:center;}' +
       '.documents-responses-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
@@ -1928,8 +1942,182 @@
       '.documents-responses-dropzone{flex-direction:column;align-items:flex-start;}' +
       '.documents-responses-dropzone-badge{white-space:normal;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px;}' +
+      '.documents-ai-modal{padding:8px;align-items:flex-end;}' +
+      '.documents-ai-modal__panel{width:100%;max-height:calc(100vh - 12px);border-radius:18px;padding:12px;}' +
+      '.documents-ai-modal__actions .documents-ai-modal__button{flex:1 1 calc(50% - 8px);}' +
+      '.documents-ai-modal__textarea{min-height:96px;font-size:16px;}' +
       '}';
     document.head.appendChild(style);
+  }
+
+  function buildDraft(prompt, documentTitle) {
+    var topic = prompt ? String(prompt).trim() : '';
+    var title = documentTitle ? String(documentTitle).trim() : '';
+    var intro = title ? ('По задаче «' + title + '».') : 'По задаче.';
+
+    if (!topic) {
+      return intro + ' Подтверждаю получение и беру в работу. Срок и статус обновлю после проверки материалов.';
+    }
+
+    return intro + '\n\n' +
+      'Подготовил ответ по запросу: ' + topic + '.\n' +
+      '1) Проверил входные данные, материалы и требования по задаче.\n' +
+      '2) Выполнил необходимые действия и зафиксировал промежуточный результат.\n' +
+      '3) Готов предоставить дополнительные детали, статусы и подтверждающие материалы по запросу.';
+  }
+
+  function getActiveEditableElement() {
+    var element = document.activeElement;
+    if (!element || element === document.body) {
+      return null;
+    }
+    if (element.isContentEditable) {
+      return element;
+    }
+    if (element.tagName === 'TEXTAREA') {
+      return element;
+    }
+    if (element.tagName === 'INPUT') {
+      var type = String(element.type || '').toLowerCase();
+      if (type === 'text' || type === 'search' || type === 'email' || type === 'url' || type === 'tel' || type === '') {
+        return element;
+      }
+    }
+    return null;
+  }
+
+  function openAiResponseModal(documentTitle) {
+    ensureResponsesStyle();
+    var safeTitle = documentTitle ? String(documentTitle) : '';
+    var fallbackEditable = getActiveEditableElement();
+    var modal = createElement('div', 'documents-ai-modal');
+    var panel = createElement('div', 'documents-ai-modal__panel');
+    var title = createElement('div', 'documents-ai-modal__title', 'Ответ с помощью ИИ');
+    var desc = createElement('div', 'documents-ai-modal__desc', 'Введите запрос, нажмите «Сгенерировать», затем вставьте результат в поле ответа.');
+    var promptField = createElement('div', 'documents-ai-modal__field');
+    var promptLabel = createElement('div', 'documents-ai-modal__label', 'Ваш запрос');
+    var promptInput = createElement('textarea', 'documents-ai-modal__textarea');
+    promptInput.placeholder = 'Например: подготовить вежливый ответ о готовности выполнить задачу';
+    var resultField = createElement('div', 'documents-ai-modal__field');
+    var resultLabel = createElement('div', 'documents-ai-modal__label', 'Сгенерированный текст');
+    var resultInput = createElement('textarea', 'documents-ai-modal__textarea');
+    resultInput.placeholder = 'Здесь появится готовый текст ответа';
+    var actions = createElement('div', 'documents-ai-modal__actions');
+    var generateButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--ghost', 'Сгенерировать');
+    var applyButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--primary', 'Использовать текст');
+    var closeButton = createElement('button', 'documents-ai-modal__button', 'Закрыть');
+
+    function closeAiModal() {
+      document.removeEventListener('keydown', handleAiEscape, true);
+      if (modal.parentNode) {
+        modal.parentNode.removeChild(modal);
+      }
+    }
+
+    function handleAiEscape(event) {
+      if (event.key !== 'Escape') {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      closeAiModal();
+    }
+
+    function insertIntoEditable(element, text) {
+      if (!element || !text) {
+        return false;
+      }
+      if (element.isContentEditable) {
+        element.focus({ preventScroll: true });
+        try {
+          var selection = window.getSelection ? window.getSelection() : null;
+          if (selection && selection.rangeCount > 0) {
+            selection.deleteFromDocument();
+            selection.getRangeAt(0).insertNode(document.createTextNode(text));
+          } else {
+            element.textContent = (element.textContent || '') + text;
+          }
+        } catch (error) {
+          element.textContent = text;
+        }
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+      if (typeof element.value === 'string') {
+        var start = typeof element.selectionStart === 'number' ? element.selectionStart : element.value.length;
+        var end = typeof element.selectionEnd === 'number' ? element.selectionEnd : element.value.length;
+        var nextValue = element.value.slice(0, start) + text + element.value.slice(end);
+        element.value = nextValue;
+        var caret = start + text.length;
+        if (typeof element.setSelectionRange === 'function') {
+          element.setSelectionRange(caret, caret);
+        }
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
+      return false;
+    }
+
+    generateButton.type = 'button';
+    generateButton.addEventListener('click', function() {
+      resultInput.value = buildDraft(promptInput.value, safeTitle);
+      resultInput.focus({ preventScroll: true });
+      resultInput.select();
+    });
+
+    applyButton.type = 'button';
+    applyButton.addEventListener('click', function() {
+      var text = String(resultInput.value || '').trim();
+      if (!text) {
+        showMessage('error', 'Сначала сгенерируйте или введите текст ответа.');
+        resultInput.focus({ preventScroll: true });
+        return;
+      }
+      var target = getActiveEditableElement() || fallbackEditable;
+      if (insertIntoEditable(target, text)) {
+        showMessage('success', 'Текст вставлен в активное поле.');
+        closeAiModal();
+        return;
+      }
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(text)
+          .then(function() {
+            showMessage('success', 'Активное поле не найдено. Текст скопирован в буфер обмена.');
+            closeAiModal();
+          })
+          .catch(function() {
+            showMessage('error', 'Не удалось вставить или скопировать текст. Скопируйте вручную.');
+          });
+        return;
+      }
+      showMessage('error', 'Активное поле не найдено. Буфер обмена недоступен, скопируйте текст вручную.');
+    });
+
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', closeAiModal);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeAiModal();
+      }
+    });
+
+    promptField.appendChild(promptLabel);
+    promptField.appendChild(promptInput);
+    resultField.appendChild(resultLabel);
+    resultField.appendChild(resultInput);
+    actions.appendChild(generateButton);
+    actions.appendChild(applyButton);
+    actions.appendChild(closeButton);
+    panel.appendChild(title);
+    panel.appendChild(desc);
+    panel.appendChild(promptField);
+    panel.appendChild(resultField);
+    panel.appendChild(actions);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+    document.addEventListener('keydown', handleAiEscape, true);
+    promptInput.focus({ preventScroll: true });
   }
 
   function ensureSearchStyles() {
@@ -12248,6 +12436,7 @@
     var header = createElement('div', 'documents-responses-header');
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
+    var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -12549,6 +12738,16 @@
       });
     });
 
+    aiButton.type = 'button';
+    aiButton.addEventListener('click', function() {
+      var titleParts = [
+        currentDoc && currentDoc.title ? currentDoc.title : '',
+        currentDoc && currentDoc.description ? currentDoc.description : '',
+        currentDoc && currentDoc.registryNumber ? ('№ ' + currentDoc.registryNumber) : ''
+      ].filter(Boolean);
+      openAiResponseModal(titleParts.join(' ').trim());
+    });
+
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
       closeModal(modal);
@@ -12560,6 +12759,7 @@
       }
     });
 
+    headerActions.appendChild(aiButton);
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
