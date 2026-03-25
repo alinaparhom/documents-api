@@ -1,5 +1,4 @@
 import { createPdfViewer } from './apppdf.js';
-import { openAiResponseDialog } from './telegram-ai-response-dialog.js';
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
@@ -8,6 +7,31 @@ const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
+
+let aiDialogLoader = null;
+
+async function openAiDialogSafely(context = {}) {
+  try {
+    if (!aiDialogLoader) {
+      aiDialogLoader = import('./telegram-ai-response-dialog.js');
+    }
+    const module = await aiDialogLoader;
+    if (module && typeof module.openAiResponseDialog === 'function') {
+      module.openAiResponseDialog(context);
+      return;
+    }
+    throw new Error('Модуль ИИ-диалога загружен, но функция открытия не найдена.');
+  } catch (error) {
+    aiDialogLoader = null;
+    if (typeof context.onStatus === 'function') {
+      context.onStatus('error', 'Не удалось открыть ИИ-диалог. Обновите страницу.');
+    }
+    logClientEvent('task_view_error', {
+      reason: 'ai_dialog_open_failed',
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 const ALLOWED_LOG_EVENTS = new Set([
   'bootstrap_after_init_telegram',
@@ -12704,7 +12728,7 @@ function createResponseUploadControls(task, entry, setStatus) {
   });
 
   aiButton.addEventListener('click', () => {
-    openAiResponseDialog({
+    openAiDialogSafely({
       task,
       entry,
       onStatus: setStatus,
