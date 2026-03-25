@@ -12228,97 +12228,106 @@
     return false;
   }
 
-  var aiResponseModalLoader = null;
-  var AI_RESPONSE_MODAL_VERSION = '2026-03-25-v2';
-  function resolveAiResponseModalScriptUrl() {
-    if (typeof document === 'undefined') {
-      return 'docs-ai-response-modal.js';
-    }
-    var scripts = document.getElementsByTagName('script');
-    for (var i = scripts.length - 1; i >= 0; i -= 1) {
-      var node = scripts[i];
-      var src = node && typeof node.getAttribute === 'function' ? node.getAttribute('src') : '';
-      if (!src || src.indexOf('docs.js') === -1) {
-        continue;
-      }
-      var cleanSrc = String(src).split('#')[0];
-      var query = '';
-      var queryIndex = cleanSrc.indexOf('?');
-      if (queryIndex !== -1) {
-        query = cleanSrc.slice(queryIndex);
-        cleanSrc = cleanSrc.slice(0, queryIndex);
-      }
-      var slashIndex = cleanSrc.lastIndexOf('/');
-      if (slashIndex === -1) {
-        return 'docs-ai-response-modal.js' + query;
-      }
-      return cleanSrc.slice(0, slashIndex + 1) + 'docs-ai-response-modal.js' + query;
-    }
-    return 'docs-ai-response-modal.js';
+  function ensureAiResponseModalScript() {
+    return Promise.resolve(true);
   }
 
-  function ensureAiResponseModalScript() {
-    if (typeof window === 'undefined') {
-      return Promise.resolve(false);
+  function ensureInlineAiModalStyle() {
+    if (typeof document === 'undefined' || document.getElementById('documents-inline-ai-modal-style')) {
+      return;
     }
-    if (
-      typeof window.openDocumentsAiResponseModal === 'function' &&
-      window.__documentsAiResponseModalVersion === AI_RESPONSE_MODAL_VERSION
-    ) {
-      return Promise.resolve(true);
-    }
-    if (aiResponseModalLoader) {
-      return aiResponseModalLoader;
-    }
-    aiResponseModalLoader = new Promise(function(resolve) {
-      var baseUrl = resolveAiResponseModalScriptUrl();
-      var candidateUrls = [baseUrl, '/docs-ai-response-modal.js', '/js/docs-ai-response-modal.js', 'docs-ai-response-modal.js'];
-      var seen = {};
+    var style = document.createElement('style');
+    style.id = 'documents-inline-ai-modal-style';
+    style.textContent = '' +
+      '.documents-inline-ai-modal{position:fixed;inset:0;background:rgba(15,23,42,.26);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:12px;z-index:1900;}' +
+      '.documents-inline-ai-modal__panel{width:min(720px,100%);max-height:90vh;overflow:auto;background:rgba(255,255,255,.92);border:1px solid rgba(255,255,255,.8);border-radius:18px;box-shadow:0 20px 50px rgba(15,23,42,.18);padding:12px;display:flex;flex-direction:column;gap:10px;}' +
+      '.documents-inline-ai-modal__title{font-size:17px;font-weight:700;color:#0f172a;}' +
+      '.documents-inline-ai-modal__row{display:grid;grid-template-columns:1fr 1fr;gap:8px;}' +
+      '.documents-inline-ai-modal__input,.documents-inline-ai-modal__select{width:100%;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px;font-size:14px;box-sizing:border-box;background:#fff;}' +
+      '.documents-inline-ai-modal__input{min-height:110px;resize:vertical;}' +
+      '.documents-inline-ai-modal__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}' +
+      '.documents-inline-ai-modal__button{min-height:42px;padding:10px 14px;border-radius:12px;border:1px solid rgba(148,163,184,.35);background:#fff;color:#334155;font-weight:600;cursor:pointer;}' +
+      '.documents-inline-ai-modal__button--primary{border:0;background:linear-gradient(135deg,#2563eb,#06b6d4);color:#fff;}' +
+      '.documents-inline-ai-modal__status{font-size:12px;color:#0369a1;}' +
+      '@media (max-width:768px){.documents-inline-ai-modal{align-items:flex-end;padding:8px}.documents-inline-ai-modal__panel{width:100%;max-height:calc(100vh - 10px)}.documents-inline-ai-modal__row{grid-template-columns:1fr}.documents-inline-ai-modal__button{flex:1 1 calc(50% - 8px)}.documents-inline-ai-modal__input,.documents-inline-ai-modal__select{font-size:16px;}}';
+    document.head.appendChild(style);
+  }
 
-      function hasReadyModal() {
-        return (
-          typeof window.openDocumentsAiResponseModal === 'function' &&
-          window.__documentsAiResponseModalVersion === AI_RESPONSE_MODAL_VERSION
-        );
+  function openAiResponseModal(options) {
+    if (typeof window !== 'undefined' && typeof window.openDocumentsAiResponseModal === 'function') {
+      window.openDocumentsAiResponseModal(options || {});
+      return;
+    }
+    ensureInlineAiModalStyle();
+
+    var modal = createElement('div', 'documents-inline-ai-modal');
+    var panel = createElement('div', 'documents-inline-ai-modal__panel');
+    var title = createElement('div', 'documents-inline-ai-modal__title', 'Ответ с помощью ИИ');
+    var status = createElement('div', 'documents-inline-ai-modal__status', 'Заполните текст или вставьте ответ от ИИ.');
+    var row = createElement('div', 'documents-inline-ai-modal__row');
+    var neutralInput = document.createElement('textarea');
+    neutralInput.className = 'documents-inline-ai-modal__input';
+    neutralInput.placeholder = 'Нейтральный стиль';
+    var aggressiveInput = document.createElement('textarea');
+    aggressiveInput.className = 'documents-inline-ai-modal__input';
+    aggressiveInput.placeholder = 'Агрессивный стиль';
+    row.appendChild(neutralInput);
+    row.appendChild(aggressiveInput);
+
+    var toneSelect = document.createElement('select');
+    toneSelect.className = 'documents-inline-ai-modal__select';
+    toneSelect.innerHTML = '<option value=\"neutral\">Использовать нейтральный</option><option value=\"aggressive\">Использовать агрессивный</option>';
+
+    var actions = createElement('div', 'documents-inline-ai-modal__actions');
+    var generateButton = createElement('button', 'documents-inline-ai-modal__button', 'Черновик');
+    var applyButton = createElement('button', 'documents-inline-ai-modal__button documents-inline-ai-modal__button--primary', 'Применить');
+    var closeButton = createElement('button', 'documents-inline-ai-modal__button', 'Закрыть');
+
+    function closeModal() {
+      if (modal.parentNode) {
+        modal.parentNode.removeChild(modal);
       }
+    }
 
-      function loadNext(index) {
-        if (hasReadyModal()) {
-          resolve(true);
-          return;
-        }
-        if (index >= candidateUrls.length) {
-          resolve(typeof window.openDocumentsAiResponseModal === 'function');
-          return;
-        }
-
-        var candidate = candidateUrls[index];
-        if (!candidate || seen[candidate]) {
-          loadNext(index + 1);
-          return;
-        }
-        seen[candidate] = true;
-
-        var separator = candidate.indexOf('?') === -1 ? '?' : '&';
-        var script = document.createElement('script');
-        script.src = candidate + separator + 'modal_version=' + encodeURIComponent(AI_RESPONSE_MODAL_VERSION);
-        script.async = true;
-        script.onload = function() {
-          if (hasReadyModal()) {
-            resolve(true);
-            return;
-          }
-          loadNext(index + 1);
-        };
-        script.onerror = function() {
-          loadNext(index + 1);
-        };
-        document.head.appendChild(script);
-      }
-
-      loadNext(0);
+    generateButton.type = 'button';
+    generateButton.addEventListener('click', function() {
+      var docTitle = options && options.documentTitle ? String(options.documentTitle) : 'документу';
+      neutralInput.value = 'По ' + docTitle + ': подтверждаем получение, рассмотрим материалы и направим официальный ответ в рабочем порядке.';
+      aggressiveInput.value = 'По ' + docTitle + ': требуем оперативно предоставить недостающие сведения. В случае задержки оставляем за собой право на эскалацию.';
+      status.textContent = 'Черновики готовы. Отредактируйте и нажмите «Применить».';
     });
-    return aiResponseModalLoader;
+
+    applyButton.type = 'button';
+    applyButton.addEventListener('click', function() {
+      var text = toneSelect.value === 'aggressive' ? String(aggressiveInput.value || '').trim() : String(neutralInput.value || '').trim();
+      if (!text) {
+        status.textContent = 'Введите текст перед применением.';
+        return;
+      }
+      if (options && typeof options.onApply === 'function') {
+        options.onApply(text);
+      }
+      closeModal();
+    });
+
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', closeModal);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeModal();
+      }
+    });
+
+    actions.appendChild(generateButton);
+    actions.appendChild(applyButton);
+    actions.appendChild(closeButton);
+    panel.appendChild(title);
+    panel.appendChild(status);
+    panel.appendChild(row);
+    panel.appendChild(toneSelect);
+    panel.appendChild(actions);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
   }
 
   function openResponseModal(doc) {
@@ -12645,15 +12654,10 @@
 
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
-      ensureAiResponseModalScript().then(function(isReady) {
-        if (typeof window.openDocumentsAiResponseModal !== 'function') {
-          showMessage('error', 'Не удалось открыть ИИ-окно. Обновите страницу.');
-          return;
-        }
-        if (!isReady) {
-          showMessage('error', 'Открыта резервная версия ИИ-окна. Обновите страницу позже для актуальной версии.');
-        }
-        window.openDocumentsAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
+      ensureAiResponseModalScript().then(function() {
+        openAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
+      }).catch(function() {
+        openAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
       });
     });
 
