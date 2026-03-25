@@ -1944,23 +1944,43 @@
       return aiResponseModalScriptPromise;
     }
     aiResponseModalScriptPromise = new Promise(function(resolve, reject) {
-      var script = document.createElement('script');
       var version = (window.__ASSET_VERSION__ || Date.now()).toString();
-      script.src = '/docs-ai-response-modal.js?v=' + encodeURIComponent(version);
-      script.async = true;
-      script.onload = function() {
+      var candidates = [
+        '/docs-ai-response-modal.js',
+        'docs-ai-response-modal.js',
+        './docs-ai-response-modal.js'
+      ];
+      var index = 0;
+
+      function loadNext() {
         if (window.openDocumentsAiResponseModal) {
           resolve(window.openDocumentsAiResponseModal);
           return;
         }
-        aiResponseModalScriptPromise = null;
-        reject(new Error('Модуль ИИ-ответа загружен, но функция не найдена.'));
-      };
-      script.onerror = function() {
-        aiResponseModalScriptPromise = null;
-        reject(new Error('Не удалось загрузить модуль ИИ-ответа.'));
-      };
-      document.head.appendChild(script);
+        if (index >= candidates.length) {
+          aiResponseModalScriptPromise = null;
+          reject(new Error('Не удалось загрузить модуль ИИ-ответа. Проверьте путь к docs-ai-response-modal.js.'));
+          return;
+        }
+        var src = candidates[index] + '?v=' + encodeURIComponent(version);
+        index += 1;
+        var script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = function() {
+          if (window.openDocumentsAiResponseModal) {
+            resolve(window.openDocumentsAiResponseModal);
+            return;
+          }
+          loadNext();
+        };
+        script.onerror = function() {
+          loadNext();
+        };
+        document.head.appendChild(script);
+      }
+
+      loadNext();
     });
     return aiResponseModalScriptPromise;
   }
