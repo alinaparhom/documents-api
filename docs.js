@@ -1898,6 +1898,11 @@
       '.documents-responses-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}' +
       '.documents-responses-body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:12px;min-height:0;}' +
       '.documents-responses-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:12px;border-radius:18px;background:rgba(248,250,252,0.92);border:1px solid rgba(226,232,240,0.95);}' +
+      '.documents-responses-message{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,0.82);border:1px solid rgba(226,232,240,0.95);}' +
+      '.documents-responses-message-label{font-size:12px;font-weight:700;color:#334155;}' +
+      '.documents-responses-message-input{width:100%;min-height:90px;max-height:180px;resize:vertical;padding:10px 12px;border-radius:12px;border:1px solid rgba(148,163,184,0.4);background:rgba(255,255,255,0.92);font-size:13px;line-height:1.4;color:#0f172a;box-sizing:border-box;}' +
+      '.documents-responses-message-input:focus{outline:none;border-color:rgba(59,130,246,0.5);box-shadow:0 0 0 3px rgba(59,130,246,0.14);}' +
+      '.documents-responses-message-meta{font-size:11px;color:#64748b;}' +
       '.documents-responses-dropzone{position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-radius:18px;border:1px dashed rgba(59,130,246,0.32);background:linear-gradient(135deg, rgba(255,255,255,0.94), rgba(239,246,255,0.96));cursor:pointer;transition:border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;}' +
       '.documents-responses-dropzone:hover,.documents-responses-dropzone:focus-visible{border-color:rgba(37,99,235,0.52);box-shadow:0 10px 24px rgba(37,99,235,0.12);outline:none;transform:translateY(-1px);}' +
       '.documents-responses-dropzone.is-dragover{border-color:rgba(37,99,235,0.78);box-shadow:0 14px 28px rgba(37,99,235,0.18);background:linear-gradient(135deg, rgba(219,234,254,0.95), rgba(239,246,255,0.98));}' +
@@ -1906,7 +1911,6 @@
       '.documents-responses-dropzone-hint{font-size:12px;line-height:1.45;color:#64748b;}' +
       '.documents-responses-dropzone-badge{flex:0 0 auto;padding:8px 12px;border-radius:999px;background:rgba(37,99,235,0.1);color:#1d4ed8;font-size:12px;font-weight:700;white-space:nowrap;}' +
       '.documents-responses-hint{font-size:12px;color:#64748b;}' +
-      '.documents-button--ai{background:linear-gradient(135deg, rgba(59,130,246,0.14), rgba(14,165,233,0.12));border-color:rgba(37,99,235,0.28);color:#1d4ed8;}' +
       '.documents-responses-table-wrap{overflow:auto;border:1px solid rgba(226,232,240,0.95);border-radius:18px;background:rgba(255,255,255,0.8);min-height:0;}' +
       '.documents-responses-table{width:100%;border-collapse:collapse;font-size:13px;color:#0f172a;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px 10px;border-bottom:1px solid rgba(226,232,240,0.85);text-align:left;vertical-align:middle;}' +
@@ -11115,8 +11119,13 @@
     descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
 
     var filesCell = createElement('div', 'documents-files');
-    if (Array.isArray(doc.files) && doc.files.length) {
-      doc.files.forEach(function(file) {
+    var attachments = Array.isArray(doc.files) ? doc.files : [];
+    var filesSummary = createElement('div', 'documents-files__summary', 'Файлы (' + attachments.length + ')');
+    filesCell.appendChild(filesSummary);
+
+    var filesList = createElement('div', 'documents-files__list');
+    if (attachments.length) {
+      attachments.forEach(function(file) {
         var link = createElement('a', 'documents-file-link', getAttachmentName(file));
         link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
         link.target = '_blank';
@@ -11135,11 +11144,12 @@
           event.preventDefault();
           handleAttachmentPreview(doc, file, link);
         });
-        filesCell.appendChild(link);
+        filesList.appendChild(link);
       });
     } else {
-      filesCell.textContent = '—';
+      filesList.textContent = '—';
     }
+    filesCell.appendChild(filesList);
     descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
 
     var actions = createElement('div', 'documents-actions');
@@ -12228,59 +12238,6 @@
     return false;
   }
 
-  var aiResponseModalLoader = null;
-  function resolveAiResponseModalScriptUrl() {
-    if (typeof document === 'undefined') {
-      return 'docs-ai-response-modal.js';
-    }
-    var scripts = document.getElementsByTagName('script');
-    for (var i = scripts.length - 1; i >= 0; i -= 1) {
-      var node = scripts[i];
-      var src = node && typeof node.getAttribute === 'function' ? node.getAttribute('src') : '';
-      if (!src || src.indexOf('docs.js') === -1) {
-        continue;
-      }
-      var cleanSrc = String(src).split('#')[0];
-      var query = '';
-      var queryIndex = cleanSrc.indexOf('?');
-      if (queryIndex !== -1) {
-        query = cleanSrc.slice(queryIndex);
-        cleanSrc = cleanSrc.slice(0, queryIndex);
-      }
-      var slashIndex = cleanSrc.lastIndexOf('/');
-      if (slashIndex === -1) {
-        return 'docs-ai-response-modal.js' + query;
-      }
-      return cleanSrc.slice(0, slashIndex + 1) + 'docs-ai-response-modal.js' + query;
-    }
-    return 'docs-ai-response-modal.js';
-  }
-
-  function ensureAiResponseModalScript() {
-    if (typeof window === 'undefined') {
-      return Promise.resolve(false);
-    }
-    if (typeof window.openDocumentsAiResponseModal === 'function') {
-      return Promise.resolve(true);
-    }
-    if (aiResponseModalLoader) {
-      return aiResponseModalLoader;
-    }
-    aiResponseModalLoader = new Promise(function(resolve) {
-      var script = document.createElement('script');
-      script.src = resolveAiResponseModalScriptUrl();
-      script.async = true;
-      script.onload = function() {
-        resolve(typeof window.openDocumentsAiResponseModal === 'function');
-      };
-      script.onerror = function() {
-        resolve(false);
-      };
-      document.head.appendChild(script);
-    });
-    return aiResponseModalLoader;
-  }
-
   function openResponseModal(doc) {
     if (!doc || !doc.id) {
       showMessage('error', 'Не удалось определить задачу для ответа.');
@@ -12297,7 +12254,6 @@
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
-    var aiButton = createElement('button', 'documents-button documents-button--secondary documents-button--ai', 'Ответ с помощью ИИ');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
     var toolbar = createElement('div', 'documents-responses-toolbar');
@@ -12309,6 +12265,13 @@
     var dropzoneBadge = createElement('div', 'documents-responses-dropzone-badge', 'Drag & Drop • Ctrl+V');
     var hint = createElement('div', 'documents-responses-hint', 'Ответы привязаны к задаче и показываются сразу без перезагрузки страницы.');
     var tableWrap = createElement('div', 'documents-responses-table-wrap');
+    var messageBox = createElement('div', 'documents-responses-message');
+    var messageLabel = createElement('div', 'documents-responses-message-label', 'Сообщение к задаче');
+    var messageInput = document.createElement('textarea');
+    messageInput.className = 'documents-responses-message-input';
+    messageInput.placeholder = 'Напишите комментарий. Он сохранится как .txt файл вместе с ответами.';
+    messageInput.maxLength = 5000;
+    var messageMeta = createElement('div', 'documents-responses-message-meta', '0 / 5000 символов');
     var hiddenInput = document.createElement('input');
     hiddenInput.type = 'file';
     hiddenInput.multiple = true;
@@ -12372,7 +12335,8 @@
       syncCurrentDoc();
       tableWrap.innerHTML = '';
       var uploaded = currentDoc && Array.isArray(currentDoc.responses) ? currentDoc.responses.slice() : [];
-      if (!uploaded.length && !pendingFiles.length) {
+      var pendingMessageText = getPendingMessageText();
+      if (!uploaded.length && !pendingFiles.length && !pendingMessageText) {
         tableWrap.appendChild(createElement('div', 'documents-responses-empty', 'Пока нет загруженных ответов. Добавьте документ кнопкой, перетаскиванием или вставкой из буфера.'));
         return;
       }
@@ -12486,12 +12450,38 @@
         tbody.appendChild(row);
       });
 
+      if (pendingMessageText) {
+        var messageRow = createElement('tr', '');
+        var messageNameCell = createElement('td', '');
+        var messageFileBox = createElement('div', 'documents-responses-file');
+        messageFileBox.appendChild(createElement('div', '', buildPendingMessageFileName()));
+        messageFileBox.appendChild(createElement('div', 'documents-responses-meta', pendingMessageText.length + ' символов • локальный txt'));
+        messageNameCell.appendChild(messageFileBox);
+        messageRow.appendChild(messageNameCell);
+        messageRow.appendChild(createElement('td', '', 'Будет сохранён'));
+        var messageStatusCell = createElement('td', '');
+        messageStatusCell.appendChild(createElement('span', 'documents-responses-status documents-responses-status--pending', 'Ожидает'));
+        messageRow.appendChild(messageStatusCell);
+        var messageActionCell = createElement('td', '');
+        var clearMessageButton = createElement('button', 'documents-button documents-button--secondary documents-responses-danger', 'Очистить');
+        clearMessageButton.type = 'button';
+        clearMessageButton.addEventListener('click', function() {
+          messageInput.value = '';
+          updateMessageMeta();
+          renderTable();
+        });
+        messageActionCell.appendChild(clearMessageButton);
+        messageRow.appendChild(messageActionCell);
+        tbody.appendChild(messageRow);
+      }
+
       table.appendChild(tbody);
       tableWrap.appendChild(table);
     }
 
     function uploadPendingFiles() {
-      if (!pendingFiles.length) {
+      var pendingMessageText = getPendingMessageText();
+      if (!pendingFiles.length && !pendingMessageText) {
         return refreshRegistrySilently().then(function() {
           syncCurrentDoc();
           renderTable();
@@ -12507,6 +12497,9 @@
       pendingFiles.forEach(function(file) {
         formData.append('attachments[]', file);
       });
+      if (pendingMessageText) {
+        formData.append('responseMessage', pendingMessageText);
+      }
       appendTelegramUserIdToFormData(formData);
       return fetch(buildApiUrl('response_upload', { organization: state.organization }), {
         method: 'POST',
@@ -12516,6 +12509,8 @@
         .then(handleResponse)
         .then(function(data) {
           pendingFiles = [];
+          messageInput.value = '';
+          updateMessageMeta();
           updateStateFromPayload(data);
           syncCurrentDoc();
           renderTable();
@@ -12603,29 +12598,18 @@
       closeModal(modal);
     });
 
-    aiButton.type = 'button';
-    aiButton.addEventListener('click', function() {
-      if (typeof window !== 'undefined' && typeof window.openDocumentsAiResponseModal === 'function') {
-        window.openDocumentsAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
-        return;
-      }
-      ensureAiResponseModalScript().then(function(isReady) {
-        if (!isReady || typeof window.openDocumentsAiResponseModal !== 'function') {
-          showMessage('error', 'Не удалось открыть ИИ-окно. Обновите страницу.');
-          return;
-        }
-        window.openDocumentsAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
-      });
-    });
-
     modal.addEventListener('click', function(event) {
       if (event.target === modal) {
         closeModal(modal);
       }
     });
 
+    messageInput.addEventListener('input', function() {
+      updateMessageMeta();
+      renderTable();
+    });
+
     headerActions.appendChild(saveButton);
-    headerActions.appendChild(aiButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
     header.appendChild(headerActions);
@@ -12635,6 +12619,10 @@
     dropzone.appendChild(dropzoneBadge);
     toolbar.appendChild(addButton);
     toolbar.appendChild(dropzone);
+    messageBox.appendChild(messageLabel);
+    messageBox.appendChild(messageInput);
+    messageBox.appendChild(messageMeta);
+    toolbar.appendChild(messageBox);
     toolbar.appendChild(hint);
     body.appendChild(toolbar);
     body.appendChild(tableWrap);
@@ -12643,6 +12631,7 @@
     panel.appendChild(hiddenInput);
     modal.appendChild(panel);
     document.body.appendChild(modal);
+    updateMessageMeta();
     renderTable();
     dropzone.focus({ preventScroll: true });
   }
@@ -14277,7 +14266,7 @@
     var filterBar = createElement('div', 'documents-filter-bar documents-filter-bar--hidden');
 
     var tableWrapper = createElement('div', 'documents-table-wrapper');
-    tableWrapper.style.maxHeight = '72vh';
+    tableWrapper.style.maxHeight = '100vh';
     tableWrapper.style.overflow = 'auto';
     tableWrapper.style.webkitOverflowScrolling = 'touch';
     var table = createElement('table', 'documents-table');
@@ -14485,3 +14474,24 @@
     return loadRegistry(state.organization);
   };
 })();
+    function getPendingMessageText() {
+      return String(messageInput.value || '').trim();
+    }
+
+    function buildPendingMessageFileName() {
+      var current = new Date();
+      var pad = function(value) {
+        return String(value).padStart(2, '0');
+      };
+      return 'Сообщение к задаче ' +
+        current.getFullYear() + '-' +
+        pad(current.getMonth() + 1) + '-' +
+        pad(current.getDate()) + '_' +
+        pad(current.getHours()) + '-' +
+        pad(current.getMinutes()) + '.txt';
+    }
+
+    function updateMessageMeta() {
+      var length = String(messageInput.value || '').trim().length;
+      messageMeta.textContent = length + ' / 5000 символов';
+    }
