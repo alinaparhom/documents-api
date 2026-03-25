@@ -12271,21 +12271,52 @@
       return aiResponseModalLoader;
     }
     aiResponseModalLoader = new Promise(function(resolve) {
-      var script = document.createElement('script');
       var baseUrl = resolveAiResponseModalScriptUrl();
-      var separator = baseUrl.indexOf('?') === -1 ? '?' : '&';
-      script.src = baseUrl + separator + 'modal_version=' + encodeURIComponent(AI_RESPONSE_MODAL_VERSION);
-      script.async = true;
-      script.onload = function() {
-        resolve(
+      var candidateUrls = [baseUrl, '/docs-ai-response-modal.js', '/js/docs-ai-response-modal.js', 'docs-ai-response-modal.js'];
+      var seen = {};
+
+      function hasReadyModal() {
+        return (
           typeof window.openDocumentsAiResponseModal === 'function' &&
           window.__documentsAiResponseModalVersion === AI_RESPONSE_MODAL_VERSION
         );
-      };
-      script.onerror = function() {
-        resolve(false);
-      };
-      document.head.appendChild(script);
+      }
+
+      function loadNext(index) {
+        if (hasReadyModal()) {
+          resolve(true);
+          return;
+        }
+        if (index >= candidateUrls.length) {
+          resolve(typeof window.openDocumentsAiResponseModal === 'function');
+          return;
+        }
+
+        var candidate = candidateUrls[index];
+        if (!candidate || seen[candidate]) {
+          loadNext(index + 1);
+          return;
+        }
+        seen[candidate] = true;
+
+        var separator = candidate.indexOf('?') === -1 ? '?' : '&';
+        var script = document.createElement('script');
+        script.src = candidate + separator + 'modal_version=' + encodeURIComponent(AI_RESPONSE_MODAL_VERSION);
+        script.async = true;
+        script.onload = function() {
+          if (hasReadyModal()) {
+            resolve(true);
+            return;
+          }
+          loadNext(index + 1);
+        };
+        script.onerror = function() {
+          loadNext(index + 1);
+        };
+        document.head.appendChild(script);
+      }
+
+      loadNext(0);
     });
     return aiResponseModalLoader;
   }
@@ -12615,9 +12646,12 @@
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
       ensureAiResponseModalScript().then(function(isReady) {
-        if (!isReady || typeof window.openDocumentsAiResponseModal !== 'function') {
+        if (typeof window.openDocumentsAiResponseModal !== 'function') {
           showMessage('error', 'Не удалось открыть ИИ-окно. Обновите страницу.');
           return;
+        }
+        if (!isReady) {
+          showMessage('error', 'Открыта резервная версия ИИ-окна. Обновите страницу позже для актуальной версии.');
         }
         window.openDocumentsAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
       });
