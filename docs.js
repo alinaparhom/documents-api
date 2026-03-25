@@ -12229,6 +12229,45 @@
   }
 
   var aiResponseModalLoader = null;
+  function openSimpleAiResponseModal() {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    if (!document.getElementById('documents-ai-fallback-style')) {
+      var style = document.createElement('style');
+      style.id = 'documents-ai-fallback-style';
+      style.textContent = '' +
+        '.documents-ai-fallback{position:fixed;inset:0;z-index:1700;display:flex;justify-content:center;align-items:center;padding:12px;background:rgba(15,23,42,0.22);backdrop-filter:blur(8px);}' +
+        '.documents-ai-fallback__panel{width:min(560px,100%);background:rgba(255,255,255,0.92);border:1px solid rgba(255,255,255,0.75);border-radius:18px;box-shadow:0 20px 48px rgba(15,23,42,0.18);padding:14px;display:flex;flex-direction:column;gap:10px;}' +
+        '.documents-ai-fallback__title{font-size:17px;font-weight:700;color:#0f172a;}' +
+        '.documents-ai-fallback__text{width:100%;min-height:120px;border-radius:12px;border:1px solid rgba(148,163,184,0.35);padding:10px;box-sizing:border-box;font-size:14px;resize:vertical;}' +
+        '.documents-ai-fallback__close{align-self:flex-end;border:1px solid rgba(148,163,184,0.35);background:rgba(255,255,255,0.7);padding:9px 14px;border-radius:10px;font-weight:600;cursor:pointer;}' +
+        '@media (max-width:768px){.documents-ai-fallback{padding:8px;align-items:flex-end;}.documents-ai-fallback__panel{width:100%;border-radius:16px;}.documents-ai-fallback__text{font-size:16px;}}';
+      document.head.appendChild(style);
+    }
+    var modal = createElement('div', 'documents-ai-fallback');
+    var panel = createElement('div', 'documents-ai-fallback__panel');
+    var title = createElement('div', 'documents-ai-fallback__title', 'Ответ с помощью ИИ');
+    var textarea = createElement('textarea', 'documents-ai-fallback__text');
+    textarea.placeholder = 'Введите текст запроса или ответа...';
+    var closeButton = createElement('button', 'documents-ai-fallback__close', 'Закрыть');
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', function() {
+      closeModal(modal);
+    });
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeModal(modal);
+      }
+    });
+    panel.appendChild(title);
+    panel.appendChild(textarea);
+    panel.appendChild(closeButton);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+    textarea.focus({ preventScroll: true });
+  }
+
   function resolveAiResponseModalScriptUrl() {
     if (typeof document === 'undefined') {
       return 'docs-ai-response-modal.js';
@@ -12605,30 +12644,20 @@
 
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
+      if (typeof window !== 'undefined' && typeof window.openDocumentsAiResponseModal === 'function') {
+        window.openDocumentsAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
+        return;
+      }
+      openSimpleAiResponseModal();
       ensureAiResponseModalScript().then(function(isReady) {
         if (!isReady || typeof window.openDocumentsAiResponseModal !== 'function') {
-          showMessage('error', 'Не удалось открыть ИИ-окно. Обновите страницу.');
           return;
         }
-        window.openDocumentsAiResponseModal({
-          documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '',
-          onApply: function(text) {
-            if (!text) {
-              return;
-            }
-            if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-              navigator.clipboard.writeText(text)
-                .then(function() {
-                  showMessage('success', 'Текст ответа скопирован. Вставьте его в нужный документ.');
-                })
-                .catch(function() {
-                  showMessage('success', 'Текст ответа готов. Скопируйте его вручную из окна ИИ.');
-                });
-            } else {
-              showMessage('success', 'Текст ответа готов. Скопируйте его вручную из окна ИИ.');
-            }
-          }
-        });
+        var fallback = document.querySelector('.documents-ai-fallback');
+        if (fallback) {
+          closeModal(fallback);
+        }
+        window.openDocumentsAiResponseModal({ documentTitle: currentDoc && currentDoc.title ? currentDoc.title : '' });
       });
     });
 
