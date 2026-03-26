@@ -298,12 +298,18 @@
         .filter(Boolean)
         .join(' ')
         .trim();
+    var rowContextText = [
+      documentData.title || '',
+      documentData.description || '',
+      documentData.status || '',
+      contextData && contextData.registryNumber ? ('Реестр: ' + contextData.registryNumber) : ''
+    ].filter(Boolean).join('\n');
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'documents-ai-modal__panel');
     var header = createElement('div', 'documents-ai-modal__header');
     var headText = createElement('div', '');
     var title = createElement('div', 'documents-ai-modal__title', 'Ответ с помощью ИИ');
-    var desc = createElement('div', 'documents-ai-modal__desc', 'Файл из строки подтянется автоматически. ИИ подготовит аналитику и один ответ в выбранном стиле. Текст можно править перед PDF.');
+    var desc = createElement('div', 'documents-ai-modal__desc', 'Файлы и текст строки подставляются автоматически. ИИ делает подробный анализ с цитатами и готовит развёрнутый структурированный ответ.');
     var closeButton = createElement('button', 'documents-ai-modal__close', '×');
 
     var grid = createElement('div', 'documents-ai-modal__grid');
@@ -330,7 +336,10 @@
 
     var promptLabel = createElement('div', 'documents-ai-modal__label', 'Уточняющий запрос');
     var promptInput = createElement('textarea', 'documents-ai-modal__textarea');
-    promptInput.placeholder = 'Например: сделай формулировку строже и короче';
+    promptInput.placeholder = 'Например: дай полный юридический и деловой разбор с рисками и финальным письмом';
+    if (rowContextText) {
+      promptInput.value = 'Контекст строки:\n' + rowContextText + '\n\nСформируй максимально подробный и структурированный ответ.';
+    }
 
     var responseLabel = createElement('div', 'documents-ai-modal__label', 'Ответ ИИ (редактируемый)');
     var responseInput = createElement('textarea', 'documents-ai-modal__textarea');
@@ -343,6 +352,7 @@
     var status = createElement('div', 'documents-ai-modal__status', 'Загрузите файл и нажмите «Проанализировать файл».');
     var analysis = createElement('textarea', 'documents-ai-modal__textarea');
     analysis.placeholder = 'Здесь будет аналитический ответ от ИИ';
+    var citationsBlock = createElement('div', 'documents-ai-modal__hint', '');
 
     var actionsTop = createElement('div', 'documents-ai-modal__row');
     var analyzeButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--primary', 'Проанализировать файл');
@@ -460,12 +470,16 @@
           var serverResponse = data && data.response ? String(data.response) : '';
           var serverNeutral = data && data.neutral ? String(data.neutral) : '';
           var serverAggressive = data && data.aggressive ? String(data.aggressive) : '';
+          var serverCitations = data && Array.isArray(data.citations) ? data.citations : [];
           var local = buildDraftPair(promptInput.value, titleInput.value, serverAnalysis);
 
           analysis.value = serverAnalysis || local.analysis;
           responseInput.value = serverResponse
             || (toneSelect.value === 'aggressive' ? serverAggressive : serverNeutral)
             || (toneSelect.value === 'aggressive' ? local.aggressive : local.neutral);
+          citationsBlock.textContent = serverCitations.length
+            ? ('Цитаты из файла: ' + serverCitations.join(' | '))
+            : 'Цитаты из файла не возвращены.';
           renderPreview();
           showStatus('Готово: анализ получен, ответ сформирован.', false);
         })
@@ -473,6 +487,7 @@
           var fallback = buildDraftPair(promptInput.value, titleInput.value, 'Сервер ИИ недоступен, применён локальный шаблон.');
           analysis.value = fallback.analysis;
           responseInput.value = toneSelect.value === 'aggressive' ? fallback.aggressive : fallback.neutral;
+          citationsBlock.textContent = 'Цитаты недоступны: применён локальный шаблон.';
           renderPreview();
           showStatus('Не удалось получить ответ ИИ (' + (error && error.message ? error.message : 'ошибка') + '). Использован локальный шаблон.', true);
         })
@@ -564,6 +579,7 @@
 
     rightCard.appendChild(createElement('div', 'documents-ai-modal__label', 'Аналитический ответ'));
     rightCard.appendChild(analysis);
+    rightCard.appendChild(citationsBlock);
     rightCard.appendChild(responseLabel);
     rightCard.appendChild(responseInput);
     rightCard.appendChild(toneLabel);

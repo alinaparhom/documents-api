@@ -2021,6 +2021,57 @@
       });
   }
 
+  function openAiModalForDocument(doc, pendingFiles, showMessageHandler) {
+    if (!doc || !doc.id) {
+      if (typeof showMessageHandler === 'function') {
+        showMessageHandler('error', 'Не удалось определить задачу для ИИ-ответа.');
+      }
+      return;
+    }
+    var uploadedResponses = doc && Array.isArray(doc.responses)
+      ? doc.responses.map(function(file) {
+        return {
+          name: getAttachmentName(file),
+          size: file && file.size ? file.size : 0,
+          uploadedBy: file && file.uploadedBy ? String(file.uploadedBy) : '',
+          uploadedAt: file && file.uploadedAt ? String(file.uploadedAt) : '',
+          isTextFile: Boolean(file && file.isTextFile)
+        };
+      })
+      : [];
+    var linkedFiles = [];
+    if (doc && Array.isArray(doc.files)) {
+      linkedFiles = doc.files.map(function(file) {
+        return {
+          name: getAttachmentName(file),
+          url: resolveAttachmentUrl(file, { bustCache: true }) || '',
+          size: file && file.size ? file.size : 0,
+          type: file && file.type ? String(file.type) : ''
+        };
+      }).filter(function(file) {
+        return Boolean(file && file.url);
+      });
+    }
+    openAiResponseModal({
+      apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
+      showMessage: typeof showMessageHandler === 'function' ? showMessageHandler : showMessage,
+      documentData: doc || {},
+      documentTitle: doc && doc.title ? String(doc.title) : '',
+      pendingFiles: Array.isArray(pendingFiles) ? pendingFiles.slice() : [],
+      linkedFiles: linkedFiles,
+      context: {
+        organization: state.organization || '',
+        documentId: doc && doc.id ? doc.id : '',
+        registryNumber: doc && doc.registryNumber ? String(doc.registryNumber) : '',
+        description: doc && doc.description ? String(doc.description) : '',
+        status: doc && doc.status ? String(doc.status) : '',
+        pendingFilesCount: Array.isArray(pendingFiles) ? pendingFiles.length : 0,
+        uploadedResponsesCount: uploadedResponses.length,
+        uploadedResponses: uploadedResponses
+      }
+    });
+  }
+
   function ensureSearchStyles() {
     if (document.getElementById('documents-search-style')) {
       return;
@@ -11323,7 +11374,7 @@
     var responseButton = createElement('button', 'documents-action documents-action--assign', 'Ответ');
     responseButton.type = 'button';
     responseButton.addEventListener('click', function() {
-      openResponseModal(doc);
+      openAiModalForDocument(doc, [], showMessage);
     });
     actions.appendChild(responseButton);
 
@@ -12836,48 +12887,7 @@
 
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
-      var uploadedResponses = currentDoc && Array.isArray(currentDoc.responses)
-        ? currentDoc.responses.map(function(file) {
-          return {
-            name: getAttachmentName(file),
-            size: file && file.size ? file.size : 0,
-            uploadedBy: file && file.uploadedBy ? String(file.uploadedBy) : '',
-            uploadedAt: file && file.uploadedAt ? String(file.uploadedAt) : '',
-            isTextFile: Boolean(file && file.isTextFile)
-          };
-        })
-        : [];
-      var linkedFiles = [];
-      if (currentDoc && Array.isArray(currentDoc.files)) {
-        linkedFiles = currentDoc.files.map(function(file) {
-          return {
-            name: getAttachmentName(file),
-            url: resolveAttachmentUrl(file, { bustCache: true }) || '',
-            size: file && file.size ? file.size : 0,
-            type: file && file.type ? String(file.type) : ''
-          };
-        }).filter(function(file) {
-          return Boolean(file && file.url);
-        });
-      }
-      openAiResponseModal({
-        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
-        showMessage: showMessage,
-        documentData: currentDoc || doc || {},
-        documentTitle: currentDoc && currentDoc.title ? String(currentDoc.title) : '',
-        pendingFiles: pendingFiles.slice(),
-        linkedFiles: linkedFiles,
-        context: {
-          organization: state.organization || '',
-          documentId: currentDoc && currentDoc.id ? currentDoc.id : doc.id,
-          registryNumber: currentDoc && currentDoc.registryNumber ? String(currentDoc.registryNumber) : '',
-          description: currentDoc && currentDoc.description ? String(currentDoc.description) : '',
-          status: currentDoc && currentDoc.status ? String(currentDoc.status) : '',
-          pendingFilesCount: pendingFiles.length,
-          uploadedResponsesCount: uploadedResponses.length,
-          uploadedResponses: uploadedResponses
-        }
-      });
+      openAiModalForDocument(currentDoc || doc, pendingFiles, showMessage);
     });
 
     closeButton.type = 'button';

@@ -161,27 +161,151 @@ function buildFilesSummary(array $files): array
 {
     $summary = [];
     foreach ($files as $file) {
-        $entry = [
-            'name' => (string)($file['name'] ?? ''),
-            'type' => (string)($file['type'] ?? ''),
-            'size' => (int)($file['size'] ?? 0),
-            'preview' => ''
-        ];
+        $name = (string)($file['name'] ?? '');
+        $type = (string)($file['type'] ?? '');
         $tmp = (string)($file['tmp_name'] ?? '');
-        if ($tmp !== '' && is_file($tmp)) {
-            $type = strtolower((string)($file['type'] ?? ''));
-            $name = strtolower((string)($file['name'] ?? ''));
-            $isText = str_contains($type, 'text') || str_ends_with($name, '.txt') || str_ends_with($name, '.md') || str_ends_with($name, '.csv') || str_ends_with($name, '.json');
-            if ($isText) {
-                $content = @file_get_contents($tmp, false, null, 0, 3000);
-                if (is_string($content) && $content !== '') {
-                    $entry['preview'] = trim($content);
-                }
-            }
-        }
+        $preview = extractTextPreviewFromFile($tmp, $name, $type);
+        $entry = [
+            'name' => $name,
+            'type' => $type,
+            'size' => (int)($file['size'] ?? 0),
+            'preview' => $preview
+        ];
         $summary[] = $entry;
     }
     return $summary;
+}
+
+function mbSafeSubstring(string $value, int $limit): string
+{
+    if ($limit <= 0) {
+        return '';
+    }
+    if (function_exists('mb_substr')) {
+        return (string)mb_substr($value, 0, $limit);
+    }
+    return substr($value, 0, $limit);
+}
+
+function normalizeExtractedText(string $text, int $maxLength = 12000): string
+{
+    $clean = trim((string)preg_replace('/\s+/u', ' ', $text));
+    if ($clean === '') {
+        return '';
+    }
+    if (function_exists('mb_strlen') && mb_strlen($clean) > $maxLength) {
+        return mbSafeSubstring($clean, $maxLength) . '…';
+    }
+    if (strlen($clean) > $maxLength) {
+        return substr($clean, 0, $maxLength) . '…';
+    }
+    return $clean;
+}
+
+function runCommand(array $parts): string
+{
+    if (!$parts) {
+        return '';
+    }
+    $command = implode(' ', array_map('escapeshellarg', $parts));
+    $output = @shell_exec($command . ' 2>/dev/null');
+    return is_string($output) ? trim($output) : '';
+}
+
+function extractTextFromDocx(string $path): string
+{
+    if (!class_exists('ZipArchive')) {
+        return '';
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) {
+        return '';
+    }
+    $xml = $zip->getFromName('word/document.xml');
+    $zip->close();
+    if (!is_string($xml) || $xml === '') {
+        return '';
+    }
+    $xml = str_replace(['</w:p>', '</w:tr>', '</w:tc>', '<w:br/>', '<w:tab/>'], ["\n", "\n", " ", "\n", " "], $xml);
+    $text = strip_tags($xml);
+    return normalizeExtractedText(html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+}
+
+function extractTextFromPdf(string $path): string
+{
+    $fromPdfToText = runCommand(['pdftotext', '-layout', '-enc', 'UTF-8', '-nopgbrk', $path, '-']);
+    if ($fromPdfToText !== '') {
+        return normalizeExtractedText($fromPdfToText);
+    }
+    return '';
+}
+
+function extractTextFromImageByOcr(string $path): string
+{
+    $text = runCommand(['tesseract', $path, 'stdout', '-l', 'rus+eng']);
+    if ($text !== '') {
+        return normalizeExtractedText($text);
+    }
+    return '';
+}
+
+function extractTextFromScannedPdf(string $path): string
+{
+    $tmpBase = tempnam(sys_get_temp_dir(), 'pdf-ocr-');
+    if (!is_string($tmpBase) || $tmpBase === '') {
+        return '';
+    }
+    @unlink($tmpBase);
+    $prefix = $tmpBase . '-page';
+    runCommand(['pdftoppm', '-f', '1', '-singlefile', '-png', $path, $prefix]);
+    $imagePath = $prefix . '.png';
+    if (!is_file($imagePath)) {
+        return '';
+    }
+    $text = extractTextFromImageByOcr($imagePath);
+    @unlink($imagePath);
+    return $text;
+}
+
+function extractTextPreviewFromFile(string $tmpPath, string $originalName, string $mimeType): string
+{
+    if ($tmpPath === '' || !is_file($tmpPath)) {
+        return '';
+    }
+    $name = strtolower($originalName);
+    $type = strtolower($mimeType);
+    $isText = str_contains($type, 'text')
+        || str_ends_with($name, '.txt')
+        || str_ends_with($name, '.md')
+        || str_ends_with($name, '.csv')
+        || str_ends_with($name, '.json');
+    if ($isText) {
+        $content = @file_get_contents($tmpPath, false, null, 0, 15000);
+        return is_string($content) ? normalizeExtractedText($content) : '';
+    }
+    if (str_ends_with($name, '.docx')) {
+        return extractTextFromDocx($tmpPath);
+    }
+    if (str_ends_with($name, '.doc')) {
+        $docText = runCommand(['catdoc', $tmpPath]);
+        return normalizeExtractedText($docText);
+    }
+    if (str_ends_with($name, '.pdf') || str_contains($type, 'pdf')) {
+        $pdfText = extractTextFromPdf($tmpPath);
+        if ($pdfText !== '') {
+            return $pdfText;
+        }
+        return extractTextFromScannedPdf($tmpPath);
+    }
+    $isImage = str_starts_with($type, 'image/')
+        || str_ends_with($name, '.png')
+        || str_ends_with($name, '.jpg')
+        || str_ends_with($name, '.jpeg')
+        || str_ends_with($name, '.webp');
+    if ($isImage) {
+        return extractTextFromImageByOcr($tmpPath);
+    }
+    return '';
 }
 
 function parseAiJson(string $content): array
@@ -234,7 +358,7 @@ function buildLocalFallback(string $documentTitle, string $prompt, array $contex
 $env = loadEnv(getEnvPaths());
 
 $apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
-$model = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
+$model = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4.1'));
 $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
 $isGroqKey = str_starts_with($apiKey, 'gsk_');
 if ($baseUrl === 'https://api.openai.com/v1' && $isGroqKey) {
@@ -262,8 +386,12 @@ $files = array_merge($attachments, $singleAttachment);
 
 $filesSummary = buildFilesSummary($files);
 
-$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
-  . "Стиль ответа бери из context.selectedTone (neutral или aggressive). Пиши коротко и по делу.";
+$systemMessage = "Ты senior-аналитик по деловой переписке. Отвечай только в JSON."
+  . " Обязательные поля: analysis, response, neutral, aggressive, citations."
+  . " response делай максимально подробным, структурированным (заголовки, списки, шаги, риски, выводы)."
+  . " В analysis сделай глубокий анализ, включи проверку противоречий и предположения."
+  . " В citations укажи массив коротких цитат/фрагментов из файлов, на которые ты опирался."
+  . " Если данных мало — явно напиши, чего не хватает. Стиль ответа бери из context.selectedTone (neutral/aggressive).";
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -274,7 +402,8 @@ $userPayload = [
 
 $body = [
     'model' => $model,
-    'temperature' => 0.3,
+    'temperature' => 0.2,
+    'max_tokens' => 3500,
     'messages' => [
         ['role' => 'system', 'content' => $systemMessage],
         ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
@@ -338,6 +467,7 @@ $analysis = trim((string)($parsed['analysis'] ?? ''));
 $response = trim((string)($parsed['response'] ?? ''));
 $neutral = trim((string)($parsed['neutral'] ?? ''));
 $aggressive = trim((string)($parsed['aggressive'] ?? ''));
+$citations = isset($parsed['citations']) && is_array($parsed['citations']) ? $parsed['citations'] : [];
 
 if ($response === '') {
     $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
@@ -365,4 +495,5 @@ jsonResponse(200, [
     'response' => $response,
     'neutral' => $neutral,
     'aggressive' => $aggressive,
+    'citations' => $citations,
 ]);
