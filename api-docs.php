@@ -216,10 +216,13 @@ function buildLocalFallback(string $documentTitle, string $prompt, array $contex
       . 'По запросу о ' . $topic . ' предоставим уточнённый статус и сроки после проверки данных.';
     $aggressive = 'По ' . $title . $orgPart . ' уведомляем: материалы приняты к исполнению в приоритетном порядке. '
       . 'По запросу о ' . $topic . ' ответ будет предоставлен в максимально короткий срок.';
-    $style = isset($context['selectedTone']) && is_string($context['selectedTone'])
+    $style = isset($context['responseStyle']) && is_string($context['responseStyle'])
+        ? trim($context['responseStyle'])
+        : '';
+    $legacyTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
         ? trim($context['selectedTone'])
-        : 'neutral';
-    $response = $style === 'aggressive' ? $aggressive : $neutral;
+        : '';
+    $response = ($style === 'concise' || $legacyTone === 'aggressive') ? $aggressive : $neutral;
 
     return [
         'ok' => true,
@@ -249,6 +252,8 @@ if ($apiKey === '') {
 $prompt = trim((string)($_POST['prompt'] ?? ''));
 $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 $context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
+$responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
+$requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 
 if ($action !== '' && $action !== 'ai_response_analyze') {
@@ -262,8 +267,22 @@ $files = array_merge($attachments, $singleAttachment);
 
 $filesSummary = buildFilesSummary($files);
 
+$effectiveStyle = $responseStyle !== ''
+    ? $responseStyle
+    : (isset($context['responseStyle']) && is_string($context['responseStyle']) ? trim($context['responseStyle']) : '');
+$styleInstruction = 'Пиши в деловом стиле.';
+if ($effectiveStyle === 'concise') {
+    $styleInstruction = 'Пиши кратко и строго по делу.';
+} elseif ($effectiveStyle === 'friendly') {
+    $styleInstruction = 'Пиши развёрнуто, дружелюбно и понятно.';
+} elseif ($effectiveStyle === 'technical') {
+    $styleInstruction = 'Пиши технически, с пояснениями и структурой.';
+}
+
+$effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
+
 $systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
-  . "Стиль ответа бери из context.selectedTone (neutral или aggressive). Пиши коротко и по делу.";
+  . $styleInstruction;
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -273,7 +292,7 @@ $userPayload = [
 ];
 
 $body = [
-    'model' => $model,
+    'model' => $effectiveModel,
     'temperature' => 0.3,
     'messages' => [
         ['role' => 'system', 'content' => $systemMessage],
@@ -342,8 +361,8 @@ $aggressive = trim((string)($parsed['aggressive'] ?? ''));
 if ($response === '') {
     $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
         ? trim($context['selectedTone'])
-        : 'neutral';
-    if ($selectedTone === 'aggressive' && $aggressive !== '') {
+        : '';
+    if (($effectiveStyle === 'concise' || $selectedTone === 'aggressive') && $aggressive !== '') {
         $response = $aggressive;
     } elseif ($neutral !== '') {
         $response = $neutral;
