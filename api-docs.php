@@ -4,17 +4,23 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['ok' => false, 'error' => 'Method Not Allowed'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
 function jsonResponse(int $status, array $payload): void
 {
     http_response_code($status);
     echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+$method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+if ($method === 'GET') {
+    jsonResponse(200, [
+        'ok' => true,
+        'message' => 'API доступен. Используйте POST для action=ai_response_analyze.',
+        'endpoint' => '/js/documents/api-docs.php'
+    ]);
+}
+if ($method !== 'POST') {
+    jsonResponse(405, ['ok' => false, 'error' => 'Method Not Allowed']);
 }
 
 function loadEnv(array $paths): array
