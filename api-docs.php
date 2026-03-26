@@ -326,6 +326,149 @@ function parseAiJson(string $content): array
     return [];
 }
 
+function collectResponseText(array $responseJson): string
+{
+    if (isset($responseJson['output_text']) && is_string($responseJson['output_text'])) {
+        return trim($responseJson['output_text']);
+    }
+    $chunks = [];
+    if (!isset($responseJson['output']) || !is_array($responseJson['output'])) {
+        return '';
+    }
+    foreach ($responseJson['output'] as $outputItem) {
+        if (!is_array($outputItem) || !isset($outputItem['content']) || !is_array($outputItem['content'])) {
+            continue;
+        }
+        foreach ($outputItem['content'] as $contentItem) {
+            if (is_array($contentItem) && isset($contentItem['text']) && is_string($contentItem['text'])) {
+                $chunks[] = $contentItem['text'];
+            }
+        }
+    }
+    return trim(implode("\n", $chunks));
+}
+
+function uploadFileToOpenAi(string $baseUrl, string $apiKey, array $file): ?string
+{
+    $tmp = (string)($file['tmp_name'] ?? '');
+    $name = (string)($file['name'] ?? 'attachment');
+    $type = (string)($file['type'] ?? 'application/octet-stream');
+    if ($tmp === '' || !is_file($tmp)) {
+        return null;
+    }
+    $endpoint = rtrim($baseUrl, '/') . '/files';
+    $curlFile = curl_file_create($tmp, $type, $name);
+    $postFields = [
+        'purpose' => 'user_data',
+        'file' => $curlFile,
+    ];
+    $ch = curl_init($endpoint);
+    if ($ch === false) {
+        return null;
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+        ],
+        CURLOPT_POSTFIELDS => $postFields,
+        CURLOPT_TIMEOUT => 120,
+    ]);
+    $response = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($response === false || $status >= 400) {
+        return null;
+    }
+    $decoded = json_decode((string)$response, true);
+    if (!is_array($decoded) || !isset($decoded['id']) || !is_string($decoded['id'])) {
+        return null;
+    }
+    return $decoded['id'];
+}
+
+function requestResponsesApi(
+    string $baseUrl,
+    string $apiKey,
+    string $model,
+    string $systemMessage,
+    array $userPayload,
+    array $fileIds
+): array {
+    $userContent = [
+        [
+            'type' => 'input_text',
+            'text' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ],
+    ];
+    foreach ($fileIds as $fileId) {
+        if (!is_string($fileId) || trim($fileId) === '') {
+            continue;
+        }
+        $userContent[] = [
+            'type' => 'input_file',
+            'file_id' => $fileId,
+        ];
+    }
+
+    $body = [
+        'model' => $model,
+        'input' => [
+            [
+                'role' => 'system',
+                'content' => [
+                    ['type' => 'input_text', 'text' => $systemMessage]
+                ]
+            ],
+            [
+                'role' => 'user',
+                'content' => $userContent
+            ]
+        ],
+        'max_output_tokens' => 3500,
+        'text' => [
+            'format' => ['type' => 'json_object']
+        ]
+    ];
+
+    $endpoint = rtrim($baseUrl, '/') . '/responses';
+    $ch = curl_init($endpoint);
+    if ($ch === false) {
+        return ['ok' => false, 'status' => 500, 'error' => 'Не удалось инициализировать cURL'];
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => 120,
+    ]);
+    $responseBody = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($responseBody === false) {
+        return ['ok' => false, 'status' => 502, 'error' => $curlError];
+    }
+    $json = json_decode((string)$responseBody, true);
+    if (!is_array($json)) {
+        return ['ok' => false, 'status' => 502, 'error' => 'Некорректный ответ Responses API'];
+    }
+    if ($statusCode >= 400) {
+        $message = isset($json['error']['message']) && is_string($json['error']['message'])
+            ? $json['error']['message']
+            : 'Responses API error';
+        return ['ok' => false, 'status' => $statusCode, 'error' => $message];
+    }
+    $content = collectResponseText($json);
+    return ['ok' => true, 'content' => $content, 'raw' => $json];
+}
+
 function buildLocalFallback(string $documentTitle, string $prompt, array $context = []): array
 {
     $title = trim($documentTitle) !== '' ? $documentTitle : 'документу';
@@ -400,67 +543,81 @@ $userPayload = [
     'files' => $filesSummary,
 ];
 
-$body = [
-    'model' => $model,
-    'temperature' => 0.2,
-    'max_tokens' => 3500,
-    'messages' => [
-        ['role' => 'system', 'content' => $systemMessage],
-        ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
-    ],
-];
-if (!$isGroq) {
-    $body['response_format'] = ['type' => 'json_object'];
-}
-
-$endpoint = rtrim($baseUrl, '/') . '/chat/completions';
-$ch = curl_init($endpoint);
-if ($ch === false) {
-    jsonResponse(500, ['ok' => false, 'error' => 'Не удалось инициализировать cURL']);
-}
-
-curl_setopt_array($ch, [
-    CURLOPT_POST => true,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_HTTPHEADER => [
-        'Authorization: Bearer ' . $apiKey,
-        'Content-Type: application/json',
-    ],
-    CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-    CURLOPT_TIMEOUT => 90,
-]);
-
-$responseBody = curl_exec($ch);
-$curlError = curl_error($ch);
-$statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
-
-if ($responseBody === false) {
-    logApiDocs('error', 'AI request failed', ['curlError' => $curlError]);
-    jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError]);
-}
-
-$responseJson = json_decode($responseBody, true);
-if (!is_array($responseJson)) {
-    logApiDocs('error', 'AI API returned non-JSON', ['response' => mb_substr($responseBody, 0, 500)]);
-    jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API']);
-}
-
-if ($statusCode >= 400) {
-    $message = 'AI API error';
-    if (isset($responseJson['error']['message']) && is_string($responseJson['error']['message'])) {
-        $message = $responseJson['error']['message'];
+$content = '';
+if (!$isGroq && stripos($baseUrl, 'api.openai.com') !== false) {
+    $fileIds = [];
+    foreach ($files as $file) {
+        $fileId = uploadFileToOpenAi($baseUrl, $apiKey, $file);
+        if ($fileId !== null) {
+            $fileIds[] = $fileId;
+        }
     }
-    logApiDocs('error', 'AI API HTTP error', ['status' => $statusCode, 'message' => $message]);
-    $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
-    if ($statusCode === 403 && $unsupportedRegion) {
-        logApiDocs('warn', 'AI provider blocked by region, fallback enabled', ['status' => $statusCode]);
-        jsonResponse(200, buildLocalFallback($documentTitle, $prompt, $context));
+    $responsesResult = requestResponsesApi($baseUrl, $apiKey, $model, $systemMessage, $userPayload, $fileIds);
+    if (!$responsesResult['ok']) {
+        $message = (string)($responsesResult['error'] ?? 'Responses API error');
+        $statusCode = (int)($responsesResult['status'] ?? 502);
+        logApiDocs('error', 'Responses API error', ['status' => $statusCode, 'message' => $message]);
+        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
     }
-    jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
+    $content = isset($responsesResult['content']) && is_string($responsesResult['content'])
+        ? $responsesResult['content']
+        : '';
+} else {
+    $body = [
+        'model' => $model,
+        'temperature' => 0.2,
+        'max_tokens' => 3500,
+        'messages' => [
+            ['role' => 'system', 'content' => $systemMessage],
+            ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
+        ],
+    ];
+    if (!$isGroq) {
+        $body['response_format'] = ['type' => 'json_object'];
+    }
+    $endpoint = rtrim($baseUrl, '/') . '/chat/completions';
+    $ch = curl_init($endpoint);
+    if ($ch === false) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось инициализировать cURL']);
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => 90,
+    ]);
+    $responseBody = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($responseBody === false) {
+        logApiDocs('error', 'AI request failed', ['curlError' => $curlError]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError]);
+    }
+    $responseJson = json_decode((string)$responseBody, true);
+    if (!is_array($responseJson)) {
+        logApiDocs('error', 'AI API returned non-JSON', ['response' => mb_substr((string)$responseBody, 0, 500)]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API']);
+    }
+    if ($statusCode >= 400) {
+        $message = 'AI API error';
+        if (isset($responseJson['error']['message']) && is_string($responseJson['error']['message'])) {
+            $message = $responseJson['error']['message'];
+        }
+        logApiDocs('error', 'AI API HTTP error', ['status' => $statusCode, 'message' => $message]);
+        $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
+        if ($statusCode === 403 && $unsupportedRegion) {
+            logApiDocs('warn', 'AI provider blocked by region, fallback enabled', ['status' => $statusCode]);
+            jsonResponse(200, buildLocalFallback($documentTitle, $prompt, $context));
+        }
+        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
+    }
+    $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 }
-
-$content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 $parsed = parseAiJson($content);
 
 $analysis = trim((string)($parsed['analysis'] ?? ''));
