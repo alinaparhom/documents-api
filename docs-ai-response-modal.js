@@ -1,621 +1,520 @@
-(function() {
-  var STYLE_ID = 'documents-ai-response-style';
-  var ROOT_CLASS = 'documents-ai-modal';
-  var MAX_FILES_PER_REQUEST = 8;
-  var MAX_TOTAL_FILE_SIZE = 20 * 1024 * 1024;
+(function () {
+  var STYLE_ID = 'ai-chat-modal-style-v3';
+  var ROOT_CLASS = 'ai-chat-modal';
+  var FILE_INPUT_ID = 'ai-chat-hidden-file-input';
+  var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
+
+  var STYLE_OPTIONS = [
+    { value: 'concise', label: 'Краткий и по делу' },
+    { value: 'friendly', label: 'Развёрнутый и дружелюбный' },
+    { value: 'technical', label: 'Технический с пояснениями' }
+  ];
 
   function createElement(tag, className, text) {
-    var element = document.createElement(tag);
+    var node = document.createElement(tag);
     if (className) {
-      element.className = className;
+      node.className = className;
     }
     if (typeof text === 'string') {
-      element.textContent = text;
+      node.textContent = text;
     }
-    return element;
+    return node;
   }
 
-  function ensureStyle() {
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function ensureStyles() {
     if (document.getElementById(STYLE_ID)) {
       return;
     }
     var style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = '' +
-      '.documents-ai-modal{position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,.24);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;}' +
-      '.documents-ai-modal__panel{width:min(940px,100%);max-height:min(92vh,980px);display:flex;flex-direction:column;gap:10px;background:linear-gradient(170deg,rgba(255,255,255,.95),rgba(255,255,255,.88));border:1px solid rgba(255,255,255,.8);border-radius:22px;box-shadow:0 26px 60px rgba(15,23,42,.2);padding:12px;overflow:auto;}' +
-      '.documents-ai-modal__header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}' +
-      '.documents-ai-modal__title{font-size:17px;font-weight:700;color:#0f172a;}' +
-      '.documents-ai-modal__desc{font-size:12px;color:#64748b;line-height:1.45;margin-top:2px;}' +
-      '.documents-ai-modal__close{border:none;background:rgba(148,163,184,.18);color:#0f172a;border-radius:999px;width:34px;height:34px;font-size:18px;line-height:1;cursor:pointer;}' +
-      '.documents-ai-modal__grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}' +
-      '.documents-ai-modal__card{background:rgba(255,255,255,.78);border:1px solid rgba(226,232,240,.95);border-radius:16px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0;}' +
-      '.documents-ai-modal__label{font-size:12px;color:#475569;font-weight:600;}' +
-      '.documents-ai-modal__input,.documents-ai-modal__textarea,.documents-ai-modal__select{width:100%;border:1px solid rgba(148,163,184,.35);border-radius:12px;background:rgba(255,255,255,.86);padding:10px 11px;font-size:14px;color:#0f172a;box-sizing:border-box;}' +
-      '.documents-ai-modal__textarea{min-height:120px;resize:vertical;}' +
-      '.documents-ai-modal__input:focus,.documents-ai-modal__textarea:focus,.documents-ai-modal__select:focus{outline:none;border-color:rgba(37,99,235,.55);box-shadow:0 0 0 3px rgba(37,99,235,.12);}' +
-      '.documents-ai-modal__row{display:flex;gap:8px;flex-wrap:wrap;}' +
-      '.documents-ai-modal__button{border:1px solid rgba(148,163,184,.34);background:rgba(255,255,255,.74);border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600;color:#334155;cursor:pointer;}' +
-      '.documents-ai-modal__button--primary{background:linear-gradient(135deg,rgba(37,99,235,.95),rgba(14,165,233,.9));color:#fff;border-color:transparent;}' +
-      '.documents-ai-modal__button--danger{background:linear-gradient(135deg,rgba(239,68,68,.9),rgba(234,88,12,.9));color:#fff;border-color:transparent;}' +
-      '.documents-ai-modal__button:disabled{opacity:.55;cursor:not-allowed;}' +
-      '.documents-ai-modal__hint{font-size:12px;color:#64748b;line-height:1.4;}' +
-      '.documents-ai-modal__status{font-size:12px;padding:8px 10px;border-radius:10px;background:rgba(59,130,246,.1);color:#1d4ed8;white-space:pre-wrap;}' +
-      '.documents-ai-modal__status--error{background:rgba(248,113,113,.12);color:#b91c1c;}' +
-      '.documents-ai-modal__preview{background:#ffffff;border:1px solid rgba(203,213,225,.95);border-radius:12px;padding:14px;min-height:220px;font-size:13px;color:#0f172a;line-height:1.45;}' +
-      '.documents-ai-modal__letter-head{display:flex;justify-content:space-between;gap:10px;margin-bottom:16px;font-size:12px;color:#334155;}' +
-      '.documents-ai-modal__subject{font-weight:700;text-transform:uppercase;text-align:center;margin:16px 0 14px;}' +
-      '.documents-ai-modal__letter-body{white-space:pre-wrap;word-break:break-word;}' +
-      '@media (max-width:900px){.documents-ai-modal__grid{grid-template-columns:1fr;}}' +
-      '@media (max-width:768px){.documents-ai-modal{padding:6px;align-items:flex-end;}.documents-ai-modal__panel{width:100%;max-height:95vh;border-radius:18px;padding:10px;}.documents-ai-modal__button{flex:1 1 calc(50% - 8px);}.documents-ai-modal__textarea{min-height:100px;font-size:16px;}}';
+      '.ai-chat-modal{position:fixed;inset:0;z-index:1900;display:flex;background:rgba(15,23,42,.44);backdrop-filter:blur(5px);opacity:0;transition:opacity .2s ease;}' +
+      '.ai-chat-modal--visible{opacity:1;}' +
+      '.ai-chat-modal--closing{opacity:0;}' +
+      '.ai-chat-modal__panel{width:100vw;height:100vh;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.96),rgba(248,250,252,.93));}' +
+      '.ai-chat-modal__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;border-bottom:1px solid rgba(226,232,240,.9);}' +
+      '.ai-chat-modal__title{font-size:14px;font-weight:700;color:#0f172a;}' +
+      '.ai-chat-modal__subtitle{margin-top:1px;font-size:11px;color:#64748b;}' +
+      '.ai-chat-modal__close{border:none;background:rgba(148,163,184,.18);width:32px;height:32px;border-radius:999px;font-size:18px;line-height:1;cursor:pointer;}' +
+      '.ai-chat-modal__content{display:flex;flex-direction:column;gap:7px;padding:7px;min-height:0;flex:1;}' +
+      '.ai-chat-modal__context{border:1px solid rgba(226,232,240,.88);border-radius:11px;padding:7px;background:rgba(255,255,255,.7);}' +
+      '.ai-chat-modal__context-title{font-size:11px;font-weight:700;color:#334155;margin-bottom:3px;}' +
+      '.ai-chat-modal__files{display:flex;flex-wrap:wrap;gap:5px;min-height:20px;}' +
+      '.ai-chat-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:999px;background:rgba(241,245,249,.95);border:1px solid rgba(203,213,225,.9);font-size:11px;color:#1e293b;max-width:100%;}' +
+      '.ai-chat-chip__meta{opacity:.8;}' +
+      '.ai-chat-chip__remove{border:none;background:transparent;color:#64748b;cursor:pointer;font-size:14px;line-height:1;padding:0;}' +
+      '.ai-chat-modal__empty{font-size:11px;color:#94a3b8;}' +
+      '.ai-chat-modal__attach{margin-top:5px;border:1px dashed rgba(148,163,184,.55);background:rgba(248,250,252,.86);border-radius:8px;padding:5px 8px;font-size:11px;font-weight:600;color:#334155;cursor:pointer;}' +
+      '.ai-chat-modal__settings{display:grid;grid-template-columns:1fr 1fr;gap:6px;border:1px solid rgba(226,232,240,.88);border-radius:10px;padding:6px;background:rgba(255,255,255,.62);}' +
+      '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
+      '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
+      '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:7px;background:rgba(248,250,252,.5);border:1px solid rgba(226,232,240,.82);border-radius:11px;display:flex;flex-direction:column;gap:7px;scroll-behavior:smooth;}' +
+      '.ai-chat-msg{max-width:84%;padding:8px 10px;border-radius:12px;font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:0 2px 8px rgba(15,23,42,.05);}' +
+      '.ai-chat-msg--user{margin-left:auto;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-bottom-right-radius:6px;}' +
+      '.ai-chat-msg--assistant{margin-right:auto;background:#fff;border:1px solid rgba(226,232,240,.9);color:#0f172a;border-bottom-left-radius:6px;}' +
+      '.ai-chat-msg--error{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.9);color:#991b1b;}' +
+      '.ai-chat-modal__composer{display:flex;gap:6px;align-items:flex-end;}' +
+      '.ai-chat-modal__textarea{flex:1;min-height:40px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;background:#fff;outline:none;}' +
+      '.ai-chat-modal__send{border:none;border-radius:10px;padding:8px 11px;min-height:40px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;cursor:pointer;}' +
+      '.ai-chat-modal__send:disabled{opacity:.6;cursor:not-allowed;}' +
+      '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
+      '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
+      '@media (max-width:860px){.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}}';
     document.head.appendChild(style);
   }
 
-  function getActiveEditableElement() {
-    var element = document.activeElement;
-    if (!element || element === document.body) {
-      return null;
+  function formatSize(size) {
+    var value = Number(size || 0);
+    if (!value || value < 1024) {
+      return value + ' B';
     }
-    if (element.isContentEditable) {
-      return element;
+    if (value < 1024 * 1024) {
+      return (value / 1024).toFixed(1) + ' KB';
     }
-    if (element.tagName === 'TEXTAREA') {
-      return element;
-    }
-    if (element.tagName === 'INPUT') {
-      var type = String(element.type || '').toLowerCase();
-      if (type === 'text' || type === 'search' || type === 'email' || type === 'url' || type === 'tel' || type === '') {
-        return element;
-      }
-    }
-    return null;
+    return (value / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
-  function insertIntoEditable(element, text) {
-    if (!element || !text) {
-      return false;
+  function detectIcon(file) {
+    var name = String(file.name || '').toLowerCase();
+    var type = String(file.type || '').toLowerCase();
+    if (/\.(js|ts|json|xml|html|css|sql|md|py|php|java|go|c|cpp|cs|rb)$/i.test(name) || type.indexOf('json') !== -1 || type.indexOf('javascript') !== -1) {
+      return '💻';
     }
-    if (element.isContentEditable) {
-      element.focus({ preventScroll: true });
-      element.textContent = text;
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      return true;
-    }
-    if (typeof element.value === 'string') {
-      element.value = text;
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    }
-    return false;
+    return '📄';
   }
 
-  function buildDraftPair(prompt, title, analysisText) {
-    var topic = prompt ? String(prompt).trim() : '';
-    var taskTitle = title ? String(title).trim() : '';
-    var intro = taskTitle ? ('По задаче «' + taskTitle + '».') : 'По задаче.';
-    var context = analysisText ? ('\n\nКлючевые моменты анализа: ' + analysisText) : '';
-    var neutral = intro + '\n\n' +
-      'Благодарю за направленные материалы.' + context + '\n\n' +
-      '1) Проверили входящие данные и соответствие требованиям.\n' +
-      '2) Выполняем необходимые действия в рабочем порядке.\n' +
-      '3) Готовы направить уточнения по срокам и статусу по вашему запросу.';
-
-    var aggressive = intro + '\n\n' +
-      'Материалы получены и приняты к исполнению.' + context + '\n\n' +
-      '1) Данные проверены, несоответствия фиксируются сразу.\n' +
-      '2) Работа выполняется в приоритетном режиме, без сдвига сроков.\n' +
-      '3) При необходимости предоставим подтверждение действий и отчёт в полном объёме.';
-
-    if (!topic) {
-      return {
-        neutral: neutral,
-        aggressive: aggressive,
-        analysis: 'Автоанализ без дополнительного запроса: документ принят, статус будет обновлён после проверки.'
-      };
-    }
-
-    return {
-      neutral: neutral + '\n\nЗапрос: ' + topic + '.',
-      aggressive: aggressive + '\n\nЗапрос принят к обязательному исполнению: ' + topic + '.',
-      analysis: 'Выделены приоритеты по запросу: ' + topic + '.'
-    };
+  function isTextLike(file) {
+    var type = String(file.type || '').toLowerCase();
+    var name = String(file.name || '').toLowerCase();
+    return type.indexOf('text') !== -1 || /\.(txt|md|json|csv|xml|html|css|js|ts|php|py|java|sql)$/i.test(name);
   }
 
-  function renderLetterMarkup(text, title, tone) {
-    var safeText = String(text || '').trim() || 'Текст письма отсутствует.';
-    var safeTitle = String(title || '').trim() || 'Без названия задачи';
-    var toneLabel = tone === 'aggressive' ? 'Агрессивный стиль' : 'Нейтральный стиль';
-    var today = new Date().toLocaleDateString('ru-RU');
-    return '' +
-      '<div class="documents-ai-modal__preview">' +
-      '<div class="documents-ai-modal__letter-head"><div>Исх. № ____</div><div>Дата: ' + today + '</div></div>' +
-      '<div class="documents-ai-modal__subject">Ответное письмо</div>' +
-      '<div><b>Тема:</b> ' + safeTitle + '</div>' +
-      '<div><b>Стиль:</b> ' + toneLabel + '</div>' +
-      '<div class="documents-ai-modal__letter-body" style="margin-top:12px;">' + safeText.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>' +
-      '<div style="margin-top:18px;">С уважением, ____________________</div>' +
-      '</div>';
-  }
-
-  function toPlainObject(value, depth, seen) {
-    var stack = Array.isArray(seen) ? seen : [];
-    if (depth > 3) {
-      return '[max-depth]';
-    }
-    if (value === null || value === undefined) {
-      return value;
-    }
-    if (typeof File !== 'undefined' && value instanceof File) {
-      return {
-        name: value.name || '',
-        size: value.size || 0,
-        type: value.type || ''
-      };
-    }
-    if (Array.isArray(value)) {
-      return value.map(function(item) {
-        return toPlainObject(item, depth + 1, stack);
-      });
-    }
-    if (typeof value === 'object') {
-      if (stack.indexOf(value) !== -1) {
-        return '[circular]';
-      }
-      stack.push(value);
-      var result = {};
-      Object.keys(value).forEach(function(key) {
-        var item = value[key];
-        if (typeof item === 'function') {
-          return;
-        }
-        result[key] = toPlainObject(item, depth + 1, stack);
-      });
-      stack.pop();
-      return result;
-    }
-    return value;
-  }
-
-  function normalizeFilesList(files) {
+  function normalizeExternalFiles(files, source) {
     if (!Array.isArray(files)) {
       return [];
     }
-    return files.filter(function(file) {
-      return typeof File !== 'undefined' && file instanceof File;
-    });
-  }
-
-  function validateFilesForRequest(files) {
-    var normalized = normalizeFilesList(files);
-    if (!normalized.length) {
-      return { ok: true, files: normalized, message: '' };
-    }
-    if (normalized.length > MAX_FILES_PER_REQUEST) {
-      return {
-        ok: false,
-        files: normalized,
-        message: 'Слишком много файлов. Максимум: ' + MAX_FILES_PER_REQUEST + '.'
-      };
-    }
-    var totalSize = normalized.reduce(function(sum, file) {
-      return sum + (file && file.size ? file.size : 0);
-    }, 0);
-    if (totalSize > MAX_TOTAL_FILE_SIZE) {
-      return {
-        ok: false,
-        files: normalized,
-        message: 'Файлы слишком большие. Лимит: 20 МБ на запрос.'
-      };
-    }
-    return { ok: true, files: normalized, message: '' };
-  }
-
-  function parseJsonSafely(raw, fallback) {
-    if (!raw) {
-      return fallback;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch (error) {
-      return fallback;
-    }
-  }
-
-  function collectFilesBySelector(selector) {
-    if (!selector) {
-      return [];
-    }
-    var input = document.querySelector(selector);
-    if (!input || !input.files) {
-      return [];
-    }
-    return normalizeFilesList(Array.from(input.files));
-  }
-
-  function collectOptionsFromTrigger(trigger) {
-    var button = trigger || null;
-    var data = button && button.dataset ? button.dataset : {};
-    var contextFromData = parseJsonSafely(data.documentsAiContext, {});
-    var documentFromData = parseJsonSafely(data.documentsAiDocument, {});
-    var files = collectFilesBySelector(data.documentsAiFilesSelector || '');
-    var title = data.documentsAiTitle || '';
-    var apiUrl = data.documentsAiApiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-    return {
-      apiUrl: apiUrl,
-      documentTitle: title,
-      documentData: documentFromData,
-      context: contextFromData,
-      pendingFiles: files
-    };
-  }
-
-  function callAiApi(options) {
-    var apiUrl = options.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-    var formData = new FormData();
-    formData.append('action', 'ai_response_analyze');
-    formData.append('documentTitle', options.documentTitle || '');
-    formData.append('prompt', options.prompt || '');
-    var files = normalizeFilesList(options.files);
-    if (files.length) {
-      files.forEach(function(file) {
-        formData.append('attachments[]', file);
-      });
-      formData.append('attachment', files[0]);
-    } else if (options.file) {
-      formData.append('attachment', options.file);
-    }
-    if (options.context) {
-      try {
-        formData.append('context', JSON.stringify(toPlainObject(options.context, 0)));
-      } catch (error) {
-        formData.append('context', '{}');
+    return files.map(function (entry, index) {
+      if (!entry) {
+        return null;
       }
-    }
+      return {
+        id: source + '-' + index + '-' + Date.now(),
+        name: entry.name ? String(entry.name) : 'Файл без названия',
+        size: Number(entry.size || 0),
+        type: entry.type ? String(entry.type) : '',
+        content: typeof entry.content === 'string' ? entry.content : '',
+        url: typeof entry.url === 'string' ? entry.url : '',
+        fileObject: null
+      };
+    }).filter(Boolean);
+  }
 
-    return fetch(apiUrl + '?action=ai_response_analyze', {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    })
-      .then(function(response) {
+  function normalizeFileObjects(files) {
+    if (!Array.isArray(files)) {
+      return [];
+    }
+    return files
+      .filter(function (item) {
+        return typeof File !== 'undefined' && item instanceof File;
+      })
+      .map(function (file, index) {
+        return {
+          id: 'local-' + index + '-' + Date.now() + '-' + Math.random().toString(16).slice(2),
+          name: file.name || 'Файл',
+          size: Number(file.size || 0),
+          type: file.type || '',
+          content: '',
+          url: '',
+          fileObject: file
+        };
+      });
+  }
+
+  function normalizeModelList(rawModels) {
+    if (!Array.isArray(rawModels) || !rawModels.length) {
+      return FALLBACK_MODEL_OPTIONS.slice();
+    }
+    return rawModels
+      .map(function (entry) {
+        var value = typeof entry === 'string'
+          ? entry.trim()
+          : (entry && typeof entry.value === 'string' ? entry.value.trim() : '');
+        if (!value) {
+          return null;
+        }
+        return { value: value, label: value };
+      })
+      .filter(Boolean);
+  }
+
+  function fetchModels(apiUrl) {
+    return fetch(apiUrl + '?action=ai_models', { credentials: 'same-origin' })
+      .then(function (response) {
         if (!response || !response.ok) {
-          throw new Error('HTTP ' + (response ? response.status : '0'));
+          throw new Error('models_failed');
         }
         return response.json();
+      })
+      .then(function (payload) {
+        if (!payload || payload.ok !== true) {
+          throw new Error('models_invalid');
+        }
+        return normalizeModelList(payload.models);
+      })
+      .catch(function () {
+        return FALLBACK_MODEL_OPTIONS.slice();
       });
   }
 
-  function openDocumentsAiResponseModal(options) {
-    ensureStyle();
-    var config = options || {};
-    var documentData = config.documentData && typeof config.documentData === 'object' ? config.documentData : {};
-    var contextData = config.context && typeof config.context === 'object' ? config.context : {};
-    var preloadedFiles = normalizeFilesList(config.pendingFiles);
-    var defaultTitle = config.documentTitle
-      ? String(config.documentTitle)
-      : [documentData.title, documentData.description, documentData.registryNumber ? ('№ ' + documentData.registryNumber) : '']
-        .filter(Boolean)
-        .join(' ')
-        .trim();
-    var root = createElement('div', ROOT_CLASS);
-    var panel = createElement('div', 'documents-ai-modal__panel');
-    var header = createElement('div', 'documents-ai-modal__header');
-    var headText = createElement('div', '');
-    var title = createElement('div', 'documents-ai-modal__title', 'Ответ с помощью ИИ');
-    var desc = createElement('div', 'documents-ai-modal__desc', 'Файл из строки подтянется автоматически. ИИ подготовит аналитику и один ответ в выбранном стиле. Текст можно править перед PDF.');
-    var closeButton = createElement('button', 'documents-ai-modal__close', '×');
+  function autoHeight(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+  }
 
-    var grid = createElement('div', 'documents-ai-modal__grid');
-    var leftCard = createElement('div', 'documents-ai-modal__card');
-    var rightCard = createElement('div', 'documents-ai-modal__card');
+  function createMessage(role, text, isError) {
+    var msg = createElement('div', 'ai-chat-msg ai-chat-msg--' + role + (isError ? ' ai-chat-msg--error' : ''));
+    msg.innerHTML = escapeHtml(text || '');
+    return msg;
+  }
 
-    var titleLabel = createElement('div', 'documents-ai-modal__label', 'Название задачи');
-    var titleInput = createElement('input', 'documents-ai-modal__input');
-    titleInput.value = defaultTitle;
-    titleInput.placeholder = 'Например: Согласование договора';
-
-    var fileLabel = createElement('div', 'documents-ai-modal__label', 'Файлы для анализа (PDF, DOCX, TXT, изображение)');
-    var fileInput = createElement('input', 'documents-ai-modal__input');
-    fileInput.type = 'file';
-    fileInput.multiple = true;
-    fileInput.accept = '.pdf,.doc,.docx,.txt,image/*';
-    var linkedFilesHint = createElement('div', 'documents-ai-modal__hint', preloadedFiles.length
-      ? ('Из окна ответа передано файлов: ' + preloadedFiles.length + ' (' + preloadedFiles.map(function(file) { return file.name; }).join(', ') + ').')
-      : 'Из окна ответа файлы пока не переданы. Можно выбрать файлы вручную.');
-    var linkedRemoteFiles = Array.isArray(config.linkedFiles) ? config.linkedFiles.filter(Boolean) : [];
-    var remoteFilesHint = createElement('div', 'documents-ai-modal__hint', linkedRemoteFiles.length
-      ? ('Из строки задачи будет автоматически загружено файлов: ' + linkedRemoteFiles.length + '.')
-      : 'Файлы из строки задачи не найдены.');
-
-    var promptLabel = createElement('div', 'documents-ai-modal__label', 'Уточняющий запрос');
-    var promptInput = createElement('textarea', 'documents-ai-modal__textarea');
-    promptInput.placeholder = 'Например: сделай формулировку строже и короче';
-
-    var responseLabel = createElement('div', 'documents-ai-modal__label', 'Ответ ИИ (редактируемый)');
-    var responseInput = createElement('textarea', 'documents-ai-modal__textarea');
-    responseInput.placeholder = 'Здесь появится готовый ответ в выбранном стиле';
-
-    var toneLabel = createElement('div', 'documents-ai-modal__label', 'Стиль ответа ИИ');
-    var toneSelect = createElement('select', 'documents-ai-modal__select');
-    toneSelect.innerHTML = '<option value="neutral">Нейтральный</option><option value="aggressive">Агрессивный</option>';
-
-    var status = createElement('div', 'documents-ai-modal__status', 'Загрузите файл и нажмите «Проанализировать файл».');
-    var analysis = createElement('textarea', 'documents-ai-modal__textarea');
-    analysis.placeholder = 'Здесь будет аналитический ответ от ИИ';
-
-    var actionsTop = createElement('div', 'documents-ai-modal__row');
-    var analyzeButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--primary', 'Проанализировать файл');
-    var useButton = createElement('button', 'documents-ai-modal__button', 'Использовать выбранный текст');
-    var closeActionButton = createElement('button', 'documents-ai-modal__button', 'Закрыть');
-
-    var previewTitle = createElement('div', 'documents-ai-modal__label', 'PDF-макет письма (предпросмотр)');
-    var preview = createElement('div', '');
-    var actionsBottom = createElement('div', 'documents-ai-modal__row');
-    var buildPdfButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--primary', 'Собрать PDF-макет');
-    var printButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--danger', 'Распечатать / сохранить PDF');
-
-    var fallbackEditable = getActiveEditableElement();
-
-    function closeModal() {
-      document.removeEventListener('keydown', handleEscape, true);
+  function closeWithAnimation(root) {
+    root.classList.add('ai-chat-modal--closing');
+    setTimeout(function () {
       if (root.parentNode) {
         root.parentNode.removeChild(root);
       }
-    }
+    }, 180);
+  }
 
-    function handleEscape(event) {
-      if (event.key !== 'Escape') {
+  function fileToText(file) {
+    return new Promise(function (resolve) {
+      if (!file || !isTextLike(file) || typeof FileReader === 'undefined') {
+        resolve('');
         return;
       }
-      event.preventDefault();
-      event.stopPropagation();
-      closeModal();
-    }
-
-    function getSelectedText() {
-      return String(responseInput.value || '').trim();
-    }
-
-    function showStatus(text, isError) {
-      status.textContent = text;
-      status.classList.toggle('documents-ai-modal__status--error', Boolean(isError));
-      if (typeof config.showMessage === 'function') {
-        config.showMessage(isError ? 'error' : 'success', text);
+      if ((file.size || 0) > 350 * 1024) {
+        resolve('[Файл слишком большой для промпта]');
+        return;
       }
-    }
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(typeof reader.result === 'string' ? reader.result.slice(0, 12000) : '');
+      };
+      reader.onerror = function () {
+        resolve('');
+      };
+      reader.readAsText(file);
+    });
+  }
 
-    function renderPreview() {
-      preview.innerHTML = renderLetterMarkup(getSelectedText(), titleInput.value, toneSelect.value);
-    }
-
-    function fetchRemoteFiles(files) {
-      var list = Array.isArray(files) ? files.filter(Boolean) : [];
-      if (!list.length) {
-        return Promise.resolve([]);
-      }
-      return Promise.all(list.map(function(meta, index) {
-        if (!meta || !meta.url) {
-          return Promise.resolve(null);
-        }
-        return fetch(meta.url, { credentials: 'same-origin' })
-          .then(function(response) {
-            if (!response || !response.ok) {
-              return null;
-            }
-            return response.blob();
-          })
-          .then(function(blob) {
-            if (!blob) {
-              return null;
-            }
-            var filename = meta.name || ('attachment-' + (index + 1));
-            var fileType = blob.type || meta.type || 'application/octet-stream';
-            return new File([blob], filename, { type: fileType });
-          })
-          .catch(function() {
-            return null;
-          });
-      })).then(function(items) {
-        return items.filter(Boolean);
+  function buildRequestBlueprint(userText, state, config) {
+    var context = {};
+    if (config.context && typeof config.context === 'object') {
+      Object.keys(config.context).forEach(function (key) {
+        context[key] = config.context[key];
       });
     }
 
-    analyzeButton.type = 'button';
-    analyzeButton.addEventListener('click', function() {
-      analyzeButton.disabled = true;
-      showStatus('Идёт обработка файла(ов) и генерация ответа…', false);
-
-      var selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
-      var baseFiles = selectedFiles.length ? selectedFiles : preloadedFiles;
-
-      fetchRemoteFiles(linkedRemoteFiles)
-        .then(function(remoteFiles) {
-          var filesForAnalysis = baseFiles.concat(remoteFiles);
-          var validation = validateFilesForRequest(filesForAnalysis);
-          if (!validation.ok) {
-            throw new Error(validation.message);
-          }
-          filesForAnalysis = validation.files;
-          var selectedFile = filesForAnalysis.length ? filesForAnalysis[0] : null;
-          return callAiApi({
-            apiUrl: config.apiUrl,
-            file: selectedFile,
-            files: filesForAnalysis,
-            prompt: promptInput.value,
-            documentTitle: titleInput.value,
-            context: {
-              document: toPlainObject(documentData, 0),
-              requestContext: toPlainObject(contextData, 0),
-              linkedFiles: toPlainObject(linkedRemoteFiles, 0),
-              filesFromResponseModal: filesForAnalysis.map(function(file) {
-                return { name: file.name || '', size: file.size || 0, type: file.type || '' };
-              }),
-              selectedTone: toneSelect.value
-            }
-          });
-        })
-        .then(function(data) {
-          var serverAnalysis = data && data.analysis ? String(data.analysis) : '';
-          var serverResponse = data && data.response ? String(data.response) : '';
-          var serverNeutral = data && data.neutral ? String(data.neutral) : '';
-          var serverAggressive = data && data.aggressive ? String(data.aggressive) : '';
-          var local = buildDraftPair(promptInput.value, titleInput.value, serverAnalysis);
-
-          analysis.value = serverAnalysis || local.analysis;
-          responseInput.value = serverResponse
-            || (toneSelect.value === 'aggressive' ? serverAggressive : serverNeutral)
-            || (toneSelect.value === 'aggressive' ? local.aggressive : local.neutral);
-          renderPreview();
-          showStatus('Готово: анализ получен, ответ сформирован.', false);
-        })
-        .catch(function(error) {
-          var fallback = buildDraftPair(promptInput.value, titleInput.value, 'Сервер ИИ недоступен, применён локальный шаблон.');
-          analysis.value = fallback.analysis;
-          responseInput.value = toneSelect.value === 'aggressive' ? fallback.aggressive : fallback.neutral;
-          renderPreview();
-          showStatus('Не удалось получить ответ ИИ (' + (error && error.message ? error.message : 'ошибка') + '). Использован локальный шаблон.', true);
-        })
-        .finally(function() {
-          analyzeButton.disabled = false;
-        });
+    context.selectedModel = state.model;
+    context.responseStyle = state.responseStyle;
+    context.attachedFiles = state.files.map(function (file) {
+      return {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: file.url || '',
+        content: file.content || ''
+      };
     });
 
-    useButton.type = 'button';
-    useButton.addEventListener('click', function() {
-      var text = getSelectedText();
-      if (!text) {
-        showStatus('Сначала сформируйте текст ответа.', true);
-        return;
+    var formData = new FormData();
+    formData.append('action', 'ai_response_analyze');
+    formData.append('documentTitle', config.documentTitle || '');
+    formData.append('prompt', userText);
+    formData.append('model', state.model);
+    formData.append('responseStyle', state.responseStyle);
+    formData.append('context', JSON.stringify(context));
+
+    state.files.forEach(function (file) {
+      if (file.fileObject) {
+        formData.append('attachments[]', file.fileObject, file.name);
       }
-      var active = getActiveEditableElement() || fallbackEditable;
-      if (insertIntoEditable(active, text)) {
-        showStatus('Текст вставлен в активное поле.', false);
-        closeModal();
-        return;
-      }
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        navigator.clipboard.writeText(text)
-          .then(function() {
-            showStatus('Активное поле не найдено. Текст скопирован в буфер обмена.', false);
-            closeModal();
-          })
-          .catch(function() {
-            showStatus('Не удалось вставить или скопировать текст. Скопируйте вручную.', true);
-          });
-        return;
-      }
-      showStatus('Активное поле не найдено. Скопируйте текст вручную.', true);
     });
 
-    buildPdfButton.type = 'button';
-    buildPdfButton.addEventListener('click', function() {
-      renderPreview();
-      showStatus('PDF-макет обновлён. Можно печатать или сохранять в PDF.', false);
-    });
+    return formData;
+  }
 
-    printButton.type = 'button';
-    printButton.addEventListener('click', function() {
-      var html = renderLetterMarkup(getSelectedText(), titleInput.value, toneSelect.value);
-      var printWindow = window.open('', '_blank', 'width=980,height=760');
-      if (!printWindow) {
-        showStatus('Браузер заблокировал окно печати. Разрешите всплывающие окна.', true);
-        return;
+  async function hydrateFileContents(state) {
+    for (var i = 0; i < state.files.length; i += 1) {
+      if (state.files[i].content || !state.files[i].fileObject) {
+        continue;
       }
-      printWindow.document.open();
-      printWindow.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Письмо</title><style>body{margin:0;padding:24px;background:#f8fafc;font-family:Inter,Arial,sans-serif;color:#0f172a}.sheet{max-width:820px;margin:0 auto;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:32px 28px;box-sizing:border-box}.documents-ai-modal__letter-head{display:flex;justify-content:space-between;gap:10px;margin-bottom:16px;font-size:12px;color:#334155}.documents-ai-modal__subject{font-weight:700;text-transform:uppercase;text-align:center;margin:16px 0 14px}.documents-ai-modal__letter-body{white-space:pre-wrap;line-height:1.5} @media print{body{padding:0;background:#fff}.sheet{border:none;box-shadow:none;max-width:none;border-radius:0;padding:24mm 16mm}}</style></head><body><div class="sheet">' + html + '</div><script>window.onload=function(){window.focus();window.print();};</script></body></html>');
-      printWindow.document.close();
-      showStatus('Открыто окно печати. Выберите «Сохранить как PDF» или печать.', false);
-    });
+      // eslint-disable-next-line no-await-in-loop
+      state.files[i].content = await fileToText(state.files[i].fileObject);
+    }
+  }
 
-    toneSelect.addEventListener('change', renderPreview);
-    responseInput.addEventListener('input', renderPreview);
-    titleInput.addEventListener('input', renderPreview);
+  function openDocumentsAiResponseModal(options) {
+    ensureStyles();
+
+    var config = options && typeof options === 'object' ? options : {};
+    var state = {
+      files: []
+        .concat(normalizeFileObjects(config.pendingFiles || []))
+        .concat(normalizeExternalFiles(config.files || [], 'external'))
+        .concat(normalizeExternalFiles(config.linkedFiles || [], 'linked')),
+      models: FALLBACK_MODEL_OPTIONS.slice(),
+      model: FALLBACK_MODEL_OPTIONS[0].value,
+      responseStyle: STYLE_OPTIONS[0].value,
+      isLoading: false
+    };
+
+    var root = createElement('div', ROOT_CLASS);
+    var panel = createElement('div', 'ai-chat-modal__panel');
+    var header = createElement('div', 'ai-chat-modal__header');
+    var titleWrap = createElement('div');
+    titleWrap.appendChild(createElement('div', 'ai-chat-modal__title', 'Ответ с помощью ИИ'));
+    titleWrap.appendChild(createElement('div', 'ai-chat-modal__subtitle', config.documentTitle ? ('Документ: ' + config.documentTitle) : 'Документ не указан'));
+
+    var closeButton = createElement('button', 'ai-chat-modal__close', '×');
     closeButton.type = 'button';
-    closeButton.addEventListener('click', closeModal);
-    closeActionButton.type = 'button';
-    closeActionButton.addEventListener('click', closeModal);
 
-    root.addEventListener('click', function(event) {
+    var content = createElement('div', 'ai-chat-modal__content');
+    var contextBox = createElement('div', 'ai-chat-modal__context');
+    contextBox.appendChild(createElement('div', 'ai-chat-modal__context-title', 'Контекст и файлы'));
+    var filesWrap = createElement('div', 'ai-chat-modal__files');
+    var attachButton = createElement('button', 'ai-chat-modal__attach', '+ Прикрепить файл');
+    attachButton.type = 'button';
+
+    var hiddenInput = document.getElementById(FILE_INPUT_ID);
+    if (!hiddenInput) {
+      hiddenInput = document.createElement('input');
+      hiddenInput.id = FILE_INPUT_ID;
+      hiddenInput.type = 'file';
+      hiddenInput.multiple = true;
+      hiddenInput.style.display = 'none';
+      document.body.appendChild(hiddenInput);
+    }
+
+    var settings = createElement('div', 'ai-chat-modal__settings');
+    var modelField = createElement('label', 'ai-chat-modal__field');
+    modelField.appendChild(createElement('span', '', 'Модель'));
+    var modelSelect = createElement('select', 'ai-chat-modal__select');
+
+    var styleField = createElement('label', 'ai-chat-modal__field');
+    styleField.appendChild(createElement('span', '', 'Стиль'));
+    var styleSelect = createElement('select', 'ai-chat-modal__select');
+    STYLE_OPTIONS.forEach(function (opt) {
+      var option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      styleSelect.appendChild(option);
+    });
+
+    var messages = createElement('div', 'ai-chat-modal__messages');
+    messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
+
+    var composer = createElement('div', 'ai-chat-modal__composer');
+    var textarea = createElement('textarea', 'ai-chat-modal__textarea');
+    textarea.placeholder = 'Введите запрос...';
+    var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить');
+    sendButton.type = 'button';
+
+    function renderModelOptions() {
+      modelSelect.innerHTML = '';
+      state.models.forEach(function (opt) {
+        var option = document.createElement('option');
+        option.value = opt.value;
+        option.textContent = opt.label;
+        modelSelect.appendChild(option);
+      });
+      modelSelect.value = state.model;
+    }
+
+    function renderFiles() {
+      filesWrap.innerHTML = '';
+      if (!state.files.length) {
+        filesWrap.appendChild(createElement('div', 'ai-chat-modal__empty', 'Нет прикреплённых файлов'));
+        return;
+      }
+      state.files.forEach(function (file) {
+        var chip = createElement('div', 'ai-chat-chip');
+        chip.innerHTML = '<span>' + detectIcon(file) + '</span><span>' + escapeHtml(file.name) + '</span><span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>';
+        var remove = createElement('button', 'ai-chat-chip__remove', '×');
+        remove.type = 'button';
+        remove.addEventListener('click', function () {
+          state.files = state.files.filter(function (entry) {
+            return entry.id !== file.id;
+          });
+          renderFiles();
+        });
+        chip.appendChild(remove);
+        filesWrap.appendChild(chip);
+      });
+    }
+
+    function setLoading(loading) {
+      state.isLoading = loading;
+      textarea.disabled = loading;
+      sendButton.disabled = loading;
+      sendButton.innerHTML = loading
+        ? '<span class="ai-chat-spinner"></span>Отправка'
+        : 'Отправить';
+    }
+
+    function closeModal() {
+      document.removeEventListener('keydown', onEsc);
+      hiddenInput.value = '';
+      closeWithAnimation(root);
+    }
+
+    function onEsc(event) {
+      if (event.key === 'Escape') {
+        closeModal();
+      }
+    }
+
+    async function sendMessage() {
+      var value = String(textarea.value || '').trim();
+      if (!value || state.isLoading) {
+        return;
+      }
+
+      state.model = modelSelect.value;
+      state.responseStyle = styleSelect.value;
+
+      messages.appendChild(createMessage('user', value));
+      var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
+      pending.innerHTML = '<span class="ai-chat-spinner"></span>ИИ готовит ответ...';
+      messages.appendChild(pending);
+      messages.scrollTop = messages.scrollHeight;
+      setLoading(true);
+
+      try {
+        await hydrateFileContents(state);
+        var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+        var response = await fetch(apiUrl + '?action=ai_response_analyze', {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: buildRequestBlueprint(value, state, config)
+        });
+
+        var payload = await response.json();
+        if (!response.ok || !payload || payload.ok !== true) {
+          throw new Error(payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')'));
+        }
+
+        pending.remove();
+        messages.appendChild(createMessage('assistant', payload.response || payload.analysis || 'Пустой ответ от API.'));
+        textarea.value = '';
+        autoHeight(textarea);
+      } catch (error) {
+        pending.remove();
+        messages.appendChild(createMessage('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Не удалось получить ответ.'), true));
+      } finally {
+        setLoading(false);
+        messages.scrollTop = messages.scrollHeight;
+      }
+    }
+
+    modelSelect.addEventListener('change', function () {
+      state.model = modelSelect.value;
+    });
+
+    styleSelect.addEventListener('change', function () {
+      state.responseStyle = styleSelect.value;
+    });
+
+    textarea.addEventListener('input', function () {
+      autoHeight(textarea);
+    });
+
+    textarea.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+
+    sendButton.addEventListener('click', sendMessage);
+    closeButton.addEventListener('click', closeModal);
+
+    attachButton.addEventListener('click', function () {
+      hiddenInput.click();
+    });
+
+    hiddenInput.addEventListener('change', function () {
+      var selected = hiddenInput.files ? Array.from(hiddenInput.files) : [];
+      if (!selected.length) {
+        return;
+      }
+      state.files = state.files.concat(normalizeFileObjects(selected));
+      hiddenInput.value = '';
+      renderFiles();
+    });
+
+    root.addEventListener('click', function (event) {
       if (event.target === root) {
         closeModal();
       }
     });
 
-    headText.appendChild(title);
-    headText.appendChild(desc);
-    header.appendChild(headText);
+    header.appendChild(titleWrap);
     header.appendChild(closeButton);
 
-    leftCard.appendChild(titleLabel);
-    leftCard.appendChild(titleInput);
-    leftCard.appendChild(fileLabel);
-    leftCard.appendChild(fileInput);
-    leftCard.appendChild(linkedFilesHint);
-    leftCard.appendChild(remoteFilesHint);
-    leftCard.appendChild(promptLabel);
-    leftCard.appendChild(promptInput);
-    leftCard.appendChild(actionsTop);
-    actionsTop.appendChild(analyzeButton);
-    actionsTop.appendChild(useButton);
-    actionsTop.appendChild(closeActionButton);
-    leftCard.appendChild(status);
-    leftCard.appendChild(createElement('div', 'documents-ai-modal__hint', 'Если API ИИ недоступен, автоматически будет использован локальный шаблон ответа.'));
+    contextBox.appendChild(filesWrap);
+    contextBox.appendChild(attachButton);
 
-    rightCard.appendChild(createElement('div', 'documents-ai-modal__label', 'Аналитический ответ'));
-    rightCard.appendChild(analysis);
-    rightCard.appendChild(responseLabel);
-    rightCard.appendChild(responseInput);
-    rightCard.appendChild(toneLabel);
-    rightCard.appendChild(toneSelect);
-    rightCard.appendChild(previewTitle);
-    rightCard.appendChild(preview);
-    rightCard.appendChild(actionsBottom);
-    actionsBottom.appendChild(buildPdfButton);
-    actionsBottom.appendChild(printButton);
+    modelField.appendChild(modelSelect);
+    styleField.appendChild(styleSelect);
+    settings.appendChild(modelField);
+    settings.appendChild(styleField);
 
-    grid.appendChild(leftCard);
-    grid.appendChild(rightCard);
+    composer.appendChild(textarea);
+    composer.appendChild(sendButton);
+
+    content.appendChild(contextBox);
+    content.appendChild(settings);
+    content.appendChild(messages);
+    content.appendChild(composer);
 
     panel.appendChild(header);
-    panel.appendChild(grid);
+    panel.appendChild(content);
     root.appendChild(panel);
     document.body.appendChild(root);
-    document.addEventListener('keydown', handleEscape, true);
 
-    renderPreview();
-    titleInput.focus({ preventScroll: true });
-  }
-
-  function bindAiTrigger(trigger) {
-    if (!trigger || trigger.__documentsAiBound) {
-      return;
-    }
-    trigger.__documentsAiBound = true;
-    trigger.addEventListener('click', function(event) {
-      event.preventDefault();
-      var options = collectOptionsFromTrigger(trigger);
-      openDocumentsAiResponseModal(options);
+    requestAnimationFrame(function () {
+      root.classList.add('ai-chat-modal--visible');
     });
-  }
 
-  function autoBindAiTriggers() {
-    var triggers = document.querySelectorAll('[data-documents-ai-open]');
-    Array.prototype.forEach.call(triggers, function(trigger) {
-      bindAiTrigger(trigger);
+    renderFiles();
+    renderModelOptions();
+
+    fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (models) {
+      state.models = models;
+      if (!models.some(function (entry) { return entry.value === state.model; })) {
+        state.model = models[0] ? models[0].value : state.model;
+      }
+      renderModelOptions();
     });
+
+    autoHeight(textarea);
+    document.addEventListener('keydown', onEsc);
+    setTimeout(function () {
+      textarea.focus();
+    }, 0);
   }
 
-  window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
-  window.DocumentsAiResponse = {
-    open: openDocumentsAiResponseModal,
-    bindTrigger: bindAiTrigger,
-    autoBind: autoBindAiTriggers
-  };
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', autoBindAiTriggers);
-  } else {
-    autoBindAiTriggers();
+  if (typeof window !== 'undefined') {
+    window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
   }
 })();

@@ -36,6 +36,29 @@ if ($method === 'OPTIONS') {
     exit;
 }
 if ($method === 'GET') {
+    $action = isset($_GET['action']) ? trim((string)$_GET['action']) : '';
+    if ($action === 'ai_models') {
+        $env = loadEnv(getEnvPaths());
+        $rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
+        $defaultModel = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
+        $models = [];
+        if ($rawModels !== '') {
+            $parts = preg_split('/[,\\n]+/u', $rawModels);
+            if (is_array($parts)) {
+                foreach ($parts as $part) {
+                    $value = trim((string)$part);
+                    if ($value !== '') {
+                        $models[] = $value;
+                    }
+                }
+            }
+        }
+        if (!$models) {
+            $models = [$defaultModel];
+        }
+        jsonResponse(200, ['ok' => true, 'models' => array_values(array_unique($models)), 'defaultModel' => $defaultModel]);
+    }
+
     $isPing = isset($_GET['ping']) && (string)$_GET['ping'] === '1';
     $isDebug = isset($_GET['debug']) && (string)$_GET['debug'] === '1';
     $payload = [
@@ -216,10 +239,13 @@ function buildLocalFallback(string $documentTitle, string $prompt, array $contex
       . 'По запросу о ' . $topic . ' предоставим уточнённый статус и сроки после проверки данных.';
     $aggressive = 'По ' . $title . $orgPart . ' уведомляем: материалы приняты к исполнению в приоритетном порядке. '
       . 'По запросу о ' . $topic . ' ответ будет предоставлен в максимально короткий срок.';
-    $style = isset($context['selectedTone']) && is_string($context['selectedTone'])
+    $style = isset($context['responseStyle']) && is_string($context['responseStyle'])
+        ? trim($context['responseStyle'])
+        : '';
+    $legacyTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
         ? trim($context['selectedTone'])
-        : 'neutral';
-    $response = $style === 'aggressive' ? $aggressive : $neutral;
+        : '';
+    $response = ($style === 'concise' || $legacyTone === 'aggressive') ? $aggressive : $neutral;
 
     return [
         'ok' => true,
@@ -249,6 +275,8 @@ if ($apiKey === '') {
 $prompt = trim((string)($_POST['prompt'] ?? ''));
 $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 $context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
+$responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
+$requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 
 if ($action !== '' && $action !== 'ai_response_analyze') {
@@ -262,8 +290,38 @@ $files = array_merge($attachments, $singleAttachment);
 
 $filesSummary = buildFilesSummary($files);
 
+$effectiveStyle = $responseStyle !== ''
+    ? $responseStyle
+    : (isset($context['responseStyle']) && is_string($context['responseStyle']) ? trim($context['responseStyle']) : '');
+$styleInstruction = 'Пиши в деловом стиле.';
+if ($effectiveStyle === 'concise') {
+    $styleInstruction = 'Пиши кратко и строго по делу.';
+} elseif ($effectiveStyle === 'friendly') {
+    $styleInstruction = 'Пиши развёрнуто, дружелюбно и понятно.';
+} elseif ($effectiveStyle === 'technical') {
+    $styleInstruction = 'Пиши технически, с пояснениями и структурой.';
+}
+
+$effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
+$allowedModelsRaw = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
+if ($allowedModelsRaw !== '') {
+    $allowedModels = [];
+    $allowedParts = preg_split('/[,\\n]+/u', $allowedModelsRaw);
+    if (is_array($allowedParts)) {
+        foreach ($allowedParts as $allowedPart) {
+            $normalized = trim((string)$allowedPart);
+            if ($normalized !== '') {
+                $allowedModels[$normalized] = true;
+            }
+        }
+    }
+    if ($requestedModel !== '' && !isset($allowedModels[$requestedModel])) {
+        $effectiveModel = $model;
+    }
+}
+
 $systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
-  . "Стиль ответа бери из context.selectedTone (neutral или aggressive). Пиши коротко и по делу.";
+  . $styleInstruction;
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -273,7 +331,7 @@ $userPayload = [
 ];
 
 $body = [
-    'model' => $model,
+    'model' => $effectiveModel,
     'temperature' => 0.3,
     'messages' => [
         ['role' => 'system', 'content' => $systemMessage],
@@ -342,8 +400,8 @@ $aggressive = trim((string)($parsed['aggressive'] ?? ''));
 if ($response === '') {
     $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
         ? trim($context['selectedTone'])
-        : 'neutral';
-    if ($selectedTone === 'aggressive' && $aggressive !== '') {
+        : '';
+    if (($effectiveStyle === 'concise' || $selectedTone === 'aggressive') && $aggressive !== '') {
         $response = $aggressive;
     } elseif ($neutral !== '') {
         $response = $neutral;
