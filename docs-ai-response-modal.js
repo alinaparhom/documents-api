@@ -136,14 +136,69 @@
       '</div>';
   }
 
+  function toPlainObject(value, depth) {
+    if (depth > 3) {
+      return '[max-depth]';
+    }
+    if (value === null || value === undefined) {
+      return value;
+    }
+    if (typeof File !== 'undefined' && value instanceof File) {
+      return {
+        name: value.name || '',
+        size: value.size || 0,
+        type: value.type || ''
+      };
+    }
+    if (Array.isArray(value)) {
+      return value.map(function(item) {
+        return toPlainObject(item, depth + 1);
+      });
+    }
+    if (typeof value === 'object') {
+      var result = {};
+      Object.keys(value).forEach(function(key) {
+        var item = value[key];
+        if (typeof item === 'function') {
+          return;
+        }
+        result[key] = toPlainObject(item, depth + 1);
+      });
+      return result;
+    }
+    return value;
+  }
+
+  function normalizeFilesList(files) {
+    if (!Array.isArray(files)) {
+      return [];
+    }
+    return files.filter(function(file) {
+      return typeof File !== 'undefined' && file instanceof File;
+    });
+  }
+
   function callAiApi(options) {
     var apiUrl = options.apiUrl || 'docs.php';
     var formData = new FormData();
     formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', options.documentTitle || '');
     formData.append('prompt', options.prompt || '');
-    if (options.file) {
+    var files = normalizeFilesList(options.files);
+    if (files.length) {
+      files.forEach(function(file) {
+        formData.append('attachments[]', file);
+      });
+      formData.append('attachment', files[0]);
+    } else if (options.file) {
       formData.append('attachment', options.file);
+    }
+    if (options.context) {
+      try {
+        formData.append('context', JSON.stringify(toPlainObject(options.context, 0)));
+      } catch (error) {
+        formData.append('context', '{}');
+      }
     }
 
     return fetch(apiUrl + '?action=ai_response_analyze', {
@@ -162,7 +217,15 @@
   window.openDocumentsAiResponseModal = function(options) {
     ensureStyle();
     var config = options || {};
-    var defaultTitle = config.documentTitle ? String(config.documentTitle) : '';
+    var documentData = config.documentData && typeof config.documentData === 'object' ? config.documentData : {};
+    var contextData = config.context && typeof config.context === 'object' ? config.context : {};
+    var preloadedFiles = normalizeFilesList(config.pendingFiles);
+    var defaultTitle = config.documentTitle
+      ? String(config.documentTitle)
+      : [documentData.title, documentData.description, documentData.registryNumber ? ('№ ' + documentData.registryNumber) : '']
+        .filter(Boolean)
+        .join(' ')
+        .trim();
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'documents-ai-modal__panel');
     var header = createElement('div', 'documents-ai-modal__header');
@@ -180,10 +243,14 @@
     titleInput.value = defaultTitle;
     titleInput.placeholder = 'Например: Согласование договора';
 
-    var fileLabel = createElement('div', 'documents-ai-modal__label', 'Файл для анализа (PDF, DOCX, TXT, изображение)');
+    var fileLabel = createElement('div', 'documents-ai-modal__label', 'Файлы для анализа (PDF, DOCX, TXT, изображение)');
     var fileInput = createElement('input', 'documents-ai-modal__input');
     fileInput.type = 'file';
+    fileInput.multiple = true;
     fileInput.accept = '.pdf,.doc,.docx,.txt,image/*';
+    var linkedFilesHint = createElement('div', 'documents-ai-modal__hint', preloadedFiles.length
+      ? ('Из окна ответа передано файлов: ' + preloadedFiles.length + ' (' + preloadedFiles.map(function(file) { return file.name; }).join(', ') + ').')
+      : 'Из окна ответа файлы пока не переданы. Можно выбрать файлы вручную.');
 
     var promptLabel = createElement('div', 'documents-ai-modal__label', 'Уточняющий запрос');
     var promptInput = createElement('textarea', 'documents-ai-modal__textarea');
@@ -255,15 +322,26 @@
 
     analyzeButton.type = 'button';
     analyzeButton.addEventListener('click', function() {
-      var selectedFile = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      var selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
+      var filesForAnalysis = selectedFiles.length ? selectedFiles : preloadedFiles;
+      var selectedFile = filesForAnalysis.length ? filesForAnalysis[0] : null;
       analyzeButton.disabled = true;
       showStatus('Идёт обработка файла и генерация вариантов ответа…', false);
 
       callAiApi({
         apiUrl: config.apiUrl,
         file: selectedFile,
+        files: filesForAnalysis,
         prompt: promptInput.value,
-        documentTitle: titleInput.value
+        documentTitle: titleInput.value,
+        context: {
+          document: toPlainObject(documentData, 0),
+          requestContext: toPlainObject(contextData, 0),
+          filesFromResponseModal: filesForAnalysis.map(function(file) {
+            return { name: file.name || '', size: file.size || 0, type: file.type || '' };
+          }),
+          selectedTone: toneSelect.value
+        }
       })
         .then(function(data) {
           var serverAnalysis = data && data.analysis ? String(data.analysis) : '';
@@ -358,6 +436,7 @@
     leftCard.appendChild(titleInput);
     leftCard.appendChild(fileLabel);
     leftCard.appendChild(fileInput);
+    leftCard.appendChild(linkedFilesHint);
     leftCard.appendChild(promptLabel);
     leftCard.appendChild(promptInput);
     leftCard.appendChild(actionsTop);

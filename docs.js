@@ -2010,13 +2010,11 @@
     return aiResponseModalScriptPromise;
   }
 
-  function openAiResponseModal(documentTitle) {
+  function openAiResponseModal(config) {
+    var options = config && typeof config === 'object' ? config : {};
     ensureAiResponseModalScript()
       .then(function(openModal) {
-        openModal({
-          documentTitle: documentTitle ? String(documentTitle) : '',
-          apiUrl: API_URL
-        });
+        openModal(options);
       })
       .catch(function(error) {
         showMessage('error', error && error.message ? error.message : 'Не удалось открыть окно ИИ-ответа.');
@@ -12838,12 +12836,34 @@
 
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
-      var titleParts = [
-        currentDoc && currentDoc.title ? currentDoc.title : '',
-        currentDoc && currentDoc.description ? currentDoc.description : '',
-        currentDoc && currentDoc.registryNumber ? ('№ ' + currentDoc.registryNumber) : ''
-      ].filter(Boolean);
-      openAiResponseModal(titleParts.join(' ').trim());
+      var uploadedResponses = currentDoc && Array.isArray(currentDoc.responses)
+        ? currentDoc.responses.map(function(file) {
+          return {
+            name: getAttachmentName(file),
+            size: file && file.size ? file.size : 0,
+            uploadedBy: file && file.uploadedBy ? String(file.uploadedBy) : '',
+            uploadedAt: file && file.uploadedAt ? String(file.uploadedAt) : '',
+            isTextFile: Boolean(file && file.isTextFile)
+          };
+        })
+        : [];
+      openAiResponseModal({
+        apiUrl: API_URL,
+        showMessage: showMessage,
+        documentData: currentDoc || doc || {},
+        documentTitle: currentDoc && currentDoc.title ? String(currentDoc.title) : '',
+        pendingFiles: pendingFiles.slice(),
+        context: {
+          organization: state.organization || '',
+          documentId: currentDoc && currentDoc.id ? currentDoc.id : doc.id,
+          registryNumber: currentDoc && currentDoc.registryNumber ? String(currentDoc.registryNumber) : '',
+          description: currentDoc && currentDoc.description ? String(currentDoc.description) : '',
+          status: currentDoc && currentDoc.status ? String(currentDoc.status) : '',
+          pendingFilesCount: pendingFiles.length,
+          uploadedResponsesCount: uploadedResponses.length,
+          uploadedResponses: uploadedResponses
+        }
+      });
     });
 
     closeButton.type = 'button';
