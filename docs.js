@@ -12848,7 +12848,7 @@
         })
         : [];
       openAiResponseModal({
-        apiUrl: API_URL,
+        apiUrl: (window.DOCUMENTS_AI_API_URL || 'ai-response-api.php'),
         showMessage: showMessage,
         documentData: currentDoc || doc || {},
         documentTitle: currentDoc && currentDoc.title ? String(currentDoc.title) : '',
