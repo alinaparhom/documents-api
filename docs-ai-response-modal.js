@@ -178,6 +178,45 @@
     });
   }
 
+  function parseJsonSafely(raw, fallback) {
+    if (!raw) {
+      return fallback;
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      return fallback;
+    }
+  }
+
+  function collectFilesBySelector(selector) {
+    if (!selector) {
+      return [];
+    }
+    var input = document.querySelector(selector);
+    if (!input || !input.files) {
+      return [];
+    }
+    return normalizeFilesList(Array.from(input.files));
+  }
+
+  function collectOptionsFromTrigger(trigger) {
+    var button = trigger || null;
+    var data = button && button.dataset ? button.dataset : {};
+    var contextFromData = parseJsonSafely(data.documentsAiContext, {});
+    var documentFromData = parseJsonSafely(data.documentsAiDocument, {});
+    var files = collectFilesBySelector(data.documentsAiFilesSelector || '');
+    var title = data.documentsAiTitle || '';
+    var apiUrl = data.documentsAiApiUrl || 'docs.php';
+    return {
+      apiUrl: apiUrl,
+      documentTitle: title,
+      documentData: documentFromData,
+      context: contextFromData,
+      pendingFiles: files
+    };
+  }
+
   function callAiApi(options) {
     var apiUrl = options.apiUrl || 'docs.php';
     var formData = new FormData();
@@ -214,7 +253,7 @@
       });
   }
 
-  window.openDocumentsAiResponseModal = function(options) {
+  function openDocumentsAiResponseModal(options) {
     ensureStyle();
     var config = options || {};
     var documentData = config.documentData && typeof config.documentData === 'object' ? config.documentData : {};
@@ -471,5 +510,37 @@
 
     renderPreview();
     titleInput.focus({ preventScroll: true });
+  }
+
+  function bindAiTrigger(trigger) {
+    if (!trigger || trigger.__documentsAiBound) {
+      return;
+    }
+    trigger.__documentsAiBound = true;
+    trigger.addEventListener('click', function(event) {
+      event.preventDefault();
+      var options = collectOptionsFromTrigger(trigger);
+      openDocumentsAiResponseModal(options);
+    });
+  }
+
+  function autoBindAiTriggers() {
+    var triggers = document.querySelectorAll('[data-documents-ai-open]');
+    Array.prototype.forEach.call(triggers, function(trigger) {
+      bindAiTrigger(trigger);
+    });
+  }
+
+  window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
+  window.DocumentsAiResponse = {
+    open: openDocumentsAiResponseModal,
+    bindTrigger: bindAiTrigger,
+    autoBind: autoBindAiTriggers
   };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', autoBindAiTriggers);
+  } else {
+    autoBindAiTriggers();
+  }
 })();
