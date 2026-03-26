@@ -36,6 +36,29 @@ if ($method === 'OPTIONS') {
     exit;
 }
 if ($method === 'GET') {
+    $action = isset($_GET['action']) ? trim((string)$_GET['action']) : '';
+    if ($action === 'ai_models') {
+        $env = loadEnv(getEnvPaths());
+        $rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
+        $defaultModel = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
+        $models = [];
+        if ($rawModels !== '') {
+            $parts = preg_split('/[,\\n]+/u', $rawModels);
+            if (is_array($parts)) {
+                foreach ($parts as $part) {
+                    $value = trim((string)$part);
+                    if ($value !== '') {
+                        $models[] = $value;
+                    }
+                }
+            }
+        }
+        if (!$models) {
+            $models = [$defaultModel];
+        }
+        jsonResponse(200, ['ok' => true, 'models' => array_values(array_unique($models)), 'defaultModel' => $defaultModel]);
+    }
+
     $isPing = isset($_GET['ping']) && (string)$_GET['ping'] === '1';
     $isDebug = isset($_GET['debug']) && (string)$_GET['debug'] === '1';
     $payload = [
@@ -280,6 +303,22 @@ if ($effectiveStyle === 'concise') {
 }
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
+$allowedModelsRaw = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
+if ($allowedModelsRaw !== '') {
+    $allowedModels = [];
+    $allowedParts = preg_split('/[,\\n]+/u', $allowedModelsRaw);
+    if (is_array($allowedParts)) {
+        foreach ($allowedParts as $allowedPart) {
+            $normalized = trim((string)$allowedPart);
+            if ($normalized !== '') {
+                $allowedModels[$normalized] = true;
+            }
+        }
+    }
+    if ($requestedModel !== '' && !isset($allowedModels[$requestedModel])) {
+        $effectiveModel = $model;
+    }
+}
 
 $systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
   . $styleInstruction;
