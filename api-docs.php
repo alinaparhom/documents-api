@@ -209,9 +209,10 @@ $env = loadEnv([
     __DIR__ . '/app/env.txt'
 ]);
 
-$apiKey = trim((string)($env['OPENAI_API_KEY'] ?? $env['AI_API_KEY'] ?? ''));
-$model = trim((string)($env['OPENAI_MODEL'] ?? $env['AI_MODEL'] ?? 'gpt-4o-mini'));
-$baseUrl = trim((string)($env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+$apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
+$model = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
+$baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+$isGroq = stripos($baseUrl, 'groq.com') !== false;
 
 if ($apiKey === '') {
     jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env']);
@@ -249,10 +250,10 @@ $body = [
         ['role' => 'system', 'content' => $systemMessage],
         ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
     ],
-    'response_format' => [
-        'type' => 'json_object'
-    ],
 ];
+if (!$isGroq) {
+    $body['response_format'] = ['type' => 'json_object'];
+}
 
 $endpoint = rtrim($baseUrl, '/') . '/chat/completions';
 $ch = curl_init($endpoint);
