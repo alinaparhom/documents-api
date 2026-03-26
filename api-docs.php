@@ -348,6 +348,41 @@ function collectResponseText(array $responseJson): string
     return trim(implode("\n", $chunks));
 }
 
+function aiValueToText(mixed $value): string
+{
+    if (is_string($value)) {
+        return trim($value);
+    }
+    if (is_numeric($value) || is_bool($value)) {
+        return (string)$value;
+    }
+    if (is_array($value)) {
+        $parts = [];
+        foreach ($value as $item) {
+            if (is_string($item) && trim($item) !== '') {
+                $parts[] = trim($item);
+                continue;
+            }
+            if (is_array($item) || is_object($item)) {
+                $json = json_encode($item, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                if (is_string($json) && $json !== '') {
+                    $parts[] = $json;
+                }
+            }
+        }
+        if ($parts) {
+            return trim(implode("\n", $parts));
+        }
+        $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return is_string($json) ? trim($json) : '';
+    }
+    if (is_object($value)) {
+        $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return is_string($json) ? trim($json) : '';
+    }
+    return '';
+}
+
 function uploadFileToOpenAi(string $baseUrl, string $apiKey, array $file): ?string
 {
     $tmp = (string)($file['tmp_name'] ?? '');
@@ -620,11 +655,27 @@ if (!$isGroq && stripos($baseUrl, 'api.openai.com') !== false) {
 }
 $parsed = parseAiJson($content);
 
-$analysis = trim((string)($parsed['analysis'] ?? ''));
-$response = trim((string)($parsed['response'] ?? ''));
-$neutral = trim((string)($parsed['neutral'] ?? ''));
-$aggressive = trim((string)($parsed['aggressive'] ?? ''));
-$citations = isset($parsed['citations']) && is_array($parsed['citations']) ? $parsed['citations'] : [];
+$analysis = aiValueToText($parsed['analysis'] ?? '');
+$response = aiValueToText($parsed['response'] ?? '');
+$neutral = aiValueToText($parsed['neutral'] ?? '');
+$aggressive = aiValueToText($parsed['aggressive'] ?? '');
+$citations = [];
+if (isset($parsed['citations'])) {
+    $rawCitations = $parsed['citations'];
+    if (is_array($rawCitations)) {
+        foreach ($rawCitations as $citationItem) {
+            $itemText = aiValueToText($citationItem);
+            if ($itemText !== '') {
+                $citations[] = $itemText;
+            }
+        }
+    } else {
+        $singleCitation = aiValueToText($rawCitations);
+        if ($singleCitation !== '') {
+            $citations[] = $singleCitation;
+        }
+    }
+}
 
 if ($response === '') {
     $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])

@@ -34,7 +34,11 @@
       '.documents-ai-modal__input,.documents-ai-modal__textarea,.documents-ai-modal__select{width:100%;border:1px solid rgba(148,163,184,.35);border-radius:12px;background:rgba(255,255,255,.86);padding:10px 11px;font-size:14px;color:#0f172a;box-sizing:border-box;}' +
       '.documents-ai-modal__textarea{min-height:120px;resize:vertical;}' +
       '.documents-ai-modal__textarea--analysis{min-height:220px;}' +
-      '.documents-ai-modal__textarea--response{min-height:300px;}' +
+      '.documents-ai-modal__textarea--response{min-height:280px;}' +
+      '.documents-ai-modal__chat{display:flex;flex-direction:column;gap:8px;max-height:220px;overflow:auto;padding:10px;border-radius:12px;background:rgba(248,250,252,.85);border:1px solid rgba(226,232,240,.95);}' +
+      '.documents-ai-modal__bubble{max-width:92%;padding:9px 11px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word;}' +
+      '.documents-ai-modal__bubble--user{align-self:flex-end;background:rgba(37,99,235,.12);color:#1e3a8a;}' +
+      '.documents-ai-modal__bubble--assistant{align-self:flex-start;background:rgba(15,23,42,.06);color:#0f172a;}' +
       '.documents-ai-modal__input:focus,.documents-ai-modal__textarea:focus,.documents-ai-modal__select:focus{outline:none;border-color:rgba(37,99,235,.55);box-shadow:0 0 0 3px rgba(37,99,235,.12);}' +
       '.documents-ai-modal__row{display:flex;gap:8px;flex-wrap:wrap;}' +
       '.documents-ai-modal__button{border:1px solid rgba(148,163,184,.34);background:rgba(255,255,255,.74);border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600;color:#334155;cursor:pointer;}' +
@@ -343,11 +347,45 @@
     var actionsTop = createElement('div', 'documents-ai-modal__row');
     var analyzeButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--primary', 'Сгенерировать ответ');
     var useButton = createElement('button', 'documents-ai-modal__button', 'Использовать выбранный текст');
+    var pdfButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--primary', 'Сгенерировать PDF');
     var closeActionButton = createElement('button', 'documents-ai-modal__button', 'Закрыть');
+    var chatLabel = createElement('div', 'documents-ai-modal__label', 'Диалог с ИИ');
+    var chatLog = createElement('div', 'documents-ai-modal__chat');
 
     responseInput.className = 'documents-ai-modal__textarea documents-ai-modal__textarea--response';
 
     var fallbackEditable = getActiveEditableElement();
+    var conversation = [];
+
+    function appendChatMessage(role, text) {
+      var safeText = String(text || '').trim();
+      if (!safeText) {
+        return;
+      }
+      var safeRole = role === 'user' ? 'user' : 'assistant';
+      conversation.push({ role: safeRole, text: safeText, at: Date.now() });
+      var bubble = createElement('div', 'documents-ai-modal__bubble documents-ai-modal__bubble--' + safeRole, safeText);
+      chatLog.appendChild(bubble);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function openPrintWindow() {
+      var text = getSelectedText();
+      if (!text) {
+        showStatus('Сначала сформируйте текст ответа.', true);
+        return;
+      }
+      var printWindow = window.open('', '_blank', 'width=980,height=760');
+      if (!printWindow) {
+        showStatus('Браузер заблокировал окно печати. Разрешите всплывающие окна.', true);
+        return;
+      }
+      var safeTitle = String(titleInput.value || 'Ответ').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      var safeBody = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      printWindow.document.open();
+      printWindow.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Ответ</title><style>body{margin:0;padding:24px;background:#f8fafc;font-family:Inter,Arial,sans-serif;color:#0f172a}.sheet{max-width:820px;margin:0 auto;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:32px 28px;box-sizing:border-box}.head{font-size:18px;font-weight:700;margin-bottom:14px}.body{white-space:pre-wrap;line-height:1.55}@media print{body{padding:0;background:#fff}.sheet{border:none;box-shadow:none;max-width:none;border-radius:0;padding:24mm 16mm}}</style></head><body><div class="sheet"><div class="head">' + safeTitle + '</div><div class="body">' + safeBody + '</div></div><script>window.onload=function(){window.focus();window.print();};</script></body></html>');
+      printWindow.document.close();
+    }
 
     function closeModal() {
       document.removeEventListener('keydown', handleEscape, true);
@@ -413,6 +451,7 @@
     analyzeButton.addEventListener('click', function() {
       analyzeButton.disabled = true;
       showStatus('Идёт обработка файлов и генерация развёрнутого ответа…', false);
+      appendChatMessage('user', promptInput.value || 'Сгенерируй ответ по документу');
 
       var selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
       var baseFiles = selectedFiles.length ? selectedFiles : preloadedFiles;
@@ -458,6 +497,7 @@
           citationsBlock.textContent = serverCitations.length
             ? ('Цитаты из файла: ' + serverCitations.join(' | '))
             : 'Цитаты из файла не возвращены.';
+          appendChatMessage('assistant', responseInput.value || analysis.value);
           showStatus('Готово: анализ и подробный ответ сформированы.', false);
         })
         .catch(function(error) {
@@ -465,6 +505,7 @@
           analysis.value = fallback.analysis;
           responseInput.value = toneSelect.value === 'aggressive' ? fallback.aggressive : fallback.neutral;
           citationsBlock.textContent = 'Цитаты недоступны: применён локальный шаблон.';
+          appendChatMessage('assistant', responseInput.value || fallback.analysis);
           showStatus('Не удалось получить ответ ИИ (' + (error && error.message ? error.message : 'ошибка') + '). Использован локальный шаблон.', true);
         })
         .finally(function() {
@@ -498,6 +539,11 @@
       }
       showStatus('Активное поле не найдено. Скопируйте текст вручную.', true);
     });
+    pdfButton.type = 'button';
+    pdfButton.addEventListener('click', function() {
+      openPrintWindow();
+      showStatus('Открыто окно печати. Выберите «Сохранить как PDF».', false);
+    });
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', closeModal);
@@ -526,12 +572,15 @@
     leftCard.appendChild(actionsTop);
     actionsTop.appendChild(analyzeButton);
     actionsTop.appendChild(useButton);
+    actionsTop.appendChild(pdfButton);
     actionsTop.appendChild(closeActionButton);
     leftCard.appendChild(status);
     leftCard.appendChild(createElement('div', 'documents-ai-modal__hint', 'Если API ИИ недоступен, автоматически будет использован локальный шаблон ответа.'));
 
     rightCard.appendChild(createElement('div', 'documents-ai-modal__label', 'Аналитический ответ'));
     rightCard.appendChild(analysis);
+    rightCard.appendChild(chatLabel);
+    rightCard.appendChild(chatLog);
     rightCard.appendChild(citationsBlock);
     rightCard.appendChild(responseLabel);
     rightCard.appendChild(responseInput);
