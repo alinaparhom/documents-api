@@ -46,6 +46,7 @@
       '.documents-ai-modal__button--danger{background:linear-gradient(135deg,rgba(239,68,68,.9),rgba(234,88,12,.9));color:#fff;border-color:transparent;}' +
       '.documents-ai-modal__button:disabled{opacity:.55;cursor:not-allowed;}' +
       '.documents-ai-modal__hint{font-size:12px;color:#64748b;line-height:1.4;}' +
+      '.documents-ai-modal__model{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;color:#1e3a8a;background:rgba(37,99,235,.12);}' +
       '.documents-ai-modal__status{font-size:12px;padding:8px 10px;border-radius:10px;background:rgba(59,130,246,.1);color:#1d4ed8;white-space:pre-wrap;}' +
       '.documents-ai-modal__status--error{background:rgba(248,113,113,.12);color:#b91c1c;}' +
       '.documents-ai-modal__preview{background:#ffffff;border:1px solid rgba(203,213,225,.95);border-radius:12px;padding:14px;min-height:220px;font-size:13px;color:#0f172a;line-height:1.45;}' +
@@ -270,7 +271,18 @@
     })
       .then(function(response) {
         if (!response || !response.ok) {
-          throw new Error('HTTP ' + (response ? response.status : '0'));
+          return response.json()
+            .then(function(errorPayload) {
+              var message = errorPayload && errorPayload.error
+                ? String(errorPayload.error)
+                : ('HTTP ' + (response ? response.status : '0'));
+              var error = new Error(message);
+              error.meta = errorPayload && typeof errorPayload === 'object' ? errorPayload : {};
+              throw error;
+            })
+            .catch(function() {
+              throw new Error('HTTP ' + (response ? response.status : '0'));
+            });
         }
         return response.json();
       });
@@ -340,6 +352,7 @@
     toneSelect.innerHTML = '<option value="neutral">Деловой</option><option value="aggressive">Жёсткий деловой</option>';
 
     var status = createElement('div', 'documents-ai-modal__status', 'Нажмите «Сгенерировать ответ», чтобы получить полный анализ и ответ.');
+    var modelBadge = createElement('div', 'documents-ai-modal__model', 'Модель: —');
     var analysis = createElement('textarea', 'documents-ai-modal__textarea documents-ai-modal__textarea--analysis');
     analysis.placeholder = 'Здесь будет аналитический ответ от ИИ';
     var citationsBlock = createElement('div', 'documents-ai-modal__hint', '');
@@ -488,6 +501,8 @@
           var serverNeutral = data && data.neutral ? String(data.neutral) : '';
           var serverAggressive = data && data.aggressive ? String(data.aggressive) : '';
           var serverCitations = data && Array.isArray(data.citations) ? data.citations : [];
+          var usedModel = data && data.model ? String(data.model) : '';
+          var usedProvider = data && data.provider ? String(data.provider) : '';
           var local = buildDraftPair(promptInput.value, titleInput.value, serverAnalysis);
 
           analysis.value = serverAnalysis || local.analysis;
@@ -497,6 +512,7 @@
           citationsBlock.textContent = serverCitations.length
             ? ('Цитаты из файла: ' + serverCitations.join(' | '))
             : 'Цитаты из файла не возвращены.';
+          modelBadge.textContent = 'Модель: ' + (usedModel || 'не определена') + (usedProvider ? (' • ' + usedProvider) : '');
           appendChatMessage('assistant', responseInput.value || analysis.value);
           showStatus('Готово: анализ и подробный ответ сформированы.', false);
         })
@@ -505,6 +521,9 @@
           analysis.value = fallback.analysis;
           responseInput.value = toneSelect.value === 'aggressive' ? fallback.aggressive : fallback.neutral;
           citationsBlock.textContent = 'Цитаты недоступны: применён локальный шаблон.';
+          if (error && error.meta && error.meta.model) {
+            modelBadge.textContent = 'Модель: ' + String(error.meta.model) + (error.meta.provider ? (' • ' + String(error.meta.provider)) : '');
+          }
           appendChatMessage('assistant', responseInput.value || fallback.analysis);
           showStatus('Не удалось получить ответ ИИ (' + (error && error.message ? error.message : 'ошибка') + '). Использован локальный шаблон.', true);
         })
@@ -575,6 +594,7 @@
     actionsTop.appendChild(pdfButton);
     actionsTop.appendChild(closeActionButton);
     leftCard.appendChild(status);
+    leftCard.appendChild(modelBadge);
     leftCard.appendChild(createElement('div', 'documents-ai-modal__hint', 'Если API ИИ недоступен, автоматически будет использован локальный шаблон ответа.'));
 
     rightCard.appendChild(createElement('div', 'documents-ai-modal__label', 'Аналитический ответ'));

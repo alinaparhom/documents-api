@@ -543,6 +543,7 @@ if ($baseUrl === 'https://api.openai.com/v1' && $isGroqKey) {
     $baseUrl = 'https://api.groq.com/openai/v1';
 }
 $isGroq = stripos($baseUrl, 'groq.com') !== false;
+$providerName = $isGroq ? 'groq' : 'openai';
 
 if ($apiKey === '') {
     jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env']);
@@ -592,7 +593,7 @@ if (!$isGroq && stripos($baseUrl, 'api.openai.com') !== false) {
         $message = (string)($responsesResult['error'] ?? 'Responses API error');
         $statusCode = (int)($responsesResult['status'] ?? 502);
         logApiDocs('error', 'Responses API error', ['status' => $statusCode, 'message' => $message]);
-        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
+        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode, 'model' => $model, 'provider' => $providerName]);
     }
     $content = isset($responsesResult['content']) && is_string($responsesResult['content'])
         ? $responsesResult['content']
@@ -699,6 +700,8 @@ if ($analysis === '' && $response === '' && $neutral === '' && $aggressive === '
 
 jsonResponse(200, [
     'ok' => true,
+    'model' => $model,
+    'provider' => $providerName,
     'analysis' => $analysis,
     'response' => $response,
     'neutral' => $neutral,
