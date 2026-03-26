@@ -207,7 +207,7 @@
     var documentFromData = parseJsonSafely(data.documentsAiDocument, {});
     var files = collectFilesBySelector(data.documentsAiFilesSelector || '');
     var title = data.documentsAiTitle || '';
-    var apiUrl = data.documentsAiApiUrl || window.DOCUMENTS_AI_API_URL || 'ai-response-api.php';
+    var apiUrl = data.documentsAiApiUrl || window.DOCUMENTS_AI_API_URL || 'api-docs.php';
     return {
       apiUrl: apiUrl,
       documentTitle: title,
@@ -218,7 +218,7 @@
   }
 
   function callAiApi(options) {
-    var apiUrl = options.apiUrl || window.DOCUMENTS_AI_API_URL || 'ai-response-api.php';
+    var apiUrl = options.apiUrl || window.DOCUMENTS_AI_API_URL || 'api-docs.php';
     var formData = new FormData();
     formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', options.documentTitle || '');
