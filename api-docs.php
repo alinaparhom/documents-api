@@ -179,6 +179,30 @@ function parseAiJson(string $content): array
     return [];
 }
 
+function buildLocalFallback(string $documentTitle, string $prompt, array $context = []): array
+{
+    $title = trim($documentTitle) !== '' ? $documentTitle : 'документу';
+    $topic = trim($prompt) !== '' ? $prompt : 'обработке входящих материалов';
+    $organization = isset($context['organization']) && is_string($context['organization'])
+        ? trim($context['organization'])
+        : '';
+    $orgPart = $organization !== '' ? (' (' . $organization . ')') : '';
+
+    $analysis = 'Сервер ИИ недоступен, сформирован локальный черновик по ' . $title . $orgPart . '.';
+    $neutral = 'По ' . $title . $orgPart . ' сообщаем: материалы получены и приняты в работу. '
+      . 'По запросу о ' . $topic . ' предоставим уточнённый статус и сроки после проверки данных.';
+    $aggressive = 'По ' . $title . $orgPart . ' уведомляем: материалы приняты к исполнению в приоритетном порядке. '
+      . 'По запросу о ' . $topic . ' ответ будет предоставлен в максимально короткий срок.';
+
+    return [
+        'ok' => true,
+        'analysis' => $analysis,
+        'neutral' => $neutral,
+        'aggressive' => $aggressive,
+        'fallback' => true
+    ];
+}
+
 $env = loadEnv([
     __DIR__ . '/app/.env',
     __DIR__ . '/.env',
@@ -269,6 +293,11 @@ if ($statusCode >= 400) {
         $message = $responseJson['error']['message'];
     }
     logApiDocs('error', 'AI API HTTP error', ['status' => $statusCode, 'message' => $message]);
+    $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
+    if ($statusCode === 403 && $unsupportedRegion) {
+        logApiDocs('warn', 'AI provider blocked by region, fallback enabled', ['status' => $statusCode]);
+        jsonResponse(200, buildLocalFallback($documentTitle, $prompt, $context));
+    }
     jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
 }
 
