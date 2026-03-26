@@ -4424,6 +4424,66 @@ function buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file, e
   });
 }
 
+function decodeTextAttachmentBuffer(buffer) {
+  if (!buffer) {
+    return '';
+  }
+  const decodeWith = (encoding) => {
+    try {
+      return new TextDecoder(encoding, { fatal: false }).decode(buffer);
+    } catch (_) {
+      return '';
+    }
+  };
+  const utf8 = decodeWith('utf-8');
+  const hasReplacement = utf8.includes('\uFFFD');
+  const windows1251 = decodeWith('windows-1251');
+  const text = windows1251 && hasReplacement ? windows1251 : utf8;
+  const normalized = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.length > 12000 ? normalized.slice(0, 12000) : normalized;
+}
+
+function buildAttachmentTextPage(pdfDoc, fonts, colors, margin, file, textContent) {
+  let page = pdfDoc.addPage([595.28, 841.89]);
+  drawAttachmentHeader(page, fonts, colors, file, {
+    margin,
+    subtitle: 'TXT-вложение',
+    titlePrefix: 'Вложение',
+  });
+  const width = page.getSize().width;
+  const lineHeight = 13;
+  const fontSize = 11;
+  const bottomLimit = 38;
+  let cursorY = page.getSize().height - 98;
+  const lines = wrapTextForPdf(fonts.regular, textContent || 'Пустой TXT-файл.', width - margin * 2, fontSize);
+  lines.forEach((line) => {
+    if (cursorY < bottomLimit) {
+      page = pdfDoc.addPage([595.28, 841.89]);
+      drawAttachmentHeader(page, fonts, colors, file, {
+        margin,
+        subtitle: 'TXT-вложение (продолжение)',
+        titlePrefix: 'Вложение',
+      });
+      cursorY = page.getSize().height - 98;
+    }
+    drawPdfText(page, line, {
+      x: margin,
+      y: cursorY,
+      size: fontSize,
+      font: fonts.regular,
+      color: colors.value,
+    });
+    cursorY -= lineHeight;
+  });
+}
+
 function drawAttachmentHeader(page, fonts, colors, file, options) {
   const margin = options && options.margin ? options.margin : 40;
   const headerHeight = options && options.headerHeight ? options.headerHeight : 72;
@@ -4514,6 +4574,7 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
     const isPdf = mimeType.includes('pdf') || extension === 'pdf';
     const isPng = mimeType.includes('png') || extension === 'png';
     const isJpeg = mimeType.includes('jpeg') || mimeType.includes('jpg') || extension === 'jpg' || extension === 'jpeg';
+    const isTxt = mimeType.includes('text/plain') || extension === 'txt';
 
     if (isPdf) {
       const attachment = await PDFLib.PDFDocument.load(buffer);
@@ -4546,6 +4607,9 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
         width: scaled.width,
         height: scaled.height,
       });
+    } else if (isTxt) {
+      const textContent = decodeTextAttachmentBuffer(buffer);
+      buildAttachmentTextPage(pdfDoc, fonts, colors, margin, file, textContent);
     } else {
       buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file,
         'Формат вложения не поддерживается в предпросмотре.', resolvedUrl);
@@ -12090,6 +12154,47 @@ function countResponseFilesForEntry(task, entry, fallbackValue = '') {
   return resolveResponseViewerFilesForEntry(task, entry, fallbackValue).length;
 }
 
+function isTextResponseFile(file) {
+  if (!file || typeof file !== 'object') {
+    return false;
+  }
+  if (file.isTextFile === true) {
+    return true;
+  }
+  const name = normalizeValue(file.originalName) || normalizeValue(file.storedName);
+  return /\.txt$/i.test(name);
+}
+
+function isResponseOwnedByCurrentUser(file) {
+  if (!file || typeof file !== 'object') {
+    return false;
+  }
+  const userKeys = new Set();
+  const { ids, names } = getUserIdentifierCandidates();
+  ids.forEach((value) => {
+    const key = buildAssignmentDirectoryKey(value);
+    if (key) {
+      userKeys.add(key);
+    }
+  });
+  names.forEach((value) => {
+    const key = buildAssignmentDirectoryKey(value);
+    if (key) {
+      userKeys.add(key);
+    }
+  });
+  if (!userKeys.size) {
+    return false;
+  }
+  const fileKeys = collectResponseIdentityKeysFromFile(file);
+  for (const key of fileKeys) {
+    if (userKeys.has(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function buildResponseViewButtonLabel(count) {
   const safeCount = Number.isFinite(count) && count >= 0 ? Math.trunc(count) : 0;
   return `Показать ответ (${safeCount})`;
@@ -12597,7 +12702,7 @@ function taskUserCanUploadResponse(task, entry) {
   return entryMatchesUser(entry, ids, names);
 }
 
-async function uploadTaskResponseFiles(task, files, setStatus) {
+async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '') {
   if (!task || typeof task !== 'object') {
     sendResponseViewerLog('response_upload_failed', {
       reason: 'task_missing',
@@ -12608,6 +12713,7 @@ async function uploadTaskResponseFiles(task, files, setStatus) {
   const documentId = normalizeValue(task.id);
   const organization = getTaskOrganization(task);
   const originalFileList = Array.isArray(files) ? files.filter(Boolean) : [];
+  const responseMessage = normalizeValue(responseMessageRaw).replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 
   if (!documentId || !organization) {
     sendResponseViewerLog('response_upload_failed', {
@@ -12618,13 +12724,13 @@ async function uploadTaskResponseFiles(task, files, setStatus) {
     throw new Error('Не удалось определить задачу или организацию.');
   }
 
-  if (!originalFileList.length) {
+  if (!originalFileList.length && !responseMessage) {
     sendResponseViewerLog('response_upload_failed', {
       reason: 'files_missing',
       documentId,
       organization,
     });
-    throw new Error('Выберите файл ответа.');
+    throw new Error('Добавьте файл или введите текст ответа.');
   }
 
   const fileList = await prepareResponseFilesForUpload(originalFileList);
@@ -12644,6 +12750,9 @@ async function uploadTaskResponseFiles(task, files, setStatus) {
   formData.append('action', 'response_upload');
   formData.append('organization', organization);
   formData.append('documentId', documentId);
+  if (responseMessage) {
+    formData.append('responseMessage', responseMessage);
+  }
   fileList.forEach((file) => {
     formData.append('attachments[]', file, file.name || 'answer-file');
   });
@@ -12658,9 +12767,17 @@ async function uploadTaskResponseFiles(task, files, setStatus) {
 
   if (typeof setStatus === 'function') {
     const compressedCount = fileList.reduce((count, file, index) => (file !== originalFileList[index] ? count + 1 : count), 0);
+    const messageParts = [];
+    if (fileList.length > 0) {
+      messageParts.push(`файлы: ${fileList.length}`);
+    }
+    if (responseMessage) {
+      messageParts.push('текст: 1');
+    }
+    const baseMessage = messageParts.length ? `Загружаем ответ (${messageParts.join(', ')})...` : 'Загружаем ответ...';
     const message = compressedCount > 0
-      ? `Подготовка фото: сжато ${compressedCount}, загружаем ${fileList.length} файл(ов)...`
-      : `Загружаем ответ: ${fileList.length} файл(ов)...`;
+      ? `Подготовка фото: сжато ${compressedCount}. ${baseMessage}`
+      : baseMessage;
     setStatus('info', message);
   }
 
@@ -12693,6 +12810,8 @@ async function uploadTaskResponseFiles(task, files, setStatus) {
         size: Number(file && file.size) || 0,
         type: normalizeValue(file && file.type),
       })),
+      hasResponseMessage: Boolean(responseMessage),
+      responseMessageLength: responseMessage.length,
     });
     throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
   }
@@ -12711,8 +12830,67 @@ async function uploadTaskResponseFiles(task, files, setStatus) {
       size: Number(file && file.size) || 0,
       type: normalizeValue(file && file.type),
     })),
+    hasResponseMessage: Boolean(responseMessage),
+    responseMessageLength: responseMessage.length,
   });
 
+  return data;
+}
+
+async function updateTaskResponseText(task, storedName, textValue, setStatus) {
+  if (!task || typeof task !== 'object') {
+    throw new Error('Не удалось определить задачу.');
+  }
+  const documentId = normalizeValue(task.id);
+  const organization = getTaskOrganization(task);
+  const text = normalizeValue(textValue).replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (!documentId || !organization) {
+    throw new Error('Не удалось определить задачу или организацию.');
+  }
+  if (!storedName) {
+    throw new Error('Не удалось определить TXT-файл для редактирования.');
+  }
+  if (!text) {
+    throw new Error('Введите текст ответа.');
+  }
+
+  if (typeof setStatus === 'function') {
+    setStatus('info', 'Обновляем текстовый ответ...');
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const response = await fetch(`/docs.php?action=response_text_update&organization=${encodeURIComponent(organization)}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify({
+      action: 'response_text_update',
+      organization,
+      documentId,
+      storedName,
+      text,
+    }),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_) {
+    data = null;
+  }
+  if (!response.ok || !data || data.success !== true) {
+    throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
+  }
+  await loadTasks(true);
+  if (typeof setStatus === 'function') {
+    setStatus('success', data.message || 'Текстовый ответ обновлён.');
+  }
   return data;
 }
 
@@ -12736,7 +12914,38 @@ function createResponseUploadControls(task, entry, setStatus) {
 
   const meta = document.createElement('div');
   meta.className = 'appdosc-card__assign-response-meta';
-  meta.textContent = 'Загрузить файл ответа';
+  meta.textContent = 'Файл или текст ответа';
+
+  const textInput = document.createElement('textarea');
+  textInput.className = 'appdosc-card__assign-response-text';
+  textInput.placeholder = 'Текстовый ответ к задаче (сохранится как .txt)';
+  textInput.maxLength = 12000;
+  textInput.rows = 3;
+  let editingTextResponse = null;
+
+  const responseFiles = Array.isArray(task && task.responses) ? task.responses : [];
+  const editableTxtCandidates = responseFiles.filter((file) => isTextResponseFile(file) && isResponseOwnedByCurrentUser(file));
+  editableTxtCandidates.sort((a, b) => {
+    const aTime = Date.parse(normalizeValue(a && a.uploadedAt) || '') || 0;
+    const bTime = Date.parse(normalizeValue(b && b.uploadedAt) || '') || 0;
+    return bTime - aTime;
+  });
+  const latestEditableTxt = editableTxtCandidates.length ? editableTxtCandidates[0] : null;
+  if (latestEditableTxt && normalizeValue(latestEditableTxt.textContent)) {
+    editingTextResponse = latestEditableTxt;
+    textInput.value = normalizeValue(latestEditableTxt.textContent);
+    meta.textContent = `Редактирование: ${normalizeValue(latestEditableTxt.originalName) || 'TXT-файл'}`;
+  }
+
+  const textActions = document.createElement('div');
+  textActions.className = 'appdosc-card__assign-response-text-actions';
+  const textCounter = document.createElement('span');
+  textCounter.className = 'appdosc-card__assign-response-text-counter';
+  textCounter.textContent = '0 / 12000';
+  const textSaveButton = document.createElement('button');
+  textSaveButton.type = 'button';
+  textSaveButton.className = 'appdosc-card__action appdosc-card__action--response';
+  textSaveButton.textContent = 'Сохранить текст';
 
   const input = document.createElement('input');
   input.type = 'file';
@@ -12769,6 +12978,12 @@ function createResponseUploadControls(task, entry, setStatus) {
     });
   });
 
+  textInput.addEventListener('input', () => {
+    const length = String(textInput.value || '').length;
+    textCounter.textContent = `${length} / 12000`;
+  });
+  textInput.dispatchEvent(new Event('input'));
+
   input.addEventListener('change', async () => {
     const files = Array.from(input.files || []);
     if (!files.length) {
@@ -12777,12 +12992,16 @@ function createResponseUploadControls(task, entry, setStatus) {
 
     button.disabled = true;
     aiButton.disabled = true;
+    textSaveButton.disabled = true;
+    textInput.disabled = true;
     wrapper.dataset.loading = 'true';
     meta.textContent = `Файлов выбрано: ${files.length}`;
 
     try {
-      await uploadTaskResponseFiles(task, files, setStatus);
+      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '');
       meta.textContent = files.length > 1 ? 'Ответы загружены' : 'Ответ загружен';
+      textInput.value = '';
+      textCounter.textContent = '0 / 12000';
     } catch (error) {
       sendResponseViewerLog('response_upload_failed', {
         reason: 'client_exception',
@@ -12802,12 +13021,56 @@ function createResponseUploadControls(task, entry, setStatus) {
     } finally {
       button.disabled = false;
       aiButton.disabled = false;
+      textSaveButton.disabled = false;
+      textInput.disabled = false;
       delete wrapper.dataset.loading;
       input.value = '';
     }
   });
 
-  wrapper.append(button, aiButton, meta, input);
+  textSaveButton.addEventListener('click', async () => {
+    const messageValue = String(textInput.value || '').trim();
+    if (!messageValue) {
+      if (typeof setStatus === 'function') {
+        setStatus('warning', 'Введите текст ответа перед сохранением.');
+      }
+      return;
+    }
+
+    button.disabled = true;
+    aiButton.disabled = true;
+    textSaveButton.disabled = true;
+    textInput.disabled = true;
+    wrapper.dataset.loading = 'true';
+    meta.textContent = 'Сохраняем текстовый ответ...';
+
+    try {
+      if (editingTextResponse && normalizeValue(editingTextResponse.storedName)) {
+        await updateTaskResponseText(task, normalizeValue(editingTextResponse.storedName), messageValue, setStatus);
+        meta.textContent = 'Текстовый ответ обновлён';
+      } else {
+        await uploadTaskResponseFiles(task, [], setStatus, messageValue);
+        meta.textContent = 'Текстовый ответ сохранён';
+      }
+      textInput.value = '';
+      editingTextResponse = null;
+      textCounter.textContent = '0 / 12000';
+    } catch (error) {
+      meta.textContent = 'Сохранение не удалось';
+      if (typeof setStatus === 'function') {
+        setStatus('error', error?.message || 'Не удалось сохранить текстовый ответ.');
+      }
+    } finally {
+      button.disabled = false;
+      aiButton.disabled = false;
+      textSaveButton.disabled = false;
+      textInput.disabled = false;
+      delete wrapper.dataset.loading;
+    }
+  });
+
+  textActions.append(textSaveButton, textCounter);
+  wrapper.append(button, aiButton, meta, textInput, textActions, input);
   return wrapper;
 }
 

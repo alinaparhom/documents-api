@@ -1906,6 +1906,11 @@
       '.documents-responses-dropzone-hint{font-size:12px;line-height:1.45;color:#64748b;}' +
       '.documents-responses-dropzone-badge{flex:0 0 auto;padding:8px 12px;border-radius:999px;background:rgba(37,99,235,0.1);color:#1d4ed8;font-size:12px;font-weight:700;white-space:nowrap;}' +
       '.documents-responses-hint{font-size:12px;color:#64748b;}' +
+      '.documents-responses-message{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:16px;background:rgba(255,255,255,0.9);border:1px solid rgba(226,232,240,0.95);}' +
+      '.documents-responses-message-label{font-size:12px;font-weight:700;color:#334155;display:flex;align-items:center;justify-content:space-between;gap:8px;}' +
+      '.documents-responses-message-counter{font-weight:600;color:#64748b;}' +
+      '.documents-responses-message textarea{width:100%;min-height:92px;max-height:200px;resize:vertical;border:1px solid rgba(148,163,184,0.4);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.45;color:#0f172a;background:rgba(255,255,255,0.98);box-sizing:border-box;}' +
+      '.documents-responses-message textarea:focus{outline:none;border-color:rgba(37,99,235,0.55);box-shadow:0 0 0 3px rgba(37,99,235,0.12);}' +
       '.documents-responses-table-wrap{overflow:auto;border:1px solid rgba(226,232,240,0.95);border-radius:18px;background:rgba(255,255,255,0.8);min-height:0;}' +
       '.documents-responses-table{width:100%;border-collapse:collapse;font-size:13px;color:#0f172a;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px 10px;border-bottom:1px solid rgba(226,232,240,0.85);text-align:left;vertical-align:middle;}' +
@@ -1914,25 +1919,12 @@
       '.documents-responses-file{display:flex;flex-direction:column;gap:4px;min-width:180px;}' +
       '.documents-responses-file a{color:#2563eb;text-decoration:none;word-break:break-word;}' +
       '.documents-responses-file a:hover{text-decoration:underline;}' +
+      '.documents-responses-text-preview{margin:0;padding:10px 12px;border-radius:12px;background:rgba(241,245,249,0.82);border:1px solid rgba(226,232,240,0.95);font-size:12px;line-height:1.45;color:#0f172a;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;}' +
       '.documents-responses-meta{font-size:12px;color:#64748b;}' +
       '.documents-responses-status{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:rgba(59,130,246,0.12);color:#1d4ed8;font-size:12px;font-weight:600;}' +
       '.documents-responses-status--pending{background:rgba(245,158,11,0.14);color:#b45309;}' +
       '.documents-responses-empty{padding:18px;text-align:center;color:#64748b;font-size:13px;}' +
       '.documents-responses-danger{color:#dc2626;}' +
-      '.documents-responses-actions .documents-button--ai{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));color:#ffffff;border-color:transparent;}' +
-      '.documents-responses-actions .documents-button--ai:hover{filter:brightness(1.03);}' +
-      '.documents-ai-modal{position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,0.2);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;}' +
-      '.documents-ai-modal__panel{width:min(640px,100%);max-height:min(88vh,780px);display:flex;flex-direction:column;gap:12px;background:rgba(255,255,255,0.9);border:1px solid rgba(255,255,255,0.72);border-radius:20px;box-shadow:0 24px 56px rgba(15,23,42,0.2);padding:14px;}' +
-      '.documents-ai-modal__title{font-size:17px;font-weight:700;color:#0f172a;}' +
-      '.documents-ai-modal__desc{font-size:12px;color:#64748b;line-height:1.45;}' +
-      '.documents-ai-modal__field{display:flex;flex-direction:column;gap:6px;}' +
-      '.documents-ai-modal__label{font-size:12px;color:#475569;font-weight:600;}' +
-      '.documents-ai-modal__textarea{width:100%;min-height:110px;resize:vertical;border:1px solid rgba(148,163,184,0.35);border-radius:14px;background:rgba(255,255,255,0.86);padding:12px;font-size:14px;color:#0f172a;box-sizing:border-box;}' +
-      '.documents-ai-modal__textarea:focus{outline:none;border-color:rgba(37,99,235,0.6);box-shadow:0 0 0 3px rgba(37,99,235,0.1);}' +
-      '.documents-ai-modal__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}' +
-      '.documents-ai-modal__button{border:1px solid rgba(148,163,184,0.34);background:rgba(255,255,255,0.72);border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600;color:#334155;cursor:pointer;}' +
-      '.documents-ai-modal__button--primary{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));border-color:transparent;color:#fff;}' +
-      '.documents-ai-modal__button--ghost{background:rgba(59,130,246,0.1);color:#1d4ed8;border-color:rgba(37,99,235,0.3);}' +
       '@media (max-width: 768px){' +
       '.documents-responses-modal{padding:8px;align-items:center;}' +
       '.documents-responses-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
@@ -1941,183 +1933,10 @@
       '.documents-responses-actions .documents-button{flex:1 1 auto;}' +
       '.documents-responses-dropzone{flex-direction:column;align-items:flex-start;}' +
       '.documents-responses-dropzone-badge{white-space:normal;}' +
+      '.documents-responses-message textarea{min-height:80px;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px;}' +
-      '.documents-ai-modal{padding:8px;align-items:flex-end;}' +
-      '.documents-ai-modal__panel{width:100%;max-height:calc(100vh - 12px);border-radius:18px;padding:12px;}' +
-      '.documents-ai-modal__actions .documents-ai-modal__button{flex:1 1 calc(50% - 8px);}' +
-      '.documents-ai-modal__textarea{min-height:96px;font-size:16px;}' +
       '}';
     document.head.appendChild(style);
-  }
-
-  function buildDraft(prompt, documentTitle) {
-    var topic = prompt ? String(prompt).trim() : '';
-    var title = documentTitle ? String(documentTitle).trim() : '';
-    var intro = title ? ('По задаче «' + title + '».') : 'По задаче.';
-
-    if (!topic) {
-      return intro + ' Подтверждаю получение и беру в работу. Срок и статус обновлю после проверки материалов.';
-    }
-
-    return intro + '\n\n' +
-      'Подготовил ответ по запросу: ' + topic + '.\n' +
-      '1) Проверил входные данные, материалы и требования по задаче.\n' +
-      '2) Выполнил необходимые действия и зафиксировал промежуточный результат.\n' +
-      '3) Готов предоставить дополнительные детали, статусы и подтверждающие материалы по запросу.';
-  }
-
-  function getActiveEditableElement() {
-    var element = document.activeElement;
-    if (!element || element === document.body) {
-      return null;
-    }
-    if (element.isContentEditable) {
-      return element;
-    }
-    if (element.tagName === 'TEXTAREA') {
-      return element;
-    }
-    if (element.tagName === 'INPUT') {
-      var type = String(element.type || '').toLowerCase();
-      if (type === 'text' || type === 'search' || type === 'email' || type === 'url' || type === 'tel' || type === '') {
-        return element;
-      }
-    }
-    return null;
-  }
-
-  function openAiResponseModal(documentTitle) {
-    ensureResponsesStyle();
-    var safeTitle = documentTitle ? String(documentTitle) : '';
-    var fallbackEditable = getActiveEditableElement();
-    var modal = createElement('div', 'documents-ai-modal');
-    var panel = createElement('div', 'documents-ai-modal__panel');
-    var title = createElement('div', 'documents-ai-modal__title', 'Ответ с помощью ИИ');
-    var desc = createElement('div', 'documents-ai-modal__desc', 'Введите запрос, нажмите «Сгенерировать», затем вставьте результат в поле ответа.');
-    var promptField = createElement('div', 'documents-ai-modal__field');
-    var promptLabel = createElement('div', 'documents-ai-modal__label', 'Ваш запрос');
-    var promptInput = createElement('textarea', 'documents-ai-modal__textarea');
-    promptInput.placeholder = 'Например: подготовить вежливый ответ о готовности выполнить задачу';
-    var resultField = createElement('div', 'documents-ai-modal__field');
-    var resultLabel = createElement('div', 'documents-ai-modal__label', 'Сгенерированный текст');
-    var resultInput = createElement('textarea', 'documents-ai-modal__textarea');
-    resultInput.placeholder = 'Здесь появится готовый текст ответа';
-    var actions = createElement('div', 'documents-ai-modal__actions');
-    var generateButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--ghost', 'Сгенерировать');
-    var applyButton = createElement('button', 'documents-ai-modal__button documents-ai-modal__button--primary', 'Использовать текст');
-    var closeButton = createElement('button', 'documents-ai-modal__button', 'Закрыть');
-
-    function closeAiModal() {
-      document.removeEventListener('keydown', handleAiEscape, true);
-      if (modal.parentNode) {
-        modal.parentNode.removeChild(modal);
-      }
-    }
-
-    function handleAiEscape(event) {
-      if (event.key !== 'Escape') {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      closeAiModal();
-    }
-
-    function insertIntoEditable(element, text) {
-      if (!element || !text) {
-        return false;
-      }
-      if (element.isContentEditable) {
-        element.focus({ preventScroll: true });
-        try {
-          var selection = window.getSelection ? window.getSelection() : null;
-          if (selection && selection.rangeCount > 0) {
-            selection.deleteFromDocument();
-            selection.getRangeAt(0).insertNode(document.createTextNode(text));
-          } else {
-            element.textContent = (element.textContent || '') + text;
-          }
-        } catch (error) {
-          element.textContent = text;
-        }
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-        return true;
-      }
-      if (typeof element.value === 'string') {
-        var start = typeof element.selectionStart === 'number' ? element.selectionStart : element.value.length;
-        var end = typeof element.selectionEnd === 'number' ? element.selectionEnd : element.value.length;
-        var nextValue = element.value.slice(0, start) + text + element.value.slice(end);
-        element.value = nextValue;
-        var caret = start + text.length;
-        if (typeof element.setSelectionRange === 'function') {
-          element.setSelectionRange(caret, caret);
-        }
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      }
-      return false;
-    }
-
-    generateButton.type = 'button';
-    generateButton.addEventListener('click', function() {
-      resultInput.value = buildDraft(promptInput.value, safeTitle);
-      resultInput.focus({ preventScroll: true });
-      resultInput.select();
-    });
-
-    applyButton.type = 'button';
-    applyButton.addEventListener('click', function() {
-      var text = String(resultInput.value || '').trim();
-      if (!text) {
-        showMessage('error', 'Сначала сгенерируйте или введите текст ответа.');
-        resultInput.focus({ preventScroll: true });
-        return;
-      }
-      var target = getActiveEditableElement() || fallbackEditable;
-      if (insertIntoEditable(target, text)) {
-        showMessage('success', 'Текст вставлен в активное поле.');
-        closeAiModal();
-        return;
-      }
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        navigator.clipboard.writeText(text)
-          .then(function() {
-            showMessage('success', 'Активное поле не найдено. Текст скопирован в буфер обмена.');
-            closeAiModal();
-          })
-          .catch(function() {
-            showMessage('error', 'Не удалось вставить или скопировать текст. Скопируйте вручную.');
-          });
-        return;
-      }
-      showMessage('error', 'Активное поле не найдено. Буфер обмена недоступен, скопируйте текст вручную.');
-    });
-
-    closeButton.type = 'button';
-    closeButton.addEventListener('click', closeAiModal);
-    modal.addEventListener('click', function(event) {
-      if (event.target === modal) {
-        closeAiModal();
-      }
-    });
-
-    promptField.appendChild(promptLabel);
-    promptField.appendChild(promptInput);
-    resultField.appendChild(resultLabel);
-    resultField.appendChild(resultInput);
-    actions.appendChild(generateButton);
-    actions.appendChild(applyButton);
-    actions.appendChild(closeButton);
-    panel.appendChild(title);
-    panel.appendChild(desc);
-    panel.appendChild(promptField);
-    panel.appendChild(resultField);
-    panel.appendChild(actions);
-    modal.appendChild(panel);
-    document.body.appendChild(modal);
-    document.addEventListener('keydown', handleAiEscape, true);
-    promptInput.focus({ preventScroll: true });
   }
 
   function ensureSearchStyles() {
@@ -7369,6 +7188,68 @@
     }
   }
 
+  function decodeTextAttachmentBuffer(buffer) {
+    if (!buffer) {
+      return '';
+    }
+    var decodeWith = function(encoding) {
+      try {
+        var decoder = new TextDecoder(encoding, { fatal: false });
+        return decoder.decode(buffer);
+      } catch (error) {
+        return '';
+      }
+    };
+    var utf8 = decodeWith('utf-8');
+    var hasReplacement = utf8.indexOf('\uFFFD') !== -1;
+    var windows1251 = decodeWith('windows-1251');
+    var rawText = windows1251 && hasReplacement ? windows1251 : utf8;
+    var normalized = (rawText || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+      .trim();
+    if (!normalized) {
+      return '';
+    }
+    return normalized.length > 12000 ? normalized.slice(0, 12000) : normalized;
+  }
+
+  function buildAttachmentTextPage(pdfDoc, fonts, colors, margin, file, textContent) {
+    var page = pdfDoc.addPage([595.28, 841.89]);
+    drawAttachmentHeader(page, fonts, colors, file, {
+      margin: margin,
+      subtitle: 'TXT-вложение',
+      titlePrefix: 'Вложение'
+    });
+    var size = page.getSize();
+    var width = size.width;
+    var cursorY = size.height - 98;
+    var lineHeight = 13;
+    var fontSize = 11;
+    var maxBottom = 38;
+    var lines = wrapTextForPdf(fonts.regular, textContent || 'Пустой TXT-файл.', width - margin * 2, fontSize);
+    for (var i = 0; i < lines.length; i += 1) {
+      if (cursorY < maxBottom) {
+        page = pdfDoc.addPage([595.28, 841.89]);
+        drawAttachmentHeader(page, fonts, colors, file, {
+          margin: margin,
+          subtitle: 'TXT-вложение (продолжение)',
+          titlePrefix: 'Вложение'
+        });
+        cursorY = page.getSize().height - 98;
+      }
+      drawPdfText(page, lines[i], {
+        x: margin,
+        y: cursorY,
+        size: fontSize,
+        font: fonts.regular,
+        color: colors.value
+      });
+      cursorY -= lineHeight;
+    }
+  }
+
   function drawAttachmentHeader(page, fonts, colors, file, options) {
     var margin = options && options.margin ? options.margin : 40;
     var headerHeight = options && options.headerHeight ? options.headerHeight : 72;
@@ -7463,6 +7344,7 @@
         var isPng = mimeType.indexOf('png') !== -1 || extension === 'png';
         var isJpeg = mimeType.indexOf('jpeg') !== -1 || mimeType.indexOf('jpg') !== -1 || extension === 'jpg' || extension === 'jpeg';
         var isOffice = isOfficeAttachment(file, mimeType);
+        var isTxt = mimeType.indexOf('text/plain') !== -1 || extension === 'txt';
 
         if (isOffice) {
           continue;
@@ -7519,6 +7401,9 @@
             width: scaled.width,
             height: scaled.height
           });
+        } else if (isTxt) {
+          var textContent = decodeTextAttachmentBuffer(buffer);
+          buildAttachmentTextPage(pdfDoc, fonts, colors, margin, file, textContent);
         } else {
           buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file, 'Формат вложения не поддерживается в предпросмотре.', resolvedUrl);
         }
@@ -12431,12 +12316,12 @@
     var currentDoc = findDocumentById(doc.id) || doc;
     var pendingFiles = [];
     var dragCounter = 0;
+    var editingResponse = null;
     var modal = createElement('div', 'documents-responses-modal');
     var panel = createElement('div', 'documents-responses-panel');
     var header = createElement('div', 'documents-responses-header');
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
-    var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -12448,6 +12333,13 @@
     var dropzoneHint = createElement('div', 'documents-responses-dropzone-hint', 'Можно также нажать для выбора, вставить файлы из буфера обмена или перетащить их в это окно.');
     var dropzoneBadge = createElement('div', 'documents-responses-dropzone-badge', 'Drag & Drop • Ctrl+V');
     var hint = createElement('div', 'documents-responses-hint', 'Ответы привязаны к задаче и показываются сразу без перезагрузки страницы.');
+    var messageWrap = createElement('div', 'documents-responses-message');
+    var messageLabel = createElement('label', 'documents-responses-message-label', 'Текстовый ответ (.txt)');
+    var messageCounter = createElement('span', 'documents-responses-message-counter', '0 / 12000');
+    var messageInput = document.createElement('textarea');
+    messageInput.placeholder = 'Напишите комментарий к задаче. Можно сохранить только текст без прикрепления файлов.';
+    messageInput.maxLength = 12000;
+    messageInput.setAttribute('aria-label', 'Текстовый ответ к задаче');
     var tableWrap = createElement('div', 'documents-responses-table-wrap');
     var hiddenInput = document.createElement('input');
     hiddenInput.type = 'file';
@@ -12508,6 +12400,17 @@
       dropzone.classList.toggle('is-dragover', Boolean(active));
     }
 
+    function isTextResponseFile(file) {
+      if (!file || typeof file !== 'object') {
+        return false;
+      }
+      if (file.isTextFile) {
+        return true;
+      }
+      var name = getAttachmentName(file);
+      return /\.txt$/i.test(name || '');
+    }
+
     function renderTable() {
       syncCurrentDoc();
       tableWrap.innerHTML = '';
@@ -12530,15 +12433,23 @@
         var row = createElement('tr', '');
         var nameCell = createElement('td', '');
         var fileBox = createElement('div', 'documents-responses-file');
-        var link = createElement('a', '', getAttachmentName(file));
-        link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.addEventListener('click', function(event) {
-          event.preventDefault();
-          handleAttachmentPreview(currentDoc, file, link);
-        });
-        fileBox.appendChild(link);
+        var isTxtFile = isTextResponseFile(file);
+        var textContent = typeof file.textContent === 'string' ? file.textContent.trim() : '';
+        if (isTxtFile && textContent) {
+          fileBox.appendChild(createElement('div', '', getAttachmentName(file)));
+          var preview = createElement('pre', 'documents-responses-text-preview', textContent);
+          fileBox.appendChild(preview);
+        } else {
+          var link = createElement('a', '', getAttachmentName(file));
+          link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.addEventListener('click', function(event) {
+            event.preventDefault();
+            handleAttachmentPreview(currentDoc, file, link);
+          });
+          fileBox.appendChild(link);
+        }
         var metaParts = [];
         if (file.size) {
           metaParts.push(formatSize(file.size));
@@ -12556,6 +12467,21 @@
         statusCell.appendChild(createElement('span', 'documents-responses-status', 'Загружен'));
         row.appendChild(statusCell);
         var actionCell = createElement('td', '');
+        if (isTxtFile && textContent && canDeleteResponseFile(file)) {
+          var editButton = createElement('button', 'documents-button documents-button--secondary', 'Редактировать txt');
+          editButton.type = 'button';
+          editButton.addEventListener('click', function() {
+            editingResponse = {
+              storedName: file.storedName,
+              originalName: getAttachmentName(file)
+            };
+            messageInput.value = textContent;
+            updateMessageCounter();
+            renderTable();
+            messageInput.focus();
+          });
+          actionCell.appendChild(editButton);
+        }
         if (canDeleteResponseFile(file)) {
           var deleteButton = createElement('button', 'documents-button documents-button--secondary documents-responses-danger', 'Удалить');
           deleteButton.type = 'button';
@@ -12593,6 +12519,9 @@
                 showMessage('error', 'Не удалось удалить ответ: ' + error.message);
               });
           });
+          if (actionCell.childNodes.length) {
+            actionCell.appendChild(document.createTextNode(' '));
+          }
           actionCell.appendChild(deleteButton);
         } else {
           actionCell.textContent = '—';
@@ -12626,12 +12555,85 @@
         tbody.appendChild(row);
       });
 
+      var pendingMessage = normalizeTextInputValue(messageInput.value);
+      if (pendingMessage) {
+        var messageRow = createElement('tr', '');
+        var messageNameCell = createElement('td', '');
+        var messageBox = createElement('div', 'documents-responses-file');
+        messageBox.appendChild(createElement('div', '', 'Ответ-сообщение.txt'));
+        var previewText = pendingMessage.length > 90 ? pendingMessage.slice(0, 90) + '…' : pendingMessage;
+        var messageSize = 0;
+        try {
+          messageSize = new Blob([pendingMessage], { type: 'text/plain;charset=utf-8' }).size;
+        } catch (error) {
+          messageSize = pendingMessage.length;
+        }
+        messageBox.appendChild(createElement('div', 'documents-responses-meta', (formatSize(messageSize) || 'текст') + ' • ' + previewText));
+        messageNameCell.appendChild(messageBox);
+        messageRow.appendChild(messageNameCell);
+        var messageByCell = createElement('td', '', editingResponse ? 'Редактирование txt' : 'Будет сохранён');
+        messageRow.appendChild(messageByCell);
+        var messageStatus = createElement('td', '');
+        messageStatus.appendChild(createElement('span', 'documents-responses-status documents-responses-status--pending', 'Ожидает'));
+        messageRow.appendChild(messageStatus);
+        var messageAction = createElement('td', '');
+        var clearMessageButton = createElement('button', 'documents-button documents-button--secondary documents-responses-danger', 'Очистить');
+        clearMessageButton.type = 'button';
+        clearMessageButton.addEventListener('click', function() {
+          messageInput.value = '';
+          editingResponse = null;
+          updateMessageCounter();
+          renderTable();
+        });
+        messageAction.appendChild(clearMessageButton);
+        messageRow.appendChild(messageAction);
+        tbody.appendChild(messageRow);
+      }
+
       table.appendChild(tbody);
       tableWrap.appendChild(table);
     }
 
+    function updateMessageCounter() {
+      var length = messageInput.value ? messageInput.value.length : 0;
+      messageCounter.textContent = length + ' / 12000';
+    }
+
     function uploadPendingFiles() {
-      if (!pendingFiles.length) {
+      var responseMessage = normalizeTextInputValue(messageInput.value);
+      if (editingResponse && responseMessage && !pendingFiles.length) {
+        saveButton.disabled = true;
+        addButton.disabled = true;
+        closeButton.disabled = true;
+        return fetch(buildApiUrl('response_text_update', { organization: state.organization }), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            action: 'response_text_update',
+            organization: state.organization,
+            documentId: currentDoc.id,
+            storedName: editingResponse.storedName,
+            text: responseMessage
+          })
+        })
+          .then(handleResponse)
+          .then(function(data) {
+            messageInput.value = '';
+            editingResponse = null;
+            updateMessageCounter();
+            updateStateFromPayload(data);
+            syncCurrentDoc();
+            renderTable();
+            showMessage('success', data && data.message ? data.message : 'Текстовый ответ обновлён.');
+          })
+          .finally(function() {
+            saveButton.disabled = false;
+            addButton.disabled = false;
+            closeButton.disabled = false;
+          });
+      }
+      if (!pendingFiles.length && !responseMessage) {
         return refreshRegistrySilently().then(function() {
           syncCurrentDoc();
           renderTable();
@@ -12644,6 +12646,9 @@
       formData.append('action', 'response_upload');
       formData.append('organization', state.organization);
       formData.append('documentId', currentDoc.id);
+      if (responseMessage) {
+        formData.append('responseMessage', responseMessage);
+      }
       pendingFiles.forEach(function(file) {
         formData.append('attachments[]', file);
       });
@@ -12656,6 +12661,9 @@
         .then(handleResponse)
         .then(function(data) {
           pendingFiles = [];
+          messageInput.value = '';
+          editingResponse = null;
+          updateMessageCounter();
           updateStateFromPayload(data);
           syncCurrentDoc();
           renderTable();
@@ -12731,21 +12739,16 @@
       mergePendingFiles(files, 'буфер обмена');
     });
 
+    messageInput.addEventListener('input', function() {
+      updateMessageCounter();
+      renderTable();
+    });
+
     saveButton.type = 'button';
     saveButton.addEventListener('click', function() {
       uploadPendingFiles().catch(function(error) {
         showMessage('error', 'Не удалось сохранить ответы: ' + error.message);
       });
-    });
-
-    aiButton.type = 'button';
-    aiButton.addEventListener('click', function() {
-      var titleParts = [
-        currentDoc && currentDoc.title ? currentDoc.title : '',
-        currentDoc && currentDoc.description ? currentDoc.description : '',
-        currentDoc && currentDoc.registryNumber ? ('№ ' + currentDoc.registryNumber) : ''
-      ].filter(Boolean);
-      openAiResponseModal(titleParts.join(' ').trim());
     });
 
     closeButton.type = 'button';
@@ -12759,7 +12762,6 @@
       }
     });
 
-    headerActions.appendChild(aiButton);
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
@@ -12771,6 +12773,10 @@
     toolbar.appendChild(addButton);
     toolbar.appendChild(dropzone);
     toolbar.appendChild(hint);
+    messageLabel.appendChild(messageCounter);
+    messageWrap.appendChild(messageLabel);
+    messageWrap.appendChild(messageInput);
+    toolbar.appendChild(messageWrap);
     body.appendChild(toolbar);
     body.appendChild(tableWrap);
     panel.appendChild(header);
@@ -12779,6 +12785,7 @@
     modal.appendChild(panel);
     document.body.appendChild(modal);
     renderTable();
+    updateMessageCounter();
     dropzone.focus({ preventScroll: true });
   }
 
