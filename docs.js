@@ -1925,6 +1925,8 @@
       '.documents-responses-status--pending{background:rgba(245,158,11,0.14);color:#b45309;}' +
       '.documents-responses-empty{padding:18px;text-align:center;color:#64748b;font-size:13px;}' +
       '.documents-responses-danger{color:#dc2626;}' +
+      '.documents-responses-actions .documents-button--ai{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));color:#ffffff;border-color:transparent;}' +
+      '.documents-responses-actions .documents-button--ai:hover{filter:brightness(1.03);}' +
       '@media (max-width: 768px){' +
       '.documents-responses-modal{padding:8px;align-items:center;}' +
       '.documents-responses-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
@@ -1937,6 +1939,86 @@
       '.documents-responses-table th,.documents-responses-table td{padding:8px;}' +
       '}';
     document.head.appendChild(style);
+  }
+
+  var aiResponseModalScriptPromise = null;
+
+  function ensureAiResponseModalScript() {
+    if (window.openDocumentsAiResponseModal) {
+      return Promise.resolve(window.openDocumentsAiResponseModal);
+    }
+    if (aiResponseModalScriptPromise) {
+      return aiResponseModalScriptPromise;
+    }
+    aiResponseModalScriptPromise = new Promise(function(resolve, reject) {
+      var version = (window.__ASSET_VERSION__ || Date.now()).toString();
+      var scriptDirectory = '';
+      var scripts = document.getElementsByTagName('script');
+      for (var s = scripts.length - 1; s >= 0; s -= 1) {
+        var source = scripts[s] && scripts[s].src ? String(scripts[s].src) : '';
+        var docsIndex = source.indexOf('/docs.js');
+        if (docsIndex === -1) {
+          docsIndex = source.indexOf('/js/documents/docs.js');
+        }
+        if (docsIndex !== -1) {
+          scriptDirectory = source.slice(0, source.lastIndexOf('/') + 1);
+          break;
+        }
+      }
+
+      var candidates = [
+        '/js/documents/docs-ai-response-modal.js',
+        '/docs-ai-response-modal.js',
+        'docs-ai-response-modal.js',
+        './docs-ai-response-modal.js'
+      ];
+      if (scriptDirectory) {
+        candidates.unshift(scriptDirectory + 'docs-ai-response-modal.js');
+      }
+      var index = 0;
+
+      function loadNext() {
+        if (window.openDocumentsAiResponseModal) {
+          resolve(window.openDocumentsAiResponseModal);
+          return;
+        }
+        if (index >= candidates.length) {
+          aiResponseModalScriptPromise = null;
+          reject(new Error('Не удалось загрузить модуль ИИ-ответа. Проверьте путь к docs-ai-response-modal.js.'));
+          return;
+        }
+        var src = candidates[index] + '?v=' + encodeURIComponent(version);
+        index += 1;
+        var script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = function() {
+          if (window.openDocumentsAiResponseModal) {
+            resolve(window.openDocumentsAiResponseModal);
+            return;
+          }
+          loadNext();
+        };
+        script.onerror = function() {
+          loadNext();
+        };
+        document.head.appendChild(script);
+      }
+
+      loadNext();
+    });
+    return aiResponseModalScriptPromise;
+  }
+
+  function openAiResponseModal(config) {
+    var options = config && typeof config === 'object' ? config : {};
+    ensureAiResponseModalScript()
+      .then(function(openModal) {
+        openModal(options);
+      })
+      .catch(function(error) {
+        showMessage('error', error && error.message ? error.message : 'Не удалось открыть окно ИИ-ответа.');
+      });
   }
 
   function ensureSearchStyles() {
@@ -12322,6 +12404,7 @@
     var header = createElement('div', 'documents-responses-header');
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
+    var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -12751,6 +12834,38 @@
       });
     });
 
+    aiButton.type = 'button';
+    aiButton.addEventListener('click', function() {
+      var uploadedResponses = currentDoc && Array.isArray(currentDoc.responses)
+        ? currentDoc.responses.map(function(file) {
+          return {
+            name: getAttachmentName(file),
+            size: file && file.size ? file.size : 0,
+            uploadedBy: file && file.uploadedBy ? String(file.uploadedBy) : '',
+            uploadedAt: file && file.uploadedAt ? String(file.uploadedAt) : '',
+            isTextFile: Boolean(file && file.isTextFile)
+          };
+        })
+        : [];
+      openAiResponseModal({
+        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
+        showMessage: showMessage,
+        documentData: currentDoc || doc || {},
+        documentTitle: currentDoc && currentDoc.title ? String(currentDoc.title) : '',
+        pendingFiles: pendingFiles.slice(),
+        context: {
+          organization: state.organization || '',
+          documentId: currentDoc && currentDoc.id ? currentDoc.id : doc.id,
+          registryNumber: currentDoc && currentDoc.registryNumber ? String(currentDoc.registryNumber) : '',
+          description: currentDoc && currentDoc.description ? String(currentDoc.description) : '',
+          status: currentDoc && currentDoc.status ? String(currentDoc.status) : '',
+          pendingFilesCount: pendingFiles.length,
+          uploadedResponsesCount: uploadedResponses.length,
+          uploadedResponses: uploadedResponses
+        }
+      });
+    });
+
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
       closeModal(modal);
@@ -12762,6 +12877,7 @@
       }
     });
 
+    headerActions.appendChild(aiButton);
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
