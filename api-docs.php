@@ -216,10 +216,15 @@ function buildLocalFallback(string $documentTitle, string $prompt, array $contex
       . 'По запросу о ' . $topic . ' предоставим уточнённый статус и сроки после проверки данных.';
     $aggressive = 'По ' . $title . $orgPart . ' уведомляем: материалы приняты к исполнению в приоритетном порядке. '
       . 'По запросу о ' . $topic . ' ответ будет предоставлен в максимально короткий срок.';
+    $style = isset($context['selectedTone']) && is_string($context['selectedTone'])
+        ? trim($context['selectedTone'])
+        : 'neutral';
+    $response = $style === 'aggressive' ? $aggressive : $neutral;
 
     return [
         'ok' => true,
         'analysis' => $analysis,
+        'response' => $response,
         'neutral' => $neutral,
         'aggressive' => $aggressive,
         'fallback' => true
@@ -257,7 +262,8 @@ $files = array_merge($attachments, $singleAttachment);
 
 $filesSummary = buildFilesSummary($files);
 
-$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, neutral, aggressive. Тексты ясные и короткие.";
+$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
+  . "Стиль ответа бери из context.selectedTone (neutral или aggressive). Пиши коротко и по делу.";
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -329,11 +335,26 @@ $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 $parsed = parseAiJson($content);
 
 $analysis = trim((string)($parsed['analysis'] ?? ''));
+$response = trim((string)($parsed['response'] ?? ''));
 $neutral = trim((string)($parsed['neutral'] ?? ''));
 $aggressive = trim((string)($parsed['aggressive'] ?? ''));
 
-if ($analysis === '' && $neutral === '' && $aggressive === '') {
+if ($response === '') {
+    $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
+        ? trim($context['selectedTone'])
+        : 'neutral';
+    if ($selectedTone === 'aggressive' && $aggressive !== '') {
+        $response = $aggressive;
+    } elseif ($neutral !== '') {
+        $response = $neutral;
+    } elseif ($aggressive !== '') {
+        $response = $aggressive;
+    }
+}
+
+if ($analysis === '' && $response === '' && $neutral === '' && $aggressive === '') {
     $analysis = 'ИИ вернул ответ в свободной форме.';
+    $response = $content;
     $neutral = $content;
     $aggressive = $content;
 }
@@ -341,6 +362,7 @@ if ($analysis === '' && $neutral === '' && $aggressive === '') {
 jsonResponse(200, [
     'ok' => true,
     'analysis' => $analysis,
+    'response' => $response,
     'neutral' => $neutral,
     'aggressive' => $aggressive,
 ]);

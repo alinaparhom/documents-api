@@ -303,7 +303,7 @@
     var header = createElement('div', 'documents-ai-modal__header');
     var headText = createElement('div', '');
     var title = createElement('div', 'documents-ai-modal__title', 'Ответ с помощью ИИ');
-    var desc = createElement('div', 'documents-ai-modal__desc', 'Загрузите файл, получите анализ и два варианта ответа. Затем выберите стиль, отредактируйте и распечатайте как PDF.');
+    var desc = createElement('div', 'documents-ai-modal__desc', 'Файл из строки подтянется автоматически. ИИ подготовит аналитику и один ответ в выбранном стиле. Текст можно править перед PDF.');
     var closeButton = createElement('button', 'documents-ai-modal__close', '×');
 
     var grid = createElement('div', 'documents-ai-modal__grid');
@@ -323,20 +323,20 @@
     var linkedFilesHint = createElement('div', 'documents-ai-modal__hint', preloadedFiles.length
       ? ('Из окна ответа передано файлов: ' + preloadedFiles.length + ' (' + preloadedFiles.map(function(file) { return file.name; }).join(', ') + ').')
       : 'Из окна ответа файлы пока не переданы. Можно выбрать файлы вручную.');
+    var linkedRemoteFiles = Array.isArray(config.linkedFiles) ? config.linkedFiles.filter(Boolean) : [];
+    var remoteFilesHint = createElement('div', 'documents-ai-modal__hint', linkedRemoteFiles.length
+      ? ('Из строки задачи будет автоматически загружено файлов: ' + linkedRemoteFiles.length + '.')
+      : 'Файлы из строки задачи не найдены.');
 
     var promptLabel = createElement('div', 'documents-ai-modal__label', 'Уточняющий запрос');
     var promptInput = createElement('textarea', 'documents-ai-modal__textarea');
     promptInput.placeholder = 'Например: сделай формулировку строже и короче';
 
-    var neutralLabel = createElement('div', 'documents-ai-modal__label', 'Вариант 1 — нейтральный');
-    var neutralInput = createElement('textarea', 'documents-ai-modal__textarea');
-    neutralInput.placeholder = 'Здесь появится нейтральный вариант';
+    var responseLabel = createElement('div', 'documents-ai-modal__label', 'Ответ ИИ (редактируемый)');
+    var responseInput = createElement('textarea', 'documents-ai-modal__textarea');
+    responseInput.placeholder = 'Здесь появится готовый ответ в выбранном стиле';
 
-    var aggressiveLabel = createElement('div', 'documents-ai-modal__label', 'Вариант 2 — агрессивный');
-    var aggressiveInput = createElement('textarea', 'documents-ai-modal__textarea');
-    aggressiveInput.placeholder = 'Здесь появится агрессивный вариант';
-
-    var toneLabel = createElement('div', 'documents-ai-modal__label', 'Какой вариант накладывать на шаблон');
+    var toneLabel = createElement('div', 'documents-ai-modal__label', 'Стиль ответа ИИ');
     var toneSelect = createElement('select', 'documents-ai-modal__select');
     toneSelect.innerHTML = '<option value="neutral">Нейтральный</option><option value="aggressive">Агрессивный</option>';
 
@@ -374,10 +374,7 @@
     }
 
     function getSelectedText() {
-      if (toneSelect.value === 'aggressive') {
-        return String(aggressiveInput.value || '').trim();
-      }
-      return String(neutralInput.value || '').trim();
+      return String(responseInput.value || '').trim();
     }
 
     function showStatus(text, isError) {
@@ -392,52 +389,90 @@
       preview.innerHTML = renderLetterMarkup(getSelectedText(), titleInput.value, toneSelect.value);
     }
 
+    function fetchRemoteFiles(files) {
+      var list = Array.isArray(files) ? files.filter(Boolean) : [];
+      if (!list.length) {
+        return Promise.resolve([]);
+      }
+      return Promise.all(list.map(function(meta, index) {
+        if (!meta || !meta.url) {
+          return Promise.resolve(null);
+        }
+        return fetch(meta.url, { credentials: 'same-origin' })
+          .then(function(response) {
+            if (!response || !response.ok) {
+              return null;
+            }
+            return response.blob();
+          })
+          .then(function(blob) {
+            if (!blob) {
+              return null;
+            }
+            var filename = meta.name || ('attachment-' + (index + 1));
+            var fileType = blob.type || meta.type || 'application/octet-stream';
+            return new File([blob], filename, { type: fileType });
+          })
+          .catch(function() {
+            return null;
+          });
+      })).then(function(items) {
+        return items.filter(Boolean);
+      });
+    }
+
     analyzeButton.type = 'button';
     analyzeButton.addEventListener('click', function() {
-      var selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
-      var filesForAnalysis = selectedFiles.length ? selectedFiles : preloadedFiles;
-      var validation = validateFilesForRequest(filesForAnalysis);
-      if (!validation.ok) {
-        showStatus(validation.message, true);
-        return;
-      }
-      filesForAnalysis = validation.files;
-      var selectedFile = filesForAnalysis.length ? filesForAnalysis[0] : null;
       analyzeButton.disabled = true;
-      showStatus('Идёт обработка файла(ов) и генерация вариантов ответа…', false);
+      showStatus('Идёт обработка файла(ов) и генерация ответа…', false);
 
-      callAiApi({
-        apiUrl: config.apiUrl,
-        file: selectedFile,
-        files: filesForAnalysis,
-        prompt: promptInput.value,
-        documentTitle: titleInput.value,
-        context: {
-          document: toPlainObject(documentData, 0),
-          requestContext: toPlainObject(contextData, 0),
-          filesFromResponseModal: filesForAnalysis.map(function(file) {
-            return { name: file.name || '', size: file.size || 0, type: file.type || '' };
-          }),
-          selectedTone: toneSelect.value
-        }
-      })
+      var selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
+      var baseFiles = selectedFiles.length ? selectedFiles : preloadedFiles;
+
+      fetchRemoteFiles(linkedRemoteFiles)
+        .then(function(remoteFiles) {
+          var filesForAnalysis = baseFiles.concat(remoteFiles);
+          var validation = validateFilesForRequest(filesForAnalysis);
+          if (!validation.ok) {
+            throw new Error(validation.message);
+          }
+          filesForAnalysis = validation.files;
+          var selectedFile = filesForAnalysis.length ? filesForAnalysis[0] : null;
+          return callAiApi({
+            apiUrl: config.apiUrl,
+            file: selectedFile,
+            files: filesForAnalysis,
+            prompt: promptInput.value,
+            documentTitle: titleInput.value,
+            context: {
+              document: toPlainObject(documentData, 0),
+              requestContext: toPlainObject(contextData, 0),
+              linkedFiles: toPlainObject(linkedRemoteFiles, 0),
+              filesFromResponseModal: filesForAnalysis.map(function(file) {
+                return { name: file.name || '', size: file.size || 0, type: file.type || '' };
+              }),
+              selectedTone: toneSelect.value
+            }
+          });
+        })
         .then(function(data) {
           var serverAnalysis = data && data.analysis ? String(data.analysis) : '';
+          var serverResponse = data && data.response ? String(data.response) : '';
           var serverNeutral = data && data.neutral ? String(data.neutral) : '';
           var serverAggressive = data && data.aggressive ? String(data.aggressive) : '';
           var local = buildDraftPair(promptInput.value, titleInput.value, serverAnalysis);
 
           analysis.value = serverAnalysis || local.analysis;
-          neutralInput.value = serverNeutral || local.neutral;
-          aggressiveInput.value = serverAggressive || local.aggressive;
+          responseInput.value = serverResponse
+            || (toneSelect.value === 'aggressive' ? serverAggressive : serverNeutral)
+            || (toneSelect.value === 'aggressive' ? local.aggressive : local.neutral);
           renderPreview();
-          showStatus('Готово: анализ получен, 2 варианта ответа сформированы.', false);
+          showStatus('Готово: анализ получен, ответ сформирован.', false);
         })
         .catch(function(error) {
           var fallback = buildDraftPair(promptInput.value, titleInput.value, 'Сервер ИИ недоступен, применён локальный шаблон.');
           analysis.value = fallback.analysis;
-          neutralInput.value = fallback.neutral;
-          aggressiveInput.value = fallback.aggressive;
+          responseInput.value = toneSelect.value === 'aggressive' ? fallback.aggressive : fallback.neutral;
           renderPreview();
           showStatus('Не удалось получить ответ ИИ (' + (error && error.message ? error.message : 'ошибка') + '). Использован локальный шаблон.', true);
         })
@@ -494,6 +529,8 @@
     });
 
     toneSelect.addEventListener('change', renderPreview);
+    responseInput.addEventListener('input', renderPreview);
+    titleInput.addEventListener('input', renderPreview);
     closeButton.type = 'button';
     closeButton.addEventListener('click', closeModal);
     closeActionButton.type = 'button';
@@ -515,6 +552,7 @@
     leftCard.appendChild(fileLabel);
     leftCard.appendChild(fileInput);
     leftCard.appendChild(linkedFilesHint);
+    leftCard.appendChild(remoteFilesHint);
     leftCard.appendChild(promptLabel);
     leftCard.appendChild(promptInput);
     leftCard.appendChild(actionsTop);
@@ -526,10 +564,8 @@
 
     rightCard.appendChild(createElement('div', 'documents-ai-modal__label', 'Аналитический ответ'));
     rightCard.appendChild(analysis);
-    rightCard.appendChild(neutralLabel);
-    rightCard.appendChild(neutralInput);
-    rightCard.appendChild(aggressiveLabel);
-    rightCard.appendChild(aggressiveInput);
+    rightCard.appendChild(responseLabel);
+    rightCard.appendChild(responseInput);
     rightCard.appendChild(toneLabel);
     rightCard.appendChild(toneSelect);
     rightCard.appendChild(previewTitle);
