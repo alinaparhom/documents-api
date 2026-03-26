@@ -1,6 +1,8 @@
 (function() {
   var STYLE_ID = 'documents-ai-response-style';
   var ROOT_CLASS = 'documents-ai-modal';
+  var MAX_FILES_PER_REQUEST = 8;
+  var MAX_TOTAL_FILE_SIZE = 20 * 1024 * 1024;
 
   function createElement(tag, className, text) {
     var element = document.createElement(tag);
@@ -136,7 +138,8 @@
       '</div>';
   }
 
-  function toPlainObject(value, depth) {
+  function toPlainObject(value, depth, seen) {
+    var stack = Array.isArray(seen) ? seen : [];
     if (depth > 3) {
       return '[max-depth]';
     }
@@ -152,18 +155,23 @@
     }
     if (Array.isArray(value)) {
       return value.map(function(item) {
-        return toPlainObject(item, depth + 1);
+        return toPlainObject(item, depth + 1, stack);
       });
     }
     if (typeof value === 'object') {
+      if (stack.indexOf(value) !== -1) {
+        return '[circular]';
+      }
+      stack.push(value);
       var result = {};
       Object.keys(value).forEach(function(key) {
         var item = value[key];
         if (typeof item === 'function') {
           return;
         }
-        result[key] = toPlainObject(item, depth + 1);
+        result[key] = toPlainObject(item, depth + 1, stack);
       });
+      stack.pop();
       return result;
     }
     return value;
@@ -176,6 +184,31 @@
     return files.filter(function(file) {
       return typeof File !== 'undefined' && file instanceof File;
     });
+  }
+
+  function validateFilesForRequest(files) {
+    var normalized = normalizeFilesList(files);
+    if (!normalized.length) {
+      return { ok: true, files: normalized, message: '' };
+    }
+    if (normalized.length > MAX_FILES_PER_REQUEST) {
+      return {
+        ok: false,
+        files: normalized,
+        message: 'Слишком много файлов. Максимум: ' + MAX_FILES_PER_REQUEST + '.'
+      };
+    }
+    var totalSize = normalized.reduce(function(sum, file) {
+      return sum + (file && file.size ? file.size : 0);
+    }, 0);
+    if (totalSize > MAX_TOTAL_FILE_SIZE) {
+      return {
+        ok: false,
+        files: normalized,
+        message: 'Файлы слишком большие. Лимит: 20 МБ на запрос.'
+      };
+    }
+    return { ok: true, files: normalized, message: '' };
   }
 
   function parseJsonSafely(raw, fallback) {
@@ -363,9 +396,15 @@
     analyzeButton.addEventListener('click', function() {
       var selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
       var filesForAnalysis = selectedFiles.length ? selectedFiles : preloadedFiles;
+      var validation = validateFilesForRequest(filesForAnalysis);
+      if (!validation.ok) {
+        showStatus(validation.message, true);
+        return;
+      }
+      filesForAnalysis = validation.files;
       var selectedFile = filesForAnalysis.length ? filesForAnalysis[0] : null;
       analyzeButton.disabled = true;
-      showStatus('Идёт обработка файла и генерация вариантов ответа…', false);
+      showStatus('Идёт обработка файла(ов) и генерация вариантов ответа…', false);
 
       callAiApi({
         apiUrl: config.apiUrl,

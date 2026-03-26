@@ -11,15 +11,43 @@ function jsonResponse(int $status, array $payload): void
     exit;
 }
 
+function logApiDocs(string $level, string $message, array $context = []): void
+{
+    $directory = __DIR__ . '/app/logs';
+    if (!is_dir($directory)) {
+        @mkdir($directory, 0775, true);
+    }
+    $record = [
+        'time' => gmdate('c'),
+        'level' => $level,
+        'message' => $message,
+        'context' => $context,
+    ];
+    @file_put_contents(
+        $directory . '/api-docs.log',
+        json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL,
+        FILE_APPEND
+    );
+}
+
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+if ($method === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
 if ($method === 'GET') {
+    $isPing = isset($_GET['ping']) && (string)$_GET['ping'] === '1';
     jsonResponse(200, [
         'ok' => true,
-        'message' => 'API доступен. Используйте POST для action=ai_response_analyze.',
-        'endpoint' => '/js/documents/api-docs.php'
+        'message' => $isPing
+            ? 'pong'
+            : 'API доступен. Используйте POST для action=ai_response_analyze.',
+        'endpoint' => '/js/documents/api-docs.php',
+        'method' => 'POST'
     ]);
 }
 if ($method !== 'POST') {
+    logApiDocs('warn', 'Unsupported HTTP method', ['method' => $method]);
     jsonResponse(405, ['ok' => false, 'error' => 'Method Not Allowed']);
 }
 
@@ -168,6 +196,12 @@ if ($apiKey === '') {
 $prompt = trim((string)($_POST['prompt'] ?? ''));
 $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 $context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
+$action = trim((string)($_POST['action'] ?? ''));
+
+if ($action !== '' && $action !== 'ai_response_analyze') {
+    logApiDocs('warn', 'Invalid action', ['action' => $action]);
+    jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
 
 $attachments = normalizeUploadedFiles('attachments');
 $singleAttachment = normalizeUploadedFiles('attachment');
@@ -219,11 +253,13 @@ $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
 
 if ($responseBody === false) {
+    logApiDocs('error', 'AI request failed', ['curlError' => $curlError]);
     jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError]);
 }
 
 $responseJson = json_decode($responseBody, true);
 if (!is_array($responseJson)) {
+    logApiDocs('error', 'AI API returned non-JSON', ['response' => mb_substr($responseBody, 0, 500)]);
     jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API']);
 }
 
@@ -232,6 +268,7 @@ if ($statusCode >= 400) {
     if (isset($responseJson['error']['message']) && is_string($responseJson['error']['message'])) {
         $message = $responseJson['error']['message'];
     }
+    logApiDocs('error', 'AI API HTTP error', ['status' => $statusCode, 'message' => $message]);
     jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
 }
 
