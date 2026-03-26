@@ -1,6 +1,8 @@
 (function() {
   var STYLE_ID = 'documents-ai-response-style';
   var ROOT_CLASS = 'documents-ai-modal';
+  var MAX_FILES_PER_REQUEST = 8;
+  var MAX_TOTAL_FILE_SIZE = 20 * 1024 * 1024;
 
   function createElement(tag, className, text) {
     var element = document.createElement(tag);
@@ -136,14 +138,139 @@
       '</div>';
   }
 
+  function toPlainObject(value, depth, seen) {
+    var stack = Array.isArray(seen) ? seen : [];
+    if (depth > 3) {
+      return '[max-depth]';
+    }
+    if (value === null || value === undefined) {
+      return value;
+    }
+    if (typeof File !== 'undefined' && value instanceof File) {
+      return {
+        name: value.name || '',
+        size: value.size || 0,
+        type: value.type || ''
+      };
+    }
+    if (Array.isArray(value)) {
+      return value.map(function(item) {
+        return toPlainObject(item, depth + 1, stack);
+      });
+    }
+    if (typeof value === 'object') {
+      if (stack.indexOf(value) !== -1) {
+        return '[circular]';
+      }
+      stack.push(value);
+      var result = {};
+      Object.keys(value).forEach(function(key) {
+        var item = value[key];
+        if (typeof item === 'function') {
+          return;
+        }
+        result[key] = toPlainObject(item, depth + 1, stack);
+      });
+      stack.pop();
+      return result;
+    }
+    return value;
+  }
+
+  function normalizeFilesList(files) {
+    if (!Array.isArray(files)) {
+      return [];
+    }
+    return files.filter(function(file) {
+      return typeof File !== 'undefined' && file instanceof File;
+    });
+  }
+
+  function validateFilesForRequest(files) {
+    var normalized = normalizeFilesList(files);
+    if (!normalized.length) {
+      return { ok: true, files: normalized, message: '' };
+    }
+    if (normalized.length > MAX_FILES_PER_REQUEST) {
+      return {
+        ok: false,
+        files: normalized,
+        message: 'Слишком много файлов. Максимум: ' + MAX_FILES_PER_REQUEST + '.'
+      };
+    }
+    var totalSize = normalized.reduce(function(sum, file) {
+      return sum + (file && file.size ? file.size : 0);
+    }, 0);
+    if (totalSize > MAX_TOTAL_FILE_SIZE) {
+      return {
+        ok: false,
+        files: normalized,
+        message: 'Файлы слишком большие. Лимит: 20 МБ на запрос.'
+      };
+    }
+    return { ok: true, files: normalized, message: '' };
+  }
+
+  function parseJsonSafely(raw, fallback) {
+    if (!raw) {
+      return fallback;
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      return fallback;
+    }
+  }
+
+  function collectFilesBySelector(selector) {
+    if (!selector) {
+      return [];
+    }
+    var input = document.querySelector(selector);
+    if (!input || !input.files) {
+      return [];
+    }
+    return normalizeFilesList(Array.from(input.files));
+  }
+
+  function collectOptionsFromTrigger(trigger) {
+    var button = trigger || null;
+    var data = button && button.dataset ? button.dataset : {};
+    var contextFromData = parseJsonSafely(data.documentsAiContext, {});
+    var documentFromData = parseJsonSafely(data.documentsAiDocument, {});
+    var files = collectFilesBySelector(data.documentsAiFilesSelector || '');
+    var title = data.documentsAiTitle || '';
+    var apiUrl = data.documentsAiApiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+    return {
+      apiUrl: apiUrl,
+      documentTitle: title,
+      documentData: documentFromData,
+      context: contextFromData,
+      pendingFiles: files
+    };
+  }
+
   function callAiApi(options) {
-    var apiUrl = options.apiUrl || 'docs.php';
+    var apiUrl = options.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
     var formData = new FormData();
     formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', options.documentTitle || '');
     formData.append('prompt', options.prompt || '');
-    if (options.file) {
+    var files = normalizeFilesList(options.files);
+    if (files.length) {
+      files.forEach(function(file) {
+        formData.append('attachments[]', file);
+      });
+      formData.append('attachment', files[0]);
+    } else if (options.file) {
       formData.append('attachment', options.file);
+    }
+    if (options.context) {
+      try {
+        formData.append('context', JSON.stringify(toPlainObject(options.context, 0)));
+      } catch (error) {
+        formData.append('context', '{}');
+      }
     }
 
     return fetch(apiUrl + '?action=ai_response_analyze', {
@@ -159,16 +286,24 @@
       });
   }
 
-  window.openDocumentsAiResponseModal = function(options) {
+  function openDocumentsAiResponseModal(options) {
     ensureStyle();
     var config = options || {};
-    var defaultTitle = config.documentTitle ? String(config.documentTitle) : '';
+    var documentData = config.documentData && typeof config.documentData === 'object' ? config.documentData : {};
+    var contextData = config.context && typeof config.context === 'object' ? config.context : {};
+    var preloadedFiles = normalizeFilesList(config.pendingFiles);
+    var defaultTitle = config.documentTitle
+      ? String(config.documentTitle)
+      : [documentData.title, documentData.description, documentData.registryNumber ? ('№ ' + documentData.registryNumber) : '']
+        .filter(Boolean)
+        .join(' ')
+        .trim();
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'documents-ai-modal__panel');
     var header = createElement('div', 'documents-ai-modal__header');
     var headText = createElement('div', '');
     var title = createElement('div', 'documents-ai-modal__title', 'Ответ с помощью ИИ');
-    var desc = createElement('div', 'documents-ai-modal__desc', 'Загрузите файл, получите анализ и два варианта ответа. Затем выберите стиль, отредактируйте и распечатайте как PDF.');
+    var desc = createElement('div', 'documents-ai-modal__desc', 'Файл из строки подтянется автоматически. ИИ подготовит аналитику и один ответ в выбранном стиле. Текст можно править перед PDF.');
     var closeButton = createElement('button', 'documents-ai-modal__close', '×');
 
     var grid = createElement('div', 'documents-ai-modal__grid');
@@ -180,24 +315,28 @@
     titleInput.value = defaultTitle;
     titleInput.placeholder = 'Например: Согласование договора';
 
-    var fileLabel = createElement('div', 'documents-ai-modal__label', 'Файл для анализа (PDF, DOCX, TXT, изображение)');
+    var fileLabel = createElement('div', 'documents-ai-modal__label', 'Файлы для анализа (PDF, DOCX, TXT, изображение)');
     var fileInput = createElement('input', 'documents-ai-modal__input');
     fileInput.type = 'file';
+    fileInput.multiple = true;
     fileInput.accept = '.pdf,.doc,.docx,.txt,image/*';
+    var linkedFilesHint = createElement('div', 'documents-ai-modal__hint', preloadedFiles.length
+      ? ('Из окна ответа передано файлов: ' + preloadedFiles.length + ' (' + preloadedFiles.map(function(file) { return file.name; }).join(', ') + ').')
+      : 'Из окна ответа файлы пока не переданы. Можно выбрать файлы вручную.');
+    var linkedRemoteFiles = Array.isArray(config.linkedFiles) ? config.linkedFiles.filter(Boolean) : [];
+    var remoteFilesHint = createElement('div', 'documents-ai-modal__hint', linkedRemoteFiles.length
+      ? ('Из строки задачи будет автоматически загружено файлов: ' + linkedRemoteFiles.length + '.')
+      : 'Файлы из строки задачи не найдены.');
 
     var promptLabel = createElement('div', 'documents-ai-modal__label', 'Уточняющий запрос');
     var promptInput = createElement('textarea', 'documents-ai-modal__textarea');
     promptInput.placeholder = 'Например: сделай формулировку строже и короче';
 
-    var neutralLabel = createElement('div', 'documents-ai-modal__label', 'Вариант 1 — нейтральный');
-    var neutralInput = createElement('textarea', 'documents-ai-modal__textarea');
-    neutralInput.placeholder = 'Здесь появится нейтральный вариант';
+    var responseLabel = createElement('div', 'documents-ai-modal__label', 'Ответ ИИ (редактируемый)');
+    var responseInput = createElement('textarea', 'documents-ai-modal__textarea');
+    responseInput.placeholder = 'Здесь появится готовый ответ в выбранном стиле';
 
-    var aggressiveLabel = createElement('div', 'documents-ai-modal__label', 'Вариант 2 — агрессивный');
-    var aggressiveInput = createElement('textarea', 'documents-ai-modal__textarea');
-    aggressiveInput.placeholder = 'Здесь появится агрессивный вариант';
-
-    var toneLabel = createElement('div', 'documents-ai-modal__label', 'Какой вариант накладывать на шаблон');
+    var toneLabel = createElement('div', 'documents-ai-modal__label', 'Стиль ответа ИИ');
     var toneSelect = createElement('select', 'documents-ai-modal__select');
     toneSelect.innerHTML = '<option value="neutral">Нейтральный</option><option value="aggressive">Агрессивный</option>';
 
@@ -235,10 +374,7 @@
     }
 
     function getSelectedText() {
-      if (toneSelect.value === 'aggressive') {
-        return String(aggressiveInput.value || '').trim();
-      }
-      return String(neutralInput.value || '').trim();
+      return String(responseInput.value || '').trim();
     }
 
     function showStatus(text, isError) {
@@ -253,35 +389,90 @@
       preview.innerHTML = renderLetterMarkup(getSelectedText(), titleInput.value, toneSelect.value);
     }
 
+    function fetchRemoteFiles(files) {
+      var list = Array.isArray(files) ? files.filter(Boolean) : [];
+      if (!list.length) {
+        return Promise.resolve([]);
+      }
+      return Promise.all(list.map(function(meta, index) {
+        if (!meta || !meta.url) {
+          return Promise.resolve(null);
+        }
+        return fetch(meta.url, { credentials: 'same-origin' })
+          .then(function(response) {
+            if (!response || !response.ok) {
+              return null;
+            }
+            return response.blob();
+          })
+          .then(function(blob) {
+            if (!blob) {
+              return null;
+            }
+            var filename = meta.name || ('attachment-' + (index + 1));
+            var fileType = blob.type || meta.type || 'application/octet-stream';
+            return new File([blob], filename, { type: fileType });
+          })
+          .catch(function() {
+            return null;
+          });
+      })).then(function(items) {
+        return items.filter(Boolean);
+      });
+    }
+
     analyzeButton.type = 'button';
     analyzeButton.addEventListener('click', function() {
-      var selectedFile = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
       analyzeButton.disabled = true;
-      showStatus('Идёт обработка файла и генерация вариантов ответа…', false);
+      showStatus('Идёт обработка файла(ов) и генерация ответа…', false);
 
-      callAiApi({
-        apiUrl: config.apiUrl,
-        file: selectedFile,
-        prompt: promptInput.value,
-        documentTitle: titleInput.value
-      })
+      var selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
+      var baseFiles = selectedFiles.length ? selectedFiles : preloadedFiles;
+
+      fetchRemoteFiles(linkedRemoteFiles)
+        .then(function(remoteFiles) {
+          var filesForAnalysis = baseFiles.concat(remoteFiles);
+          var validation = validateFilesForRequest(filesForAnalysis);
+          if (!validation.ok) {
+            throw new Error(validation.message);
+          }
+          filesForAnalysis = validation.files;
+          var selectedFile = filesForAnalysis.length ? filesForAnalysis[0] : null;
+          return callAiApi({
+            apiUrl: config.apiUrl,
+            file: selectedFile,
+            files: filesForAnalysis,
+            prompt: promptInput.value,
+            documentTitle: titleInput.value,
+            context: {
+              document: toPlainObject(documentData, 0),
+              requestContext: toPlainObject(contextData, 0),
+              linkedFiles: toPlainObject(linkedRemoteFiles, 0),
+              filesFromResponseModal: filesForAnalysis.map(function(file) {
+                return { name: file.name || '', size: file.size || 0, type: file.type || '' };
+              }),
+              selectedTone: toneSelect.value
+            }
+          });
+        })
         .then(function(data) {
           var serverAnalysis = data && data.analysis ? String(data.analysis) : '';
+          var serverResponse = data && data.response ? String(data.response) : '';
           var serverNeutral = data && data.neutral ? String(data.neutral) : '';
           var serverAggressive = data && data.aggressive ? String(data.aggressive) : '';
           var local = buildDraftPair(promptInput.value, titleInput.value, serverAnalysis);
 
           analysis.value = serverAnalysis || local.analysis;
-          neutralInput.value = serverNeutral || local.neutral;
-          aggressiveInput.value = serverAggressive || local.aggressive;
+          responseInput.value = serverResponse
+            || (toneSelect.value === 'aggressive' ? serverAggressive : serverNeutral)
+            || (toneSelect.value === 'aggressive' ? local.aggressive : local.neutral);
           renderPreview();
-          showStatus('Готово: анализ получен, 2 варианта ответа сформированы.', false);
+          showStatus('Готово: анализ получен, ответ сформирован.', false);
         })
         .catch(function(error) {
           var fallback = buildDraftPair(promptInput.value, titleInput.value, 'Сервер ИИ недоступен, применён локальный шаблон.');
           analysis.value = fallback.analysis;
-          neutralInput.value = fallback.neutral;
-          aggressiveInput.value = fallback.aggressive;
+          responseInput.value = toneSelect.value === 'aggressive' ? fallback.aggressive : fallback.neutral;
           renderPreview();
           showStatus('Не удалось получить ответ ИИ (' + (error && error.message ? error.message : 'ошибка') + '). Использован локальный шаблон.', true);
         })
@@ -338,6 +529,8 @@
     });
 
     toneSelect.addEventListener('change', renderPreview);
+    responseInput.addEventListener('input', renderPreview);
+    titleInput.addEventListener('input', renderPreview);
     closeButton.type = 'button';
     closeButton.addEventListener('click', closeModal);
     closeActionButton.type = 'button';
@@ -358,6 +551,8 @@
     leftCard.appendChild(titleInput);
     leftCard.appendChild(fileLabel);
     leftCard.appendChild(fileInput);
+    leftCard.appendChild(linkedFilesHint);
+    leftCard.appendChild(remoteFilesHint);
     leftCard.appendChild(promptLabel);
     leftCard.appendChild(promptInput);
     leftCard.appendChild(actionsTop);
@@ -369,10 +564,8 @@
 
     rightCard.appendChild(createElement('div', 'documents-ai-modal__label', 'Аналитический ответ'));
     rightCard.appendChild(analysis);
-    rightCard.appendChild(neutralLabel);
-    rightCard.appendChild(neutralInput);
-    rightCard.appendChild(aggressiveLabel);
-    rightCard.appendChild(aggressiveInput);
+    rightCard.appendChild(responseLabel);
+    rightCard.appendChild(responseInput);
     rightCard.appendChild(toneLabel);
     rightCard.appendChild(toneSelect);
     rightCard.appendChild(previewTitle);
@@ -392,5 +585,37 @@
 
     renderPreview();
     titleInput.focus({ preventScroll: true });
+  }
+
+  function bindAiTrigger(trigger) {
+    if (!trigger || trigger.__documentsAiBound) {
+      return;
+    }
+    trigger.__documentsAiBound = true;
+    trigger.addEventListener('click', function(event) {
+      event.preventDefault();
+      var options = collectOptionsFromTrigger(trigger);
+      openDocumentsAiResponseModal(options);
+    });
+  }
+
+  function autoBindAiTriggers() {
+    var triggers = document.querySelectorAll('[data-documents-ai-open]');
+    Array.prototype.forEach.call(triggers, function(trigger) {
+      bindAiTrigger(trigger);
+    });
+  }
+
+  window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
+  window.DocumentsAiResponse = {
+    open: openDocumentsAiResponseModal,
+    bindTrigger: bindAiTrigger,
+    autoBind: autoBindAiTriggers
   };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', autoBindAiTriggers);
+  } else {
+    autoBindAiTriggers();
+  }
 })();
