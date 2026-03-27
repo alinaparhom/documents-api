@@ -78,6 +78,8 @@
       '.ai-chat-modal__export-area{margin-top:4px;border-top:1px solid rgba(226,232,240,.88);padding-top:8px;display:flex;flex-direction:column;gap:6px;}' +
       '.ai-chat-modal__export-header{font-size:11px;font-weight:600;color:#334155;}' +
       '.ai-chat-modal__editable-response{width:100%;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px;font-size:12px;font-family:inherit;resize:vertical;background:#fff;min-height:84px;}' +
+      '.ai-chat-modal__live-preview{border:1px solid rgba(148,163,184,.35);border-radius:10px;padding:10px;background:rgba(255,255,255,.78);min-height:110px;max-height:220px;overflow:auto;font-size:12px;line-height:1.45;color:#0f172a;white-space:pre-wrap;word-break:break-word;outline:none;}' +
+      '.ai-chat-modal__live-preview:empty:before{content:attr(data-placeholder);color:#94a3b8;}' +
       '.ai-chat-modal__export-buttons{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}' +
       '.ai-chat-modal__export-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;background:#f1f5f9;color:#1e293b;cursor:pointer;transition:all .2s;min-height:38px;}' +
       '.ai-chat-modal__export-btn:hover{background:#e2e8f0;}' +
@@ -564,6 +566,10 @@
     var editableResponse = createElement('textarea', 'ai-chat-modal__editable-response');
     editableResponse.rows = 6;
     editableResponse.placeholder = 'Здесь появится ответ от ИИ. Вы можете отредактировать его перед экспортом.';
+    var previewHeader = createElement('div', 'ai-chat-modal__export-header', 'Онлайн‑редактор и превью:');
+    var livePreview = createElement('div', 'ai-chat-modal__live-preview');
+    livePreview.setAttribute('contenteditable', 'true');
+    livePreview.setAttribute('data-placeholder', 'Здесь можно править текст в режиме реального времени.');
     var exportButtons = createElement('div', 'ai-chat-modal__export-buttons');
     var exportDocx = createElement('button', 'ai-chat-modal__export-btn', '📄 Скачать DOCX');
     exportDocx.type = 'button';
@@ -573,7 +579,22 @@
     exportButtons.appendChild(exportPdf);
     exportArea.appendChild(exportHeader);
     exportArea.appendChild(editableResponse);
+    exportArea.appendChild(previewHeader);
+    exportArea.appendChild(livePreview);
     exportArea.appendChild(exportButtons);
+
+    function syncPreviewFromTextarea() {
+      livePreview.textContent = String(editableResponse.value || '');
+    }
+
+    function syncTextareaFromPreview() {
+      editableResponse.value = String(livePreview.textContent || '').replace(/\u00a0/g, ' ');
+    }
+
+    function getEditorText() {
+      syncTextareaFromPreview();
+      return String(editableResponse.value || '').trim();
+    }
 
     function blinkExportArea() {
       exportArea.classList.add('ai-chat-modal__export-area--highlight');
@@ -583,7 +604,7 @@
     }
 
     function exportDocument(format) {
-      var answerText = String(editableResponse.value || '').trim();
+      var answerText = getEditorText();
       if (!answerText) {
         alert('Нет текста для экспорта. Сначала получите ответ от ИИ.');
         return;
@@ -838,6 +859,7 @@
         var finalResponse = payload.response || payload.analysis || 'Пустой ответ от API.';
         messages.appendChild(createMessage('assistant', finalResponse));
         editableResponse.value = finalResponse;
+        syncPreviewFromTextarea();
         exportArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         blinkExportArea();
         textarea.value = '';
@@ -860,6 +882,18 @@
     });
     behaviorInput.addEventListener('input', function () {
       state.aiBehavior = String(behaviorInput.value || '').trim();
+    });
+    editableResponse.addEventListener('input', syncPreviewFromTextarea);
+    livePreview.addEventListener('input', syncTextareaFromPreview);
+    livePreview.addEventListener('paste', function (event) {
+      event.preventDefault();
+      var clipboard = event.clipboardData || window.clipboardData;
+      var pasted = clipboard && typeof clipboard.getData === 'function' ? clipboard.getData('text') : '';
+      if (document.execCommand) {
+        document.execCommand('insertText', false, pasted);
+      } else {
+        livePreview.textContent += pasted;
+      }
     });
 
     textarea.addEventListener('input', function () {
@@ -948,6 +982,7 @@
     });
 
     autoHeight(textarea);
+    syncPreviewFromTextarea();
     document.addEventListener('keydown', onEsc);
     setTimeout(function () {
       textarea.focus();

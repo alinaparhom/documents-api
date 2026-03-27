@@ -297,6 +297,16 @@ function normalizeDocText(string $value): string
     return trim($normalized);
 }
 
+function textToWordParagraphsXml(string $text): string
+{
+    $lines = explode("\n", normalizeDocText($text));
+    $chunks = [];
+    foreach ($lines as $line) {
+        $chunks[] = '<w:p><w:r><w:t xml:space="preserve">' . xmlEscape($line) . '</w:t></w:r></w:p>';
+    }
+    return implode('', $chunks);
+}
+
 function replaceDocxPlaceholders(string $templatePath, string $outputPath, array $replacements): bool
 {
     if (!@copy($templatePath, $outputPath)) {
@@ -316,6 +326,7 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
     }
 
+    $replacedAny = false;
     foreach ($internalFiles as $internalFile) {
         $content = $zip->getFromName($internalFile);
         if (!is_string($content) || $content === '') {
@@ -324,10 +335,22 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         $updated = $content;
         foreach ($replacements as $search => $replace) {
             $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape($replace));
-            $updated = str_replace($search, $escaped, $updated);
+            if (strpos($updated, $search) !== false) {
+                $updated = str_replace($search, $escaped, $updated);
+                $replacedAny = true;
+            }
         }
         if ($updated !== $content) {
             $zip->addFromString($internalFile, $updated);
+        }
+    }
+
+    if (!$replacedAny && isset($replacements['[ОТВЕТ_ИИ]'])) {
+        $docXml = $zip->getFromName('word/document.xml');
+        if (is_string($docXml) && $docXml !== '' && str_contains($docXml, '</w:body>')) {
+            $appendXml = textToWordParagraphsXml((string)$replacements['[ОТВЕТ_ИИ]']);
+            $docXml = str_replace('</w:body>', $appendXml . '</w:body>', $docXml);
+            $zip->addFromString('word/document.xml', $docXml);
         }
     }
 
