@@ -358,11 +358,12 @@ function createPdfFromText(string $outputPath, string $documentTitle, string $an
     return is_file($outputPath) && filesize($outputPath) > 0;
 }
 
-function resolveTemplatePath(string $fileName): string
+function resolveTemplatePath(string $fileName, array $extraDirectories = []): string
 {
     $normalizedName = ltrim($fileName, '/');
     $documentRoot = isset($_SERVER['DOCUMENT_ROOT']) ? rtrim((string)$_SERVER['DOCUMENT_ROOT'], '/') : '';
     $candidates = [
+        __DIR__ . '/app/templates/' . $normalizedName,
         __DIR__ . '/templates/' . $normalizedName,
         dirname(__DIR__) . '/templates/' . $normalizedName,
         dirname(__DIR__, 2) . '/templates/' . $normalizedName,
@@ -371,6 +372,12 @@ function resolveTemplatePath(string $fileName): string
     if ($documentRoot !== '') {
         $candidates[] = $documentRoot . '/js/documents/templates/' . $normalizedName;
         $candidates[] = $documentRoot . '/templates/' . $normalizedName;
+    }
+    foreach ($extraDirectories as $directory) {
+        $normalizedDir = is_string($directory) ? rtrim(trim($directory), '/') : '';
+        if ($normalizedDir !== '') {
+            $candidates[] = $normalizedDir . '/' . $normalizedName;
+        }
     }
 
     foreach ($candidates as $candidate) {
@@ -455,10 +462,20 @@ if ($action === 'generate_document') {
         jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
     }
 
-    $templateDocxPath = resolveTemplatePath('template.docx');
-    $templatePdfPath = resolveTemplatePath('template.pdf');
+    $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? $_POST['templatePath'] ?? ''));
+    $extraTemplateDirs = array_filter([
+        trim((string)($env['DOCUMENT_TEMPLATE_DIR'] ?? '')),
+        trim((string)($env['DOC_TEMPLATES_DIR'] ?? '')),
+        trim((string)($env['TEMPLATE_DIR'] ?? '')),
+        $templateDirFromRequest,
+    ], static function ($value): bool {
+        return is_string($value) && $value !== '';
+    });
+
+    $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
+    $templatePdfPath = resolveTemplatePath('template.pdf', $extraTemplateDirs);
     if (!is_file($templateDocxPath) && !is_file($templatePdfPath)) {
-        jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Ожидаемые пути: /js/documents/templates/template.docx или /app/templates/template.docx']);
+        jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
     }
 
     $tmpFile = tempnam(sys_get_temp_dir(), 'answer_');
@@ -469,7 +486,7 @@ if ($action === 'generate_document') {
     if ($format === 'docx') {
         if (!is_file($templateDocxPath)) {
             @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/templates/ или /app/templates/']);
+            jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/app/templates/, /js/documents/templates/ или укажите DOCUMENT_TEMPLATE_DIR']);
         }
         if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
             '[ОТВЕТ_ИИ]' => $answerText,
@@ -490,7 +507,7 @@ if ($action === 'generate_document') {
             }
             if (!createPdfFromText($tmpFile, $documentTitle, $answerText)) {
                 @unlink($tmpFile);
-                jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или добавьте /app/templates/template.pdf']);
+                jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или добавьте template.pdf в директорию шаблонов']);
             }
         }
         header('Content-Type: application/pdf');
