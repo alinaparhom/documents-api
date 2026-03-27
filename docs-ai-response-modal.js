@@ -3,11 +3,14 @@
   var ROOT_CLASS = 'ai-chat-modal';
   var FILE_INPUT_ID = 'ai-chat-hidden-file-input';
   var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
+  var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
+  var MAX_EXTRACT_CHARS = 500000;
+  var pdfJsReadyPromise = null;
 
   var STYLE_OPTIONS = [
-    { value: 'concise', label: 'Краткий и по делу' },
-    { value: 'friendly', label: 'Развёрнутый и дружелюбный' },
-    { value: 'technical', label: 'Технический с пояснениями' }
+    { value: 'neutral', label: 'Нейтральный стиль' },
+    { value: 'aggressive', label: 'Агрессивный стиль' },
+    { value: 'informational', label: 'Спокойный (информационный)' }
   ];
 
   function createElement(tag, className, text) {
@@ -37,16 +40,16 @@
     var style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = '' +
-      '.ai-chat-modal{position:fixed;inset:0;z-index:1900;display:flex;background:rgba(15,23,42,.44);backdrop-filter:blur(5px);opacity:0;transition:opacity .2s ease;}' +
+      '.ai-chat-modal{position:fixed;inset:0;z-index:1900;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(15,23,42,.44);backdrop-filter:blur(5px);opacity:0;transition:opacity .2s ease;}' +
       '.ai-chat-modal--visible{opacity:1;}' +
       '.ai-chat-modal--closing{opacity:0;}' +
-      '.ai-chat-modal__panel{width:100vw;height:100vh;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.96),rgba(248,250,252,.93));}' +
-      '.ai-chat-modal__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;border-bottom:1px solid rgba(226,232,240,.9);}' +
+      '.ai-chat-modal__panel{width:min(1600px,90vw);height:90vh;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.92),rgba(248,250,252,.86));border:1px solid rgba(203,213,225,.7);border-radius:18px;overflow:hidden;box-shadow:0 20px 55px rgba(15,23,42,.22);}' +
+      '.ai-chat-modal__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,rgba(255,255,255,.76),rgba(248,250,252,.62));}' +
       '.ai-chat-modal__title{font-size:14px;font-weight:700;color:#0f172a;}' +
       '.ai-chat-modal__subtitle{margin-top:1px;font-size:11px;color:#64748b;}' +
       '.ai-chat-modal__close{border:none;background:rgba(148,163,184,.18);width:32px;height:32px;border-radius:999px;font-size:18px;line-height:1;cursor:pointer;}' +
-      '.ai-chat-modal__content{display:flex;flex-direction:column;gap:7px;padding:7px;min-height:0;flex:1;}' +
-      '.ai-chat-modal__context{border:1px solid rgba(226,232,240,.88);border-radius:11px;padding:7px;background:rgba(255,255,255,.7);}' +
+      '.ai-chat-modal__content{display:flex;flex-direction:column;gap:10px;padding:11px;min-height:0;flex:1;}' +
+      '.ai-chat-modal__context{border:1px solid rgba(226,232,240,.88);border-radius:12px;padding:8px;background:rgba(255,255,255,.72);backdrop-filter:blur(2px);}' +
       '.ai-chat-modal__context-title{font-size:11px;font-weight:700;color:#334155;margin-bottom:3px;}' +
       '.ai-chat-modal__files{display:flex;flex-wrap:wrap;gap:5px;min-height:20px;}' +
       '.ai-chat-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:999px;background:rgba(241,245,249,.95);border:1px solid rgba(203,213,225,.9);font-size:11px;color:#1e293b;max-width:100%;}' +
@@ -54,10 +57,10 @@
       '.ai-chat-chip__remove{border:none;background:transparent;color:#64748b;cursor:pointer;font-size:14px;line-height:1;padding:0;}' +
       '.ai-chat-modal__empty{font-size:11px;color:#94a3b8;}' +
       '.ai-chat-modal__attach{margin-top:5px;border:1px dashed rgba(148,163,184,.55);background:rgba(248,250,252,.86);border-radius:8px;padding:5px 8px;font-size:11px;font-weight:600;color:#334155;cursor:pointer;}' +
-      '.ai-chat-modal__settings{display:grid;grid-template-columns:1fr 1fr;gap:6px;border:1px solid rgba(226,232,240,.88);border-radius:10px;padding:6px;background:rgba(255,255,255,.62);}' +
+      '.ai-chat-modal__settings{display:grid;grid-template-columns:1fr 1fr;gap:6px;border:1px solid rgba(226,232,240,.88);border-radius:12px;padding:7px;background:rgba(255,255,255,.66);backdrop-filter:blur(2px);}' +
       '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
       '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
-      '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:7px;background:rgba(248,250,252,.5);border:1px solid rgba(226,232,240,.82);border-radius:11px;display:flex;flex-direction:column;gap:7px;scroll-behavior:smooth;}' +
+      '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:11px;background:rgba(248,250,252,.52);border:1px solid rgba(226,232,240,.82);border-radius:12px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth;}' +
       '.ai-chat-msg{max-width:84%;padding:8px 10px;border-radius:12px;font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:0 2px 8px rgba(15,23,42,.05);}' +
       '.ai-chat-msg--user{margin-left:auto;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-bottom-right-radius:6px;}' +
       '.ai-chat-msg--assistant{margin-right:auto;background:#fff;border:1px solid rgba(226,232,240,.9);color:#0f172a;border-bottom-left-radius:6px;}' +
@@ -68,7 +71,7 @@
       '.ai-chat-modal__send:disabled{opacity:.6;cursor:not-allowed;}' +
       '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}}';
     document.head.appendChild(style);
   }
 
@@ -96,6 +99,12 @@
     var type = String(file.type || '').toLowerCase();
     var name = String(file.name || '').toLowerCase();
     return type.indexOf('text') !== -1 || /\.(txt|md|json|csv|xml|html|css|js|ts|php|py|java|sql)$/i.test(name);
+  }
+
+  function isPdfLike(file) {
+    var type = String(file.type || '').toLowerCase();
+    var name = String(file.name || '').toLowerCase();
+    return type.indexOf('pdf') !== -1 || /\.pdf$/i.test(name);
   }
 
   function normalizeExternalFiles(files, source) {
@@ -197,23 +206,185 @@
 
   function fileToText(file) {
     return new Promise(function (resolve) {
-      if (!file || !isTextLike(file) || typeof FileReader === 'undefined') {
+      if (!file || typeof FileReader === 'undefined') {
         resolve('');
         return;
       }
-      if ((file.size || 0) > 350 * 1024) {
+      if ((file.size || 0) > MAX_FILE_SIZE_BYTES) {
         resolve('[Файл слишком большой для промпта]');
+        return;
+      }
+      if (isPdfLike(file)) {
+        var pdfReader = new FileReader();
+        pdfReader.onload = function () {
+          extractPdfText(pdfReader.result).then(resolve).catch(function () {
+            resolve('[Не удалось извлечь текст из PDF]');
+          });
+        };
+        pdfReader.onerror = function () {
+          resolve('');
+        };
+        pdfReader.readAsArrayBuffer(file);
+        return;
+      }
+      if (!isTextLike(file)) {
+        resolve('');
         return;
       }
       var reader = new FileReader();
       reader.onload = function () {
-        resolve(typeof reader.result === 'string' ? reader.result.slice(0, 12000) : '');
+        resolve(typeof reader.result === 'string' ? reader.result.slice(0, MAX_EXTRACT_CHARS) : '');
       };
       reader.onerror = function () {
         resolve('');
       };
       reader.readAsText(file);
     });
+  }
+
+  function ensurePdfJsLoaded() {
+    if (pdfJsReadyPromise) {
+      return pdfJsReadyPromise;
+    }
+    pdfJsReadyPromise = new Promise(function (resolve, reject) {
+      if (typeof window === 'undefined') {
+        reject(new Error('no_window'));
+        return;
+      }
+      if (window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function') {
+        resolve(window.pdfjsLib);
+        return;
+      }
+
+      var scriptCandidates = getPdfScriptCandidates();
+      var workerCandidates = getPdfWorkerCandidates();
+
+      function applyWorkerSrc() {
+        if (!window.pdfjsLib || !window.pdfjsLib.GlobalWorkerOptions) {
+          return;
+        }
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = workerCandidates[0];
+      }
+
+      function tryLoad(index) {
+        if (index >= scriptCandidates.length) {
+          reject(new Error('pdfjs_load_failed'));
+          return;
+        }
+        var src = scriptCandidates[index];
+        var script = document.createElement('script');
+        script.async = true;
+        script.src = src;
+        script.setAttribute('data-ai-pdfjs', '1');
+        script.onload = function () {
+          if (!window.pdfjsLib || typeof window.pdfjsLib.getDocument !== 'function') {
+            tryLoad(index + 1);
+            return;
+          }
+          applyWorkerSrc();
+          resolve(window.pdfjsLib);
+        };
+        script.onerror = function () {
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+          tryLoad(index + 1);
+        };
+        document.head.appendChild(script);
+      }
+
+      tryLoad(0);
+    }).catch(function (error) {
+      pdfJsReadyPromise = null;
+      throw error;
+    });
+    return pdfJsReadyPromise;
+  }
+
+  function getPdfAssetBasePaths() {
+    var bases = [];
+    var scriptEl = document.querySelector('script[src*="docs-ai-response-modal.js"]');
+    if (scriptEl && scriptEl.src) {
+      var normalized = String(scriptEl.src).replace(/\/docs-ai-response-modal\.js(?:\?.*)?$/i, '/');
+      bases.push(normalized);
+    }
+    bases.push(window.location.origin + '/js/documents/');
+    bases.push(window.location.origin + '/');
+    return Array.from(new Set(bases));
+  }
+
+  function getPdfScriptCandidates() {
+    var bases = getPdfAssetBasePaths();
+    var candidates = [];
+    bases.forEach(function (base) {
+      candidates.push(base + 'pdf/pdf.min.js');
+    });
+    candidates.push('/js/documents/pdf/pdf.min.js');
+    candidates.push('/pdf/pdf.min.js');
+    return Array.from(new Set(candidates));
+  }
+
+  function getPdfWorkerCandidates() {
+    var bases = getPdfAssetBasePaths();
+    var candidates = [];
+    bases.forEach(function (base) {
+      candidates.push(base + 'pdf/pdf.worker.min.js');
+    });
+    candidates.push('/js/documents/pdf/pdf.worker.min.js');
+    candidates.push('/pdf/pdf.worker.min.js');
+    return Array.from(new Set(candidates));
+  }
+
+  async function extractPdfText(source) {
+    try {
+      var pdfjsLib = await ensurePdfJsLoaded();
+      var loadingTask = pdfjsLib.getDocument({ data: source });
+      var pdf = await loadingTask.promise;
+      var maxPages = Math.max(pdf.numPages || 0, 0);
+      var parts = [];
+      for (var pageNum = 1; pageNum <= maxPages; pageNum += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        var page = await pdf.getPage(pageNum);
+        // eslint-disable-next-line no-await-in-loop
+        var textContent = await page.getTextContent();
+        var line = (textContent.items || []).map(function (item) {
+          return item && item.str ? item.str : '';
+        }).join(' ').replace(/\s+/g, ' ').trim();
+        if (line) {
+          parts.push('Страница ' + pageNum + ': ' + line);
+        }
+        if (parts.join('\n').length >= MAX_EXTRACT_CHARS) {
+          break;
+        }
+      }
+      var fullText = parts.join('\n').slice(0, MAX_EXTRACT_CHARS);
+      return fullText || '[В PDF не найден извлекаемый текст]';
+    } catch (error) {
+      return '[Не удалось извлечь текст из PDF]';
+    }
+  }
+
+  async function fetchExternalFileContent(file) {
+    if (!file || !file.url) {
+      return '';
+    }
+    try {
+      var response = await fetch(file.url, { credentials: 'same-origin' });
+      if (!response.ok) {
+        return '';
+      }
+      if (isPdfLike(file)) {
+        var buffer = await response.arrayBuffer();
+        return extractPdfText(buffer);
+      }
+      if (!isTextLike(file)) {
+        return '';
+      }
+      var rawText = await response.text();
+      return String(rawText || '').slice(0, MAX_EXTRACT_CHARS);
+    } catch (error) {
+      return '';
+    }
   }
 
   function buildRequestBlueprint(userText, state, config) {
@@ -255,11 +426,16 @@
 
   async function hydrateFileContents(state) {
     for (var i = 0; i < state.files.length; i += 1) {
-      if (state.files[i].content || !state.files[i].fileObject) {
+      if (state.files[i].content) {
         continue;
       }
-      // eslint-disable-next-line no-await-in-loop
-      state.files[i].content = await fileToText(state.files[i].fileObject);
+      if (state.files[i].fileObject) {
+        // eslint-disable-next-line no-await-in-loop
+        state.files[i].content = await fileToText(state.files[i].fileObject);
+      } else if (state.files[i].url) {
+        // eslint-disable-next-line no-await-in-loop
+        state.files[i].content = await fetchExternalFileContent(state.files[i]);
+      }
     }
   }
 
