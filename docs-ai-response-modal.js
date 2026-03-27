@@ -6,6 +6,10 @@
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
   var pdfJsReadyPromise = null;
+  var DEFAULT_AI_BEHAVIOR = 'Ты — корпоративный секретарь. Ответь на документ в официально-деловом стиле.\n'
+    + 'Используй обороты: "В ответ на Ваше письмо... сообщаем следующее", "Отмечаем, что...", "Обращаем Ваше внимание...".\n'
+    + 'Тон: строгий, аргументированный, без эмоций.\n'
+    + 'Ответ должен содержать чёткую структуру: вступление, основную часть, заключение.';
 
   var STYLE_OPTIONS = [
     { value: 'neutral', label: 'Нейтральный стиль' },
@@ -71,8 +75,17 @@
       '.ai-chat-modal__textarea{flex:1;min-height:40px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;background:#fff;outline:none;}' +
       '.ai-chat-modal__send{border:none;border-radius:10px;padding:8px 11px;min-height:40px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;cursor:pointer;}' +
       '.ai-chat-modal__send:disabled{opacity:.6;cursor:not-allowed;}' +      '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
+      '.ai-chat-modal__export-area{margin-top:4px;border-top:1px solid rgba(226,232,240,.88);padding-top:8px;display:flex;flex-direction:column;gap:6px;}' +
+      '.ai-chat-modal__export-header{font-size:11px;font-weight:600;color:#334155;}' +
+      '.ai-chat-modal__editable-response{width:100%;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px;font-size:12px;font-family:inherit;resize:vertical;background:#fff;min-height:84px;}' +
+      '.ai-chat-modal__live-preview{border:1px solid rgba(148,163,184,.35);border-radius:10px;padding:10px;background:rgba(255,255,255,.78);min-height:110px;max-height:220px;overflow:auto;font-size:12px;line-height:1.45;color:#0f172a;white-space:pre-wrap;word-break:break-word;outline:none;}' +
+      '.ai-chat-modal__live-preview:empty:before{content:attr(data-placeholder);color:#94a3b8;}' +
+      '.ai-chat-modal__export-buttons{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}' +
+      '.ai-chat-modal__export-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;background:#f1f5f9;color:#1e293b;cursor:pointer;transition:all .2s;min-height:38px;}' +
+      '.ai-chat-modal__export-btn:hover{background:#e2e8f0;}' +
+      '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}}';
     document.head.appendChild(style);
   }
 
@@ -483,7 +496,9 @@
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
       responseStyle: STYLE_OPTIONS[0].value,
-      aiBehavior: typeof config.aiBehavior === 'string' ? config.aiBehavior.trim() : '',
+      aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
+        ? config.aiBehavior.trim()
+        : DEFAULT_AI_BEHAVIOR,
       isLoading: false
     };
 
@@ -530,8 +545,8 @@
     });
     var behaviorField = createElement('label', 'ai-chat-modal__field ai-chat-modal__field--full');
     behaviorField.appendChild(createElement('span', '', 'Поведение ИИ'));
-    var behaviorInput = createElement('input', 'ai-chat-modal__input');
-    behaviorInput.type = 'text';
+    var behaviorInput = createElement('textarea', 'ai-chat-modal__input');
+    behaviorInput.rows = 4;
     behaviorInput.placeholder = 'Например: отвечай максимально кратко и по шагам';
     behaviorInput.value = state.aiBehavior;
 
@@ -545,6 +560,91 @@
     ocrButton.type = 'button';
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
     sendButton.type = 'button';
+
+    var exportArea = createElement('div', 'ai-chat-modal__export-area');
+    var exportHeader = createElement('div', 'ai-chat-modal__export-header', 'Финальный ответ (можно редактировать):');
+    var editableResponse = createElement('textarea', 'ai-chat-modal__editable-response');
+    editableResponse.rows = 6;
+    editableResponse.placeholder = 'Здесь появится ответ от ИИ. Вы можете отредактировать его перед экспортом.';
+    var previewHeader = createElement('div', 'ai-chat-modal__export-header', 'Онлайн‑редактор и превью:');
+    var livePreview = createElement('div', 'ai-chat-modal__live-preview');
+    livePreview.setAttribute('contenteditable', 'true');
+    livePreview.setAttribute('data-placeholder', 'Здесь можно править текст в режиме реального времени.');
+    var exportButtons = createElement('div', 'ai-chat-modal__export-buttons');
+    var exportDocx = createElement('button', 'ai-chat-modal__export-btn', '📄 Скачать DOCX');
+    exportDocx.type = 'button';
+    var exportPdf = createElement('button', 'ai-chat-modal__export-btn', '📑 Скачать PDF');
+    exportPdf.type = 'button';
+    exportButtons.appendChild(exportDocx);
+    exportButtons.appendChild(exportPdf);
+    exportArea.appendChild(exportHeader);
+    exportArea.appendChild(editableResponse);
+    exportArea.appendChild(previewHeader);
+    exportArea.appendChild(livePreview);
+    exportArea.appendChild(exportButtons);
+
+    function syncPreviewFromTextarea() {
+      livePreview.textContent = String(editableResponse.value || '');
+    }
+
+    function syncTextareaFromPreview() {
+      editableResponse.value = String(livePreview.textContent || '').replace(/\u00a0/g, ' ');
+    }
+
+    function getEditorText() {
+      syncTextareaFromPreview();
+      return String(editableResponse.value || '').trim();
+    }
+
+    function blinkExportArea() {
+      exportArea.classList.add('ai-chat-modal__export-area--highlight');
+      setTimeout(function () {
+        exportArea.classList.remove('ai-chat-modal__export-area--highlight');
+      }, 1400);
+    }
+
+    function exportDocument(format) {
+      var answerText = getEditorText();
+      if (!answerText) {
+        alert('Нет текста для экспорта. Сначала получите ответ от ИИ.');
+        return;
+      }
+      var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var formData = new FormData();
+      formData.append('action', 'generate_document');
+      formData.append('format', format);
+      formData.append('answer', answerText);
+      formData.append('documentTitle', config.documentTitle || '');
+
+      fetch(apiUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            return response.json().catch(function () {
+              return { error: 'Ошибка сервера (' + response.status + ')' };
+            }).then(function (payload) {
+              throw new Error((payload && payload.error) ? payload.error : 'Ошибка сервера');
+            });
+          }
+          return response.blob();
+        })
+        .then(function (blob) {
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'response.' + format;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        })
+        .catch(function (error) {
+          alert('Ошибка при генерации документа: ' + (error && error.message ? error.message : 'Неизвестная ошибка'));
+        });
+    }
 
     function renderModelOptions() {
       modelSelect.innerHTML = '';
@@ -756,7 +856,12 @@
         }
 
         pending.remove();
-        messages.appendChild(createMessage('assistant', payload.response || payload.analysis || 'Пустой ответ от API.'));
+        var finalResponse = payload.response || payload.analysis || 'Пустой ответ от API.';
+        messages.appendChild(createMessage('assistant', finalResponse));
+        editableResponse.value = finalResponse;
+        syncPreviewFromTextarea();
+        exportArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        blinkExportArea();
         textarea.value = '';
         autoHeight(textarea);
       } catch (error) {
@@ -778,6 +883,18 @@
     behaviorInput.addEventListener('input', function () {
       state.aiBehavior = String(behaviorInput.value || '').trim();
     });
+    editableResponse.addEventListener('input', syncPreviewFromTextarea);
+    livePreview.addEventListener('input', syncTextareaFromPreview);
+    livePreview.addEventListener('paste', function (event) {
+      event.preventDefault();
+      var clipboard = event.clipboardData || window.clipboardData;
+      var pasted = clipboard && typeof clipboard.getData === 'function' ? clipboard.getData('text') : '';
+      if (document.execCommand) {
+        document.execCommand('insertText', false, pasted);
+      } else {
+        livePreview.textContent += pasted;
+      }
+    });
 
     textarea.addEventListener('input', function () {
       autoHeight(textarea);
@@ -797,6 +914,8 @@
       extractAllPendingFiles();
     });
     sendButton.addEventListener('click', sendMessage);
+    exportDocx.addEventListener('click', function () { exportDocument('docx'); });
+    exportPdf.addEventListener('click', function () { exportDocument('pdf'); });
     closeButton.addEventListener('click', closeModal);
 
     attachButton.addEventListener('click', function () {
@@ -840,6 +959,7 @@
     content.appendChild(settings);
     content.appendChild(messages);
     content.appendChild(composer);
+    content.appendChild(exportArea);
 
     panel.appendChild(header);
     panel.appendChild(content);
@@ -862,6 +982,7 @@
     });
 
     autoHeight(textarea);
+    syncPreviewFromTextarea();
     document.addEventListener('keydown', onEsc);
     setTimeout(function () {
       textarea.focus();

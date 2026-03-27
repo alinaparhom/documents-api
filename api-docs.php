@@ -286,6 +286,132 @@ function parseAiJson(string $content): array
     return [];
 }
 
+function xmlEscape(string $value): string
+{
+    return htmlspecialchars($value, ENT_QUOTES | ENT_XML1, 'UTF-8');
+}
+
+function normalizeDocText(string $value): string
+{
+    $normalized = str_replace(["\r\n", "\r"], "\n", $value);
+    return trim($normalized);
+}
+
+function textToWordParagraphsXml(string $text): string
+{
+    $lines = explode("\n", normalizeDocText($text));
+    $chunks = [];
+    foreach ($lines as $line) {
+        $chunks[] = '<w:p><w:r><w:t xml:space="preserve">' . xmlEscape($line) . '</w:t></w:r></w:p>';
+    }
+    return implode('', $chunks);
+}
+
+function replaceDocxPlaceholders(string $templatePath, string $outputPath, array $replacements): bool
+{
+    if (!@copy($templatePath, $outputPath)) {
+        return false;
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($outputPath) !== true) {
+        return false;
+    }
+
+    $internalFiles = [];
+    for ($i = 0; $i < $zip->numFiles; $i += 1) {
+        $name = $zip->getNameIndex($i);
+        if (is_string($name) && preg_match('/^word\\/(document|header\\d+|footer\\d+)\\.xml$/u', $name)) {
+            $internalFiles[] = $name;
+        }
+    }
+
+    $replacedAny = false;
+    foreach ($internalFiles as $internalFile) {
+        $content = $zip->getFromName($internalFile);
+        if (!is_string($content) || $content === '') {
+            continue;
+        }
+        $updated = $content;
+        foreach ($replacements as $search => $replace) {
+            $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape($replace));
+            if (strpos($updated, $search) !== false) {
+                $updated = str_replace($search, $escaped, $updated);
+                $replacedAny = true;
+            }
+        }
+        if ($updated !== $content) {
+            $zip->addFromString($internalFile, $updated);
+        }
+    }
+
+    if (!$replacedAny && isset($replacements['[ОТВЕТ_ИИ]'])) {
+        $docXml = $zip->getFromName('word/document.xml');
+        if (is_string($docXml) && $docXml !== '' && str_contains($docXml, '</w:body>')) {
+            $appendXml = textToWordParagraphsXml((string)$replacements['[ОТВЕТ_ИИ]']);
+            $docXml = str_replace('</w:body>', $appendXml . '</w:body>', $docXml);
+            $zip->addFromString('word/document.xml', $docXml);
+        }
+    }
+
+    return $zip->close();
+}
+
+function createPdfFromText(string $outputPath, string $documentTitle, string $answerText): bool
+{
+    if (!class_exists('TCPDF')) {
+        return false;
+    }
+    $pdf = new TCPDF();
+    $pdf->SetCreator('documents-api');
+    $pdf->SetAuthor('documents-api');
+    $pdf->SetTitle($documentTitle !== '' ? $documentTitle : 'Ответ');
+    $pdf->SetMargins(16, 16, 16);
+    $pdf->SetAutoPageBreak(true, 18);
+    $pdf->AddPage();
+    $pdf->SetFont('dejavusans', '', 10);
+    if ($documentTitle !== '') {
+        $pdf->SetFont('dejavusans', 'B', 12);
+        $pdf->MultiCell(0, 0, $documentTitle, 0, 'L', false, 1);
+        $pdf->Ln(2);
+        $pdf->SetFont('dejavusans', '', 10);
+    }
+    $pdf->MultiCell(0, 0, $answerText, 0, 'L', false, 1);
+    $pdf->Output($outputPath, 'F');
+    return is_file($outputPath) && filesize($outputPath) > 0;
+}
+
+function resolveTemplatePath(string $fileName, array $extraDirectories = []): string
+{
+    $normalizedName = ltrim($fileName, '/');
+    $documentRoot = isset($_SERVER['DOCUMENT_ROOT']) ? rtrim((string)$_SERVER['DOCUMENT_ROOT'], '/') : '';
+    $candidates = [
+        __DIR__ . '/app/templates/' . $normalizedName,
+        __DIR__ . '/templates/' . $normalizedName,
+        dirname(__DIR__) . '/templates/' . $normalizedName,
+        dirname(__DIR__, 2) . '/templates/' . $normalizedName,
+        '/app/templates/' . $normalizedName,
+    ];
+    if ($documentRoot !== '') {
+        $candidates[] = $documentRoot . '/js/documents/templates/' . $normalizedName;
+        $candidates[] = $documentRoot . '/templates/' . $normalizedName;
+    }
+    foreach ($extraDirectories as $directory) {
+        $normalizedDir = is_string($directory) ? rtrim(trim($directory), '/') : '';
+        if ($normalizedDir !== '') {
+            $candidates[] = $normalizedDir . '/' . $normalizedName;
+        }
+    }
+
+    foreach ($candidates as $candidate) {
+        if (is_string($candidate) && $candidate !== '' && is_file($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return '';
+}
+
 function looksLikeJsonText(string $value): bool
 {
     $trimmed = trim($value);
@@ -339,9 +465,84 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
+
+if ($action === 'generate_document') {
+    $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
+    $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
+    $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
+
+    if ($answerText === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
+    }
+    if (mb_strlen($answerText) > 40000) {
+        jsonResponse(400, ['ok' => false, 'error' => 'Ответ слишком большой для экспорта']);
+    }
+    if ($format !== 'docx' && $format !== 'pdf') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
+    }
+
+    $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? $_POST['templatePath'] ?? ''));
+    $extraTemplateDirs = array_filter([
+        trim((string)($env['DOCUMENT_TEMPLATE_DIR'] ?? '')),
+        trim((string)($env['DOC_TEMPLATES_DIR'] ?? '')),
+        trim((string)($env['TEMPLATE_DIR'] ?? '')),
+        $templateDirFromRequest,
+    ], static function ($value): bool {
+        return is_string($value) && $value !== '';
+    });
+
+    $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
+    $templatePdfPath = resolveTemplatePath('template.pdf', $extraTemplateDirs);
+    if (!is_file($templateDocxPath) && !is_file($templatePdfPath)) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
+    }
+
+    $tmpFile = tempnam(sys_get_temp_dir(), 'answer_');
+    if ($tmpFile === false) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось создать временный файл']);
+    }
+
+    if ($format === 'docx') {
+        if (!is_file($templateDocxPath)) {
+            @unlink($tmpFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/app/templates/, /js/documents/templates/ или укажите DOCUMENT_TEMPLATE_DIR']);
+        }
+        if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
+            '[ОТВЕТ_ИИ]' => $answerText,
+            '[DOCUMENT_TITLE]' => $documentTitle,
+        ])) {
+            @unlink($tmpFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX на основе шаблона']);
+        }
+        header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        header('Content-Disposition: attachment; filename="answer.docx"');
+    } else {
+        if (is_file($templatePdfPath)) {
+            @unlink($tmpFile);
+            $tmpFile = $templatePdfPath;
+        } else {
+            if (is_file(__DIR__ . '/vendor/autoload.php')) {
+                require_once __DIR__ . '/vendor/autoload.php';
+            }
+            if (!createPdfFromText($tmpFile, $documentTitle, $answerText)) {
+                @unlink($tmpFile);
+                jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или добавьте template.pdf в директорию шаблонов']);
+            }
+        }
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="answer.pdf"');
+    }
+
+    header('Content-Length: ' . filesize($tmpFile));
+    readfile($tmpFile);
+    if ($tmpFile !== $templatePdfPath) {
+        @unlink($tmpFile);
+    }
+    exit;
 }
 
 $attachments = normalizeUploadedFiles('attachments');
