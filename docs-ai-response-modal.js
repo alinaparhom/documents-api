@@ -508,12 +508,14 @@
     behaviorInput.value = state.aiBehavior;
 
     var messages = createElement('div', 'ai-chat-modal__messages');
-    messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
+    messages.appendChild(createMessage('assistant', '1) Нажмите «Прочитать файл (OCR)». 2) Проверьте текст. 3) Нажмите «Отправить в ИИ».'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
-    textarea.placeholder = 'Введите запрос...';
-    var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить');
+    textarea.placeholder = 'Введите запрос (можно пусто — отправим OCR текст)';
+    var ocrButton = createElement('button', 'ai-chat-modal__send', 'Прочитать файл (OCR)');
+    ocrButton.type = 'button';
+    var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
     sendButton.type = 'button';
 
     function renderModelOptions() {
@@ -552,10 +554,70 @@
     function setLoading(loading) {
       state.isLoading = loading;
       textarea.disabled = loading;
+      ocrButton.disabled = loading;
       sendButton.disabled = loading;
-      sendButton.innerHTML = loading
-        ? '<span class="ai-chat-spinner"></span>Отправка'
-        : 'Отправить';
+      if (loading) {
+        ocrButton.innerHTML = '<span class="ai-chat-spinner"></span>Обработка';
+        sendButton.innerHTML = '<span class="ai-chat-spinner"></span>Отправка';
+      } else {
+        ocrButton.textContent = 'Прочитать файл (OCR)';
+        sendButton.textContent = 'Отправить в ИИ';
+      }
+    }
+
+    function getFirstUploadableFile() {
+      for (var i = 0; i < state.files.length; i += 1) {
+        if (state.files[i] && state.files[i].fileObject) {
+          return state.files[i];
+        }
+      }
+      return null;
+    }
+
+    async function runOcr() {
+      if (state.isLoading) {
+        return;
+      }
+      var fileEntry = getFirstUploadableFile();
+      if (!fileEntry || !fileEntry.fileObject) {
+        messages.appendChild(createMessage('assistant', 'Сначала прикрепите файл с устройства для OCR.', true));
+        messages.scrollTop = messages.scrollHeight;
+        return;
+      }
+      var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
+      pending.innerHTML = '<span class="ai-chat-spinner"></span>Читаю файл через OCR...';
+      messages.appendChild(pending);
+      messages.scrollTop = messages.scrollHeight;
+      setLoading(true);
+      try {
+        var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+        var formData = new FormData();
+        formData.append('action', 'ocr_extract');
+        formData.append('language', 'rus');
+        formData.append('file', fileEntry.fileObject, fileEntry.name || 'document.pdf');
+        var response = await fetch(apiUrl + '?action=ocr_extract', {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData
+        });
+        var payload = await response.json();
+        if (!response.ok || !payload || payload.ok !== true) {
+          throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+        }
+        var extractedText = String(payload.text || '').trim();
+        if (!extractedText) {
+          throw new Error('OCR не вернул текст. Проверьте качество файла.');
+        }
+        fileEntry.content = extractedText;
+        pending.remove();
+        messages.appendChild(createMessage('assistant', 'OCR текст:\n' + extractedText));
+      } catch (error) {
+        pending.remove();
+        messages.appendChild(createMessage('assistant', 'Ошибка OCR: ' + (error && error.message ? error.message : 'Не удалось распознать текст.'), true));
+      } finally {
+        setLoading(false);
+        messages.scrollTop = messages.scrollHeight;
+      }
     }
 
     function closeModal() {
@@ -572,15 +634,24 @@
 
     async function sendMessage() {
       var value = String(textarea.value || '').trim();
-      if (!value || state.isLoading) {
+      if (state.isLoading) {
         return;
       }
+      var hasFileContent = state.files.some(function (file) {
+        return file && typeof file.content === 'string' && file.content.trim() !== '';
+      });
+      if (!value && !hasFileContent) {
+        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или сначала нажмите «Прочитать файл (OCR)».', true));
+        messages.scrollTop = messages.scrollHeight;
+        return;
+      }
+      var effectivePrompt = value || 'Сформируй официальный ответ на основе OCR-текста файла.';
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
       state.aiBehavior = String(behaviorInput.value || '').trim();
 
-      messages.appendChild(createMessage('user', value));
+      messages.appendChild(createMessage('user', effectivePrompt));
       var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
       pending.innerHTML = '<span class="ai-chat-spinner"></span>ИИ готовит ответ...';
       messages.appendChild(pending);
@@ -593,7 +664,7 @@
         var response = await fetch(apiUrl + '?action=ai_response_analyze', {
           method: 'POST',
           credentials: 'same-origin',
-          body: buildRequestBlueprint(value, state, config)
+          body: buildRequestBlueprint(effectivePrompt, state, config)
         });
 
         var payload = await response.json();
@@ -636,6 +707,7 @@
       }
     });
 
+    ocrButton.addEventListener('click', runOcr);
     sendButton.addEventListener('click', sendMessage);
     closeButton.addEventListener('click', closeModal);
 
@@ -673,6 +745,7 @@
     settings.appendChild(behaviorField);
 
     composer.appendChild(textarea);
+    composer.appendChild(ocrButton);
     composer.appendChild(sendButton);
 
     content.appendChild(contextBox);
