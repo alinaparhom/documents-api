@@ -1,6 +1,11 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
-const DOCX_TEMPLATE_URLS = ['/app/templates/template.docx', '/templates/template.docx'];
+const DOCX_TEMPLATE_URLS = [
+  '/app/templates/template.docx',
+  '/templates/template.docx',
+  './templates/template.docx',
+  'templates/template.docx',
+];
 
 function ensureAiDialogStyles() {
   if (document.getElementById(DIALOG_STYLE_ID)) {
@@ -42,6 +47,7 @@ function ensureAiDialogStyles() {
     .appdosc-docx-viewer__title{font-size:14px;font-weight:700;color:#0f172a;}
     .appdosc-docx-viewer__body{flex:1;overflow:auto;background:rgba(241,245,249,.5);padding:10px;}
     .appdosc-docx-viewer__canvas{min-height:100%;}
+    .appdosc-docx-viewer__fallback-page{max-width:860px;margin:0 auto;background:#fff;border-radius:12px;border:1px solid rgba(203,213,225,.8);box-shadow:0 10px 24px rgba(15,23,42,.08);padding:18px;white-space:pre-wrap;color:#0f172a;line-height:1.55;}
     .appdosc-docx-viewer__status{font-size:12px;color:#64748b;padding:0 12px 8px;}
 
     @media (max-width: 560px){
@@ -116,7 +122,9 @@ function textToWordParagraphs(text) {
 
 async function fetchTemplateBuffer() {
   let lastError = null;
+  const tried = [];
   for (const url of DOCX_TEMPLATE_URLS) {
+    tried.push(url);
     try {
       const response = await fetch(url, { credentials: 'same-origin' });
       if (response.ok) {
@@ -127,7 +135,8 @@ async function fetchTemplateBuffer() {
       lastError = error;
     }
   }
-  throw lastError || new Error('Не удалось загрузить шаблон DOCX');
+  const triedText = tried.join(', ');
+  throw lastError || new Error(`Не удалось загрузить шаблон DOCX. Проверены пути: ${triedText}`);
 }
 
 async function buildDocxBlob(answerText) {
@@ -147,7 +156,34 @@ async function buildDocxBlob(answerText) {
 
   zip.file('word/document.xml', xml);
   const blob = zip.generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-  return { blob, templateUrl: template.url };
+  return { blob, templateUrl: template.url, documentXml: xml };
+}
+
+function extractTextFromDocumentXml(xml) {
+  if (!xml) {
+    return '';
+  }
+  return String(xml)
+    .replace(/<w:tab\/?\s*>/g, '\t')
+    .replace(/<w:br\/?\s*>/g, '\n')
+    .replace(/<\/w:p>/g, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function renderDocxFallbackHtml(container, xmlText) {
+  const page = document.createElement('div');
+  page.className = 'appdosc-docx-viewer__fallback-page';
+  const restoredText = extractTextFromDocumentXml(xmlText);
+  page.textContent = restoredText || 'Шаблон загружен, но содержимое пустое.';
+  container.innerHTML = '';
+  container.appendChild(page);
 }
 
 function downloadBlob(blob, name) {
@@ -342,17 +378,28 @@ function openAiResponseDialog(context = {}) {
       return null;
     }
     viewerStatus.textContent = 'Готовим DOCX из шаблона...';
-    const { blob, templateUrl } = await buildDocxBlob(text);
+    const { blob, templateUrl, documentXml } = await buildDocxBlob(text);
     currentDocxBlob = blob;
-    const docxPreview = await ensureDocxPreview();
     viewerCanvas.innerHTML = '';
-    await docxPreview.renderAsync(blob, viewerCanvas, null, {
-      className: 'docx',
-      inWrapper: true,
-      ignoreWidth: false,
-      breakPages: true,
-    });
-    viewerStatus.textContent = `Шаблон загружен: ${templateUrl}`;
+    let rendered = false;
+    try {
+      const docxPreview = await ensureDocxPreview();
+      await docxPreview.renderAsync(blob, viewerCanvas, null, {
+        className: 'docx',
+        inWrapper: true,
+        ignoreWidth: false,
+        breakPages: true,
+      });
+      rendered = true;
+    } catch (_) {
+      rendered = false;
+    }
+    if (!rendered) {
+      renderDocxFallbackHtml(viewerCanvas, documentXml);
+    }
+    viewerStatus.textContent = rendered
+      ? `Шаблон загружен: ${templateUrl}`
+      : `Шаблон загружен: ${templateUrl}. Упрощённый просмотр (fallback).`;
     return blob;
   };
 
