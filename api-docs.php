@@ -294,11 +294,20 @@ $effectiveStyle = $responseStyle !== ''
     ? $responseStyle
     : (isset($context['responseStyle']) && is_string($context['responseStyle']) ? trim($context['responseStyle']) : '');
 $styleInstruction = 'Пиши в деловом стиле.';
-if ($effectiveStyle === 'concise') {
+if ($effectiveStyle === 'aggressive') {
+    $styleInstruction = 'Пиши напористо, уверенно и жёстко, но без оскорблений.';
+} elseif ($effectiveStyle === 'informational') {
+    $styleInstruction = 'Пиши спокойно, нейтрально и максимально информативно.';
+} elseif ($effectiveStyle === 'neutral') {
+    $styleInstruction = 'Пиши в нейтральном деловом тоне.';
+} elseif ($effectiveStyle === 'concise') {
+    // Обратная совместимость со старыми значениями
     $styleInstruction = 'Пиши кратко и строго по делу.';
 } elseif ($effectiveStyle === 'friendly') {
+    // Обратная совместимость со старыми значениями
     $styleInstruction = 'Пиши развёрнуто, дружелюбно и понятно.';
 } elseif ($effectiveStyle === 'technical') {
+    // Обратная совместимость со старыми значениями
     $styleInstruction = 'Пиши технически, с пояснениями и структурой.';
 }
 
@@ -404,7 +413,7 @@ if ($response === '') {
     $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
         ? trim($context['selectedTone'])
         : '';
-    if (($effectiveStyle === 'concise' || $selectedTone === 'aggressive') && $aggressive !== '') {
+    if (($effectiveStyle === 'aggressive' || $effectiveStyle === 'concise' || $selectedTone === 'aggressive') && $aggressive !== '') {
         $response = $aggressive;
     } elseif ($neutral !== '') {
         $response = $neutral;
