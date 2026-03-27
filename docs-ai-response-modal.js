@@ -99,7 +99,9 @@
   function isTextLike(file) {
     var type = String(file.type || '').toLowerCase();
     var name = String(file.name || '').toLowerCase();
-    return type.indexOf('text') !== -1 || /\.(txt|md|json|csv|xml|html|css|js|ts|php|py|java|sql)$/i.test(name);
+    return type.indexOf('text') !== -1
+      || /(json|xml|csv|html|javascript|markdown|x-yaml|yaml)/i.test(type)
+      || /\.(txt|md|json|csv|xml|html|css|js|ts|php|py|java|sql|log|ini|yml|yaml|rtf)$/i.test(name);
   }
 
   function isPdfLike(file) {
@@ -122,6 +124,9 @@
         size: Number(entry.size || 0),
         type: entry.type ? String(entry.type) : '',
         content: typeof entry.content === 'string' ? entry.content : '',
+        extracted: Boolean(entry.extracted || (typeof entry.content === 'string' && entry.content.trim() !== '')),
+        extracting: false,
+        extractError: null,
         url: typeof entry.url === 'string' ? entry.url : '',
         fileObject: null
       };
@@ -143,6 +148,9 @@
           size: Number(file.size || 0),
           type: file.type || '',
           content: '',
+          extracted: false,
+          extracting: false,
+          extractError: null,
           url: '',
           fileObject: file
         };
@@ -396,16 +404,32 @@
       });
     }
 
+    var extractedTexts = state.files
+      .filter(function (file) {
+        return file && typeof file.content === 'string' && file.content.trim() !== '';
+      })
+      .map(function (file) {
+        return {
+          id: file.id,
+          name: file.name,
+          type: file.type || '',
+          text: file.content
+        };
+      });
+
     context.selectedModel = state.model;
     context.responseStyle = state.responseStyle;
     context.aiBehavior = state.aiBehavior;
+    context.extractedTexts = extractedTexts;
     context.attachedFiles = state.files.map(function (file) {
       return {
         name: file.name,
         size: file.size,
         type: file.type,
         url: file.url || '',
-        content: file.content || ''
+        content: file.content || '',
+        extracted: Boolean(file.extracted),
+        extractError: file.extractError || null
       };
     });
 
@@ -417,6 +441,7 @@
     formData.append('responseStyle', state.responseStyle);
     formData.append('aiBehavior', state.aiBehavior || '');
     formData.append('context', JSON.stringify(context));
+    formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
     state.files.forEach(function (file) {
       if (file.fileObject) {
@@ -430,6 +455,8 @@
   async function hydrateFileContents(state) {
     for (var i = 0; i < state.files.length; i += 1) {
       if (state.files[i].content) {
+        state.files[i].extracted = true;
+        state.files[i].extractError = null;
         continue;
       }
       if (state.files[i].fileObject) {
@@ -439,6 +466,8 @@
         // eslint-disable-next-line no-await-in-loop
         state.files[i].content = await fetchExternalFileContent(state.files[i]);
       }
+      state.files[i].extracted = Boolean(state.files[i].content && String(state.files[i].content).trim() !== '');
+      state.files[i].extractError = state.files[i].extracted ? null : state.files[i].extractError;
     }
   }
 
@@ -536,9 +565,26 @@
       }
       state.files.forEach(function (file) {
         var chip = createElement('div', 'ai-chat-chip');
-        chip.innerHTML = '<span>' + detectIcon(file) + '</span><span>' + escapeHtml(file.name) + '</span><span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>';
+        var statusText = file.extracting
+          ? '⏳ извлечение...'
+          : (file.extracted ? '✓ текст извлечён' : (file.extractError ? '⚠ ошибка извлечения' : '— текст не извлечён'));
+        chip.innerHTML = ''
+          + '<span>' + detectIcon(file) + '</span>'
+          + '<span>' + escapeHtml(file.name) + '</span>'
+          + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>'
+          + '<span class="ai-chat-chip__meta">' + escapeHtml(statusText) + '</span>';
+
+        var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ OCR' : '📄 OCR');
+        ocr.type = 'button';
+        ocr.disabled = !!file.extracting;
+        ocr.addEventListener('click', function () {
+          extractSingleFile(file);
+        });
+        chip.appendChild(ocr);
+
         var remove = createElement('button', 'ai-chat-chip__remove', '×');
         remove.type = 'button';
+        remove.disabled = !!file.extracting;
         remove.addEventListener('click', function () {
           state.files = state.files.filter(function (entry) {
             return entry.id !== file.id;
@@ -548,6 +594,10 @@
         chip.appendChild(remove);
         filesWrap.appendChild(chip);
       });
+    }
+
+    function updateFileStatusInUI() {
+      renderFiles();
     }
 
     function setLoading(loading) {
@@ -564,68 +614,92 @@
       }
     }
 
-    function getFirstUploadableFile() {
-      for (var i = 0; i < state.files.length; i += 1) {
-        if (state.files[i] && (state.files[i].fileObject || state.files[i].url)) {
-          return state.files[i];
-        }
+    async function extractSingleFile(fileEntry) {
+      if (!fileEntry || fileEntry.extracting) {
+        return false;
       }
-      return null;
+      var fileLabel = fileEntry.name || 'файл';
+      fileEntry.extracting = true;
+      fileEntry.extractError = null;
+      updateFileStatusInUI();
+
+      try {
+        var extractedText = '';
+        if (fileEntry.fileObject && isTextLike(fileEntry.fileObject)) {
+          extractedText = await fileToText(fileEntry.fileObject);
+          if (!String(extractedText || '').trim() && !isPdfLike(fileEntry.fileObject)) {
+            throw new Error('Текстовый файл пустой или не читается');
+          }
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
+        } else if (fileEntry.url && isTextLike(fileEntry)) {
+          extractedText = await fetchExternalFileContent(fileEntry);
+          if (!String(extractedText || '').trim() && !isPdfLike(fileEntry)) {
+            throw new Error('Не удалось прочитать текст по ссылке');
+          }
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
+        } else {
+          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+          var formData = new FormData();
+          formData.append('action', 'ocr_extract');
+          formData.append('language', 'rus');
+          if (fileEntry.fileObject) {
+            formData.append('file', fileEntry.fileObject, fileLabel || 'document.pdf');
+          } else if (fileEntry.url) {
+            formData.append('file_url', String(fileEntry.url));
+          } else {
+            throw new Error('Файл недоступен для чтения');
+          }
+          var response = await fetch(apiUrl + '?action=ocr_extract', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: formData
+          });
+          var payload = await response.json();
+          if (!response.ok || !payload || payload.ok !== true) {
+            throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+          }
+          extractedText = String(payload.text || '').trim();
+          if (!extractedText) {
+            throw new Error('OCR не вернул текст. Проверьте качество файла.');
+          }
+          messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText.slice(0, 1200)));
+        }
+
+        fileEntry.content = String(extractedText || '').trim();
+        fileEntry.extracted = fileEntry.content !== '';
+        fileEntry.extractError = fileEntry.extracted ? null : 'Пустой результат';
+        return fileEntry.extracted;
+      } catch (error) {
+        fileEntry.extractError = error && error.message ? error.message : 'Не удалось извлечь текст';
+        messages.appendChild(createMessage('assistant', 'Ошибка извлечения (' + fileLabel + '): ' + fileEntry.extractError, true));
+        return false;
+      } finally {
+        fileEntry.extracting = false;
+        updateFileStatusInUI();
+        messages.scrollTop = messages.scrollHeight;
+      }
     }
 
-    async function runOcr() {
-      if (state.isLoading) {
-        return;
-      }
-      var fileEntry = getFirstUploadableFile();
-      if (!fileEntry) {
-        messages.appendChild(createMessage('assistant', 'Не найден файл для OCR. Прикрепите файл или откройте документ с вложением.', true));
+    async function extractAllPendingFiles() {
+      var queue = state.files.filter(function (file) {
+        return file && !file.extracted && !file.extracting && (file.fileObject || file.url);
+      });
+      if (!queue.length) {
+        messages.appendChild(createMessage('assistant', 'Нет файлов для извлечения. Все файлы уже обработаны или недоступны.'));
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      if (fileEntry.content && String(fileEntry.content).trim() !== '') {
-        messages.appendChild(createMessage('assistant', 'Текст уже доступен:\n' + String(fileEntry.content)));
-        messages.scrollTop = messages.scrollHeight;
-        return;
-      }
-      var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
-      pending.innerHTML = '<span class="ai-chat-spinner"></span>Читаю файл через OCR...';
-      messages.appendChild(pending);
-      messages.scrollTop = messages.scrollHeight;
       setLoading(true);
-      try {
-        var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-        var formData = new FormData();
-        formData.append('action', 'ocr_extract');
-        formData.append('language', 'rus');
-        if (fileEntry.fileObject) {
-          formData.append('file', fileEntry.fileObject, fileEntry.name || 'document.pdf');
-        } else if (fileEntry.url) {
-          formData.append('file_url', String(fileEntry.url));
-        }
-        var response = await fetch(apiUrl + '?action=ocr_extract', {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: formData
-        });
-        var payload = await response.json();
-        if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
-        }
-        var extractedText = String(payload.text || '').trim();
-        if (!extractedText) {
-          throw new Error('OCR не вернул текст. Проверьте качество файла.');
-        }
-        fileEntry.content = extractedText;
-        pending.remove();
-        messages.appendChild(createMessage('assistant', 'OCR текст:\n' + extractedText));
-      } catch (error) {
-        pending.remove();
-        messages.appendChild(createMessage('assistant', 'Ошибка OCR: ' + (error && error.message ? error.message : 'Не удалось распознать текст.'), true));
-      } finally {
-        setLoading(false);
+      for (var i = 0; i < queue.length; i += 1) {
+        var current = queue[i];
+        messages.appendChild(createMessage('assistant', 'Обрабатываю файл ' + (i + 1) + ' из ' + queue.length + ': ' + (current.name || 'файл')));
         messages.scrollTop = messages.scrollHeight;
+        // eslint-disable-next-line no-await-in-loop
+        await extractSingleFile(current);
       }
+      setLoading(false);
+      messages.appendChild(createMessage('assistant', 'Обработка файлов завершена.'));
+      messages.scrollTop = messages.scrollHeight;
     }
 
     function closeModal() {
@@ -716,7 +790,12 @@
       }
     });
 
-    ocrButton.addEventListener('click', runOcr);
+    ocrButton.addEventListener('click', function () {
+      if (state.isLoading) {
+        return;
+      }
+      extractAllPendingFiles();
+    });
     sendButton.addEventListener('click', sendMessage);
     closeButton.addEventListener('click', closeModal);
 

@@ -286,6 +286,16 @@ function parseAiJson(string $content): array
     return [];
 }
 
+function looksLikeJsonText(string $value): bool
+{
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return false;
+    }
+    return (str_starts_with($trimmed, '{') && str_ends_with($trimmed, '}'))
+        || (str_starts_with($trimmed, '[') && str_ends_with($trimmed, ']'));
+}
+
 function buildLocalFallback(string $documentTitle, string $prompt, array $context = []): array
 {
     $title = trim($documentTitle) !== '' ? $documentTitle : 'документу';
@@ -327,6 +337,7 @@ $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
+$extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
 if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
@@ -416,25 +427,52 @@ if ($apiKey === '') {
 
 $filesSummary = buildFilesSummary($files);
 
+$extractedTexts = [];
+$decodedExtractedTexts = safeJsonDecode($extractedTextsRaw);
+if (isset($context['extractedTexts']) && is_array($context['extractedTexts']) && !$decodedExtractedTexts) {
+    $decodedExtractedTexts = $context['extractedTexts'];
+}
+if (is_array($decodedExtractedTexts)) {
+    foreach ($decodedExtractedTexts as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $text = trim((string)($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        $extractedTexts[] = [
+            'name' => trim((string)($entry['name'] ?? 'Файл')),
+            'type' => trim((string)($entry['type'] ?? '')),
+            'text' => mb_substr($text, 0, 12000),
+        ];
+    }
+}
+
 $effectiveStyle = $responseStyle !== ''
     ? $responseStyle
     : (isset($context['responseStyle']) && is_string($context['responseStyle']) ? trim($context['responseStyle']) : '');
-$styleInstruction = 'Пиши в деловом стиле.';
+$styleInstruction = 'Пиши в официально-деловом стиле.';
+$styleExampleInstruction = "Ориентируйся на форму ответа: «В ответ на Ваше письмо от 20.03.2026 г. сообщаем следующее... Работы выполняются в рабочем порядке в рамках утверждённого графика.»";
 if ($effectiveStyle === 'aggressive') {
     $styleInstruction = 'Пиши напористо, уверенно и жёстко, но без оскорблений.';
+    $styleExampleInstruction = '';
 } elseif ($effectiveStyle === 'informational') {
     $styleInstruction = 'Пиши спокойно, нейтрально и максимально информативно.';
 } elseif ($effectiveStyle === 'neutral') {
-    $styleInstruction = 'Пиши в нейтральном деловом тоне.';
+    $styleInstruction = 'Пиши в нейтральном официально-деловом тоне.';
 } elseif ($effectiveStyle === 'concise') {
     // Обратная совместимость со старыми значениями
     $styleInstruction = 'Пиши кратко и строго по делу.';
+    $styleExampleInstruction = '';
 } elseif ($effectiveStyle === 'friendly') {
     // Обратная совместимость со старыми значениями
     $styleInstruction = 'Пиши развёрнуто, дружелюбно и понятно.';
+    $styleExampleInstruction = '';
 } elseif ($effectiveStyle === 'technical') {
     // Обратная совместимость со старыми значениями
     $styleInstruction = 'Пиши технически, с пояснениями и структурой.';
+    $styleExampleInstruction = '';
 }
 $effectiveBehavior = $aiBehavior !== ''
     ? $aiBehavior
@@ -463,15 +501,30 @@ if ($allowedModelsRaw !== '') {
 
 $systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
   . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview и context.attachedFiles[*].content. "
+  . "Используй также user payload: extractedTexts[*].text и extractedTextsCombined. "
   . "Если контент файла присутствует, не проси путь или имя файла повторно, а используй этот контент напрямую. "
   . "Если контент пустой, кратко сообщи, что файл не удалось прочитать. "
-  . $styleInstruction . ' ' . $behaviorInstruction;
+  . $styleInstruction . ' '
+  . ($styleExampleInstruction !== '' ? ($styleExampleInstruction . ' ') : '')
+  . $behaviorInstruction;
+
+$extractedTextsCombined = '';
+if ($extractedTexts) {
+    $combinedParts = [];
+    foreach ($extractedTexts as $idx => $entry) {
+        $name = $entry['name'] !== '' ? $entry['name'] : ('Файл ' . ($idx + 1));
+        $combinedParts[] = 'Источник: ' . $name . "\n" . $entry['text'];
+    }
+    $extractedTextsCombined = implode("\n\n---\n\n", $combinedParts);
+}
 
 $userPayload = [
     'documentTitle' => $documentTitle,
     'prompt' => $prompt,
     'context' => $context,
     'files' => $filesSummary,
+    'extractedTexts' => $extractedTexts,
+    'extractedTextsCombined' => $extractedTextsCombined,
 ];
 
 $body = [
@@ -575,7 +628,10 @@ if ($statusCode >= 400) {
 $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 $parsed = parseAiJson($content);
 
-$analysis = textFromMixed($parsed['analysis'] ?? '');
+$analysis = '';
+if (isset($parsed['analysis']) && (is_string($parsed['analysis']) || is_numeric($parsed['analysis']) || is_bool($parsed['analysis']))) {
+    $analysis = textFromMixed($parsed['analysis']);
+}
 $response = textFromMixed($parsed['response'] ?? '');
 $neutral = textFromMixed($parsed['neutral'] ?? '');
 $aggressive = textFromMixed($parsed['aggressive'] ?? '');
@@ -598,6 +654,21 @@ if ($analysis === '' && $response === '' && $neutral === '' && $aggressive === '
     $response = $content;
     $neutral = $content;
     $aggressive = $content;
+}
+
+if (looksLikeJsonText($response) || $response === '') {
+    $fallback = buildLocalFallback($documentTitle, $prompt, array_merge($context, ['responseStyle' => $effectiveStyle]));
+    $response = (string)($fallback['response'] ?? '');
+    if ($analysis === '') {
+        $analysis = (string)($fallback['analysis'] ?? 'Ответ сформирован по локальному шаблону.');
+    }
+}
+
+if (mb_strlen($analysis) > 1200) {
+    $analysis = mb_substr($analysis, 0, 1200) . '…';
+}
+if (mb_strlen($response) > 8000) {
+    $response = mb_substr($response, 0, 8000) . '…';
 }
 
 jsonResponse(200, [
