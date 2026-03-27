@@ -5,6 +5,7 @@
   var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
+  var pdfJsReadyPromise = null;
 
   var STYLE_OPTIONS = [
     { value: 'concise', label: 'Краткий и по делу' },
@@ -242,7 +243,10 @@
   }
 
   function ensurePdfJsLoaded() {
-    return new Promise(function (resolve, reject) {
+    if (pdfJsReadyPromise) {
+      return pdfJsReadyPromise;
+    }
+    pdfJsReadyPromise = new Promise(function (resolve, reject) {
       if (typeof window === 'undefined') {
         reject(new Error('no_window'));
         return;
@@ -252,40 +256,83 @@
         return;
       }
 
-      var existingScript = document.querySelector('script[data-ai-pdfjs="1"]');
-      if (existingScript) {
-        existingScript.addEventListener('load', function () {
-          if (window.pdfjsLib) {
-            resolve(window.pdfjsLib);
-          } else {
-            reject(new Error('pdfjs_not_ready'));
-          }
-        }, { once: true });
-        existingScript.addEventListener('error', function () {
-          reject(new Error('pdfjs_load_failed'));
-        }, { once: true });
-        return;
-      }
+      var scriptCandidates = getPdfScriptCandidates();
+      var workerCandidates = getPdfWorkerCandidates();
 
-      var script = document.createElement('script');
-      script.src = '/js/documents/pdf/pdf.min.js';
-      script.async = true;
-      script.setAttribute('data-ai-pdfjs', '1');
-      script.onload = function () {
-        if (window.pdfjsLib) {
-          if (window.pdfjsLib.GlobalWorkerOptions) {
-            window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/js/documents/pdf/pdf.worker.min.js';
-          }
-          resolve(window.pdfjsLib);
+      function applyWorkerSrc() {
+        if (!window.pdfjsLib || !window.pdfjsLib.GlobalWorkerOptions) {
           return;
         }
-        reject(new Error('pdfjs_missing'));
-      };
-      script.onerror = function () {
-        reject(new Error('pdfjs_load_failed'));
-      };
-      document.head.appendChild(script);
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = workerCandidates[0];
+      }
+
+      function tryLoad(index) {
+        if (index >= scriptCandidates.length) {
+          reject(new Error('pdfjs_load_failed'));
+          return;
+        }
+        var src = scriptCandidates[index];
+        var script = document.createElement('script');
+        script.async = true;
+        script.src = src;
+        script.setAttribute('data-ai-pdfjs', '1');
+        script.onload = function () {
+          if (!window.pdfjsLib || typeof window.pdfjsLib.getDocument !== 'function') {
+            tryLoad(index + 1);
+            return;
+          }
+          applyWorkerSrc();
+          resolve(window.pdfjsLib);
+        };
+        script.onerror = function () {
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+          tryLoad(index + 1);
+        };
+        document.head.appendChild(script);
+      }
+
+      tryLoad(0);
+    }).catch(function (error) {
+      pdfJsReadyPromise = null;
+      throw error;
     });
+    return pdfJsReadyPromise;
+  }
+
+  function getPdfAssetBasePaths() {
+    var bases = [];
+    var scriptEl = document.querySelector('script[src*="docs-ai-response-modal.js"]');
+    if (scriptEl && scriptEl.src) {
+      var normalized = String(scriptEl.src).replace(/\/docs-ai-response-modal\.js(?:\?.*)?$/i, '/');
+      bases.push(normalized);
+    }
+    bases.push(window.location.origin + '/js/documents/');
+    bases.push(window.location.origin + '/');
+    return Array.from(new Set(bases));
+  }
+
+  function getPdfScriptCandidates() {
+    var bases = getPdfAssetBasePaths();
+    var candidates = [];
+    bases.forEach(function (base) {
+      candidates.push(base + 'pdf/pdf.min.js');
+    });
+    candidates.push('/js/documents/pdf/pdf.min.js');
+    candidates.push('/pdf/pdf.min.js');
+    return Array.from(new Set(candidates));
+  }
+
+  function getPdfWorkerCandidates() {
+    var bases = getPdfAssetBasePaths();
+    var candidates = [];
+    bases.forEach(function (base) {
+      candidates.push(base + 'pdf/pdf.worker.min.js');
+    });
+    candidates.push('/js/documents/pdf/pdf.worker.min.js');
+    candidates.push('/pdf/pdf.worker.min.js');
+    return Array.from(new Set(candidates));
   }
 
   async function extractPdfText(source) {
