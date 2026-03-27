@@ -41,9 +41,6 @@ if ($method === 'GET') {
         $env = loadEnv(getEnvPaths());
         $rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
         $defaultModel = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
-        $apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
-        $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
-        $isGroq = str_starts_with($apiKey, 'gsk_') || stripos($baseUrl, 'groq.com') !== false;
         $models = [];
         if ($rawModels !== '') {
             $parts = preg_split('/[,\\n]+/u', $rawModels);
@@ -57,9 +54,7 @@ if ($method === 'GET') {
             }
         }
         if (!$models) {
-            $models = $isGroq
-                ? ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'gemma2-9b-it']
-                : [$defaultModel];
+            $models = [$defaultModel];
         }
         jsonResponse(200, ['ok' => true, 'models' => array_values(array_unique($models)), 'defaultModel' => $defaultModel]);
     }
