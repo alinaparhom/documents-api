@@ -1,6 +1,6 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
-const DOCX_TEMPLATE_URL = '/app/templates/template.docx';
+const DOCX_TEMPLATE_URLS = ['/app/templates/template.docx', '/templates/template.docx'];
 
 function ensureAiDialogStyles() {
   if (document.getElementById(DIALOG_STYLE_ID)) {
@@ -11,34 +11,46 @@ function ensureAiDialogStyles() {
   style.id = DIALOG_STYLE_ID;
   style.textContent = `
     .appdosc-ai-dialog{position:fixed;inset:0;z-index:2500;display:flex;align-items:stretch;justify-content:center;background:rgba(15,23,42,.36);backdrop-filter:blur(6px);padding:0;}
-    .appdosc-ai-dialog__panel{width:min(860px,100%);height:100dvh;max-height:100dvh;border-radius:22px 22px 0 0;background:linear-gradient(165deg,rgba(255,255,255,.92),rgba(255,255,255,.8));border:1px solid rgba(255,255,255,.7);box-shadow:0 18px 46px rgba(15,23,42,.22);display:flex;flex-direction:column;overflow:hidden;}
+    .appdosc-ai-dialog__panel{width:min(920px,100%);height:100dvh;max-height:100dvh;border-radius:22px 22px 0 0;background:linear-gradient(165deg,rgba(255,255,255,.94),rgba(255,255,255,.82));border:1px solid rgba(255,255,255,.7);box-shadow:0 18px 46px rgba(15,23,42,.22);display:flex;flex-direction:column;overflow:hidden;}
     .appdosc-ai-dialog__header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 14px 10px;border-bottom:1px solid rgba(148,163,184,.25);}
     .appdosc-ai-dialog__title{font-size:16px;font-weight:700;color:#0f172a;}
     .appdosc-ai-dialog__subtitle{font-size:12px;color:#64748b;margin-top:2px;}
     .appdosc-ai-dialog__close{border:none;background:rgba(148,163,184,.16);color:#0f172a;border-radius:999px;width:34px;height:34px;font-size:18px;line-height:1;cursor:pointer;}
     .appdosc-ai-dialog__messages{padding:10px 12px;display:flex;flex-direction:column;gap:8px;overflow:auto;background:rgba(248,250,252,.55);min-height:0;flex:1;}
-    .appdosc-ai-dialog__bubble{max-width:90%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.4;white-space:pre-wrap;word-break:break-word;}
+    .appdosc-ai-dialog__bubble{max-width:90%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word;}
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:rgba(37,99,235,.12);color:#1e3a8a;}
     .appdosc-ai-dialog__bubble--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(148,163,184,.25);}
-    .appdosc-ai-dialog__composer{padding:10px 12px;border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:8px;background:rgba(255,255,255,.7);}
+    .appdosc-ai-dialog__composer{padding:10px 12px;border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:8px;background:rgba(255,255,255,.76);}
     .appdosc-ai-dialog__input{resize:none;min-height:76px;max-height:180px;border-radius:14px;border:1px solid rgba(148,163,184,.38);padding:10px 12px;font-size:14px;color:#0f172a;background:rgba(255,255,255,.85);outline:none;}
     .appdosc-ai-dialog__input:focus,.appdosc-ai-dialog__docx-input:focus{border-color:rgba(37,99,235,.5);box-shadow:0 0 0 3px rgba(59,130,246,.15);}
     .appdosc-ai-dialog__actions{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;}
     .appdosc-ai-dialog__hint{font-size:12px;color:#64748b;}
     .appdosc-ai-dialog__buttons{display:flex;gap:8px;flex-wrap:wrap;}
     .appdosc-ai-dialog__btn{border:none;border-radius:12px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;padding:10px 14px;min-height:38px;cursor:pointer;}
+    .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed;}
     .appdosc-ai-dialog__btn--ghost{background:rgba(148,163,184,.15);color:#0f172a;}
-    .appdosc-ai-dialog__docx{display:none;border-top:1px solid rgba(148,163,184,.2);padding:10px 12px calc(12px + env(safe-area-inset-bottom, 0px));background:rgba(255,255,255,.74);gap:8px;flex-direction:column;}
+
+    .appdosc-ai-dialog__docx{display:none;border-top:1px solid rgba(148,163,184,.2);padding:10px 12px calc(12px + env(safe-area-inset-bottom, 0px));background:rgba(255,255,255,.76);gap:8px;flex-direction:column;}
     .appdosc-ai-dialog__docx--visible{display:flex;}
-    .appdosc-ai-dialog__docx-input{width:100%;resize:vertical;min-height:120px;max-height:260px;border-radius:12px;border:1px solid rgba(148,163,184,.38);padding:10px 12px;font-size:14px;background:rgba(255,255,255,.9);color:#0f172a;outline:none;}
     .appdosc-ai-dialog__docx-meta{font-size:12px;color:#64748b;}
-    .appdosc-ai-dialog__preview{border:1px solid rgba(148,163,184,.3);border-radius:12px;background:#fff;max-height:220px;overflow:auto;padding:10px;}
-    .appdosc-ai-dialog__preview-page{max-width:760px;background:#fff;color:#0f172a;margin:0 auto;padding:16px;white-space:pre-wrap;line-height:1.5;font-size:14px;}
+    .appdosc-ai-dialog__docx-input{width:100%;resize:vertical;min-height:96px;max-height:210px;border-radius:12px;border:1px solid rgba(148,163,184,.38);padding:10px 12px;font-size:14px;background:rgba(255,255,255,.92);color:#0f172a;outline:none;}
+
+    .appdosc-docx-viewer{position:fixed;inset:0;z-index:2600;display:none;padding:10px;background:rgba(15,23,42,.42);backdrop-filter:blur(6px);}
+    .appdosc-docx-viewer--open{display:flex;}
+    .appdosc-docx-viewer__panel{width:min(980px,100%);height:100%;margin:auto;display:flex;flex-direction:column;gap:8px;border-radius:16px;background:rgba(255,255,255,.92);border:1px solid rgba(148,163,184,.26);overflow:hidden;}
+    .appdosc-docx-viewer__header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,.2);}
+    .appdosc-docx-viewer__title{font-size:14px;font-weight:700;color:#0f172a;}
+    .appdosc-docx-viewer__body{flex:1;overflow:auto;background:rgba(241,245,249,.5);padding:10px;}
+    .appdosc-docx-viewer__canvas{min-height:100%;}
+    .appdosc-docx-viewer__status{font-size:12px;color:#64748b;padding:0 12px 8px;}
+
     @media (max-width: 560px){
       .appdosc-ai-dialog{padding:0;align-items:stretch;}
       .appdosc-ai-dialog__panel{width:100%;height:100dvh;max-height:100dvh;border-radius:0;}
       .appdosc-ai-dialog__buttons{width:100%;}
       .appdosc-ai-dialog__btn{flex:1;}
+      .appdosc-docx-viewer{padding:0;}
+      .appdosc-docx-viewer__panel{border-radius:0;}
     }
   `;
   document.head.appendChild(style);
@@ -56,7 +68,7 @@ function buildAssistantReply(userMessage, context) {
     `«${userMessage.trim()}»`,
     '',
     '3) Дальше:',
-    'Проверьте формулировку и при необходимости откройте DOCX-редактор ниже.',
+    'Откройте шаблон DOCX, внесите правки и распечатайте при необходимости.',
   ].join('\n');
 }
 
@@ -67,17 +79,25 @@ function createBubble(text, role) {
   return bubble;
 }
 
-function ensurePizZip() {
-  if (window.PizZip) {
-    return Promise.resolve(window.PizZip);
+function ensureScript(src, globalKey, title) {
+  if (window[globalKey]) {
+    return Promise.resolve(window[globalKey]);
   }
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/pizzip@3.2.0/dist/pizzip.min.js';
-    script.onload = () => window.PizZip ? resolve(window.PizZip) : reject(new Error('PizZip не загрузился'));
-    script.onerror = () => reject(new Error('Не удалось загрузить PizZip'));
+    script.src = src;
+    script.onload = () => window[globalKey] ? resolve(window[globalKey]) : reject(new Error(`${title} не загрузился`));
+    script.onerror = () => reject(new Error(`Не удалось загрузить ${title}`));
     document.head.appendChild(script);
   });
+}
+
+function ensurePizZip() {
+  return ensureScript('https://cdn.jsdelivr.net/npm/pizzip@3.2.0/dist/pizzip.min.js', 'PizZip', 'PizZip');
+}
+
+function ensureDocxPreview() {
+  return ensureScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.3/dist/docx-preview.min.js', 'docx', 'docx-preview');
 }
 
 function escapeXml(value) {
@@ -94,14 +114,26 @@ function textToWordParagraphs(text) {
   return lines.map((line) => `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line || ' ')}</w:t></w:r></w:p>`).join('');
 }
 
-async function generateDocxFromTemplate(answerText) {
-  const PizZip = await ensurePizZip();
-  const templateResponse = await fetch(DOCX_TEMPLATE_URL, { credentials: 'same-origin' });
-  if (!templateResponse.ok) {
-    throw new Error('Шаблон DOCX не найден: /app/templates/template.docx');
+async function fetchTemplateBuffer() {
+  let lastError = null;
+  for (const url of DOCX_TEMPLATE_URLS) {
+    try {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (response.ok) {
+        return { buffer: await response.arrayBuffer(), url };
+      }
+      lastError = new Error(`Шаблон недоступен (${response.status}): ${url}`);
+    } catch (error) {
+      lastError = error;
+    }
   }
-  const templateBuffer = await templateResponse.arrayBuffer();
-  const zip = new PizZip(templateBuffer);
+  throw lastError || new Error('Не удалось загрузить шаблон DOCX');
+}
+
+async function buildDocxBlob(answerText) {
+  const PizZip = await ensurePizZip();
+  const template = await fetchTemplateBuffer();
+  const zip = new PizZip(template.buffer);
   let xml = zip.file('word/document.xml').asText();
   const paragraphs = textToWordParagraphs(answerText);
 
@@ -114,7 +146,8 @@ async function generateDocxFromTemplate(answerText) {
   }
 
   zip.file('word/document.xml', xml);
-  return zip.generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const blob = zip.generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  return { blob, templateUrl: template.url };
 }
 
 function downloadBlob(blob, name) {
@@ -125,19 +158,20 @@ function downloadBlob(blob, name) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
-function printText(text) {
+function openPrintWindowFromHtml(html) {
   const win = window.open('', '_blank');
   if (!win) {
     throw new Error('Разрешите всплывающие окна для печати.');
   }
-  const safe = String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  win.document.write(`<!doctype html><html lang="ru"><head><meta charset="UTF-8"><title>Печать ответа</title><style>body{font-family:Inter,Arial,sans-serif;padding:24px;line-height:1.55;white-space:pre-wrap;color:#111827}</style></head><body>${safe}</body></html>`);
+  win.document.write(`<!doctype html><html lang="ru"><head><meta charset="UTF-8"><title>Печать DOCX</title><style>body{font-family:Inter,Arial,sans-serif;padding:0;margin:0;background:#f8fafc;} .docx-wrapper{padding:12px;}</style></head><body><div class="docx-wrapper">${html}</div></body></html>`);
   win.document.close();
-  win.focus();
-  win.print();
+  setTimeout(() => {
+    win.focus();
+    win.print();
+  }, 250);
 }
 
 function openAiResponseDialog(context = {}) {
@@ -167,7 +201,7 @@ function openAiResponseDialog(context = {}) {
   title.textContent = 'Ответ с помощью ИИ';
   const subtitle = document.createElement('div');
   subtitle.className = 'appdosc-ai-dialog__subtitle';
-  subtitle.textContent = 'Сформируйте ответ, отредактируйте и выгрузите в DOCX';
+  subtitle.textContent = 'Сначала черновик, потом шаблон DOCX и печать';
   titleWrap.append(title, subtitle);
 
   const closeButton = document.createElement('button');
@@ -205,7 +239,7 @@ function openAiResponseDialog(context = {}) {
   const openEditorButton = document.createElement('button');
   openEditorButton.type = 'button';
   openEditorButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
-  openEditorButton.textContent = 'DOCX редактор';
+  openEditorButton.textContent = 'Открыть шаблон DOCX';
   openEditorButton.disabled = true;
 
   const docxSection = document.createElement('div');
@@ -213,25 +247,24 @@ function openAiResponseDialog(context = {}) {
 
   const docxMeta = document.createElement('div');
   docxMeta.className = 'appdosc-ai-dialog__docx-meta';
-  docxMeta.textContent = 'Текст попадёт в шаблон /app/templates/template.docx';
+  docxMeta.textContent = 'Текст будет вставлен в /app/templates/template.docx';
 
   const docxInput = document.createElement('textarea');
   docxInput.className = 'appdosc-ai-dialog__docx-input';
-  docxInput.placeholder = 'Здесь можно отредактировать ответ перед вставкой в DOCX';
-
-  const preview = document.createElement('div');
-  preview.className = 'appdosc-ai-dialog__preview';
-  const previewPage = document.createElement('div');
-  previewPage.className = 'appdosc-ai-dialog__preview-page';
-  previewPage.textContent = 'Черновик ещё не создан.';
-  preview.appendChild(previewPage);
+  docxInput.placeholder = 'Отредактируйте текст перед вставкой в шаблон DOCX';
 
   const docxActions = document.createElement('div');
   docxActions.className = 'appdosc-ai-dialog__buttons';
+
   const applyButton = document.createElement('button');
   applyButton.type = 'button';
   applyButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
   applyButton.textContent = 'Вставить в ответ';
+
+  const previewDocxButton = document.createElement('button');
+  previewDocxButton.type = 'button';
+  previewDocxButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+  previewDocxButton.textContent = 'Показать шаблон';
 
   const downloadButton = document.createElement('button');
   downloadButton.type = 'button';
@@ -243,6 +276,34 @@ function openAiResponseDialog(context = {}) {
   printButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
   printButton.textContent = 'Печать';
 
+  const viewer = document.createElement('div');
+  viewer.className = 'appdosc-docx-viewer';
+  const viewerPanel = document.createElement('div');
+  viewerPanel.className = 'appdosc-docx-viewer__panel';
+  const viewerHeader = document.createElement('div');
+  viewerHeader.className = 'appdosc-docx-viewer__header';
+  const viewerTitle = document.createElement('div');
+  viewerTitle.className = 'appdosc-docx-viewer__title';
+  viewerTitle.textContent = 'Просмотр шаблона DOCX';
+  const viewerClose = document.createElement('button');
+  viewerClose.type = 'button';
+  viewerClose.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+  viewerClose.textContent = 'Закрыть';
+  const viewerBody = document.createElement('div');
+  viewerBody.className = 'appdosc-docx-viewer__body';
+  const viewerCanvas = document.createElement('div');
+  viewerCanvas.className = 'appdosc-docx-viewer__canvas';
+  const viewerStatus = document.createElement('div');
+  viewerStatus.className = 'appdosc-docx-viewer__status';
+  viewerStatus.textContent = 'Шаблон не загружен.';
+
+  viewerBody.appendChild(viewerCanvas);
+  viewerHeader.append(viewerTitle, viewerClose);
+  viewerPanel.append(viewerHeader, viewerBody, viewerStatus);
+  viewer.appendChild(viewerPanel);
+
+  let currentDocxBlob = null;
+
   const close = () => {
     document.removeEventListener('keydown', handleEsc);
     root.remove();
@@ -250,6 +311,10 @@ function openAiResponseDialog(context = {}) {
 
   const handleEsc = (event) => {
     if (event.key === 'Escape') {
+      if (viewer.classList.contains('appdosc-docx-viewer--open')) {
+        viewer.classList.remove('appdosc-docx-viewer--open');
+        return;
+      }
       close();
     }
   };
@@ -257,8 +322,38 @@ function openAiResponseDialog(context = {}) {
   const setEditorText = (value) => {
     const text = String(value || '').trim();
     docxInput.value = text;
-    previewPage.textContent = text || 'Черновик ещё не создан.';
     openEditorButton.disabled = !text;
+  };
+
+  const ensureText = () => {
+    const text = String(docxInput.value || '').trim();
+    if (!text) {
+      if (typeof context.onStatus === 'function') {
+        context.onStatus('warning', 'Сначала сформируйте или введите текст ответа.');
+      }
+      return '';
+    }
+    return text;
+  };
+
+  const generateAndRender = async () => {
+    const text = ensureText();
+    if (!text) {
+      return null;
+    }
+    viewerStatus.textContent = 'Готовим DOCX из шаблона...';
+    const { blob, templateUrl } = await buildDocxBlob(text);
+    currentDocxBlob = blob;
+    const docxPreview = await ensureDocxPreview();
+    viewerCanvas.innerHTML = '';
+    await docxPreview.renderAsync(blob, viewerCanvas, null, {
+      className: 'docx',
+      inWrapper: true,
+      ignoreWidth: false,
+      breakPages: true,
+    });
+    viewerStatus.textContent = `Шаблон загружен: ${templateUrl}`;
+    return blob;
   };
 
   const send = () => {
@@ -273,7 +368,7 @@ function openAiResponseDialog(context = {}) {
     messages.scrollTop = messages.scrollHeight;
     input.value = '';
     if (typeof context.onStatus === 'function') {
-      context.onStatus('success', 'Черновик ответа от ИИ готов. Можно открыть DOCX редактор.');
+      context.onStatus('success', 'Черновик ответа готов. Откройте шаблон DOCX.');
     }
   };
 
@@ -289,40 +384,46 @@ function openAiResponseDialog(context = {}) {
     docxSection.classList.toggle('appdosc-ai-dialog__docx--visible');
   });
 
-  docxInput.addEventListener('input', () => {
-    previewPage.textContent = docxInput.value || 'Черновик ещё не создан.';
-  });
-
   applyButton.addEventListener('click', () => {
-    const text = String(docxInput.value || '').trim();
+    const text = ensureText();
     if (!text) {
-      if (typeof context.onStatus === 'function') {
-        context.onStatus('warning', 'Нет текста для вставки в ответ.');
-      }
       return;
     }
     if (typeof context.onApplyText === 'function') {
       context.onApplyText(text);
     }
     if (typeof context.onStatus === 'function') {
-      context.onStatus('success', 'Текст из DOCX редактора вставлен в поле ответа.');
+      context.onStatus('success', 'Текст вставлен в поле ответа задачи.');
+    }
+  });
+
+  previewDocxButton.addEventListener('click', async () => {
+    previewDocxButton.disabled = true;
+    try {
+      await generateAndRender();
+      viewer.classList.add('appdosc-docx-viewer--open');
+    } catch (error) {
+      if (typeof context.onStatus === 'function') {
+        context.onStatus('error', error && error.message ? error.message : 'Не удалось визуализировать шаблон DOCX.');
+      }
+      viewerStatus.textContent = 'Ошибка визуализации шаблона.';
+    } finally {
+      previewDocxButton.disabled = false;
     }
   });
 
   downloadButton.addEventListener('click', async () => {
-    const text = String(docxInput.value || '').trim();
+    const text = ensureText();
     if (!text) {
-      if (typeof context.onStatus === 'function') {
-        context.onStatus('warning', 'Сначала сформируйте или введите текст ответа.');
-      }
       return;
     }
     downloadButton.disabled = true;
     try {
-      const blob = await generateDocxFromTemplate(text);
-      downloadBlob(blob, 'response-template.docx');
+      const result = currentDocxBlob ? { blob: currentDocxBlob } : await buildDocxBlob(text);
+      currentDocxBlob = result.blob;
+      downloadBlob(currentDocxBlob, 'response-template.docx');
       if (typeof context.onStatus === 'function') {
-        context.onStatus('success', 'DOCX сформирован из шаблона и скачан.');
+        context.onStatus('success', 'DOCX из шаблона успешно скачан.');
       }
     } catch (error) {
       if (typeof context.onStatus === 'function') {
@@ -333,20 +434,30 @@ function openAiResponseDialog(context = {}) {
     }
   });
 
-  printButton.addEventListener('click', () => {
-    const text = String(docxInput.value || '').trim();
+  printButton.addEventListener('click', async () => {
+    const text = ensureText();
     if (!text) {
-      if (typeof context.onStatus === 'function') {
-        context.onStatus('warning', 'Нет текста для печати.');
-      }
       return;
     }
+    printButton.disabled = true;
     try {
-      printText(text);
+      await generateAndRender();
+      openPrintWindowFromHtml(viewerCanvas.innerHTML);
     } catch (error) {
       if (typeof context.onStatus === 'function') {
         context.onStatus('error', error && error.message ? error.message : 'Печать недоступна.');
       }
+    } finally {
+      printButton.disabled = false;
+    }
+  });
+
+  viewerClose.addEventListener('click', () => {
+    viewer.classList.remove('appdosc-docx-viewer--open');
+  });
+  viewer.addEventListener('click', (event) => {
+    if (event.target === viewer) {
+      viewer.classList.remove('appdosc-docx-viewer--open');
     }
   });
 
@@ -360,11 +471,11 @@ function openAiResponseDialog(context = {}) {
   buttons.append(openEditorButton, sendButton);
   actions.append(hint, buttons);
   composer.append(input, actions);
-  docxActions.append(applyButton, downloadButton, printButton);
-  docxSection.append(docxMeta, docxInput, preview, docxActions);
+  docxActions.append(applyButton, previewDocxButton, downloadButton, printButton);
+  docxSection.append(docxMeta, docxInput, docxActions);
   header.append(titleWrap, closeButton);
   panel.append(header, messages, composer, docxSection);
-  root.appendChild(panel);
+  root.append(panel, viewer);
   document.body.appendChild(root);
 
   document.addEventListener('keydown', handleEsc);
