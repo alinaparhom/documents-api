@@ -207,6 +207,67 @@ function buildFilesSummary(array $files): array
     return $summary;
 }
 
+function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
+{
+    $ch = curl_init($endpoint);
+    if ($ch === false) {
+        return ['status' => 500, 'body' => false, 'curl_error' => 'Не удалось инициализировать cURL'];
+    }
+
+    $postFields = [
+        'language' => $language,
+    ];
+    if (is_string($fileUrl) && trim($fileUrl) !== '') {
+        $postFields['url'] = trim($fileUrl);
+    } else {
+        $tmpName = (string)($file['tmp_name'] ?? '');
+        if ($tmpName === '' || !is_file($tmpName)) {
+            return ['status' => 400, 'body' => false, 'curl_error' => 'Файл для OCR не найден'];
+        }
+        $mime = (string)($file['type'] ?? 'application/octet-stream');
+        $name = (string)($file['name'] ?? 'document');
+        $postFields['file'] = curl_file_create($tmpName, $mime, $name);
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'apikey: ' . $apiKey,
+        ],
+        CURLOPT_POSTFIELDS => $postFields,
+        CURLOPT_TIMEOUT => 120,
+    ]);
+
+    $responseBody = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
+}
+
+function textFromMixed(mixed $value): string
+{
+    if (is_string($value)) {
+        return trim($value);
+    }
+    if (is_numeric($value) || is_bool($value)) {
+        return trim((string)$value);
+    }
+    if (!is_array($value)) {
+        return '';
+    }
+    $parts = [];
+    foreach ($value as $item) {
+        $chunk = textFromMixed($item);
+        if ($chunk !== '') {
+            $parts[] = $chunk;
+        }
+    }
+    return trim(implode('; ', $parts));
+}
+
 function parseAiJson(string $content): array
 {
     $content = trim($content);
@@ -259,6 +320,86 @@ function buildLocalFallback(string $documentTitle, string $prompt, array $contex
 
 $env = loadEnv(getEnvPaths());
 
+$prompt = trim((string)($_POST['prompt'] ?? ''));
+$documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
+$context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
+$responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
+$aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
+$requestedModel = trim((string)($_POST['model'] ?? ''));
+$action = trim((string)($_POST['action'] ?? ''));
+
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract') {
+    logApiDocs('warn', 'Invalid action', ['action' => $action]);
+    jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
+
+$attachments = normalizeUploadedFiles('attachments');
+$singleAttachment = normalizeUploadedFiles('attachment');
+$ocrFile = normalizeUploadedFiles('file');
+$files = array_merge($attachments, $singleAttachment, $ocrFile);
+
+if ($action === 'ocr_extract') {
+    $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
+    $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
+    $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
+    $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
+
+    if ($ocrApiKey === '') {
+        jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
+    }
+    if (!$files && $ocrFileUrl === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
+    }
+
+    $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $files ? $files[0] : [], $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrFileUrl);
+    $ocrResponseBody = $ocrResult['body'];
+    $ocrCurlError = (string)$ocrResult['curl_error'];
+    $ocrStatusCode = (int)$ocrResult['status'];
+
+    if ($ocrResponseBody === false) {
+        logApiDocs('error', 'OCR request failed', ['curlError' => $ocrCurlError]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError]);
+    }
+
+    $ocrJson = json_decode((string)$ocrResponseBody, true);
+    if (!is_array($ocrJson)) {
+        logApiDocs('error', 'OCR API returned non-JSON', ['response' => mb_substr((string)$ocrResponseBody, 0, 500)]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ OCR API']);
+    }
+
+    if ($ocrStatusCode >= 400) {
+        $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+        if ($message === '') {
+            $message = 'OCR API error';
+        }
+        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+    }
+
+    $hasErrorOnProcessing = isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true;
+    if ($hasErrorOnProcessing) {
+        $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+        jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
+    }
+
+    $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
+    $parts = [];
+    foreach ($parsedResults as $entry) {
+        if (is_array($entry) && isset($entry['ParsedText']) && is_string($entry['ParsedText'])) {
+            $textPart = trim($entry['ParsedText']);
+            if ($textPart !== '') {
+                $parts[] = $textPart;
+            }
+        }
+    }
+
+    $ocrText = trim(implode("\n\n", $parts));
+    jsonResponse(200, [
+        'ok' => true,
+        'text' => $ocrText,
+        'raw' => $ocrJson,
+    ]);
+}
+
 $apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
 $model = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
 $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
@@ -272,23 +413,6 @@ $isGoogleOpenAiCompat = stripos($baseUrl, 'generativelanguage.googleapis.com') !
 if ($apiKey === '') {
     jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env']);
 }
-
-$prompt = trim((string)($_POST['prompt'] ?? ''));
-$documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
-$context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
-$responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
-$aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
-$requestedModel = trim((string)($_POST['model'] ?? ''));
-$action = trim((string)($_POST['action'] ?? ''));
-
-if ($action !== '' && $action !== 'ai_response_analyze') {
-    logApiDocs('warn', 'Invalid action', ['action' => $action]);
-    jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
-}
-
-$attachments = normalizeUploadedFiles('attachments');
-$singleAttachment = normalizeUploadedFiles('attachment');
-$files = array_merge($attachments, $singleAttachment);
 
 $filesSummary = buildFilesSummary($files);
 
@@ -435,8 +559,9 @@ if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
 
 if ($statusCode >= 400) {
     $message = 'AI API error';
-    if (isset($responseJson['error']['message']) && is_string($responseJson['error']['message'])) {
-        $message = $responseJson['error']['message'];
+    $errorMessage = textFromMixed($responseJson['error']['message'] ?? '');
+    if ($errorMessage !== '') {
+        $message = $errorMessage;
     }
     logApiDocs('error', 'AI API HTTP error', ['status' => $statusCode, 'message' => $message]);
     $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
@@ -450,10 +575,10 @@ if ($statusCode >= 400) {
 $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 $parsed = parseAiJson($content);
 
-$analysis = trim((string)($parsed['analysis'] ?? ''));
-$response = trim((string)($parsed['response'] ?? ''));
-$neutral = trim((string)($parsed['neutral'] ?? ''));
-$aggressive = trim((string)($parsed['aggressive'] ?? ''));
+$analysis = textFromMixed($parsed['analysis'] ?? '');
+$response = textFromMixed($parsed['response'] ?? '');
+$neutral = textFromMixed($parsed['neutral'] ?? '');
+$aggressive = textFromMixed($parsed['aggressive'] ?? '');
 
 if ($response === '') {
     $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
