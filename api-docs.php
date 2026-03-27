@@ -276,6 +276,7 @@ $prompt = trim((string)($_POST['prompt'] ?? ''));
 $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 $context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
+$aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 
@@ -310,6 +311,12 @@ if ($effectiveStyle === 'aggressive') {
     // Обратная совместимость со старыми значениями
     $styleInstruction = 'Пиши технически, с пояснениями и структурой.';
 }
+$effectiveBehavior = $aiBehavior !== ''
+    ? $aiBehavior
+    : (isset($context['aiBehavior']) && is_string($context['aiBehavior']) ? trim($context['aiBehavior']) : '');
+$behaviorInstruction = $effectiveBehavior !== ''
+    ? ('Дополнительная настройка поведения: ' . $effectiveBehavior . '.')
+    : '';
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
 $allowedModelsRaw = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
@@ -333,7 +340,7 @@ $systemMessage = "Ты помощник по деловой переписке �
   . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview и context.attachedFiles[*].content. "
   . "Если контент файла присутствует, не проси путь или имя файла повторно, а используй этот контент напрямую. "
   . "Если контент пустой, кратко сообщи, что файл не удалось прочитать. "
-  . $styleInstruction;
+  . $styleInstruction . ' ' . $behaviorInstruction;
 
 $userPayload = [
     'documentTitle' => $documentTitle,

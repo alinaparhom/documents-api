@@ -58,8 +58,10 @@
       '.ai-chat-modal__empty{font-size:11px;color:#94a3b8;}' +
       '.ai-chat-modal__attach{margin-top:5px;border:1px dashed rgba(148,163,184,.55);background:rgba(248,250,252,.86);border-radius:8px;padding:5px 8px;font-size:11px;font-weight:600;color:#334155;cursor:pointer;}' +
       '.ai-chat-modal__settings{display:grid;grid-template-columns:1fr 1fr;gap:6px;border:1px solid rgba(226,232,240,.88);border-radius:12px;padding:7px;background:rgba(255,255,255,.66);backdrop-filter:blur(2px);}' +
+      '.ai-chat-modal__field--full{grid-column:1 / -1;}' +
       '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
       '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
+      '.ai-chat-modal__input{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:rgba(255,255,255,.95);padding:7px 8px;font-size:12px;color:#0f172a;outline:none;}' +
       '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:11px;background:rgba(248,250,252,.52);border:1px solid rgba(226,232,240,.82);border-radius:12px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth;}' +
       '.ai-chat-msg{max-width:84%;padding:8px 10px;border-radius:12px;font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:0 2px 8px rgba(15,23,42,.05);}' +
       '.ai-chat-msg--user{margin-left:auto;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-bottom-right-radius:6px;}' +
@@ -397,6 +399,7 @@
 
     context.selectedModel = state.model;
     context.responseStyle = state.responseStyle;
+    context.aiBehavior = state.aiBehavior;
     context.attachedFiles = state.files.map(function (file) {
       return {
         name: file.name,
@@ -413,6 +416,7 @@
     formData.append('prompt', userText);
     formData.append('model', state.model);
     formData.append('responseStyle', state.responseStyle);
+    formData.append('aiBehavior', state.aiBehavior || '');
     formData.append('context', JSON.stringify(context));
 
     state.files.forEach(function (file) {
@@ -451,6 +455,7 @@
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
       responseStyle: STYLE_OPTIONS[0].value,
+      aiBehavior: typeof config.aiBehavior === 'string' ? config.aiBehavior.trim() : '',
       isLoading: false
     };
 
@@ -495,6 +500,12 @@
       option.textContent = opt.label;
       styleSelect.appendChild(option);
     });
+    var behaviorField = createElement('label', 'ai-chat-modal__field ai-chat-modal__field--full');
+    behaviorField.appendChild(createElement('span', '', 'Поведение ИИ'));
+    var behaviorInput = createElement('input', 'ai-chat-modal__input');
+    behaviorInput.type = 'text';
+    behaviorInput.placeholder = 'Например: отвечай максимально кратко и по шагам';
+    behaviorInput.value = state.aiBehavior;
 
     var messages = createElement('div', 'ai-chat-modal__messages');
     messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
@@ -567,6 +578,7 @@
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
+      state.aiBehavior = String(behaviorInput.value || '').trim();
 
       messages.appendChild(createMessage('user', value));
       var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
@@ -608,6 +620,9 @@
 
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
+    });
+    behaviorInput.addEventListener('input', function () {
+      state.aiBehavior = String(behaviorInput.value || '').trim();
     });
 
     textarea.addEventListener('input', function () {
@@ -654,6 +669,8 @@
     styleField.appendChild(styleSelect);
     settings.appendChild(modelField);
     settings.appendChild(styleField);
+    behaviorField.appendChild(behaviorInput);
+    settings.appendChild(behaviorField);
 
     composer.appendChild(textarea);
     composer.appendChild(sendButton);
