@@ -88,17 +88,9 @@
       '.ai-chat-modal__template-btn{border:1px solid rgba(37,99,235,.32);border-radius:9px;padding:7px 10px;background:rgba(239,246,255,.85);color:#1d4ed8;font-size:11px;font-weight:700;cursor:pointer;}' +
       '.ai-chat-modal__template-link{display:none;align-items:center;border:1px solid rgba(14,116,144,.25);border-radius:9px;padding:7px 10px;background:rgba(236,254,255,.85);color:#0e7490;font-size:11px;font-weight:700;text-decoration:none;}' +
       '.ai-chat-modal__template-link--visible{display:inline-flex;}' +
-      '.ai-chat-modal__pdf-wrap{display:none;border:1px solid rgba(226,232,240,.88);border-radius:12px;overflow:hidden;background:#fff;}' +
-      '.ai-chat-modal__pdf-wrap--visible{display:block;}' +
-      '.ai-chat-modal__pdf-view{display:block;width:100%;height:56vh;border:none;background:#fff;}' +
-      '.ai-chat-modal__editor{display:none;flex-direction:column;gap:6px;border:1px solid rgba(226,232,240,.88);border-radius:12px;background:rgba(255,255,255,.78);padding:8px;}' +
-      '.ai-chat-modal__editor--visible{display:flex;}' +
-      '.ai-chat-modal__editor-title{font-size:11px;font-weight:700;color:#334155;}' +
-      '.ai-chat-modal__editor-text{width:100%;min-height:170px;max-height:42vh;resize:vertical;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:10px;background:#fff;color:#0f172a;font-size:12px;line-height:1.45;}' +
-      '.ai-chat-modal__editor-actions{display:flex;justify-content:flex-end;}' +
       '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__pdf-view{height:40vh;}.ai-chat-modal__editor-text{max-height:35vh;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}}';
     document.head.appendChild(style);
   }
 
@@ -716,8 +708,7 @@
       lastAiResponse: '',
       templateObjectUrl: '',
       templateSourceText: '',
-      templateEditorReady: false,
-      templateWindow: null
+      templateEditorReady: false
     };
 
     var root = createElement('div', ROOT_CLASS);
@@ -775,27 +766,13 @@
     var templateActions = createElement('div', 'ai-chat-modal__template-actions');
     var templateButton = createElement('button', 'ai-chat-modal__template-btn', 'Шаблон');
     templateButton.type = 'button';
-    var refreshTemplateButton = createElement('button', 'ai-chat-modal__template-btn', 'Обновить PDF');
-    refreshTemplateButton.type = 'button';
-    var templateDownload = createElement('a', 'ai-chat-modal__template-link', 'Скачать PDF');
-    templateDownload.setAttribute('download', 'ai-template-response.pdf');
-    templateDownload.setAttribute('target', '_blank');
+    var downloadButton = createElement('button', 'ai-chat-modal__template-btn', 'Скачать PDF');
+    downloadButton.type = 'button';
+    downloadButton.disabled = true;
     templateActions.appendChild(templateButton);
-    templateActions.appendChild(templateDownload);
+    templateActions.appendChild(downloadButton);
     templateBox.appendChild(templateStatus);
     templateBox.appendChild(templateActions);
-    var editorWrap = createElement('div', 'ai-chat-modal__editor');
-    editorWrap.appendChild(createElement('div', 'ai-chat-modal__editor-title', 'Редактор шаблона (можно править вручную)'));
-    var editorText = createElement('textarea', 'ai-chat-modal__editor-text');
-    editorText.placeholder = 'Текст шаблона появится здесь...';
-    var editorActions = createElement('div', 'ai-chat-modal__editor-actions');
-    editorActions.appendChild(refreshTemplateButton);
-    editorWrap.appendChild(editorText);
-    editorWrap.appendChild(editorActions);
-    var pdfWrap = createElement('div', 'ai-chat-modal__pdf-wrap');
-    var pdfView = createElement('iframe', 'ai-chat-modal__pdf-view');
-    pdfView.setAttribute('title', 'PDF предпросмотр');
-    pdfWrap.appendChild(pdfView);
 
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
@@ -844,7 +821,7 @@
       ocrButton.disabled = loading;
       sendButton.disabled = loading;
       templateButton.disabled = loading;
-      refreshTemplateButton.disabled = loading;
+      downloadButton.disabled = loading || !state.templateObjectUrl;
       if (loading) {
         ocrButton.innerHTML = '<span class="ai-chat-spinner"></span>Обработка';
         sendButton.innerHTML = '<span class="ai-chat-spinner"></span>Отправка';
@@ -920,14 +897,10 @@
 
     function closeModal() {
       document.removeEventListener('keydown', onEsc);
-      window.removeEventListener('message', onTemplateMessage);
       hiddenInput.value = '';
       if (state.templateObjectUrl) {
         URL.revokeObjectURL(state.templateObjectUrl);
         state.templateObjectUrl = '';
-      }
-      if (state.templateWindow && !state.templateWindow.closed) {
-        state.templateWindow.close();
       }
       closeWithAnimation(root);
     }
@@ -938,34 +911,6 @@
       }
     }
 
-    function openTemplateInSeparateWindow(textValue) {
-      var popup = window.open('', 'aiTemplateEditorWindow', 'width=1400,height=900,noopener=no');
-      if (!popup) {
-        return null;
-      }
-      var safeText = escapeHtml(String(textValue || ''));
-      var html = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
-        '<title>Редактор шаблона</title><style>' +
-        'body{margin:0;font-family:Inter,system-ui,sans-serif;background:#f1f5f9;color:#0f172a;display:flex;flex-direction:column;height:100vh;}' +
-        '.bar{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,.9);border-bottom:1px solid #dbe5f0;}' +
-        '.title{font-size:14px;font-weight:700;}.hint{font-size:11px;color:#64748b;}' +
-        '.btn{border:1px solid rgba(37,99,235,.35);background:#eff6ff;color:#1d4ed8;border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;}' +
-        'textarea{flex:1;margin:12px;border:1px solid #cbd5e1;border-radius:12px;padding:14px;font-size:14px;line-height:1.5;resize:none;outline:none;background:#fff;}' +
-        '</style></head><body>' +
-        '<div class="bar"><div><div class="title">Редактор шаблона (полный экран)</div><div class="hint">Исправьте текст и нажмите «Применить»</div></div>' +
-        '<button id="applyBtn" class="btn">Применить</button></div>' +
-        '<textarea id="editor">' + safeText + '</textarea>' +
-        '<script>document.getElementById(\"applyBtn\").addEventListener(\"click\",function(){' +
-        'var val=document.getElementById(\"editor\").value||\"\";' +
-        'if(window.opener){window.opener.postMessage({type:\"ai_template_editor_apply\",text:val},window.location.origin);}' +
-        'window.close();' +
-        '});</script></body></html>';
-      popup.document.open();
-      popup.document.write(html);
-      popup.document.close();
-      popup.focus();
-      return popup;
-    }
 
     async function regenerateTemplatePdf(textValue, successLabel) {
       var pdfBytes = await buildTemplatePdfWithAnswer(textValue);
@@ -974,30 +919,10 @@
         URL.revokeObjectURL(state.templateObjectUrl);
       }
       state.templateObjectUrl = URL.createObjectURL(blob);
-      pdfView.src = state.templateObjectUrl;
-      pdfWrap.classList.add('ai-chat-modal__pdf-wrap--visible');
-      templateDownload.href = state.templateObjectUrl;
-      templateDownload.classList.add('ai-chat-modal__template-link--visible');
+      downloadButton.disabled = false;
       templateStatus.textContent = successLabel || 'Шаблон: PDF готов, можно скачать';
     }
 
-    function onTemplateMessage(event) {
-      if (!event || event.origin !== window.location.origin || !event.data || event.data.type !== 'ai_template_editor_apply') {
-        return;
-      }
-      editorText.value = String(event.data.text || '');
-      editorWrap.classList.add('ai-chat-modal__editor--visible');
-      setLoading(true);
-      templateStatus.textContent = 'Шаблон: применяю правки...';
-      regenerateTemplatePdf(editorText.value, 'Шаблон: правки применены, PDF обновлён')
-        .catch(function (error) {
-          templateStatus.textContent = 'Шаблон: ошибка';
-          messages.appendChild(createMessage('assistant', 'Ошибка шаблона: ' + (error && error.message ? error.message : 'Не удалось применить правки.'), true));
-        })
-        .finally(function () {
-          setLoading(false);
-        });
-    }
 
     async function sendMessage() {
       var value = String(textarea.value || '').trim();
@@ -1087,21 +1012,20 @@
         return;
       }
       setLoading(true);
-      templateStatus.textContent = 'Шаблон: готовлю редактор...';
+      templateStatus.textContent = 'Шаблон: формирую PDF...';
       try {
         if (!state.templateEditorReady) {
           state.templateSourceText = await fetchTemplateText();
-          editorText.value = mergeAnswerIntoTemplateMiddle(state.templateSourceText, state.lastAiResponse);
           state.templateEditorReady = true;
-        } else if (!editorText.value.trim()) {
-          editorText.value = mergeAnswerIntoTemplateMiddle(state.templateSourceText, state.lastAiResponse);
         }
-        templateStatus.textContent = 'Шаблон: формирую PDF...';
-        await regenerateTemplatePdf(editorText.value, 'Шаблон: PDF готов, можно скачать');
-        state.templateWindow = openTemplateInSeparateWindow(editorText.value);
-        if (!state.templateWindow) {
-          editorWrap.classList.add('ai-chat-modal__editor--visible');
-          templateStatus.textContent = 'Шаблон: попап заблокирован, редактор открыт в модалке';
+        var mergedText = mergeAnswerIntoTemplateMiddle(state.templateSourceText, state.lastAiResponse);
+        if (!mergedText.trim()) {
+          throw new Error('Не удалось подготовить текст для шаблона');
+        }
+        await regenerateTemplatePdf(mergedText, 'Шаблон: PDF открыт в новой вкладке');
+        var tab = window.open(state.templateObjectUrl, '_blank');
+        if (!tab) {
+          templateStatus.textContent = 'Шаблон: вкладка заблокирована, используйте кнопку «Скачать PDF»';
         }
       } catch (error) {
         templateStatus.textContent = 'Шаблон: ошибка';
@@ -1111,22 +1035,18 @@
         setLoading(false);
       }
     });
-    refreshTemplateButton.addEventListener('click', async function () {
-      if (!editorText.value.trim()) {
-        messages.appendChild(createMessage('assistant', 'Введите текст в редакторе шаблона.', true));
+    downloadButton.addEventListener('click', function () {
+      if (!state.templateObjectUrl) {
+        messages.appendChild(createMessage('assistant', 'Сначала сгенерируйте PDF кнопкой «Шаблон».', true));
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      setLoading(true);
-      templateStatus.textContent = 'Шаблон: обновляю PDF...';
-      try {
-        await regenerateTemplatePdf(editorText.value, 'Шаблон: PDF обновлён');
-      } catch (error) {
-        templateStatus.textContent = 'Шаблон: ошибка';
-        messages.appendChild(createMessage('assistant', 'Ошибка шаблона: ' + (error && error.message ? error.message : 'Не удалось обновить PDF.'), true));
-      } finally {
-        setLoading(false);
-      }
+      var link = document.createElement('a');
+      link.href = state.templateObjectUrl;
+      link.download = 'ai-template-response.pdf';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     });
     closeButton.addEventListener('click', closeModal);
 
@@ -1170,8 +1090,6 @@
     content.appendChild(contextBox);
     content.appendChild(settings);
     content.appendChild(templateBox);
-    content.appendChild(editorWrap);
-    content.appendChild(pdfWrap);
     content.appendChild(messages);
     content.appendChild(composer);
 
@@ -1200,7 +1118,6 @@
     setTimeout(function () {
       textarea.focus();
     }, 0);
-    window.addEventListener('message', onTemplateMessage);
   }
 
   if (typeof window !== 'undefined') {
