@@ -30,6 +30,67 @@ function logApiDocs(string $level, string $message, array $context = []): void
     );
 }
 
+function buildBaseUrlFromRequest(): string
+{
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = isset($_SERVER['HTTP_HOST']) ? trim((string)$_SERVER['HTTP_HOST']) : '';
+    if ($host === '') {
+        return '';
+    }
+    return $scheme . '://' . $host;
+}
+
+function ensureDirectory(string $path): bool
+{
+    if (is_dir($path)) {
+        return true;
+    }
+    return @mkdir($path, 0775, true);
+}
+
+function handleDocxStubGenerationAction(): void
+{
+    $templatePath = __DIR__ . '/app/templates/template.docx';
+    if (!is_file($templatePath)) {
+        logApiDocs('error', 'DOCX template is missing', ['templatePath' => $templatePath]);
+        jsonResponse(500, ['ok' => false, 'error' => 'Шаблон DOCX не найден.']);
+    }
+
+    $responseText = trim((string)($_POST['responseText'] ?? ''));
+    if ($responseText === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Текст ответа пустой.']);
+    }
+
+    $tmpDir = __DIR__ . '/app/tmp';
+    if (!ensureDirectory($tmpDir)) {
+        logApiDocs('error', 'Failed to create temp directory for DOCX', ['tmpDir' => $tmpDir]);
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось подготовить временную директорию.']);
+    }
+
+    try {
+        $suffix = bin2hex(random_bytes(4));
+    } catch (Throwable $exception) {
+        $suffix = (string)mt_rand(100000, 999999);
+    }
+    $fileName = 'response-stub-' . gmdate('Ymd-His') . '-' . $suffix . '.docx';
+    $targetPath = $tmpDir . '/' . $fileName;
+    if (!@copy($templatePath, $targetPath)) {
+        logApiDocs('error', 'Failed to copy DOCX template', ['templatePath' => $templatePath, 'targetPath' => $targetPath]);
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX файл.']);
+    }
+
+    $publicPath = '/app/tmp/' . rawurlencode($fileName);
+    $baseUrl = buildBaseUrlFromRequest();
+    $publicUrl = $baseUrl !== '' ? ($baseUrl . $publicPath) : $publicPath;
+
+    jsonResponse(200, [
+        'ok' => true,
+        'url' => $publicUrl,
+        'fileName' => $fileName,
+        'stub' => true,
+    ]);
+}
+
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 if ($method === 'OPTIONS') {
     http_response_code(204);
@@ -86,6 +147,11 @@ if ($method === 'GET') {
 if ($method !== 'POST') {
     logApiDocs('warn', 'Unsupported HTTP method', ['method' => $method]);
     jsonResponse(405, ['ok' => false, 'error' => 'Method Not Allowed']);
+}
+
+$action = trim((string)($_POST['action'] ?? ''));
+if ($action === 'response_generate_docx_stub') {
+    handleDocxStubGenerationAction();
 }
 
 function loadEnv(array $paths): array
@@ -277,7 +343,6 @@ $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 $context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
-$action = trim((string)($_POST['action'] ?? ''));
 
 if ($action !== '' && $action !== 'ai_response_analyze') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);

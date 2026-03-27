@@ -12867,6 +12867,22 @@
         documentTitle: currentDoc && currentDoc.title ? String(currentDoc.title) : '',
         pendingFiles: pendingFiles.slice(),
         linkedFiles: linkedFiles,
+        getResponseText: function() {
+          return messageInput.value || '';
+        },
+        onInsertResponseText: function(assistantText) {
+          messageInput.value = String(assistantText || '');
+          updateMessageCounter();
+          renderTable();
+        },
+        onDocxGenerated: function(file) {
+          if (!file) {
+            return;
+          }
+          mergePendingFiles([file], 'DOCX генерация');
+          updateMessageCounter();
+          renderTable();
+        },
         context: {
           organization: state.organization || '',
           documentId: currentDoc && currentDoc.id ? currentDoc.id : doc.id,
