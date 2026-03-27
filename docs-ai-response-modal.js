@@ -7,10 +7,15 @@
   var MAX_EXTRACT_CHARS = 500000;
   var pdfJsReadyPromise = null;
   var pdfLibReadyPromise = null;
+  var pdfFontkitReadyPromise = null;
   var TEMPLATE_PDF_CANDIDATES = [
     '/app/templates/template.pdf',
     '/templates/template.pdf',
     '/js/documents/app/templates/template.pdf'
+  ];
+  var CYRILLIC_FONT_CANDIDATES = [
+    'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts/hinted/ttf/NotoSans/NotoSans-Regular.ttf',
+    'https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans-Regular.ttf'
   ];
 
   var STYLE_OPTIONS = [
@@ -386,6 +391,40 @@
     return pdfLibReadyPromise;
   }
 
+  function ensurePdfFontkitLoaded() {
+    if (pdfFontkitReadyPromise) {
+      return pdfFontkitReadyPromise;
+    }
+    pdfFontkitReadyPromise = new Promise(function (resolve, reject) {
+      if (typeof window === 'undefined') {
+        reject(new Error('no_window'));
+        return;
+      }
+      if (window.fontkit) {
+        resolve(window.fontkit);
+        return;
+      }
+      var script = document.createElement('script');
+      script.async = true;
+      script.src = 'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js';
+      script.onload = function () {
+        if (window.fontkit) {
+          resolve(window.fontkit);
+        } else {
+          reject(new Error('fontkit_missing'));
+        }
+      };
+      script.onerror = function () {
+        reject(new Error('fontkit_load_failed'));
+      };
+      document.head.appendChild(script);
+    }).catch(function (error) {
+      pdfFontkitReadyPromise = null;
+      throw error;
+    });
+    return pdfFontkitReadyPromise;
+  }
+
   async function fetchTemplatePdfBytes() {
     for (var i = 0; i < TEMPLATE_PDF_CANDIDATES.length; i += 1) {
       // eslint-disable-next-line no-await-in-loop
@@ -398,67 +437,121 @@
     throw new Error('Шаблон PDF не найден по пути /app/templates/template.pdf');
   }
 
-  function splitTextLines(text, maxChars) {
+  async function fetchCyrillicFontBytes() {
+    for (var i = 0; i < CYRILLIC_FONT_CANDIDATES.length; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      var response = await fetch(CYRILLIC_FONT_CANDIDATES[i], { credentials: 'omit' }).catch(function () { return null; });
+      if (response && response.ok) {
+        // eslint-disable-next-line no-await-in-loop
+        return response.arrayBuffer();
+      }
+    }
+    throw new Error('Не удалось загрузить шрифт для кириллицы');
+  }
+
+  function splitTextByWidth(text, font, size, maxWidth) {
     var content = String(text || '').replace(/\r/g, '').trim();
     if (!content) {
-      return ['Ответ пустой'];
+      return ['Ответ пустой.'];
     }
     var lines = [];
-    content.split('\n').forEach(function (rawLine) {
-      var line = rawLine.trim();
-      if (!line) {
+    content.split('\n').forEach(function (rawParagraph) {
+      var paragraph = rawParagraph.trim();
+      if (!paragraph) {
         lines.push('');
         return;
       }
-      while (line.length > maxChars) {
-        lines.push(line.slice(0, maxChars));
-        line = line.slice(maxChars);
+      var words = paragraph.split(/\s+/);
+      var current = '';
+      words.forEach(function (word) {
+        var candidate = current ? (current + ' ' + word) : word;
+        if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+          current = candidate;
+          return;
+        }
+        if (current) {
+          lines.push(current);
+        }
+        current = word;
+        while (font.widthOfTextAtSize(current, size) > maxWidth && current.length > 1) {
+          var part = current.slice(0, Math.max(1, Math.floor(current.length / 2)));
+          if (font.widthOfTextAtSize(part, size) <= maxWidth) {
+            lines.push(part);
+            current = current.slice(part.length);
+          } else {
+            current = current.slice(0, Math.max(1, current.length - 1));
+          }
+        }
+      });
+      if (current) {
+        lines.push(current);
       }
-      lines.push(line);
     });
     return lines;
   }
 
   async function buildTemplatePdfWithAnswer(answerText) {
     var PDFLib = await ensurePdfLibLoaded();
+    var fontkit = await ensurePdfFontkitLoaded();
     var bytes = await fetchTemplatePdfBytes();
     var pdfDoc = await PDFLib.PDFDocument.load(bytes);
+    pdfDoc.registerFontkit(fontkit);
+    var fontBytes = await fetchCyrillicFontBytes();
+    var textFont = await pdfDoc.embedFont(fontBytes, { subset: true });
     var pages = pdfDoc.getPages();
-    var firstPage = pages && pages.length ? pages[0] : pdfDoc.addPage();
-    var width = firstPage.getWidth();
-    var height = firstPage.getHeight();
-    var margin = 32;
-    var boxHeight = Math.min(250, height - margin * 2);
-    firstPage.drawRectangle({
-      x: margin,
-      y: margin,
-      width: width - margin * 2,
-      height: boxHeight,
-      color: PDFLib.rgb(0.98, 0.99, 1),
-      borderWidth: 1,
-      borderColor: PDFLib.rgb(0.82, 0.88, 0.96),
-      opacity: 0.94
-    });
-    firstPage.drawText('Ответ ИИ', {
-      x: margin + 12,
-      y: margin + boxHeight - 22,
-      size: 12,
-      color: PDFLib.rgb(0.12, 0.23, 0.42)
-    });
+    var page = pages && pages.length ? pages[0] : pdfDoc.addPage();
+    var pageWidth = page.getWidth();
+    var pageHeight = page.getHeight();
+    var margin = 30;
+    var boxX = margin;
+    var boxY = margin;
+    var boxWidth = pageWidth - margin * 2;
+    var boxHeight = pageHeight - margin * 2;
+    var titleSize = 13;
+    var textSize = 10;
+    var lineHeight = 13;
+    var textTopPadding = 38;
+    var textBottomPadding = 14;
+    var maxTextWidth = boxWidth - 24;
+    var minY = boxY + textBottomPadding;
+    var maxY = boxY + boxHeight - textTopPadding;
+    var lines = splitTextByWidth(answerText, textFont, textSize, maxTextWidth);
+    var lineIndex = 0;
 
-    var lines = splitTextLines(answerText, 90);
-    var y = margin + boxHeight - 40;
-    for (var i = 0; i < lines.length; i += 1) {
-      if (y < margin + 10) {
-        break;
-      }
-      firstPage.drawText(lines[i], {
-        x: margin + 12,
-        y: y,
-        size: 10,
-        color: PDFLib.rgb(0.09, 0.13, 0.2)
+    while (lineIndex < lines.length) {
+      page.drawRectangle({
+        x: boxX,
+        y: boxY,
+        width: boxWidth,
+        height: boxHeight,
+        color: PDFLib.rgb(0.98, 0.99, 1),
+        borderWidth: 1,
+        borderColor: PDFLib.rgb(0.82, 0.88, 0.96),
+        opacity: 0.95
       });
-      y -= 12;
+      page.drawText('Ответ ИИ', {
+        x: boxX + 12,
+        y: boxY + boxHeight - 24,
+        size: titleSize,
+        font: textFont,
+        color: PDFLib.rgb(0.12, 0.23, 0.42)
+      });
+
+      var y = maxY;
+      while (lineIndex < lines.length && y >= minY) {
+        page.drawText(lines[lineIndex], {
+          x: boxX + 12,
+          y: y,
+          size: textSize,
+          font: textFont,
+          color: PDFLib.rgb(0.09, 0.13, 0.2)
+        });
+        y -= lineHeight;
+        lineIndex += 1;
+      }
+      if (lineIndex < lines.length) {
+        page = pdfDoc.addPage([pageWidth, pageHeight]);
+      }
     }
     return pdfDoc.save();
   }
