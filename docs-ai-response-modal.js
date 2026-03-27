@@ -527,7 +527,17 @@
     if (!cleanAnswer) {
       return String(templateText || '').trim();
     }
-    var lines = String(templateText || '')
+    var rawTemplate = String(templateText || '').replace(/\r/g, '');
+    if (rawTemplate) {
+      var placeholderPatterns = [/\{\{\s*answer\s*\}\}/gi, /\{\{\s*ответ\s*\}\}/gi, /\{answer\}/gi, /\[\[\s*answer\s*\]\]/gi];
+      for (var p = 0; p < placeholderPatterns.length; p += 1) {
+        if (placeholderPatterns[p].test(rawTemplate)) {
+          return rawTemplate.replace(placeholderPatterns[p], cleanAnswer).trim();
+        }
+      }
+    }
+
+    var lines = rawTemplate
       .replace(/\r/g, '')
       .split('\n')
       .map(function (line) { return line.trim(); })
