@@ -716,7 +716,8 @@
       lastAiResponse: '',
       templateObjectUrl: '',
       templateSourceText: '',
-      templateEditorReady: false
+      templateEditorReady: false,
+      templateWindow: null
     };
 
     var root = createElement('div', ROOT_CLASS);
@@ -919,10 +920,14 @@
 
     function closeModal() {
       document.removeEventListener('keydown', onEsc);
+      window.removeEventListener('message', onTemplateMessage);
       hiddenInput.value = '';
       if (state.templateObjectUrl) {
         URL.revokeObjectURL(state.templateObjectUrl);
         state.templateObjectUrl = '';
+      }
+      if (state.templateWindow && !state.templateWindow.closed) {
+        state.templateWindow.close();
       }
       closeWithAnimation(root);
     }
@@ -931,6 +936,67 @@
       if (event.key === 'Escape') {
         closeModal();
       }
+    }
+
+    function openTemplateInSeparateWindow(textValue) {
+      var popup = window.open('', 'aiTemplateEditorWindow', 'width=1400,height=900,noopener=no');
+      if (!popup) {
+        return null;
+      }
+      var safeText = escapeHtml(String(textValue || ''));
+      var html = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+        '<title>Редактор шаблона</title><style>' +
+        'body{margin:0;font-family:Inter,system-ui,sans-serif;background:#f1f5f9;color:#0f172a;display:flex;flex-direction:column;height:100vh;}' +
+        '.bar{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,.9);border-bottom:1px solid #dbe5f0;}' +
+        '.title{font-size:14px;font-weight:700;}.hint{font-size:11px;color:#64748b;}' +
+        '.btn{border:1px solid rgba(37,99,235,.35);background:#eff6ff;color:#1d4ed8;border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;}' +
+        'textarea{flex:1;margin:12px;border:1px solid #cbd5e1;border-radius:12px;padding:14px;font-size:14px;line-height:1.5;resize:none;outline:none;background:#fff;}' +
+        '</style></head><body>' +
+        '<div class="bar"><div><div class="title">Редактор шаблона (полный экран)</div><div class="hint">Исправьте текст и нажмите «Применить»</div></div>' +
+        '<button id="applyBtn" class="btn">Применить</button></div>' +
+        '<textarea id="editor">' + safeText + '</textarea>' +
+        '<script>document.getElementById(\"applyBtn\").addEventListener(\"click\",function(){' +
+        'var val=document.getElementById(\"editor\").value||\"\";' +
+        'if(window.opener){window.opener.postMessage({type:\"ai_template_editor_apply\",text:val},window.location.origin);}' +
+        'window.close();' +
+        '});</script></body></html>';
+      popup.document.open();
+      popup.document.write(html);
+      popup.document.close();
+      popup.focus();
+      return popup;
+    }
+
+    async function regenerateTemplatePdf(textValue, successLabel) {
+      var pdfBytes = await buildTemplatePdfWithAnswer(textValue);
+      var blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      if (state.templateObjectUrl) {
+        URL.revokeObjectURL(state.templateObjectUrl);
+      }
+      state.templateObjectUrl = URL.createObjectURL(blob);
+      pdfView.src = state.templateObjectUrl;
+      pdfWrap.classList.add('ai-chat-modal__pdf-wrap--visible');
+      templateDownload.href = state.templateObjectUrl;
+      templateDownload.classList.add('ai-chat-modal__template-link--visible');
+      templateStatus.textContent = successLabel || 'Шаблон: PDF готов, можно скачать';
+    }
+
+    function onTemplateMessage(event) {
+      if (!event || event.origin !== window.location.origin || !event.data || event.data.type !== 'ai_template_editor_apply') {
+        return;
+      }
+      editorText.value = String(event.data.text || '');
+      editorWrap.classList.add('ai-chat-modal__editor--visible');
+      setLoading(true);
+      templateStatus.textContent = 'Шаблон: применяю правки...';
+      regenerateTemplatePdf(editorText.value, 'Шаблон: правки применены, PDF обновлён')
+        .catch(function (error) {
+          templateStatus.textContent = 'Шаблон: ошибка';
+          messages.appendChild(createMessage('assistant', 'Ошибка шаблона: ' + (error && error.message ? error.message : 'Не удалось применить правки.'), true));
+        })
+        .finally(function () {
+          setLoading(false);
+        });
     }
 
     async function sendMessage() {
@@ -1030,19 +1096,13 @@
         } else if (!editorText.value.trim()) {
           editorText.value = mergeAnswerIntoTemplateMiddle(state.templateSourceText, state.lastAiResponse);
         }
-        editorWrap.classList.add('ai-chat-modal__editor--visible');
         templateStatus.textContent = 'Шаблон: формирую PDF...';
-        var pdfBytes = await buildTemplatePdfWithAnswer(editorText.value);
-        var blob = new Blob([pdfBytes], { type: 'application/pdf' });
-        if (state.templateObjectUrl) {
-          URL.revokeObjectURL(state.templateObjectUrl);
+        await regenerateTemplatePdf(editorText.value, 'Шаблон: PDF готов, можно скачать');
+        state.templateWindow = openTemplateInSeparateWindow(editorText.value);
+        if (!state.templateWindow) {
+          editorWrap.classList.add('ai-chat-modal__editor--visible');
+          templateStatus.textContent = 'Шаблон: попап заблокирован, редактор открыт в модалке';
         }
-        state.templateObjectUrl = URL.createObjectURL(blob);
-        pdfView.src = state.templateObjectUrl;
-        pdfWrap.classList.add('ai-chat-modal__pdf-wrap--visible');
-        templateDownload.href = state.templateObjectUrl;
-        templateDownload.classList.add('ai-chat-modal__template-link--visible');
-        templateStatus.textContent = 'Шаблон: PDF готов, можно скачать';
       } catch (error) {
         templateStatus.textContent = 'Шаблон: ошибка';
         messages.appendChild(createMessage('assistant', 'Ошибка шаблона: ' + (error && error.message ? error.message : 'Не удалось собрать PDF.'), true));
@@ -1060,17 +1120,7 @@
       setLoading(true);
       templateStatus.textContent = 'Шаблон: обновляю PDF...';
       try {
-        var pdfBytes = await buildTemplatePdfWithAnswer(editorText.value);
-        var blob = new Blob([pdfBytes], { type: 'application/pdf' });
-        if (state.templateObjectUrl) {
-          URL.revokeObjectURL(state.templateObjectUrl);
-        }
-        state.templateObjectUrl = URL.createObjectURL(blob);
-        pdfView.src = state.templateObjectUrl;
-        pdfWrap.classList.add('ai-chat-modal__pdf-wrap--visible');
-        templateDownload.href = state.templateObjectUrl;
-        templateDownload.classList.add('ai-chat-modal__template-link--visible');
-        templateStatus.textContent = 'Шаблон: PDF обновлён';
+        await regenerateTemplatePdf(editorText.value, 'Шаблон: PDF обновлён');
       } catch (error) {
         templateStatus.textContent = 'Шаблон: ошибка';
         messages.appendChild(createMessage('assistant', 'Ошибка шаблона: ' + (error && error.message ? error.message : 'Не удалось обновить PDF.'), true));
@@ -1150,6 +1200,7 @@
     setTimeout(function () {
       textarea.focus();
     }, 0);
+    window.addEventListener('message', onTemplateMessage);
   }
 
   if (typeof window !== 'undefined') {
