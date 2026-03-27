@@ -12975,10 +12975,6 @@ function createResponseUploadControls(task, entry, setStatus) {
       task,
       entry,
       onStatus: setStatus,
-      onApplyText: (value) => {
-        textInput.value = String(value || '');
-        textInput.dispatchEvent(new Event('input'));
-      },
     });
   });
 
