@@ -2,7 +2,13 @@
   var STYLE_ID = 'ai-chat-modal-style-v3';
   var ROOT_CLASS = 'ai-chat-modal';
   var FILE_INPUT_ID = 'ai-chat-hidden-file-input';
-  var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
+  var FALLBACK_MODEL_OPTIONS = [
+    { value: 'llama-3.3-70b-versatile', label: 'Groq: llama-3.3-70b-versatile (рекомендовано)' },
+    { value: 'llama-3.1-8b-instant', label: 'Groq: llama-3.1-8b-instant (быстро)' },
+    { value: 'mixtral-8x7b-32768', label: 'Groq: mixtral-8x7b-32768' },
+    { value: 'gemma2-9b-it', label: 'Groq: gemma2-9b-it' },
+    { value: 'gpt-4o-mini', label: 'OpenAI: gpt-4o-mini' }
+  ];
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
   var pdfJsReadyPromise = null;
@@ -567,7 +573,7 @@
 
     function getFirstUploadableFile() {
       for (var i = 0; i < state.files.length; i += 1) {
-        if (state.files[i] && state.files[i].fileObject) {
+        if (state.files[i] && (state.files[i].fileObject || state.files[i].url)) {
           return state.files[i];
         }
       }
@@ -579,8 +585,13 @@
         return;
       }
       var fileEntry = getFirstUploadableFile();
-      if (!fileEntry || !fileEntry.fileObject) {
-        messages.appendChild(createMessage('assistant', 'Сначала прикрепите файл с устройства для OCR.', true));
+      if (!fileEntry) {
+        messages.appendChild(createMessage('assistant', 'Не найден файл для OCR. Прикрепите файл или откройте документ с вложением.', true));
+        messages.scrollTop = messages.scrollHeight;
+        return;
+      }
+      if (fileEntry.content && String(fileEntry.content).trim() !== '') {
+        messages.appendChild(createMessage('assistant', 'Текст уже доступен:\n' + String(fileEntry.content)));
         messages.scrollTop = messages.scrollHeight;
         return;
       }
@@ -594,7 +605,11 @@
         var formData = new FormData();
         formData.append('action', 'ocr_extract');
         formData.append('language', 'rus');
-        formData.append('file', fileEntry.fileObject, fileEntry.name || 'document.pdf');
+        if (fileEntry.fileObject) {
+          formData.append('file', fileEntry.fileObject, fileEntry.name || 'document.pdf');
+        } else if (fileEntry.url) {
+          formData.append('file_url', String(fileEntry.url));
+        }
         var response = await fetch(apiUrl + '?action=ocr_extract', {
           method: 'POST',
           credentials: 'same-origin',
