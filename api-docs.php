@@ -358,6 +358,30 @@ function createPdfFromText(string $outputPath, string $documentTitle, string $an
     return is_file($outputPath) && filesize($outputPath) > 0;
 }
 
+function resolveTemplatePath(string $fileName): string
+{
+    $normalizedName = ltrim($fileName, '/');
+    $documentRoot = isset($_SERVER['DOCUMENT_ROOT']) ? rtrim((string)$_SERVER['DOCUMENT_ROOT'], '/') : '';
+    $candidates = [
+        __DIR__ . '/templates/' . $normalizedName,
+        dirname(__DIR__) . '/templates/' . $normalizedName,
+        dirname(__DIR__, 2) . '/templates/' . $normalizedName,
+        '/app/templates/' . $normalizedName,
+    ];
+    if ($documentRoot !== '') {
+        $candidates[] = $documentRoot . '/js/documents/templates/' . $normalizedName;
+        $candidates[] = $documentRoot . '/templates/' . $normalizedName;
+    }
+
+    foreach ($candidates as $candidate) {
+        if (is_string($candidate) && $candidate !== '' && is_file($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return '';
+}
+
 function looksLikeJsonText(string $value): bool
 {
     $trimmed = trim($value);
@@ -431,10 +455,10 @@ if ($action === 'generate_document') {
         jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
     }
 
-    $templateDocxPath = '/app/templates/template.docx';
-    $templatePdfPath = '/app/templates/template.pdf';
+    $templateDocxPath = resolveTemplatePath('template.docx');
+    $templatePdfPath = resolveTemplatePath('template.pdf');
     if (!is_file($templateDocxPath) && !is_file($templatePdfPath)) {
-        jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены: /app/templates/template.docx или /app/templates/template.pdf']);
+        jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Ожидаемые пути: /js/documents/templates/template.docx или /app/templates/template.docx']);
     }
 
     $tmpFile = tempnam(sys_get_temp_dir(), 'answer_');
@@ -445,7 +469,7 @@ if ($action === 'generate_document') {
     if ($format === 'docx') {
         if (!is_file($templateDocxPath)) {
             @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден: /app/templates/template.docx']);
+            jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/templates/ или /app/templates/']);
         }
         if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
             '[ОТВЕТ_ИИ]' => $answerText,
