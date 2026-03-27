@@ -67,11 +67,22 @@
       '.ai-chat-msg--error{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.9);color:#991b1b;}' +
       '.ai-chat-modal__composer{display:flex;gap:6px;align-items:flex-end;}' +
       '.ai-chat-modal__textarea{flex:1;min-height:40px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;background:#fff;outline:none;}' +
+      '.ai-chat-modal__composer-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}' +
+      '.ai-chat-modal__secondary-btn{border:1px solid rgba(148,163,184,.42);border-radius:10px;padding:8px 10px;min-height:40px;font-size:12px;font-weight:700;background:rgba(255,255,255,.92);color:#0f172a;cursor:pointer;}' +
+      '.ai-chat-modal__secondary-btn:disabled{opacity:.5;cursor:not-allowed;}' +
+      '.ai-chat-modal__editor{position:fixed;inset:0;z-index:2100;background:rgba(15,23,42,.46);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:10px;}' +
+      '.ai-chat-modal__editor-panel{width:min(760px,100%);max-height:92vh;display:flex;flex-direction:column;gap:10px;background:rgba(255,255,255,.95);border:1px solid rgba(226,232,240,.95);border-radius:14px;padding:12px;box-shadow:0 20px 50px rgba(15,23,42,.22);}' +
+      '.ai-chat-modal__editor-title{font-size:14px;font-weight:700;color:#0f172a;}' +
+      '.ai-chat-modal__editor-subtitle{font-size:12px;color:#64748b;}' +
+      '.ai-chat-modal__editor-textarea{width:100%;min-height:180px;max-height:55vh;resize:vertical;border:1px solid rgba(148,163,184,.45);border-radius:12px;padding:10px 12px;line-height:1.4;font-size:13px;color:#0f172a;background:#fff;box-sizing:border-box;}' +
+      '.ai-chat-modal__editor-preview-label{font-size:12px;font-weight:700;color:#334155;}' +
+      '.ai-chat-modal__editor-preview{border:1px solid rgba(226,232,240,.95);border-radius:12px;background:rgba(248,250,252,.85);padding:10px 12px;font-size:12px;line-height:1.45;color:#0f172a;max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-word;}' +
+      '.ai-chat-modal__editor-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}' +
       '.ai-chat-modal__send{border:none;border-radius:10px;padding:8px 11px;min-height:40px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;cursor:pointer;}' +
       '.ai-chat-modal__send:disabled{opacity:.6;cursor:not-allowed;}' +
       '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-direction:column;align-items:stretch;}.ai-chat-modal__composer-actions{justify-content:stretch;}.ai-chat-modal__secondary-btn,.ai-chat-modal__send{width:100%;}.ai-chat-modal__send{min-height:38px;}.ai-chat-modal__editor{padding:6px;}.ai-chat-modal__editor-panel{padding:10px;}.ai-chat-modal__editor-actions{justify-content:stretch;}.ai-chat-modal__editor-actions .ai-chat-modal__secondary-btn,.ai-chat-modal__editor-actions .ai-chat-modal__send{width:100%;}}';
     document.head.appendChild(style);
   }
 
@@ -451,7 +462,9 @@
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
       responseStyle: STYLE_OPTIONS[0].value,
-      isLoading: false
+      isLoading: false,
+      assistantText: '',
+      isDocxLoading: false
     };
 
     var root = createElement('div', ROOT_CLASS);
@@ -502,6 +515,12 @@
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
     textarea.placeholder = 'Введите запрос...';
+    var composerActions = createElement('div', 'ai-chat-modal__composer-actions');
+    var insertButton = createElement('button', 'ai-chat-modal__secondary-btn', 'Вставить в ответ');
+    insertButton.type = 'button';
+    insertButton.disabled = true;
+    var generateDocxButton = createElement('button', 'ai-chat-modal__secondary-btn', 'Сохранить в DOCX');
+    generateDocxButton.type = 'button';
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить');
     sendButton.type = 'button';
 
@@ -542,9 +561,117 @@
       state.isLoading = loading;
       textarea.disabled = loading;
       sendButton.disabled = loading;
+      generateDocxButton.disabled = loading || state.isDocxLoading;
+      insertButton.disabled = loading || !state.assistantText;
       sendButton.innerHTML = loading
         ? '<span class="ai-chat-spinner"></span>Отправка'
         : 'Отправить';
+    }
+
+    function setDocxLoading(loading) {
+      state.isDocxLoading = loading;
+      generateDocxButton.disabled = loading || state.isLoading;
+      generateDocxButton.innerHTML = loading
+        ? '<span class="ai-chat-spinner"></span>Генерация...'
+        : 'Сохранить в DOCX';
+    }
+
+    function openResponseEditor(options) {
+      var editorConfig = options && typeof options === 'object' ? options : {};
+      var overlay = createElement('div', 'ai-chat-modal__editor');
+      var panelEditor = createElement('div', 'ai-chat-modal__editor-panel');
+      var titleEditor = createElement('div', 'ai-chat-modal__editor-title', editorConfig.title || 'Редактор ответа');
+      var subtitleEditor = createElement('div', 'ai-chat-modal__editor-subtitle', editorConfig.subtitle || 'Проверьте текст перед действием.');
+      var editorTextarea = createElement('textarea', 'ai-chat-modal__editor-textarea');
+      editorTextarea.value = String(editorConfig.initialText || '');
+      editorTextarea.placeholder = editorConfig.placeholder || 'Введите текст...';
+      var previewLabel = null;
+      var previewBox = null;
+      if (editorConfig.enablePreview) {
+        previewLabel = createElement('div', 'ai-chat-modal__editor-preview-label', editorConfig.previewTitle || 'Предварительный просмотр DOCX');
+        previewBox = createElement('div', 'ai-chat-modal__editor-preview');
+        previewBox.textContent = editorTextarea.value || 'Пусто';
+        editorTextarea.addEventListener('input', function () {
+          previewBox.textContent = editorTextarea.value || 'Пусто';
+        });
+      }
+      var actions = createElement('div', 'ai-chat-modal__editor-actions');
+      var backButton = createElement('button', 'ai-chat-modal__secondary-btn', editorConfig.cancelText || 'Вернуться назад');
+      backButton.type = 'button';
+      var confirmButton = createElement('button', 'ai-chat-modal__send', editorConfig.confirmText || 'Применить');
+      confirmButton.type = 'button';
+
+      function closeEditor() {
+        if (overlay.parentNode) {
+          overlay.parentNode.removeChild(overlay);
+        }
+      }
+
+      backButton.addEventListener('click', closeEditor);
+      confirmButton.addEventListener('click', function () {
+        if (editorConfig && typeof editorConfig.onConfirm === 'function') {
+          editorConfig.onConfirm(String(editorTextarea.value || ''), closeEditor, confirmButton);
+          return;
+        }
+        closeEditor();
+      });
+      overlay.addEventListener('click', function (event) {
+        if (event.target === overlay) {
+          closeEditor();
+        }
+      });
+
+      actions.appendChild(backButton);
+      actions.appendChild(confirmButton);
+      panelEditor.appendChild(titleEditor);
+      panelEditor.appendChild(subtitleEditor);
+      panelEditor.appendChild(editorTextarea);
+      if (previewLabel && previewBox) {
+        panelEditor.appendChild(previewLabel);
+        panelEditor.appendChild(previewBox);
+      }
+      panelEditor.appendChild(actions);
+      overlay.appendChild(panelEditor);
+      document.body.appendChild(overlay);
+      setTimeout(function () {
+        editorTextarea.focus();
+        editorTextarea.selectionStart = editorTextarea.value.length;
+        editorTextarea.selectionEnd = editorTextarea.value.length;
+      }, 0);
+    }
+
+    async function generateDocxFromText(requestText) {
+      var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var formData = new FormData();
+      formData.append('action', 'response_generate_docx_stub');
+      formData.append('responseText', requestText);
+      var response = await fetch(apiUrl + '?action=response_generate_docx_stub', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      });
+      var payload = await response.json();
+      if (!response.ok || !payload || payload.ok !== true || !payload.url) {
+        throw new Error(payload && payload.error ? payload.error : 'Не удалось сгенерировать DOCX.');
+      }
+      var docxResponse = await fetch(payload.url, { credentials: 'same-origin' });
+      if (!docxResponse.ok) {
+        throw new Error('Не удалось скачать DOCX файл.');
+      }
+      var docxBlob = await docxResponse.blob();
+      var docxName = payload.fileName ? String(payload.fileName) : ('response-' + Date.now() + '.docx');
+      var docxFile;
+      if (typeof File === 'function') {
+        docxFile = new File([docxBlob], docxName, {
+          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          lastModified: Date.now()
+        });
+      } else {
+        docxFile = docxBlob;
+        docxFile.name = docxName;
+        docxFile.lastModified = Date.now();
+      }
+      return docxFile;
     }
 
     function closeModal() {
@@ -590,7 +717,9 @@
         }
 
         pending.remove();
-        messages.appendChild(createMessage('assistant', payload.response || payload.analysis || 'Пустой ответ от API.'));
+        state.assistantText = String(payload.response || payload.analysis || '').trim();
+        messages.appendChild(createMessage('assistant', state.assistantText || 'Пустой ответ от API.'));
+        insertButton.disabled = !state.assistantText;
         textarea.value = '';
         autoHeight(textarea);
       } catch (error) {
@@ -622,6 +751,88 @@
     });
 
     sendButton.addEventListener('click', sendMessage);
+    insertButton.addEventListener('click', function () {
+      if (!state.assistantText || !config || typeof config.onInsertResponseText !== 'function') {
+        return;
+      }
+      openResponseEditor({
+        title: 'Редактирование ответа',
+        subtitle: 'Отредактируйте текст и нажмите «Вставить в ответ».',
+        initialText: state.assistantText,
+        confirmText: 'Вставить в ответ',
+        cancelText: 'Вернуться назад',
+        onConfirm: function (editedText, closeEditor) {
+          var normalizedText = String(editedText || '').trim();
+          if (!normalizedText) {
+            if (config && typeof config.showMessage === 'function') {
+              config.showMessage('error', 'Текст ответа пустой. Добавьте текст перед вставкой.');
+            }
+            return;
+          }
+          state.assistantText = normalizedText;
+          config.onInsertResponseText(state.assistantText);
+          closeEditor();
+          if (config && typeof config.showMessage === 'function') {
+            config.showMessage('success', 'Текст вставлен в окно «Загрузить ответ».');
+          }
+        }
+      });
+    });
+    generateDocxButton.addEventListener('click', async function () {
+      if (state.isDocxLoading || state.isLoading) {
+        return;
+      }
+      var requestText = '';
+      if (config && typeof config.getResponseText === 'function') {
+        requestText = String(config.getResponseText() || '').trim();
+      }
+      if (!requestText && state.assistantText) {
+        requestText = state.assistantText;
+      }
+      if (!requestText) {
+        if (config && typeof config.showMessage === 'function') {
+          config.showMessage('error', 'Сначала добавьте текст ответа, чтобы сгенерировать DOCX.');
+        }
+        return;
+      }
+      openResponseEditor({
+        title: 'Онлайн редактор DOCX',
+        subtitle: 'Измените текст и нажмите «Приложить документ» или вернитесь назад.',
+        initialText: requestText,
+        enablePreview: true,
+        previewTitle: 'Предпросмотр содержимого DOCX',
+        confirmText: 'Приложить документ',
+        cancelText: 'Вернуться назад',
+        onConfirm: async function (editedText, closeEditor, confirmButton) {
+          var normalizedText = String(editedText || '').trim();
+          if (!normalizedText) {
+            if (config && typeof config.showMessage === 'function') {
+              config.showMessage('error', 'Текст пустой. Заполните текст перед сохранением в DOCX.');
+            }
+            return;
+          }
+          confirmButton.disabled = true;
+          setDocxLoading(true);
+          try {
+            var generatedFile = await generateDocxFromText(normalizedText);
+            if (config && typeof config.onDocxGenerated === 'function') {
+              config.onDocxGenerated(generatedFile);
+            }
+            closeEditor();
+            if (config && typeof config.showMessage === 'function') {
+              config.showMessage('success', 'Документ приложен в окно «Загрузить ответ».');
+            }
+          } catch (error) {
+            if (config && typeof config.showMessage === 'function') {
+              config.showMessage('error', error && error.message ? error.message : 'Ошибка генерации DOCX.');
+            }
+          } finally {
+            confirmButton.disabled = false;
+            setDocxLoading(false);
+          }
+        }
+      });
+    });
     closeButton.addEventListener('click', closeModal);
 
     attachButton.addEventListener('click', function () {
@@ -655,8 +866,11 @@
     settings.appendChild(modelField);
     settings.appendChild(styleField);
 
+    composerActions.appendChild(insertButton);
+    composerActions.appendChild(generateDocxButton);
+    composerActions.appendChild(sendButton);
     composer.appendChild(textarea);
-    composer.appendChild(sendButton);
+    composer.appendChild(composerActions);
 
     content.appendChild(contextBox);
     content.appendChild(settings);

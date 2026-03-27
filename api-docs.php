@@ -30,6 +30,121 @@ function logApiDocs(string $level, string $message, array $context = []): void
     );
 }
 
+function buildBaseUrlFromRequest(): string
+{
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = isset($_SERVER['HTTP_HOST']) ? trim((string)$_SERVER['HTTP_HOST']) : '';
+    if ($host === '') {
+        return '';
+    }
+    return $scheme . '://' . $host;
+}
+
+function ensureDirectory(string $path): bool
+{
+    if (is_dir($path)) {
+        return true;
+    }
+    return @mkdir($path, 0775, true);
+}
+
+function escapeXmlText(string $value): string
+{
+    return htmlspecialchars($value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
+}
+
+function buildWordParagraphsFromText(string $text): string
+{
+    $normalized = str_replace(["\r\n", "\r"], "\n", $text);
+    $lines = explode("\n", $normalized);
+    if (!$lines) {
+        $lines = [''];
+    }
+    $paragraphs = [];
+    foreach ($lines as $line) {
+        $safeLine = $line === '' ? ' ' : $line;
+        $paragraphs[] = '<w:p><w:r><w:t xml:space="preserve">' . escapeXmlText($safeLine) . '</w:t></w:r></w:p>';
+    }
+    return implode('', $paragraphs);
+}
+
+function createDocxFromTemplate(string $templatePath, string $targetPath, string $responseText): bool
+{
+    if (!@copy($templatePath, $targetPath)) {
+        return false;
+    }
+
+    if (!class_exists('ZipArchive')) {
+        return true;
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($targetPath) !== true) {
+        return false;
+    }
+
+    $documentXml = $zip->getFromName('word/document.xml');
+    if (!is_string($documentXml) || $documentXml === '') {
+        $zip->close();
+        return false;
+    }
+
+    $contentBlock = buildWordParagraphsFromText($responseText);
+    $updatedXml = str_replace('__RESPONSE_BLOCK__', $contentBlock, $documentXml);
+    if ($updatedXml === $documentXml && !str_contains($documentXml, '__RESPONSE_BLOCK__')) {
+        $zip->close();
+        return false;
+    }
+
+    $zip->addFromString('word/document.xml', $updatedXml);
+    $zip->close();
+    return true;
+}
+
+function handleDocxStubGenerationAction(): void
+{
+    $templatePath = __DIR__ . '/app/templates/template.docx';
+    if (!is_file($templatePath)) {
+        logApiDocs('error', 'DOCX template is missing', ['templatePath' => $templatePath]);
+        jsonResponse(500, ['ok' => false, 'error' => 'Шаблон DOCX не найден.']);
+    }
+
+    $responseText = trim((string)($_POST['responseText'] ?? ''));
+    if ($responseText === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Текст ответа пустой.']);
+    }
+
+    $tmpDir = __DIR__ . '/app/tmp';
+    if (!ensureDirectory($tmpDir)) {
+        logApiDocs('error', 'Failed to create temp directory for DOCX', ['tmpDir' => $tmpDir]);
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось подготовить временную директорию.']);
+    }
+
+    try {
+        $suffix = bin2hex(random_bytes(4));
+    } catch (Throwable $exception) {
+        $suffix = (string)mt_rand(100000, 999999);
+    }
+    $fileName = 'response-stub-' . gmdate('Ymd-His') . '-' . $suffix . '.docx';
+    $targetPath = $tmpDir . '/' . $fileName;
+    if (!createDocxFromTemplate($templatePath, $targetPath, $responseText)) {
+        logApiDocs('error', 'Failed to create DOCX from template', ['templatePath' => $templatePath, 'targetPath' => $targetPath]);
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX файл.']);
+    }
+
+    $publicPath = '/app/tmp/' . rawurlencode($fileName);
+    $baseUrl = buildBaseUrlFromRequest();
+    $publicUrl = $baseUrl !== '' ? ($baseUrl . $publicPath) : $publicPath;
+
+    jsonResponse(200, [
+        'ok' => true,
+        'url' => $publicUrl,
+        'fileName' => $fileName,
+        'previewText' => mb_substr($responseText, 0, 1500),
+        'stub' => true,
+    ]);
+}
+
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 if ($method === 'OPTIONS') {
     http_response_code(204);
@@ -86,6 +201,11 @@ if ($method === 'GET') {
 if ($method !== 'POST') {
     logApiDocs('warn', 'Unsupported HTTP method', ['method' => $method]);
     jsonResponse(405, ['ok' => false, 'error' => 'Method Not Allowed']);
+}
+
+$action = trim((string)($_POST['action'] ?? ''));
+if ($action === 'response_generate_docx_stub') {
+    handleDocxStubGenerationAction();
 }
 
 function loadEnv(array $paths): array
@@ -277,7 +397,6 @@ $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 $context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
-$action = trim((string)($_POST['action'] ?? ''));
 
 if ($action !== '' && $action !== 'ai_response_analyze') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
