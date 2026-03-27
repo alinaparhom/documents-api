@@ -286,6 +286,16 @@ function parseAiJson(string $content): array
     return [];
 }
 
+function looksLikeJsonText(string $value): bool
+{
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return false;
+    }
+    return (str_starts_with($trimmed, '{') && str_ends_with($trimmed, '}'))
+        || (str_starts_with($trimmed, '[') && str_ends_with($trimmed, ']'));
+}
+
 function buildLocalFallback(string $documentTitle, string $prompt, array $context = []): array
 {
     $title = trim($documentTitle) !== '' ? $documentTitle : 'документу';
@@ -618,7 +628,10 @@ if ($statusCode >= 400) {
 $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 $parsed = parseAiJson($content);
 
-$analysis = textFromMixed($parsed['analysis'] ?? '');
+$analysis = '';
+if (isset($parsed['analysis']) && (is_string($parsed['analysis']) || is_numeric($parsed['analysis']) || is_bool($parsed['analysis']))) {
+    $analysis = textFromMixed($parsed['analysis']);
+}
 $response = textFromMixed($parsed['response'] ?? '');
 $neutral = textFromMixed($parsed['neutral'] ?? '');
 $aggressive = textFromMixed($parsed['aggressive'] ?? '');
@@ -641,6 +654,21 @@ if ($analysis === '' && $response === '' && $neutral === '' && $aggressive === '
     $response = $content;
     $neutral = $content;
     $aggressive = $content;
+}
+
+if (looksLikeJsonText($response) || $response === '') {
+    $fallback = buildLocalFallback($documentTitle, $prompt, array_merge($context, ['responseStyle' => $effectiveStyle]));
+    $response = (string)($fallback['response'] ?? '');
+    if ($analysis === '') {
+        $analysis = (string)($fallback['analysis'] ?? 'Ответ сформирован по локальному шаблону.');
+    }
+}
+
+if (mb_strlen($analysis) > 1200) {
+    $analysis = mb_substr($analysis, 0, 1200) . '…';
+}
+if (mb_strlen($response) > 8000) {
+    $response = mb_substr($response, 0, 8000) . '…';
 }
 
 jsonResponse(200, [
