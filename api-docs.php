@@ -267,6 +267,7 @@ if ($baseUrl === 'https://api.openai.com/v1' && $isGroqKey) {
     $baseUrl = 'https://api.groq.com/openai/v1';
 }
 $isGroq = stripos($baseUrl, 'groq.com') !== false;
+$isGoogleOpenAiCompat = stripos($baseUrl, 'generativelanguage.googleapis.com') !== false;
 
 if ($apiKey === '') {
     jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env']);
@@ -276,6 +277,7 @@ $prompt = trim((string)($_POST['prompt'] ?? ''));
 $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 $context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
+$aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 
@@ -310,6 +312,12 @@ if ($effectiveStyle === 'aggressive') {
     // Обратная совместимость со старыми значениями
     $styleInstruction = 'Пиши технически, с пояснениями и структурой.';
 }
+$effectiveBehavior = $aiBehavior !== ''
+    ? $aiBehavior
+    : (isset($context['aiBehavior']) && is_string($context['aiBehavior']) ? trim($context['aiBehavior']) : '');
+$behaviorInstruction = $effectiveBehavior !== ''
+    ? ('Дополнительная настройка поведения: ' . $effectiveBehavior . '.')
+    : '';
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
 $allowedModelsRaw = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
@@ -333,7 +341,7 @@ $systemMessage = "Ты помощник по деловой переписке �
   . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview и context.attachedFiles[*].content. "
   . "Если контент файла присутствует, не проси путь или имя файла повторно, а используй этот контент напрямую. "
   . "Если контент пустой, кратко сообщи, что файл не удалось прочитать. "
-  . $styleInstruction;
+  . $styleInstruction . ' ' . $behaviorInstruction;
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -350,31 +358,41 @@ $body = [
         ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
     ],
 ];
-if (!$isGroq) {
+if (!$isGroq && !$isGoogleOpenAiCompat) {
     $body['response_format'] = ['type' => 'json_object'];
 }
 
 $endpoint = rtrim($baseUrl, '/') . '/chat/completions';
-$ch = curl_init($endpoint);
-if ($ch === false) {
-    jsonResponse(500, ['ok' => false, 'error' => 'Не удалось инициализировать cURL']);
+function performAiRequest(string $endpoint, string $apiKey, array $body): array
+{
+    $ch = curl_init($endpoint);
+    if ($ch === false) {
+        return ['status' => 500, 'body' => false, 'curl_error' => 'Не удалось инициализировать cURL'];
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => 90,
+    ]);
+
+    $responseBody = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
 }
 
-curl_setopt_array($ch, [
-    CURLOPT_POST => true,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_HTTPHEADER => [
-        'Authorization: Bearer ' . $apiKey,
-        'Content-Type: application/json',
-    ],
-    CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-    CURLOPT_TIMEOUT => 90,
-]);
-
-$responseBody = curl_exec($ch);
-$curlError = curl_error($ch);
-$statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
+$requestResult = performAiRequest($endpoint, $apiKey, $body);
+$responseBody = $requestResult['body'];
+$curlError = (string)$requestResult['curl_error'];
+$statusCode = (int)$requestResult['status'];
 
 if ($responseBody === false) {
     logApiDocs('error', 'AI request failed', ['curlError' => $curlError]);
@@ -385,6 +403,34 @@ $responseJson = json_decode($responseBody, true);
 if (!is_array($responseJson)) {
     logApiDocs('error', 'AI API returned non-JSON', ['response' => mb_substr($responseBody, 0, 500)]);
     jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API']);
+}
+
+if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
+    $errorMessage = isset($responseJson['error']['message']) && is_string($responseJson['error']['message'])
+        ? $responseJson['error']['message']
+        : '';
+    $isUnsupportedField = stripos($errorMessage, 'response_format') !== false
+        || stripos($errorMessage, 'temperature') !== false
+        || stripos($errorMessage, 'Unknown name') !== false;
+    if ($isUnsupportedField) {
+        $retryBody = $body;
+        unset($retryBody['response_format'], $retryBody['temperature']);
+        $retryResult = performAiRequest($endpoint, $apiKey, $retryBody);
+        $retryResponseBody = $retryResult['body'];
+        $retryCurlError = (string)$retryResult['curl_error'];
+        $retryStatusCode = (int)$retryResult['status'];
+
+        if ($retryResponseBody === false) {
+            logApiDocs('error', 'Google AI retry request failed', ['curlError' => $retryCurlError]);
+            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $retryCurlError]);
+        }
+
+        $retryJson = json_decode($retryResponseBody, true);
+        if (is_array($retryJson)) {
+            $responseJson = $retryJson;
+            $statusCode = $retryStatusCode;
+        }
+    }
 }
 
 if ($statusCode >= 400) {
