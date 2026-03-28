@@ -207,6 +207,81 @@ function buildFilesSummary(array $files): array
     return $summary;
 }
 
+function detectFileExtension(array $file): string
+{
+    $name = strtolower(trim((string)($file['name'] ?? '')));
+    if ($name === '' || !str_contains($name, '.')) {
+        return '';
+    }
+    $parts = explode('.', $name);
+    return trim((string)end($parts));
+}
+
+function decodeDocxXmlText(string $xml): string
+{
+    $prepared = str_replace(["\r\n", "\r"], "\n", $xml);
+    $prepared = preg_replace('/<w:tab\b[^>]*\/?\s*>/u', "\t", (string)$prepared);
+    $prepared = preg_replace('/<w:br\b[^>]*\/?\s*>/u', "\n", (string)$prepared);
+    $prepared = preg_replace('/<\/w:p>/u', "\n", (string)$prepared);
+    $prepared = preg_replace('/<\/w:tr>/u', "\n", (string)$prepared);
+    $prepared = preg_replace('/<\/w:tc>/u', "\t", (string)$prepared);
+    $plain = trim(strip_tags((string)$prepared));
+    $plain = html_entity_decode($plain, ENT_QUOTES | ENT_XML1, 'UTF-8');
+    $plain = preg_replace('/\n{3,}/u', "\n\n", (string)$plain);
+    return trim((string)$plain);
+}
+
+function extractDocxText(string $tmpFile): string
+{
+    if ($tmpFile === '' || !is_file($tmpFile) || !class_exists('ZipArchive')) {
+        return '';
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($tmpFile) !== true) {
+        return '';
+    }
+
+    $targets = ['word/document.xml', 'word/header1.xml', 'word/footer1.xml'];
+    $parts = [];
+    foreach ($targets as $entryName) {
+        $xml = $zip->getFromName($entryName);
+        if (!is_string($xml) || trim($xml) === '') {
+            continue;
+        }
+        $chunk = decodeDocxXmlText($xml);
+        if ($chunk !== '') {
+            $parts[] = $chunk;
+        }
+    }
+    $zip->close();
+
+    return trim(implode("\n\n", $parts));
+}
+
+function extractTextWithoutOcr(array $file): string
+{
+    $tmpFile = (string)($file['tmp_name'] ?? '');
+    if ($tmpFile === '' || !is_file($tmpFile)) {
+        return '';
+    }
+
+    $extension = detectFileExtension($file);
+    if ($extension === 'docx') {
+        return extractDocxText($tmpFile);
+    }
+
+    if (in_array($extension, ['txt', 'md', 'csv', 'json', 'xml', 'html'], true)) {
+        $raw = @file_get_contents($tmpFile);
+        if (!is_string($raw) || $raw === '') {
+            return '';
+        }
+        return trim((string)$raw);
+    }
+
+    return '';
+}
+
 function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
 {
     $ch = curl_init($endpoint);
@@ -885,11 +960,26 @@ if ($action === 'ocr_extract') {
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
 
-    if ($ocrApiKey === '') {
-        jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
-    }
     if (!$files && $ocrFileUrl === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
+    }
+
+    if ($files) {
+        $directText = extractTextWithoutOcr($files[0]);
+        if ($directText !== '') {
+            jsonResponse(200, [
+                'ok' => true,
+                'text' => $directText,
+                'raw' => [
+                    'source' => 'direct_text',
+                    'extension' => detectFileExtension($files[0])
+                ],
+            ]);
+        }
+    }
+
+    if ($ocrApiKey === '') {
+        jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
     }
 
     $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $files ? $files[0] : [], $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrFileUrl);
