@@ -82,7 +82,42 @@
     if (!result) {
       result = cleanNumericArtifacts(normalized).replace(/\n{3,}/g, '\n\n').trim();
     }
+    result = result
+      .replace(/Miack/gi, 'Минск')
+      .replace(/реш мие/gi, 'решение')
+      .replace(/сгоянка/gi, 'стоянка')
+      .replace(/общесгвенного/gi, 'общественного');
+    result = extractBusinessCore(result);
     return result;
+  }
+
+  function extractBusinessCore(text) {
+    var source = String(text || '');
+    var startMatchers = [
+      /В связи с полученными изменениями проектной документации/i,
+      /для продолжения выполнения работ по монтажу системы кондиционирования/i,
+      /Прошу Вас:/i
+    ];
+    var start = -1;
+    for (var i = 0; i < startMatchers.length; i += 1) {
+      var match = source.match(startMatchers[i]);
+      if (match && typeof match.index === 'number') {
+        start = match.index;
+        break;
+      }
+    }
+    if (start < 0) {
+      return source.trim();
+    }
+    var trimmed = source.slice(start).trim();
+    var endMatchers = [/Гл\.\s*инженер/i, /Главн(ый|ого)\s+инженер/i];
+    for (var j = 0; j < endMatchers.length; j += 1) {
+      var endMatch = trimmed.match(endMatchers[j]);
+      if (endMatch && typeof endMatch.index === 'number') {
+        return trimmed.slice(0, endMatch.index).trim();
+      }
+    }
+    return trimmed;
   }
 
   function ensureStyles() {
