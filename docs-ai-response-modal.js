@@ -740,10 +740,14 @@
       }
       state.files.forEach(function (file) {
         var chip = createElement('div', 'ai-chat-chip');
+        var ocrStatus = file.extracting
+          ? '⏳ OCR'
+          : (file.extracted ? '✅ OCR' : (file.extractError ? '⚠️ OCR' : '⭕ OCR'));
         chip.innerHTML = ''
           + '<span>' + detectIcon(file) + '</span>'
           + '<span>' + escapeHtml(file.name) + '</span>'
-          + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>';
+          + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>'
+          + '<span class="ai-chat-chip__meta">' + escapeHtml(ocrStatus) + '</span>';
 
         var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ OCR' : '📄 OCR');
         ocr.type = 'button';
@@ -847,6 +851,19 @@
         updateFileStatusInUI();
         messages.scrollTop = messages.scrollHeight;
       }
+    }
+
+    async function autoExtractFiles(queue) {
+      var list = Array.isArray(queue) ? queue.filter(Boolean) : [];
+      if (!list.length || state.isLoading) {
+        return;
+      }
+      setLoading(true);
+      for (var i = 0; i < list.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await extractSingleFile(list[i]);
+      }
+      setLoading(false);
     }
 
     function closeModal() {
@@ -1048,9 +1065,11 @@
       if (!selected.length) {
         return;
       }
-      state.files = state.files.concat(normalizeFileObjects(selected));
+      var newFiles = normalizeFileObjects(selected);
+      state.files = state.files.concat(newFiles);
       hiddenInput.value = '';
       renderFiles();
+      autoExtractFiles(newFiles);
     });
 
     root.addEventListener('click', function (event) {
