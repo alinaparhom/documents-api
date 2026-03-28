@@ -838,7 +838,18 @@ $env = loadEnv(getEnvPaths());
 
 $prompt = trim((string)($_POST['prompt'] ?? ''));
 $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
-$context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
+$contextRaw = isset($_POST['context']) ? (string)$_POST['context'] : '';
+$maxContextChars = (int)($env['AI_MAX_CONTEXT_CHARS'] ?? 120000);
+if ($maxContextChars < 2000) {
+    $maxContextChars = 2000;
+}
+if ($contextRaw !== '' && mb_strlen($contextRaw) > $maxContextChars) {
+    jsonResponse(400, [
+        'ok' => false,
+        'error' => 'Контекст слишком большой: ' . mb_strlen($contextRaw) . ' символов. Максимум: ' . $maxContextChars . '. Переключите режим на «кратко» или сократите вложения.',
+    ]);
+}
+$context = safeJsonDecode($contextRaw);
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));

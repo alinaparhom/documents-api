@@ -5,6 +5,11 @@
   var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
+  var MAX_CONTEXT_FILE_CHARS_DETAILED = 12000;
+  var MAX_CONTEXT_FILE_CHARS_BRIEF = 3500;
+  var MAX_CONTEXT_TOTAL_CHARS_DETAILED = 45000;
+  var MAX_CONTEXT_TOTAL_CHARS_BRIEF = 18000;
+  var LONG_ATTACHMENT_THRESHOLD = 7000;
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
   var DEFAULT_AI_BEHAVIOR = 'Ты — корпоративный секретарь. Ответь на документ в официально-деловом стиле.\n'
@@ -21,6 +26,10 @@
     { value: 'smart', label: 'OCR: умная очистка' },
     { value: 'strict', label: 'OCR: строгая очистка' },
     { value: 'raw', label: 'OCR: максимально исходный текст' }
+  ];
+  var CONTEXT_DETAIL_OPTIONS = [
+    { value: 'detailed', label: 'Подробно' },
+    { value: 'brief', label: 'Кратко' }
   ];
 
   function createElement(tag, className, text) {
@@ -182,6 +191,162 @@
       result = extractBusinessCore(result);
     }
     return result;
+  }
+
+  function normalizeContextText(text) {
+    return String(text || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\u00a0/g, ' ')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function sliceByChars(value, maxChars) {
+    var text = String(value || '');
+    if (!maxChars || text.length <= maxChars) {
+      return text;
+    }
+    return text.slice(0, Math.max(0, maxChars - 1)).trimEnd() + '…';
+  }
+
+  function extractPriorityLines(lines) {
+    var safeLines = Array.isArray(lines) ? lines : [];
+    var groups = [
+      { key: 'Реквизиты', patterns: [/\b(инн|кпп|огрн|бик|р\/с|расчетный счет|корр(\.|еспондентский)?\s*счет|банк|реквизит)\b/i] },
+      { key: 'Даты', patterns: [/\b(дата|от)\b/i, /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/] },
+      { key: 'Суммы', patterns: [/\b(сумм|итого|руб(лей)?|коп(еек)?|₽|оплат)\b/i, /\b\d[\d\s]{0,15}(?:[.,]\d{1,2})?\s*(руб|₽)\b/i] },
+      { key: 'Поручения', patterns: [/\b(поруч(аем|ение)|необходимо|обязуем|просим|требуется)\b/i] },
+      { key: 'Сроки', patterns: [/\b(срок|дедлайн|не позднее|в течение)\b/i] }
+    ];
+    var result = [];
+    var seen = {};
+    groups.forEach(function (group) {
+      var added = 0;
+      for (var i = 0; i < safeLines.length; i += 1) {
+        var line = String(safeLines[i] || '').trim();
+        if (!line) {
+          continue;
+        }
+        var normalized = line.toLowerCase();
+        if (seen[normalized]) {
+          continue;
+        }
+        var match = group.patterns.some(function (pattern) { return pattern.test(line); });
+        if (!match) {
+          continue;
+        }
+        result.push(group.key + ': ' + line);
+        seen[normalized] = true;
+        added += 1;
+        if (added >= 6) {
+          break;
+        }
+      }
+    });
+    return result;
+  }
+
+  function buildExtractSummary(text) {
+    var normalized = normalizeContextText(text);
+    if (!normalized) {
+      return '';
+    }
+    var lines = normalized.split('\n').map(function (line) { return line.trim(); }).filter(Boolean);
+    if (!lines.length) {
+      return '';
+    }
+    var keyPoints = extractPriorityLines(lines);
+    if (!keyPoints.length) {
+      keyPoints = lines.slice(0, 5).map(function (line) { return 'Пункт: ' + line; });
+    }
+    var quotes = lines
+      .filter(function (line) { return line.length >= 12; })
+      .slice(0, 4)
+      .map(function (line) { return '> ' + sliceByChars(line, 160); });
+    return [
+      'Ключевые пункты:',
+      keyPoints.slice(0, 7).map(function (line) { return '- ' + line; }).join('\n'),
+      'Цитаты строк:',
+      quotes.join('\n')
+    ].join('\n').trim();
+  }
+
+  function prepareContextPayload(state) {
+    var detailMode = state.contextDetail === 'brief' ? 'brief' : 'detailed';
+    var perFileLimit = detailMode === 'brief' ? MAX_CONTEXT_FILE_CHARS_BRIEF : MAX_CONTEXT_FILE_CHARS_DETAILED;
+    var totalLimit = detailMode === 'brief' ? MAX_CONTEXT_TOTAL_CHARS_BRIEF : MAX_CONTEXT_TOTAL_CHARS_DETAILED;
+    var collected = [];
+    var priorityLines = [];
+    var seenTexts = {};
+    var totalChars = 0;
+    var sourceChars = 0;
+    var truncatedFiles = 0;
+    (state.files || []).forEach(function (file) {
+      if (!file || typeof file.content !== 'string') {
+        return;
+      }
+      var original = normalizeContextText(file.content);
+      if (!original) {
+        return;
+      }
+      sourceChars += original.length;
+      var lines = original.split('\n').map(function (line) { return line.trim(); }).filter(Boolean);
+      priorityLines = priorityLines.concat(extractPriorityLines(lines));
+      var shouldSummarize = detailMode === 'brief' || original.length > LONG_ATTACHMENT_THRESHOLD;
+      var preparedText = shouldSummarize ? buildExtractSummary(original) : original;
+      preparedText = sliceByChars(preparedText, perFileLimit);
+      if (preparedText.length < original.length) {
+        truncatedFiles += 1;
+      }
+      var fingerprint = preparedText.toLowerCase();
+      if (!preparedText || seenTexts[fingerprint]) {
+        return;
+      }
+      seenTexts[fingerprint] = true;
+      if (totalChars >= totalLimit) {
+        return;
+      }
+      var available = totalLimit - totalChars;
+      var finalText = sliceByChars(preparedText, available);
+      if (!finalText) {
+        return;
+      }
+      collected.push({
+        id: file.id,
+        name: file.name,
+        type: file.type || '',
+        text: finalText
+      });
+      totalChars += finalText.length;
+    });
+
+    var dedupPriority = [];
+    var seenPriority = {};
+    priorityLines.forEach(function (line) {
+      var key = String(line || '').toLowerCase();
+      if (!key || seenPriority[key]) {
+        return;
+      }
+      seenPriority[key] = true;
+      dedupPriority.push(line);
+    });
+    var priorityText = sliceByChars(dedupPriority.slice(0, 18).join('\n'), Math.floor(totalLimit * 0.35));
+    var prioritizedEntries = priorityText
+      ? [{ id: 'priority-block', name: 'Приоритетные данные', type: 'summary', text: priorityText }]
+      : [];
+    var entries = prioritizedEntries.concat(collected).filter(Boolean);
+    return {
+      extractedTexts: entries,
+      stats: {
+        sourceChars: sourceChars,
+        preparedChars: entries.reduce(function (acc, item) { return acc + String(item.text || '').length; }, 0),
+        filesUsed: collected.length,
+        truncatedFiles: truncatedFiles,
+        mode: detailMode,
+        totalLimit: totalLimit
+      }
+    };
   }
 
   function extractBusinessCore(text) {
@@ -659,24 +824,15 @@
       });
     }
 
-    var extractedTexts = state.files
-      .filter(function (file) {
-        return file && typeof file.content === 'string' && file.content.trim() !== '';
-      })
-      .map(function (file) {
-        var normalizedText = filterOcrArtifacts(file.rawContent || file.content, state.ocrMode);
-        return {
-          id: file.id,
-          name: file.name,
-          type: file.type || '',
-          text: normalizedText
-        };
-      });
+    var preparedContext = prepareContextPayload(state);
+    var extractedTexts = preparedContext.extractedTexts;
 
     context.selectedModel = state.model;
     context.responseStyle = state.responseStyle;
     context.aiBehavior = state.aiBehavior;
     context.ocrMode = state.ocrMode;
+    context.contextDetail = state.contextDetail;
+    context.contextStats = preparedContext.stats;
     context.extractedTexts = extractedTexts;
     context.attachedFiles = state.files.map(function (file) {
       return {
@@ -742,6 +898,7 @@
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
         : DEFAULT_AI_BEHAVIOR,
+      contextDetail: config.contextDetail === 'brief' ? 'brief' : 'detailed',
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
         ? config.ocrMode
         : OCR_MODE_OPTIONS[0].value,
@@ -838,6 +995,10 @@
     menuDropdown.appendChild(openTemplateButton);
     menuWrap.appendChild(menuButton);
     menuWrap.appendChild(menuDropdown);
+    var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'OCR к отправке: 0 символов');
+    contextUsageHint.style.margin = '6px 0 0';
+    contextUsageHint.style.fontSize = '11px';
+    contextUsageHint.style.textAlign = 'left';
 
     function exportDocument(format, answerText) {
       if (!answerText) {
@@ -926,6 +1087,17 @@
     ocrModeField.appendChild(ocrModeSelect);
     var ocrHint = createElement('div', 'ai-chat-modal__ocr-hint', 'Если пропали важные строки (номер, дата, реквизиты), переключите режим OCR на «raw».');
     ocrModeField.appendChild(ocrHint);
+    var contextDetailField = createElement('label', 'ai-chat-modal__field');
+    contextDetailField.appendChild(createElement('span', '', 'Передача контекста'));
+    var contextDetailSelect = createElement('select', 'ai-chat-modal__select');
+    CONTEXT_DETAIL_OPTIONS.forEach(function (opt) {
+      var option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      contextDetailSelect.appendChild(option);
+    });
+    contextDetailSelect.value = state.contextDetail;
+    contextDetailField.appendChild(contextDetailSelect);
     var settingsInput = createElement('textarea', 'ai-chat-modal__textarea');
     settingsInput.rows = 8;
     settingsInput.style.maxHeight = '260px';
@@ -939,6 +1111,7 @@
     settingsActions.appendChild(settingsCancel);
     settingsActions.appendChild(settingsSave);
     aiSettingsModal.content.appendChild(ocrModeField);
+    aiSettingsModal.content.appendChild(contextDetailField);
     aiSettingsModal.content.appendChild(settingsInput);
     aiSettingsModal.content.appendChild(settingsActions);
 
@@ -1035,6 +1208,7 @@
       filesWrap.innerHTML = '';
       if (!state.files.length) {
         filesWrap.appendChild(createElement('div', 'ai-chat-modal__empty', 'Нет прикреплённых файлов'));
+        updateContextUsageHint();
         return;
       }
       state.files.forEach(function (file) {
@@ -1072,6 +1246,19 @@
         chip.appendChild(remove);
         filesWrap.appendChild(chip);
       });
+      updateContextUsageHint();
+    }
+
+    function updateContextUsageHint() {
+      if (!contextUsageHint) {
+        return;
+      }
+      var prepared = prepareContextPayload(state);
+      var stats = prepared.stats || {};
+      contextUsageHint.textContent = 'OCR к отправке: ' + String(stats.preparedChars || 0)
+        + ' символов • режим: ' + (stats.mode === 'brief' ? 'кратко' : 'подробно')
+        + ' • файлов: ' + String(stats.filesUsed || 0)
+        + (stats.truncatedFiles ? (' • сжато: ' + String(stats.truncatedFiles)) : '');
     }
 
     function updateFileStatusInUI() {
@@ -1254,6 +1441,10 @@
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
     });
+    contextDetailSelect.addEventListener('change', function () {
+      state.contextDetail = contextDetailSelect.value === 'brief' ? 'brief' : 'detailed';
+      updateContextUsageHint();
+    });
 
     textarea.addEventListener('input', function () {
       autoHeight(textarea);
@@ -1401,6 +1592,7 @@
     header.appendChild(closeButton);
 
     filesBox.appendChild(filesWrap);
+    filesBox.appendChild(contextUsageHint);
     filesBox.appendChild(attachButton);
 
     modelField.appendChild(modelSelect);
