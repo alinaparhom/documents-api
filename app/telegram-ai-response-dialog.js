@@ -1,5 +1,6 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
+const DOCS_API_ENDPOINT = '/js/documents/api-docs.php';
 const DOCX_TEMPLATE_URLS = [
   '/app/templates/template.docx',
   '/templates/template.docx',
@@ -24,14 +25,12 @@ const DEFAULT_DEPENDENCY_DEFINITIONS = {
 };
 
 function ensureAiDialogStyles() {
-  if (document.getElementById(DIALOG_STYLE_ID)) {
-    return;
-  }
+  if (document.getElementById(DIALOG_STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = DIALOG_STYLE_ID;
   style.textContent = `
-    .appdosc-ai-dialog{position:fixed;inset:0;z-index:2500;display:flex;align-items:stretch;justify-content:center;background:rgba(15,23,42,.38);backdrop-filter:blur(6px);}
-    .appdosc-ai-dialog__panel{width:min(920px,100%);height:100dvh;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(255,255,255,.82));border:1px solid rgba(255,255,255,.7);box-shadow:0 18px 46px rgba(15,23,42,.22);overflow:hidden;border-radius:20px 20px 0 0;}
+    .appdosc-ai-dialog{position:fixed;inset:0;z-index:2500;display:flex;align-items:stretch;justify-content:center;background:rgba(15,23,42,.38);backdrop-filter:blur(6px)}
+    .appdosc-ai-dialog__panel{width:min(920px,100%);height:100dvh;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(255,255,255,.82));border:1px solid rgba(255,255,255,.7);box-shadow:0 18px 46px rgba(15,23,42,.22);overflow:hidden;border-radius:20px 20px 0 0}
     .appdosc-ai-dialog__header{display:flex;align-items:center;justify-content:space-between;padding:12px;border-bottom:1px solid rgba(148,163,184,.24)}
     .appdosc-ai-dialog__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-ai-dialog__subtitle{font-size:12px;color:#64748b;margin-top:2px}
@@ -41,10 +40,8 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:rgba(37,99,235,.12);color:#1e3a8a}
     .appdosc-ai-dialog__bubble--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(148,163,184,.25)}
     .appdosc-ai-dialog__composer{padding:10px 12px;border-top:1px solid rgba(148,163,184,.2);background:rgba(255,255,255,.78);display:flex;flex-direction:column;gap:8px}
-    .appdosc-ai-dialog__input,.appdosc-ai-dialog__docx-input{width:100%;border:1px solid rgba(148,163,184,.38);border-radius:12px;padding:10px 12px;font-size:14px;outline:none;background:#fff;color:#0f172a}
-    .appdosc-ai-dialog__input{min-height:76px;max-height:180px;resize:none}
-    .appdosc-ai-dialog__docx-input{min-height:96px;max-height:210px;resize:vertical}
-    .appdosc-ai-dialog__input:focus,.appdosc-ai-dialog__docx-input:focus{border-color:rgba(37,99,235,.5);box-shadow:0 0 0 3px rgba(59,130,246,.14)}
+    .appdosc-ai-dialog__input{width:100%;border:1px solid rgba(148,163,184,.38);border-radius:12px;padding:10px 12px;font-size:14px;outline:none;background:#fff;color:#0f172a;min-height:76px;max-height:180px;resize:none}
+    .appdosc-ai-dialog__input:focus,.appdosc-ai-dialog__docx-editor:focus{border-color:rgba(37,99,235,.5);box-shadow:0 0 0 3px rgba(59,130,246,.14)}
     .appdosc-ai-dialog__actions{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
     .appdosc-ai-dialog__hint{font-size:12px;color:#64748b}
     .appdosc-ai-dialog__buttons{display:flex;gap:8px;flex-wrap:wrap}
@@ -54,6 +51,12 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__docx{display:none;border-top:1px solid rgba(148,163,184,.2);padding:10px 12px calc(12px + env(safe-area-inset-bottom, 0px));gap:8px;background:rgba(255,255,255,.78)}
     .appdosc-ai-dialog__docx--visible{display:flex;flex-direction:column}
     .appdosc-ai-dialog__docx-meta{font-size:12px;color:#64748b}
+    .appdosc-ai-dialog__docx-editor{min-height:180px;max-height:42dvh;overflow:auto;border:1px solid rgba(148,163,184,.38);border-radius:12px;padding:12px;background:rgba(255,255,255,.95);font-size:14px;line-height:1.5;color:#0f172a;outline:none}
+    .appdosc-ai-dialog__docx-editor h1,.appdosc-ai-dialog__docx-editor h2,.appdosc-ai-dialog__docx-editor h3{margin:10px 0 6px}
+    .appdosc-ai-dialog__docx-editor p{margin:0 0 8px}
+    .appdosc-ai-dialog__docx-editor ul,.appdosc-ai-dialog__docx-editor ol{padding-left:20px;margin:0 0 8px}
+    .appdosc-ai-dialog__docx-editor table{width:100%;border-collapse:collapse;margin:8px 0 12px;background:rgba(255,255,255,.88)}
+    .appdosc-ai-dialog__docx-editor th,.appdosc-ai-dialog__docx-editor td{border:1px solid rgba(148,163,184,.45);padding:6px 8px;vertical-align:top}
 
     .appdosc-pdf-viewer{position:fixed;inset:0;z-index:2600;display:none;background:rgba(15,23,42,.46);backdrop-filter:blur(7px);padding:10px}
     .appdosc-pdf-viewer--open{display:flex}
@@ -68,6 +71,7 @@ function ensureAiDialogStyles() {
       .appdosc-pdf-viewer,.appdosc-ai-dialog{padding:0}
       .appdosc-ai-dialog__buttons{width:100%}
       .appdosc-ai-dialog__btn{flex:1}
+      .appdosc-ai-dialog__docx-editor{max-height:46dvh}
     }
   `;
   document.head.appendChild(style);
@@ -88,167 +92,28 @@ function buildAssistantReply(userMessage, context) {
     `Задача №${taskId} принята в работу.`,
     '',
     `Текст ответа: «${userMessage.trim()}»`,
-    '',
-    'Дальше: откройте PDF-предпросмотр шаблона и проверьте результат.',
   ].join('\n');
 }
 
-function classifySourceType(src) {
-  return /^https?:\/\//i.test(String(src || '')) ? 'cdn' : 'local';
-}
-
-function getAssetBasePaths() {
-  const bases = [];
-  const scriptEl = document.querySelector('script[src*="telegram-ai-response-dialog.js"]');
-  if (scriptEl && scriptEl.src) {
-    const normalized = String(scriptEl.src).replace(/\/telegram-ai-response-dialog\.js(?:\?.*)?$/i, '/');
-    bases.push(normalized);
-  }
-  bases.push(window.location.origin + '/js/documents/app/');
-  bases.push(window.location.origin + '/');
-  return Array.from(new Set(bases));
-}
-
-function normalizeList(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.map((item) => String(item || '').trim()).filter(Boolean);
-}
-
-function getRuntimeDependencyConfig() {
-  if (typeof window === 'undefined' || !window.__APPDOCS_DEPENDENCY_SOURCES__) {
-    return {};
-  }
-  const config = window.__APPDOCS_DEPENDENCY_SOURCES__;
-  return config && typeof config === 'object' ? config : {};
-}
-
-function getVendorBasePaths() {
-  const runtimeConfig = getRuntimeDependencyConfig();
-  const configuredBases = normalizeList(runtimeConfig.vendorBasePaths);
-  const defaults = ['/js/vendor/', '/vendor/'];
-  return Array.from(new Set([...configuredBases, ...defaults]));
-}
-
-function joinUrl(base, path) {
-  return `${String(base).replace(/\/+$/, '')}/${String(path).replace(/^\/+/, '')}`;
-}
-
-function buildSourceCandidates(definition) {
-  const runtimeConfig = getRuntimeDependencyConfig();
-  const key = definition && definition.key ? definition.key : '';
-  const override = key ? runtimeConfig[key] : null;
-  const localFiles = normalizeList(override && override.localFiles).length
-    ? normalizeList(override.localFiles)
-    : normalizeList(definition && definition.localFiles);
-  const cdnSources = normalizeList(override && override.cdnSources).length
-    ? normalizeList(override.cdnSources)
-    : normalizeList(definition && definition.cdnSources);
-  const directSources = normalizeList(override && override.sources);
-  const localRoots = [...getAssetBasePaths(), ...getVendorBasePaths()];
-  const sources = [];
-
-  localRoots.forEach((root) => {
-    localFiles.forEach((filePath) => {
-      sources.push(joinUrl(root, filePath));
-    });
-  });
-  sources.push(...directSources);
-  sources.push(...cdnSources);
-
-  return Array.from(new Set(sources));
-}
-
-function ensureScriptFromSources(options) {
-  const { sources = [], globalKey, title, onSourceResult } = options || {};
-  if (!globalKey || !title) {
-    return Promise.reject(new Error('Некорректные параметры загрузки скрипта.'));
-  }
-  if (window[globalKey]) {
-    return Promise.resolve(window[globalKey]);
-  }
-  if (!Array.isArray(sources) || !sources.length) {
-    return Promise.reject(new Error(`Нет источников для ${title}.`));
-  }
-
-  const tried = [];
-  const tryLoad = (index) => new Promise((resolve, reject) => {
-    if (index >= sources.length) {
-      if (typeof onSourceResult === 'function') {
-        onSourceResult({
-          stage: 'all_sources_failed',
-          title,
-          tried: tried.slice(),
-        });
-      }
-      reject(new Error(`${title} не загрузился ни из одного источника. Проверьте интернет или обратитесь к администратору.`));
-      return;
-    }
-    const source = sources[index];
-    const sourceType = classifySourceType(source);
-    tried.push(source);
+function ensureScript(src, globalKey, title) {
+  if (window[globalKey]) return Promise.resolve(window[globalKey]);
+  return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = source;
-    script.async = true;
-    script.onload = () => {
-      if (window[globalKey]) {
-        resolve(window[globalKey]);
-        return;
-      }
-      if (typeof onSourceResult === 'function') {
-        onSourceResult({
-          stage: sourceType === 'local' ? 'local_failed' : 'cdn_failed',
-          title,
-          source,
-          sourceType,
-          reason: 'global_missing_after_load',
-        });
-      }
-      if (script.parentNode) {
-        script.parentNode.removeChild(script);
-      }
-      resolve(tryLoad(index + 1));
-    };
-    script.onerror = () => {
-      if (script.parentNode) {
-        script.parentNode.removeChild(script);
-      }
-      if (typeof onSourceResult === 'function') {
-        onSourceResult({
-          stage: sourceType === 'local' ? 'local_failed' : 'cdn_failed',
-          title,
-          source,
-          sourceType,
-          reason: 'load_error',
-        });
-      }
-      resolve(tryLoad(index + 1));
-    };
+    script.src = src;
+    script.onload = () => (window[globalKey] ? resolve(window[globalKey]) : reject(new Error(`${title} не загрузился`)));
+    script.onerror = () => reject(new Error(`Не удалось загрузить ${title}`));
     document.head.appendChild(script);
   });
 
   return tryLoad(0);
 }
 
-function ensurePizZip(onSourceResult) {
-  const definition = DEFAULT_DEPENDENCY_DEFINITIONS.pizzip;
-  return ensureScriptFromSources({
-    sources: buildSourceCandidates(definition),
-    globalKey: definition.globalKey,
-    title: definition.title,
-    onSourceResult,
-  });
+function ensureJsPdf() {
+  return ensureScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'jspdf', 'jsPDF');
 }
 
-function ensureJsPdf(onSourceResult) {
-  const definition = DEFAULT_DEPENDENCY_DEFINITIONS.jspdf;
-  return ensureScriptFromSources({
-    sources: buildSourceCandidates(definition),
-    globalKey: definition.globalKey,
-    title: definition.title,
-    onSourceResult,
-  });
+function ensureMammoth() {
+  return ensureScript('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', 'mammoth', 'Mammoth');
 }
 
 async function fetchTemplateBuffer() {
@@ -258,9 +123,7 @@ async function fetchTemplateBuffer() {
     tried.push(url);
     try {
       const response = await fetch(url, { credentials: 'same-origin' });
-      if (response.ok) {
-        return { buffer: await response.arrayBuffer(), url };
-      }
+      if (response.ok) return { buffer: await response.arrayBuffer(), url };
       lastError = new Error(`Шаблон недоступен (${response.status}): ${url}`);
     } catch (error) {
       lastError = error;
@@ -269,49 +132,31 @@ async function fetchTemplateBuffer() {
   throw lastError || new Error(`Не удалось загрузить шаблон. Проверены пути: ${tried.join(', ')}`);
 }
 
-function extractTextFromDocumentXml(xml) {
-  if (!xml) return '';
-  return String(xml)
-    .replace(/<w:tab\/?\s*>/g, '\t')
-    .replace(/<w:br\/?\s*>/g, '\n')
-    .replace(/<\/w:p>/g, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-async function getTemplateText(onSourceResult) {
-  const PizZip = await ensurePizZip(onSourceResult);
+async function getTemplateHtml() {
+  const mammoth = await ensureMammoth();
   const { buffer, url } = await fetchTemplateBuffer();
-  const zip = new PizZip(buffer);
-  const xmlFile = zip.file('word/document.xml');
-  if (!xmlFile) {
-    throw new Error('В шаблоне нет word/document.xml');
-  }
-  const xml = xmlFile.asText();
-  return { text: extractTextFromDocumentXml(xml), url };
+  const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+  const html = String(result && result.value ? result.value : '').trim();
+  if (!html) throw new Error('Не удалось преобразовать DOCX в HTML');
+  return { html, url };
 }
 
-function buildMergedText(templateText, responseText) {
-  const tpl = String(templateText || '').trim();
-  const answer = String(responseText || '').trim();
-  const parts = [];
-  if (tpl) parts.push('ШАБЛОН ДОКУМЕНТА\n' + tpl);
-  if (answer) parts.push('ОТВЕТ ИИ\n' + answer);
-  return parts.join('\n\n────────────────────\n\n').trim();
+function htmlToPlainText(html) {
+  const node = document.createElement('div');
+  node.innerHTML = String(html || '');
+  return String(node.textContent || node.innerText || '').trim();
+}
+
+function appendAnswerToHtml(templateHtml, responseText) {
+  const safeAnswer = String(responseText || '').trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (!safeAnswer) return String(templateHtml || '');
+  return `${String(templateHtml || '')}<h2>Ответ ИИ</h2><p>${safeAnswer.replace(/\n/g, '<br/>')}</p>`;
 }
 
 async function createPdfBlob(text, title, onSourceResult) {
   const jspdfNs = await ensureJsPdf(onSourceResult);
   const jsPDF = jspdfNs && jspdfNs.jsPDF ? jspdfNs.jsPDF : null;
-  if (!jsPDF) {
-    throw new Error('jsPDF не инициализирован');
-  }
+  if (!jsPDF) throw new Error('jsPDF не инициализирован');
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const margin = 36;
   const width = doc.internal.pageSize.getWidth() - margin * 2;
@@ -326,7 +171,6 @@ async function createPdfBlob(text, title, onSourceResult) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(11);
   const lines = doc.splitTextToSize(String(text || ''), width);
-
   lines.forEach((line) => {
     if (y > pageHeight - margin) {
       doc.addPage();
@@ -335,15 +179,12 @@ async function createPdfBlob(text, title, onSourceResult) {
     doc.text(line, margin, y);
     y += 14;
   });
-
   return doc.output('blob');
 }
 
 function setPdfToFrame(frame, blob) {
   if (!frame) return;
-  if (frame.dataset.url) {
-    URL.revokeObjectURL(frame.dataset.url);
-  }
+  if (frame.dataset.url) URL.revokeObjectURL(frame.dataset.url);
   const url = URL.createObjectURL(blob);
   frame.dataset.url = url;
   frame.src = url;
@@ -383,7 +224,7 @@ function openAiResponseDialog(context = {}) {
   title.textContent = 'Ответ с помощью ИИ';
   const subtitle = document.createElement('div');
   subtitle.className = 'appdosc-ai-dialog__subtitle';
-  subtitle.textContent = 'Проверка шаблона через PDF предпросмотр';
+  subtitle.textContent = 'Основной режим: редактирование DOCX как HTML';
   titleWrap.append(title, subtitle);
 
   const closeButton = document.createElement('button');
@@ -393,7 +234,7 @@ function openAiResponseDialog(context = {}) {
 
   const messages = document.createElement('div');
   messages.className = 'appdosc-ai-dialog__messages';
-  messages.appendChild(createBubble('Напишите, какой ответ подготовить. Потом проверим его в PDF на базе шаблона.', 'assistant'));
+  messages.appendChild(createBubble('Введите запрос. Ниже откроется HTML-редактор шаблона (таблицы/списки/заголовки).', 'assistant'));
 
   const composer = document.createElement('div');
   composer.className = 'appdosc-ai-dialog__composer';
@@ -424,11 +265,11 @@ function openAiResponseDialog(context = {}) {
   docxSection.className = 'appdosc-ai-dialog__docx';
   const docxMeta = document.createElement('div');
   docxMeta.className = 'appdosc-ai-dialog__docx-meta';
-  docxMeta.textContent = 'Текст будет наложен на содержимое шаблона и показан в PDF.';
+  docxMeta.textContent = 'Редактируйте структуру DOCX как HTML: таблицы, списки и заголовки сохраняются.';
 
-  const docxInput = document.createElement('textarea');
-  docxInput.className = 'appdosc-ai-dialog__docx-input';
-  docxInput.placeholder = 'Отредактируйте ответ перед PDF предпросмотром';
+  const docxEditor = document.createElement('div');
+  docxEditor.className = 'appdosc-ai-dialog__docx-editor';
+  docxEditor.contentEditable = 'true';
 
   const docxButtons = document.createElement('div');
   docxButtons.className = 'appdosc-ai-dialog__buttons';
@@ -446,7 +287,12 @@ function openAiResponseDialog(context = {}) {
   const mergedPreviewButton = document.createElement('button');
   mergedPreviewButton.type = 'button';
   mergedPreviewButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
-  mergedPreviewButton.textContent = 'PDF с ответом';
+  mergedPreviewButton.textContent = 'PDF fallback';
+
+  const downloadDocxButton = document.createElement('button');
+  downloadDocxButton.type = 'button';
+  downloadDocxButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+  downloadDocxButton.textContent = 'Скачать DOCX';
 
   const downloadPdfButton = document.createElement('button');
   downloadPdfButton.type = 'button';
@@ -482,15 +328,13 @@ function openAiResponseDialog(context = {}) {
   viewerPanel.append(viewerHeader, viewerStatus, viewerFrame);
   viewer.appendChild(viewerPanel);
 
-  let templateTextCache = '';
+  let templateHtmlCache = '';
   let templateUrlCache = '';
   let mergedPdfBlob = null;
 
   const close = () => {
     document.removeEventListener('keydown', onEsc);
-    if (viewerFrame.dataset.url) {
-      URL.revokeObjectURL(viewerFrame.dataset.url);
-    }
+    if (viewerFrame.dataset.url) URL.revokeObjectURL(viewerFrame.dataset.url);
     root.remove();
   };
 
@@ -504,9 +348,7 @@ function openAiResponseDialog(context = {}) {
   };
 
   const notify = (type, message) => {
-    if (typeof context.onStatus === 'function') {
-      context.onStatus(type, message);
-    }
+    if (typeof context.onStatus === 'function') context.onStatus(type, message);
   };
   const onDependencyLoadResult = (payload) => {
     if (typeof context.onDependencyLoad === 'function') {
@@ -514,42 +356,53 @@ function openAiResponseDialog(context = {}) {
     }
   };
 
-  const ensureResponseText = () => {
-    const text = String(docxInput.value || '').trim();
-    if (!text) {
-      notify('warning', 'Сначала введите или сгенерируйте текст ответа.');
-      return '';
-    }
-    return text;
-  };
-
-  const ensureTemplateText = async () => {
-    if (templateTextCache) {
-      return { text: templateTextCache, url: templateUrlCache };
-    }
-    const templateData = await getTemplateText(onDependencyLoadResult);
-    templateTextCache = templateData.text;
+  const ensureTemplateHtml = async () => {
+    if (templateHtmlCache) return { html: templateHtmlCache, url: templateUrlCache };
+    const templateData = await getTemplateHtml();
+    templateHtmlCache = templateData.html;
     templateUrlCache = templateData.url;
     return templateData;
   };
 
   const openTemplatePdfPreview = async () => {
-    const { text, url } = await ensureTemplateText();
-    const pdfBlob = await createPdfBlob(text || 'Шаблон пустой.', 'Предпросмотр шаблона', onDependencyLoadResult);
+    const { html, url } = await ensureTemplateHtml();
+    const pdfBlob = await createPdfBlob(htmlToPlainText(html) || 'Шаблон пустой.', 'Предпросмотр шаблона');
     setPdfToFrame(viewerFrame, pdfBlob);
     viewerStatus.textContent = `Шаблон загружен: ${url}`;
     viewer.classList.add('appdosc-pdf-viewer--open');
   };
 
   const openMergedPdfPreview = async () => {
-    const responseText = ensureResponseText();
-    if (!responseText) return;
-    const { text, url } = await ensureTemplateText();
-    const mergedText = buildMergedText(text, responseText);
-    mergedPdfBlob = await createPdfBlob(mergedText, 'Шаблон + ответ ИИ', onDependencyLoadResult);
+    const text = htmlToPlainText(docxEditor.innerHTML);
+    if (!text) {
+      notify('warning', 'Сначала заполните редактор шаблона.');
+      return;
+    }
+    const { url } = await ensureTemplateHtml();
+    mergedPdfBlob = await createPdfBlob(text, 'HTML fallback предпросмотр');
     setPdfToFrame(viewerFrame, mergedPdfBlob);
-    viewerStatus.textContent = `Проверка шаблона (${url}) + ответ ИИ`;
+    viewerStatus.textContent = `Fallback-проверка шаблона (${url})`;
     viewer.classList.add('appdosc-pdf-viewer--open');
+  };
+
+  const requestGeneratedFile = async (format) => {
+    const html = String(docxEditor.innerHTML || '').trim();
+    if (!html) throw new Error('Нет HTML для сохранения');
+    const payload = new FormData();
+    payload.append('action', 'generate_from_html');
+    payload.append('format', format);
+    payload.append('documentTitle', 'Ответ ИИ');
+    payload.append('html', html);
+    const response = await fetch(DOCS_API_ENDPOINT, { method: 'POST', body: payload, credentials: 'same-origin' });
+    if (!response.ok) {
+      let errorText = `Ошибка сохранения (${response.status})`;
+      try {
+        const data = await response.json();
+        if (data && data.error) errorText = String(data.error);
+      } catch (_) {}
+      throw new Error(errorText);
+    }
+    return response.blob();
   };
 
   const send = () => {
@@ -558,11 +411,11 @@ function openAiResponseDialog(context = {}) {
     messages.appendChild(createBubble(value, 'user'));
     const assistantText = buildAssistantReply(value, context);
     messages.appendChild(createBubble(assistantText, 'assistant'));
-    docxInput.value = assistantText;
+    docxEditor.innerHTML = templateHtmlCache ? appendAnswerToHtml(templateHtmlCache, assistantText) : `<p>${assistantText.replace(/\n/g, '<br/>')}</p>`;
     toggleEditorButton.disabled = false;
     input.value = '';
     messages.scrollTop = messages.scrollHeight;
-    notify('success', 'Черновик готов. Проверьте его в PDF предпросмотре шаблона.');
+    notify('success', 'Черновик готов. Проверьте и отредактируйте структуру документа.');
   };
 
   sendButton.addEventListener('click', send);
@@ -573,16 +426,15 @@ function openAiResponseDialog(context = {}) {
     }
   });
 
-  toggleEditorButton.addEventListener('click', () => {
-    docxSection.classList.toggle('appdosc-ai-dialog__docx--visible');
-  });
+  toggleEditorButton.addEventListener('click', () => docxSection.classList.toggle('appdosc-ai-dialog__docx--visible'));
 
   applyButton.addEventListener('click', () => {
-    const text = ensureResponseText();
-    if (!text) return;
-    if (typeof context.onApplyText === 'function') {
-      context.onApplyText(text);
+    const text = htmlToPlainText(docxEditor.innerHTML);
+    if (!text) {
+      notify('warning', 'Редактор пустой.');
+      return;
     }
+    if (typeof context.onApplyText === 'function') context.onApplyText(text);
     notify('success', 'Текст вставлен в поле ответа задачи.');
   });
 
@@ -604,24 +456,41 @@ function openAiResponseDialog(context = {}) {
     try {
       await openMergedPdfPreview();
     } catch (error) {
-      notify('error', error && error.message ? error.message : 'Не удалось собрать PDF с ответом.');
+      notify('error', error && error.message ? error.message : 'Не удалось собрать fallback PDF.');
     } finally {
       mergedPreviewButton.disabled = false;
+    }
+  });
+
+  downloadDocxButton.addEventListener('click', async () => {
+    downloadDocxButton.disabled = true;
+    try {
+      const blob = await requestGeneratedFile('docx');
+      downloadBlob(blob, 'response-from-html.docx');
+      notify('success', 'DOCX скачан (HTML → DOCX на сервере).');
+    } catch (error) {
+      notify('error', error && error.message ? error.message : 'Не удалось скачать DOCX.');
+    } finally {
+      downloadDocxButton.disabled = false;
     }
   });
 
   downloadPdfButton.addEventListener('click', async () => {
     downloadPdfButton.disabled = true;
     try {
-      if (!mergedPdfBlob) {
-        await openMergedPdfPreview();
-      }
-      if (mergedPdfBlob) {
-        downloadBlob(mergedPdfBlob, 'response-template-preview.pdf');
-        notify('success', 'PDF скачан.');
-      }
+      const blob = await requestGeneratedFile('pdf');
+      downloadBlob(blob, 'response-from-html.pdf');
+      notify('success', 'PDF скачан (HTML → PDF на сервере).');
     } catch (error) {
-      notify('error', error && error.message ? error.message : 'Не удалось скачать PDF.');
+      try {
+        if (!mergedPdfBlob) await openMergedPdfPreview();
+        if (mergedPdfBlob) {
+          downloadBlob(mergedPdfBlob, 'response-template-preview.pdf');
+          notify('success', 'PDF скачан в fallback-режиме.');
+        }
+      } catch (_) {
+        notify('error', error && error.message ? error.message : 'Не удалось скачать PDF.');
+      }
     } finally {
       downloadPdfButton.disabled = false;
     }
@@ -630,9 +499,7 @@ function openAiResponseDialog(context = {}) {
   printPdfButton.addEventListener('click', async () => {
     printPdfButton.disabled = true;
     try {
-      if (!mergedPdfBlob) {
-        await openMergedPdfPreview();
-      }
+      if (!mergedPdfBlob) await openMergedPdfPreview();
       if (viewerFrame.contentWindow) {
         viewer.classList.add('appdosc-pdf-viewer--open');
         viewerFrame.contentWindow.focus();
@@ -647,11 +514,8 @@ function openAiResponseDialog(context = {}) {
 
   viewerClose.addEventListener('click', () => viewer.classList.remove('appdosc-pdf-viewer--open'));
   viewer.addEventListener('click', (event) => {
-    if (event.target === viewer) {
-      viewer.classList.remove('appdosc-pdf-viewer--open');
-    }
+    if (event.target === viewer) viewer.classList.remove('appdosc-pdf-viewer--open');
   });
-
   closeButton.addEventListener('click', close);
   root.addEventListener('click', (event) => {
     if (event.target === root) close();
@@ -660,14 +524,21 @@ function openAiResponseDialog(context = {}) {
   actionButtons.append(toggleEditorButton, sendButton);
   actions.append(hint, actionButtons);
   composer.append(input, actions);
-
-  docxButtons.append(applyButton, templatePreviewButton, mergedPreviewButton, downloadPdfButton, printPdfButton);
-  docxSection.append(docxMeta, docxInput, docxButtons);
-
+  docxButtons.append(applyButton, templatePreviewButton, mergedPreviewButton, downloadDocxButton, downloadPdfButton, printPdfButton);
+  docxSection.append(docxMeta, docxEditor, docxButtons);
   header.append(titleWrap, closeButton);
   panel.append(header, messages, composer, docxSection);
   root.append(panel, viewer);
   document.body.appendChild(root);
+
+  ensureTemplateHtml()
+    .then(({ html }) => {
+      docxEditor.innerHTML = html;
+      toggleEditorButton.disabled = false;
+    })
+    .catch(() => {
+      docxEditor.innerHTML = '<p>Шаблон не загружен. Доступен fallback-режим PDF из текста.</p>';
+    });
 
   document.addEventListener('keydown', onEsc);
   setTimeout(() => input.focus(), 0);
