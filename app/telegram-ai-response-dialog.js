@@ -7,6 +7,22 @@ const DOCX_TEMPLATE_URLS = [
   './templates/template.docx',
   'templates/template.docx',
 ];
+const DEFAULT_DEPENDENCY_DEFINITIONS = {
+  pizzip: {
+    key: 'pizzip',
+    title: 'PizZip',
+    globalKey: 'PizZip',
+    localFiles: ['pizzip/pizzip.min.js', 'pizzip.min.js'],
+    cdnSources: ['https://cdn.jsdelivr.net/npm/pizzip@3.2.0/dist/pizzip.min.js'],
+  },
+  jspdf: {
+    key: 'jspdf',
+    title: 'jsPDF',
+    globalKey: 'jspdf',
+    localFiles: ['jspdf/jspdf.umd.min.js', 'jspdf.umd.min.js'],
+    cdnSources: ['https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'],
+  },
+};
 
 function ensureAiDialogStyles() {
   if (document.getElementById(DIALOG_STYLE_ID)) return;
@@ -88,6 +104,8 @@ function ensureScript(src, globalKey, title) {
     script.onerror = () => reject(new Error(`Не удалось загрузить ${title}`));
     document.head.appendChild(script);
   });
+
+  return tryLoad(0);
 }
 
 function ensureJsPdf() {
@@ -135,8 +153,8 @@ function appendAnswerToHtml(templateHtml, responseText) {
   return `${String(templateHtml || '')}<h2>Ответ ИИ</h2><p>${safeAnswer.replace(/\n/g, '<br/>')}</p>`;
 }
 
-async function createPdfBlob(text, title) {
-  const jspdfNs = await ensureJsPdf();
+async function createPdfBlob(text, title, onSourceResult) {
+  const jspdfNs = await ensureJsPdf(onSourceResult);
   const jsPDF = jspdfNs && jspdfNs.jsPDF ? jspdfNs.jsPDF : null;
   if (!jsPDF) throw new Error('jsPDF не инициализирован');
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
@@ -331,6 +349,11 @@ function openAiResponseDialog(context = {}) {
 
   const notify = (type, message) => {
     if (typeof context.onStatus === 'function') context.onStatus(type, message);
+  };
+  const onDependencyLoadResult = (payload) => {
+    if (typeof context.onDependencyLoad === 'function') {
+      context.onDependencyLoad(payload);
+    }
   };
 
   const ensureTemplateHtml = async () => {
