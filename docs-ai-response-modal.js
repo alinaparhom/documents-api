@@ -62,6 +62,7 @@
       '.ai-chat-modal__empty{font-size:11px;color:#94a3b8;}' +
       '.ai-chat-modal__attach{margin-top:5px;border:1px dashed rgba(148,163,184,.55);background:rgba(248,250,252,.86);border-radius:8px;padding:5px 8px;font-size:11px;font-weight:600;color:#334155;cursor:pointer;}' +
       '.ai-chat-modal__settings{display:grid;grid-template-columns:1fr 1fr;gap:6px;border:1px solid rgba(226,232,240,.88);border-radius:12px;padding:7px;background:rgba(255,255,255,.66);backdrop-filter:blur(2px);}' +
+      '.ai-chat-modal__top-bar{grid-template-columns:minmax(0,1.7fr) repeat(2,minmax(130px,1fr)) auto;align-items:center;}' +
       '.ai-chat-modal__field--full{grid-column:1 / -1;}' +
       '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
       '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
@@ -85,7 +86,7 @@
       '.ai-chat-modal__export-btn:hover{background:#e2e8f0;}' +
       '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}}';
     document.head.appendChild(style);
   }
 
@@ -499,7 +500,9 @@
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
         : DEFAULT_AI_BEHAVIOR,
-      isLoading: false
+      isLoading: false,
+      lastAssistantMessage: '',
+      templateDraft: ''
     };
 
     var root = createElement('div', ROOT_CLASS);
@@ -513,11 +516,15 @@
     closeButton.type = 'button';
 
     var content = createElement('div', 'ai-chat-modal__content');
-    var contextBox = createElement('div', 'ai-chat-modal__context');
-    contextBox.appendChild(createElement('div', 'ai-chat-modal__context-title', 'Контекст и файлы'));
+    var topBar = createElement('div', 'ai-chat-modal__settings ai-chat-modal__top-bar');
+
+    var filesBox = createElement('div', 'ai-chat-modal__field ai-chat-modal__field--full');
+    filesBox.style.gridColumn = '1 / span 2';
+    filesBox.style.margin = '0';
     var filesWrap = createElement('div', 'ai-chat-modal__files');
     var attachButton = createElement('button', 'ai-chat-modal__attach', '+ Прикрепить файл');
     attachButton.type = 'button';
+    attachButton.style.marginTop = '4px';
 
     var hiddenInput = document.getElementById(FILE_INPUT_ID);
     if (!hiddenInput) {
@@ -529,7 +536,6 @@
       document.body.appendChild(hiddenInput);
     }
 
-    var settings = createElement('div', 'ai-chat-modal__settings');
     var modelField = createElement('label', 'ai-chat-modal__field');
     modelField.appendChild(createElement('span', '', 'Модель'));
     var modelSelect = createElement('select', 'ai-chat-modal__select');
@@ -543,12 +549,12 @@
       option.textContent = opt.label;
       styleSelect.appendChild(option);
     });
-    var behaviorField = createElement('label', 'ai-chat-modal__field ai-chat-modal__field--full');
-    behaviorField.appendChild(createElement('span', '', 'Поведение ИИ'));
-    var behaviorInput = createElement('textarea', 'ai-chat-modal__input');
-    behaviorInput.rows = 4;
-    behaviorInput.placeholder = 'Например: отвечай максимально кратко и по шагам';
-    behaviorInput.value = state.aiBehavior;
+    var settingsButton = createElement('button', 'ai-chat-modal__send', '⚙️ Настройки ИИ');
+    settingsButton.type = 'button';
+    settingsButton.style.minHeight = '36px';
+    settingsButton.style.padding = '6px 10px';
+    settingsButton.style.whiteSpace = 'nowrap';
+    settingsButton.style.fontSize = '11px';
 
     var messages = createElement('div', 'ai-chat-modal__messages');
     messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
@@ -556,55 +562,37 @@
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
     textarea.placeholder = 'Введите запрос (можно пусто — отправим OCR текст)';
-    var ocrButton = createElement('button', 'ai-chat-modal__send', 'Прочитать файл (OCR)');
-    ocrButton.type = 'button';
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
     sendButton.type = 'button';
+    var menuWrap = createElement('div');
+    menuWrap.style.position = 'relative';
+    var menuButton = createElement('button', 'ai-chat-modal__send', '⋮');
+    menuButton.type = 'button';
+    menuButton.style.minWidth = '44px';
+    var menuDropdown = createElement('div', 'ai-chat-modal__context');
+    menuDropdown.style.position = 'absolute';
+    menuDropdown.style.right = '0';
+    menuDropdown.style.bottom = '46px';
+    menuDropdown.style.minWidth = '220px';
+    menuDropdown.style.display = 'none';
+    menuDropdown.style.zIndex = '5';
+    menuDropdown.style.padding = '6px';
+    var openEditButton = createElement('button', 'ai-chat-modal__attach', 'Редактировать ответ ИИ');
+    openEditButton.type = 'button';
+    openEditButton.style.marginTop = '0';
+    openEditButton.style.width = '100%';
+    openEditButton.style.textAlign = 'left';
+    var openTemplateButton = createElement('button', 'ai-chat-modal__attach', 'Шаблон');
+    openTemplateButton.type = 'button';
+    openTemplateButton.style.marginTop = '4px';
+    openTemplateButton.style.width = '100%';
+    openTemplateButton.style.textAlign = 'left';
+    menuDropdown.appendChild(openEditButton);
+    menuDropdown.appendChild(openTemplateButton);
+    menuWrap.appendChild(menuButton);
+    menuWrap.appendChild(menuDropdown);
 
-    var exportArea = createElement('div', 'ai-chat-modal__export-area');
-    var exportHeader = createElement('div', 'ai-chat-modal__export-header', 'Финальный ответ (можно редактировать):');
-    var editableResponse = createElement('textarea', 'ai-chat-modal__editable-response');
-    editableResponse.rows = 6;
-    editableResponse.placeholder = 'Здесь появится ответ от ИИ. Вы можете отредактировать его перед экспортом.';
-    var previewHeader = createElement('div', 'ai-chat-modal__export-header', 'Онлайн‑редактор и превью:');
-    var livePreview = createElement('div', 'ai-chat-modal__live-preview');
-    livePreview.setAttribute('contenteditable', 'true');
-    livePreview.setAttribute('data-placeholder', 'Здесь можно править текст в режиме реального времени.');
-    var exportButtons = createElement('div', 'ai-chat-modal__export-buttons');
-    var exportDocx = createElement('button', 'ai-chat-modal__export-btn', '📄 Скачать DOCX');
-    exportDocx.type = 'button';
-    var exportPdf = createElement('button', 'ai-chat-modal__export-btn', '📑 Скачать PDF');
-    exportPdf.type = 'button';
-    exportButtons.appendChild(exportDocx);
-    exportButtons.appendChild(exportPdf);
-    exportArea.appendChild(exportHeader);
-    exportArea.appendChild(editableResponse);
-    exportArea.appendChild(previewHeader);
-    exportArea.appendChild(livePreview);
-    exportArea.appendChild(exportButtons);
-
-    function syncPreviewFromTextarea() {
-      livePreview.textContent = String(editableResponse.value || '');
-    }
-
-    function syncTextareaFromPreview() {
-      editableResponse.value = String(livePreview.textContent || '').replace(/\u00a0/g, ' ');
-    }
-
-    function getEditorText() {
-      syncTextareaFromPreview();
-      return String(editableResponse.value || '').trim();
-    }
-
-    function blinkExportArea() {
-      exportArea.classList.add('ai-chat-modal__export-area--highlight');
-      setTimeout(function () {
-        exportArea.classList.remove('ai-chat-modal__export-area--highlight');
-      }, 1400);
-    }
-
-    function exportDocument(format) {
-      var answerText = getEditorText();
+    function exportDocument(format, answerText) {
       if (!answerText) {
         alert('Нет текста для экспорта. Сначала получите ответ от ИИ.');
         return;
@@ -646,6 +634,93 @@
         });
     }
 
+    function createOverlayModal(titleText) {
+      var overlay = createElement('div', ROOT_CLASS);
+      overlay.style.zIndex = '2000';
+      overlay.style.padding = '8px';
+      var modalPanel = createElement('div', 'ai-chat-modal__panel');
+      modalPanel.style.width = 'min(860px, 96vw)';
+      modalPanel.style.height = 'auto';
+      modalPanel.style.maxHeight = '90vh';
+      var modalHeader = createElement('div', 'ai-chat-modal__header');
+      modalHeader.appendChild(createElement('div', 'ai-chat-modal__title', titleText));
+      var modalClose = createElement('button', 'ai-chat-modal__close', '×');
+      modalClose.type = 'button';
+      modalHeader.appendChild(modalClose);
+      var modalContent = createElement('div', 'ai-chat-modal__content');
+      modalContent.style.paddingTop = '8px';
+      modalPanel.appendChild(modalHeader);
+      modalPanel.appendChild(modalContent);
+      overlay.appendChild(modalPanel);
+
+      function closeOverlay() {
+        closeWithAnimation(overlay);
+      }
+      overlay.addEventListener('click', function (event) {
+        if (event.target === overlay) {
+          closeOverlay();
+        }
+      });
+      modalClose.addEventListener('click', closeOverlay);
+      return { overlay: overlay, content: modalContent, close: closeOverlay };
+    }
+
+    var aiSettingsModal = createOverlayModal('Настройки поведения ИИ');
+    var settingsInput = createElement('textarea', 'ai-chat-modal__textarea');
+    settingsInput.rows = 8;
+    settingsInput.style.maxHeight = '260px';
+    settingsInput.style.minHeight = '160px';
+    settingsInput.value = state.aiBehavior;
+    var settingsActions = createElement('div', 'ai-chat-modal__export-buttons');
+    var settingsCancel = createElement('button', 'ai-chat-modal__export-btn', 'Отмена');
+    var settingsSave = createElement('button', 'ai-chat-modal__send', 'Сохранить');
+    settingsCancel.type = 'button';
+    settingsSave.type = 'button';
+    settingsActions.appendChild(settingsCancel);
+    settingsActions.appendChild(settingsSave);
+    aiSettingsModal.content.appendChild(settingsInput);
+    aiSettingsModal.content.appendChild(settingsActions);
+
+    var editModal = createOverlayModal('Редактировать ответ ИИ');
+    var editInfo = createElement('div', 'ai-chat-modal__empty', '');
+    editInfo.style.fontSize = '12px';
+    editInfo.style.marginBottom = '6px';
+    var editArea = createElement('textarea', 'ai-chat-modal__textarea');
+    editArea.rows = 12;
+    editArea.style.maxHeight = '320px';
+    editArea.style.minHeight = '220px';
+    var editActions = createElement('div', 'ai-chat-modal__export-buttons');
+    var editApply = createElement('button', 'ai-chat-modal__send', 'Обновить');
+    var editDocx = createElement('button', 'ai-chat-modal__export-btn', 'Скачать DOCX');
+    var editPdf = createElement('button', 'ai-chat-modal__export-btn', 'Скачать PDF');
+    var editCopy = createElement('button', 'ai-chat-modal__export-btn', 'Копировать в буфер');
+    [editApply, editDocx, editPdf, editCopy].forEach(function (btn) { btn.type = 'button'; editActions.appendChild(btn); });
+    editModal.content.appendChild(editInfo);
+    editModal.content.appendChild(editArea);
+    editModal.content.appendChild(editActions);
+
+    var templateModal = createOverlayModal('Шаблон');
+    var templateInfo = createElement('div', 'ai-chat-modal__empty', 'Загрузка шаблона...');
+    var templateArea = createElement('textarea', 'ai-chat-modal__textarea');
+    templateArea.rows = 12;
+    templateArea.style.maxHeight = '320px';
+    templateArea.style.minHeight = '220px';
+    templateArea.placeholder = 'Шаблон недоступен. Введите текст вручную.';
+    var templateActions = createElement('div', 'ai-chat-modal__export-buttons');
+    var applyToResponse = createElement('button', 'ai-chat-modal__export-btn', 'Применить в ответ');
+    var applyToComposer = createElement('button', 'ai-chat-modal__export-btn', 'Применить в запрос');
+    var downloadTemplate = createElement('button', 'ai-chat-modal__send', 'Скачать как DOCX');
+    var closeTemplate = createElement('button', 'ai-chat-modal__export-btn', 'Закрыть');
+    [applyToResponse, applyToComposer, downloadTemplate, closeTemplate].forEach(function (btn) { btn.type = 'button'; templateActions.appendChild(btn); });
+    templateModal.content.appendChild(templateInfo);
+    templateModal.content.appendChild(templateArea);
+    templateModal.content.appendChild(templateActions);
+
+    function openOverlay(modalRef) {
+      document.body.appendChild(modalRef.overlay);
+      requestAnimationFrame(function () { modalRef.overlay.classList.add('ai-chat-modal--visible'); });
+    }
+
     function renderModelOptions() {
       modelSelect.innerHTML = '';
       state.models.forEach(function (opt) {
@@ -665,14 +740,10 @@
       }
       state.files.forEach(function (file) {
         var chip = createElement('div', 'ai-chat-chip');
-        var statusText = file.extracting
-          ? '⏳ извлечение...'
-          : (file.extracted ? '✓ текст извлечён' : (file.extractError ? '⚠ ошибка извлечения' : '— текст не извлечён'));
         chip.innerHTML = ''
           + '<span>' + detectIcon(file) + '</span>'
           + '<span>' + escapeHtml(file.name) + '</span>'
-          + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>'
-          + '<span class="ai-chat-chip__meta">' + escapeHtml(statusText) + '</span>';
+          + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>';
 
         var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ OCR' : '📄 OCR');
         ocr.type = 'button';
@@ -703,14 +774,12 @@
     function setLoading(loading) {
       state.isLoading = loading;
       textarea.disabled = loading;
-      ocrButton.disabled = loading;
       sendButton.disabled = loading;
+      menuButton.disabled = loading;
       if (loading) {
-        ocrButton.innerHTML = '<span class="ai-chat-spinner"></span>Обработка';
         sendButton.innerHTML = '<span class="ai-chat-spinner"></span>Отправка';
       } else {
-        ocrButton.textContent = 'Прочитать файл (OCR)';
-        sendButton.textContent = 'Отправить в ИИ';
+        sendButton.textContent = 'Отправить';
       }
     }
 
@@ -780,28 +849,6 @@
       }
     }
 
-    async function extractAllPendingFiles() {
-      var queue = state.files.filter(function (file) {
-        return file && !file.extracted && !file.extracting && (file.fileObject || file.url);
-      });
-      if (!queue.length) {
-        messages.appendChild(createMessage('assistant', 'Нет файлов для извлечения. Все файлы уже обработаны или недоступны.'));
-        messages.scrollTop = messages.scrollHeight;
-        return;
-      }
-      setLoading(true);
-      for (var i = 0; i < queue.length; i += 1) {
-        var current = queue[i];
-        messages.appendChild(createMessage('assistant', 'Обрабатываю файл ' + (i + 1) + ' из ' + queue.length + ': ' + (current.name || 'файл')));
-        messages.scrollTop = messages.scrollHeight;
-        // eslint-disable-next-line no-await-in-loop
-        await extractSingleFile(current);
-      }
-      setLoading(false);
-      messages.appendChild(createMessage('assistant', 'Обработка файлов завершена.'));
-      messages.scrollTop = messages.scrollHeight;
-    }
-
     function closeModal() {
       document.removeEventListener('keydown', onEsc);
       hiddenInput.value = '';
@@ -824,7 +871,7 @@
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       });
       if (!value && !hasFileContent) {
-        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или сначала нажмите «Прочитать файл (OCR)».', true));
+        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст через OCR у файла.', true));
         messages.scrollTop = messages.scrollHeight;
         return;
       }
@@ -832,7 +879,7 @@
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
-      state.aiBehavior = String(behaviorInput.value || '').trim();
+      state.aiBehavior = String(settingsInput.value || '').trim();
 
       messages.appendChild(createMessage('user', effectivePrompt));
       var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
@@ -858,10 +905,7 @@
         pending.remove();
         var finalResponse = payload.response || payload.analysis || 'Пустой ответ от API.';
         messages.appendChild(createMessage('assistant', finalResponse));
-        editableResponse.value = finalResponse;
-        syncPreviewFromTextarea();
-        exportArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        blinkExportArea();
+        state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
         autoHeight(textarea);
       } catch (error) {
@@ -880,21 +924,6 @@
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
     });
-    behaviorInput.addEventListener('input', function () {
-      state.aiBehavior = String(behaviorInput.value || '').trim();
-    });
-    editableResponse.addEventListener('input', syncPreviewFromTextarea);
-    livePreview.addEventListener('input', syncTextareaFromPreview);
-    livePreview.addEventListener('paste', function (event) {
-      event.preventDefault();
-      var clipboard = event.clipboardData || window.clipboardData;
-      var pasted = clipboard && typeof clipboard.getData === 'function' ? clipboard.getData('text') : '';
-      if (document.execCommand) {
-        document.execCommand('insertText', false, pasted);
-      } else {
-        livePreview.textContent += pasted;
-      }
-    });
 
     textarea.addEventListener('input', function () {
       autoHeight(textarea);
@@ -907,16 +936,108 @@
       }
     });
 
-    ocrButton.addEventListener('click', function () {
-      if (state.isLoading) {
+    sendButton.addEventListener('click', sendMessage);
+    closeButton.addEventListener('click', closeModal);
+    settingsButton.addEventListener('click', function () {
+      settingsInput.value = state.aiBehavior;
+      openOverlay(aiSettingsModal);
+    });
+
+    settingsCancel.addEventListener('click', function () {
+      aiSettingsModal.close();
+    });
+    settingsSave.addEventListener('click', function () {
+      state.aiBehavior = String(settingsInput.value || '').trim();
+      aiSettingsModal.close();
+    });
+
+    menuButton.addEventListener('click', function () {
+      menuDropdown.style.display = menuDropdown.style.display === 'none' ? 'block' : 'none';
+    });
+    openEditButton.addEventListener('click', function () {
+      menuDropdown.style.display = 'none';
+      if (!state.lastAssistantMessage) {
+        editInfo.textContent = 'Ответ ещё не получен.';
+        editArea.value = '';
+      } else {
+        editInfo.textContent = 'Можно отредактировать последний ответ ассистента.';
+        editArea.value = state.lastAssistantMessage;
+      }
+      openOverlay(editModal);
+    });
+    openTemplateButton.addEventListener('click', async function () {
+      menuDropdown.style.display = 'none';
+      if (!state.templateDraft) {
+        var templateUrl = config.templateUrl || '/template.docx';
+        try {
+          var response = await fetch(templateUrl, { credentials: 'same-origin' });
+          if (!response.ok) {
+            throw new Error('not_found');
+          }
+          await response.blob();
+          state.templateDraft = 'Шаблон загружен (' + templateUrl + '). Вставьте нужный текст вручную для редактирования.';
+          templateInfo.textContent = 'Файл шаблона найден. Отредактируйте содержимое ниже.';
+        } catch (error) {
+          state.templateDraft = '';
+          templateInfo.textContent = 'Не удалось загрузить template.docx. Можно ввести текст вручную.';
+        }
+      }
+      templateArea.value = state.templateDraft;
+      openOverlay(templateModal);
+    });
+
+    editApply.addEventListener('click', function () {
+      var next = String(editArea.value || '').trim();
+      if (!next) {
+        alert('Введите текст для обновления.');
         return;
       }
-      extractAllPendingFiles();
+      state.lastAssistantMessage = next;
+      var assistantMessages = Array.from(messages.querySelectorAll('.ai-chat-msg--assistant:not(.ai-chat-msg--error)'));
+      if (assistantMessages.length > 0) {
+        assistantMessages[assistantMessages.length - 1].innerHTML = escapeHtml(next);
+      } else {
+        messages.appendChild(createMessage('assistant', next));
+      }
+      editModal.close();
     });
-    sendButton.addEventListener('click', sendMessage);
-    exportDocx.addEventListener('click', function () { exportDocument('docx'); });
-    exportPdf.addEventListener('click', function () { exportDocument('pdf'); });
-    closeButton.addEventListener('click', closeModal);
+    editDocx.addEventListener('click', function () {
+      exportDocument('docx', String(editArea.value || '').trim());
+    });
+    editPdf.addEventListener('click', function () {
+      exportDocument('pdf', String(editArea.value || '').trim());
+    });
+    editCopy.addEventListener('click', function () {
+      var text = String(editArea.value || '').trim();
+      if (!text) {
+        return;
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+      }
+    });
+
+    applyToResponse.addEventListener('click', function () {
+      var text = String(templateArea.value || '').trim();
+      if (!text) {
+        return;
+      }
+      state.lastAssistantMessage = text;
+      editArea.value = text;
+      templateModal.close();
+    });
+    applyToComposer.addEventListener('click', function () {
+      textarea.value = String(templateArea.value || '');
+      autoHeight(textarea);
+      templateModal.close();
+    });
+    downloadTemplate.addEventListener('click', function () {
+      exportDocument('docx', String(templateArea.value || '').trim());
+    });
+    closeTemplate.addEventListener('click', function () {
+      state.templateDraft = String(templateArea.value || '');
+      templateModal.close();
+    });
 
     attachButton.addEventListener('click', function () {
       hiddenInput.click();
@@ -933,6 +1054,9 @@
     });
 
     root.addEventListener('click', function (event) {
+      if (!menuWrap.contains(event.target)) {
+        menuDropdown.style.display = 'none';
+      }
       if (event.target === root) {
         closeModal();
       }
@@ -941,25 +1065,23 @@
     header.appendChild(titleWrap);
     header.appendChild(closeButton);
 
-    contextBox.appendChild(filesWrap);
-    contextBox.appendChild(attachButton);
+    filesBox.appendChild(filesWrap);
+    filesBox.appendChild(attachButton);
 
     modelField.appendChild(modelSelect);
     styleField.appendChild(styleSelect);
-    settings.appendChild(modelField);
-    settings.appendChild(styleField);
-    behaviorField.appendChild(behaviorInput);
-    settings.appendChild(behaviorField);
+    topBar.appendChild(filesBox);
+    topBar.appendChild(modelField);
+    topBar.appendChild(styleField);
+    topBar.appendChild(settingsButton);
 
     composer.appendChild(textarea);
-    composer.appendChild(ocrButton);
     composer.appendChild(sendButton);
+    composer.appendChild(menuWrap);
 
-    content.appendChild(contextBox);
-    content.appendChild(settings);
+    content.appendChild(topBar);
     content.appendChild(messages);
     content.appendChild(composer);
-    content.appendChild(exportArea);
 
     panel.appendChild(header);
     panel.appendChild(content);
@@ -982,7 +1104,6 @@
     });
 
     autoHeight(textarea);
-    syncPreviewFromTextarea();
     document.addEventListener('keydown', onEsc);
     setTimeout(function () {
       textarea.focus();
