@@ -21,6 +21,12 @@
     { value: 'strict', label: 'OCR: строгая очистка' },
     { value: 'raw', label: 'OCR: максимально исходный текст' }
   ];
+  var OCR_LANGUAGE_OPTIONS = [
+    { value: 'auto', label: 'Авто (rus+eng → резерв)' },
+    { value: 'rus', label: 'Русский (rus)' },
+    { value: 'eng', label: 'Английский (eng)' },
+    { value: 'rus+eng', label: 'Русский + Английский (rus+eng)' }
+  ];
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -606,6 +612,9 @@
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
         ? config.ocrMode
         : OCR_MODE_OPTIONS[0].value,
+      ocrLanguage: (typeof config.ocrLanguage === 'string' && OCR_LANGUAGE_OPTIONS.some(function (opt) { return opt.value === config.ocrLanguage; }))
+        ? config.ocrLanguage
+        : OCR_LANGUAGE_OPTIONS[0].value,
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: ''
@@ -783,6 +792,17 @@
     });
     ocrModeSelect.value = state.ocrMode;
     ocrModeField.appendChild(ocrModeSelect);
+    var ocrLanguageField = createElement('label', 'ai-chat-modal__field');
+    ocrLanguageField.appendChild(createElement('span', '', 'Язык OCR'));
+    var ocrLanguageSelect = createElement('select', 'ai-chat-modal__select');
+    OCR_LANGUAGE_OPTIONS.forEach(function (opt) {
+      var option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      ocrLanguageSelect.appendChild(option);
+    });
+    ocrLanguageSelect.value = state.ocrLanguage;
+    ocrLanguageField.appendChild(ocrLanguageSelect);
     var settingsInput = createElement('textarea', 'ai-chat-modal__textarea');
     settingsInput.rows = 8;
     settingsInput.style.maxHeight = '260px';
@@ -796,6 +816,7 @@
     settingsActions.appendChild(settingsCancel);
     settingsActions.appendChild(settingsSave);
     aiSettingsModal.content.appendChild(ocrModeField);
+    aiSettingsModal.content.appendChild(ocrLanguageField);
     aiSettingsModal.content.appendChild(settingsInput);
     aiSettingsModal.content.appendChild(settingsActions);
 
@@ -947,7 +968,7 @@
           var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
           var formData = new FormData();
           formData.append('action', 'ocr_extract');
-          formData.append('language', 'rus');
+          formData.append('language', state.ocrLanguage || 'auto');
           if (fileEntry.fileObject) {
             formData.append('file', fileEntry.fileObject, fileLabel || 'document.pdf');
           } else if (fileEntry.url) {
@@ -1099,6 +1120,7 @@
     settingsButton.addEventListener('click', function () {
       settingsInput.value = state.aiBehavior;
       ocrModeSelect.value = state.ocrMode;
+      ocrLanguageSelect.value = state.ocrLanguage;
       openOverlay(aiSettingsModal);
     });
 
@@ -1108,6 +1130,7 @@
     settingsSave.addEventListener('click', function () {
       state.aiBehavior = String(settingsInput.value || '').trim();
       state.ocrMode = ocrModeSelect.value;
+      state.ocrLanguage = ocrLanguageSelect.value;
       resanitizeFileContents();
       aiSettingsModal.close();
     });
