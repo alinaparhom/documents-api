@@ -247,6 +247,32 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
 }
 
+function performAiRequest(string $endpoint, string $apiKey, array $body): array
+{
+    $ch = curl_init($endpoint);
+    if ($ch === false) {
+        return ['status' => 500, 'body' => false, 'curl_error' => 'Не удалось инициализировать cURL'];
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => 90,
+    ]);
+
+    $responseBody = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
+}
+
 function textFromMixed(mixed $value): string
 {
     if (is_string($value)) {
@@ -688,6 +714,79 @@ function applyInputBudget(array $entries, int $maxChars): array
     ];
 }
 
+function compressExtractedTextsViaAi(
+    array $entries,
+    string $endpoint,
+    string $apiKey,
+    string $model,
+    bool $isGroq,
+    bool $isGoogleOpenAiCompat,
+    int $maxCharsPerFile
+): array {
+    if (!$entries || $apiKey === '' || $model === '') {
+        return [];
+    }
+
+    $payload = [];
+    foreach ($entries as $index => $entry) {
+        $payload[] = [
+            'index' => $index,
+            'name' => (string)($entry['name'] ?? 'Файл'),
+            'type' => (string)($entry['type'] ?? ''),
+            'text' => (string)($entry['text'] ?? ''),
+        ];
+    }
+
+    $systemMessage = 'Ты сервис сжатия OCR-текста. Верни только JSON объект формата {"items":[{"index":0,"summary":"..."}]}. '
+        . 'Сохраняй факты, даты, номера, суммы, реквизиты, ФИО, адреса и юридически значимые формулировки. '
+        . 'Удали шум OCR и повторы. Каждый summary должен быть на русском и не длиннее '
+        . $maxCharsPerFile . ' символов.';
+    $body = [
+        'model' => $model,
+        'temperature' => 0.1,
+        'messages' => [
+            ['role' => 'system', 'content' => $systemMessage],
+            ['role' => 'user', 'content' => json_encode(['items' => $payload], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
+        ],
+    ];
+    if (!$isGroq && !$isGoogleOpenAiCompat) {
+        $body['response_format'] = ['type' => 'json_object'];
+    }
+
+    $result = performAiRequest($endpoint, $apiKey, $body);
+    if ($result['body'] === false || (int)$result['status'] >= 400) {
+        return [];
+    }
+    $responseJson = json_decode((string)$result['body'], true);
+    if (!is_array($responseJson)) {
+        return [];
+    }
+    $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
+    $parsed = parseAiJson($content);
+    $items = isset($parsed['items']) && is_array($parsed['items']) ? $parsed['items'] : [];
+    if (!$items) {
+        return [];
+    }
+
+    $compressed = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $index = (int)($item['index'] ?? -1);
+        $summary = trim((string)($item['summary'] ?? ''));
+        if ($index < 0 || !isset($entries[$index]) || $summary === '') {
+            continue;
+        }
+        $compressed[] = [
+            'name' => (string)($entries[$index]['name'] ?? 'Файл'),
+            'type' => (string)($entries[$index]['type'] ?? ''),
+            'text' => mb_substr(normalizeInputText($summary), 0, max(300, $maxCharsPerFile)),
+        ];
+    }
+    return $compressed;
+}
+
 function buildLocalFallback(string $documentTitle, string $prompt, array $context = []): array
 {
     $title = trim($documentTitle) !== '' ? $documentTitle : 'документу';
@@ -1058,6 +1157,44 @@ if ($allowedModelsRaw !== '') {
     }
 }
 
+$preprocessTriggerChars = (int)($env['AI_PREPROCESS_TRIGGER_CHARS'] ?? 32000);
+if ($preprocessTriggerChars < 4000) {
+    $preprocessTriggerChars = 4000;
+}
+$preprocessMaxCharsPerFile = (int)($env['AI_PREPROCESS_MAX_CHARS_PER_FILE'] ?? 3500);
+if ($preprocessMaxCharsPerFile < 700) {
+    $preprocessMaxCharsPerFile = 700;
+}
+$preprocessModel = trim((string)($env['AI_PREPROCESS_MODEL'] ?? $env['OPENAI_PREPROCESS_MODEL'] ?? ''));
+$preprocessApiKey = trim((string)($env['AI_PREPROCESS_API_KEY'] ?? $env['OPENAI_PREPROCESS_API_KEY'] ?? $apiKey));
+$preprocessBaseUrl = trim((string)($env['AI_PREPROCESS_BASE_URL'] ?? $env['OPENAI_PREPROCESS_BASE_URL'] ?? $baseUrl));
+$preprocessIsGroq = stripos($preprocessBaseUrl, 'groq.com') !== false;
+$preprocessIsGoogleOpenAiCompat = stripos($preprocessBaseUrl, 'generativelanguage.googleapis.com') !== false;
+
+if ($preprocessModel !== '' && (int)$promptStats['charsIn'] > $preprocessTriggerChars && count($extractedTexts) > 1) {
+    $compressedTexts = compressExtractedTextsViaAi(
+        $extractedTexts,
+        rtrim($preprocessBaseUrl, '/') . '/chat/completions',
+        $preprocessApiKey,
+        $preprocessModel,
+        $preprocessIsGroq,
+        $preprocessIsGoogleOpenAiCompat,
+        $preprocessMaxCharsPerFile
+    );
+    if ($compressedTexts) {
+        $extractedTexts = deduplicateAndNormalizeExtractedTexts($compressedTexts);
+        $limitedCompressed = applyInputBudget($extractedTexts, $maxInputChars);
+        $extractedTexts = $limitedCompressed['entries'];
+        $promptStats['charsIn'] = (int)$limitedCompressed['charsIn'];
+        $promptStats['filesUsed'] = (int)$limitedCompressed['filesUsed'];
+        $promptStats['chunksUsed'] = (int)$limitedCompressed['chunksUsed'];
+        $promptStats['preprocessed'] = true;
+        $promptStats['preprocessModel'] = $preprocessModel;
+    } else {
+        $promptStats['preprocessed'] = false;
+    }
+}
+
 $systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
   . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview. "
   . "Главный источник текста — user payload: extractedTexts[*].text. "
@@ -1088,31 +1225,6 @@ if (!$isGroq && !$isGoogleOpenAiCompat) {
 }
 
 $endpoint = rtrim($baseUrl, '/') . '/chat/completions';
-function performAiRequest(string $endpoint, string $apiKey, array $body): array
-{
-    $ch = curl_init($endpoint);
-    if ($ch === false) {
-        return ['status' => 500, 'body' => false, 'curl_error' => 'Не удалось инициализировать cURL'];
-    }
-
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => [
-            'Authorization: Bearer ' . $apiKey,
-            'Content-Type: application/json',
-        ],
-        CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        CURLOPT_TIMEOUT => 90,
-    ]);
-
-    $responseBody = curl_exec($ch);
-    $curlError = curl_error($ch);
-    $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
-}
 
 $requestResult = performAiRequest($endpoint, $apiKey, $body);
 $responseBody = $requestResult['body'];
