@@ -6,6 +6,22 @@ const DOCX_TEMPLATE_URLS = [
   './templates/template.docx',
   'templates/template.docx',
 ];
+const DEFAULT_DEPENDENCY_DEFINITIONS = {
+  pizzip: {
+    key: 'pizzip',
+    title: 'PizZip',
+    globalKey: 'PizZip',
+    localFiles: ['pizzip/pizzip.min.js', 'pizzip.min.js'],
+    cdnSources: ['https://cdn.jsdelivr.net/npm/pizzip@3.2.0/dist/pizzip.min.js'],
+  },
+  jspdf: {
+    key: 'jspdf',
+    title: 'jsPDF',
+    globalKey: 'jspdf',
+    localFiles: ['jspdf/jspdf.umd.min.js', 'jspdf.umd.min.js'],
+    cdnSources: ['https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'],
+  },
+};
 
 function ensureAiDialogStyles() {
   if (document.getElementById(DIALOG_STYLE_ID)) {
@@ -77,25 +93,162 @@ function buildAssistantReply(userMessage, context) {
   ].join('\n');
 }
 
-function ensureScript(src, globalKey, title) {
+function classifySourceType(src) {
+  return /^https?:\/\//i.test(String(src || '')) ? 'cdn' : 'local';
+}
+
+function getAssetBasePaths() {
+  const bases = [];
+  const scriptEl = document.querySelector('script[src*="telegram-ai-response-dialog.js"]');
+  if (scriptEl && scriptEl.src) {
+    const normalized = String(scriptEl.src).replace(/\/telegram-ai-response-dialog\.js(?:\?.*)?$/i, '/');
+    bases.push(normalized);
+  }
+  bases.push(window.location.origin + '/js/documents/app/');
+  bases.push(window.location.origin + '/');
+  return Array.from(new Set(bases));
+}
+
+function normalizeList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function getRuntimeDependencyConfig() {
+  if (typeof window === 'undefined' || !window.__APPDOCS_DEPENDENCY_SOURCES__) {
+    return {};
+  }
+  const config = window.__APPDOCS_DEPENDENCY_SOURCES__;
+  return config && typeof config === 'object' ? config : {};
+}
+
+function getVendorBasePaths() {
+  const runtimeConfig = getRuntimeDependencyConfig();
+  const configuredBases = normalizeList(runtimeConfig.vendorBasePaths);
+  const defaults = ['/js/vendor/', '/vendor/'];
+  return Array.from(new Set([...configuredBases, ...defaults]));
+}
+
+function joinUrl(base, path) {
+  return `${String(base).replace(/\/+$/, '')}/${String(path).replace(/^\/+/, '')}`;
+}
+
+function buildSourceCandidates(definition) {
+  const runtimeConfig = getRuntimeDependencyConfig();
+  const key = definition && definition.key ? definition.key : '';
+  const override = key ? runtimeConfig[key] : null;
+  const localFiles = normalizeList(override && override.localFiles).length
+    ? normalizeList(override.localFiles)
+    : normalizeList(definition && definition.localFiles);
+  const cdnSources = normalizeList(override && override.cdnSources).length
+    ? normalizeList(override.cdnSources)
+    : normalizeList(definition && definition.cdnSources);
+  const directSources = normalizeList(override && override.sources);
+  const localRoots = [...getAssetBasePaths(), ...getVendorBasePaths()];
+  const sources = [];
+
+  localRoots.forEach((root) => {
+    localFiles.forEach((filePath) => {
+      sources.push(joinUrl(root, filePath));
+    });
+  });
+  sources.push(...directSources);
+  sources.push(...cdnSources);
+
+  return Array.from(new Set(sources));
+}
+
+function ensureScriptFromSources(options) {
+  const { sources = [], globalKey, title, onSourceResult } = options || {};
+  if (!globalKey || !title) {
+    return Promise.reject(new Error('Некорректные параметры загрузки скрипта.'));
+  }
   if (window[globalKey]) {
     return Promise.resolve(window[globalKey]);
   }
-  return new Promise((resolve, reject) => {
+  if (!Array.isArray(sources) || !sources.length) {
+    return Promise.reject(new Error(`Нет источников для ${title}.`));
+  }
+
+  const tried = [];
+  const tryLoad = (index) => new Promise((resolve, reject) => {
+    if (index >= sources.length) {
+      if (typeof onSourceResult === 'function') {
+        onSourceResult({
+          stage: 'all_sources_failed',
+          title,
+          tried: tried.slice(),
+        });
+      }
+      reject(new Error(`${title} не загрузился ни из одного источника. Проверьте интернет или обратитесь к администратору.`));
+      return;
+    }
+    const source = sources[index];
+    const sourceType = classifySourceType(source);
+    tried.push(source);
     const script = document.createElement('script');
-    script.src = src;
-    script.onload = () => window[globalKey] ? resolve(window[globalKey]) : reject(new Error(`${title} не загрузился`));
-    script.onerror = () => reject(new Error(`Не удалось загрузить ${title}`));
+    script.src = source;
+    script.async = true;
+    script.onload = () => {
+      if (window[globalKey]) {
+        resolve(window[globalKey]);
+        return;
+      }
+      if (typeof onSourceResult === 'function') {
+        onSourceResult({
+          stage: sourceType === 'local' ? 'local_failed' : 'cdn_failed',
+          title,
+          source,
+          sourceType,
+          reason: 'global_missing_after_load',
+        });
+      }
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+      resolve(tryLoad(index + 1));
+    };
+    script.onerror = () => {
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+      if (typeof onSourceResult === 'function') {
+        onSourceResult({
+          stage: sourceType === 'local' ? 'local_failed' : 'cdn_failed',
+          title,
+          source,
+          sourceType,
+          reason: 'load_error',
+        });
+      }
+      resolve(tryLoad(index + 1));
+    };
     document.head.appendChild(script);
+  });
+
+  return tryLoad(0);
+}
+
+function ensurePizZip(onSourceResult) {
+  const definition = DEFAULT_DEPENDENCY_DEFINITIONS.pizzip;
+  return ensureScriptFromSources({
+    sources: buildSourceCandidates(definition),
+    globalKey: definition.globalKey,
+    title: definition.title,
+    onSourceResult,
   });
 }
 
-function ensurePizZip() {
-  return ensureScript('https://cdn.jsdelivr.net/npm/pizzip@3.2.0/dist/pizzip.min.js', 'PizZip', 'PizZip');
-}
-
-function ensureJsPdf() {
-  return ensureScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'jspdf', 'jsPDF');
+function ensureJsPdf(onSourceResult) {
+  const definition = DEFAULT_DEPENDENCY_DEFINITIONS.jspdf;
+  return ensureScriptFromSources({
+    sources: buildSourceCandidates(definition),
+    globalKey: definition.globalKey,
+    title: definition.title,
+    onSourceResult,
+  });
 }
 
 async function fetchTemplateBuffer() {
@@ -132,8 +285,8 @@ function extractTextFromDocumentXml(xml) {
     .trim();
 }
 
-async function getTemplateText() {
-  const PizZip = await ensurePizZip();
+async function getTemplateText(onSourceResult) {
+  const PizZip = await ensurePizZip(onSourceResult);
   const { buffer, url } = await fetchTemplateBuffer();
   const zip = new PizZip(buffer);
   const xmlFile = zip.file('word/document.xml');
@@ -153,8 +306,8 @@ function buildMergedText(templateText, responseText) {
   return parts.join('\n\n────────────────────\n\n').trim();
 }
 
-async function createPdfBlob(text, title) {
-  const jspdfNs = await ensureJsPdf();
+async function createPdfBlob(text, title, onSourceResult) {
+  const jspdfNs = await ensureJsPdf(onSourceResult);
   const jsPDF = jspdfNs && jspdfNs.jsPDF ? jspdfNs.jsPDF : null;
   if (!jsPDF) {
     throw new Error('jsPDF не инициализирован');
@@ -355,6 +508,11 @@ function openAiResponseDialog(context = {}) {
       context.onStatus(type, message);
     }
   };
+  const onDependencyLoadResult = (payload) => {
+    if (typeof context.onDependencyLoad === 'function') {
+      context.onDependencyLoad(payload);
+    }
+  };
 
   const ensureResponseText = () => {
     const text = String(docxInput.value || '').trim();
@@ -369,7 +527,7 @@ function openAiResponseDialog(context = {}) {
     if (templateTextCache) {
       return { text: templateTextCache, url: templateUrlCache };
     }
-    const templateData = await getTemplateText();
+    const templateData = await getTemplateText(onDependencyLoadResult);
     templateTextCache = templateData.text;
     templateUrlCache = templateData.url;
     return templateData;
@@ -377,7 +535,7 @@ function openAiResponseDialog(context = {}) {
 
   const openTemplatePdfPreview = async () => {
     const { text, url } = await ensureTemplateText();
-    const pdfBlob = await createPdfBlob(text || 'Шаблон пустой.', 'Предпросмотр шаблона');
+    const pdfBlob = await createPdfBlob(text || 'Шаблон пустой.', 'Предпросмотр шаблона', onDependencyLoadResult);
     setPdfToFrame(viewerFrame, pdfBlob);
     viewerStatus.textContent = `Шаблон загружен: ${url}`;
     viewer.classList.add('appdosc-pdf-viewer--open');
@@ -388,7 +546,7 @@ function openAiResponseDialog(context = {}) {
     if (!responseText) return;
     const { text, url } = await ensureTemplateText();
     const mergedText = buildMergedText(text, responseText);
-    mergedPdfBlob = await createPdfBlob(mergedText, 'Шаблон + ответ ИИ');
+    mergedPdfBlob = await createPdfBlob(mergedText, 'Шаблон + ответ ИИ', onDependencyLoadResult);
     setPdfToFrame(viewerFrame, mergedPdfBlob);
     viewerStatus.textContent = `Проверка шаблона (${url}) + ответ ИИ`;
     viewer.classList.add('appdosc-pdf-viewer--open');

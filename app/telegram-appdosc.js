@@ -53,9 +53,35 @@ function ensureAiDialogScriptLoaded() {
 }
 
 async function openAiDialogSafely(context = {}) {
+  const reportDependencyLoad = (payload = {}) => {
+    const stage = normalizeValue(payload && payload.stage) || '';
+    if (!stage) {
+      return;
+    }
+    if (stage !== 'local_failed' && stage !== 'cdn_failed' && stage !== 'all_sources_failed') {
+      return;
+    }
+    logClientEvent('task_view_error', {
+      reason: stage,
+      dependency: normalizeValue(payload && payload.title),
+      source: normalizeValue(payload && payload.source),
+      sourceType: normalizeValue(payload && payload.sourceType),
+      details: normalizeValue(payload && payload.reason),
+      taskId: normalizeValue(context && context.task && context.task.id),
+    });
+  };
+
   try {
     const openDialog = await ensureAiDialogScriptLoaded();
-    openDialog(context);
+    openDialog({
+      ...context,
+      onDependencyLoad(payload) {
+        reportDependencyLoad(payload);
+        if (typeof context.onDependencyLoad === 'function') {
+          context.onDependencyLoad(payload);
+        }
+      },
+    });
   } catch (error) {
     if (typeof context.onStatus === 'function') {
       context.onStatus('error', 'Не удалось открыть ИИ-диалог. Обновите страницу.');
