@@ -6,6 +6,7 @@
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
   var pdfJsReadyPromise = null;
+  var mammothReadyPromise = null;
   var DEFAULT_AI_BEHAVIOR = 'Ты — корпоративный секретарь. Ответь на документ в официально-деловом стиле.\n'
     + 'Используй обороты: "В ответ на Ваше письмо... сообщаем следующее", "Отмечаем, что...", "Обращаем Ваше внимание...".\n'
     + 'Тон: строгий, аргументированный, без эмоций.\n'
@@ -300,6 +301,14 @@
     return type.indexOf('pdf') !== -1 || /\.pdf$/i.test(name);
   }
 
+  function isDocxLike(file) {
+    var type = String(file.type || '').toLowerCase();
+    var name = String(file.name || '').toLowerCase();
+    return type.indexOf('wordprocessingml.document') !== -1
+      || /\.docx$/i.test(name)
+      || /\.docm$/i.test(name);
+  }
+
   function normalizeExternalFiles(files, source) {
     if (!Array.isArray(files)) {
       return [];
@@ -428,6 +437,12 @@
         pdfReader.readAsArrayBuffer(file);
         return;
       }
+      if (isDocxLike(file)) {
+        extractDocxText(file).then(resolve).catch(function () {
+          resolve('');
+        });
+        return;
+      }
       if (!isTextLike(file)) {
         resolve('');
         return;
@@ -441,6 +456,54 @@
       };
       reader.readAsText(file);
     });
+  }
+
+  function ensureMammothLoaded() {
+    if (mammothReadyPromise) {
+      return mammothReadyPromise;
+    }
+    mammothReadyPromise = new Promise(function (resolve, reject) {
+      if (typeof window === 'undefined') {
+        reject(new Error('no_window'));
+        return;
+      }
+      if (window.mammoth && typeof window.mammoth.extractRawText === 'function') {
+        resolve(window.mammoth);
+        return;
+      }
+      var script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js';
+      script.async = true;
+      script.onload = function () {
+        if (window.mammoth && typeof window.mammoth.extractRawText === 'function') {
+          resolve(window.mammoth);
+        } else {
+          reject(new Error('mammoth_missing'));
+        }
+      };
+      script.onerror = function () {
+        reject(new Error('mammoth_load_failed'));
+      };
+      document.head.appendChild(script);
+    });
+    return mammothReadyPromise;
+  }
+
+  function extractDocxText(file) {
+    if (!file || typeof file.arrayBuffer !== 'function') {
+      return Promise.resolve('');
+    }
+    return Promise.all([ensureMammothLoaded(), file.arrayBuffer()])
+      .then(function (results) {
+        var mammoth = results[0];
+        var buffer = results[1];
+        return mammoth.extractRawText({ arrayBuffer: buffer });
+      })
+      .then(function (result) {
+        var text = result && typeof result.value === 'string' ? result.value : '';
+        text = text.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        return text.slice(0, MAX_EXTRACT_CHARS);
+      });
   }
 
   function ensurePdfJsLoaded() {
