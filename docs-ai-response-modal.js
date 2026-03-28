@@ -7,10 +7,14 @@
   var MAX_EXTRACT_CHARS = 500000;
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
-  var DEFAULT_AI_BEHAVIOR = 'Ты — корпоративный секретарь. Ответь на документ в официально-деловом стиле.\n'
-    + 'Используй обороты: "В ответ на Ваше письмо... сообщаем следующее", "Отмечаем, что...", "Обращаем Ваше внимание...".\n'
-    + 'Тон: строгий, аргументированный, без эмоций.\n'
-    + 'Ответ должен содержать чёткую структуру: вступление, основную часть, заключение.';
+  var DEFAULT_AI_BEHAVIOR = 'Ты сотрудник компании и отвечаешь как вежливый коллега.\n'
+    + 'Пиши по-русски коротко и понятно новичку.\n'
+    + 'Если речь о сайте/интерфейсе — учитывай мобильные устройства, минималистичный светлый стеклянный стиль и понятный UX.\n'
+    + 'Если речь о Telegram Mini Apps — учитывай совместимость Android, iOS и web-версии Telegram.';
+  var THINKING_DIRECTION_PROMPTS = {
+    positive: 'Направление ответа: положительное. Ищи преимущества, решения и конструктивные шаги.',
+    negative: 'Направление ответа: отрицательное. Критически оценивай риски, проблемы и слабые места.'
+  };
 
   var STYLE_OPTIONS = [
     { value: 'neutral', label: 'Нейтральный стиль' },
@@ -22,6 +26,17 @@
     { value: 'strict', label: 'OCR: строгая очистка' },
     { value: 'raw', label: 'OCR: максимально исходный текст' }
   ];
+  var THINKING_DIRECTION_OPTIONS = [
+    { value: 'positive', label: 'Положительное направление' },
+    { value: 'negative', label: 'Отрицательное направление' }
+  ];
+
+  function composeBehaviorPrompt(baseBehavior, direction) {
+    var base = String(baseBehavior || '').trim();
+    var directionValue = THINKING_DIRECTION_PROMPTS[direction] ? direction : 'positive';
+    var directionPrompt = THINKING_DIRECTION_PROMPTS[directionValue];
+    return [base, directionPrompt].filter(Boolean).join('\n');
+  }
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -695,7 +710,8 @@
     formData.append('prompt', userText);
     formData.append('model', state.model);
     formData.append('responseStyle', state.responseStyle);
-    formData.append('aiBehavior', state.aiBehavior || '');
+    formData.append('aiBehavior', composeBehaviorPrompt(state.aiBehavior, state.thinkingDirection));
+    formData.append('thinkingDirection', state.thinkingDirection || THINKING_DIRECTION_OPTIONS[0].value);
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
@@ -742,6 +758,9 @@
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
         : DEFAULT_AI_BEHAVIOR,
+      thinkingDirection: (typeof config.thinkingDirection === 'string' && THINKING_DIRECTION_PROMPTS[config.thinkingDirection])
+        ? config.thinkingDirection
+        : THINKING_DIRECTION_OPTIONS[0].value,
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
         ? config.ocrMode
         : OCR_MODE_OPTIONS[0].value,
@@ -926,6 +945,17 @@
     ocrModeField.appendChild(ocrModeSelect);
     var ocrHint = createElement('div', 'ai-chat-modal__ocr-hint', 'Если пропали важные строки (номер, дата, реквизиты), переключите режим OCR на «raw».');
     ocrModeField.appendChild(ocrHint);
+    var thinkingDirectionField = createElement('label', 'ai-chat-modal__field');
+    thinkingDirectionField.appendChild(createElement('span', '', 'Направление ответа'));
+    var thinkingDirectionSelect = createElement('select', 'ai-chat-modal__select');
+    THINKING_DIRECTION_OPTIONS.forEach(function (opt) {
+      var option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      thinkingDirectionSelect.appendChild(option);
+    });
+    thinkingDirectionSelect.value = state.thinkingDirection;
+    thinkingDirectionField.appendChild(thinkingDirectionSelect);
     var settingsInput = createElement('textarea', 'ai-chat-modal__textarea');
     settingsInput.rows = 8;
     settingsInput.style.maxHeight = '260px';
@@ -939,6 +969,7 @@
     settingsActions.appendChild(settingsCancel);
     settingsActions.appendChild(settingsSave);
     aiSettingsModal.content.appendChild(ocrModeField);
+    aiSettingsModal.content.appendChild(thinkingDirectionField);
     aiSettingsModal.content.appendChild(settingsInput);
     aiSettingsModal.content.appendChild(settingsActions);
 
@@ -1271,6 +1302,7 @@
     settingsButton.addEventListener('click', function () {
       settingsInput.value = state.aiBehavior;
       ocrModeSelect.value = state.ocrMode;
+      thinkingDirectionSelect.value = state.thinkingDirection;
       openOverlay(aiSettingsModal);
     });
 
@@ -1280,6 +1312,7 @@
     settingsSave.addEventListener('click', function () {
       state.aiBehavior = String(settingsInput.value || '').trim();
       state.ocrMode = ocrModeSelect.value;
+      state.thinkingDirection = thinkingDirectionSelect.value;
       resanitizeFileContents();
       aiSettingsModal.close();
     });
