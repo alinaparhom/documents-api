@@ -271,6 +271,9 @@ function textFromMixed(mixed $value): string
 function parseAiJson(string $content): array
 {
     $content = trim($content);
+    if (preg_match('/```(?:json)?\s*([\s\S]*?)```/ui', $content, $codeBlock)) {
+        $content = trim((string)$codeBlock[1]);
+    }
     $decoded = json_decode($content, true);
     if (is_array($decoded)) {
         return $decoded;
@@ -284,6 +287,74 @@ function parseAiJson(string $content): array
     }
 
     return [];
+}
+
+function cleanBriefText(string $value, int $maxLen, int $maxLines = 2): string
+{
+    $value = str_replace(["\r\n", "\r"], "\n", $value);
+    $value = preg_replace('/[ \t]+/u', ' ', $value) ?? $value;
+    $value = preg_replace('/[^\p{L}\p{N}\s\.\,\:\;\-\(\)\/«»"№]/u', '', $value) ?? $value;
+    $lines = preg_split('/\n+/u', $value) ?: [];
+    $cleanedLines = [];
+    foreach ($lines as $line) {
+        $line = trim((string)$line);
+        if ($line === '') {
+            continue;
+        }
+        // Удаляем OCR-шум из линий без букв
+        if (!preg_match('/[\p{L}]/u', $line) && preg_match('/\d{4,}|[_=~#@*]{2,}/u', $line)) {
+            continue;
+        }
+        $cleanedLines[] = $line;
+        if (count($cleanedLines) >= $maxLines) {
+            break;
+        }
+    }
+    $result = trim(implode("\n", $cleanedLines));
+    if ($result === '') {
+        return '';
+    }
+    if (mb_strlen($result) > $maxLen) {
+        $result = rtrim(mb_substr($result, 0, $maxLen), " \t\n\r\0\x0B,.:-") . '…';
+    }
+    return $result;
+}
+
+function extractBriefFields(array $parsed, string $prompt, string $documentTitle): array
+{
+    $topic = textFromMixed($parsed['topic'] ?? '');
+    $sender = textFromMixed($parsed['sender'] ?? '');
+    $request = textFromMixed($parsed['request'] ?? '');
+
+    if ($topic === '') {
+        $topic = trim($documentTitle) !== '' ? $documentTitle : $prompt;
+    }
+    if ($sender === '') {
+        $sender = textFromMixed($parsed['analysis']['sender'] ?? '');
+    }
+    if ($request === '') {
+        $request = trim($prompt);
+    }
+
+    $topic = cleanBriefText($topic, 140, 2);
+    $sender = cleanBriefText($sender, 120, 2);
+    $request = cleanBriefText($request, 180, 2);
+
+    if ($sender === '') {
+        $sender = 'Не указан';
+    }
+    if ($topic === '') {
+        $topic = 'Без темы';
+    }
+    if ($request === '') {
+        $request = 'Запрос не распознан';
+    }
+
+    return [
+        'topic' => $topic,
+        'sender' => $sender,
+        'request' => $request,
+    ];
 }
 
 function xmlEscape(string $value): string
@@ -591,6 +662,7 @@ $prompt = trim((string)($_POST['prompt'] ?? ''));
 $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 $context = safeJsonDecode(isset($_POST['context']) ? (string)$_POST['context'] : '');
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
+$responseFormat = trim((string)($_POST['responseFormat'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
@@ -847,6 +919,9 @@ if (is_array($decodedExtractedTexts)) {
 $effectiveStyle = $responseStyle !== ''
     ? $responseStyle
     : (isset($context['responseStyle']) && is_string($context['responseStyle']) ? trim($context['responseStyle']) : '');
+$effectiveResponseFormat = $responseFormat !== ''
+    ? $responseFormat
+    : (isset($context['responseFormat']) && is_string($context['responseFormat']) ? trim($context['responseFormat']) : 'full');
 $styleInstruction = 'Пиши в официально-деловом стиле.';
 $styleExampleInstruction = "Ориентируйся на форму ответа: «В ответ на Ваше письмо от 20.03.2026 г. сообщаем следующее... Работы выполняются в рабочем порядке в рамках утверждённого графика.»";
 if ($effectiveStyle === 'aggressive') {
@@ -875,6 +950,11 @@ $effectiveBehavior = $aiBehavior !== ''
 $behaviorInstruction = $effectiveBehavior !== ''
     ? ('Дополнительная настройка поведения: ' . $effectiveBehavior . '.')
     : '';
+$briefInstruction = '';
+if ($effectiveResponseFormat === 'brief') {
+    $briefInstruction = 'Режим brief: верни JSON с ключами topic, sender, request, response. '
+      . 'Поля topic/sender/request должны быть очень краткими: 1-2 короткие строки, без OCR-мусора и лишних деталей. ';
+}
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
 $allowedModelsRaw = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
@@ -894,11 +974,16 @@ if ($allowedModelsRaw !== '') {
     }
 }
 
-$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
+$baseJsonFieldsInstruction = $effectiveResponseFormat === 'brief'
+    ? 'Верни только JSON объект с полями: topic, sender, request, response.'
+    : 'Верни только JSON объект с полями: analysis, response.';
+
+$systemMessage = "Ты помощник по деловой переписке на русском языке. " . $baseJsonFieldsInstruction . ' '
   . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview и context.attachedFiles[*].content. "
   . "Используй также user payload: extractedTexts[*].text и extractedTextsCombined. "
   . "Если контент файла присутствует, не проси путь или имя файла повторно, а используй этот контент напрямую. "
   . "Если контент пустой, кратко сообщи, что файл не удалось прочитать. "
+  . $briefInstruction
   . $styleInstruction . ' '
   . ($styleExampleInstruction !== '' ? ($styleExampleInstruction . ' ') : '')
   . $behaviorInstruction;
@@ -1030,6 +1115,7 @@ if (isset($parsed['analysis']) && (is_string($parsed['analysis']) || is_numeric(
 $response = textFromMixed($parsed['response'] ?? '');
 $neutral = textFromMixed($parsed['neutral'] ?? '');
 $aggressive = textFromMixed($parsed['aggressive'] ?? '');
+$briefFields = extractBriefFields($parsed, $prompt, $documentTitle);
 
 if ($response === '') {
     $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
@@ -1059,6 +1145,17 @@ if (looksLikeJsonText($response) || $response === '') {
     }
 }
 
+if ($effectiveResponseFormat === 'brief') {
+    $briefFields['topic'] = cleanBriefText($briefFields['topic'], 140, 2);
+    $briefFields['sender'] = cleanBriefText($briefFields['sender'], 120, 2);
+    $briefFields['request'] = cleanBriefText($briefFields['request'], 180, 2);
+    $response = cleanBriefText($response, 1200, 5);
+    if ($response === '') {
+        $fallback = buildLocalFallback($documentTitle, $prompt, array_merge($context, ['responseStyle' => $effectiveStyle]));
+        $response = cleanBriefText((string)($fallback['response'] ?? ''), 1200, 5);
+    }
+}
+
 if (mb_strlen($analysis) > 1200) {
     $analysis = mb_substr($analysis, 0, 1200) . '…';
 }
@@ -1072,4 +1169,8 @@ jsonResponse(200, [
     'response' => $response,
     'neutral' => $neutral,
     'aggressive' => $aggressive,
+    'topic' => $briefFields['topic'],
+    'sender' => $briefFields['sender'],
+    'request' => $briefFields['request'],
+    'responseFormat' => $effectiveResponseFormat,
 ]);

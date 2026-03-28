@@ -21,6 +21,10 @@
     { value: 'strict', label: 'OCR: строгая очистка' },
     { value: 'raw', label: 'OCR: максимально исходный текст' }
   ];
+  var RESPONSE_FORMAT_OPTIONS = [
+    { value: 'full', label: 'Полный ответ' },
+    { value: 'brief', label: 'Краткая сводка' }
+  ];
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -159,7 +163,7 @@
       '.ai-chat-modal__empty{font-size:11px;color:#94a3b8;}' +
       '.ai-chat-modal__attach{margin-top:5px;border:1px dashed rgba(148,163,184,.55);background:rgba(248,250,252,.86);border-radius:8px;padding:5px 8px;font-size:11px;font-weight:600;color:#334155;cursor:pointer;}' +
       '.ai-chat-modal__settings{display:grid;grid-template-columns:1fr 1fr;gap:6px;border:1px solid rgba(226,232,240,.88);border-radius:12px;padding:7px;background:rgba(255,255,255,.66);backdrop-filter:blur(2px);}' +
-      '.ai-chat-modal__top-bar{grid-template-columns:minmax(0,1.7fr) repeat(2,minmax(130px,1fr)) auto;align-items:center;}' +
+      '.ai-chat-modal__top-bar{grid-template-columns:minmax(0,1.6fr) repeat(3,minmax(125px,1fr)) auto;align-items:center;}' +
       '.ai-chat-modal__field--full{grid-column:1 / -1;}' +
       '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
       '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
@@ -169,6 +173,11 @@
       '.ai-chat-msg--user{margin-left:auto;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-bottom-right-radius:6px;}' +
       '.ai-chat-msg--assistant{margin-right:auto;background:#fff;border:1px solid rgba(226,232,240,.9);color:#0f172a;border-bottom-left-radius:6px;}' +
       '.ai-chat-msg--error{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.9);color:#991b1b;}' +
+      '.ai-chat-brief{display:grid;gap:8px;padding:10px;border-radius:14px;border:1px solid rgba(191,219,254,.9);background:linear-gradient(155deg,rgba(255,255,255,.95),rgba(239,246,255,.9));box-shadow:0 10px 24px rgba(59,130,246,.09);}' +
+      '.ai-chat-brief__item{padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.75);border:1px solid rgba(219,234,254,.95);}' +
+      '.ai-chat-brief__label{display:block;font-size:11px;font-weight:700;color:#2563eb;margin-bottom:3px;}' +
+      '.ai-chat-brief__value{font-size:12px;line-height:1.35;color:#0f172a;white-space:pre-wrap;word-break:break-word;}' +
+      '.ai-chat-brief__response{margin-top:2px;padding-top:8px;border-top:1px dashed rgba(148,163,184,.45);font-size:12px;line-height:1.4;color:#334155;white-space:pre-wrap;word-break:break-word;}' +
       '.ai-chat-modal__composer{display:flex;gap:6px;align-items:flex-end;}' +
       '.ai-chat-modal__textarea{flex:1;min-height:40px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;background:#fff;outline:none;}' +
       '.ai-chat-modal__send{border:none;border-radius:10px;padding:8px 11px;min-height:40px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;cursor:pointer;}' +
@@ -315,6 +324,37 @@
     var msg = createElement('div', 'ai-chat-msg ai-chat-msg--' + role + (isError ? ' ai-chat-msg--error' : ''));
     msg.innerHTML = escapeHtml(text || '');
     return msg;
+  }
+
+  function normalizeBriefValue(value, fallback) {
+    var cleaned = String(value || '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/[^\S\r\n]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return cleaned || fallback || '—';
+  }
+
+  function createBriefCard(payload) {
+    var card = createElement('div', 'ai-chat-msg ai-chat-msg--assistant ai-chat-brief');
+    var fields = [
+      { label: 'О чём', value: normalizeBriefValue(payload && payload.topic, 'Тема не определена') },
+      { label: 'От кого', value: normalizeBriefValue(payload && payload.sender, 'Отправитель не определён') },
+      { label: 'Что хотят', value: normalizeBriefValue(payload && payload.request, 'Запрос не определён') }
+    ];
+    fields.forEach(function (field) {
+      var item = createElement('div', 'ai-chat-brief__item');
+      item.appendChild(createElement('span', 'ai-chat-brief__label', field.label));
+      item.appendChild(createElement('div', 'ai-chat-brief__value', field.value));
+      card.appendChild(item);
+    });
+    var responseText = normalizeBriefValue(payload && payload.response, '');
+    if (responseText && responseText !== '—') {
+      var responseWrap = createElement('div', 'ai-chat-brief__response');
+      responseWrap.textContent = responseText;
+      card.appendChild(responseWrap);
+    }
+    return card;
   }
 
   function closeWithAnimation(root) {
@@ -534,6 +574,7 @@
 
     context.selectedModel = state.model;
     context.responseStyle = state.responseStyle;
+    context.responseFormat = state.responseFormat;
     context.aiBehavior = state.aiBehavior;
     context.ocrMode = state.ocrMode;
     context.extractedTexts = extractedTexts;
@@ -556,6 +597,7 @@
     formData.append('prompt', userText);
     formData.append('model', state.model);
     formData.append('responseStyle', state.responseStyle);
+    formData.append('responseFormat', state.responseFormat);
     formData.append('aiBehavior', state.aiBehavior || '');
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
@@ -606,6 +648,9 @@
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
         ? config.ocrMode
         : OCR_MODE_OPTIONS[0].value,
+      responseFormat: (typeof config.responseFormat === 'string' && RESPONSE_FORMAT_OPTIONS.some(function (opt) { return opt.value === config.responseFormat; }))
+        ? config.responseFormat
+        : RESPONSE_FORMAT_OPTIONS[0].value,
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: ''
@@ -655,6 +700,16 @@
       option.textContent = opt.label;
       styleSelect.appendChild(option);
     });
+    var responseFormatField = createElement('label', 'ai-chat-modal__field');
+    responseFormatField.appendChild(createElement('span', '', 'Формат ответа'));
+    var responseFormatSelect = createElement('select', 'ai-chat-modal__select');
+    RESPONSE_FORMAT_OPTIONS.forEach(function (opt) {
+      var option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      responseFormatSelect.appendChild(option);
+    });
+    responseFormatSelect.value = state.responseFormat;
     var settingsButton = createElement('button', 'ai-chat-modal__send', '⚙️ Настройки ИИ');
     settingsButton.type = 'button';
     settingsButton.style.minHeight = '36px';
@@ -1033,6 +1088,7 @@
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
+      state.responseFormat = responseFormatSelect.value;
       state.aiBehavior = String(settingsInput.value || '').trim();
 
       messages.appendChild(createMessage('user', effectivePrompt));
@@ -1062,7 +1118,16 @@
           .replace(/[ \t]+\n/g, '\n')
           .replace(/\n{3,}/g, '\n\n')
           .trim();
-        messages.appendChild(createMessage('assistant', finalResponse));
+        if (state.responseFormat === 'brief') {
+          messages.appendChild(createBriefCard({
+            topic: payload.topic,
+            sender: payload.sender,
+            request: payload.request,
+            response: finalResponse
+          }));
+        } else {
+          messages.appendChild(createMessage('assistant', finalResponse));
+        }
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
         autoHeight(textarea);
@@ -1081,6 +1146,9 @@
 
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
+    });
+    responseFormatSelect.addEventListener('change', function () {
+      state.responseFormat = responseFormatSelect.value;
     });
 
     textarea.addEventListener('input', function () {
@@ -1233,9 +1301,11 @@
 
     modelField.appendChild(modelSelect);
     styleField.appendChild(styleSelect);
+    responseFormatField.appendChild(responseFormatSelect);
     topBar.appendChild(filesBox);
     topBar.appendChild(modelField);
     topBar.appendChild(styleField);
+    topBar.appendChild(responseFormatField);
     topBar.appendChild(settingsButton);
 
     composer.appendChild(textarea);
@@ -1258,6 +1328,8 @@
     renderFiles();
     resanitizeFileContents();
     renderModelOptions();
+    styleSelect.value = state.responseStyle;
+    responseFormatSelect.value = state.responseFormat;
 
     fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (models) {
       state.models = models;
