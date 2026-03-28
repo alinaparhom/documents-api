@@ -219,16 +219,39 @@ function detectFileExtension(array $file): string
 
 function decodeDocxXmlText(string $xml): string
 {
-    $prepared = str_replace(["\r\n", "\r"], "\n", $xml);
-    $prepared = preg_replace('/<w:tab\b[^>]*\/?\s*>/u', "\t", (string)$prepared);
-    $prepared = preg_replace('/<w:br\b[^>]*\/?\s*>/u', "\n", (string)$prepared);
-    $prepared = preg_replace('/<\/w:p>/u', "\n", (string)$prepared);
-    $prepared = preg_replace('/<\/w:tr>/u', "\n", (string)$prepared);
-    $prepared = preg_replace('/<\/w:tc>/u', "\t", (string)$prepared);
-    $plain = trim(strip_tags((string)$prepared));
-    $plain = html_entity_decode($plain, ENT_QUOTES | ENT_XML1, 'UTF-8');
-    $plain = preg_replace('/\n{3,}/u', "\n\n", (string)$plain);
-    return trim((string)$plain);
+    $dom = new DOMDocument();
+    $loaded = @$dom->loadXML($xml, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET | LIBXML_COMPACT);
+    if (!$loaded) {
+        return '';
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+    $nodes = $xpath->query('//*[self::w:t or self::w:tab or self::w:br or self::w:cr or self::w:p or self::w:tr or self::w:tc]');
+    if (!$nodes instanceof DOMNodeList) {
+        return '';
+    }
+
+    $result = '';
+    foreach ($nodes as $node) {
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+        $name = $node->nodeName;
+        if ($name === 'w:t') {
+            $result .= (string)$node->textContent;
+        } elseif ($name === 'w:tab' || $name === 'w:tc') {
+            $result .= "\t";
+        } elseif ($name === 'w:br' || $name === 'w:cr' || $name === 'w:p' || $name === 'w:tr') {
+            $result .= "\n";
+        }
+    }
+
+    $result = str_replace(["\r\n", "\r"], "\n", $result);
+    $result = preg_replace('/[^\P{C}\n\t]+/u', '', (string)$result);
+    $result = preg_replace('/[ \t]+\n/u', "\n", (string)$result);
+    $result = preg_replace('/\n{3,}/u', "\n\n", (string)$result);
+    return trim((string)$result);
 }
 
 function extractDocxText(string $tmpFile): string
@@ -242,7 +265,23 @@ function extractDocxText(string $tmpFile): string
         return '';
     }
 
-    $targets = ['word/document.xml', 'word/header1.xml', 'word/footer1.xml'];
+    $targets = [];
+    for ($i = 0; $i < $zip->numFiles; $i += 1) {
+        $entryName = $zip->getNameIndex($i);
+        if (!is_string($entryName)) {
+            continue;
+        }
+        if (preg_match('/^word\/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$/u', $entryName)) {
+            $targets[] = $entryName;
+        }
+    }
+    sort($targets);
+
+    if (!$targets) {
+        $zip->close();
+        return '';
+    }
+
     $parts = [];
     foreach ($targets as $entryName) {
         $xml = $zip->getFromName($entryName);
@@ -267,7 +306,7 @@ function extractTextWithoutOcr(array $file): string
     }
 
     $extension = detectFileExtension($file);
-    if ($extension === 'docx') {
+    if ($extension === 'docx' || $extension === 'docm') {
         return extractDocxText($tmpFile);
     }
 
