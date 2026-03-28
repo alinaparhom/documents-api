@@ -381,6 +381,137 @@ function createPdfFromText(string $outputPath, string $documentTitle, string $an
     return is_file($outputPath) && filesize($outputPath) > 0;
 }
 
+function htmlToPlainText(string $html): string
+{
+    $text = trim(strip_tags($html));
+    $text = preg_replace('/[ \t]+/u', ' ', $text);
+    $text = preg_replace('/\R{3,}/u', "\n\n", (string)$text);
+    return trim((string)$text);
+}
+
+function htmlNodeInnerXml(DOMNode $node): string
+{
+    $xml = '';
+    foreach ($node->childNodes as $child) {
+        $xml .= $node->ownerDocument?->saveXML($child) ?? '';
+    }
+    return $xml;
+}
+
+function htmlToWordBodyXml(string $html): string
+{
+    $wrapped = '<!DOCTYPE html><html><body>' . $html . '</body></html>';
+    $dom = new DOMDocument();
+    @$dom->loadHTML($wrapped, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    $body = $dom->getElementsByTagName('body')->item(0);
+    if (!$body instanceof DOMElement) {
+        return textToWordParagraphsXml(htmlToPlainText($html));
+    }
+
+    $chunks = [];
+    foreach ($body->childNodes as $node) {
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+        $tag = strtolower($node->tagName);
+        if (in_array($tag, ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], true)) {
+            $text = trim($node->textContent ?? '');
+            if ($text !== '') {
+                $chunks[] = '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">' . xmlEscape($text) . '</w:t></w:r></w:p>';
+            }
+            continue;
+        }
+        if ($tag === 'ul' || $tag === 'ol') {
+            foreach ($node->getElementsByTagName('li') as $li) {
+                $prefix = $tag === 'ol' ? '1. ' : '• ';
+                $text = trim($li->textContent ?? '');
+                if ($text !== '') {
+                    $chunks[] = '<w:p><w:r><w:t xml:space="preserve">' . xmlEscape($prefix . $text) . '</w:t></w:r></w:p>';
+                }
+            }
+            continue;
+        }
+        if ($tag === 'table') {
+            $rowsXml = [];
+            foreach ($node->getElementsByTagName('tr') as $tr) {
+                $cellXml = [];
+                foreach ($tr->childNodes as $cell) {
+                    if (!$cell instanceof DOMElement) {
+                        continue;
+                    }
+                    $cellTag = strtolower($cell->tagName);
+                    if ($cellTag !== 'td' && $cellTag !== 'th') {
+                        continue;
+                    }
+                    $cellText = trim($cell->textContent ?? '');
+                    $cellXml[] = '<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">' . xmlEscape($cellText) . '</w:t></w:r></w:p></w:tc>';
+                }
+                if ($cellXml) {
+                    $rowsXml[] = '<w:tr>' . implode('', $cellXml) . '</w:tr>';
+                }
+            }
+            if ($rowsXml) {
+                $chunks[] = '<w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="6"/><w:left w:val="single" w:sz="6"/><w:bottom w:val="single" w:sz="6"/><w:right w:val="single" w:sz="6"/><w:insideH w:val="single" w:sz="6"/><w:insideV w:val="single" w:sz="6"/></w:tblBorders></w:tblPr>' . implode('', $rowsXml) . '</w:tbl>';
+            }
+            continue;
+        }
+
+        $innerText = trim(strip_tags(htmlNodeInnerXml($node)));
+        if ($innerText !== '') {
+            $chunks[] = '<w:p><w:r><w:t xml:space="preserve">' . xmlEscape($innerText) . '</w:t></w:r></w:p>';
+        }
+    }
+    return $chunks ? implode('', $chunks) : textToWordParagraphsXml(htmlToPlainText($html));
+}
+
+function replaceDocxWithHtml(string $templatePath, string $outputPath, string $html): bool
+{
+    if (!@copy($templatePath, $outputPath)) {
+        return false;
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($outputPath) !== true) {
+        return false;
+    }
+    $documentXml = $zip->getFromName('word/document.xml');
+    if (!is_string($documentXml) || $documentXml === '' || !str_contains($documentXml, '<w:body>')) {
+        $zip->close();
+        return false;
+    }
+    $bodyXml = htmlToWordBodyXml($html);
+    $updatedXml = preg_replace('/<w:body>.*<\/w:body>/su', '<w:body>' . $bodyXml . '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body>', $documentXml);
+    if (!is_string($updatedXml) || $updatedXml === '') {
+        $zip->close();
+        return false;
+    }
+    $zip->addFromString('word/document.xml', $updatedXml);
+    return $zip->close();
+}
+
+function createDocxFromHtmlUsingPhpWord(string $outputPath, string $html): bool
+{
+    if (!class_exists('\\PhpOffice\\PhpWord\\PhpWord') || !class_exists('\\PhpOffice\\PhpWord\\Shared\\Html')) {
+        return false;
+    }
+
+    try {
+        $phpWord = new \PhpOffice\PhpWord\PhpWord();
+        $section = $phpWord->addSection([
+            'marginTop' => 1134,
+            'marginRight' => 1134,
+            'marginBottom' => 1134,
+            'marginLeft' => 1134,
+        ]);
+        \PhpOffice\PhpWord\Shared\Html::addHtml($section, $html, false, false);
+        $writer = \PhpOffice\PhpWord\IOFactory::createWriter($phpWord, 'Word2007');
+        $writer->save($outputPath);
+        return is_file($outputPath) && filesize($outputPath) > 0;
+    } catch (Throwable $e) {
+        logApiDocs('warn', 'PhpWord conversion failed', ['error' => $e->getMessage()]);
+        return false;
+    }
+}
+
 function resolveTemplatePath(string $fileName, array $extraDirectories = []): string
 {
     $normalizedName = ltrim($fileName, '/');
@@ -465,7 +596,7 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
 }
@@ -542,6 +673,69 @@ if ($action === 'generate_document') {
     if ($tmpFile !== $templatePdfPath) {
         @unlink($tmpFile);
     }
+    exit;
+}
+
+if ($action === 'generate_from_html') {
+    $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
+    $html = trim((string)($_POST['html'] ?? ''));
+    $documentTitle = trim((string)($_POST['documentTitle'] ?? 'Ответ'));
+    if ($html === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'HTML пустой']);
+    }
+    if ($format !== 'docx' && $format !== 'pdf') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
+    }
+
+    $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? $_POST['templatePath'] ?? ''));
+    $extraTemplateDirs = array_filter([
+        trim((string)($env['DOCUMENT_TEMPLATE_DIR'] ?? '')),
+        trim((string)($env['DOC_TEMPLATES_DIR'] ?? '')),
+        trim((string)($env['TEMPLATE_DIR'] ?? '')),
+        $templateDirFromRequest,
+    ], static function ($value): bool {
+        return is_string($value) && $value !== '';
+    });
+    $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
+    if (!is_file($templateDocxPath)) {
+        jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден']);
+    }
+
+    $tmpFile = tempnam(sys_get_temp_dir(), 'html_');
+    if ($tmpFile === false) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось создать временный файл']);
+    }
+
+    if ($format === 'docx') {
+        $generated = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
+        if (!$generated) {
+            $generated = replaceDocxWithHtml($templateDocxPath, $tmpFile, $html);
+        }
+        if (!$generated) {
+            @unlink($tmpFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX из HTML (установите phpoffice/phpword или проверьте шаблон)']);
+        }
+        header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        header('Content-Disposition: attachment; filename="answer-from-html.docx"');
+        header('Content-Length: ' . filesize($tmpFile));
+        readfile($tmpFile);
+        @unlink($tmpFile);
+        exit;
+    }
+
+    if (is_file(__DIR__ . '/vendor/autoload.php')) {
+        require_once __DIR__ . '/vendor/autoload.php';
+    }
+    $text = htmlToPlainText($html);
+    if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
+        @unlink($tmpFile);
+        jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен для HTML']);
+    }
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="answer-from-html.pdf"');
+    header('Content-Length: ' . filesize($tmpFile));
+    readfile($tmpFile);
+    @unlink($tmpFile);
     exit;
 }
 
