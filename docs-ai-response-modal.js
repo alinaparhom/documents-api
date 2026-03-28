@@ -16,6 +16,11 @@
     { value: 'aggressive', label: 'Агрессивный стиль' },
     { value: 'informational', label: 'Спокойный (информационный)' }
   ];
+  var OCR_MODE_OPTIONS = [
+    { value: 'smart', label: 'OCR: умная очистка' },
+    { value: 'strict', label: 'OCR: строгая очистка' },
+    { value: 'raw', label: 'OCR: максимально исходный текст' }
+  ];
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -59,13 +64,20 @@
     return shortBroken || mostlyNoise || randomToken;
   }
 
-  function filterOcrArtifacts(text) {
+  function filterOcrArtifacts(text, mode) {
+    var currentMode = mode || 'smart';
     var normalized = String(text || '')
       .replace(/\r\n/g, '\n')
       .replace(/\u00a0/g, ' ')
       .replace(/[‐‑‒–—]/g, '-')
       .replace(/-\n(?=\S)/g, '')
       .replace(/[ \t]+\n/g, '\n');
+
+    if (currentMode === 'raw') {
+      return cleanNumericArtifacts(normalized)
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
 
     var lines = normalized.split('\n');
     var cleaned = lines.filter(function (line) {
@@ -87,7 +99,9 @@
       .replace(/реш мие/gi, 'решение')
       .replace(/сгоянка/gi, 'стоянка')
       .replace(/общесгвенного/gi, 'общественного');
-    result = extractBusinessCore(result);
+    if (currentMode === 'strict') {
+      result = extractBusinessCore(result);
+    }
     return result;
   }
 
@@ -221,6 +235,7 @@
         size: Number(entry.size || 0),
         type: entry.type ? String(entry.type) : '',
         content: typeof entry.content === 'string' ? entry.content : '',
+        rawContent: typeof entry.content === 'string' ? entry.content : '',
         extracted: Boolean(entry.extracted || (typeof entry.content === 'string' && entry.content.trim() !== '')),
         extracting: false,
         extractError: null,
@@ -245,6 +260,7 @@
           size: Number(file.size || 0),
           type: file.type || '',
           content: '',
+          rawContent: '',
           extracted: false,
           extracting: false,
           extractError: null,
@@ -506,18 +522,20 @@
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       })
       .map(function (file) {
-        var normalizedText = filterOcrArtifacts(file.content);
+        var normalizedText = filterOcrArtifacts(file.rawContent || file.content, state.ocrMode);
         return {
           id: file.id,
           name: file.name,
           type: file.type || '',
-          text: normalizedText
+          text: normalizedText,
+          rawText: String(file.rawContent || '')
         };
       });
 
     context.selectedModel = state.model;
     context.responseStyle = state.responseStyle;
     context.aiBehavior = state.aiBehavior;
+    context.ocrMode = state.ocrMode;
     context.extractedTexts = extractedTexts;
     context.attachedFiles = state.files.map(function (file) {
       return {
@@ -525,7 +543,8 @@
         size: file.size,
         type: file.type,
         url: file.url || '',
-        content: filterOcrArtifacts(file.content || ''),
+        content: filterOcrArtifacts(file.rawContent || file.content || '', state.ocrMode),
+        rawContent: String(file.rawContent || ''),
         extracted: Boolean(file.extracted),
         extractError: file.extractError || null
       };
@@ -584,6 +603,9 @@
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
         : DEFAULT_AI_BEHAVIOR,
+      ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
+        ? config.ocrMode
+        : OCR_MODE_OPTIONS[0].value,
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: ''
@@ -750,6 +772,17 @@
     }
 
     var aiSettingsModal = createOverlayModal('Настройки поведения ИИ');
+    var ocrModeField = createElement('label', 'ai-chat-modal__field');
+    ocrModeField.appendChild(createElement('span', '', 'Режим OCR-очистки'));
+    var ocrModeSelect = createElement('select', 'ai-chat-modal__select');
+    OCR_MODE_OPTIONS.forEach(function (opt) {
+      var option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      ocrModeSelect.appendChild(option);
+    });
+    ocrModeSelect.value = state.ocrMode;
+    ocrModeField.appendChild(ocrModeSelect);
     var settingsInput = createElement('textarea', 'ai-chat-modal__textarea');
     settingsInput.rows = 8;
     settingsInput.style.maxHeight = '260px';
@@ -762,6 +795,7 @@
     settingsSave.type = 'button';
     settingsActions.appendChild(settingsCancel);
     settingsActions.appendChild(settingsSave);
+    aiSettingsModal.content.appendChild(ocrModeField);
     aiSettingsModal.content.appendChild(settingsInput);
     aiSettingsModal.content.appendChild(settingsActions);
 
@@ -803,6 +837,21 @@
     function openOverlay(modalRef) {
       document.body.appendChild(modalRef.overlay);
       requestAnimationFrame(function () { modalRef.overlay.classList.add('ai-chat-modal--visible'); });
+    }
+
+    function resanitizeFileContents() {
+      state.files.forEach(function (file) {
+        if (!file) {
+          return;
+        }
+        var sourceText = String(file.rawContent || file.content || '').trim();
+        if (!sourceText) {
+          return;
+        }
+        file.content = filterOcrArtifacts(sourceText, state.ocrMode);
+        file.extracted = Boolean(file.content);
+      });
+      renderFiles();
     }
 
     function renderModelOptions() {
@@ -922,7 +971,8 @@
           messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText.slice(0, 1200)));
         }
 
-        fileEntry.content = filterOcrArtifacts(String(extractedText || '').trim());
+        fileEntry.rawContent = String(extractedText || '').trim();
+        fileEntry.content = filterOcrArtifacts(fileEntry.rawContent, state.ocrMode);
         fileEntry.extracted = fileEntry.content !== '';
         fileEntry.extractError = fileEntry.extracted ? null : 'Пустой результат';
         return fileEntry.extracted;
@@ -1048,6 +1098,7 @@
     closeButton.addEventListener('click', closeModal);
     settingsButton.addEventListener('click', function () {
       settingsInput.value = state.aiBehavior;
+      ocrModeSelect.value = state.ocrMode;
       openOverlay(aiSettingsModal);
     });
 
@@ -1056,6 +1107,8 @@
     });
     settingsSave.addEventListener('click', function () {
       state.aiBehavior = String(settingsInput.value || '').trim();
+      state.ocrMode = ocrModeSelect.value;
+      resanitizeFileContents();
       aiSettingsModal.close();
     });
 
@@ -1203,6 +1256,7 @@
     });
 
     renderFiles();
+    resanitizeFileContents();
     renderModelOptions();
 
     fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (models) {
