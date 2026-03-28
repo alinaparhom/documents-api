@@ -7,23 +7,6 @@ const DOCX_TEMPLATE_URLS = [
   './templates/template.docx',
   'templates/template.docx',
 ];
-const DEFAULT_DEPENDENCY_DEFINITIONS = {
-  pizzip: {
-    key: 'pizzip',
-    title: 'PizZip',
-    globalKey: 'PizZip',
-    localFiles: ['pizzip/pizzip.min.js', 'pizzip.min.js'],
-    cdnSources: ['https://cdn.jsdelivr.net/npm/pizzip@3.2.0/dist/pizzip.min.js'],
-  },
-  jspdf: {
-    key: 'jspdf',
-    title: 'jsPDF',
-    globalKey: 'jspdf',
-    localFiles: ['jspdf/jspdf.umd.min.js', 'jspdf.umd.min.js'],
-    cdnSources: ['https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'],
-  },
-};
-
 function ensureAiDialogStyles() {
   if (document.getElementById(DIALOG_STYLE_ID)) return;
   const style = document.createElement('style');
@@ -57,6 +40,21 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__docx-editor ul,.appdosc-ai-dialog__docx-editor ol{padding-left:20px;margin:0 0 8px}
     .appdosc-ai-dialog__docx-editor table{width:100%;border-collapse:collapse;margin:8px 0 12px;background:rgba(255,255,255,.88)}
     .appdosc-ai-dialog__docx-editor th,.appdosc-ai-dialog__docx-editor td{border:1px solid rgba(148,163,184,.45);padding:6px 8px;vertical-align:top}
+    .appdosc-ai-dialog__template-editor{position:fixed;inset:0;z-index:2700;display:none;background:rgba(15,23,42,.44);backdrop-filter:blur(8px);padding:14px}
+    .appdosc-ai-dialog__template-editor--open{display:flex}
+    .appdosc-ai-dialog__template-panel{margin:auto;width:min(1080px,100%);height:min(92dvh,860px);display:flex;flex-direction:column;border-radius:18px;overflow:hidden;background:linear-gradient(165deg,rgba(255,255,255,.96),rgba(255,255,255,.88));border:1px solid rgba(255,255,255,.75);box-shadow:0 24px 56px rgba(15,23,42,.22)}
+    .appdosc-ai-dialog__template-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:12px;border-bottom:1px solid rgba(148,163,184,.24)}
+    .appdosc-ai-dialog__template-title{font-size:16px;font-weight:700;color:#0f172a}
+    .appdosc-ai-dialog__template-subtitle{font-size:12px;color:#64748b;margin-top:2px}
+    .appdosc-ai-dialog__template-body{flex:1;min-height:0;display:flex;gap:12px;padding:12px;background:rgba(248,250,252,.65)}
+    .appdosc-ai-dialog__template-column{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+    .appdosc-ai-dialog__template-column-title{font-size:12px;font-weight:600;color:#475569}
+    .appdosc-ai-dialog__template-ai{flex:1;min-height:120px;max-height:100%;overflow:auto;border:1px solid rgba(148,163,184,.32);border-radius:12px;padding:12px;background:#fff;white-space:pre-wrap;font-size:14px;color:#0f172a}
+    .appdosc-ai-dialog__template-ai:empty::before{content:attr(data-empty);color:#94a3b8}
+    .appdosc-ai-dialog__template-tools{display:flex;gap:8px;flex-wrap:wrap}
+    .appdosc-ai-dialog__template-editable{flex:1;min-height:180px;overflow:auto;border:1px solid rgba(148,163,184,.38);border-radius:12px;padding:12px;background:#fff;font-size:14px;line-height:1.55;color:#0f172a;outline:none}
+    .appdosc-ai-dialog__template-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:12px;border-top:1px solid rgba(148,163,184,.22);background:rgba(255,255,255,.82)}
+    .appdosc-ai-dialog__template-hint{font-size:12px;color:#64748b}
 
     .appdosc-pdf-viewer{position:fixed;inset:0;z-index:2600;display:none;background:rgba(15,23,42,.46);backdrop-filter:blur(7px);padding:10px}
     .appdosc-pdf-viewer--open{display:flex}
@@ -72,6 +70,10 @@ function ensureAiDialogStyles() {
       .appdosc-ai-dialog__buttons{width:100%}
       .appdosc-ai-dialog__btn{flex:1}
       .appdosc-ai-dialog__docx-editor{max-height:46dvh}
+      .appdosc-ai-dialog__template-editor{padding:0}
+      .appdosc-ai-dialog__template-panel{height:100dvh;max-height:none;border-radius:0}
+      .appdosc-ai-dialog__template-body{flex-direction:column;padding:10px}
+      .appdosc-ai-dialog__template-footer .appdosc-ai-dialog__buttons{width:100%}
     }
   `;
   document.head.appendChild(style);
@@ -153,8 +155,8 @@ function appendAnswerToHtml(templateHtml, responseText) {
   return `${String(templateHtml || '')}<h2>Ответ ИИ</h2><p>${safeAnswer.replace(/\n/g, '<br/>')}</p>`;
 }
 
-async function createPdfBlob(text, title, onSourceResult) {
-  const jspdfNs = await ensureJsPdf(onSourceResult);
+async function createPdfBlob(text, title) {
+  const jspdfNs = await ensureJsPdf();
   const jsPDF = jspdfNs && jspdfNs.jsPDF ? jspdfNs.jsPDF : null;
   if (!jsPDF) throw new Error('jsPDF не инициализирован');
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
@@ -282,7 +284,7 @@ function openAiResponseDialog(context = {}) {
   const templatePreviewButton = document.createElement('button');
   templatePreviewButton.type = 'button';
   templatePreviewButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
-  templatePreviewButton.textContent = 'Предпросмотр шаблона';
+  templatePreviewButton.textContent = 'Открыть шаблон';
 
   const mergedPreviewButton = document.createElement('button');
   mergedPreviewButton.type = 'button';
@@ -328,9 +330,86 @@ function openAiResponseDialog(context = {}) {
   viewerPanel.append(viewerHeader, viewerStatus, viewerFrame);
   viewer.appendChild(viewerPanel);
 
+  const templateEditorOverlay = document.createElement('div');
+  templateEditorOverlay.className = 'appdosc-ai-dialog__template-editor';
+  const templateEditorPanel = document.createElement('div');
+  templateEditorPanel.className = 'appdosc-ai-dialog__template-panel';
+  const templateEditorHeader = document.createElement('div');
+  templateEditorHeader.className = 'appdosc-ai-dialog__template-header';
+  const templateEditorHeadText = document.createElement('div');
+  const templateEditorTitle = document.createElement('div');
+  templateEditorTitle.className = 'appdosc-ai-dialog__template-title';
+  templateEditorTitle.textContent = 'Редактор шаблона';
+  const templateEditorSubtitle = document.createElement('div');
+  templateEditorSubtitle.className = 'appdosc-ai-dialog__template-subtitle';
+  templateEditorSubtitle.textContent = 'Редактируйте шаблон в отдельном окне и вставляйте ответ ИИ в любое место.';
+  templateEditorHeadText.append(templateEditorTitle, templateEditorSubtitle);
+  const templateEditorClose = document.createElement('button');
+  templateEditorClose.type = 'button';
+  templateEditorClose.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+  templateEditorClose.textContent = 'Закрыть';
+  templateEditorHeader.append(templateEditorHeadText, templateEditorClose);
+
+  const templateEditorBody = document.createElement('div');
+  templateEditorBody.className = 'appdosc-ai-dialog__template-body';
+  const templateAiColumn = document.createElement('div');
+  templateAiColumn.className = 'appdosc-ai-dialog__template-column';
+  const templateAiTitle = document.createElement('div');
+  templateAiTitle.className = 'appdosc-ai-dialog__template-column-title';
+  templateAiTitle.textContent = 'Ответ ИИ';
+  const templateAiPreview = document.createElement('div');
+  templateAiPreview.className = 'appdosc-ai-dialog__template-ai';
+  templateAiPreview.dataset.empty = 'Сначала отправьте запрос ИИ. Здесь появится черновик ответа.';
+  const templateAiTools = document.createElement('div');
+  templateAiTools.className = 'appdosc-ai-dialog__template-tools';
+  const insertAiToCursorButton = document.createElement('button');
+  insertAiToCursorButton.type = 'button';
+  insertAiToCursorButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+  insertAiToCursorButton.textContent = 'Вставить в курсор';
+  const replaceWithAiButton = document.createElement('button');
+  replaceWithAiButton.type = 'button';
+  replaceWithAiButton.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+  replaceWithAiButton.textContent = 'Заменить текст ИИ';
+  templateAiTools.append(insertAiToCursorButton, replaceWithAiButton);
+  templateAiColumn.append(templateAiTitle, templateAiPreview, templateAiTools);
+
+  const templateEditableColumn = document.createElement('div');
+  templateEditableColumn.className = 'appdosc-ai-dialog__template-column';
+  const templateEditableTitle = document.createElement('div');
+  templateEditableTitle.className = 'appdosc-ai-dialog__template-column-title';
+  templateEditableTitle.textContent = 'Текст шаблона';
+  const templateEditorEditable = document.createElement('div');
+  templateEditorEditable.className = 'appdosc-ai-dialog__template-editable';
+  templateEditorEditable.contentEditable = 'true';
+  templateEditableColumn.append(templateEditableTitle, templateEditorEditable);
+
+  templateEditorBody.append(templateAiColumn, templateEditableColumn);
+
+  const templateEditorFooter = document.createElement('div');
+  templateEditorFooter.className = 'appdosc-ai-dialog__template-footer';
+  const templateEditorHint = document.createElement('div');
+  templateEditorHint.className = 'appdosc-ai-dialog__template-hint';
+  templateEditorHint.textContent = 'Совет: поставьте курсор в нужное место и нажмите «Вставить в курсор».';
+  const templateEditorButtons = document.createElement('div');
+  templateEditorButtons.className = 'appdosc-ai-dialog__buttons';
+  const templateEditorApply = document.createElement('button');
+  templateEditorApply.type = 'button';
+  templateEditorApply.className = 'appdosc-ai-dialog__btn';
+  templateEditorApply.textContent = 'Сохранить в ответ';
+  const templateEditorAppend = document.createElement('button');
+  templateEditorAppend.type = 'button';
+  templateEditorAppend.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+  templateEditorAppend.textContent = 'Добавить ИИ в конец';
+  templateEditorButtons.append(templateEditorAppend, templateEditorApply);
+  templateEditorFooter.append(templateEditorHint, templateEditorButtons);
+
+  templateEditorPanel.append(templateEditorHeader, templateEditorBody, templateEditorFooter);
+  templateEditorOverlay.appendChild(templateEditorPanel);
+
   let templateHtmlCache = '';
   let templateUrlCache = '';
   let mergedPdfBlob = null;
+  let latestAssistantText = '';
 
   const close = () => {
     document.removeEventListener('keydown', onEsc);
@@ -340,6 +419,10 @@ function openAiResponseDialog(context = {}) {
 
   const onEsc = (event) => {
     if (event.key !== 'Escape') return;
+    if (templateEditorOverlay.classList.contains('appdosc-ai-dialog__template-editor--open')) {
+      closeTemplateEditor();
+      return;
+    }
     if (viewer.classList.contains('appdosc-pdf-viewer--open')) {
       viewer.classList.remove('appdosc-pdf-viewer--open');
       return;
@@ -350,12 +433,6 @@ function openAiResponseDialog(context = {}) {
   const notify = (type, message) => {
     if (typeof context.onStatus === 'function') context.onStatus(type, message);
   };
-  const onDependencyLoadResult = (payload) => {
-    if (typeof context.onDependencyLoad === 'function') {
-      context.onDependencyLoad(payload);
-    }
-  };
-
   const ensureTemplateHtml = async () => {
     if (templateHtmlCache) return { html: templateHtmlCache, url: templateUrlCache };
     const templateData = await getTemplateHtml();
@@ -364,12 +441,35 @@ function openAiResponseDialog(context = {}) {
     return templateData;
   };
 
-  const openTemplatePdfPreview = async () => {
-    const { html, url } = await ensureTemplateHtml();
-    const pdfBlob = await createPdfBlob(htmlToPlainText(html) || 'Шаблон пустой.', 'Предпросмотр шаблона');
-    setPdfToFrame(viewerFrame, pdfBlob);
-    viewerStatus.textContent = `Шаблон загружен: ${url}`;
-    viewer.classList.add('appdosc-pdf-viewer--open');
+  const openTemplateEditor = async () => {
+    const { html } = await ensureTemplateHtml();
+    if (!String(templateEditorEditable.innerHTML || '').trim()) {
+      templateEditorEditable.innerHTML = String(docxEditor.innerHTML || '').trim() || html;
+    }
+    templateAiPreview.textContent = latestAssistantText || '';
+    templateEditorOverlay.classList.add('appdosc-ai-dialog__template-editor--open');
+    setTimeout(() => templateEditorEditable.focus(), 0);
+  };
+
+  const closeTemplateEditor = () => {
+    templateEditorOverlay.classList.remove('appdosc-ai-dialog__template-editor--open');
+  };
+
+  const insertAtCursor = (container, text) => {
+    if (!container || !text) return false;
+    container.focus();
+    const selection = window.getSelection();
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    const inEditor = !!(range && container.contains(range.commonAncestorContainer));
+    if (!inEditor) {
+      container.innerHTML += `<p>${String(text).replace(/\n/g, '<br/>')}</p>`;
+      return true;
+    }
+    const fragment = range.createContextualFragment(`<p>${String(text).replace(/\n/g, '<br/>')}</p>`);
+    range.deleteContents();
+    range.insertNode(fragment);
+    selection.removeAllRanges();
+    return true;
   };
 
   const openMergedPdfPreview = async () => {
@@ -410,6 +510,7 @@ function openAiResponseDialog(context = {}) {
     if (!value) return;
     messages.appendChild(createBubble(value, 'user'));
     const assistantText = buildAssistantReply(value, context);
+    latestAssistantText = assistantText;
     messages.appendChild(createBubble(assistantText, 'assistant'));
     docxEditor.innerHTML = templateHtmlCache ? appendAnswerToHtml(templateHtmlCache, assistantText) : `<p>${assistantText.replace(/\n/g, '<br/>')}</p>`;
     toggleEditorButton.disabled = false;
@@ -441,14 +542,57 @@ function openAiResponseDialog(context = {}) {
   templatePreviewButton.addEventListener('click', async () => {
     templatePreviewButton.disabled = true;
     try {
-      await openTemplatePdfPreview();
-      notify('success', 'Предпросмотр шаблона открыт.');
+      await openTemplateEditor();
+      notify('success', 'Шаблон открыт в отдельном редакторе.');
     } catch (error) {
-      notify('error', error && error.message ? error.message : 'Не удалось открыть предпросмотр шаблона.');
-      viewerStatus.textContent = 'Ошибка загрузки шаблона.';
+      notify('error', error && error.message ? error.message : 'Не удалось открыть редактор шаблона.');
     } finally {
       templatePreviewButton.disabled = false;
     }
+  });
+
+  insertAiToCursorButton.addEventListener('click', () => {
+    if (!latestAssistantText) {
+      notify('warning', 'Сначала получите ответ ИИ.');
+      return;
+    }
+    insertAtCursor(templateEditorEditable, latestAssistantText);
+    notify('success', 'Ответ ИИ вставлен в шаблон.');
+  });
+
+  replaceWithAiButton.addEventListener('click', () => {
+    if (!latestAssistantText) {
+      notify('warning', 'Сначала получите ответ ИИ.');
+      return;
+    }
+    templateEditorEditable.innerHTML = `<p>${String(latestAssistantText).replace(/\n/g, '<br/>')}</p>`;
+    notify('success', 'Текст шаблона заменён ответом ИИ.');
+  });
+
+  templateEditorAppend.addEventListener('click', () => {
+    if (!latestAssistantText) {
+      notify('warning', 'Сначала получите ответ ИИ.');
+      return;
+    }
+    templateEditorEditable.innerHTML = appendAnswerToHtml(templateEditorEditable.innerHTML, latestAssistantText);
+    notify('success', 'Ответ ИИ добавлен в конец документа.');
+  });
+
+  templateEditorApply.addEventListener('click', () => {
+    const html = String(templateEditorEditable.innerHTML || '').trim();
+    if (!html) {
+      notify('warning', 'Шаблон пустой.');
+      return;
+    }
+    docxEditor.innerHTML = html;
+    closeTemplateEditor();
+    docxSection.classList.add('appdosc-ai-dialog__docx--visible');
+    notify('success', 'Изменения сохранены в основной ответ.');
+  });
+
+  templateEditorClose.addEventListener('click', closeTemplateEditor);
+  templateEditorOverlay.addEventListener('click', (event) => {
+    if (event.target === templateEditorOverlay) closeTemplateEditor();
   });
 
   mergedPreviewButton.addEventListener('click', async () => {
@@ -528,7 +672,7 @@ function openAiResponseDialog(context = {}) {
   docxSection.append(docxMeta, docxEditor, docxButtons);
   header.append(titleWrap, closeButton);
   panel.append(header, messages, composer, docxSection);
-  root.append(panel, viewer);
+  root.append(panel, viewer, templateEditorOverlay);
   document.body.appendChild(root);
 
   ensureTemplateHtml()
