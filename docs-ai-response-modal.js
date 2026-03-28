@@ -55,16 +55,57 @@
     if (!raw) {
       return true;
     }
+    if (isBusinessWhitelistLine(raw) || hasRequisitePattern(raw)) {
+      return false;
+    }
     var letters = (raw.match(/[A-Za-zА-Яа-яЁё]/g) || []).length;
     var digits = (raw.match(/\d/g) || []).length;
     var noise = (raw.match(/[^\w\sА-Яа-яЁё.,:;!?()«»"'\-–—/]/g) || []).length;
     var shortBroken = raw.length <= 3 && letters === 0;
-    var mostlyNoise = raw.length > 0 && (noise / raw.length) > 0.24 && letters < 3;
-    var randomToken = raw.length < 16 && letters < 2 && digits < 2;
+    var mostlyNoise = raw.length > 0 && (noise / raw.length) > 0.33 && letters < 2;
+    var randomToken = raw.length <= 6 && letters === 0 && digits <= 1 && /\W/.test(raw);
     return shortBroken || mostlyNoise || randomToken;
   }
 
-  function filterOcrArtifacts(text, mode) {
+  function hasRequisitePattern(line) {
+    var value = String(line || '').trim();
+    if (!value) {
+      return false;
+    }
+    var patterns = [
+      /\b(исх|вх)\.?\s*(№|N|No)?\s*[\w\-\/]+/i,
+      /(^|[\s:])№\s*[\w\-\/]+/i,
+      /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/,
+      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
+      /(\+?\d[\d\s()\-]{8,}\d)/,
+      /\b[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.[А-ЯЁ]\.\b/,
+      /\b[А-ЯЁ]\.[А-ЯЁ]\.\s*[А-ЯЁ][а-яё]+\b/
+    ];
+    return patterns.some(function (pattern) {
+      return pattern.test(value);
+    });
+  }
+
+  function isBusinessWhitelistLine(line) {
+    var value = String(line || '').trim();
+    if (!value) {
+      return false;
+    }
+    var patterns = [
+      /^\s*(от|отправитель|sender)\s*[:\-]/i,
+      /^\s*(кому|получатель|recipient|to)\s*[:\-]/i,
+      /^\s*(тема|subject)\s*[:\-]/i,
+      /^\s*(исх|вх)\.?\s*(№|N|No)?\s*[:\-]?\s*[\w\-\/]+/i,
+      /^\s*(дата|date)\s*[:\-]/i,
+      /(^|[\s:])№\s*[\w\-\/]+/i,
+      /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/
+    ];
+    return patterns.some(function (pattern) {
+      return pattern.test(value);
+    }) || hasRequisitePattern(value);
+  }
+
+  function filterOcrArtifacts(text, mode, diagnostics) {
     var currentMode = mode || 'smart';
     var normalized = String(text || '')
       .replace(/\r\n/g, '\n')
@@ -73,18 +114,55 @@
       .replace(/-\n(?=\S)/g, '')
       .replace(/[ \t]+\n/g, '\n');
 
+    var stats = diagnostics && typeof diagnostics === 'object' ? diagnostics : null;
+    if (stats) {
+      stats.totalLines = 0;
+      stats.whitelistKept = 0;
+      stats.noiseDropped = 0;
+      stats.emptyDropped = 0;
+      stats.mode = currentMode;
+    }
+
     if (currentMode === 'raw') {
+      if (stats) {
+        stats.totalLines = normalized ? normalized.split('\n').length : 0;
+      }
       return cleanNumericArtifacts(normalized)
         .replace(/\n{3,}/g, '\n\n')
         .trim();
     }
 
-    var lines = normalized.split('\n');
+    var baseNormalized = currentMode === 'strict'
+      ? normalized.replace(/\s{2,}/g, ' ')
+      : normalized;
+    var lines = baseNormalized.split('\n');
+    if (stats) {
+      stats.totalLines = lines.length;
+    }
     var cleaned = lines.filter(function (line) {
-      return !isNoisyLine(line);
+      var trimmed = String(line || '').trim();
+      if (!trimmed) {
+        if (stats) {
+          stats.emptyDropped += 1;
+        }
+        return false;
+      }
+      if (isBusinessWhitelistLine(trimmed)) {
+        if (stats) {
+          stats.whitelistKept += 1;
+        }
+        return true;
+      }
+      if (isNoisyLine(trimmed)) {
+        if (stats) {
+          stats.noiseDropped += 1;
+        }
+        return false;
+      }
+      return true;
     }).map(function (line) {
       return cleanNumericArtifacts(line)
-        .replace(/\s{2,}/g, ' ')
+        .replace(currentMode === 'strict' ? /\s{2,}/g : /[ \t]{3,}/g, ' ')
         .trim();
     }).filter(Boolean);
 
@@ -181,6 +259,7 @@
       '.ai-chat-modal__export-buttons{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}' +
       '.ai-chat-modal__export-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;background:#f1f5f9;color:#1e293b;cursor:pointer;transition:all .2s;min-height:38px;}' +
       '.ai-chat-modal__export-btn:hover{background:#e2e8f0;}' +
+      '.ai-chat-modal__ocr-hint{margin-top:4px;padding:6px 8px;border-radius:8px;background:rgba(239,246,255,.8);border:1px solid rgba(147,197,253,.55);font-size:11px;color:#1e3a8a;line-height:1.35;}' +
       '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
       '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}}';
@@ -611,6 +690,8 @@
       templateDraft: ''
     };
 
+    state.ocrSummary = { totalLines: 0, droppedLines: 0, whitelistKept: 0 };
+
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'ai-chat-modal__panel');
     var header = createElement('div', 'ai-chat-modal__header');
@@ -783,6 +864,8 @@
     });
     ocrModeSelect.value = state.ocrMode;
     ocrModeField.appendChild(ocrModeSelect);
+    var ocrHint = createElement('div', 'ai-chat-modal__ocr-hint', 'Если пропали важные строки (номер, дата, реквизиты), переключите режим OCR на «raw».');
+    ocrModeField.appendChild(ocrHint);
     var settingsInput = createElement('textarea', 'ai-chat-modal__textarea');
     settingsInput.rows = 8;
     settingsInput.style.maxHeight = '260px';
@@ -840,6 +923,9 @@
     }
 
     function resanitizeFileContents() {
+      var totalLines = 0;
+      var droppedLines = 0;
+      var whitelistKept = 0;
       state.files.forEach(function (file) {
         if (!file) {
           return;
@@ -848,10 +934,30 @@
         if (!sourceText) {
           return;
         }
-        file.content = filterOcrArtifacts(sourceText, state.ocrMode);
+        file.ocrDiagnostics = {};
+        file.content = filterOcrArtifacts(sourceText, state.ocrMode, file.ocrDiagnostics);
+        totalLines += Number(file.ocrDiagnostics.totalLines || 0);
+        droppedLines += Number(file.ocrDiagnostics.noiseDropped || 0) + Number(file.ocrDiagnostics.emptyDropped || 0);
+        whitelistKept += Number(file.ocrDiagnostics.whitelistKept || 0);
         file.extracted = Boolean(file.content);
       });
+      state.ocrSummary = { totalLines: totalLines, droppedLines: droppedLines, whitelistKept: whitelistKept };
+      updateOcrHint();
       renderFiles();
+    }
+
+    function updateOcrHint() {
+      if (!ocrHint) {
+        return;
+      }
+      var summary = state.ocrSummary || {};
+      var dropped = Number(summary.droppedLines || 0);
+      var kept = Number(summary.whitelistKept || 0);
+      if (state.ocrMode === 'raw') {
+        ocrHint.textContent = 'Режим raw: строки не отбрасываются, сохраняется максимально исходный OCR-текст.';
+        return;
+      }
+      ocrHint.textContent = 'Отброшено строк: ' + dropped + '. Сохранено по белому списку: ' + kept + '. Если пропали важные данные, выберите «raw».';
     }
 
     function renderModelOptions() {
@@ -876,11 +982,15 @@
         var ocrStatus = file.extracting
           ? '⏳ OCR'
           : (file.extracted ? '✅ OCR' : (file.extractError ? '⚠️ OCR' : '⭕ OCR'));
+        var droppedLines = file.ocrDiagnostics
+          ? (Number(file.ocrDiagnostics.noiseDropped || 0) + Number(file.ocrDiagnostics.emptyDropped || 0))
+          : 0;
         chip.innerHTML = ''
           + '<span>' + detectIcon(file) + '</span>'
           + '<span>' + escapeHtml(file.name) + '</span>'
           + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>'
-          + '<span class="ai-chat-chip__meta">' + escapeHtml(ocrStatus) + '</span>';
+          + '<span class="ai-chat-chip__meta">' + escapeHtml(ocrStatus) + '</span>'
+          + '<span class="ai-chat-chip__meta">−' + escapeHtml(String(droppedLines)) + ' строк</span>';
 
         var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ OCR' : '📄 OCR');
         ocr.type = 'button';
@@ -972,9 +1082,11 @@
         }
 
         fileEntry.rawContent = String(extractedText || '').trim();
-        fileEntry.content = filterOcrArtifacts(fileEntry.rawContent, state.ocrMode);
+        fileEntry.ocrDiagnostics = {};
+        fileEntry.content = filterOcrArtifacts(fileEntry.rawContent, state.ocrMode, fileEntry.ocrDiagnostics);
         fileEntry.extracted = fileEntry.content !== '';
         fileEntry.extractError = fileEntry.extracted ? null : 'Пустой результат';
+        resanitizeFileContents();
         return fileEntry.extracted;
       } catch (error) {
         fileEntry.extractError = error && error.message ? error.message : 'Не удалось извлечь текст';
