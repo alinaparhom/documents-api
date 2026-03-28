@@ -843,13 +843,27 @@ $maxContextChars = (int)($env['AI_MAX_CONTEXT_CHARS'] ?? 120000);
 if ($maxContextChars < 2000) {
     $maxContextChars = 2000;
 }
+$contextSizeErrorHint = trim((string)($env['AI_CONTEXT_SIZE_ERROR_HINT'] ?? 'Переключите режим на «кратко» или сократите вложения.'));
 if ($contextRaw !== '' && mb_strlen($contextRaw) > $maxContextChars) {
     jsonResponse(400, [
         'ok' => false,
-        'error' => 'Контекст слишком большой: ' . mb_strlen($contextRaw) . ' символов. Максимум: ' . $maxContextChars . '. Переключите режим на «кратко» или сократите вложения.',
+        'error' => 'Контекст слишком большой: ' . mb_strlen($contextRaw) . ' символов. Максимум: ' . $maxContextChars . '. ' . $contextSizeErrorHint,
     ]);
 }
+if ($contextRaw !== '' && !looksLikeJsonText($contextRaw)) {
+    jsonResponse(400, ['ok' => false, 'error' => 'Некорректный формат context: ожидается JSON-объект.']);
+}
 $context = safeJsonDecode($contextRaw);
+if (!is_array($context)) {
+    $context = [];
+}
+$normalizedContextRaw = (string)json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxContextChars) {
+    jsonResponse(400, [
+        'ok' => false,
+        'error' => 'Контекст после нормализации слишком большой: ' . mb_strlen($normalizedContextRaw) . ' символов. Максимум: ' . $maxContextChars . '. ' . $contextSizeErrorHint,
+    ]);
+}
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));

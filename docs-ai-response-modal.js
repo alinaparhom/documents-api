@@ -5,11 +5,11 @@
   var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
-  var MAX_CONTEXT_FILE_CHARS_DETAILED = 12000;
-  var MAX_CONTEXT_FILE_CHARS_BRIEF = 3500;
-  var MAX_CONTEXT_TOTAL_CHARS_DETAILED = 45000;
-  var MAX_CONTEXT_TOTAL_CHARS_BRIEF = 18000;
-  var LONG_ATTACHMENT_THRESHOLD = 7000;
+  var DEFAULT_CONTEXT_FILE_CHARS_DETAILED = 12000;
+  var DEFAULT_CONTEXT_FILE_CHARS_BRIEF = 3500;
+  var DEFAULT_CONTEXT_TOTAL_CHARS_DETAILED = 45000;
+  var DEFAULT_CONTEXT_TOTAL_CHARS_BRIEF = 18000;
+  var DEFAULT_LONG_ATTACHMENT_THRESHOLD = 7000;
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
   var DEFAULT_AI_BEHAVIOR = 'Ты — корпоративный секретарь. Ответь на документ в официально-деловом стиле.\n'
@@ -210,19 +210,68 @@
     return text.slice(0, Math.max(0, maxChars - 1)).trimEnd() + '…';
   }
 
-  function extractPriorityLines(lines) {
+  function buildContextSettings(config) {
+    var preparation = config && config.contextPreparation && typeof config.contextPreparation === 'object'
+      ? config.contextPreparation
+      : {};
+    var priorityGroups = Array.isArray(preparation.priorityGroups) && preparation.priorityGroups.length
+      ? preparation.priorityGroups
+      : [
+        { key: 'Реквизиты', patterns: [/\b(инн|кпп|огрн|бик|р\/с|расчетный счет|корр(\.|еспондентский)?\s*счет|банк|реквизит)\b/i] },
+        { key: 'Даты', patterns: [/\b(дата|от)\b/i, /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/] },
+        { key: 'Суммы', patterns: [/\b(сумм|итого|руб(лей)?|коп(еек)?|₽|оплат)\b/i, /\b\d[\d\s]{0,15}(?:[.,]\d{1,2})?\s*(руб|₽)\b/i] },
+        { key: 'Поручения', patterns: [/\b(поруч(аем|ение)|необходимо|обязуем|просим|требуется)\b/i] },
+        { key: 'Сроки', patterns: [/\b(срок|дедлайн|не позднее|в течение)\b/i] }
+      ];
+
+    priorityGroups = priorityGroups.map(function (group) {
+      var patterns = Array.isArray(group && group.patterns) ? group.patterns : [];
+      var normalizedPatterns = patterns.map(function (pattern) {
+        if (pattern instanceof RegExp) {
+          return pattern;
+        }
+        if (typeof pattern === 'string' && pattern.trim()) {
+          try {
+            return new RegExp(pattern, 'i');
+          } catch (error) {
+            return null;
+          }
+        }
+        return null;
+      }).filter(Boolean);
+      return {
+        key: group && group.key ? String(group.key) : 'Данные',
+        patterns: normalizedPatterns
+      };
+    }).filter(function (group) {
+      return group.patterns.length > 0;
+    });
+
+    return {
+      perFileDetailed: Math.max(1000, Number(preparation.perFileDetailed || DEFAULT_CONTEXT_FILE_CHARS_DETAILED)),
+      perFileBrief: Math.max(800, Number(preparation.perFileBrief || DEFAULT_CONTEXT_FILE_CHARS_BRIEF)),
+      totalDetailed: Math.max(2000, Number(preparation.totalDetailed || DEFAULT_CONTEXT_TOTAL_CHARS_DETAILED)),
+      totalBrief: Math.max(1500, Number(preparation.totalBrief || DEFAULT_CONTEXT_TOTAL_CHARS_BRIEF)),
+      longAttachmentThreshold: Math.max(1000, Number(preparation.longAttachmentThreshold || DEFAULT_LONG_ATTACHMENT_THRESHOLD)),
+      maxLinesPerPriorityGroup: Math.max(1, Number(preparation.maxLinesPerPriorityGroup || 6)),
+      maxSummaryPoints: Math.max(3, Number(preparation.maxSummaryPoints || 7)),
+      maxSummaryQuotes: Math.max(1, Number(preparation.maxSummaryQuotes || 4)),
+      maxQuoteChars: Math.max(80, Number(preparation.maxQuoteChars || 160)),
+      priorityPoolLimit: Math.max(4, Number(preparation.priorityPoolLimit || 18)),
+      priorityShare: Math.min(0.7, Math.max(0.1, Number(preparation.priorityShare || 0.35))),
+      priorityGroups: priorityGroups
+    };
+  }
+
+  function extractPriorityLines(lines, settings) {
     var safeLines = Array.isArray(lines) ? lines : [];
-    var groups = [
-      { key: 'Реквизиты', patterns: [/\b(инн|кпп|огрн|бик|р\/с|расчетный счет|корр(\.|еспондентский)?\s*счет|банк|реквизит)\b/i] },
-      { key: 'Даты', patterns: [/\b(дата|от)\b/i, /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/] },
-      { key: 'Суммы', patterns: [/\b(сумм|итого|руб(лей)?|коп(еек)?|₽|оплат)\b/i, /\b\d[\d\s]{0,15}(?:[.,]\d{1,2})?\s*(руб|₽)\b/i] },
-      { key: 'Поручения', patterns: [/\b(поруч(аем|ение)|необходимо|обязуем|просим|требуется)\b/i] },
-      { key: 'Сроки', patterns: [/\b(срок|дедлайн|не позднее|в течение)\b/i] }
-    ];
+    var groups = settings && Array.isArray(settings.priorityGroups) ? settings.priorityGroups : [];
+    var linesPerGroup = settings && settings.maxLinesPerPriorityGroup ? settings.maxLinesPerPriorityGroup : 6;
     var result = [];
     var seen = {};
     groups.forEach(function (group) {
       var added = 0;
+      var patterns = Array.isArray(group.patterns) ? group.patterns : [];
       for (var i = 0; i < safeLines.length; i += 1) {
         var line = String(safeLines[i] || '').trim();
         if (!line) {
@@ -232,14 +281,14 @@
         if (seen[normalized]) {
           continue;
         }
-        var match = group.patterns.some(function (pattern) { return pattern.test(line); });
+        var match = patterns.some(function (pattern) { return pattern instanceof RegExp && pattern.test(line); });
         if (!match) {
           continue;
         }
-        result.push(group.key + ': ' + line);
+        result.push(String(group.key || 'Данные') + ': ' + line);
         seen[normalized] = true;
         added += 1;
-        if (added >= 6) {
+        if (added >= linesPerGroup) {
           break;
         }
       }
@@ -247,7 +296,7 @@
     return result;
   }
 
-  function buildExtractSummary(text) {
+  function buildExtractSummary(text, settings) {
     var normalized = normalizeContextText(text);
     if (!normalized) {
       return '';
@@ -256,26 +305,26 @@
     if (!lines.length) {
       return '';
     }
-    var keyPoints = extractPriorityLines(lines);
+    var keyPoints = extractPriorityLines(lines, settings);
     if (!keyPoints.length) {
       keyPoints = lines.slice(0, 5).map(function (line) { return 'Пункт: ' + line; });
     }
     var quotes = lines
       .filter(function (line) { return line.length >= 12; })
-      .slice(0, 4)
-      .map(function (line) { return '> ' + sliceByChars(line, 160); });
+      .slice(0, settings.maxSummaryQuotes)
+      .map(function (line) { return '> ' + sliceByChars(line, settings.maxQuoteChars); });
     return [
       'Ключевые пункты:',
-      keyPoints.slice(0, 7).map(function (line) { return '- ' + line; }).join('\n'),
+      keyPoints.slice(0, settings.maxSummaryPoints).map(function (line) { return '- ' + line; }).join('\n'),
       'Цитаты строк:',
       quotes.join('\n')
     ].join('\n').trim();
   }
 
-  function prepareContextPayload(state) {
+  function prepareContextPayload(state, settings) {
     var detailMode = state.contextDetail === 'brief' ? 'brief' : 'detailed';
-    var perFileLimit = detailMode === 'brief' ? MAX_CONTEXT_FILE_CHARS_BRIEF : MAX_CONTEXT_FILE_CHARS_DETAILED;
-    var totalLimit = detailMode === 'brief' ? MAX_CONTEXT_TOTAL_CHARS_BRIEF : MAX_CONTEXT_TOTAL_CHARS_DETAILED;
+    var perFileLimit = detailMode === 'brief' ? settings.perFileBrief : settings.perFileDetailed;
+    var totalLimit = detailMode === 'brief' ? settings.totalBrief : settings.totalDetailed;
     var collected = [];
     var priorityLines = [];
     var seenTexts = {};
@@ -292,9 +341,9 @@
       }
       sourceChars += original.length;
       var lines = original.split('\n').map(function (line) { return line.trim(); }).filter(Boolean);
-      priorityLines = priorityLines.concat(extractPriorityLines(lines));
-      var shouldSummarize = detailMode === 'brief' || original.length > LONG_ATTACHMENT_THRESHOLD;
-      var preparedText = shouldSummarize ? buildExtractSummary(original) : original;
+      priorityLines = priorityLines.concat(extractPriorityLines(lines, settings));
+      var shouldSummarize = detailMode === 'brief' || original.length > settings.longAttachmentThreshold;
+      var preparedText = shouldSummarize ? buildExtractSummary(original, settings) : original;
       preparedText = sliceByChars(preparedText, perFileLimit);
       if (preparedText.length < original.length) {
         truncatedFiles += 1;
@@ -331,7 +380,10 @@
       seenPriority[key] = true;
       dedupPriority.push(line);
     });
-    var priorityText = sliceByChars(dedupPriority.slice(0, 18).join('\n'), Math.floor(totalLimit * 0.35));
+    var priorityText = sliceByChars(
+      dedupPriority.slice(0, settings.priorityPoolLimit).join('\n'),
+      Math.floor(totalLimit * settings.priorityShare)
+    );
     var prioritizedEntries = priorityText
       ? [{ id: 'priority-block', name: 'Приоритетные данные', type: 'summary', text: priorityText }]
       : [];
@@ -824,7 +876,7 @@
       });
     }
 
-    var preparedContext = prepareContextPayload(state);
+    var preparedContext = prepareContextPayload(state, state.contextSettings);
     var extractedTexts = preparedContext.extractedTexts;
 
     context.selectedModel = state.model;
@@ -899,6 +951,7 @@
         ? config.aiBehavior.trim()
         : DEFAULT_AI_BEHAVIOR,
       contextDetail: config.contextDetail === 'brief' ? 'brief' : 'detailed',
+      contextSettings: buildContextSettings(config),
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
         ? config.ocrMode
         : OCR_MODE_OPTIONS[0].value,
@@ -1253,7 +1306,7 @@
       if (!contextUsageHint) {
         return;
       }
-      var prepared = prepareContextPayload(state);
+      var prepared = prepareContextPayload(state, state.contextSettings);
       var stats = prepared.stats || {};
       contextUsageHint.textContent = 'OCR к отправке: ' + String(stats.preparedChars || 0)
         + ' символов • режим: ' + (stats.mode === 'brief' ? 'кратко' : 'подробно')
