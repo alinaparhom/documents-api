@@ -84,15 +84,104 @@ function createBubble(text, role) {
   return bubble;
 }
 
+function safeText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).trim();
+  return '';
+}
+
+function collapseWhitespace(value) {
+  return safeText(value).replace(/\s+/g, ' ').trim();
+}
+
+function pickTaskContext(task) {
+  if (!task || typeof task !== 'object') return '';
+  const sourceFields = [
+    task.summary,
+    task.resolution,
+    task.instruction,
+    task.document,
+    task.correspondent,
+    task.organization,
+  ];
+  const joined = sourceFields
+    .map((item) => collapseWhitespace(item))
+    .filter(Boolean)
+    .join('. ');
+  return joined;
+}
+
+function summarizeContext(contextText, maxSentences = 2) {
+  const clean = collapseWhitespace(contextText);
+  if (!clean) return 'Контекст задачи не заполнен.';
+  const chunks = clean
+    .split(/(?<=[.!?])\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!chunks.length) return clean.slice(0, 320);
+  return chunks.slice(0, maxSentences).join(' ').slice(0, 420);
+}
+
+function buildStructuredTextReply(userMessage, task, entry) {
+  const taskId = collapseWhitespace(task && task.id) || '—';
+  const entryLabel = collapseWhitespace(entry && (entry.label || entry.value)) || 'не указан';
+  const userIntent = collapseWhitespace(userMessage);
+  const taskContext = pickTaskContext(task);
+  const contextSummary = summarizeContext(taskContext, 2);
+  const org = collapseWhitespace(task && task.organization);
+  const dueDate = collapseWhitespace(task && task.dueDate);
+  const correspondent = collapseWhitespace(task && task.correspondent);
+
+  const responseLines = [];
+  responseLines.push('1) Что понял');
+  responseLines.push(`- Задача №${taskId}, исполнитель: ${entryLabel}.`);
+  responseLines.push(`- Запрос пользователя: ${userIntent || 'без уточнения запроса'}.`);
+  responseLines.push(`- Ключевой контекст: ${contextSummary}`);
+  responseLines.push('');
+  responseLines.push('2) Решение');
+  responseLines.push('- Подготовлен черновик официального ответа на основе данных задачи.');
+  responseLines.push('- Структура: вступление → основная часть → заключение.');
+  responseLines.push('- Формат ответа: только текст, без HTML/Markdown.');
+  responseLines.push('');
+  responseLines.push('3) Готовый текст ответа');
+  responseLines.push('В ответ на Ваше письмо сообщаем следующее.');
+  if (org) responseLines.push(`По материалам задачи по организации «${org}» рассмотрен Ваш запрос.`);
+  if (correspondent) responseLines.push(`Отмечаем, что обращение поступило от: ${correspondent}.`);
+  responseLines.push(`Суть обращения: ${userIntent || 'требуется подготовка официального ответа по задаче'}.`);
+  responseLines.push(`Обращаем Ваше внимание: ${contextSummary}`);
+  if (dueDate) responseLines.push(`Срок исполнения по задаче: ${dueDate}.`);
+  responseLines.push('По итогам рассмотрения подтверждаем готовность выполнить действия в рамках установленного регламента.');
+  responseLines.push('Заключение: при необходимости направим дополнительное разъяснение отдельным письмом.');
+  responseLines.push('');
+  responseLines.push('4) Что проверить перед отправкой');
+  responseLines.push('- ФИО, реквизиты и номер документа.');
+  responseLines.push('- Корректность дат и сроков.');
+  responseLines.push('- Соответствие ответа внутреннему регламенту.');
+  return responseLines.join('\n');
+}
+
 function buildAssistantReply(userMessage, context) {
-  const taskId = context && context.task && context.task.id ? String(context.task.id) : '—';
-  return [
-    'Черновик ответа от ИИ:',
-    '',
-    `Задача №${taskId} принята в работу.`,
-    '',
-    `Текст ответа: «${userMessage.trim()}»`,
-  ].join('\n');
+  try {
+    const safeMessage = safeText(userMessage);
+    const task = context && typeof context === 'object' ? context.task : null;
+    const entry = context && typeof context === 'object' ? context.entry : null;
+    return buildStructuredTextReply(safeMessage, task, entry);
+  } catch (error) {
+    const fallback = safeText(userMessage);
+    return [
+      '1) Что понял',
+      `- Запрос: ${fallback || 'без текста запроса'}.`,
+      '',
+      '2) Готовый текст ответа',
+      'В ответ на Ваше письмо сообщаем следующее.',
+      'Ваш запрос принят в обработку. Подготовлен предварительный текст официального ответа.',
+      'При необходимости уточните реквизиты документа, срок и адресата.',
+      '',
+      '3) Проверка',
+      '- Перед отправкой проверьте даты и номера документов.',
+    ].join('\n');
+  }
 }
 
 function ensureScript(src, globalKey, title) {
