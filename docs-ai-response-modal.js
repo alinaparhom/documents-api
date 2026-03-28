@@ -652,15 +652,18 @@
         state.files[i].extractError = null;
         continue;
       }
-      if (state.files[i].fileObject) {
+      try {
         // eslint-disable-next-line no-await-in-loop
-        state.files[i].content = await fileToText(state.files[i].fileObject);
-      } else if (state.files[i].url) {
-        // eslint-disable-next-line no-await-in-loop
-        state.files[i].content = await fetchExternalFileContent(state.files[i]);
+        var hydrated = await resolveFileContent(state.files[i], { allowOcrFallback: true, announceToChat: false });
+        state.files[i].rawContent = String(hydrated || '').trim();
+        state.files[i].ocrDiagnostics = {};
+        state.files[i].content = filterOcrArtifacts(state.files[i].rawContent, state.ocrMode, state.files[i].ocrDiagnostics);
+        state.files[i].extracted = state.files[i].content !== '';
+        state.files[i].extractError = state.files[i].extracted ? null : 'Пустой результат';
+      } catch (error) {
+        state.files[i].extracted = false;
+        state.files[i].extractError = error && error.message ? error.message : 'Не удалось извлечь текст';
       }
-      state.files[i].extracted = Boolean(state.files[i].content && String(state.files[i].content).trim() !== '');
-      state.files[i].extractError = state.files[i].extracted ? null : state.files[i].extractError;
     }
   }
 
@@ -1027,6 +1030,72 @@
       }
     }
 
+    async function requestOcrText(fileEntry, fileLabel) {
+      var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      if (fileEntry.fileObject) {
+        formData.append('file', fileEntry.fileObject, fileLabel || 'document.pdf');
+      } else if (fileEntry.url) {
+        formData.append('file_url', String(fileEntry.url));
+      } else {
+        throw new Error('Файл недоступен для чтения');
+      }
+      var response = await fetch(apiUrl + '?action=ocr_extract', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      });
+      var payload = await response.json();
+      if (!response.ok || !payload || payload.ok !== true) {
+        throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+      }
+      var text = String(payload.text || '').trim();
+      if (!text) {
+        throw new Error('OCR не вернул текст. Проверьте качество файла.');
+      }
+      return text;
+    }
+
+    async function resolveFileContent(fileEntry, options) {
+      var opts = options && typeof options === 'object' ? options : {};
+      var fileLabel = fileEntry && fileEntry.name ? fileEntry.name : 'файл';
+      var announceToChat = opts.announceToChat === true;
+      var allowOcrFallback = opts.allowOcrFallback !== false;
+      var extractedText = '';
+
+      if (fileEntry.fileObject && isTextLike(fileEntry.fileObject)) {
+        extractedText = await fileToText(fileEntry.fileObject);
+        if (!String(extractedText || '').trim() && !isPdfLike(fileEntry.fileObject)) {
+          throw new Error('Текстовый файл пустой или не читается');
+        }
+        if (announceToChat) {
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
+        }
+        return String(extractedText || '').trim();
+      }
+      if (fileEntry.url && isTextLike(fileEntry)) {
+        extractedText = await fetchExternalFileContent(fileEntry);
+        if (!String(extractedText || '').trim() && !isPdfLike(fileEntry)) {
+          throw new Error('Не удалось прочитать текст по ссылке');
+        }
+        if (announceToChat) {
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
+        }
+        return String(extractedText || '').trim();
+      }
+      if (!allowOcrFallback) {
+        return '';
+      }
+
+      extractedText = await requestOcrText(fileEntry, fileLabel);
+      if (announceToChat) {
+        messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText.slice(0, 1200)));
+      }
+      return extractedText;
+    }
+
     async function extractSingleFile(fileEntry) {
       if (!fileEntry || fileEntry.extracting) {
         return false;
@@ -1037,46 +1106,7 @@
       updateFileStatusInUI();
 
       try {
-        var extractedText = '';
-        if (fileEntry.fileObject && isTextLike(fileEntry.fileObject)) {
-          extractedText = await fileToText(fileEntry.fileObject);
-          if (!String(extractedText || '').trim() && !isPdfLike(fileEntry.fileObject)) {
-            throw new Error('Текстовый файл пустой или не читается');
-          }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
-        } else if (fileEntry.url && isTextLike(fileEntry)) {
-          extractedText = await fetchExternalFileContent(fileEntry);
-          if (!String(extractedText || '').trim() && !isPdfLike(fileEntry)) {
-            throw new Error('Не удалось прочитать текст по ссылке');
-          }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
-        } else {
-          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-          var formData = new FormData();
-          formData.append('action', 'ocr_extract');
-          formData.append('language', 'rus');
-          if (fileEntry.fileObject) {
-            formData.append('file', fileEntry.fileObject, fileLabel || 'document.pdf');
-          } else if (fileEntry.url) {
-            formData.append('file_url', String(fileEntry.url));
-          } else {
-            throw new Error('Файл недоступен для чтения');
-          }
-          var response = await fetch(apiUrl + '?action=ocr_extract', {
-            method: 'POST',
-            credentials: 'same-origin',
-            body: formData
-          });
-          var payload = await response.json();
-          if (!response.ok || !payload || payload.ok !== true) {
-            throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
-          }
-          extractedText = String(payload.text || '').trim();
-          if (!extractedText) {
-            throw new Error('OCR не вернул текст. Проверьте качество файла.');
-          }
-          messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText.slice(0, 1200)));
-        }
+        var extractedText = await resolveFileContent(fileEntry, { allowOcrFallback: true, announceToChat: true });
 
         fileEntry.rawContent = String(extractedText || '').trim();
         fileEntry.ocrDiagnostics = {};
