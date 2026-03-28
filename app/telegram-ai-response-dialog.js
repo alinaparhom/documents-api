@@ -5,8 +5,12 @@ const DOCX_TEMPLATE_URLS = [
   '/app/templates/template.docx',
   '/templates/template.docx',
   './templates/template.docx',
-  'templates/template.docx',
 ];
+const TEMPLATE_HELPER_SCRIPT_URLS = [
+  '/template-loader-helper.js',
+  '../template-loader-helper.js',
+];
+let templateLoaderPromise = null;
 const DEFAULT_DEPENDENCY_DEFINITIONS = {
   pizzip: {
     key: 'pizzip',
@@ -116,25 +120,48 @@ function ensureMammoth() {
   return ensureScript('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', 'mammoth', 'Mammoth');
 }
 
-async function fetchTemplateBuffer() {
-  const tried = [];
-  let lastError = null;
-  for (const url of DOCX_TEMPLATE_URLS) {
-    tried.push(url);
-    try {
-      const response = await fetch(url, { credentials: 'same-origin' });
-      if (response.ok) return { buffer: await response.arrayBuffer(), url };
-      lastError = new Error(`Шаблон недоступен (${response.status}): ${url}`);
-    } catch (error) {
-      lastError = error;
-    }
+function ensureTemplateLoader() {
+  if (window.DocumentsTemplateLoader && typeof window.DocumentsTemplateLoader.fetchTemplateBuffer === 'function') {
+    return Promise.resolve(window.DocumentsTemplateLoader);
   }
-  throw lastError || new Error(`Не удалось загрузить шаблон. Проверены пути: ${tried.join(', ')}`);
+  if (templateLoaderPromise) {
+    return templateLoaderPromise;
+  }
+  templateLoaderPromise = new Promise((resolve, reject) => {
+    let index = 0;
+
+    function loadNext() {
+      if (window.DocumentsTemplateLoader && typeof window.DocumentsTemplateLoader.fetchTemplateBuffer === 'function') {
+        resolve(window.DocumentsTemplateLoader);
+        return;
+      }
+      if (index >= TEMPLATE_HELPER_SCRIPT_URLS.length) {
+        templateLoaderPromise = null;
+        reject(new Error('Не удалось загрузить helper шаблона.'));
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = TEMPLATE_HELPER_SCRIPT_URLS[index];
+      index += 1;
+      script.async = true;
+      script.onload = loadNext;
+      script.onerror = loadNext;
+      document.head.appendChild(script);
+    }
+
+    loadNext();
+  });
+  return templateLoaderPromise;
 }
 
-async function getTemplateHtml() {
+async function fetchTemplateBuffer(templateUrl) {
+  const loader = await ensureTemplateLoader();
+  return loader.fetchTemplateBuffer({ templateUrl, templateUrls: DOCX_TEMPLATE_URLS });
+}
+
+async function getTemplateHtml(templateUrl) {
   const mammoth = await ensureMammoth();
-  const { buffer, url } = await fetchTemplateBuffer();
+  const { buffer, url } = await fetchTemplateBuffer(templateUrl);
   const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
   const html = String(result && result.value ? result.value : '').trim();
   if (!html) throw new Error('Не удалось преобразовать DOCX в HTML');
@@ -358,7 +385,7 @@ function openAiResponseDialog(context = {}) {
 
   const ensureTemplateHtml = async () => {
     if (templateHtmlCache) return { html: templateHtmlCache, url: templateUrlCache };
-    const templateData = await getTemplateHtml();
+    const templateData = await getTemplateHtml(context && context.templateUrl ? context.templateUrl : '');
     templateHtmlCache = templateData.html;
     templateUrlCache = templateData.url;
     return templateData;

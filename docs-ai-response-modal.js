@@ -5,6 +5,9 @@
   var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
+  var TEMPLATE_HELPER_SCRIPT_URLS = ['/template-loader-helper.js', './template-loader-helper.js'];
+  var DEFAULT_TEMPLATE_PATHS = ['/app/templates/template.docx', '/templates/template.docx', './templates/template.docx'];
+  var templateLoaderPromise = null;
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
   var DEFAULT_AI_BEHAVIOR = 'Ты — корпоративный секретарь. Ответь на документ в официально-деловом стиле.\n'
@@ -211,6 +214,59 @@
       }
     }
     return trimmed;
+  }
+
+
+  function ensureTemplateLoader() {
+    if (window.DocumentsTemplateLoader && typeof window.DocumentsTemplateLoader.fetchTemplateBuffer === 'function') {
+      return Promise.resolve(window.DocumentsTemplateLoader);
+    }
+    if (templateLoaderPromise) {
+      return templateLoaderPromise;
+    }
+    templateLoaderPromise = new Promise(function (resolve, reject) {
+      var index = 0;
+
+      function loadNext() {
+        if (window.DocumentsTemplateLoader && typeof window.DocumentsTemplateLoader.fetchTemplateBuffer === 'function') {
+          resolve(window.DocumentsTemplateLoader);
+          return;
+        }
+        if (index >= TEMPLATE_HELPER_SCRIPT_URLS.length) {
+          templateLoaderPromise = null;
+          reject(new Error('Не удалось загрузить helper шаблона.'));
+          return;
+        }
+        var script = document.createElement('script');
+        script.src = TEMPLATE_HELPER_SCRIPT_URLS[index];
+        index += 1;
+        script.async = true;
+        script.onload = loadNext;
+        script.onerror = loadNext;
+        document.head.appendChild(script);
+      }
+
+      loadNext();
+    });
+    return templateLoaderPromise;
+  }
+
+  function formatTemplateAttempts(attempts) {
+    if (!Array.isArray(attempts) || !attempts.length) {
+      return '';
+    }
+    return attempts.map(function (attempt) {
+      if (!attempt || !attempt.url) {
+        return '';
+      }
+      if (attempt.reason === 'http_error') {
+        return '— ' + attempt.url + ' (HTTP ' + attempt.status + ')';
+      }
+      if (attempt.reason === 'network_error') {
+        return '— ' + attempt.url + ' (ошибка сети)';
+      }
+      return '— ' + attempt.url + ' (не найден)';
+    }).filter(Boolean).join('\n');
   }
 
   function ensureStyles() {
@@ -1301,18 +1357,21 @@
     openTemplateButton.addEventListener('click', async function () {
       menuDropdown.style.display = 'none';
       if (!state.templateDraft) {
-        var templateUrl = config.templateUrl || '/template.docx';
         try {
-          var response = await fetch(templateUrl, { credentials: 'same-origin' });
-          if (!response.ok) {
-            throw new Error('not_found');
-          }
-          await response.blob();
-          state.templateDraft = 'Шаблон загружен (' + templateUrl + '). Вставьте нужный текст вручную для редактирования.';
-          templateInfo.textContent = 'Файл шаблона найден. Отредактируйте содержимое ниже.';
+          var loader = await ensureTemplateLoader();
+          var templateResult = await loader.fetchTemplateBuffer({
+            templateUrl: config.templateUrl || '',
+            templateUrls: DEFAULT_TEMPLATE_PATHS
+          });
+          state.templateDraft = 'Шаблон загружен (' + templateResult.url + '). Вставьте нужный текст вручную для редактирования.';
+          templateInfo.textContent = 'Файл шаблона найден: ' + templateResult.url + '. Отредактируйте содержимое ниже.';
         } catch (error) {
           state.templateDraft = '';
-          templateInfo.textContent = 'Не удалось загрузить template.docx. Можно ввести текст вручную.';
+          var attempts = error && error.attempts ? error.attempts : [];
+          var details = formatTemplateAttempts(attempts);
+          templateInfo.textContent = details
+            ? 'Не удалось загрузить шаблон. Проверены пути:\n' + details
+            : 'Не удалось загрузить шаблон DOCX. Можно ввести текст вручную.';
         }
       }
       templateArea.value = state.templateDraft;

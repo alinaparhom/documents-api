@@ -2021,6 +2021,22 @@
       });
   }
 
+  function resolveTemplateUrlFromEnvironment() {
+    var candidates = [
+      window.DOCUMENTS_TEMPLATE_URL,
+      window.APP_TEMPLATE_URL,
+      document.body && document.body.dataset ? document.body.dataset.templateUrl : '',
+      document.documentElement && document.documentElement.dataset ? document.documentElement.dataset.templateUrl : ''
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var value = String(candidates[i] || '').trim();
+      if (value) {
+        return value;
+      }
+    }
+    return '';
+  }
+
   function ensureSearchStyles() {
     if (document.getElementById('documents-search-style')) {
       return;
@@ -12860,11 +12876,13 @@
           return Boolean(file && file.url);
         });
       }
+      var environmentTemplateUrl = resolveTemplateUrlFromEnvironment();
       openAiResponseModal({
         apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
         showMessage: showMessage,
         documentData: currentDoc || doc || {},
         documentTitle: currentDoc && currentDoc.title ? String(currentDoc.title) : '',
+        templateUrl: environmentTemplateUrl || undefined,
         pendingFiles: pendingFiles.slice(),
         linkedFiles: linkedFiles,
         context: {
