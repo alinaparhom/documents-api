@@ -37,6 +37,54 @@
       .replace(/'/g, '&#39;');
   }
 
+  function cleanNumericArtifacts(text) {
+    return String(text || '')
+      .replace(/(\d)\s*[\(\)ОOо]\s*(\d)/g, '$1$2')
+      .replace(/(\d)\s{2,}(\d)/g, '$1 $2')
+      .replace(/\bрубл\b/gi, 'рублей')
+      .replace(/\bкоп\b\.?/gi, 'копеек');
+  }
+
+  function isNoisyLine(line) {
+    var raw = String(line || '').trim();
+    if (!raw) {
+      return true;
+    }
+    var letters = (raw.match(/[A-Za-zА-Яа-яЁё]/g) || []).length;
+    var digits = (raw.match(/\d/g) || []).length;
+    var noise = (raw.match(/[^\w\sА-Яа-яЁё.,:;!?()«»"'\-–—/]/g) || []).length;
+    var shortBroken = raw.length <= 3 && letters === 0;
+    var mostlyNoise = raw.length > 0 && (noise / raw.length) > 0.24 && letters < 3;
+    var randomToken = raw.length < 16 && letters < 2 && digits < 2;
+    return shortBroken || mostlyNoise || randomToken;
+  }
+
+  function filterOcrArtifacts(text) {
+    var normalized = String(text || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\u00a0/g, ' ')
+      .replace(/[‐‑‒–—]/g, '-')
+      .replace(/-\n(?=\S)/g, '')
+      .replace(/[ \t]+\n/g, '\n');
+
+    var lines = normalized.split('\n');
+    var cleaned = lines.filter(function (line) {
+      return !isNoisyLine(line);
+    }).map(function (line) {
+      return cleanNumericArtifacts(line)
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }).filter(Boolean);
+
+    var result = cleaned.join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    if (!result) {
+      result = cleanNumericArtifacts(normalized).replace(/\n{3,}/g, '\n\n').trim();
+    }
+    return result;
+  }
+
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) {
       return;
@@ -411,16 +459,6 @@
   }
 
   function buildRequestBlueprint(userText, state, config) {
-    function sanitizeExtractedText(text) {
-      return String(text || '')
-        .replace(/\r\n/g, '\n')
-        .replace(/\u00a0/g, ' ')
-        .replace(/-\n(?=\S)/g, '')
-        .replace(/[ \t]+\n/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-    }
-
     var context = {};
     if (config.context && typeof config.context === 'object') {
       Object.keys(config.context).forEach(function (key) {
@@ -433,7 +471,7 @@
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       })
       .map(function (file) {
-        var normalizedText = sanitizeExtractedText(file.content);
+        var normalizedText = filterOcrArtifacts(file.content);
         return {
           id: file.id,
           name: file.name,
@@ -452,7 +490,7 @@
         size: file.size,
         type: file.type,
         url: file.url || '',
-        content: sanitizeExtractedText(file.content || ''),
+        content: filterOcrArtifacts(file.content || ''),
         extracted: Boolean(file.extracted),
         extractError: file.extractError || null
       };
@@ -849,7 +887,7 @@
           messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText.slice(0, 1200)));
         }
 
-        fileEntry.content = String(extractedText || '').trim();
+        fileEntry.content = filterOcrArtifacts(String(extractedText || '').trim());
         fileEntry.extracted = fileEntry.content !== '';
         fileEntry.extractError = fileEntry.extracted ? null : 'Пустой результат';
         return fileEntry.extracted;
@@ -935,6 +973,10 @@
 
         pending.remove();
         var finalResponse = payload.response || payload.analysis || 'Пустой ответ от API.';
+        finalResponse = cleanNumericArtifacts(String(finalResponse || ''))
+          .replace(/[ \t]+\n/g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
         messages.appendChild(createMessage('assistant', finalResponse));
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
