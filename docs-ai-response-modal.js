@@ -411,6 +411,16 @@
   }
 
   function buildRequestBlueprint(userText, state, config) {
+    function sanitizeExtractedText(text) {
+      return String(text || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\u00a0/g, ' ')
+        .replace(/-\n(?=\S)/g, '')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+
     var context = {};
     if (config.context && typeof config.context === 'object') {
       Object.keys(config.context).forEach(function (key) {
@@ -423,11 +433,12 @@
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       })
       .map(function (file) {
+        var normalizedText = sanitizeExtractedText(file.content);
         return {
           id: file.id,
           name: file.name,
           type: file.type || '',
-          text: file.content
+          text: normalizedText
         };
       });
 
@@ -441,7 +452,7 @@
         size: file.size,
         type: file.type,
         url: file.url || '',
-        content: file.content || '',
+        content: sanitizeExtractedText(file.content || ''),
         extracted: Boolean(file.extracted),
         extractError: file.extractError || null
       };
@@ -893,6 +904,9 @@
         return;
       }
       var effectivePrompt = value || 'Сформируй официальный ответ на основе OCR-текста файла.';
+      if (!value) {
+        effectivePrompt += ' Исправь очевидные OCR-ошибки, не цитируй мусорные символы, дай деловой структурированный текст.';
+      }
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
