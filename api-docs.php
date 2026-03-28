@@ -207,6 +207,120 @@ function buildFilesSummary(array $files): array
     return $summary;
 }
 
+function detectFileExtension(array $file): string
+{
+    $name = strtolower(trim((string)($file['name'] ?? '')));
+    if ($name === '' || !str_contains($name, '.')) {
+        return '';
+    }
+    $parts = explode('.', $name);
+    return trim((string)end($parts));
+}
+
+function decodeDocxXmlText(string $xml): string
+{
+    $dom = new DOMDocument();
+    $loaded = @$dom->loadXML($xml, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET | LIBXML_COMPACT);
+    if (!$loaded) {
+        return '';
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+    $nodes = $xpath->query('//*[self::w:t or self::w:tab or self::w:br or self::w:cr or self::w:p or self::w:tr or self::w:tc]');
+    if (!$nodes instanceof DOMNodeList) {
+        return '';
+    }
+
+    $result = '';
+    foreach ($nodes as $node) {
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+        $name = $node->nodeName;
+        if ($name === 'w:t') {
+            $result .= (string)$node->textContent;
+        } elseif ($name === 'w:tab' || $name === 'w:tc') {
+            $result .= "\t";
+        } elseif ($name === 'w:br' || $name === 'w:cr' || $name === 'w:p' || $name === 'w:tr') {
+            $result .= "\n";
+        }
+    }
+
+    $result = str_replace(["\r\n", "\r"], "\n", $result);
+    $result = preg_replace('/[^\P{C}\n\t]+/u', '', (string)$result);
+    $result = preg_replace('/[ \t]+\n/u', "\n", (string)$result);
+    $result = preg_replace('/\n{3,}/u', "\n\n", (string)$result);
+    return trim((string)$result);
+}
+
+function extractDocxText(string $tmpFile): string
+{
+    if ($tmpFile === '' || !is_file($tmpFile) || !class_exists('ZipArchive')) {
+        return '';
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($tmpFile) !== true) {
+        return '';
+    }
+
+    $targets = [];
+    for ($i = 0; $i < $zip->numFiles; $i += 1) {
+        $entryName = $zip->getNameIndex($i);
+        if (!is_string($entryName)) {
+            continue;
+        }
+        if (preg_match('/^word\/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$/u', $entryName)) {
+            $targets[] = $entryName;
+        }
+    }
+    sort($targets);
+
+    if (!$targets) {
+        $zip->close();
+        return '';
+    }
+
+    $parts = [];
+    foreach ($targets as $entryName) {
+        $xml = $zip->getFromName($entryName);
+        if (!is_string($xml) || trim($xml) === '') {
+            continue;
+        }
+        $chunk = decodeDocxXmlText($xml);
+        if ($chunk !== '') {
+            $parts[] = $chunk;
+        }
+    }
+    $zip->close();
+
+    return trim(implode("\n\n", $parts));
+}
+
+function extractTextWithoutOcr(array $file): string
+{
+    $tmpFile = (string)($file['tmp_name'] ?? '');
+    if ($tmpFile === '' || !is_file($tmpFile)) {
+        return '';
+    }
+
+    $extension = detectFileExtension($file);
+    if ($extension === 'docx' || $extension === 'docm') {
+        return extractDocxText($tmpFile);
+    }
+
+    if (in_array($extension, ['txt', 'md', 'csv', 'json', 'xml', 'html'], true)) {
+        $raw = @file_get_contents($tmpFile);
+        if (!is_string($raw) || $raw === '') {
+            return '';
+        }
+        return trim((string)$raw);
+    }
+
+    return '';
+}
+
 function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
 {
     $ch = curl_init($endpoint);
@@ -885,11 +999,26 @@ if ($action === 'ocr_extract') {
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
 
-    if ($ocrApiKey === '') {
-        jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
-    }
     if (!$files && $ocrFileUrl === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
+    }
+
+    if ($files) {
+        $directText = extractTextWithoutOcr($files[0]);
+        if ($directText !== '') {
+            jsonResponse(200, [
+                'ok' => true,
+                'text' => $directText,
+                'raw' => [
+                    'source' => 'direct_text',
+                    'extension' => detectFileExtension($files[0])
+                ],
+            ]);
+        }
+    }
+
+    if ($ocrApiKey === '') {
+        jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
     }
 
     $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $files ? $files[0] : [], $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrFileUrl);
