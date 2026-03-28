@@ -606,8 +606,7 @@
           id: file.id,
           name: file.name,
           type: file.type || '',
-          text: normalizedText,
-          rawText: String(file.rawContent || '')
+          text: normalizedText
         };
       });
 
@@ -622,8 +621,6 @@
         size: file.size,
         type: file.type,
         url: file.url || '',
-        content: filterOcrArtifacts(file.rawContent || file.content || '', state.ocrMode),
-        rawContent: String(file.rawContent || ''),
         extracted: Boolean(file.extracted),
         extractError: file.extractError || null
       };

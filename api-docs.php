@@ -553,6 +553,141 @@ function looksLikeJsonText(string $value): bool
         || (str_starts_with($trimmed, '[') && str_ends_with($trimmed, ']'));
 }
 
+function normalizeInputText(string $value): string
+{
+    $normalized = str_replace(["\r\n", "\r"], "\n", $value);
+    $normalized = preg_replace('/[ \t]+/u', ' ', $normalized);
+    $normalized = preg_replace('/\n{3,}/u', "\n\n", (string)$normalized);
+    return trim((string)$normalized);
+}
+
+function deduplicateAndNormalizeExtractedTexts(array $entries): array
+{
+    $result = [];
+    $seen = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $rawText = isset($entry['text']) ? (string)$entry['text'] : '';
+        $text = normalizeInputText($rawText);
+        if ($text === '') {
+            continue;
+        }
+        $name = trim((string)($entry['name'] ?? 'Файл'));
+        $type = trim((string)($entry['type'] ?? ''));
+        $fingerprint = md5(mb_strtolower($name . '|' . $type . '|' . $text));
+        if (isset($seen[$fingerprint])) {
+            continue;
+        }
+        $seen[$fingerprint] = true;
+        $result[] = [
+            'name' => $name !== '' ? $name : 'Файл',
+            'type' => $type,
+            'text' => $text,
+        ];
+    }
+    return $result;
+}
+
+function chunkPriorityScore(string $text, int $maxPage): int
+{
+    $lower = mb_strtolower($text);
+    $score = 0;
+    $requisitesKeywords = ['реквизит', 'инн', 'кпп', 'огрн', 'бик', 'корр', 'расчетный счет', 'р/с', 'банк'];
+    foreach ($requisitesKeywords as $keyword) {
+        if (str_contains($lower, $keyword)) {
+            $score += 220;
+            break;
+        }
+    }
+
+    if (preg_match('/страница\s*(\d{1,4})/ui', $text, $matches)) {
+        $pageNumber = (int)($matches[1] ?? 0);
+        if ($pageNumber > 0) {
+            $score += 80;
+            if ($maxPage > 0) {
+                $score += max(0, $pageNumber - max(1, $maxPage - 3)) * 40;
+            }
+            $score += min($pageNumber, 30);
+        }
+    }
+
+    return $score;
+}
+
+function applyInputBudget(array $entries, int $maxChars): array
+{
+    $chunks = [];
+    $maxPage = 0;
+    foreach ($entries as $entry) {
+        $text = trim((string)($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        if (preg_match_all('/страница\s*(\d{1,4})/ui', $text, $matches)) {
+            foreach ($matches[1] as $pageRaw) {
+                $maxPage = max($maxPage, (int)$pageRaw);
+            }
+        }
+        $chunks[] = [
+            'name' => (string)($entry['name'] ?? 'Файл'),
+            'type' => (string)($entry['type'] ?? ''),
+            'text' => $text,
+        ];
+    }
+    if (!$chunks) {
+        return ['entries' => [], 'charsIn' => 0, 'chunksUsed' => 0, 'filesUsed' => 0];
+    }
+
+    foreach ($chunks as $index => $chunk) {
+        $chunks[$index]['score'] = chunkPriorityScore($chunk['text'], $maxPage);
+        $chunks[$index]['index'] = $index;
+    }
+    usort($chunks, static function (array $a, array $b): int {
+        if ($a['score'] === $b['score']) {
+            return $a['index'] <=> $b['index'];
+        }
+        return $b['score'] <=> $a['score'];
+    });
+
+    $selected = [];
+    $usedChars = 0;
+    $usedFiles = [];
+    foreach ($chunks as $chunk) {
+        if ($usedChars >= $maxChars) {
+            break;
+        }
+        $available = $maxChars - $usedChars;
+        if ($available <= 0) {
+            break;
+        }
+        $text = $chunk['text'];
+        $length = mb_strlen($text);
+        if ($length > $available) {
+            if ($available < 200) {
+                continue;
+            }
+            $text = mb_substr($text, 0, $available) . '…';
+            $length = mb_strlen($text);
+        }
+        $selected[] = [
+            'name' => $chunk['name'],
+            'type' => $chunk['type'],
+            'text' => $text,
+        ];
+        $usedChars += $length;
+        $usedFiles[$chunk['name']] = true;
+    }
+
+    return [
+        'entries' => $selected,
+        'charsIn' => $usedChars,
+        'chunksUsed' => count($selected),
+        'filesUsed' => count($usedFiles),
+    ];
+}
+
 function buildLocalFallback(string $documentTitle, string $prompt, array $context = []): array
 {
     $title = trim($documentTitle) !== '' ? $documentTitle : 'документу';
@@ -843,6 +978,35 @@ if (is_array($decodedExtractedTexts)) {
         ];
     }
 }
+$legacyAttachedFiles = isset($context['attachedFiles']) && is_array($context['attachedFiles'])
+    ? $context['attachedFiles']
+    : [];
+foreach ($legacyAttachedFiles as $legacyFile) {
+    if (!is_array($legacyFile)) {
+        continue;
+    }
+    $legacyText = trim((string)($legacyFile['content'] ?? ''));
+    if ($legacyText === '') {
+        continue;
+    }
+    $extractedTexts[] = [
+        'name' => trim((string)($legacyFile['name'] ?? 'Файл')),
+        'type' => trim((string)($legacyFile['type'] ?? '')),
+        'text' => mb_substr($legacyText, 0, 12000),
+    ];
+}
+$extractedTexts = deduplicateAndNormalizeExtractedTexts($extractedTexts);
+$maxInputChars = (int)($env['AI_MAX_INPUT_CHARS'] ?? 60000);
+if ($maxInputChars < 2000) {
+    $maxInputChars = 2000;
+}
+$limitedInput = applyInputBudget($extractedTexts, $maxInputChars);
+$extractedTexts = $limitedInput['entries'];
+$promptStats = [
+    'charsIn' => (int)$limitedInput['charsIn'],
+    'filesUsed' => (int)$limitedInput['filesUsed'],
+    'chunksUsed' => (int)$limitedInput['chunksUsed'],
+];
 
 $effectiveStyle = $responseStyle !== ''
     ? $responseStyle
@@ -895,23 +1059,13 @@ if ($allowedModelsRaw !== '') {
 }
 
 $systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
-  . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview и context.attachedFiles[*].content. "
-  . "Используй также user payload: extractedTexts[*].text и extractedTextsCombined. "
+  . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview. "
+  . "Главный источник текста — user payload: extractedTexts[*].text. "
   . "Если контент файла присутствует, не проси путь или имя файла повторно, а используй этот контент напрямую. "
   . "Если контент пустой, кратко сообщи, что файл не удалось прочитать. "
   . $styleInstruction . ' '
   . ($styleExampleInstruction !== '' ? ($styleExampleInstruction . ' ') : '')
   . $behaviorInstruction;
-
-$extractedTextsCombined = '';
-if ($extractedTexts) {
-    $combinedParts = [];
-    foreach ($extractedTexts as $idx => $entry) {
-        $name = $entry['name'] !== '' ? $entry['name'] : ('Файл ' . ($idx + 1));
-        $combinedParts[] = 'Источник: ' . $name . "\n" . $entry['text'];
-    }
-    $extractedTextsCombined = implode("\n\n---\n\n", $combinedParts);
-}
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -919,7 +1073,6 @@ $userPayload = [
     'context' => $context,
     'files' => $filesSummary,
     'extractedTexts' => $extractedTexts,
-    'extractedTextsCombined' => $extractedTextsCombined,
 ];
 
 $body = [
@@ -1015,7 +1168,9 @@ if ($statusCode >= 400) {
     $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
     if ($statusCode === 403 && $unsupportedRegion) {
         logApiDocs('warn', 'AI provider blocked by region, fallback enabled', ['status' => $statusCode]);
-        jsonResponse(200, buildLocalFallback($documentTitle, $prompt, $context));
+        $fallbackPayload = buildLocalFallback($documentTitle, $prompt, $context);
+        $fallbackPayload['promptStats'] = $promptStats;
+        jsonResponse(200, $fallbackPayload);
     }
     jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
 }
@@ -1072,4 +1227,5 @@ jsonResponse(200, [
     'response' => $response,
     'neutral' => $neutral,
     'aggressive' => $aggressive,
+    'promptStats' => $promptStats,
 ]);
