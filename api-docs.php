@@ -706,6 +706,88 @@ function createPdfFromText(string $outputPath, string $documentTitle, string $an
     return is_file($outputPath) && filesize($outputPath) > 0;
 }
 
+function createEditablePdfFromTemplate(string $templatePdfPath, string $outputPath, string $documentTitle, string $answerText): bool
+{
+    if (!class_exists('TCPDF') || !is_file($templatePdfPath)) {
+        return false;
+    }
+
+    $pdf = class_exists('\\setasign\\Fpdi\\Tcpdf\\Fpdi')
+        ? new \setasign\Fpdi\Tcpdf\Fpdi()
+        : new TCPDF();
+
+    $pdf->SetCreator('documents-api');
+    $pdf->SetAuthor('documents-api');
+    $pdf->SetTitle($documentTitle !== '' ? $documentTitle : 'Ответ');
+    $pdf->setPrintHeader(false);
+    $pdf->setPrintFooter(false);
+    $pdf->SetAutoPageBreak(false, 0);
+    $pdf->SetMargins(0, 0, 0);
+
+    $imported = false;
+    if (method_exists($pdf, 'setSourceFile') && method_exists($pdf, 'importPage') && method_exists($pdf, 'useTemplate')) {
+        try {
+            $pageCount = (int)$pdf->setSourceFile($templatePdfPath);
+            for ($pageNo = 1; $pageNo <= $pageCount; $pageNo += 1) {
+                $template = $pdf->importPage($pageNo);
+                $templateSize = $pdf->getTemplateSize($template);
+                $width = isset($templateSize['width']) ? (float)$templateSize['width'] : 210.0;
+                $height = isset($templateSize['height']) ? (float)$templateSize['height'] : 297.0;
+                $orientation = $width > $height ? 'L' : 'P';
+                $pdf->AddPage($orientation, [$width, $height]);
+                $pdf->useTemplate($template, 0, 0, $width, $height, true);
+
+                if ($pageNo === 1) {
+                    $fieldMargin = max(10.0, min(16.0, $width * 0.08));
+                    $fieldWidth = max(80.0, $width - ($fieldMargin * 2));
+                    $fieldY = max(22.0, $height * 0.52);
+                    $fieldHeight = max(40.0, $height - $fieldY - $fieldMargin);
+
+                    $pdf->SetFont('dejavusans', 'B', 10);
+                    $pdf->SetTextColor(32, 52, 77);
+                    $pdf->SetXY($fieldMargin, max(10.0, $fieldY - 7.5));
+                    $pdf->Cell($fieldWidth, 5, 'Текст для редактирования:', 0, 1, 'L');
+
+                    $pdf->TextField(
+                        'AI_RESPONSE',
+                        $fieldWidth,
+                        $fieldHeight,
+                        [
+                            'multiline' => true,
+                            'lineWidth' => 0.3,
+                            'borderStyle' => 'solid',
+                        ],
+                        [
+                            'v' => $answerText,
+                        ],
+                        $fieldMargin,
+                        $fieldY
+                    );
+                }
+            }
+            $imported = $pageCount > 0;
+        } catch (Throwable $error) {
+            $imported = false;
+        }
+    }
+
+    if (!$imported) {
+        $pdf->SetAutoPageBreak(true, 16);
+        $pdf->SetMargins(16, 16, 16);
+        $pdf->AddPage();
+        $pdf->SetFont('dejavusans', 'B', 12);
+        $pdf->SetTextColor(32, 52, 77);
+        $pdf->MultiCell(0, 0, $documentTitle !== '' ? $documentTitle : 'Ответ', 0, 'L', false, 1);
+        $pdf->Ln(4);
+        $pdf->SetFont('dejavusans', '', 10);
+        $pdf->SetTextColor(20, 20, 20);
+        $pdf->MultiCell(0, 0, $answerText, 0, 'L', false, 1);
+    }
+
+    $pdf->Output($outputPath, 'F');
+    return is_file($outputPath) && filesize($outputPath) > 0;
+}
+
 function convertDocxToPdfViaLibreOffice(string $docxPath, string $outputPath): bool
 {
     if (!is_file($docxPath) || filesize($docxPath) <= 0) {
@@ -1304,8 +1386,10 @@ if ($action === 'generate_document') {
         header('Content-Disposition: attachment; filename="answer.docx"');
     } else {
         if (is_file($templatePdfPath)) {
-            @unlink($tmpFile);
-            $tmpFile = $templatePdfPath;
+            if (!createEditablePdfFromTemplate($templatePdfPath, $tmpFile, $documentTitle, $answerText)) {
+                @unlink($tmpFile);
+                jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать PDF на основе template.pdf']);
+            }
         } else {
             if (is_file(__DIR__ . '/vendor/autoload.php')) {
                 require_once __DIR__ . '/vendor/autoload.php';
@@ -1321,9 +1405,7 @@ if ($action === 'generate_document') {
 
     header('Content-Length: ' . filesize($tmpFile));
     readfile($tmpFile);
-    if ($tmpFile !== $templatePdfPath) {
-        @unlink($tmpFile);
-    }
+    @unlink($tmpFile);
     exit;
 }
 
@@ -1459,6 +1541,17 @@ if ($action === 'generate_from_editor') {
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="edited.docx"');
     } else {
+        $templatePdfPath = resolveTemplatePath('template.pdf', []);
+        $editorText = htmlToPlainText($html);
+        if (is_file($templatePdfPath) && createEditablePdfFromTemplate($templatePdfPath, $tmpFile, $documentTitle, $editorText)) {
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="edited.pdf"');
+            header('Content-Length: ' . filesize($tmpFile));
+            readfile($tmpFile);
+            @unlink($tmpFile);
+            exit;
+        }
+
         $tmpDocx = tempnam(sys_get_temp_dir(), 'editor_docx_');
         $pdfCreated = false;
         if ($tmpDocx !== false) {
