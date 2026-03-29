@@ -400,6 +400,194 @@ function parseAiJson(string $content): array
     return [];
 }
 
+function normalizeTextList(mixed $value): array
+{
+    if (is_array($value)) {
+        $source = $value;
+    } else {
+        $raw = trim((string)$value);
+        if ($raw === '') {
+            return [];
+        }
+        $source = preg_split('/[,;\n|]+/u', $raw) ?: [];
+    }
+    $result = [];
+    foreach ($source as $item) {
+        $line = trim((string)$item);
+        if ($line !== '') {
+            $result[] = $line;
+        }
+    }
+    return array_values(array_unique($result));
+}
+
+function sanitizeGeneratedResponse(string $value, array $sanitizePrefixes = []): string
+{
+    $text = trim(str_replace(["\r\n", "\r"], "\n", $value));
+    if ($text === '') {
+        return '';
+    }
+
+    $defaultPrefixes = ['сформируй официальный ответ', 'подготовь официальный ответ', 'решение ии:', 'причина:', 'действия:'];
+    $prefixes = normalizeTextList($sanitizePrefixes);
+    if (!$prefixes) {
+        $prefixes = $defaultPrefixes;
+    } else {
+        $prefixes = array_merge($defaultPrefixes, $prefixes);
+    }
+    $prefixes = array_values(array_unique(array_map(static function (string $item): string {
+        return mb_strtolower(trim($item));
+    }, $prefixes)));
+
+    $lines = explode("\n", $text);
+    $cleaned = [];
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+        if ($trimmed === '') {
+            $cleaned[] = '';
+            continue;
+        }
+        $lower = mb_strtolower($trimmed);
+        $isMeta = false;
+        foreach ($prefixes as $prefix) {
+            if ($prefix !== '' && str_starts_with($lower, $prefix)) {
+                $isMeta = true;
+                break;
+            }
+        }
+        if ($isMeta) {
+            continue;
+        }
+        $cleaned[] = $line;
+    }
+
+    return trim(preg_replace('/\n{3,}/u', "\n\n", implode("\n", $cleaned)) ?? '');
+}
+
+
+
+function normalizeDecisionValue(string $value): string
+{
+    $normalized = mb_strtolower(trim($value));
+    if ($normalized === '') {
+        return '';
+    }
+    if (in_array($normalized, ['approve', 'approved', 'ok', 'accept', 'accepted', 'согласовать', 'утвердить'], true)) {
+        return 'approve';
+    }
+    if (in_array($normalized, ['reject', 'rejected', 'deny', 'decline', 'отклонить', 'отказать'], true)) {
+        return 'reject';
+    }
+    if (in_array($normalized, ['need_clarification', 'need_info', 'need_information', 'request_info', 'clarify', 'уточнить'], true)) {
+        return 'need_clarification';
+    }
+    return '';
+}
+
+function normalizeStringList(mixed $value, int $maxItems = 6, int $maxLen = 240): array
+{
+    if (!is_array($value)) {
+        $single = textFromMixed($value);
+        return $single !== '' ? [mb_substr($single, 0, $maxLen)] : [];
+    }
+    $result = [];
+    foreach ($value as $item) {
+        $text = textFromMixed($item);
+        if ($text === '') {
+            continue;
+        }
+        $result[] = mb_substr($text, 0, $maxLen);
+        if (count($result) >= $maxItems) {
+            break;
+        }
+    }
+    return $result;
+}
+
+function extractDecisionBlock(array $parsed): array
+{
+    $decision = normalizeDecisionValue(textFromMixed($parsed['decision'] ?? ''));
+    $decisionReason = textFromMixed($parsed['decision_reason'] ?? '');
+    $risks = normalizeStringList($parsed['risks'] ?? []);
+    $requiredActions = normalizeStringList($parsed['required_actions'] ?? []);
+
+    return [
+        'decision' => $decision,
+        'decision_reason' => $decisionReason,
+        'risks' => $risks,
+        'required_actions' => $requiredActions,
+        'valid' => $decision !== '' && $decisionReason !== '',
+    ];
+}
+
+function extractRequirementsFromTexts(array $extractedTexts, array $triggerPhrases = [], array $stopPrefixes = []): array
+{
+    $triggers = normalizeTextList($triggerPhrases);
+    if (!$triggers) {
+        $triggers = ['требуется выполнить', 'необходимо выполнить', 'следует выполнить', 'для выполнения работ необходимо'];
+    }
+    $skipPrefixes = normalizeTextList($stopPrefixes);
+    if (!$skipPrefixes) {
+        $skipPrefixes = ['стоимость', 'итого', 'приложение', 'директор', 'тел', 'факс', 'e-mail', 'email', 'унип', 'инн'];
+    }
+
+    $items = [];
+    foreach ($extractedTexts as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $text = str_replace(["\r\n", "\r"], "\n", (string)($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        $normalized = preg_replace('/[•●▪◦·]/u', '-', $text);
+        if (!is_string($normalized)) {
+            continue;
+        }
+        $match = null;
+        foreach ($triggers as $trigger) {
+            $quoted = preg_quote($trigger, '/');
+            if (preg_match('/' . $quoted . '\s*:?(?<tail>[\s\S]{0,1200})/iu', $normalized, $m)) {
+                $match = $m;
+                break;
+            }
+        }
+        if (!is_array($match)) {
+            continue;
+        }
+        $tail = (string)($match['tail'] ?? '');
+        $lines = preg_split('/\n+/u', $tail) ?: [];
+        foreach ($lines as $line) {
+            $line = trim((string)$line);
+            $line = preg_replace('/^\s*[-–—]\s*/u', '', $line ?? '');
+            $line = trim((string)$line);
+            if ($line === '') {
+                continue;
+            }
+            if (mb_strlen($line) < 8) {
+                continue;
+            }
+            $lineLower = mb_strtolower($line);
+            $skip = false;
+            foreach ($skipPrefixes as $prefix) {
+                if ($prefix !== '' && str_starts_with($lineLower, mb_strtolower($prefix))) {
+                    $skip = true;
+                    break;
+                }
+            }
+            if ($skip) {
+                continue;
+            }
+            $items[] = rtrim($line, " .;") . '.';
+            if (count($items) >= 8) {
+                break 2;
+            }
+        }
+    }
+
+    return array_values(array_unique($items));
+}
+
 function xmlEscape(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES | ENT_XML1, 'UTF-8');
@@ -802,38 +990,6 @@ function applyInputBudget(array $entries, int $maxChars): array
     ];
 }
 
-function buildLocalFallback(string $documentTitle, string $prompt, array $context = []): array
-{
-    $title = trim($documentTitle) !== '' ? $documentTitle : 'документу';
-    $topic = trim($prompt) !== '' ? $prompt : 'обработке входящих материалов';
-    $organization = isset($context['organization']) && is_string($context['organization'])
-        ? trim($context['organization'])
-        : '';
-    $orgPart = $organization !== '' ? (' (' . $organization . ')') : '';
-
-    $analysis = 'Сервер ИИ недоступен, сформирован локальный черновик по ' . $title . $orgPart . '.';
-    $neutral = 'По ' . $title . $orgPart . ' сообщаем: материалы получены и приняты в работу. '
-      . 'По запросу о ' . $topic . ' предоставим уточнённый статус и сроки после проверки данных.';
-    $aggressive = 'По ' . $title . $orgPart . ' уведомляем: материалы приняты к исполнению в приоритетном порядке. '
-      . 'По запросу о ' . $topic . ' ответ будет предоставлен в максимально короткий срок.';
-    $style = isset($context['responseStyle']) && is_string($context['responseStyle'])
-        ? trim($context['responseStyle'])
-        : '';
-    $legacyTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
-        ? trim($context['selectedTone'])
-        : '';
-    $response = ($style === 'concise' || $legacyTone === 'aggressive') ? $aggressive : $neutral;
-
-    return [
-        'ok' => true,
-        'analysis' => $analysis,
-        'response' => $response,
-        'neutral' => $neutral,
-        'aggressive' => $aggressive,
-        'fallback' => true
-    ];
-}
-
 $env = loadEnv(getEnvPaths());
 
 $prompt = trim((string)($_POST['prompt'] ?? ''));
@@ -856,6 +1012,22 @@ if ($contextRaw !== '' && !looksLikeJsonText($contextRaw)) {
 $context = safeJsonDecode($contextRaw);
 if (!is_array($context)) {
     $context = [];
+}
+$runtimeConfig = [
+    'sanitizePrefixes' => normalizeTextList($env['AI_SANITIZE_PREFIXES'] ?? []),
+    'requirementTriggers' => normalizeTextList($env['AI_REQUIREMENT_TRIGGERS'] ?? []),
+    'requirementStopPrefixes' => normalizeTextList($env['AI_REQUIREMENT_STOP_PREFIXES'] ?? []),
+];
+if (isset($context['aiRuntime']) && is_array($context['aiRuntime'])) {
+    if (isset($context['aiRuntime']['sanitizePrefixes'])) {
+        $runtimeConfig['sanitizePrefixes'] = normalizeTextList($context['aiRuntime']['sanitizePrefixes']);
+    }
+    if (isset($context['aiRuntime']['requirementTriggers'])) {
+        $runtimeConfig['requirementTriggers'] = normalizeTextList($context['aiRuntime']['requirementTriggers']);
+    }
+    if (isset($context['aiRuntime']['requirementStopPrefixes'])) {
+        $runtimeConfig['requirementStopPrefixes'] = normalizeTextList($context['aiRuntime']['requirementStopPrefixes']);
+    }
 }
 $normalizedContextRaw = (string)json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxContextChars) {
@@ -1161,6 +1333,14 @@ $promptStats = [
     'filesUsed' => (int)$limitedInput['filesUsed'],
     'chunksUsed' => (int)$limitedInput['chunksUsed'],
 ];
+$requirements = extractRequirementsFromTexts(
+    $extractedTexts,
+    $runtimeConfig['requirementTriggers'] ?? [],
+    $runtimeConfig['requirementStopPrefixes'] ?? []
+);
+if ($requirements) {
+    $context['requirements'] = $requirements;
+}
 
 $effectiveStyle = $responseStyle !== ''
     ? $responseStyle
@@ -1212,14 +1392,16 @@ if ($allowedModelsRaw !== '') {
     }
 }
 
-$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
+$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, decision, decision_reason, risks, required_actions, response. "
   . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview. "
   . "Главный источник текста — user payload: extractedTexts[*].text. "
   . "Если контент файла присутствует, не проси путь или имя файла повторно, а используй этот контент напрямую. "
   . "Если контент пустой, кратко сообщи, что файл не удалось прочитать. "
   . $styleInstruction . ' '
   . ($styleExampleInstruction !== '' ? ($styleExampleInstruction . ' ') : '')
-  . $behaviorInstruction;
+  . $behaviorInstruction . ' Решение decision должно быть строго одним из: approve, reject, need_clarification. Поля risks и required_actions верни массивами строк. '
+  . 'При наличии requirements из OCR обязательно опирайся на них и сформируй решение по этим пунктам. '
+  . 'Поле response — это только готовый официальный ответ на письмо без служебных фраз, без повторения задания пользователя, без строк "Решение ИИ:", "Причина:", "Действия:".';
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -1227,6 +1409,8 @@ $userPayload = [
     'context' => $context,
     'files' => $filesSummary,
     'extractedTexts' => $extractedTexts,
+    'requirements' => $requirements,
+    'aiRuntime' => $runtimeConfig,
 ];
 
 $body = [
@@ -1321,22 +1505,52 @@ if ($statusCode >= 400) {
     logApiDocs('error', 'AI API HTTP error', ['status' => $statusCode, 'message' => $message]);
     $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
     if ($statusCode === 403 && $unsupportedRegion) {
-        logApiDocs('warn', 'AI provider blocked by region, fallback enabled', ['status' => $statusCode]);
-        $fallbackPayload = buildLocalFallback($documentTitle, $prompt, $context);
-        $fallbackPayload['promptStats'] = $promptStats;
-        jsonResponse(200, $fallbackPayload);
+        logApiDocs('error', 'AI provider blocked by region, no local fallback in autonomous mode', ['status' => $statusCode]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode]);
     }
     jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
 }
 
 $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 $parsed = parseAiJson($content);
+$decisionBlock = extractDecisionBlock($parsed);
+
+if (!$decisionBlock['valid']) {
+    $repairBody = $body;
+    $repairBody['messages'][] = ['role' => 'assistant', 'content' => $content];
+    $repairBody['messages'][] = [
+        'role' => 'user',
+        'content' => 'Верни только корректный JSON без пояснений. Обязательные поля: analysis, decision (approve|reject|need_clarification), decision_reason, risks[], required_actions[], response.'
+    ];
+    $repairResult = performAiRequest($endpoint, $apiKey, $repairBody);
+    $repairResponseBody = $repairResult['body'];
+    if ($repairResponseBody !== false) {
+        $repairJson = json_decode((string)$repairResponseBody, true);
+        if (is_array($repairJson)) {
+            $repairContent = (string)($repairJson['choices'][0]['message']['content'] ?? '');
+            $repairParsed = parseAiJson($repairContent);
+            $repairDecision = extractDecisionBlock($repairParsed);
+            if ($repairDecision['valid']) {
+                $parsed = $repairParsed;
+                $content = $repairContent;
+                $decisionBlock = $repairDecision;
+            }
+        }
+    }
+}
+if (!$decisionBlock['valid']) {
+    logApiDocs('error', 'AI decision block invalid after repair', [
+        'documentTitle' => $documentTitle,
+        'promptPreview' => mb_substr($prompt, 0, 180),
+    ]);
+    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул некорректный decision JSON. Повторите запрос.']);
+}
 
 $analysis = '';
 if (isset($parsed['analysis']) && (is_string($parsed['analysis']) || is_numeric($parsed['analysis']) || is_bool($parsed['analysis']))) {
     $analysis = textFromMixed($parsed['analysis']);
 }
-$response = textFromMixed($parsed['response'] ?? '');
+$response = sanitizeGeneratedResponse(textFromMixed($parsed['response'] ?? ''), $runtimeConfig['sanitizePrefixes'] ?? []);
 $neutral = textFromMixed($parsed['neutral'] ?? '');
 $aggressive = textFromMixed($parsed['aggressive'] ?? '');
 
@@ -1345,27 +1559,31 @@ if ($response === '') {
         ? trim($context['selectedTone'])
         : '';
     if (($effectiveStyle === 'aggressive' || $effectiveStyle === 'concise' || $selectedTone === 'aggressive') && $aggressive !== '') {
-        $response = $aggressive;
+        $response = sanitizeGeneratedResponse($aggressive, $runtimeConfig['sanitizePrefixes'] ?? []);
     } elseif ($neutral !== '') {
-        $response = $neutral;
+        $response = sanitizeGeneratedResponse($neutral, $runtimeConfig['sanitizePrefixes'] ?? []);
     } elseif ($aggressive !== '') {
-        $response = $aggressive;
+        $response = sanitizeGeneratedResponse($aggressive, $runtimeConfig['sanitizePrefixes'] ?? []);
     }
 }
 
 if ($analysis === '' && $response === '' && $neutral === '' && $aggressive === '') {
     $analysis = 'ИИ вернул ответ в свободной форме.';
-    $response = $content;
+    $response = sanitizeGeneratedResponse($content, $runtimeConfig['sanitizePrefixes'] ?? []);
     $neutral = $content;
     $aggressive = $content;
 }
 
 if (looksLikeJsonText($response) || $response === '') {
-    $fallback = buildLocalFallback($documentTitle, $prompt, array_merge($context, ['responseStyle' => $effectiveStyle]));
-    $response = (string)($fallback['response'] ?? '');
-    if ($analysis === '') {
-        $analysis = (string)($fallback['analysis'] ?? 'Ответ сформирован по локальному шаблону.');
-    }
+    logApiDocs('error', 'AI returned empty or JSON-like response text', [
+        'documentTitle' => $documentTitle,
+        'contentPreview' => mb_substr($content, 0, 220),
+    ]);
+    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.']);
+}
+$decisionBlock['response'] = $response;
+if (!isset($decisionBlock['requirements']) || !is_array($decisionBlock['requirements'])) {
+    $decisionBlock['requirements'] = $requirements;
 }
 
 if (mb_strlen($analysis) > 1200) {
@@ -1382,4 +1600,11 @@ jsonResponse(200, [
     'neutral' => $neutral,
     'aggressive' => $aggressive,
     'promptStats' => $promptStats,
+    'decisionBlock' => [
+        'decision' => (string)($decisionBlock['decision'] ?? ''),
+        'decision_reason' => (string)($decisionBlock['decision_reason'] ?? ''),
+        'risks' => normalizeStringList($decisionBlock['risks'] ?? []),
+        'required_actions' => normalizeStringList($decisionBlock['required_actions'] ?? []),
+        'requirements' => normalizeStringList($decisionBlock['requirements'] ?? $requirements, 8, 300),
+    ],
 ]);
