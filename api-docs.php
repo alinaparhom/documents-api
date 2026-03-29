@@ -980,6 +980,8 @@ function createDocxFromHtmlUsingPhpWord(string $outputPath, string $html): bool
     try {
         $phpWord = new \PhpOffice\PhpWord\PhpWord();
         $section = $phpWord->addSection([
+            'pageSizeW' => 11906,
+            'pageSizeH' => 16838,
             'marginTop' => 1134,
             'marginRight' => 1134,
             'marginBottom' => 1134,
@@ -1383,14 +1385,38 @@ if ($action === 'generate_from_html') {
         exit;
     }
 
-    if (is_file(__DIR__ . '/vendor/autoload.php')) {
-        require_once __DIR__ . '/vendor/autoload.php';
+    $tmpDocx = tempnam(sys_get_temp_dir(), 'html_pdf_docx_');
+    $pdfCreated = false;
+    if ($tmpDocx !== false) {
+        $docxReady = replaceDocxPlaceholderWithHtml(
+            $templateDocxPath,
+            $tmpDocx,
+            $html,
+            ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+        );
+        if (!$docxReady) {
+            $docxReady = createDocxFromHtmlUsingPhpWord($tmpDocx, $html);
+        }
+        if (!$docxReady) {
+            $docxReady = replaceDocxWithHtml($templateDocxPath, $tmpDocx, $html);
+        }
+        if ($docxReady) {
+            $pdfCreated = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
+        }
+        @unlink($tmpDocx);
     }
-    $text = htmlToPlainText($html);
-    if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
-        @unlink($tmpFile);
-        jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен для HTML']);
+
+    if (!$pdfCreated) {
+        if (is_file(__DIR__ . '/vendor/autoload.php')) {
+            require_once __DIR__ . '/vendor/autoload.php';
+        }
+        $text = htmlToPlainText($html);
+        if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
+            @unlink($tmpFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен для HTML']);
+        }
     }
+
     header('Content-Type: application/pdf');
     header('Content-Disposition: attachment; filename="answer-from-html.pdf"');
     header('Content-Length: ' . filesize($tmpFile));
@@ -1439,44 +1465,38 @@ if ($action === 'generate_from_editor') {
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="edited.docx"');
     } else {
-        if (is_file(__DIR__ . '/vendor/autoload.php')) {
-            require_once __DIR__ . '/vendor/autoload.php';
-        }
-        $text = htmlToPlainText($html);
-        if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
-            $tmpDocx = tempnam(sys_get_temp_dir(), 'editor_docx_');
-            if ($tmpDocx !== false) {
+        $tmpDocx = tempnam(sys_get_temp_dir(), 'editor_docx_');
+        $pdfCreated = false;
+        if ($tmpDocx !== false) {
+            $templatePath = resolveTemplatePath('template.docx', []);
+            $docxCreated = is_file($templatePath)
+                ? replaceDocxPlaceholderWithHtml(
+                    $templatePath,
+                    $tmpDocx,
+                    $html,
+                    ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+                )
+                : false;
+            if (!$docxCreated) {
                 $docxCreated = createDocxFromHtmlUsingPhpWord($tmpDocx, $html);
-                if (!$docxCreated) {
-                    $templatePath = resolveTemplatePath('template.docx', []);
-                    $docxCreated = is_file($templatePath)
-                        ? replaceDocxPlaceholderWithHtml(
-                            $templatePath,
-                            $tmpDocx,
-                            $html,
-                            ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
-                        )
-                        : false;
-                    if (!$docxCreated && is_file($templatePath)) {
-                        $docxCreated = replaceDocxWithHtml($templatePath, $tmpDocx, $html);
-                    }
-                }
-                if ($docxCreated) {
-                    $converted = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
-                    if (!$converted) {
-                        @unlink($tmpDocx);
-                        @unlink($tmpFile);
-                        jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или LibreOffice (soffice)']);
-                    }
-                } else {
-                    @unlink($tmpDocx);
-                    @unlink($tmpFile);
-                    jsonResponse(500, ['ok' => false, 'error' => 'Не удалось подготовить DOCX для конвертации в PDF']);
-                }
-                @unlink($tmpDocx);
-            } else {
+            }
+            if (!$docxCreated && is_file($templatePath)) {
+                $docxCreated = replaceDocxWithHtml($templatePath, $tmpDocx, $html);
+            }
+            if ($docxCreated) {
+                $pdfCreated = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
+            }
+            @unlink($tmpDocx);
+        }
+
+        if (!$pdfCreated) {
+            if (is_file(__DIR__ . '/vendor/autoload.php')) {
+                require_once __DIR__ . '/vendor/autoload.php';
+            }
+            $text = htmlToPlainText($html);
+            if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
                 @unlink($tmpFile);
-                jsonResponse(500, ['ok' => false, 'error' => 'Ошибка создания временного DOCX для PDF']);
+                jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите LibreOffice (soffice) или tecnickcom/tcpdf']);
             }
         }
         header('Content-Type: application/pdf');
