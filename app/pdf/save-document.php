@@ -16,6 +16,58 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     exit;
 }
 
+function sanitizeHtmlForExport(string $html): string
+{
+    if ($html === '') {
+        return '';
+    }
+
+    if (class_exists(DOMDocument::class)) {
+        $dom = new DOMDocument();
+        @$dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD | LIBXML_NONET);
+
+        $xpath = new DOMXPath($dom);
+        foreach (['//script', '//style', '//iframe', '//object', '//embed', '//link'] as $query) {
+            $nodes = $xpath->query($query);
+            if (!$nodes instanceof DOMNodeList) {
+                continue;
+            }
+            foreach (iterator_to_array($nodes) as $node) {
+                if ($node->parentNode) {
+                    $node->parentNode->removeChild($node);
+                }
+            }
+        }
+
+        $allNodes = $xpath->query('//*');
+        if ($allNodes instanceof DOMNodeList) {
+            foreach ($allNodes as $node) {
+                if (!$node instanceof DOMElement || !$node->hasAttributes()) {
+                    continue;
+                }
+                $attributes = iterator_to_array($node->attributes);
+                foreach ($attributes as $attribute) {
+                    $name = strtolower((string)$attribute->name);
+                    $value = strtolower(trim((string)$attribute->value));
+                    if (str_starts_with($name, 'on')) {
+                        $node->removeAttribute($attribute->name);
+                        continue;
+                    }
+                    if (in_array($name, ['href', 'src'], true) && str_starts_with($value, 'javascript:')) {
+                        $node->removeAttribute($attribute->name);
+                    }
+                }
+            }
+        }
+
+        $cleaned = $dom->saveHTML();
+        return is_string($cleaned) ? trim($cleaned) : '';
+    }
+
+    $html = preg_replace('/<script\\b[^>]*>(.*?)<\\/script>/is', '', $html) ?? '';
+    return trim($html);
+}
+
 $raw = file_get_contents('php://input');
 if ($raw === false || trim($raw) === '') {
     http_response_code(400);
@@ -57,6 +109,7 @@ if ($html === '') {
     echo 'Отсутствует HTML документа.';
     exit;
 }
+$html = sanitizeHtmlForExport($html);
 
 if (strlen($html) > 2_000_000) {
     http_response_code(413);
