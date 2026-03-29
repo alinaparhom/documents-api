@@ -903,6 +903,13 @@
     context.contextDetail = state.contextDetail;
     context.contextStats = preparedContext.stats;
     context.extractedTexts = extractedTexts;
+    if (config.aiRuntime && typeof config.aiRuntime === 'object') {
+      context.aiRuntime = {
+        sanitizePrefixes: Array.isArray(config.aiRuntime.sanitizePrefixes) ? config.aiRuntime.sanitizePrefixes.slice(0, 20) : [],
+        requirementTriggers: Array.isArray(config.aiRuntime.requirementTriggers) ? config.aiRuntime.requirementTriggers.slice(0, 20) : [],
+        requirementStopPrefixes: Array.isArray(config.aiRuntime.requirementStopPrefixes) ? config.aiRuntime.requirementStopPrefixes.slice(0, 20) : []
+      };
+    }
     context.attachedFiles = state.files.map(function (file) {
       return {
         name: file.name,

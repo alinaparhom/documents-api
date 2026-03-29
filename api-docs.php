@@ -400,12 +400,44 @@ function parseAiJson(string $content): array
     return [];
 }
 
-function sanitizeGeneratedResponse(string $value): string
+function normalizeTextList(mixed $value): array
+{
+    if (is_array($value)) {
+        $source = $value;
+    } else {
+        $raw = trim((string)$value);
+        if ($raw === '') {
+            return [];
+        }
+        $source = preg_split('/[,;\n|]+/u', $raw) ?: [];
+    }
+    $result = [];
+    foreach ($source as $item) {
+        $line = trim((string)$item);
+        if ($line !== '') {
+            $result[] = $line;
+        }
+    }
+    return array_values(array_unique($result));
+}
+
+function sanitizeGeneratedResponse(string $value, array $sanitizePrefixes = []): string
 {
     $text = trim(str_replace(["\r\n", "\r"], "\n", $value));
     if ($text === '') {
         return '';
     }
+
+    $defaultPrefixes = ['сформируй официальный ответ', 'подготовь официальный ответ', 'решение ии:', 'причина:', 'действия:'];
+    $prefixes = normalizeTextList($sanitizePrefixes);
+    if (!$prefixes) {
+        $prefixes = $defaultPrefixes;
+    } else {
+        $prefixes = array_merge($defaultPrefixes, $prefixes);
+    }
+    $prefixes = array_values(array_unique(array_map(static function (string $item): string {
+        return mb_strtolower(trim($item));
+    }, $prefixes)));
 
     $lines = explode("\n", $text);
     $cleaned = [];
@@ -415,16 +447,15 @@ function sanitizeGeneratedResponse(string $value): string
             $cleaned[] = '';
             continue;
         }
-        if (preg_match('/^(сформируй|подготовь)\s+официальный\s+ответ/i', $trimmed)) {
-            continue;
+        $lower = mb_strtolower($trimmed);
+        $isMeta = false;
+        foreach ($prefixes as $prefix) {
+            if ($prefix !== '' && str_starts_with($lower, $prefix)) {
+                $isMeta = true;
+                break;
+            }
         }
-        if (preg_match('/^решение\s*ии\s*:/iu', $trimmed)) {
-            continue;
-        }
-        if (preg_match('/^причина\s*:/iu', $trimmed)) {
-            continue;
-        }
-        if (preg_match('/^действия\s*:/iu', $trimmed)) {
+        if ($isMeta) {
             continue;
         }
         $cleaned[] = $line;
@@ -547,8 +578,17 @@ function buildDecisionFallback(string $documentTitle, string $prompt, array $con
     ];
 }
 
-function extractRequirementsFromTexts(array $extractedTexts): array
+function extractRequirementsFromTexts(array $extractedTexts, array $triggerPhrases = [], array $stopPrefixes = []): array
 {
+    $triggers = normalizeTextList($triggerPhrases);
+    if (!$triggers) {
+        $triggers = ['требуется выполнить', 'необходимо выполнить', 'следует выполнить', 'для выполнения работ необходимо'];
+    }
+    $skipPrefixes = normalizeTextList($stopPrefixes);
+    if (!$skipPrefixes) {
+        $skipPrefixes = ['стоимость', 'итого', 'приложение', 'директор', 'тел', 'факс', 'e-mail', 'email', 'унип', 'инн'];
+    }
+
     $items = [];
     foreach ($extractedTexts as $entry) {
         if (!is_array($entry)) {
@@ -562,7 +602,15 @@ function extractRequirementsFromTexts(array $extractedTexts): array
         if (!is_string($normalized)) {
             continue;
         }
-        if (!preg_match('/требуется\s+выполнить\s*:?(?<tail>[\s\S]{0,900})/iu', $normalized, $match)) {
+        $match = null;
+        foreach ($triggers as $trigger) {
+            $quoted = preg_quote($trigger, '/');
+            if (preg_match('/' . $quoted . '\s*:?(?<tail>[\s\S]{0,1200})/iu', $normalized, $m)) {
+                $match = $m;
+                break;
+            }
+        }
+        if (!is_array($match)) {
             continue;
         }
         $tail = (string)($match['tail'] ?? '');
@@ -577,7 +625,15 @@ function extractRequirementsFromTexts(array $extractedTexts): array
             if (mb_strlen($line) < 8) {
                 continue;
             }
-            if (preg_match('/^(стоимость|итого|приложение|директор|тел|e-?mail)/iu', $line)) {
+            $lineLower = mb_strtolower($line);
+            $skip = false;
+            foreach ($skipPrefixes as $prefix) {
+                if ($prefix !== '' && str_starts_with($lineLower, mb_strtolower($prefix))) {
+                    $skip = true;
+                    break;
+                }
+            }
+            if ($skip) {
                 continue;
             }
             $items[] = rtrim($line, " .;") . '.';
@@ -1047,6 +1103,22 @@ $context = safeJsonDecode($contextRaw);
 if (!is_array($context)) {
     $context = [];
 }
+$runtimeConfig = [
+    'sanitizePrefixes' => normalizeTextList($env['AI_SANITIZE_PREFIXES'] ?? []),
+    'requirementTriggers' => normalizeTextList($env['AI_REQUIREMENT_TRIGGERS'] ?? []),
+    'requirementStopPrefixes' => normalizeTextList($env['AI_REQUIREMENT_STOP_PREFIXES'] ?? []),
+];
+if (isset($context['aiRuntime']) && is_array($context['aiRuntime'])) {
+    if (isset($context['aiRuntime']['sanitizePrefixes'])) {
+        $runtimeConfig['sanitizePrefixes'] = normalizeTextList($context['aiRuntime']['sanitizePrefixes']);
+    }
+    if (isset($context['aiRuntime']['requirementTriggers'])) {
+        $runtimeConfig['requirementTriggers'] = normalizeTextList($context['aiRuntime']['requirementTriggers']);
+    }
+    if (isset($context['aiRuntime']['requirementStopPrefixes'])) {
+        $runtimeConfig['requirementStopPrefixes'] = normalizeTextList($context['aiRuntime']['requirementStopPrefixes']);
+    }
+}
 $normalizedContextRaw = (string)json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxContextChars) {
     jsonResponse(400, [
@@ -1351,7 +1423,11 @@ $promptStats = [
     'filesUsed' => (int)$limitedInput['filesUsed'],
     'chunksUsed' => (int)$limitedInput['chunksUsed'],
 ];
-$requirements = extractRequirementsFromTexts($extractedTexts);
+$requirements = extractRequirementsFromTexts(
+    $extractedTexts,
+    $runtimeConfig['requirementTriggers'] ?? [],
+    $runtimeConfig['requirementStopPrefixes'] ?? []
+);
 if ($requirements) {
     $context['requirements'] = $requirements;
 }
@@ -1424,6 +1500,7 @@ $userPayload = [
     'files' => $filesSummary,
     'extractedTexts' => $extractedTexts,
     'requirements' => $requirements,
+    'aiRuntime' => $runtimeConfig,
 ];
 
 $body = [
@@ -1558,7 +1635,7 @@ $analysis = '';
 if (isset($parsed['analysis']) && (is_string($parsed['analysis']) || is_numeric($parsed['analysis']) || is_bool($parsed['analysis']))) {
     $analysis = textFromMixed($parsed['analysis']);
 }
-$response = sanitizeGeneratedResponse(textFromMixed($parsed['response'] ?? ''));
+$response = sanitizeGeneratedResponse(textFromMixed($parsed['response'] ?? ''), $runtimeConfig['sanitizePrefixes'] ?? []);
 $neutral = textFromMixed($parsed['neutral'] ?? '');
 $aggressive = textFromMixed($parsed['aggressive'] ?? '');
 
@@ -1567,24 +1644,24 @@ if ($response === '') {
         ? trim($context['selectedTone'])
         : '';
     if (($effectiveStyle === 'aggressive' || $effectiveStyle === 'concise' || $selectedTone === 'aggressive') && $aggressive !== '') {
-        $response = sanitizeGeneratedResponse($aggressive);
+        $response = sanitizeGeneratedResponse($aggressive, $runtimeConfig['sanitizePrefixes'] ?? []);
     } elseif ($neutral !== '') {
-        $response = sanitizeGeneratedResponse($neutral);
+        $response = sanitizeGeneratedResponse($neutral, $runtimeConfig['sanitizePrefixes'] ?? []);
     } elseif ($aggressive !== '') {
-        $response = sanitizeGeneratedResponse($aggressive);
+        $response = sanitizeGeneratedResponse($aggressive, $runtimeConfig['sanitizePrefixes'] ?? []);
     }
 }
 
 if ($analysis === '' && $response === '' && $neutral === '' && $aggressive === '') {
     $analysis = 'ИИ вернул ответ в свободной форме.';
-    $response = sanitizeGeneratedResponse($content);
+    $response = sanitizeGeneratedResponse($content, $runtimeConfig['sanitizePrefixes'] ?? []);
     $neutral = $content;
     $aggressive = $content;
 }
 
 if (looksLikeJsonText($response) || $response === '') {
     $fallback = buildLocalFallback($documentTitle, $prompt, array_merge($context, ['responseStyle' => $effectiveStyle]));
-    $response = sanitizeGeneratedResponse((string)($fallback['response'] ?? ''));
+    $response = sanitizeGeneratedResponse((string)($fallback['response'] ?? ''), $runtimeConfig['sanitizePrefixes'] ?? []);
     if ($analysis === '') {
         $analysis = (string)($fallback['analysis'] ?? 'Ответ сформирован по локальному шаблону.');
     }
