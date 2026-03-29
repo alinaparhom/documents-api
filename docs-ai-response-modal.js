@@ -1313,12 +1313,26 @@
       var initialHtml = await loadTemplateHtml();
 
       var editorModal = createOverlayModal('WYSIWYG-редактор шаблона');
-      editorModal.content.style.width = 'min(1400px, 95vw)';
-      editorModal.content.style.maxWidth = '95vw';
-      editorModal.content.style.height = '90vh';
+      var editorOverlay = editorModal.overlay;
+      var editorPanel = editorModal.content.parentNode;
+      editorOverlay.style.padding = '0';
+      editorOverlay.style.alignItems = 'stretch';
+      editorOverlay.style.justifyContent = 'stretch';
+      editorPanel.style.width = '100vw';
+      editorPanel.style.height = '100vh';
+      editorPanel.style.maxWidth = '100vw';
+      editorPanel.style.maxHeight = '100vh';
+      editorPanel.style.minWidth = '320px';
+      editorPanel.style.minHeight = '420px';
+      editorPanel.style.borderRadius = '0';
+      editorPanel.style.resize = 'both';
+      editorPanel.style.overflow = 'hidden';
+      editorPanel.style.margin = '0';
+      editorModal.content.style.width = '100%';
+      editorModal.content.style.height = '100%';
       editorModal.content.style.padding = '0';
       editorModal.content.style.overflow = 'hidden';
-      editorModal.content.style.borderRadius = '18px';
+      editorModal.content.style.borderRadius = '0';
       editorModal.content.style.border = '1px solid rgba(148,163,184,.34)';
       editorModal.content.style.background = 'linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%)';
 
@@ -1421,7 +1435,8 @@
       var reloadTemplateBtn = createButton('Загрузить шаблон', false);
       var applyResponseBtn = createButton('Применить в ответ', false);
       var applyRequestBtn = createButton('Применить в запрос', false);
-      topBar.append(insertAnswerBtn, printBtn, downloadDocxBtn, downloadPdfBtn, reloadTemplateBtn, applyResponseBtn, applyRequestBtn);
+      var fullscreenToggleBtn = createButton('Окно 90%', false);
+      topBar.append(insertAnswerBtn, printBtn, downloadDocxBtn, downloadPdfBtn, reloadTemplateBtn, applyResponseBtn, applyRequestBtn, fullscreenToggleBtn);
 
       var fontSelect = document.createElement('select');
       fontSelect.className = 'ai-chat-modal__select';
@@ -1621,6 +1636,33 @@
         autoHeight(textarea);
         state.templateDraft = getDocumentHtml();
         toast('Текст применён в поле запроса.');
+      });
+
+      var isFullscreenEditor = true;
+      fullscreenToggleBtn.addEventListener('click', function () {
+        if (isFullscreenEditor) {
+          editorPanel.style.width = 'min(1400px, 95vw)';
+          editorPanel.style.height = '90vh';
+          editorPanel.style.maxWidth = '95vw';
+          editorPanel.style.maxHeight = '95vh';
+          editorPanel.style.borderRadius = '16px';
+          editorOverlay.style.padding = '8px';
+          editorOverlay.style.alignItems = 'center';
+          editorOverlay.style.justifyContent = 'center';
+          fullscreenToggleBtn.textContent = 'На весь экран';
+        } else {
+          editorOverlay.style.padding = '0';
+          editorOverlay.style.alignItems = 'stretch';
+          editorOverlay.style.justifyContent = 'stretch';
+          editorPanel.style.width = '100vw';
+          editorPanel.style.height = '100vh';
+          editorPanel.style.maxWidth = '100vw';
+          editorPanel.style.maxHeight = '100vh';
+          editorPanel.style.borderRadius = '0';
+          fullscreenToggleBtn.textContent = 'Окно 90%';
+        }
+        isFullscreenEditor = !isFullscreenEditor;
+        syncPageScale();
       });
 
       printBtn.addEventListener('click', function () {
