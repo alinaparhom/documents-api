@@ -86,10 +86,11 @@ function ensureScript(src, globalKey) {
 }
 
 const ensureMammoth = () => ensureScript('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', 'mammoth');
+const ensureDocxPreview = () => ensureScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.5/dist/docx-preview.min.js', 'docx');
 const ensureJsPdf = () => ensureScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'jspdf');
 
 const BASE_ALLOWED_TAGS = new Set(['P', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'A', 'SPAN', 'DIV', 'BLOCKQUOTE']);
-const TEMPLATE_ALLOWED_TAGS = new Set([...BASE_ALLOWED_TAGS, 'SECTION', 'HEADER', 'FOOTER']);
+const TEMPLATE_ALLOWED_TAGS = new Set([...BASE_ALLOWED_TAGS, 'SECTION', 'HEADER', 'FOOTER', 'STYLE']);
 const SAFE_STYLE_PROPERTIES = new Set([
   'text-align',
   'font-size',
@@ -242,8 +243,40 @@ async function fetchTemplateBuffer(urls) {
 }
 
 async function getTemplateHtml() {
-  const mammoth = await ensureMammoth();
   const { buffer, url } = await fetchTemplateBuffer(DOCX_TEMPLATE_URLS);
+
+  try {
+    const docxPreview = await ensureDocxPreview();
+    if (docxPreview && typeof docxPreview.renderAsync === 'function') {
+      const host = document.createElement('div');
+      const bodyHost = document.createElement('div');
+      const styleHost = document.createElement('div');
+      await docxPreview.renderAsync(buffer, bodyHost, styleHost, {
+        className: 'appdosc-docx-template',
+        breakPages: false,
+        inWrapper: false,
+        ignoreWidth: false,
+        ignoreHeight: false,
+      });
+
+      const styleHtml = styleHost.innerHTML || '';
+      const bodyHtml = bodyHost.innerHTML || '';
+      host.innerHTML = `${styleHtml}${bodyHtml}`;
+
+      const html = sanitizeTemplateHtml(host.innerHTML);
+      if (html.trim()) {
+        return {
+          html,
+          url,
+          messages: [{ type: 'info', message: 'Шаблон загружен через docx-preview (максимально близко к Word).' }],
+        };
+      }
+    }
+  } catch (_) {
+    // fallback below
+  }
+
+  const mammoth = await ensureMammoth();
   const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
   const html = sanitizeTemplateHtml(result && result.value ? result.value : '');
   if (!html.trim()) throw new Error('DOCX не удалось конвертировать');
