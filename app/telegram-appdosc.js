@@ -10,6 +10,20 @@ const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 
 let aiDialogLoader = null;
 
+function openTemplateEditorFallback() {
+  const editorUrl = '/js/documents/app/pdf/editor.html';
+  try {
+    if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.openLink === 'function') {
+      window.Telegram.WebApp.openLink(editorUrl, { try_instant_view: false });
+      return true;
+    }
+    const opened = window.open(editorUrl, '_blank', 'noopener,noreferrer');
+    return Boolean(opened);
+  } catch (error) {
+    return false;
+  }
+}
+
 function ensureAiDialogScriptLoaded() {
   if (window && typeof window.openAiResponseDialog === 'function') {
     return Promise.resolve(window.openAiResponseDialog);
@@ -83,12 +97,19 @@ async function openAiDialogSafely(context = {}) {
       },
     });
   } catch (error) {
+    const fallbackOpened = openTemplateEditorFallback();
     if (typeof context.onStatus === 'function') {
-      context.onStatus('error', 'Не удалось открыть ИИ-диалог. Обновите страницу.');
+      context.onStatus(
+        fallbackOpened ? 'warning' : 'error',
+        fallbackOpened
+          ? 'ИИ-диалог временно недоступен. Открыл редактор шаблона в новой вкладке.'
+          : 'Не удалось открыть ИИ-диалог. Обновите страницу.'
+      );
     }
     logClientEvent('task_view_error', {
       reason: 'ai_dialog_open_failed',
       message: error instanceof Error ? error.message : String(error),
+      fallbackOpened: fallbackOpened ? '1' : '0',
     });
   }
 }
