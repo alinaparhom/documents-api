@@ -1260,6 +1260,29 @@
     async function openTemplateEditor() {
       var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
       var htmlContent = '';
+      function normalizeTemplateHtml(rawHtml) {
+        var content = String(rawHtml || '').trim();
+        if (!content) {
+          return '<p>Шаблон пустой. Начните редактирование.</p>';
+        }
+        if (!/<html[\s>]/i.test(content)) {
+          return content;
+        }
+        try {
+          var parser = new DOMParser();
+          var parsed = parser.parseFromString(content, 'text/html');
+          var bodyHtml = parsed.body ? parsed.body.innerHTML : content;
+          var headStyles = '';
+          if (parsed.head) {
+            headStyles = Array.prototype.map.call(parsed.head.querySelectorAll('style'), function (styleTag) {
+              return styleTag.outerHTML;
+            }).join('');
+          }
+          return headStyles + bodyHtml;
+        } catch (e) {
+          return content;
+        }
+      }
       try {
         var res = await fetch(apiUrl, {
           method: 'POST',
@@ -1269,7 +1292,7 @@
         });
         var data = await res.json();
         htmlContent = (res.ok && data && data.ok && data.html)
-          ? String(data.html)
+          ? normalizeTemplateHtml(data.html)
           : '<p>Не удалось загрузить шаблон. Создайте новый документ.</p>';
       } catch (error) {
         htmlContent = '<p>Ошибка загрузки шаблона</p>';
@@ -1333,25 +1356,36 @@
 
       var page = createElement('div', 'ai-editor-page');
       page.style.background = '#fff';
-      page.style.maxWidth = '900px';
+      page.style.width = '210mm';
+      page.style.maxWidth = '100%';
       page.style.margin = '0 auto';
       page.style.boxShadow = '0 8px 22px rgba(15,23,42,.12)';
-      page.style.minHeight = '60vh';
+      page.style.minHeight = '297mm';
       page.style.borderRadius = '6px';
+      page.style.position = 'relative';
+
+      var pageHint = createElement('div', 'ai-editor-page-hint', 'Лист A4 · формат шаблона сохранён');
+      pageHint.style.position = 'absolute';
+      pageHint.style.top = '10px';
+      pageHint.style.right = '12px';
+      pageHint.style.fontSize = '11px';
+      pageHint.style.color = '#64748b';
+      pageHint.style.pointerEvents = 'none';
 
       var editorArea = createElement('div', 'ai-chat-modal__live-preview');
       editorArea.setAttribute('contenteditable', 'true');
       editorArea.setAttribute('spellcheck', 'true');
       editorArea.innerHTML = htmlContent;
       editorArea.style.minHeight = '60vh';
-      editorArea.style.padding = '40px 46px';
-      editorArea.style.fontSize = '15px';
-      editorArea.style.lineHeight = '1.55';
-      editorArea.style.fontFamily = "'Times New Roman', Georgia, serif";
+      editorArea.style.padding = '20mm 18mm 20mm 22mm';
+      editorArea.style.fontSize = '14px';
+      editorArea.style.lineHeight = '1.5';
       editorArea.style.outline = 'none';
       editorArea.style.color = '#111827';
       editorArea.style.background = '#fff';
+      editorArea.style.wordBreak = 'break-word';
 
+      page.appendChild(pageHint);
       page.appendChild(editorArea);
       pageBg.appendChild(page);
       appWrap.appendChild(ribbon);
@@ -1359,6 +1393,26 @@
       appWrap.appendChild(pageBg);
       editorModal.content.appendChild(appWrap);
       openOverlay(editorModal);
+
+      function syncA4Scale() {
+        if (!pageBg || !page) {
+          return;
+        }
+        var viewport = pageBg.clientWidth - 20;
+        if (viewport <= 0) {
+          return;
+        }
+        var pageWidthPx = page.getBoundingClientRect().width;
+        if (pageWidthPx <= 0) {
+          return;
+        }
+        var nextScale = viewport < pageWidthPx ? Math.max(0.72, viewport / pageWidthPx) : 1;
+        page.style.transformOrigin = 'top center';
+        page.style.transform = 'scale(' + nextScale + ')';
+        pageBg.style.minHeight = Math.ceil((page.offsetHeight * nextScale) + 24) + 'px';
+      }
+      syncA4Scale();
+      window.addEventListener('resize', syncA4Scale);
 
       function applyFormat(command) {
         editorArea.focus();
