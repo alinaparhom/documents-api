@@ -1407,14 +1407,8 @@ if ($action === 'generate_from_html') {
     }
 
     if (!$pdfCreated) {
-        if (is_file(__DIR__ . '/vendor/autoload.php')) {
-            require_once __DIR__ . '/vendor/autoload.php';
-        }
-        $text = htmlToPlainText($html);
-        if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
-            @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен для HTML']);
-        }
+        @unlink($tmpFile);
+        jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт в режиме "как в шаблоне" недоступен: установите LibreOffice (soffice)']);
     }
 
     header('Content-Type: application/pdf');
@@ -1490,14 +1484,8 @@ if ($action === 'generate_from_editor') {
         }
 
         if (!$pdfCreated) {
-            if (is_file(__DIR__ . '/vendor/autoload.php')) {
-                require_once __DIR__ . '/vendor/autoload.php';
-            }
-            $text = htmlToPlainText($html);
-            if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
-                @unlink($tmpFile);
-                jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите LibreOffice (soffice) или tecnickcom/tcpdf']);
-            }
+            @unlink($tmpFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт в режиме "как в шаблоне" недоступен: установите LibreOffice (soffice)']);
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="edited.pdf"');
