@@ -88,8 +88,71 @@ function ensureScript(src, globalKey) {
 const ensureMammoth = () => ensureScript('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', 'mammoth');
 const ensureJsPdf = () => ensureScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'jspdf');
 
-function sanitizeHtml(inputHtml) {
-  const allowedTags = new Set(['P', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'H1', 'H2', 'H3', 'UL', 'OL', 'LI', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'A', 'SPAN', 'DIV']);
+const BASE_ALLOWED_TAGS = new Set(['P', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'A', 'SPAN', 'DIV', 'BLOCKQUOTE']);
+const TEMPLATE_ALLOWED_TAGS = new Set([...BASE_ALLOWED_TAGS, 'SECTION', 'HEADER', 'FOOTER']);
+const SAFE_STYLE_PROPERTIES = new Set([
+  'text-align',
+  'font-size',
+  'font-weight',
+  'font-style',
+  'font-family',
+  'line-height',
+  'letter-spacing',
+  'text-decoration',
+  'text-transform',
+  'margin',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'padding',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'border',
+  'border-top',
+  'border-right',
+  'border-bottom',
+  'border-left',
+  'border-collapse',
+  'width',
+  'min-width',
+  'max-width',
+  'height',
+  'min-height',
+  'max-height',
+  'vertical-align',
+  'background-color',
+  'color',
+]);
+
+function sanitizeInlineStyle(styleValue) {
+  return String(styleValue || '')
+    .split(';')
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      const separatorIndex = chunk.indexOf(':');
+      if (separatorIndex <= 0) return '';
+      const property = chunk.slice(0, separatorIndex).trim().toLowerCase();
+      const value = chunk.slice(separatorIndex + 1).trim();
+      if (!SAFE_STYLE_PROPERTIES.has(property) || !value) return '';
+      if (/url\s*\(/i.test(value) || /expression\s*\(/i.test(value)) return '';
+      return `${property}: ${value}`;
+    })
+    .filter(Boolean)
+    .join('; ');
+}
+
+function sanitizeHtml(inputHtml, options = {}) {
+  const {
+    allowTemplateMarkup = false,
+    allowInlineStyles = false,
+    allowClassNames = false,
+  } = options;
+  const allowedTags = allowTemplateMarkup ? TEMPLATE_ALLOWED_TAGS : BASE_ALLOWED_TAGS;
+
   const parser = new DOMParser();
   const doc = parser.parseFromString(`<div>${String(inputHtml || '')}</div>`, 'text/html');
   const root = doc.body.firstElementChild;
@@ -103,12 +166,29 @@ function sanitizeHtml(inputHtml) {
           child.replaceWith(...Array.from(child.childNodes));
           return;
         }
+
         Array.from(child.attributes).forEach((attr) => {
           const name = attr.name.toLowerCase();
-          if (name.startsWith('on') || name === 'style') {
+          if (name.startsWith('on')) {
             child.removeAttribute(attr.name);
             return;
           }
+
+          if (name === 'style') {
+            if (!allowInlineStyles) {
+              child.removeAttribute(attr.name);
+              return;
+            }
+            const safeStyle = sanitizeInlineStyle(attr.value);
+            if (safeStyle) child.setAttribute('style', safeStyle); else child.removeAttribute('style');
+            return;
+          }
+
+          if (name === 'class') {
+            if (!allowClassNames) child.removeAttribute(attr.name);
+            return;
+          }
+
           if (tag === 'A' && name === 'href') {
             const href = String(attr.value || '').trim();
             if (!/^https?:\/\//i.test(href)) {
@@ -119,10 +199,12 @@ function sanitizeHtml(inputHtml) {
             }
             return;
           }
+
           if (!['href', 'target', 'rel', 'colspan', 'rowspan'].includes(name)) {
             child.removeAttribute(attr.name);
           }
         });
+
         walk(child);
       }
       if (child.nodeType === Node.COMMENT_NODE) child.remove();
@@ -131,6 +213,14 @@ function sanitizeHtml(inputHtml) {
 
   walk(root);
   return root.innerHTML;
+}
+
+function sanitizeTemplateHtml(inputHtml) {
+  return sanitizeHtml(inputHtml, {
+    allowTemplateMarkup: true,
+    allowInlineStyles: true,
+    allowClassNames: true,
+  });
 }
 
 function textToParagraphHtml(text) {
@@ -155,7 +245,7 @@ async function getTemplateHtml() {
   const mammoth = await ensureMammoth();
   const { buffer, url } = await fetchTemplateBuffer(DOCX_TEMPLATE_URLS);
   const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
-  const html = sanitizeHtml(result && result.value ? result.value : '');
+  const html = sanitizeTemplateHtml(result && result.value ? result.value : '');
   if (!html.trim()) throw new Error('DOCX не удалось конвертировать');
   return { html, url, messages: Array.isArray(result && result.messages) ? result.messages : [] };
 }
@@ -164,8 +254,15 @@ function fillDocxHtml(templateHtml, aiText) {
   const cleanTemplate = String(templateHtml || '').trim();
   const aiHtml = textToParagraphHtml(aiText);
   if (!cleanTemplate) return aiHtml;
-  if (cleanTemplate.includes('{{AI_RESPONSE}}')) return cleanTemplate.replaceAll('{{AI_RESPONSE}}', aiHtml);
-  return `${cleanTemplate}<h2>Ответ ИИ</h2>${aiHtml}`;
+
+  const markers = ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]'];
+  for (const marker of markers) {
+    if (cleanTemplate.includes(marker)) {
+      return cleanTemplate.split(marker).join(aiHtml);
+    }
+  }
+
+  return `${cleanTemplate}<p></p><h2>Ответ ИИ</h2>${aiHtml}`;
 }
 
 function extractPlainTextFromHtml(html) {
@@ -430,7 +527,7 @@ function openAiResponseDialog(context = {}) {
 
   const saveNow = () => {
     if (!state.isEditorOpen || state.destroyed) return;
-    saveDraft({ html: sanitizeHtml(editable.innerHTML), templateType: state.templateType, ts: Date.now() });
+    saveDraft({ html: sanitizeTemplateHtml(editable.innerHTML), templateType: state.templateType, ts: Date.now() });
     statusNode.textContent = `Автосохранение: ${new Date().toLocaleTimeString('ru-RU')}`;
   };
 
@@ -481,13 +578,13 @@ function openAiResponseDialog(context = {}) {
       if (state.destroyed) return;
       state.templateType = 'docx';
       state.templateHtml = html;
-      editable.innerHTML = sanitizeHtml(draft && draft.html ? draft.html : fillDocxHtml(html, state.assistantText));
+      editable.innerHTML = sanitizeTemplateHtml(draft && draft.html ? draft.html : fillDocxHtml(html, state.assistantText));
       editorSubtitle.textContent = `DOCX: ${url} • requestId: ${state.requestId || '—'} • ${warnings.length ? `Предупреждений: ${warnings.length}` : 'без предупреждений'}`;
       pdfNote.hidden = true;
     } catch (error) {
       state.templateType = 'pdf';
       state.templateHtml = '';
-      editable.innerHTML = sanitizeHtml(draft && draft.html ? draft.html : textToParagraphHtml(state.assistantText || 'Введите текст документа'));
+      editable.innerHTML = sanitizeTemplateHtml(draft && draft.html ? draft.html : textToParagraphHtml(state.assistantText || 'Введите текст документа'));
       pdfNote.hidden = false;
       try {
         const pdfMeta = await fetchTemplateBuffer(PDF_TEMPLATE_URLS);
@@ -559,7 +656,7 @@ function openAiResponseDialog(context = {}) {
 
   const runExportDocx = async () => {
     try {
-      const html = sanitizeHtml(editable.innerHTML);
+      const html = sanitizeTemplateHtml(editable.innerHTML);
       if (!html.trim()) throw new Error('Редактор пуст');
       const payload = new FormData();
       payload.append('action', 'generate_from_html');
@@ -583,7 +680,7 @@ function openAiResponseDialog(context = {}) {
 
   const runExportPdf = async () => {
     try {
-      const text = extractPlainTextFromHtml(sanitizeHtml(editable.innerHTML));
+      const text = extractPlainTextFromHtml(sanitizeTemplateHtml(editable.innerHTML));
       if (!text) throw new Error('Нет текста для PDF');
       downloadBlob(await createPdfBlobFromText(text), 'answer.pdf');
       notify('success', 'PDF скачан.');
@@ -593,7 +690,7 @@ function openAiResponseDialog(context = {}) {
   };
 
   const runSendChat = () => {
-    const text = extractPlainTextFromHtml(sanitizeHtml(editable.innerHTML));
+    const text = extractPlainTextFromHtml(sanitizeTemplateHtml(editable.innerHTML));
     if (!text) {
       notify('warning', 'Нет текста для отправки');
       return;
