@@ -714,6 +714,82 @@ function htmlToPlainText(string $html): string
     return trim((string)$text);
 }
 
+function nodeToHtml(DOMNode $node, DOMXPath $xpath): string
+{
+    $html = '';
+    foreach ($node->childNodes as $child) {
+        if ($child->nodeType === XML_TEXT_NODE) {
+            $html .= htmlspecialchars((string)$child->textContent, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            continue;
+        }
+        if (!($child instanceof DOMElement)) {
+            continue;
+        }
+        $tag = $child->nodeName;
+        if ($tag === 'w:p') {
+            $html .= '<p>' . nodeToHtml($child, $xpath) . '</p>';
+        } elseif ($tag === 'w:r') {
+            $html .= nodeToHtml($child, $xpath);
+        } elseif ($tag === 'w:t') {
+            $html .= htmlspecialchars((string)$child->textContent, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        } elseif ($tag === 'w:br' || $tag === 'w:cr') {
+            $html .= '<br>';
+        } elseif ($tag === 'w:tab') {
+            $html .= '&emsp;';
+        } elseif ($tag === 'w:hyperlink') {
+            $html .= '<a href="#">' . nodeToHtml($child, $xpath) . '</a>';
+        } else {
+            $html .= nodeToHtml($child, $xpath);
+        }
+    }
+    return $html;
+}
+
+function docxToHtml(string $docxPath): string
+{
+    if (is_file(__DIR__ . '/vendor/autoload.php')) {
+        require_once __DIR__ . '/vendor/autoload.php';
+    }
+
+    if (class_exists('\\PhpOffice\\PhpWord\\IOFactory') && class_exists('\\PhpOffice\\PhpWord\\Writer\\HTML')) {
+        try {
+            $phpWord = \PhpOffice\PhpWord\IOFactory::load($docxPath);
+            $htmlWriter = new \PhpOffice\PhpWord\Writer\HTML($phpWord);
+            ob_start();
+            $htmlWriter->save('php://output');
+            $content = (string)ob_get_clean();
+            if (trim($content) !== '') {
+                return $content;
+            }
+        } catch (Throwable $e) {
+            logApiDocs('warn', 'PhpWord DOCX->HTML conversion failed', ['error' => $e->getMessage()]);
+        }
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($docxPath) !== true) {
+        return '<p>Ошибка чтения шаблона</p>';
+    }
+    $xml = $zip->getFromName('word/document.xml');
+    $zip->close();
+    if (!$xml) {
+        return '<p>Некорректный DOCX</p>';
+    }
+
+    $dom = new DOMDocument();
+    $loaded = @$dom->loadXML((string)$xml, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET | LIBXML_COMPACT);
+    if (!$loaded) {
+        return '<p>Некорректный XML в DOCX</p>';
+    }
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+    $body = $xpath->query('/w:document/w:body')->item(0);
+    if (!$body) {
+        return '<p>Нет содержимого</p>';
+    }
+    return '<div class="docx-preview">' . nodeToHtml($body, $xpath) . '</div>';
+}
+
 function htmlNodeInnerXml(DOMNode $node): string
 {
     $xml = '';
@@ -1065,9 +1141,26 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html') {
+if (
+    $action !== ''
+    && $action !== 'ai_response_analyze'
+    && $action !== 'ocr_extract'
+    && $action !== 'generate_document'
+    && $action !== 'generate_from_html'
+    && $action !== 'generate_from_editor'
+    && $action !== 'load_template_html'
+) {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
+
+if ($action === 'load_template_html') {
+    $templatePath = resolveTemplatePath('template.docx', []);
+    if (!is_file($templatePath)) {
+        jsonResponse(404, ['ok' => false, 'error' => 'Шаблон template.docx не найден']);
+    }
+    $html = docxToHtml($templatePath);
+    jsonResponse(200, ['ok' => true, 'html' => $html]);
 }
 
 if ($action === 'generate_document') {
@@ -1210,6 +1303,55 @@ if ($action === 'generate_from_html') {
     }
     header('Content-Type: application/pdf');
     header('Content-Disposition: attachment; filename="answer-from-html.pdf"');
+    header('Content-Length: ' . filesize($tmpFile));
+    readfile($tmpFile);
+    @unlink($tmpFile);
+    exit;
+}
+
+if ($action === 'generate_from_editor') {
+    $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
+    $html = trim((string)($_POST['html'] ?? ''));
+    $documentTitle = trim((string)($_POST['documentTitle'] ?? 'Ответ'));
+
+    if ($html === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'HTML пустой']);
+    }
+    if ($format !== 'docx' && $format !== 'pdf') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
+    }
+
+    $tmpFile = tempnam(sys_get_temp_dir(), 'editor_');
+    if ($tmpFile === false) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Ошибка tempnam']);
+    }
+
+    if ($format === 'docx') {
+        if (class_exists('\\PhpOffice\\PhpWord\\PhpWord')) {
+            $ok = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
+        } else {
+            $templatePath = resolveTemplatePath('template.docx', []);
+            $ok = is_file($templatePath) ? replaceDocxWithHtml($templatePath, $tmpFile, $html) : false;
+        }
+        if (!$ok) {
+            @unlink($tmpFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось создать DOCX из HTML']);
+        }
+        header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        header('Content-Disposition: attachment; filename="edited.docx"');
+    } else {
+        if (is_file(__DIR__ . '/vendor/autoload.php')) {
+            require_once __DIR__ . '/vendor/autoload.php';
+        }
+        $text = htmlToPlainText($html);
+        if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
+            @unlink($tmpFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'Ошибка создания PDF']);
+        }
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="edited.pdf"');
+    }
+
     header('Content-Length: ' . filesize($tmpFile));
     readfile($tmpFile);
     @unlink($tmpFile);

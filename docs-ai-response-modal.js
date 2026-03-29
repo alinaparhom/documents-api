@@ -1070,8 +1070,14 @@
     openTemplateButton.style.marginTop = '4px';
     openTemplateButton.style.width = '100%';
     openTemplateButton.style.textAlign = 'left';
+    var openTemplateEditorButton = createElement('button', 'ai-chat-modal__attach', '✏️ Редактировать шаблон');
+    openTemplateEditorButton.type = 'button';
+    openTemplateEditorButton.style.marginTop = '4px';
+    openTemplateEditorButton.style.width = '100%';
+    openTemplateEditorButton.style.textAlign = 'left';
     menuDropdown.appendChild(openEditButton);
     menuDropdown.appendChild(openTemplateButton);
+    menuDropdown.appendChild(openTemplateEditorButton);
     menuWrap.appendChild(menuButton);
     menuWrap.appendChild(menuDropdown);
     var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'OCR к отправке: 0 символов');
@@ -1249,6 +1255,122 @@
     function openOverlay(modalRef) {
       document.body.appendChild(modalRef.overlay);
       requestAnimationFrame(function () { modalRef.overlay.classList.add('ai-chat-modal--visible'); });
+    }
+
+    async function openTemplateEditor() {
+      var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var htmlContent = '';
+      try {
+        var res = await fetch(apiUrl, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: 'action=load_template_html'
+        });
+        var data = await res.json();
+        htmlContent = (res.ok && data && data.ok && data.html)
+          ? String(data.html)
+          : '<p>Не удалось загрузить шаблон. Создайте новый документ.</p>';
+      } catch (error) {
+        htmlContent = '<p>Ошибка загрузки шаблона</p>';
+      }
+
+      var editorModal = createOverlayModal('Редактор шаблона');
+      var editorToolbar = createElement('div', 'ai-chat-modal__export-buttons');
+      editorToolbar.style.justifyContent = 'flex-start';
+      editorToolbar.style.gap = '6px';
+      var insertAnswerBtn = createElement('button', 'ai-chat-modal__export-btn', 'Вставить ответ ИИ');
+      var boldBtn = createElement('button', 'ai-chat-modal__export-btn', 'Ж');
+      var italicBtn = createElement('button', 'ai-chat-modal__export-btn', 'К');
+      var listBtn = createElement('button', 'ai-chat-modal__export-btn', '• Список');
+      var printBtn = createElement('button', 'ai-chat-modal__export-btn', '🖨️ Печать');
+      var saveDocxBtn = createElement('button', 'ai-chat-modal__send', 'Скачать DOCX');
+      var savePdfBtn = createElement('button', 'ai-chat-modal__send', 'Скачать PDF');
+      [insertAnswerBtn, boldBtn, italicBtn, listBtn, printBtn, saveDocxBtn, savePdfBtn].forEach(function (btn) {
+        btn.type = 'button';
+      });
+      editorToolbar.append(insertAnswerBtn, boldBtn, italicBtn, listBtn, printBtn, saveDocxBtn, savePdfBtn);
+
+      var editorArea = createElement('div', 'ai-chat-modal__live-preview');
+      editorArea.setAttribute('contenteditable', 'true');
+      editorArea.setAttribute('spellcheck', 'true');
+      editorArea.innerHTML = htmlContent;
+      editorArea.style.minHeight = '360px';
+      editorArea.style.maxHeight = '70vh';
+      editorArea.style.overflow = 'auto';
+      editorArea.style.padding = '12px';
+      editorArea.style.border = '1px solid rgba(148,163,184,.35)';
+      editorArea.style.background = 'rgba(255,255,255,.9)';
+      editorArea.style.fontSize = '14px';
+      editorArea.style.lineHeight = '1.5';
+
+      editorModal.content.appendChild(editorToolbar);
+      editorModal.content.appendChild(editorArea);
+      openOverlay(editorModal);
+
+      function applyFormat(command) {
+        editorArea.focus();
+        if (document.execCommand) {
+          document.execCommand(command, false, null);
+        }
+      }
+
+      insertAnswerBtn.addEventListener('click', function () {
+        var answer = String(state.lastAssistantMessage || 'Ответ ИИ отсутствует');
+        editorArea.focus();
+        var selection = window.getSelection();
+        if (selection && selection.rangeCount > 0) {
+          var range = selection.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createTextNode(answer));
+          range.collapse(false);
+        } else {
+          editorArea.innerHTML += '<p>' + escapeHtml(answer) + '</p>';
+        }
+      });
+      boldBtn.addEventListener('click', function () { applyFormat('bold'); });
+      italicBtn.addEventListener('click', function () { applyFormat('italic'); });
+      listBtn.addEventListener('click', function () { applyFormat('insertUnorderedList'); });
+
+      printBtn.addEventListener('click', function () {
+        var printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          alert('Разрешите всплывающие окна для печати.');
+          return;
+        }
+        printWindow.document.write('<html><head><title>Печать</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:Arial,sans-serif;padding:16px;color:#0f172a;}p{margin:0 0 10px;}</style></head><body>' + editorArea.innerHTML + '</body></html>');
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+      });
+
+      async function saveDocument(format) {
+        try {
+          var formData = new FormData();
+          formData.append('action', 'generate_from_editor');
+          formData.append('format', format);
+          formData.append('html', editorArea.innerHTML);
+          formData.append('documentTitle', config.documentTitle || 'Отредактированный документ');
+          var response = await fetch(apiUrl, { method: 'POST', credentials: 'same-origin', body: formData });
+          if (!response.ok) {
+            throw new Error('Ошибка генерации');
+          }
+          var blob = await response.blob();
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'document.' + format;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          alert('Не удалось сохранить файл: ' + (error && error.message ? error.message : 'Ошибка'));
+        }
+      }
+
+      saveDocxBtn.addEventListener('click', function () { saveDocument('docx'); });
+      savePdfBtn.addEventListener('click', function () { saveDocument('pdf'); });
     }
 
     function resanitizeFileContents() {
@@ -1626,6 +1748,10 @@
       }
       templateArea.value = state.templateDraft;
       openOverlay(templateModal);
+    });
+    openTemplateEditorButton.addEventListener('click', function () {
+      menuDropdown.style.display = 'none';
+      openTemplateEditor();
     });
 
     chooseTemplateButton.addEventListener('click', function () {
