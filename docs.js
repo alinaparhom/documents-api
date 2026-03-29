@@ -1932,9 +1932,11 @@
       '.documents-brief-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;border-bottom:1px solid rgba(226,232,240,0.95);background:rgba(255,255,255,0.7);}' +
       '.documents-brief-title{font-size:18px;font-weight:700;color:#0f172a;}' +
       '.documents-brief-subtitle{font-size:12px;color:#64748b;margin-top:2px;}' +
-      '.documents-brief-body{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:14px;padding:14px;min-height:0;flex:1;background:linear-gradient(180deg, rgba(248,250,252,0.55), rgba(255,255,255,0.78));}' +
-      '.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;padding:2px 4px 2px 0;}' +
-      '.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.96);border-radius:14px;padding:11px 12px;text-align:left;color:#0f172a;font-size:13px;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 20px rgba(15,23,42,0.05);}' +
+      '.documents-brief-body{display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);gap:14px;padding:14px;min-height:0;flex:1;background:linear-gradient(180deg, rgba(248,250,252,0.55), rgba(255,255,255,0.78));}' +
+      '.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;padding:2px 6px 2px 0;scrollbar-width:thin;}' +
+      '.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.96);border-radius:14px;padding:11px 12px;text-align:left;color:#0f172a;font-size:13px;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 20px rgba(15,23,42,0.05);display:flex;flex-direction:column;align-items:flex-start;gap:4px;}' +
+      '.documents-brief-item-name{display:block;width:100%;font-size:13px;font-weight:600;line-height:1.35;white-space:normal;word-break:break-word;overflow-wrap:anywhere;}' +
+      '.documents-brief-item-meta{display:block;width:100%;font-size:11px;color:#64748b;white-space:normal;word-break:break-word;overflow-wrap:anywhere;}' +
       '.documents-brief-item:hover,.documents-brief-item:focus-visible{border-color:rgba(37,99,235,0.48);box-shadow:0 0 0 3px rgba(37,99,235,0.12);outline:none;}' +
       '.documents-brief-item.is-active{background:linear-gradient(135deg, rgba(239,246,255,0.96), rgba(255,255,255,0.98));border-color:rgba(37,99,235,0.52);}' +
       '.documents-brief-preview{border:1px solid rgba(203,213,225,0.9);border-radius:18px;background:rgba(255,255,255,0.98);padding:16px;font-size:13px;line-height:1.58;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto;min-height:0;box-shadow:inset 0 1px 0 rgba(255,255,255,0.75), 0 12px 26px rgba(15,23,42,0.06);}' +
@@ -1952,6 +1954,8 @@
       '.documents-brief-modal{padding:8px;align-items:flex-end;}' +
       '.documents-brief-panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;}' +
       '.documents-brief-body{grid-template-columns:1fr;padding:12px;}' +
+      '.documents-brief-item{padding:10px 11px;}' +
+      '.documents-brief-item-name{font-size:12px;}' +
       '}';
     document.head.appendChild(style);
   }
@@ -2293,7 +2297,15 @@
     }
 
     function addSourceButton(source) {
-      var button = createElement('button', 'documents-brief-item', source.label);
+      var button = createElement('button', 'documents-brief-item');
+      var nameNode = createElement('span', 'documents-brief-item-name', source.label);
+      var metaLabel = source.id === 'task_context'
+        ? 'Текст карточки задачи'
+        : (source.fileObject ? 'Новый файл (локально)' : 'Файл из документа');
+      var metaNode = createElement('span', 'documents-brief-item-meta', metaLabel);
+      button.appendChild(nameNode);
+      button.appendChild(metaNode);
+      button.title = source.label;
       button.type = 'button';
       button.addEventListener('click', function() {
         makeActive(button);
