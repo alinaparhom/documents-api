@@ -17,29 +17,36 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__header{display:flex;align-items:center;justify-content:space-between;padding:12px;border-bottom:1px solid rgba(148,163,184,.24)}
     .appdosc-ai-dialog__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-ai-dialog__subtitle{font-size:12px;color:#64748b;margin-top:2px}
-    .appdosc-ai-dialog__close{width:34px;height:34px;border:none;border-radius:999px;background:rgba(148,163,184,.16);font-size:18px;cursor:pointer}
+    .appdosc-ai-dialog__close{width:40px;height:40px;border:none;border-radius:999px;background:rgba(148,163,184,.16);font-size:18px;cursor:pointer}
     .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:10px 12px;background:rgba(248,250,252,.55);display:flex;flex-direction:column;gap:8px}
     .appdosc-ai-dialog__bubble{max-width:90%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:rgba(37,99,235,.12);color:#1e3a8a}
     .appdosc-ai-dialog__bubble--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(148,163,184,.25)}
     .appdosc-ai-dialog__composer{padding:10px 12px;border-top:1px solid rgba(148,163,184,.2);background:rgba(255,255,255,.78);display:flex;flex-direction:column;gap:8px}
     .appdosc-ai-dialog__input{width:100%;border:1px solid rgba(148,163,184,.38);border-radius:12px;padding:10px 12px;font-size:14px;outline:none;background:#fff;color:#0f172a;min-height:76px;max-height:180px;resize:none}
-    .appdosc-ai-dialog__input:focus,.appdosc-ai-dialog__docx-editor:focus{border-color:rgba(37,99,235,.5);box-shadow:0 0 0 3px rgba(59,130,246,.14)}
+    .appdosc-ai-dialog__input:focus{border-color:rgba(37,99,235,.5);box-shadow:0 0 0 3px rgba(59,130,246,.14)}
     .appdosc-ai-dialog__actions{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
     .appdosc-ai-dialog__hint{font-size:12px;color:#64748b}
     .appdosc-ai-dialog__buttons{display:flex;gap:8px;flex-wrap:wrap}
-    .appdosc-ai-dialog__btn{border:none;border-radius:12px;min-height:38px;padding:10px 14px;cursor:pointer;font-weight:600;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff}
+    .appdosc-ai-dialog__btn{border:none;border-radius:12px;min-height:40px;min-width:40px;padding:10px 14px;cursor:pointer;font-weight:600;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff}
     .appdosc-ai-dialog__btn--ghost{background:rgba(148,163,184,.15);color:#0f172a}
+    .appdosc-ai-dialog__btn:active{transform:translateY(1px)}
     .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed}
     .appdosc-ai-dialog__docx{display:none;border-top:1px solid rgba(148,163,184,.2);padding:10px 12px calc(12px + env(safe-area-inset-bottom, 0px));gap:8px;background:rgba(255,255,255,.78)}
     .appdosc-ai-dialog__docx--visible{display:flex;flex-direction:column}
     .appdosc-ai-dialog__docx-meta{font-size:12px;color:#64748b}
-    .appdosc-ai-dialog__docx-editor{min-height:180px;max-height:42dvh;overflow:auto;border:1px solid rgba(148,163,184,.38);border-radius:12px;padding:12px;background:rgba(255,255,255,.95);font-size:14px;line-height:1.5;color:#0f172a;outline:none}
-    .appdosc-ai-dialog__docx-editor h1,.appdosc-ai-dialog__docx-editor h2,.appdosc-ai-dialog__docx-editor h3{margin:10px 0 6px}
-    .appdosc-ai-dialog__docx-editor p{margin:0 0 8px}
-    .appdosc-ai-dialog__docx-editor ul,.appdosc-ai-dialog__docx-editor ol{padding-left:20px;margin:0 0 8px}
-    .appdosc-ai-dialog__docx-editor table{width:100%;border-collapse:collapse;margin:8px 0 12px;background:rgba(255,255,255,.88)}
-    .appdosc-ai-dialog__docx-editor th,.appdosc-ai-dialog__docx-editor td{border:1px solid rgba(148,163,184,.45);padding:6px 8px;vertical-align:top}
+    .appdosc-ai-dialog__docx-toolbar{display:flex;gap:8px;flex-wrap:wrap}
+    .appdosc-ai-dialog__docx-tool{border:1px solid rgba(148,163,184,.35);border-radius:10px;min-height:40px;min-width:40px;padding:8px 12px;background:rgba(255,255,255,.92);color:#0f172a;font-weight:600;font-size:13px;cursor:pointer}
+    .appdosc-ai-dialog__docx-tool:active{transform:translateY(1px)}
+    .appdosc-ai-dialog__docx-tool.is-active{border-color:rgba(37,99,235,.45);background:rgba(59,130,246,.14);color:#1e3a8a}
+    .appdosc-ai-dialog__docx-editor{min-height:180px;max-height:42dvh;overflow:auto;border:1px solid rgba(148,163,184,.38);border-radius:12px;padding:0;background:rgba(255,255,255,.95);font-size:14px;line-height:1.5;color:#0f172a;outline:none}
+    .appdosc-ai-dialog__docx-editor:focus-within{border-color:rgba(37,99,235,.5);box-shadow:0 0 0 3px rgba(59,130,246,.14)}
+    .appdosc-ai-dialog__docx-editor-surface{min-height:180px;padding:12px;outline:none;-webkit-user-select:text;user-select:text}
+    .appdosc-ai-dialog__docx-editor-surface h1,.appdosc-ai-dialog__docx-editor-surface h2,.appdosc-ai-dialog__docx-editor-surface h3{margin:10px 0 6px}
+    .appdosc-ai-dialog__docx-editor-surface p{margin:0 0 8px}
+    .appdosc-ai-dialog__docx-editor-surface ul,.appdosc-ai-dialog__docx-editor-surface ol{padding-left:20px;margin:0 0 8px}
+    .appdosc-ai-dialog__docx-editor-surface table{width:100%;border-collapse:collapse;margin:8px 0 12px;background:rgba(255,255,255,.88)}
+    .appdosc-ai-dialog__docx-editor-surface th,.appdosc-ai-dialog__docx-editor-surface td{border:1px solid rgba(148,163,184,.45);padding:6px 8px;vertical-align:top}
     .appdosc-ai-dialog__template-editor{position:fixed;inset:0;z-index:2700;display:none;background:rgba(15,23,42,.44);backdrop-filter:blur(8px);padding:14px}
     .appdosc-ai-dialog__template-editor--open{display:flex}
     .appdosc-ai-dialog__template-panel{margin:auto;width:min(1080px,100%);height:min(92dvh,860px);display:flex;flex-direction:column;border-radius:18px;overflow:hidden;background:linear-gradient(165deg,rgba(255,255,255,.96),rgba(255,255,255,.88));border:1px solid rgba(255,255,255,.75);box-shadow:0 24px 56px rgba(15,23,42,.22)}
@@ -116,6 +123,10 @@ function ensureJsPdf() {
 
 function ensureMammoth() {
   return ensureScript('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', 'mammoth', 'Mammoth');
+}
+
+function ensureMobileWysiwyg() {
+  return ensureScript('/app/vendor/mobile-wysiwyg.bundle.js', 'AppDocsMobileWysiwyg', 'Mobile WYSIWYG');
 }
 
 async function fetchTemplateBuffer() {
@@ -269,9 +280,27 @@ function openAiResponseDialog(context = {}) {
   docxMeta.className = 'appdosc-ai-dialog__docx-meta';
   docxMeta.textContent = 'Редактируйте структуру DOCX как HTML: таблицы, списки и заголовки сохраняются.';
 
+  const docxToolbar = document.createElement('div');
+  docxToolbar.className = 'appdosc-ai-dialog__docx-toolbar';
+  [
+    { action: 'bold', label: 'B', title: 'Жирный' },
+    { action: 'italic', label: 'I', title: 'Курсив' },
+    { action: 'heading', label: 'H2', title: 'Заголовок' },
+    { action: 'list', label: '• List', title: 'Список' },
+    { action: 'link', label: 'Link', title: 'Ссылка' },
+    { action: 'table', label: 'Table', title: 'Таблица' },
+  ].forEach(({ action, label, title }) => {
+    const toolButton = document.createElement('button');
+    toolButton.type = 'button';
+    toolButton.className = 'appdosc-ai-dialog__docx-tool';
+    toolButton.dataset.action = action;
+    toolButton.title = title;
+    toolButton.textContent = label;
+    docxToolbar.appendChild(toolButton);
+  });
+
   const docxEditor = document.createElement('div');
   docxEditor.className = 'appdosc-ai-dialog__docx-editor';
-  docxEditor.contentEditable = 'true';
 
   const docxButtons = document.createElement('div');
   docxButtons.className = 'appdosc-ai-dialog__buttons';
@@ -410,10 +439,17 @@ function openAiResponseDialog(context = {}) {
   let templateUrlCache = '';
   let mergedPdfBlob = null;
   let latestAssistantText = '';
+  let docxEditorApi = null;
+
+  const getDocxHtml = () => (docxEditorApi && typeof docxEditorApi.getHTML === 'function' ? docxEditorApi.getHTML() : '');
+  const setDocxHtml = (html) => {
+    if (docxEditorApi && typeof docxEditorApi.setHTML === 'function') docxEditorApi.setHTML(html);
+  };
 
   const close = () => {
     document.removeEventListener('keydown', onEsc);
     if (viewerFrame.dataset.url) URL.revokeObjectURL(viewerFrame.dataset.url);
+    if (docxEditorApi && typeof docxEditorApi.destroy === 'function') docxEditorApi.destroy();
     root.remove();
   };
 
@@ -444,7 +480,7 @@ function openAiResponseDialog(context = {}) {
   const openTemplateEditor = async () => {
     const { html } = await ensureTemplateHtml();
     if (!String(templateEditorEditable.innerHTML || '').trim()) {
-      templateEditorEditable.innerHTML = String(docxEditor.innerHTML || '').trim() || html;
+      templateEditorEditable.innerHTML = getDocxHtml() || html;
     }
     templateAiPreview.textContent = latestAssistantText || '';
     templateEditorOverlay.classList.add('appdosc-ai-dialog__template-editor--open');
@@ -473,7 +509,7 @@ function openAiResponseDialog(context = {}) {
   };
 
   const openMergedPdfPreview = async () => {
-    const text = htmlToPlainText(docxEditor.innerHTML);
+    const text = htmlToPlainText(getDocxHtml());
     if (!text) {
       notify('warning', 'Сначала заполните редактор шаблона.');
       return;
@@ -486,7 +522,7 @@ function openAiResponseDialog(context = {}) {
   };
 
   const requestGeneratedFile = async (format) => {
-    const html = String(docxEditor.innerHTML || '').trim();
+    const html = getDocxHtml();
     if (!html) throw new Error('Нет HTML для сохранения');
     const payload = new FormData();
     payload.append('action', 'generate_from_html');
@@ -512,7 +548,7 @@ function openAiResponseDialog(context = {}) {
     const assistantText = buildAssistantReply(value, context);
     latestAssistantText = assistantText;
     messages.appendChild(createBubble(assistantText, 'assistant'));
-    docxEditor.innerHTML = templateHtmlCache ? appendAnswerToHtml(templateHtmlCache, assistantText) : `<p>${assistantText.replace(/\n/g, '<br/>')}</p>`;
+    setDocxHtml(templateHtmlCache ? appendAnswerToHtml(templateHtmlCache, assistantText) : `<p>${assistantText.replace(/\n/g, '<br/>')}</p>`);
     toggleEditorButton.disabled = false;
     input.value = '';
     messages.scrollTop = messages.scrollHeight;
@@ -530,7 +566,7 @@ function openAiResponseDialog(context = {}) {
   toggleEditorButton.addEventListener('click', () => docxSection.classList.toggle('appdosc-ai-dialog__docx--visible'));
 
   applyButton.addEventListener('click', () => {
-    const text = htmlToPlainText(docxEditor.innerHTML);
+    const text = htmlToPlainText(getDocxHtml());
     if (!text) {
       notify('warning', 'Редактор пустой.');
       return;
@@ -584,7 +620,7 @@ function openAiResponseDialog(context = {}) {
       notify('warning', 'Шаблон пустой.');
       return;
     }
-    docxEditor.innerHTML = html;
+    setDocxHtml(html);
     closeTemplateEditor();
     docxSection.classList.add('appdosc-ai-dialog__docx--visible');
     notify('success', 'Изменения сохранены в основной ответ.');
@@ -669,19 +705,30 @@ function openAiResponseDialog(context = {}) {
   actions.append(hint, actionButtons);
   composer.append(input, actions);
   docxButtons.append(applyButton, templatePreviewButton, mergedPreviewButton, downloadDocxButton, downloadPdfButton, printPdfButton);
-  docxSection.append(docxMeta, docxEditor, docxButtons);
+  docxSection.append(docxMeta, docxToolbar, docxEditor, docxButtons);
   header.append(titleWrap, closeButton);
   panel.append(header, messages, composer, docxSection);
   root.append(panel, viewer, templateEditorOverlay);
   document.body.appendChild(root);
 
-  ensureTemplateHtml()
+  ensureMobileWysiwyg()
+    .then((wysiwyg) => {
+      docxEditorApi = wysiwyg.create({ mount: docxEditor, toolbar: docxToolbar });
+      docxToolbar.addEventListener('click', (event) => {
+        const button = event.target && event.target.closest ? event.target.closest('.appdosc-ai-dialog__docx-tool') : null;
+        if (!button || !docxEditorApi) return;
+        const action = button.dataset.action;
+        if (!action) return;
+        docxEditorApi.run(action);
+      });
+      return ensureTemplateHtml();
+    })
     .then(({ html }) => {
-      docxEditor.innerHTML = html;
+      setDocxHtml(html);
       toggleEditorButton.disabled = false;
     })
     .catch(() => {
-      docxEditor.innerHTML = '<p>Шаблон не загружен. Доступен fallback-режим PDF из текста.</p>';
+      docxMeta.textContent = 'Локальный WYSIWYG-бандл не загружен. Проверьте файл /app/vendor/mobile-wysiwyg.bundle.js.';
     });
 
   document.addEventListener('keydown', onEsc);
