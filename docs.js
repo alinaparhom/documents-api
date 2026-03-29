@@ -2062,6 +2062,42 @@
     ].join('\n');
   }
 
+  function buildAiBriefSummaryText(payload) {
+    var data = payload && typeof payload === 'object' ? payload : {};
+    var analysis = data.analysis ? String(data.analysis).trim() : '';
+    var decision = data.decisionBlock && typeof data.decisionBlock === 'object' ? data.decisionBlock : {};
+    var risks = Array.isArray(decision.risks) ? decision.risks : [];
+    var actions = Array.isArray(decision.required_actions) ? decision.required_actions : [];
+    var requirements = Array.isArray(decision.requirements) ? decision.requirements : [];
+    var participants = '';
+
+    risks.some(function(item) {
+      var line = String(item || '').trim();
+      if (!line) {
+        return false;
+      }
+      if (/^отправитель\s*:/i.test(line) || /^кто\s+прислал\s*:/i.test(line)) {
+        participants = line;
+        return true;
+      }
+      return false;
+    });
+
+    return [
+      'О чем файл:',
+      analysis || 'Не удалось определить суть документа.',
+      '',
+      'Кто прислал / кому:',
+      participants || 'Не удалось точно определить отправителя и получателя.',
+      '',
+      'Важные детали:',
+      actions.length ? actions.map(function(item) { return '• ' + item; }).join('\n') : '• Важные детали не найдены.',
+      '',
+      'Требования:',
+      requirements.length ? requirements.map(function(item) { return '• ' + item; }).join('\n') : '• Явные требования не выделены.'
+    ].join('\n');
+  }
+
   function requestOcrTextForSource(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var formData = new FormData();
@@ -2088,6 +2124,43 @@
           throw new Error('OCR не вернул текст.');
         }
         return extractedText;
+      });
+    });
+  }
+
+  function requestAiBriefSummaryForText(source, sourceText, apiUrl) {
+    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var briefText = String(sourceText || '').trim();
+    if (!briefText) {
+      return Promise.reject(new Error('Текст для анализа пустой.'));
+    }
+    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+    var context = {
+      extractedTexts: [
+        {
+          name: sourceLabel,
+          type: 'text/plain',
+          text: briefText
+        }
+      ],
+      aiBehavior: 'Режим "Кратко ИИ". Поле analysis: 2-3 предложения о сути документа. В risks первой строкой верни "Отправитель: ...; Получатель: ...". Если данных нет, пиши "Отправитель: не определён; Получатель: не определён". В required_actions перечисли 3-5 ключевых фактов/деталей. В requirements перечисли ключевые требования.'
+    };
+    var formData = new FormData();
+    formData.append('action', 'ai_response_analyze');
+    formData.append('documentTitle', sourceLabel);
+    formData.append('prompt', 'Кратко проанализируй OCR-текст и выдели важные детали, отправителя и получателя.');
+    formData.append('responseStyle', 'concise');
+    formData.append('context', JSON.stringify(context));
+    return fetch(endpoint, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    }).then(function(response) {
+      return response.json().catch(function() { return null; }).then(function(payload) {
+        if (!response.ok || !payload || payload.ok !== true) {
+          throw new Error(payload && payload.error ? payload.error : ('Ошибка анализа ИИ (' + response.status + ')'));
+        }
+        return payload;
       });
     });
   }
@@ -2179,8 +2252,17 @@
         setPreviewLoading(true, source.label);
         resolveSourceText(source)
           .then(function(sourceText) {
-            preview.classList.remove('is-loading');
-            preview.textContent = buildBriefSummaryText(sourceText);
+            preview.textContent = '⏳ OCR завершён. ИИ анализирует документ...';
+            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl)
+              .then(function(aiPayload) {
+                preview.classList.remove('is-loading');
+                preview.textContent = buildAiBriefSummaryText(aiPayload);
+              })
+              .catch(function(error) {
+                preview.classList.remove('is-loading');
+                preview.textContent = buildBriefSummaryText(sourceText) + '\n\n[Fallback] ИИ недоступен: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+                showStatusMessage('warning', 'ИИ-анализ для "' + source.label + '" недоступен. Показан краткий fallback.');
+              });
           })
           .catch(function(error) {
             preview.classList.remove('is-loading');
