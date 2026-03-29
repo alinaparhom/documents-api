@@ -1266,6 +1266,7 @@
     async function openTemplateEditor() {
       var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
       var htmlContent = '';
+
       function normalizeTemplateHtml(rawHtml) {
         var content = String(rawHtml || '').trim();
         if (!content) {
@@ -1289,6 +1290,7 @@
           return content;
         }
       }
+
       try {
         var res = await fetch(apiUrl, {
           method: 'POST',
@@ -1304,68 +1306,158 @@
         htmlContent = '<p>Ошибка загрузки шаблона</p>';
       }
 
-      var editorModal = createOverlayModal('Редактор шаблона');
-      editorModal.content.style.maxWidth = '1200px';
-      editorModal.content.style.width = '95vw';
-      editorModal.content.style.background = 'rgba(255,255,255,.86)';
-      editorModal.content.style.backdropFilter = 'blur(14px)';
-      editorModal.content.style.border = '1px solid rgba(148,163,184,.25)';
+      var editorModal = createOverlayModal('Полноценный редактор шаблона');
+      editorModal.content.style.maxWidth = '100vw';
+      editorModal.content.style.width = '100vw';
+      editorModal.content.style.background = 'rgba(255,255,255,.96)';
+      editorModal.content.style.border = '1px solid rgba(148,163,184,.35)';
       editorModal.content.style.padding = '0';
       editorModal.content.style.overflow = 'hidden';
+      editorModal.content.style.height = '100vh';
+      editorModal.content.style.borderRadius = '0';
 
       var appWrap = createElement('div', 'ai-editor-app');
       appWrap.style.display = 'flex';
       appWrap.style.flexDirection = 'column';
-      appWrap.style.maxHeight = '86vh';
+      appWrap.style.height = '100vh';
 
       var ribbon = createElement('div', 'ai-editor-ribbon');
       ribbon.style.display = 'flex';
       ribbon.style.flexWrap = 'wrap';
       ribbon.style.gap = '8px';
-      ribbon.style.padding = '10px';
-      ribbon.style.borderBottom = '1px solid rgba(148,163,184,.25)';
-      ribbon.style.background = 'rgba(248,250,252,.9)';
+      ribbon.style.padding = '10px 12px';
+      ribbon.style.borderBottom = '1px solid rgba(148,163,184,.3)';
+      ribbon.style.background = '#f8fafc';
+      ribbon.style.alignItems = 'center';
 
       var insertAnswerBtn = createElement('button', 'ai-chat-modal__export-btn', 'Вставить ответ ИИ');
       var printBtn = createElement('button', 'ai-chat-modal__export-btn', '🖨️ Печать');
       var saveDocxBtn = createElement('button', 'ai-chat-modal__send', 'Скачать DOCX');
       var savePdfBtn = createElement('button', 'ai-chat-modal__send', 'Скачать PDF');
-      [insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn].forEach(function (btn) {
+      var loadTemplateBtn = createElement('button', 'ai-chat-modal__export-btn', '⟳ Загрузить шаблон');
+      [insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn, loadTemplateBtn].forEach(function (btn) {
         btn.type = 'button';
+        btn.style.minHeight = '34px';
       });
-      ribbon.append(insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn);
+      ribbon.append(insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn, loadTemplateBtn);
 
-      var formatBar = createElement('div', 'ai-editor-format');
-      formatBar.style.display = 'flex';
-      formatBar.style.flexWrap = 'wrap';
-      formatBar.style.gap = '6px';
-      formatBar.style.padding = '8px 10px';
-      formatBar.style.borderBottom = '1px solid rgba(148,163,184,.2)';
-      formatBar.style.background = 'rgba(255,255,255,.85)';
-      var boldBtn = createElement('button', 'ai-chat-modal__export-btn', 'B');
-      var italicBtn = createElement('button', 'ai-chat-modal__export-btn', 'I');
-      var underlineBtn = createElement('button', 'ai-chat-modal__export-btn', 'U');
-      var leftBtn = createElement('button', 'ai-chat-modal__export-btn', '⬅');
-      var centerBtn = createElement('button', 'ai-chat-modal__export-btn', '⬌');
-      var rightBtn = createElement('button', 'ai-chat-modal__export-btn', '➡');
-      var listBtn = createElement('button', 'ai-chat-modal__export-btn', '• Список');
-      [boldBtn, italicBtn, underlineBtn, leftBtn, centerBtn, rightBtn, listBtn].forEach(function (btn) {
-        btn.type = 'button';
-        btn.style.minWidth = '42px';
+      var formatBar1 = createElement('div', 'ai-editor-format');
+      formatBar1.style.display = 'flex';
+      formatBar1.style.flexWrap = 'wrap';
+      formatBar1.style.gap = '6px';
+      formatBar1.style.padding = '6px 12px';
+      formatBar1.style.borderBottom = '1px solid rgba(148,163,184,.2)';
+      formatBar1.style.background = '#ffffff';
+      formatBar1.style.alignItems = 'center';
+
+      function createLabel(text) {
+        var span = document.createElement('span');
+        span.textContent = text;
+        span.style.fontSize = '11px';
+        span.style.color = '#475569';
+        span.style.marginRight = '2px';
+        return span;
+      }
+
+      var fontFamilySelect = document.createElement('select');
+      fontFamilySelect.className = 'ai-chat-modal__select';
+      fontFamilySelect.style.width = '130px';
+      ['Arial', 'Times New Roman', 'Calibri', 'Georgia', 'Verdana', 'Courier New'].forEach(function (font) {
+        var opt = document.createElement('option');
+        opt.value = font;
+        opt.textContent = font;
+        fontFamilySelect.appendChild(opt);
       });
-      formatBar.append(boldBtn, italicBtn, underlineBtn, leftBtn, centerBtn, rightBtn, listBtn);
+      fontFamilySelect.value = 'Arial';
+
+      var fontSizeSelect = document.createElement('select');
+      fontSizeSelect.className = 'ai-chat-modal__select';
+      fontSizeSelect.style.width = '76px';
+      [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36].forEach(function (size) {
+        var opt = document.createElement('option');
+        opt.value = size + 'px';
+        opt.textContent = size + 'px';
+        fontSizeSelect.appendChild(opt);
+      });
+      fontSizeSelect.value = '12px';
+
+      var textColorInput = document.createElement('input');
+      textColorInput.type = 'color';
+      textColorInput.value = '#000000';
+      textColorInput.style.width = '36px';
+      textColorInput.style.height = '32px';
+      textColorInput.style.border = '1px solid #cbd5e1';
+      textColorInput.style.borderRadius = '6px';
+      textColorInput.style.cursor = 'pointer';
+
+      var bgColorInput = document.createElement('input');
+      bgColorInput.type = 'color';
+      bgColorInput.value = '#ffffff';
+      bgColorInput.style.width = '36px';
+      bgColorInput.style.height = '32px';
+      bgColorInput.style.border = '1px solid #cbd5e1';
+      bgColorInput.style.borderRadius = '6px';
+      bgColorInput.style.cursor = 'pointer';
+
+      formatBar1.append(
+        createLabel('Шрифт:'), fontFamilySelect,
+        createLabel('Размер:'), fontSizeSelect,
+        createLabel('Цвет:'), textColorInput,
+        createLabel('Фон:'), bgColorInput
+      );
+
+      var formatBar2 = createElement('div', 'ai-editor-format');
+      formatBar2.style.display = 'flex';
+      formatBar2.style.flexWrap = 'wrap';
+      formatBar2.style.gap = '6px';
+      formatBar2.style.padding = '6px 12px';
+      formatBar2.style.borderBottom = '1px solid rgba(148,163,184,.2)';
+      formatBar2.style.background = '#ffffff';
+
+      function createButton(text, cmd) {
+        var btn = createElement('button', 'ai-chat-modal__export-btn', text);
+        btn.type = 'button';
+        btn.style.minWidth = '44px';
+        btn.setAttribute('data-cmd', cmd);
+        return btn;
+      }
+
+      var boldBtn = createButton('B', 'bold');
+      var italicBtn = createButton('I', 'italic');
+      var underlineBtn = createButton('U', 'underline');
+      var strikeBtn = createButton('S', 'strikeThrough');
+      var leftBtn = createButton('⬅', 'justifyLeft');
+      var centerBtn = createButton('⬌', 'justifyCenter');
+      var rightBtn = createButton('➡', 'justifyRight');
+      var justifyBtn = createButton('☰', 'justifyFull');
+      var ulBtn = createButton('• Список', 'insertUnorderedList');
+      var olBtn = createButton('1. Список', 'insertOrderedList');
+      var indentBtn = createButton('↪', 'indent');
+      var outdentBtn = createButton('↩', 'outdent');
+      var linkBtn = createButton('🔗', 'createLink');
+      var tableBtn = createButton('📊', 'insertTable');
+      var undoBtn = createButton('↩️', 'undo');
+      var redoBtn = createButton('↪️', 'redo');
+
+      formatBar2.append(
+        boldBtn, italicBtn, underlineBtn, strikeBtn,
+        leftBtn, centerBtn, rightBtn, justifyBtn,
+        ulBtn, olBtn, indentBtn, outdentBtn,
+        linkBtn, tableBtn, undoBtn, redoBtn
+      );
 
       var pageBg = createElement('div', 'ai-editor-page-bg');
       pageBg.style.background = '#dbe3ee';
-      pageBg.style.padding = '16px';
+      pageBg.style.padding = '12px';
       pageBg.style.overflow = 'auto';
+      pageBg.style.flex = '1';
 
       var page = createElement('div', 'ai-editor-page');
       page.style.background = '#fff';
       page.style.width = '210mm';
       page.style.maxWidth = '100%';
       page.style.margin = '0 auto';
-      page.style.boxShadow = '0 8px 22px rgba(15,23,42,.12)';
+      page.style.boxShadow = '0 8px 22px rgba(15,23,42,.15)';
       page.style.minHeight = '297mm';
       page.style.borderRadius = '6px';
       page.style.position = 'relative';
@@ -1394,38 +1486,128 @@
       page.appendChild(pageHint);
       page.appendChild(editorArea);
       pageBg.appendChild(page);
-      appWrap.appendChild(ribbon);
-      appWrap.appendChild(formatBar);
-      appWrap.appendChild(pageBg);
+      appWrap.append(ribbon, formatBar1, formatBar2, pageBg);
       editorModal.content.appendChild(appWrap);
       openOverlay(editorModal);
 
-      function syncA4Scale() {
-        if (!pageBg || !page) {
-          return;
-        }
-        var viewport = pageBg.clientWidth - 20;
-        if (viewport <= 0) {
-          return;
-        }
-        var pageWidthPx = page.getBoundingClientRect().width;
-        if (pageWidthPx <= 0) {
-          return;
-        }
-        var nextScale = viewport < pageWidthPx ? Math.max(0.72, viewport / pageWidthPx) : 1;
-        page.style.transformOrigin = 'top center';
-        page.style.transform = 'scale(' + nextScale + ')';
-        pageBg.style.minHeight = Math.ceil((page.offsetHeight * nextScale) + 24) + 'px';
+      if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) {
+        editorModal.content.style.width = '100vw';
+        editorModal.content.style.maxWidth = '100vw';
+        editorModal.content.style.height = '100vh';
+        editorModal.content.style.borderRadius = '0';
+        appWrap.style.height = '100vh';
+        pageBg.style.padding = '8px';
+        editorArea.style.padding = '14px';
+        editorArea.style.minHeight = '70vh';
+        pageHint.style.display = 'none';
       }
-      syncA4Scale();
-      window.addEventListener('resize', syncA4Scale);
 
-      function applyFormat(command) {
+      function applyCommand(command, value) {
         editorArea.focus();
-        if (document.execCommand) {
-          document.execCommand(command, false, null);
+        if (command === 'fontName' || command === 'fontSize' || command === 'foreColor' || command === 'backColor') {
+          document.execCommand(command, false, value);
+          return;
+        }
+        if (command === 'createLink') {
+          var url = prompt('Введите URL:', 'https://');
+          if (url) {
+            document.execCommand(command, false, url);
+          }
+          return;
+        }
+        if (command === 'insertTable') {
+          var rows = parseInt(prompt('Количество строк:', '3'), 10);
+          var cols = parseInt(prompt('Количество столбцов:', '3'), 10);
+          if (rows > 0 && cols > 0) {
+            var tableHtml = '<table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse; width:100%;"><tbody>';
+            for (var i = 0; i < rows; i++) {
+              tableHtml += '<tr>';
+              for (var j = 0; j < cols; j++) {
+                tableHtml += '<td style="border:1px solid #ccc; padding:6px;">&nbsp;</td>';
+              }
+              tableHtml += '</tr>';
+            }
+            tableHtml += '</tbody></table><br>';
+            document.execCommand('insertHTML', false, tableHtml);
+          }
+          return;
+        }
+        document.execCommand(command, false, null);
+      }
+
+      function createElementFromHTML(htmlString) {
+        var div = document.createElement('div');
+        div.innerHTML = String(htmlString || '').trim();
+        return div.firstChild;
+      }
+
+      function applyFontFamily() {
+        applyCommand('fontName', fontFamilySelect.value);
+      }
+
+      function applyFontSize() {
+        var size = fontSizeSelect.value;
+        var px = parseInt(size, 10);
+        if (isNaN(px)) {
+          return;
+        }
+        editorArea.focus();
+        var selection = window.getSelection();
+        if (!selection || !selection.rangeCount) {
+          return;
+        }
+        var range = selection.getRangeAt(0);
+        if (range.collapsed) {
+          var span = document.createElement('span');
+          span.style.fontSize = size;
+          span.innerHTML = '&nbsp;';
+          range.insertNode(span);
+          range.setStartAfter(span);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+        try {
+          var wrapper = document.createElement('span');
+          wrapper.style.fontSize = size;
+          range.surroundContents(wrapper);
+        } catch (e) {
+          var fragment = range.cloneContents();
+          var holder = document.createElement('div');
+          holder.appendChild(fragment);
+          var html = '<span style="font-size:' + size + ';">' + holder.innerHTML + '</span>';
+          range.deleteContents();
+          var inserted = createElementFromHTML(html);
+          if (inserted) {
+            range.insertNode(inserted);
+          }
         }
       }
+
+      function applyTextColor() {
+        applyCommand('foreColor', textColorInput.value);
+      }
+
+      function applyBgColor() {
+        applyCommand('backColor', bgColorInput.value);
+      }
+
+      fontFamilySelect.addEventListener('change', applyFontFamily);
+      fontSizeSelect.addEventListener('change', applyFontSize);
+      textColorInput.addEventListener('change', applyTextColor);
+      bgColorInput.addEventListener('change', applyBgColor);
+
+      [
+        boldBtn, italicBtn, underlineBtn, strikeBtn,
+        leftBtn, centerBtn, rightBtn, justifyBtn,
+        ulBtn, olBtn, indentBtn, outdentBtn,
+        linkBtn, tableBtn, undoBtn, redoBtn
+      ].forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          applyCommand(btn.getAttribute('data-cmd'));
+        });
+      });
 
       insertAnswerBtn.addEventListener('click', function () {
         var answer = String(state.lastAssistantMessage || 'Ответ ИИ отсутствует');
@@ -1440,13 +1622,23 @@
           editorArea.innerHTML += '<p>' + escapeHtml(answer) + '</p>';
         }
       });
-      boldBtn.addEventListener('click', function () { applyFormat('bold'); });
-      italicBtn.addEventListener('click', function () { applyFormat('italic'); });
-      underlineBtn.addEventListener('click', function () { applyFormat('underline'); });
-      leftBtn.addEventListener('click', function () { applyFormat('justifyLeft'); });
-      centerBtn.addEventListener('click', function () { applyFormat('justifyCenter'); });
-      rightBtn.addEventListener('click', function () { applyFormat('justifyRight'); });
-      listBtn.addEventListener('click', function () { applyFormat('insertUnorderedList'); });
+
+      loadTemplateBtn.addEventListener('click', async function () {
+        try {
+          var templateRes = await fetch(apiUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+            body: 'action=load_template_html'
+          });
+          var templateData = await templateRes.json();
+          editorArea.innerHTML = (templateRes.ok && templateData && templateData.ok && templateData.html)
+            ? normalizeTemplateHtml(templateData.html)
+            : '<p>Шаблон не загружен</p>';
+        } catch (e) {
+          editorArea.innerHTML = '<p>Ошибка перезагрузки шаблона</p>';
+        }
+      });
 
       printBtn.addEventListener('click', function () {
         var printWindow = window.open('', '_blank');
@@ -1454,7 +1646,7 @@
           alert('Разрешите всплывающие окна для печати.');
           return;
         }
-        printWindow.document.write('<html><head><title>Печать</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:Arial,sans-serif;padding:16px;color:#0f172a;}p{margin:0 0 10px;}</style></head><body>' + editorArea.innerHTML + '</body></html>');
+        printWindow.document.write('<html><head><title>Печать</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:Arial,sans-serif;padding:16px;}table{border-collapse:collapse;width:100%;}td,th{border:1px solid #aaa;padding:6px;}</style></head><body>' + editorArea.innerHTML + '</body></html>');
         printWindow.document.close();
         printWindow.focus();
         printWindow.print();
@@ -1477,13 +1669,7 @@
             } catch (e) {
               errorPayload = null;
             }
-            var serverError = errorPayload && errorPayload.error ? errorPayload.error : 'Ошибка генерации';
-            throw new Error(serverError);
-          }
-          var responseType = (response.headers.get('content-type') || '').toLowerCase();
-          if (responseType.indexOf('application/json') !== -1) {
-            var payload = await response.json();
-            throw new Error(payload && payload.error ? payload.error : 'Сервер не вернул файл');
+            throw new Error(errorPayload && errorPayload.error ? errorPayload.error : 'Ошибка генерации');
           }
           var blob = await response.blob();
           var url = URL.createObjectURL(blob);
@@ -1504,7 +1690,45 @@
 
       saveDocxBtn.addEventListener('click', function () { saveDocument('docx'); });
       savePdfBtn.addEventListener('click', function () { saveDocument('pdf'); });
+
+      function syncA4Scale() {
+        if (!pageBg || !page) {
+          return;
+        }
+        var isMobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+        if (isMobile) {
+          page.style.transform = 'none';
+          page.style.width = '100%';
+          page.style.minHeight = 'auto';
+          pageBg.style.minHeight = 'auto';
+          return;
+        }
+        page.style.width = '210mm';
+        page.style.minHeight = '297mm';
+
+        var frameWidth = pageBg.clientWidth - 24;
+        var frameHeight = pageBg.clientHeight - 24;
+        if (frameWidth <= 0 || frameHeight <= 0) {
+          return;
+        }
+
+        var mmToPx = 3.7795275591;
+        var a4Width = 210 * mmToPx;
+        var a4Height = 297 * mmToPx;
+        var scaleByWidth = frameWidth / a4Width;
+        var scaleByHeight = frameHeight / a4Height;
+        var nextScale = Math.min(scaleByWidth, scaleByHeight, 1);
+        nextScale = Math.max(0.5, nextScale);
+
+        page.style.transformOrigin = 'top center';
+        page.style.transform = 'scale(' + nextScale + ')';
+        pageBg.style.minHeight = Math.ceil((a4Height * nextScale) + 24) + 'px';
+      }
+
+      syncA4Scale();
+      window.addEventListener('resize', syncA4Scale);
     }
+
 
     function resanitizeFileContents() {
       var totalLines = 0;
