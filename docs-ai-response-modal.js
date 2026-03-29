@@ -13,6 +13,17 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
+  var docxPreviewReadyPromise = null;
+  var TEMPLATE_DOCX_URLS = [
+    '/app/templates/template.docx',
+    '/app/templates/template.docs',
+    '/templates/template.docx',
+    '/templates/template.docs',
+    './templates/template.docx',
+    './templates/template.docs',
+    'templates/template.docx',
+    'templates/template.docs'
+  ];
   var DEFAULT_AI_BEHAVIOR = 'Ты — руководитель организации, уполномоченный принимать окончательное решение по документу.\n'
     + 'Обязательно используй формулировки: "В ответ на Ваш документ от [дата] № [номер] сообщаем следующее", "Отмечаем, что…", "Обращаем Ваше внимание на…".\n'
     + 'Тон: строгий, аргументированный, без эмоций.\n'
@@ -730,6 +741,40 @@
     return mammothReadyPromise;
   }
 
+  function ensureDocxPreviewLoaded() {
+    if (docxPreviewReadyPromise) {
+      return docxPreviewReadyPromise;
+    }
+    docxPreviewReadyPromise = new Promise(function (resolve, reject) {
+      if (typeof window === 'undefined') {
+        reject(new Error('no_window'));
+        return;
+      }
+      if (window.docx && typeof window.docx.renderAsync === 'function') {
+        resolve(window.docx);
+        return;
+      }
+      var script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/docx-preview@0.3.2/dist/docx-preview.min.js';
+      script.async = true;
+      script.onload = function () {
+        if (window.docx && typeof window.docx.renderAsync === 'function') {
+          resolve(window.docx);
+        } else {
+          reject(new Error('docx_preview_missing'));
+        }
+      };
+      script.onerror = function () {
+        reject(new Error('docx_preview_load_failed'));
+      };
+      document.head.appendChild(script);
+    }).catch(function (error) {
+      docxPreviewReadyPromise = null;
+      throw error;
+    });
+    return docxPreviewReadyPromise;
+  }
+
   function extractDocxText(file) {
     if (!file || typeof file.arrayBuffer !== 'function') {
       return Promise.resolve('');
@@ -1292,6 +1337,47 @@
       }
 
       async function loadTemplateHtml() {
+        async function loadTemplateDocxHtml() {
+          var docxPreview = await ensureDocxPreviewLoaded();
+          var lastError = null;
+          for (var i = 0; i < TEMPLATE_DOCX_URLS.length; i += 1) {
+            var templateUrl = TEMPLATE_DOCX_URLS[i];
+            try {
+              var response = await fetch(templateUrl, { credentials: 'same-origin' });
+              if (!response.ok) {
+                lastError = new Error('template_not_found_' + response.status);
+                continue;
+              }
+              var arrayBuffer = await response.arrayBuffer();
+              var container = document.createElement('div');
+              await docxPreview.renderAsync(arrayBuffer, container, null, {
+                className: 'docx',
+                ignoreWidth: false,
+                ignoreHeight: false,
+                ignoreFonts: false,
+                breakPages: true,
+                inWrapper: true
+              });
+              var renderedHtml = normalizeTemplateHtml(container.innerHTML || '');
+              if (renderedHtml && renderedHtml.trim()) {
+                return renderedHtml;
+              }
+            } catch (error) {
+              lastError = error;
+            }
+          }
+          throw lastError || new Error('docx_template_load_failed');
+        }
+
+        try {
+          var docxHtml = await loadTemplateDocxHtml();
+          if (docxHtml && docxHtml.trim()) {
+            return docxHtml;
+          }
+        } catch (docxError) {
+          // fallback на API ниже
+        }
+
         try {
           var res = await fetch(apiUrl, {
             method: 'POST',
@@ -1386,7 +1472,6 @@
       editorArea.style.lineHeight = '1.5';
       editorArea.style.color = '#0f172a';
       editorArea.style.wordBreak = 'break-word';
-      editorArea.style.webkitUserModify = 'read-write-plaintext-only';
       editorArea.style.setProperty('webkitUserModify', 'read-write');
 
       var contentStyles = document.createElement('style');
