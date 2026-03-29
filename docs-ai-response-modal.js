@@ -5,18 +5,21 @@
   var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
-  var DEFAULT_CONTEXT_FILE_CHARS_DETAILED = 12000;
+  var DEFAULT_CONTEXT_FILE_CHARS_DETAILED = 60000;
   var DEFAULT_CONTEXT_FILE_CHARS_BRIEF = 3500;
-  var DEFAULT_CONTEXT_TOTAL_CHARS_DETAILED = 45000;
+  var DEFAULT_CONTEXT_TOTAL_CHARS_DETAILED = 220000;
   var DEFAULT_CONTEXT_TOTAL_CHARS_BRIEF = 18000;
   var DEFAULT_LONG_ATTACHMENT_THRESHOLD = 7000;
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
-  var DEFAULT_AI_BEHAVIOR = 'Ты — корпоративный секретарь. Ответь на документ в официально-деловом стиле.\n'
-    + 'Используй обороты: "В ответ на Ваше письмо... сообщаем следующее", "Отмечаем, что...", "Обращаем Ваше внимание...".\n'
+  var DEFAULT_AI_BEHAVIOR = 'Ты — руководитель организации, уполномоченный принимать окончательное решение по документу.\n'
+    + 'Обязательно используй формулировки: "В ответ на Ваш документ от [дата] № [номер] сообщаем следующее", "Отмечаем, что…", "Обращаем Ваше внимание на…".\n'
     + 'Тон: строгий, аргументированный, без эмоций.\n'
-    + 'Ответ должен содержать чёткую структуру: вступление, основную часть, заключение.';
+    + 'Структура: вступление (факт получения и рассмотрения), основная часть (анализ пунктов со ссылками на нормативные или внутренние требования), заключение (однозначное решение).\n'
+    + 'Допустимые решения: approve (одобрить), reject (отклонить с причинами), need_clarification (запросить недостающие данные).\n'
+    + 'Если данных недостаточно, явно запроси недостающую информацию и укажи, какое решение будет принято после её получения.\n'
+    + 'Ответ должен быть развёрнутым: не кратким и не коротким.';
 
   var STYLE_OPTIONS = [
     { value: 'neutral', label: 'Нейтральный стиль' },
@@ -157,6 +160,9 @@
           stats.emptyDropped += 1;
         }
         return false;
+      }
+      if (currentMode === 'smart') {
+        return true;
       }
       if (isBusinessWhitelistLine(trimmed)) {
         if (stats) {
@@ -979,7 +985,7 @@
       contextSettings: buildContextSettings(config),
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
         ? config.ocrMode
-        : OCR_MODE_OPTIONS[0].value,
+        : 'raw',
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: '',
@@ -1520,7 +1526,7 @@
           : null;
         if (decisionBlock && decisionBlock.decision && !/^решение\s*ии\s*:/i.test(finalResponse)) {
           var decisionMap = {
-            approve: '✅ Согласовать',
+            approve: '✅ Одобрить',
             reject: '⛔ Отклонить',
             need_clarification: '❓ Нужны уточнения'
           };
