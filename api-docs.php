@@ -217,6 +217,29 @@ function detectFileExtension(array $file): string
     return trim((string)end($parts));
 }
 
+function getUploadedTemplateFile(string $field = 'templateFile'): ?array
+{
+    $templates = normalizeUploadedFiles($field);
+    if (!$templates) {
+        return null;
+    }
+    $candidate = $templates[0];
+    $tmpName = (string)($candidate['tmp_name'] ?? '');
+    if ($tmpName === '' || !is_file($tmpName)) {
+        return null;
+    }
+    $extension = detectFileExtension($candidate);
+    if ($extension !== 'docx' && $extension !== 'pdf') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Шаблон должен быть в формате DOCX или PDF']);
+    }
+    $size = (int)($candidate['size'] ?? 0);
+    if ($size > 20 * 1024 * 1024) {
+        jsonResponse(400, ['ok' => false, 'error' => 'Шаблон слишком большой (максимум 20MB)']);
+    }
+    $candidate['extension'] = $extension;
+    return $candidate;
+}
+
 function decodeDocxXmlText(string $xml): string
 {
     $dom = new DOMDocument();
@@ -1051,6 +1074,7 @@ if ($action === 'generate_document') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
+    $uploadedTemplate = getUploadedTemplateFile('templateFile');
 
     if ($answerText === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
@@ -1072,8 +1096,12 @@ if ($action === 'generate_document') {
         return is_string($value) && $value !== '';
     });
 
-    $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
-    $templatePdfPath = resolveTemplatePath('template.pdf', $extraTemplateDirs);
+    $templateDocxPath = $uploadedTemplate && (($uploadedTemplate['extension'] ?? '') === 'docx')
+        ? (string)($uploadedTemplate['tmp_name'] ?? '')
+        : resolveTemplatePath('template.docx', $extraTemplateDirs);
+    $templatePdfPath = $uploadedTemplate && (($uploadedTemplate['extension'] ?? '') === 'pdf')
+        ? (string)($uploadedTemplate['tmp_name'] ?? '')
+        : resolveTemplatePath('template.pdf', $extraTemplateDirs);
     if (!is_file($templateDocxPath) && !is_file($templatePdfPath)) {
         jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
     }
@@ -1126,6 +1154,7 @@ if ($action === 'generate_from_html') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $html = trim((string)($_POST['html'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? 'Ответ'));
+    $uploadedTemplate = getUploadedTemplateFile('templateFile');
     if ($html === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'HTML пустой']);
     }
@@ -1142,7 +1171,9 @@ if ($action === 'generate_from_html') {
     ], static function ($value): bool {
         return is_string($value) && $value !== '';
     });
-    $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
+    $templateDocxPath = $uploadedTemplate && (($uploadedTemplate['extension'] ?? '') === 'docx')
+        ? (string)($uploadedTemplate['tmp_name'] ?? '')
+        : resolveTemplatePath('template.docx', $extraTemplateDirs);
     if (!is_file($templateDocxPath)) {
         jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден']);
     }

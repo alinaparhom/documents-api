@@ -10,6 +10,7 @@
   var DEFAULT_CONTEXT_TOTAL_CHARS_DETAILED = 45000;
   var DEFAULT_CONTEXT_TOTAL_CHARS_BRIEF = 18000;
   var DEFAULT_LONG_ATTACHMENT_THRESHOLD = 7000;
+  var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
   var DEFAULT_AI_BEHAVIOR = 'Ты — корпоративный секретарь. Ответь на документ в официально-деловом стиле.\n'
@@ -981,7 +982,8 @@
         : OCR_MODE_OPTIONS[0].value,
       isLoading: false,
       lastAssistantMessage: '',
-      templateDraft: ''
+      templateDraft: '',
+      templateFile: null
     };
 
     state.ocrSummary = { totalLines: 0, droppedLines: 0, whitelistKept: 0 };
@@ -1088,6 +1090,9 @@
       formData.append('format', format);
       formData.append('answer', answerText);
       formData.append('documentTitle', config.documentTitle || '');
+      if (state.templateFile && state.templateFile.fileObject) {
+        formData.append('templateFile', state.templateFile.fileObject, state.templateFile.fileObject.name || 'template.docx');
+      }
 
       fetch(apiUrl, {
         method: 'POST',
@@ -1212,6 +1217,18 @@
 
     var templateModal = createOverlayModal('Шаблон');
     var templateInfo = createElement('div', 'ai-chat-modal__empty', 'Загрузка шаблона...');
+    var templateUploadWrap = createElement('div', 'ai-chat-modal__export-buttons');
+    templateUploadWrap.style.marginBottom = '8px';
+    var chooseTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Загрузить DOCX/PDF');
+    var clearTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Сбросить шаблон');
+    chooseTemplateButton.type = 'button';
+    clearTemplateButton.type = 'button';
+    templateUploadWrap.appendChild(chooseTemplateButton);
+    templateUploadWrap.appendChild(clearTemplateButton);
+    var templateInput = document.createElement('input');
+    templateInput.type = 'file';
+    templateInput.accept = '.docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    templateInput.style.display = 'none';
     var templateArea = createElement('textarea', 'ai-chat-modal__textarea');
     templateArea.rows = 12;
     templateArea.style.maxHeight = '320px';
@@ -1224,8 +1241,10 @@
     var closeTemplate = createElement('button', 'ai-chat-modal__export-btn', 'Закрыть');
     [applyToResponse, applyToComposer, downloadTemplate, closeTemplate].forEach(function (btn) { btn.type = 'button'; templateActions.appendChild(btn); });
     templateModal.content.appendChild(templateInfo);
+    templateModal.content.appendChild(templateUploadWrap);
     templateModal.content.appendChild(templateArea);
     templateModal.content.appendChild(templateActions);
+    templateModal.content.appendChild(templateInput);
 
     function openOverlay(modalRef) {
       document.body.appendChild(modalRef.overlay);
@@ -1588,7 +1607,7 @@
     });
     openTemplateButton.addEventListener('click', async function () {
       menuDropdown.style.display = 'none';
-      if (!state.templateDraft) {
+      if (!state.templateDraft && !(state.templateFile && state.templateFile.fileObject)) {
         var templateUrl = config.templateUrl || '/template.docx';
         try {
           var response = await fetch(templateUrl, { credentials: 'same-origin' });
@@ -1602,9 +1621,41 @@
           state.templateDraft = '';
           templateInfo.textContent = 'Не удалось загрузить template.docx. Можно ввести текст вручную.';
         }
+      } else if (state.templateFile && state.templateFile.fileObject) {
+        templateInfo.textContent = 'Выбран шаблон: ' + state.templateFile.fileObject.name + '. Он будет использован при экспорте DOCX/PDF.';
       }
       templateArea.value = state.templateDraft;
       openOverlay(templateModal);
+    });
+
+    chooseTemplateButton.addEventListener('click', function () {
+      templateInput.click();
+    });
+    clearTemplateButton.addEventListener('click', function () {
+      state.templateFile = null;
+      templateInput.value = '';
+      templateInfo.textContent = 'Пользовательский шаблон сброшен. Используется шаблон по умолчанию.';
+    });
+    templateInput.addEventListener('change', function () {
+      var file = templateInput.files && templateInput.files[0] ? templateInput.files[0] : null;
+      if (!file) {
+        return;
+      }
+      var fileName = String(file.name || '').toLowerCase();
+      var isDocx = /\.docx$/i.test(fileName);
+      var isPdf = /\.pdf$/i.test(fileName);
+      if (!isDocx && !isPdf) {
+        templateInfo.textContent = 'Нужен файл DOCX или PDF.';
+        templateInput.value = '';
+        return;
+      }
+      if (file.size > MAX_TEMPLATE_FILE_BYTES) {
+        templateInfo.textContent = 'Файл шаблона больше 20MB. Выберите файл поменьше.';
+        templateInput.value = '';
+        return;
+      }
+      state.templateFile = { fileObject: file };
+      templateInfo.textContent = 'Шаблон загружен: ' + file.name + '. При экспорте ответ ИИ будет вставлен в этот шаблон.';
     });
 
     editApply.addEventListener('click', function () {
