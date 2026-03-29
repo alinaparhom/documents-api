@@ -7,6 +7,8 @@ const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
+const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
+const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v1';
 
 let aiDialogLoader = null;
 
@@ -91,6 +93,152 @@ async function openAiDialogSafely(context = {}) {
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function ensureTelegramBriefModalStyle() {
+  if (document.getElementById(TELEGRAM_BRIEF_MODAL_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = TELEGRAM_BRIEF_MODAL_STYLE_ID;
+  style.textContent = `
+    .appdosc-brief-ai{position:fixed;inset:0;z-index:2800;background:rgba(15,23,42,.32);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:8px}
+    .appdosc-brief-ai__panel{width:min(980px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.98),rgba(255,255,255,.92));border-radius:20px;border:1px solid rgba(255,255,255,.9);overflow:hidden}
+    .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid rgba(226,232,240,.95)}
+    .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
+    .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
+    .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,300px) minmax(0,1fr);gap:10px;padding:12px;min-height:0;flex:1}
+    .appdosc-brief-ai__list{display:flex;flex-direction:column;gap:8px;overflow:auto}
+    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:12px;padding:10px;text-align:left;opacity:1}
+    .appdosc-brief-ai__item span{display:block;word-break:break-word;overflow-wrap:anywhere}
+    .appdosc-brief-ai__item strong{font-size:13px;color:#0f172a}
+    .appdosc-brief-ai__item small{font-size:11px;color:#64748b}
+    .appdosc-brief-ai__item.is-active{border-color:rgba(37,99,235,.55);background:rgba(239,246,255,.9)}
+    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:#fff;padding:12px;white-space:pre-wrap;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
+    @media (max-width:768px){.appdosc-brief-ai__body{grid-template-columns:1fr}}
+  `;
+  document.head.appendChild(style);
+}
+
+async function requestTelegramOcrByUrl(fileUrl) {
+  const formData = new FormData();
+  formData.append('action', 'ocr_extract');
+  formData.append('language', 'rus');
+  formData.append('file_url', fileUrl);
+  const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || 'OCR временно недоступен');
+  }
+  const text = payload && payload.text ? String(payload.text).trim() : '';
+  if (!text) throw new Error('OCR не вернул текст');
+  return text;
+}
+
+async function requestTelegramBriefAi(sourceLabel, text) {
+  const context = {
+    extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: String(text || '').slice(0, 12000) }],
+    aiBehavior: 'Режим "Кратко ИИ". Кратко и понятно: о чем документ, кто отправитель/получатель, 3-4 ключевые детали.'
+  };
+  const formData = new FormData();
+  formData.append('action', 'ai_response_analyze');
+  formData.append('documentTitle', sourceLabel);
+  formData.append('prompt', 'Сделай короткое и понятное summary документа.');
+  formData.append('responseStyle', 'concise');
+  formData.append('context', JSON.stringify(context));
+  const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || 'ИИ временно недоступен');
+  }
+  return payload;
+}
+
+function buildTelegramBriefText(payload, task) {
+  const analysis = payload && payload.analysis ? String(payload.analysis).trim() : '';
+  const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
+  const actions = Array.isArray(block.required_actions) ? block.required_actions.slice(0, 4) : [];
+  const requirements = Array.isArray(block.requirements) ? block.requirements.slice(0, 3) : [];
+  const decisionReason = block && block.decision_reason ? String(block.decision_reason).trim() : '';
+  const participants = Array.isArray(block.risks) ? block.risks.find((line) => /^отправитель\s*:/i.test(String(line || '').trim())) : '';
+  const taskSender = normalizeValue(task && task.correspondent) || normalizeValue(task && task.organization);
+  const taskRecipient = normalizeValue(task && task.organization);
+  const participantsLine = participants
+    || ((taskSender || taskRecipient) ? `Отправитель: ${taskSender || 'не определён'}; Получатель: ${taskRecipient || 'не определён'}` : 'Не удалось точно определить.');
+  return [
+    '✨ Кратко по документу',
+    '',
+    '📄 О чем файл',
+    analysis || 'Не удалось определить суть документа.',
+    '',
+    '👤 Кто прислал / кому',
+    participantsLine,
+    '',
+    '❓ Зачем это письмо',
+    decisionReason || 'Согласовать изменения по работам и принять решение о дальнейших действиях.',
+    '',
+    '🔎 Важные детали',
+    actions.length ? actions.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Детали не выделены.',
+    '',
+    '✅ Что нужно сделать',
+    requirements.length ? requirements.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Проверить требования документа и дать официальный ответ.'
+  ].join('\n');
+}
+
+function openTelegramBriefModal(task, statusHandler) {
+  ensureTelegramBriefModalStyle();
+  const modal = document.createElement('div');
+  modal.className = 'appdosc-brief-ai';
+  modal.innerHTML = `
+    <div class="appdosc-brief-ai__panel">
+      <div class="appdosc-brief-ai__header">
+        <div><div class="appdosc-brief-ai__title">Кратко ИИ</div><div class="appdosc-brief-ai__sub">Выберите источник для анализа</div></div>
+        <button type="button" class="appdosc-card__action" data-close>Закрыть</button>
+      </div>
+      <div class="appdosc-brief-ai__body">
+        <div class="appdosc-brief-ai__list" data-list></div>
+        <pre class="appdosc-brief-ai__preview" data-preview>Нажмите на источник слева.</pre>
+      </div>
+    </div>`;
+  const list = modal.querySelector('[data-list]');
+  const preview = modal.querySelector('[data-preview]');
+  const sources = [];
+  const taskText = [task && task.summary, task && task.instruction, task && task.resolution].map((v) => String(v || '').trim()).filter(Boolean).join('\n');
+  if (taskText) sources.push({ label: 'Текст задачи', text: taskText, type: 'context' });
+  (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
+    const name = getAttachmentName(file, index + 1);
+    const url = resolveFileFetchUrl(file);
+    if (url) sources.push({ label: name, url, type: 'file' });
+  });
+
+  const activate = (button) => Array.from(list.querySelectorAll('.appdosc-brief-ai__item')).forEach((el) => el.classList.toggle('is-active', el === button));
+  const close = () => modal.remove();
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  modal.querySelector('[data-close]').addEventListener('click', close);
+
+  sources.forEach((source) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'appdosc-brief-ai__item';
+    button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>${source.type === 'file' ? 'Вложение' : 'Карточка задачи'}</small></span>`;
+    button.addEventListener('click', async () => {
+      activate(button);
+      try {
+        preview.textContent = '⏳ Подготовка текста...';
+        const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
+        preview.textContent = '⏳ ИИ анализирует документ...';
+        const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
+        preview.textContent = buildTelegramBriefText(aiPayload, task);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'неизвестная ошибка';
+        preview.textContent = `ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${message}`;
+        if (typeof statusHandler === 'function') statusHandler('warning', preview.textContent);
+      }
+    });
+    list.appendChild(button);
+  });
+  if (!sources.length) {
+    list.innerHTML = '<div class="appdosc-empty">Нет текста или файлов для анализа.</div>';
+  }
+  document.body.appendChild(modal);
 }
 
 const ALLOWED_LOG_EVENTS = new Set([
@@ -1837,6 +1985,7 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
+      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief>Кратко ИИ</button>
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
@@ -3112,6 +3261,10 @@ function createCard(task, index, anchorRegistry) {
   const viewButton = card.querySelector('[data-card-view]');
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
+  }
+  const briefButton = card.querySelector('[data-card-brief]');
+  if (briefButton) {
+    briefButton.addEventListener('click', () => openTelegramBriefModal(task, setStatus));
   }
 
   updateCardViewInfo(card, task);
