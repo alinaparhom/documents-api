@@ -629,7 +629,7 @@
       if (!trimmed) {
         return true;
       }
-      if (/^сформируй\s+официальный\s+ответ/i.test(trimmed)) {
+      if (/^(сформируй|подготовь)\s+официальный\s+ответ/i.test(trimmed)) {
         return false;
       }
       return !/^решение\s*ии\s*:/i.test(trimmed)
@@ -1505,6 +1505,9 @@
           }
           if (Array.isArray(decisionBlock.required_actions) && decisionBlock.required_actions.length) {
             decisionLines.push('Действия: ' + decisionBlock.required_actions.slice(0, 3).join('; '));
+          }
+          if (Array.isArray(decisionBlock.requirements) && decisionBlock.requirements.length) {
+            decisionLines.push('Требования из файла: ' + decisionBlock.requirements.slice(0, 3).join('; '));
           }
           finalResponse = decisionLines.join('\n') + '\n\n' + finalResponse;
         }
