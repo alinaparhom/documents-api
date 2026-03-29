@@ -18,9 +18,18 @@ function openTemplateEditorFallback() {
       return true;
     }
     const opened = window.open(editorUrl, '_blank', 'noopener,noreferrer');
-    return Boolean(opened);
+    if (opened) {
+      return true;
+    }
+    window.location.href = editorUrl;
+    return true;
   } catch (error) {
-    return false;
+    try {
+      window.location.href = editorUrl;
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }
 
