@@ -58,6 +58,14 @@ if ($method === 'GET') {
         }
         jsonResponse(200, ['ok' => true, 'models' => array_values(array_unique($models)), 'defaultModel' => $defaultModel]);
     }
+    if ($action === 'load_template_html') {
+        $templatePath = resolveTemplatePath('template.docx', []);
+        if (!is_file($templatePath)) {
+            jsonResponse(404, ['ok' => false, 'error' => 'Шаблон template.docx не найден в /app/templates/ или других папках']);
+        }
+        $html = docxToHtml($templatePath);
+        jsonResponse(200, ['ok' => true, 'html' => $html]);
+    }
 
     $isPing = isset($_GET['ping']) && (string)$_GET['ping'] === '1';
     $isDebug = isset($_GET['debug']) && (string)$_GET['debug'] === '1';
@@ -1122,7 +1130,7 @@ if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxConte
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
-$action = trim((string)($_POST['action'] ?? ''));
+$action = trim((string)($_POST['action'] ?? $_GET['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
 if ($action !== ''

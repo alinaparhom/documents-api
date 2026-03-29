@@ -253,7 +253,15 @@
 
 <script>
     // ======================== КОНФИГУРАЦИЯ ========================
-    const API_ENDPOINT = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+    function resolveApiEndpoint() {
+        if (window.DOCUMENTS_AI_API_URL && String(window.DOCUMENTS_AI_API_URL).trim() !== '') {
+            return String(window.DOCUMENTS_AI_API_URL).trim();
+        }
+        const currentPath = window.location.pathname || '';
+        const currentDir = currentPath.includes('/') ? currentPath.slice(0, currentPath.lastIndexOf('/') + 1) : '/';
+        return currentDir + 'api-docs.php';
+    }
+    const API_ENDPOINT = resolveApiEndpoint();
     let lastAIResponse = '';
 
     // DOM элементы
@@ -297,7 +305,15 @@
             const formData = new FormData();
             formData.append('action', 'load_template_html');
             const response = await fetch(API_ENDPOINT, { method: 'POST', body: formData });
-            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(`Сервер вернул ${response.status}`);
+            }
+            let data = null;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                throw new Error('API вернул не JSON. Проверьте путь к api-docs.php');
+            }
             if (data.ok && data.html) {
                 editorDiv.innerHTML = data.html;
                 showToast('Шаблон загружен', 1500);
