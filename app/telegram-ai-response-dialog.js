@@ -1,9 +1,10 @@
-const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v5';
+const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v6';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
 const DOCS_API_ENDPOINT = '/js/documents/api-docs.php';
 const DOCX_TEMPLATE_URLS = ['/app/templates/template.docx', '/templates/template.docx', './templates/template.docx', 'templates/template.docx'];
 const PDF_TEMPLATE_URLS = ['/app/templates/template.pdf', '/templates/template.pdf', './templates/template.pdf', 'templates/template.pdf'];
 const EDITOR_DRAFT_KEY = 'miniapp_editor_draft_v2';
+const EDITOR_ROUTE_PAYLOAD_KEY = 'miniapp_editor_route_payload_v1';
 const REQUEST_TIMEOUT_MS = 12000;
 
 const SCRIPT_CACHE = new Map();
@@ -30,19 +31,20 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed}
     .appdosc-ai-dialog__editor{position:fixed;inset:0;z-index:2800;display:none;background:rgba(241,245,249,.74);backdrop-filter:blur(10px)}
     .appdosc-ai-dialog__editor--open{display:flex}
-    .appdosc-ai-dialog__editor-panel{width:100%;height:100dvh;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.97),rgba(255,255,255,.9))}
-    .appdosc-ai-dialog__editor-header{padding:12px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:1px solid rgba(148,163,184,.22)}
+    .appdosc-ai-dialog__editor-panel{width:100%;height:100dvh;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.97),rgba(255,255,255,.9));padding:calc(8px + env(safe-area-inset-top,0px)) calc(10px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px))}
+    .appdosc-ai-dialog__editor-header{padding:10px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border:1px solid rgba(148,163,184,.2);border-radius:16px;background:rgba(255,255,255,.75);backdrop-filter:blur(8px)}
     .appdosc-ai-dialog__editor-title{font-size:17px;font-weight:700;color:#0f172a}
     .appdosc-ai-dialog__editor-subtitle{font-size:12px;color:#64748b;margin-top:2px}
+    .appdosc-ai-dialog__top-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .appdosc-ai-dialog__toolbar{position:sticky;top:0;z-index:2;display:flex;gap:8px;flex-wrap:wrap;padding:8px 10px;background:rgba(255,255,255,.92);border-bottom:1px solid rgba(148,163,184,.18)}
-    .appdosc-ai-dialog__body{flex:1;min-height:0;overflow:auto;padding:12px 12px 96px}
+    .appdosc-ai-dialog__body{flex:1;min-height:0;overflow:auto;padding:12px 4px 96px}
     .appdosc-ai-dialog__editable{min-height:52dvh;border:1px solid rgba(148,163,184,.34);border-radius:16px;padding:14px;background:#fff;line-height:1.55;outline:none}
     .appdosc-ai-dialog__editable table{width:100%;border-collapse:collapse}
     .appdosc-ai-dialog__editable td,.appdosc-ai-dialog__editable th{border:1px solid rgba(148,163,184,.42);padding:6px}
     .appdosc-ai-dialog__pdf-note{margin-top:10px;border:1px dashed rgba(148,163,184,.45);border-radius:12px;padding:10px;background:rgba(255,255,255,.86);font-size:12px;color:#334155}
     .appdosc-ai-dialog__status{font-size:12px;color:#64748b;padding:0 12px 8px}
-    .appdosc-ai-dialog__sticky{position:fixed;left:0;right:0;bottom:0;z-index:3;display:flex;gap:8px;overflow:auto;padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));background:rgba(255,255,255,.94);border-top:1px solid rgba(148,163,184,.2)}
-    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__btn{flex:1}}
+    .appdosc-ai-dialog__sticky{position:fixed;left:0;right:0;bottom:0;z-index:3;display:flex;gap:8px;overflow:auto;padding:8px calc(10px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));background:rgba(255,255,255,.94);border-top:1px solid rgba(148,163,184,.2)}
+    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__btn{flex:1;min-height:48px;font-size:15px}}
   `;
   document.head.appendChild(style);
 }
@@ -178,6 +180,14 @@ function saveDraft(data) {
 
 function loadDraft() {
   try { return JSON.parse(localStorage.getItem(EDITOR_DRAFT_KEY) || 'null'); } catch (_) { return null; }
+}
+
+function saveEditorRoutePayload(payload) {
+  try { sessionStorage.setItem(EDITOR_ROUTE_PAYLOAD_KEY, JSON.stringify(payload || {})); } catch (_) {}
+}
+
+function loadEditorRoutePayload() {
+  try { return JSON.parse(sessionStorage.getItem(EDITOR_ROUTE_PAYLOAD_KEY) || 'null'); } catch (_) { return null; }
 }
 
 function isValidHttpUrl(url) {
@@ -317,6 +327,7 @@ function openAiResponseDialog(context = {}) {
     isEditorOpen: false,
     assistantText: '',
     templateType: 'docx',
+    requestId: '',
     templateHtml: '',
     controllers: new Set(),
     autosaveTimer: null,
@@ -354,7 +365,12 @@ function openAiResponseDialog(context = {}) {
     <div class="appdosc-ai-dialog__editor-panel" role="dialog" aria-label="Редактор документа">
       <div class="appdosc-ai-dialog__editor-header">
         <div><div class="appdosc-ai-dialog__editor-title">/editor</div><div class="appdosc-ai-dialog__editor-subtitle" data-editor-subtitle>Загрузка шаблона...</div></div>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-editor-close>Назад</button>
+        <div class="appdosc-ai-dialog__top-actions">
+          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-editor-close>Назад</button>
+          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-save-top>Сохранить</button>
+          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-top>Экспорт</button>
+          <button type="button" class="appdosc-ai-dialog__btn" data-send-chat-top>В чат</button>
+        </div>
       </div>
       <div class="appdosc-ai-dialog__toolbar">
         <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-bold>B</button>
@@ -371,8 +387,8 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__status" data-status>Автосохранение включено</div>
       <div class="appdosc-ai-dialog__sticky">
         <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-save>Сохранить</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-download-docx>Скачать DOCX</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-download-pdf>Скачать PDF</button>
+        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-docx>Экспорт DOCX</button>
+        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-pdf>Экспорт PDF</button>
         <button type="button" class="appdosc-ai-dialog__btn" data-send-chat>Отправить в чат</button>
       </div>
     </div>`;
@@ -436,13 +452,27 @@ function openAiResponseDialog(context = {}) {
     state.isEditorOpen = true;
     editor.classList.add('appdosc-ai-dialog__editor--open');
     if (!state.historyPushed) {
-      history.pushState({ miniEditor: true }, '', '/editor');
+      const search = new URLSearchParams({
+        source: 'ai',
+        template: state.templateType || 'docx',
+        requestId: state.requestId || '',
+      });
+      saveEditorRoutePayload({
+        source: 'ai',
+        template: state.templateType || 'docx',
+        requestId: state.requestId || '',
+        assistantText: state.assistantText || '',
+      });
+      history.pushState({ miniEditor: true }, '', `/editor?${search.toString()}`);
       state.historyPushed = true;
     }
     editorSubtitle.textContent = 'Загрузка шаблона...';
     statusNode.textContent = 'Подготовка редактора...';
 
     const draft = loadDraft();
+    const routePayload = loadEditorRoutePayload() || {};
+    if (!state.assistantText && routePayload.assistantText) state.assistantText = String(routePayload.assistantText);
+    if (!state.requestId && routePayload.requestId) state.requestId = String(routePayload.requestId);
     const controller = new AbortController();
     state.controllers.add(controller);
 
@@ -452,7 +482,7 @@ function openAiResponseDialog(context = {}) {
       state.templateType = 'docx';
       state.templateHtml = html;
       editable.innerHTML = sanitizeHtml(draft && draft.html ? draft.html : fillDocxHtml(html, state.assistantText));
-      editorSubtitle.textContent = `DOCX: ${url} • ${warnings.length ? `Предупреждений: ${warnings.length}` : 'без предупреждений'}`;
+      editorSubtitle.textContent = `DOCX: ${url} • requestId: ${state.requestId || '—'} • ${warnings.length ? `Предупреждений: ${warnings.length}` : 'без предупреждений'}`;
       pdfNote.hidden = true;
     } catch (error) {
       state.templateType = 'pdf';
@@ -465,7 +495,7 @@ function openAiResponseDialog(context = {}) {
       } catch (_) {
         pdfNote.textContent = 'DOCX и PDF шаблоны недоступны. Можно продолжить в текстовом режиме.';
       }
-      editorSubtitle.textContent = 'Fallback режим PDF';
+      editorSubtitle.textContent = `Fallback режим PDF • requestId: ${state.requestId || '—'}`;
       notify('warning', `Ошибка шаблона: ${error && error.message ? error.message : 'неизвестно'}`);
     } finally {
       state.controllers.delete(controller);
@@ -496,6 +526,7 @@ function openAiResponseDialog(context = {}) {
     if (!prompt) return;
     appendBubble(prompt, 'user');
     state.assistantText = buildAssistantReply(prompt, context);
+    state.requestId = String((context && (context.requestId || (context.task && context.task.id))) || Date.now());
     appendBubble(state.assistantText, 'assistant');
     input.value = '';
     openEditorBtn.disabled = false;
@@ -521,12 +552,12 @@ function openAiResponseDialog(context = {}) {
   });
   root.querySelector('[data-table]').addEventListener('click', () => insertTable(editable));
 
-  root.querySelector('[data-save]').addEventListener('click', () => {
+  const runSave = () => {
     saveNow();
     notify('success', 'Документ сохранён.');
-  });
+  };
 
-  root.querySelector('[data-download-docx]').addEventListener('click', async () => {
+  const runExportDocx = async () => {
     try {
       const html = sanitizeHtml(editable.innerHTML);
       if (!html.trim()) throw new Error('Редактор пуст');
@@ -548,9 +579,9 @@ function openAiResponseDialog(context = {}) {
     } catch (error) {
       notify('error', error && error.message ? error.message : 'Ошибка экспорта DOCX');
     }
-  });
+  };
 
-  root.querySelector('[data-download-pdf]').addEventListener('click', async () => {
+  const runExportPdf = async () => {
     try {
       const text = extractPlainTextFromHtml(sanitizeHtml(editable.innerHTML));
       if (!text) throw new Error('Нет текста для PDF');
@@ -559,9 +590,9 @@ function openAiResponseDialog(context = {}) {
     } catch (error) {
       notify('error', error && error.message ? error.message : 'Ошибка PDF экспорта');
     }
-  });
+  };
 
-  root.querySelector('[data-send-chat]').addEventListener('click', () => {
+  const runSendChat = () => {
     const text = extractPlainTextFromHtml(sanitizeHtml(editable.innerHTML));
     if (!text) {
       notify('warning', 'Нет текста для отправки');
@@ -570,15 +601,49 @@ function openAiResponseDialog(context = {}) {
     if (typeof context.onApplyText === 'function') context.onApplyText(text);
     try {
       if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.sendData === 'function') {
-        window.Telegram.WebApp.sendData(JSON.stringify({ type: 'editor_send', templateType: state.templateType, text }));
+        window.Telegram.WebApp.sendData(JSON.stringify({
+          type: 'editor_send',
+          source: 'ai',
+          templateType: state.templateType,
+          requestId: state.requestId || null,
+          text,
+        }));
       }
     } catch (_) {}
     notify('success', 'Текст отправлен в чат.');
     closeEditor();
+  };
+
+  root.querySelector('[data-save]').addEventListener('click', runSave);
+  root.querySelector('[data-save-top]').addEventListener('click', runSave);
+  root.querySelector('[data-export-docx]').addEventListener('click', runExportDocx);
+  root.querySelector('[data-export-pdf]').addEventListener('click', runExportPdf);
+  root.querySelector('[data-export-top]').addEventListener('click', () => {
+    if ((state.templateType || 'docx') === 'pdf') runExportPdf(); else runExportDocx();
   });
+  root.querySelector('[data-send-chat]').addEventListener('click', runSendChat);
+  root.querySelector('[data-send-chat-top]').addEventListener('click', runSendChat);
+
+  const maybeOpenEditorFromRoute = () => {
+    if (location.pathname !== '/editor') return;
+    const params = new URLSearchParams(location.search || '');
+    const source = params.get('source') || '';
+    const template = params.get('template') || 'docx';
+    const requestId = params.get('requestId') || '';
+    const routePayload = loadEditorRoutePayload() || {};
+    if (source === 'ai' || routePayload.assistantText) {
+      state.templateType = template === 'pdf' ? 'pdf' : 'docx';
+      state.requestId = requestId || state.requestId;
+      state.assistantText = routePayload.assistantText || state.assistantText;
+      openEditorBtn.disabled = !state.assistantText;
+      if (state.assistantText) appendBubble(state.assistantText, 'assistant');
+      openEditor();
+    }
+  };
 
   window.addEventListener('popstate', onPopState);
   window.addEventListener('keydown', onEscClose);
+  maybeOpenEditorFromRoute();
   setTimeout(() => input.focus(), 0);
 }
 
