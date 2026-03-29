@@ -1543,6 +1543,10 @@
           }
           finalResponse = decisionLines.join('\n') + '\n\n' + finalResponse;
         }
+        if (window.getAIResponseFromModal && typeof window.getAIResponseFromModal === 'function') {
+          window.getAIResponseFromModal(finalResponse);
+        }
+        window.__lastAiAssistantResponse = finalResponse;
         messages.appendChild(createMessage('assistant', finalResponse));
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';

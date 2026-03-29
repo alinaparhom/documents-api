@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Редактор шаблона документа | Онлайн редактор DOCX</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #e2e8f0;
+            font-family: 'Segoe UI', 'DejaVu Sans', 'Roboto', sans-serif;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .editor-app {
+            max-width: 1400px;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .ribbon {
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            padding: 8px 16px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .ribbon-group {
+            display: flex;
+            gap: 6px;
+            background: #ffffff;
+            padding: 4px 8px;
+            border-radius: 40px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .ribbon-btn {
+            background: transparent;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 32px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: 0.1s;
+            color: #1e293b;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .ribbon-btn i { font-style: normal; font-weight: 600; }
+        .ribbon-btn:hover { background: #eef2ff; color: #1d4ed8; }
+        .ribbon-btn.primary {
+            background: #2563eb;
+            color: white;
+        }
+        .ribbon-btn.primary:hover { background: #1d4ed8; }
+
+        .separator {
+            width: 1px;
+            height: 24px;
+            background: #cbd5e1;
+            margin: 0 4px;
+        }
+
+        .format-bar {
+            background: #fefefe;
+            border-bottom: 1px solid #e2e8f0;
+            padding: 8px 16px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            font-size: 12px;
+        }
+
+        .format-btn {
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            color: #0f172a;
+            min-width: 36px;
+            text-align: center;
+        }
+
+        .format-btn:hover {
+            background: #f1f5f9;
+            border-color: #94a3b8;
+        }
+
+        .format-btn.active {
+            background: #e0e7ff;
+            border-color: #3b82f6;
+            color: #1e3a8a;
+        }
+
+        .editor-container {
+            background: #cbd5e1;
+            padding: 32px 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .document-paper {
+            max-width: 1000px;
+            width: 100%;
+            background: white;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            border-radius: 4px;
+            min-height: 70vh;
+        }
+
+        .editable-content {
+            padding: 48px 56px;
+            outline: none;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #0f172a;
+            font-family: 'Times New Roman', 'Georgia', serif;
+            min-height: 600px;
+            overflow-y: auto;
+        }
+
+        .editable-content:focus {
+            background: #fffdf7;
+        }
+
+        .editable-content h1 { font-size: 24px; margin: 0.8em 0 0.4em; }
+        .editable-content h2 { font-size: 20px; margin: 0.6em 0 0.3em; }
+        .editable-content p { margin: 0 0 0.75em; }
+        .editable-content ul, .editable-content ol { margin: 0.5em 0 0.75em 1.8em; }
+        .editable-content table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+        .editable-content td, .editable-content th { border: 1px solid #cbd5e1; padding: 6px 8px; }
+        .editable-content blockquote { border-left: 3px solid #3b82f6; margin: 0.5em 0; padding-left: 1em; color: #334155; }
+
+        .status-bar {
+            background: #f1f5f9;
+            border-top: 1px solid #e2e8f0;
+            padding: 6px 16px;
+            font-size: 12px;
+            color: #475569;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .toast-msg {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #0f172a;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 40px;
+            font-size: 13px;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+
+        @media (max-width: 780px) {
+            .editable-content { padding: 24px; }
+            .ribbon, .format-bar { gap: 6px; }
+            .ribbon-btn { padding: 4px 8px; font-size: 11px; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.js"></script>
+</head>
+<body>
+<div class="editor-app">
+    <div class="ribbon">
+        <div class="ribbon-group">
+            <button class="ribbon-btn" id="loadTemplateBtn">📄 Загрузить шаблон</button>
+            <button class="ribbon-btn" id="insertAIAnswerBtn">🤖 Вставить ответ ИИ</button>
+        </div>
+        <div class="ribbon-group">
+            <button class="ribbon-btn" id="printBtn">🖨️ Печать</button>
+            <button class="ribbon-btn primary" id="saveDocxBtn">💾 Скачать DOCX</button>
+            <button class="ribbon-btn primary" id="savePdfBtn">📑 Скачать PDF</button>
+        </div>
+        <div class="separator"></div>
+        <div class="ribbon-group">
+            <button class="ribbon-btn" id="clearFormatBtn">🧹 Очистить формат</button>
+            <button class="ribbon-btn" id="insertTableBtn">📊 Вставить таблицу</button>
+        </div>
+        <span style="flex:1"></span>
+        <span id="docStatus" style="font-size:12px;">⚡ Готово</span>
+    </div>
+
+    <div class="format-bar">
+        <button class="format-btn" data-command="bold" title="Жирный"><strong>B</strong></button>
+        <button class="format-btn" data-command="italic" title="Курсив"><em>I</em></button>
+        <button class="format-btn" data-command="underline" title="Подчёркнутый"><u>U</u></button>
+        <span class="separator"></span>
+        <button class="format-btn" data-command="justifyLeft" title="По левому краю">⬅️</button>
+        <button class="format-btn" data-command="justifyCenter" title="По центру">⬌</button>
+        <button class="format-btn" data-command="justifyRight" title="По правому краю">➡️</button>
+        <span class="separator"></span>
+        <button class="format-btn" data-command="insertUnorderedList" title="Маркированный список">• Список</button>
+        <button class="format-btn" data-command="insertOrderedList" title="Нумерованный список">1. Список</button>
+        <span class="separator"></span>
+        <select id="fontSizeSelect" class="format-btn" style="width:65px;">
+            <option value="12">12px</option><option value="14">14px</option><option value="16">16px</option>
+            <option value="18">18px</option><option value="20">20px</option><option value="24">24px</option>
+        </select>
+        <select id="fontFamilySelect" class="format-btn" style="width:100px;">
+            <option value="Times New Roman">Times New Roman</option>
+            <option value="Arial">Arial</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Courier New">Courier New</option>
+        </select>
+    </div>
+
+    <div class="editor-container">
+        <div class="document-paper">
+            <div id="editorContent" class="editable-content" contenteditable="true">
+                <p style="color:#94a3b8; text-align:center;">Нажмите «Загрузить шаблон» или начните вводить текст</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <span>✏️ Редактирование онлайн</span>
+        <span id="wordCount">Символов: 0</span>
+    </div>
+</div>
+<div id="toastMsg" class="toast-msg"></div>
+
+<script>
+    // ======================== КОНФИГУРАЦИЯ ========================
+    const API_ENDPOINT = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+    let lastAIResponse = '';
+
+    // DOM элементы
+    const editorDiv = document.getElementById('editorContent');
+    const docStatusSpan = document.getElementById('docStatus');
+    const wordCountSpan = document.getElementById('wordCount');
+    const toastMsgDiv = document.getElementById('toastMsg');
+
+    // Утилиты
+    function showToast(text, duration = 2000) {
+        toastMsgDiv.textContent = text;
+        toastMsgDiv.style.opacity = '1';
+        setTimeout(() => { toastMsgDiv.style.opacity = '0'; }, duration);
+    }
+
+    function updateWordCount() {
+        const text = editorDiv.innerText || '';
+        const charCount = text.replace(/\s/g, '').length;
+        wordCountSpan.textContent = `Символов: ${charCount}`;
+    }
+
+    function updateFormatButtonsState() {
+        document.querySelectorAll('.format-btn[data-command]').forEach(btn => {
+            const cmd = btn.getAttribute('data-command');
+            if (document.queryCommandState(cmd)) btn.classList.add('active');
+            else btn.classList.remove('active');
+        });
+    }
+
+    function execFormatCommand(command, value = null) {
+        document.execCommand(command, false, value);
+        editorDiv.focus();
+        updateFormatButtonsState();
+        updateWordCount();
+    }
+
+    // Загрузка шаблона с сервера
+    async function loadTemplateFromServer() {
+        docStatusSpan.innerHTML = '⏳ Загрузка...';
+        try {
+            const formData = new FormData();
+            formData.append('action', 'load_template_html');
+            const response = await fetch(API_ENDPOINT, { method: 'POST', body: formData });
+            const data = await response.json();
+            if (data.ok && data.html) {
+                editorDiv.innerHTML = data.html;
+                showToast('Шаблон загружен', 1500);
+                docStatusSpan.innerHTML = '✅ Шаблон загружен';
+            } else {
+                throw new Error(data.error || 'Ошибка загрузки');
+            }
+        } catch (err) {
+            console.error(err);
+            editorDiv.innerHTML = '<p style="color:red;">Ошибка загрузки шаблона. Убедитесь, что файл template.docx существует в /app/templates/.</p>';
+            showToast('Ошибка: ' + err.message, 3000);
+            docStatusSpan.innerHTML = '⚠️ Ошибка';
+        } finally {
+            updateWordCount();
+        }
+    }
+
+    // Вставить ответ ИИ в текущую позицию курсора
+    function insertAIResponseAtCursor() {
+        // Получаем ответ из глобальной переменной или localStorage
+        if (!lastAIResponse) {
+            const stored = localStorage.getItem('last_ai_response');
+            if (stored) lastAIResponse = stored;
+            else {
+                showToast('Нет сохранённого ответа ИИ. Сначала получите ответ в модальном окне.', 2500);
+                return;
+            }
+        }
+        const answerText = lastAIResponse;
+        const formattedAnswer = `<div style="margin: 12px 0; padding: 8px 12px; background: #f0f9ff; border-left: 4px solid #3b82f6;"><strong>🤖 Ответ ИИ:</strong><br>${escapeHtml(answerText)}</div>`;
+        execFormatCommand('insertHTML', formattedAnswer);
+        showToast('Ответ ИИ вставлен', 1000);
+    }
+
+    // Сохранение DOCX через html-docx-js
+    async function saveAsDocx() {
+        const content = editorDiv.innerHTML;
+        if (!content || content.trim() === '' || content.includes('Нажмите «Загрузить шаблон»')) {
+            showToast('Нет содержимого для сохранения', 1500);
+            return;
+        }
+        const fullHtml = `<!DOCTYPE html>
+        <html>
+        <head><meta charset="UTF-8">
+        <style>
+            body { font-family: 'Times New Roman', Times, serif; margin: 2.54cm; font-size: 12pt; line-height: 1.4; }
+            h1, h2, h3 { margin-top: 0.8em; }
+            p { margin: 0 0 0.5em; }
+            table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+            td, th { border: 1px solid #aaa; padding: 6px; }
+            ul, ol { margin: 0.3em 0 0.6em 1.5em; }
+        </style>
+        </head>
+        <body>${content}</body>
+        </html>`;
+        try {
+            const blob = await htmlDocx.asBlob(fullHtml, { orientation: 'portrait' });
+            saveAs(blob, `document_${new Date().toISOString().slice(0,19)}.docx`);
+            showToast('DOCX сохранён', 1500);
+        } catch (err) {
+            showToast('Ошибка создания DOCX: ' + err.message, 3000);
+        }
+    }
+
+    // Печать
+    function printDocument() {
+        const printWindow = window.open('', '_blank');
+        const style = `<style>
+            body { font-family: 'Times New Roman', serif; margin: 2cm; font-size: 12pt; line-height: 1.4; }
+            table { border-collapse: collapse; width: 100%; }
+            td, th { border: 1px solid black; padding: 6px; }
+        </style>`;
+        printWindow.document.write(`<!DOCTYPE html><html><head><title>Печать документа</title>${style}</head><body>${editorDiv.innerHTML}</body></html>`);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+        showToast('Окно печати открыто', 1000);
+    }
+
+    // Сохранение PDF через сервер (action generate_from_editor)
+    async function saveAsPdf() {
+        const htmlContent = editorDiv.innerHTML;
+        if (!htmlContent || htmlContent.trim() === '' || htmlContent.includes('Нажмите «Загрузить шаблон»')) {
+            showToast('Нет содержимого для PDF', 1500);
+            return;
+        }
+        docStatusSpan.innerHTML = '⏳ Генерация PDF...';
+        try {
+            const formData = new FormData();
+            formData.append('action', 'generate_from_editor');
+            formData.append('format', 'pdf');
+            formData.append('html', htmlContent);
+            formData.append('documentTitle', 'Отредактированный документ');
+            const response = await fetch(API_ENDPOINT, { method: 'POST', body: formData });
+            if (!response.ok) throw new Error(`Сервер вернул ${response.status}`);
+            const blob = await response.blob();
+            saveAs(blob, `document_${Date.now()}.pdf`);
+            showToast('PDF сохранён', 1500);
+            docStatusSpan.innerHTML = '✅ PDF готов';
+        } catch (err) {
+            showToast('Ошибка PDF: ' + err.message, 3000);
+            docStatusSpan.innerHTML = '❌ Ошибка PDF';
+        } finally {
+            setTimeout(() => { if (docStatusSpan.innerHTML !== '✅ Шаблон загружен') docStatusSpan.innerHTML = '⚡ Готово'; }, 2000);
+        }
+    }
+
+    function insertTable() {
+        const tableHtml = '<table border="1" style="border-collapse: collapse; width: 100%;">' +
+            '<thead><tr><th>№</th><th>Наименование</th><th>Примечание</th></tr></thead>' +
+            '<tbody><tr><td>1</td><td></td><td></td></tr><tr><td>2</td><td></td><td></td></tr><tr><td>3</td><td></td><td></td></tr></tbody></table><br>';
+        execFormatCommand('insertHTML', tableHtml);
+    }
+
+    function clearFormatting() {
+        document.execCommand('removeFormat', false, null);
+        showToast('Форматирование очищено', 800);
+        updateWordCount();
+    }
+
+    function applyFontSize() {
+        const size = document.getElementById('fontSizeSelect').value;
+        document.execCommand('fontSize', false, '7');
+        // Более надёжный способ для современных браузеров:
+        const selection = window.getSelection();
+        if (!selection.isCollapsed) {
+            const span = document.createElement('span');
+            span.style.fontSize = size + 'px';
+            const range = selection.getRangeAt(0);
+            range.surroundContents(span);
+        } else {
+            document.execCommand('styleWithCSS', false, true);
+            document.execCommand('fontSize', false, size + 'px');
+        }
+        editorDiv.focus();
+    }
+
+    function applyFontFamily() {
+        const family = document.getElementById('fontFamilySelect').value;
+        document.execCommand('fontName', false, family);
+        editorDiv.focus();
+    }
+
+    function autoSaveDraft() {
+        localStorage.setItem('doc_editor_draft', editorDiv.innerHTML);
+    }
+
+    function loadDraftFromStorage() {
+        const draft = localStorage.getItem('doc_editor_draft');
+        if (draft && draft.trim() !== '' && !draft.includes('Нажмите «Загрузить шаблон»')) {
+            if (confirm('Обнаружен несохранённый черновик. Загрузить его?')) {
+                editorDiv.innerHTML = draft;
+                showToast('Черновик восстановлен', 1500);
+                updateWordCount();
+            } else {
+                localStorage.removeItem('doc_editor_draft');
+            }
+        }
+    }
+
+    function escapeHtml(str) {
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+
+    // Получение ответа ИИ из внешнего модального окна
+    window.getAIResponseFromModal = function(responseText) {
+        lastAIResponse = responseText;
+        localStorage.setItem('last_ai_response', responseText);
+        showToast('Ответ ИИ сохранён в редакторе', 1200);
+    };
+
+    // Инициализация событий
+    function init() {
+        document.getElementById('loadTemplateBtn').addEventListener('click', loadTemplateFromServer);
+        document.getElementById('insertAIAnswerBtn').addEventListener('click', insertAIResponseAtCursor);
+        document.getElementById('printBtn').addEventListener('click', printDocument);
+        document.getElementById('saveDocxBtn').addEventListener('click', saveAsDocx);
+        document.getElementById('savePdfBtn').addEventListener('click', saveAsPdf);
+        document.getElementById('clearFormatBtn').addEventListener('click', clearFormatting);
+        document.getElementById('insertTableBtn').addEventListener('click', insertTable);
+
+        document.querySelectorAll('.format-btn[data-command]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const cmd = btn.getAttribute('data-command');
+                execFormatCommand(cmd);
+            });
+        });
+        document.getElementById('fontSizeSelect').addEventListener('change', applyFontSize);
+        document.getElementById('fontFamilySelect').addEventListener('change', applyFontFamily);
+
+        editorDiv.addEventListener('input', () => {
+            updateWordCount();
+            autoSaveDraft();
+        });
+        editorDiv.addEventListener('keyup', updateFormatButtonsState);
+        editorDiv.addEventListener('mouseup', updateFormatButtonsState);
+
+        // Попытка автоматически загрузить шаблон, если нет черновика
+        const draft = localStorage.getItem('doc_editor_draft');
+        if (!draft || draft === '<p style="color:#94a3b8; text-align:center;">Нажмите «Загрузить шаблон» или начните вводить текст</p>') {
+            loadTemplateFromServer();
+        } else {
+            loadDraftFromStorage();
+        }
+        updateWordCount();
+    }
+
+    init();
+</script>
+</body>
+</html>
