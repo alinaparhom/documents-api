@@ -2312,16 +2312,34 @@
         setPreviewLoading(true, source.label);
         resolveSourceText(source)
           .then(function(sourceText) {
-            preview.textContent = '⏳ OCR завершён. ИИ анализирует документ...';
+            var aiStartedAt = Date.now();
+            var estimatedSeconds = 35;
+            var timerId = null;
+            function updateAiProgress() {
+              var elapsed = Math.floor((Date.now() - aiStartedAt) / 1000);
+              var remain = Math.max(0, estimatedSeconds - elapsed);
+              preview.textContent = '⏳ OCR завершён. ИИ анализирует документ...\nОсталось примерно: ' + remain + ' сек.';
+            }
+            updateAiProgress();
+            timerId = window.setInterval(updateAiProgress, 1000);
             return requestAiBriefSummaryForText(source, sourceText, options.apiUrl)
               .then(function(aiPayload) {
+                if (timerId) {
+                  window.clearInterval(timerId);
+                }
                 preview.classList.remove('is-loading');
                 preview.textContent = buildAiBriefSummaryText(aiPayload);
               })
               .catch(function(error) {
+                if (timerId) {
+                  window.clearInterval(timerId);
+                }
+                var elapsed = Math.floor((Date.now() - aiStartedAt) / 1000);
+                var retryAfter = Math.max(10, 45 - elapsed);
+                var waitHint = 'ИИ временно недоступен. Попробуйте снова через ~' + retryAfter + ' сек.';
                 preview.classList.remove('is-loading');
-                preview.textContent = buildBriefSummaryText(sourceText) + '\n\n[Fallback] ИИ недоступен: ' + (error && error.message ? error.message : 'неизвестная ошибка');
-                showStatusMessage('warning', 'ИИ-анализ для "' + source.label + '" недоступен. Показан краткий fallback.');
+                preview.textContent = waitHint + '\n\n' + buildBriefSummaryText(sourceText) + '\n\n[Fallback] ' + (error && error.message ? error.message : 'неизвестная ошибка');
+                showStatusMessage('warning', 'ИИ недоступен для "' + source.label + '". ' + waitHint + ' Пока показан краткий fallback.');
               });
           })
           .catch(function(error) {
