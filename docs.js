@@ -2098,13 +2098,30 @@
       return value.charAt(0).toUpperCase() + value.slice(1);
     }
 
-    function sanitizeList(items, maxItems) {
+    function isNoisyItem(value, mode) {
+      var text = String(value || '').toLowerCase();
+      if (!text) {
+        return true;
+      }
+      if (/-\s*$/.test(text) || text.indexOf('объек-') !== -1) {
+        return true;
+      }
+      if (text.indexOf('рубл') !== -1 && !/\d/.test(text)) {
+        return true;
+      }
+      if (mode === 'requirements' && /(в настоящее время|прошу вас|принять реш)/.test(text)) {
+        return true;
+      }
+      return false;
+    }
+
+    function sanitizeList(items, maxItems, mode, excludeMap) {
       var seen = {};
       return (Array.isArray(items) ? items : [])
         .map(normalizeSentence)
         .filter(function(item) {
           var key = item.toLowerCase();
-          if (!item || seen[key]) {
+          if (!item || seen[key] || (excludeMap && excludeMap[key]) || isNoisyItem(item, mode)) {
             return false;
           }
           seen[key] = true;
@@ -2125,8 +2142,12 @@
       return false;
     });
     analysis = normalizeSentence(analysis) || 'Не удалось определить суть документа.';
-    cleanedActions = sanitizeList(actions, 4);
-    cleanedRequirements = sanitizeList(requirements, 4);
+    cleanedActions = sanitizeList(actions, 4, 'actions');
+    var actionsMap = {};
+    cleanedActions.forEach(function(item) {
+      actionsMap[String(item).toLowerCase()] = true;
+    });
+    cleanedRequirements = sanitizeList(requirements, 4, 'requirements', actionsMap);
 
     return [
       '✨ Кратко по документу',
