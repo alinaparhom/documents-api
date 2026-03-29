@@ -38,7 +38,9 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__top-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .appdosc-ai-dialog__toolbar{position:sticky;top:0;z-index:2;display:flex;gap:8px;flex-wrap:wrap;padding:8px 10px;background:rgba(255,255,255,.92);border-bottom:1px solid rgba(148,163,184,.18)}
     .appdosc-ai-dialog__body{flex:1;min-height:0;overflow:auto;padding:12px 4px 96px}
-    .appdosc-ai-dialog__editable{min-height:52dvh;border:1px solid rgba(148,163,184,.34);border-radius:16px;padding:14px;background:#fff;line-height:1.55;outline:none}
+    .appdosc-ai-dialog__editable{min-height:52dvh;border:1px solid rgba(148,163,184,.34);border-radius:16px;padding:14px;background:#fff;line-height:1.55;outline:none;white-space:normal}
+    .appdosc-ai-dialog__editable p{margin:0 0 .75em}
+    .appdosc-ai-dialog__editable p:last-child{margin-bottom:0}
     .appdosc-ai-dialog__editable table{width:100%;border-collapse:collapse}
     .appdosc-ai-dialog__editable td,.appdosc-ai-dialog__editable th{border:1px solid rgba(148,163,184,.42);padding:6px}
     .appdosc-ai-dialog__pdf-note{margin-top:10px;border:1px dashed rgba(148,163,184,.45);border-radius:12px;padding:10px;background:rgba(255,255,255,.86);font-size:12px;color:#334155}
@@ -97,6 +99,7 @@ const SAFE_STYLE_PROPERTIES = new Set([
   'font-style',
   'font-family',
   'line-height',
+  'text-indent',
   'letter-spacing',
   'text-decoration',
   'text-transform',
@@ -123,6 +126,7 @@ const SAFE_STYLE_PROPERTIES = new Set([
   'min-height',
   'max-height',
   'vertical-align',
+  'white-space',
   'background-color',
   'color',
 ]);

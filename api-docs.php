@@ -927,6 +927,50 @@ function replaceDocxWithHtml(string $templatePath, string $outputPath, string $h
     return $zip->close();
 }
 
+function replaceDocxPlaceholderWithHtml(string $templatePath, string $outputPath, string $html, array $placeholders): bool
+{
+    if (!@copy($templatePath, $outputPath)) {
+        return false;
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($outputPath) !== true) {
+        return false;
+    }
+
+    $documentXml = $zip->getFromName('word/document.xml');
+    if (!is_string($documentXml) || $documentXml === '') {
+        $zip->close();
+        return false;
+    }
+
+    $bodyXml = htmlToWordBodyXml($html);
+    $updatedXml = $documentXml;
+    $replaced = false;
+
+    foreach ($placeholders as $placeholder) {
+        $marker = trim((string)$placeholder);
+        if ($marker === '') {
+            continue;
+        }
+        $escapedMarker = xmlEscape($marker);
+        $pattern = '/<w:p\\b[^>]*>.*?' . preg_quote($escapedMarker, '/') . '.*?<\\/w:p>/su';
+        $candidate = preg_replace($pattern, $bodyXml, $updatedXml, 1, $count);
+        if (is_string($candidate) && $count > 0) {
+            $updatedXml = $candidate;
+            $replaced = true;
+            break;
+        }
+    }
+
+    if (!$replaced || $updatedXml === '') {
+        $zip->close();
+        return false;
+    }
+
+    $zip->addFromString('word/document.xml', $updatedXml);
+    return $zip->close();
+}
+
 function createDocxFromHtmlUsingPhpWord(string $outputPath, string $html): bool
 {
     if (!class_exists('\\PhpOffice\\PhpWord\\PhpWord') || !class_exists('\\PhpOffice\\PhpWord\\Shared\\Html')) {
@@ -936,6 +980,8 @@ function createDocxFromHtmlUsingPhpWord(string $outputPath, string $html): bool
     try {
         $phpWord = new \PhpOffice\PhpWord\PhpWord();
         $section = $phpWord->addSection([
+            'pageSizeW' => 11906,
+            'pageSizeH' => 16838,
             'marginTop' => 1134,
             'marginRight' => 1134,
             'marginBottom' => 1134,
@@ -1315,7 +1361,15 @@ if ($action === 'generate_from_html') {
     }
 
     if ($format === 'docx') {
-        $generated = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
+        $generated = replaceDocxPlaceholderWithHtml(
+            $templateDocxPath,
+            $tmpFile,
+            $html,
+            ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+        );
+        if (!$generated) {
+            $generated = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
+        }
         if (!$generated) {
             $generated = replaceDocxWithHtml($templateDocxPath, $tmpFile, $html);
         }
@@ -1331,14 +1385,32 @@ if ($action === 'generate_from_html') {
         exit;
     }
 
-    if (is_file(__DIR__ . '/vendor/autoload.php')) {
-        require_once __DIR__ . '/vendor/autoload.php';
+    $tmpDocx = tempnam(sys_get_temp_dir(), 'html_pdf_docx_');
+    $pdfCreated = false;
+    if ($tmpDocx !== false) {
+        $docxReady = replaceDocxPlaceholderWithHtml(
+            $templateDocxPath,
+            $tmpDocx,
+            $html,
+            ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+        );
+        if (!$docxReady) {
+            $docxReady = createDocxFromHtmlUsingPhpWord($tmpDocx, $html);
+        }
+        if (!$docxReady) {
+            $docxReady = replaceDocxWithHtml($templateDocxPath, $tmpDocx, $html);
+        }
+        if ($docxReady) {
+            $pdfCreated = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
+        }
+        @unlink($tmpDocx);
     }
-    $text = htmlToPlainText($html);
-    if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
+
+    if (!$pdfCreated) {
         @unlink($tmpFile);
-        jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен для HTML']);
+        jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт в режиме "как в шаблоне" недоступен: установите LibreOffice (soffice)']);
     }
+
     header('Content-Type: application/pdf');
     header('Content-Disposition: attachment; filename="answer-from-html.pdf"');
     header('Content-Length: ' . filesize($tmpFile));
@@ -1365,11 +1437,20 @@ if ($action === 'generate_from_editor') {
     }
 
     if ($format === 'docx') {
-        if (class_exists('\\PhpOffice\\PhpWord\\PhpWord')) {
+        $templatePath = resolveTemplatePath('template.docx', []);
+        $ok = is_file($templatePath)
+            ? replaceDocxPlaceholderWithHtml(
+                $templatePath,
+                $tmpFile,
+                $html,
+                ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+            )
+            : false;
+        if (!$ok && class_exists('\\PhpOffice\\PhpWord\\PhpWord')) {
             $ok = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
-        } else {
-            $templatePath = resolveTemplatePath('template.docx', []);
-            $ok = is_file($templatePath) ? replaceDocxWithHtml($templatePath, $tmpFile, $html) : false;
+        }
+        if (!$ok && is_file($templatePath)) {
+            $ok = replaceDocxWithHtml($templatePath, $tmpFile, $html);
         }
         if (!$ok) {
             @unlink($tmpFile);
@@ -1378,35 +1459,33 @@ if ($action === 'generate_from_editor') {
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="edited.docx"');
     } else {
-        if (is_file(__DIR__ . '/vendor/autoload.php')) {
-            require_once __DIR__ . '/vendor/autoload.php';
-        }
-        $text = htmlToPlainText($html);
-        if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
-            $tmpDocx = tempnam(sys_get_temp_dir(), 'editor_docx_');
-            if ($tmpDocx !== false) {
+        $tmpDocx = tempnam(sys_get_temp_dir(), 'editor_docx_');
+        $pdfCreated = false;
+        if ($tmpDocx !== false) {
+            $templatePath = resolveTemplatePath('template.docx', []);
+            $docxCreated = is_file($templatePath)
+                ? replaceDocxPlaceholderWithHtml(
+                    $templatePath,
+                    $tmpDocx,
+                    $html,
+                    ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+                )
+                : false;
+            if (!$docxCreated) {
                 $docxCreated = createDocxFromHtmlUsingPhpWord($tmpDocx, $html);
-                if (!$docxCreated) {
-                    $templatePath = resolveTemplatePath('template.docx', []);
-                    $docxCreated = is_file($templatePath) ? replaceDocxWithHtml($templatePath, $tmpDocx, $html) : false;
-                }
-                if ($docxCreated) {
-                    $converted = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
-                    if (!$converted) {
-                        @unlink($tmpDocx);
-                        @unlink($tmpFile);
-                        jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или LibreOffice (soffice)']);
-                    }
-                } else {
-                    @unlink($tmpDocx);
-                    @unlink($tmpFile);
-                    jsonResponse(500, ['ok' => false, 'error' => 'Не удалось подготовить DOCX для конвертации в PDF']);
-                }
-                @unlink($tmpDocx);
-            } else {
-                @unlink($tmpFile);
-                jsonResponse(500, ['ok' => false, 'error' => 'Ошибка создания временного DOCX для PDF']);
             }
+            if (!$docxCreated && is_file($templatePath)) {
+                $docxCreated = replaceDocxWithHtml($templatePath, $tmpDocx, $html);
+            }
+            if ($docxCreated) {
+                $pdfCreated = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
+            }
+            @unlink($tmpDocx);
+        }
+
+        if (!$pdfCreated) {
+            @unlink($tmpFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт в режиме "как в шаблоне" недоступен: установите LibreOffice (soffice)']);
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="edited.pdf"');
