@@ -520,64 +520,6 @@ function extractDecisionBlock(array $parsed): array
     ];
 }
 
-function buildDecisionFallback(string $documentTitle, string $prompt, array $context = [], string $response = ''): array
-{
-    $text = mb_strtolower(trim($prompt . ' ' . textFromMixed($context['summary'] ?? '')));
-    $requirements = [];
-    if (isset($context['requirements']) && is_array($context['requirements'])) {
-        $requirements = normalizeStringList($context['requirements'], 8, 300);
-    }
-    $decision = 'need_clarification';
-    $reason = 'Недостаточно данных для однозначного решения, требуется уточнение условий и реквизитов.';
-
-    if ($requirements) {
-        $decision = 'need_clarification';
-        $reason = 'По OCR-тексту выявлены обязательные работы, требуется подтверждение финансирования и формата согласования.';
-    }
-    if (preg_match('/(отказ|не соглас|невозможн|нарушен|просроч|не соответствует)/u', $text)) {
-        $decision = 'reject';
-        $reason = 'Выявлены признаки риска/несоответствия, поэтому рекомендовано отклонить до устранения замечаний.';
-    } elseif (preg_match('/(соглас|утверд|принять|поддерж|исполнить|выполнено)/u', $text)) {
-        $decision = 'approve';
-        $reason = 'Формулировки письма указывают на возможность согласования и исполнения в штатном режиме.';
-    }
-
-    $risks = $decision === 'approve'
-        ? ['Риск неполных входных данных', 'Риск срыва сроков при отсутствии подтверждения']
-        : ['Риск принятия неверного решения без подтверждающих данных', 'Риск юридических претензий при неясных реквизитах'];
-
-    $requiredActions = $decision === 'reject'
-        ? ['Запросить исправленные документы', 'Повторно оценить после устранения замечаний']
-        : ['Проверить реквизиты и сроки', 'Зафиксировать решение в деловой переписке'];
-    if ($requirements) {
-        $requiredActions = array_merge(
-            ['Подтвердить выполнение обязательных работ из OCR-приложения'],
-            $requirements,
-            $requiredActions
-        );
-    }
-
-    $fallbackResponse = trim($response);
-    if ($fallbackResponse === '') {
-        $title = trim($documentTitle) !== '' ? $documentTitle : 'обращение';
-        $fallbackResponse = 'В ответ на Ваше письмо по теме «' . $title . '» сообщаем: требуется дополнительное уточнение данных перед финальным решением.';
-        if ($decision === 'approve') {
-            $fallbackResponse = 'В ответ на Ваше письмо по теме «' . $title . '» сообщаем: материалы рассмотрены, решение согласовано к исполнению.';
-        } elseif ($decision === 'reject') {
-            $fallbackResponse = 'В ответ на Ваше письмо по теме «' . $title . '» сообщаем: в текущем виде согласование невозможно, просим устранить замечания.';
-        }
-    }
-
-    return [
-        'decision' => $decision,
-        'decision_reason' => $reason,
-        'risks' => $risks,
-        'required_actions' => $requiredActions,
-        'response' => $fallbackResponse,
-        'requirements' => $requirements,
-    ];
-}
-
 function extractRequirementsFromTexts(array $extractedTexts, array $triggerPhrases = [], array $stopPrefixes = []): array
 {
     $triggers = normalizeTextList($triggerPhrases);
@@ -1045,38 +987,6 @@ function applyInputBudget(array $entries, int $maxChars): array
         'charsIn' => $usedChars,
         'chunksUsed' => count($selected),
         'filesUsed' => count($usedFiles),
-    ];
-}
-
-function buildLocalFallback(string $documentTitle, string $prompt, array $context = []): array
-{
-    $title = trim($documentTitle) !== '' ? $documentTitle : 'документу';
-    $topic = trim($prompt) !== '' ? $prompt : 'обработке входящих материалов';
-    $organization = isset($context['organization']) && is_string($context['organization'])
-        ? trim($context['organization'])
-        : '';
-    $orgPart = $organization !== '' ? (' (' . $organization . ')') : '';
-
-    $analysis = 'Сервер ИИ недоступен, сформирован локальный черновик по ' . $title . $orgPart . '.';
-    $neutral = 'По ' . $title . $orgPart . ' сообщаем: материалы получены и приняты в работу. '
-      . 'По запросу о ' . $topic . ' предоставим уточнённый статус и сроки после проверки данных.';
-    $aggressive = 'По ' . $title . $orgPart . ' уведомляем: материалы приняты к исполнению в приоритетном порядке. '
-      . 'По запросу о ' . $topic . ' ответ будет предоставлен в максимально короткий срок.';
-    $style = isset($context['responseStyle']) && is_string($context['responseStyle'])
-        ? trim($context['responseStyle'])
-        : '';
-    $legacyTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
-        ? trim($context['selectedTone'])
-        : '';
-    $response = ($style === 'concise' || $legacyTone === 'aggressive') ? $aggressive : $neutral;
-
-    return [
-        'ok' => true,
-        'analysis' => $analysis,
-        'response' => $response,
-        'neutral' => $neutral,
-        'aggressive' => $aggressive,
-        'fallback' => true
     ];
 }
 
@@ -1595,10 +1505,8 @@ if ($statusCode >= 400) {
     logApiDocs('error', 'AI API HTTP error', ['status' => $statusCode, 'message' => $message]);
     $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
     if ($statusCode === 403 && $unsupportedRegion) {
-        logApiDocs('warn', 'AI provider blocked by region, fallback enabled', ['status' => $statusCode]);
-        $fallbackPayload = buildLocalFallback($documentTitle, $prompt, $context);
-        $fallbackPayload['promptStats'] = $promptStats;
-        jsonResponse(200, $fallbackPayload);
+        logApiDocs('error', 'AI provider blocked by region, no local fallback in autonomous mode', ['status' => $statusCode]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode]);
     }
     jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
 }
@@ -1630,6 +1538,13 @@ if (!$decisionBlock['valid']) {
         }
     }
 }
+if (!$decisionBlock['valid']) {
+    logApiDocs('error', 'AI decision block invalid after repair', [
+        'documentTitle' => $documentTitle,
+        'promptPreview' => mb_substr($prompt, 0, 180),
+    ]);
+    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул некорректный decision JSON. Повторите запрос.']);
+}
 
 $analysis = '';
 if (isset($parsed['analysis']) && (is_string($parsed['analysis']) || is_numeric($parsed['analysis']) || is_bool($parsed['analysis']))) {
@@ -1660,18 +1575,13 @@ if ($analysis === '' && $response === '' && $neutral === '' && $aggressive === '
 }
 
 if (looksLikeJsonText($response) || $response === '') {
-    $fallback = buildLocalFallback($documentTitle, $prompt, array_merge($context, ['responseStyle' => $effectiveStyle]));
-    $response = sanitizeGeneratedResponse((string)($fallback['response'] ?? ''), $runtimeConfig['sanitizePrefixes'] ?? []);
-    if ($analysis === '') {
-        $analysis = (string)($fallback['analysis'] ?? 'Ответ сформирован по локальному шаблону.');
-    }
+    logApiDocs('error', 'AI returned empty or JSON-like response text', [
+        'documentTitle' => $documentTitle,
+        'contentPreview' => mb_substr($content, 0, 220),
+    ]);
+    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.']);
 }
-
-if (!$decisionBlock['valid']) {
-    $decisionBlock = buildDecisionFallback($documentTitle, $prompt, $context, $response);
-} else {
-    $decisionBlock['response'] = $response;
-}
+$decisionBlock['response'] = $response;
 if (!isset($decisionBlock['requirements']) || !is_array($decisionBlock['requirements'])) {
     $decisionBlock['requirements'] = $requirements;
 }
