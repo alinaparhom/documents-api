@@ -107,12 +107,12 @@ function ensureTelegramBriefModalStyle() {
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
     .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,300px) minmax(0,1fr);gap:10px;padding:12px;min-height:0;flex:1}
     .appdosc-brief-ai__list{display:flex;flex-direction:column;gap:8px;overflow:auto}
-    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:12px;padding:10px;text-align:left}
+    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:12px;padding:10px;text-align:left;opacity:1}
     .appdosc-brief-ai__item span{display:block;word-break:break-word;overflow-wrap:anywhere}
     .appdosc-brief-ai__item strong{font-size:13px;color:#0f172a}
     .appdosc-brief-ai__item small{font-size:11px;color:#64748b}
     .appdosc-brief-ai__item.is-active{border-color:rgba(37,99,235,.55);background:rgba(239,246,255,.9)}
-    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:#fff;padding:12px;white-space:pre-wrap;overflow:auto;font-size:13px;line-height:1.55}
+    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:#fff;padding:12px;white-space:pre-wrap;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
     @media (max-width:768px){.appdosc-brief-ai__body{grid-template-columns:1fr}}
   `;
   document.head.appendChild(style);
@@ -152,11 +152,17 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   return payload;
 }
 
-function buildTelegramBriefText(payload) {
+function buildTelegramBriefText(payload, task) {
   const analysis = payload && payload.analysis ? String(payload.analysis).trim() : '';
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
   const actions = Array.isArray(block.required_actions) ? block.required_actions.slice(0, 4) : [];
+  const requirements = Array.isArray(block.requirements) ? block.requirements.slice(0, 3) : [];
+  const decisionReason = block && block.decision_reason ? String(block.decision_reason).trim() : '';
   const participants = Array.isArray(block.risks) ? block.risks.find((line) => /^отправитель\s*:/i.test(String(line || '').trim())) : '';
+  const taskSender = normalizeValue(task && task.correspondent) || normalizeValue(task && task.organization);
+  const taskRecipient = normalizeValue(task && task.organization);
+  const participantsLine = participants
+    || ((taskSender || taskRecipient) ? `Отправитель: ${taskSender || 'не определён'}; Получатель: ${taskRecipient || 'не определён'}` : 'Не удалось точно определить.');
   return [
     '✨ Кратко по документу',
     '',
@@ -164,10 +170,16 @@ function buildTelegramBriefText(payload) {
     analysis || 'Не удалось определить суть документа.',
     '',
     '👤 Кто прислал / кому',
-    participants || 'Не удалось точно определить.',
+    participantsLine,
+    '',
+    '❓ Зачем это письмо',
+    decisionReason || 'Согласовать изменения по работам и принять решение о дальнейших действиях.',
     '',
     '🔎 Важные детали',
-    actions.length ? actions.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Детали не выделены.'
+    actions.length ? actions.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Детали не выделены.',
+    '',
+    '✅ Что нужно сделать',
+    requirements.length ? requirements.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Проверить требования документа и дать официальный ответ.'
   ].join('\n');
 }
 
@@ -214,7 +226,7 @@ function openTelegramBriefModal(task, statusHandler) {
         const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
         preview.textContent = '⏳ ИИ анализирует документ...';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
-        preview.textContent = buildTelegramBriefText(aiPayload);
+        preview.textContent = buildTelegramBriefText(aiPayload, task);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
         preview.textContent = `ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${message}`;
