@@ -927,6 +927,50 @@ function replaceDocxWithHtml(string $templatePath, string $outputPath, string $h
     return $zip->close();
 }
 
+function replaceDocxPlaceholderWithHtml(string $templatePath, string $outputPath, string $html, array $placeholders): bool
+{
+    if (!@copy($templatePath, $outputPath)) {
+        return false;
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($outputPath) !== true) {
+        return false;
+    }
+
+    $documentXml = $zip->getFromName('word/document.xml');
+    if (!is_string($documentXml) || $documentXml === '') {
+        $zip->close();
+        return false;
+    }
+
+    $bodyXml = htmlToWordBodyXml($html);
+    $updatedXml = $documentXml;
+    $replaced = false;
+
+    foreach ($placeholders as $placeholder) {
+        $marker = trim((string)$placeholder);
+        if ($marker === '') {
+            continue;
+        }
+        $escapedMarker = xmlEscape($marker);
+        $pattern = '/<w:p\\b[^>]*>.*?' . preg_quote($escapedMarker, '/') . '.*?<\\/w:p>/su';
+        $candidate = preg_replace($pattern, $bodyXml, $updatedXml, 1, $count);
+        if (is_string($candidate) && $count > 0) {
+            $updatedXml = $candidate;
+            $replaced = true;
+            break;
+        }
+    }
+
+    if (!$replaced || $updatedXml === '') {
+        $zip->close();
+        return false;
+    }
+
+    $zip->addFromString('word/document.xml', $updatedXml);
+    return $zip->close();
+}
+
 function createDocxFromHtmlUsingPhpWord(string $outputPath, string $html): bool
 {
     if (!class_exists('\\PhpOffice\\PhpWord\\PhpWord') || !class_exists('\\PhpOffice\\PhpWord\\Shared\\Html')) {
@@ -1315,7 +1359,15 @@ if ($action === 'generate_from_html') {
     }
 
     if ($format === 'docx') {
-        $generated = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
+        $generated = replaceDocxPlaceholderWithHtml(
+            $templateDocxPath,
+            $tmpFile,
+            $html,
+            ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+        );
+        if (!$generated) {
+            $generated = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
+        }
         if (!$generated) {
             $generated = replaceDocxWithHtml($templateDocxPath, $tmpFile, $html);
         }
@@ -1365,11 +1417,20 @@ if ($action === 'generate_from_editor') {
     }
 
     if ($format === 'docx') {
-        if (class_exists('\\PhpOffice\\PhpWord\\PhpWord')) {
+        $templatePath = resolveTemplatePath('template.docx', []);
+        $ok = is_file($templatePath)
+            ? replaceDocxPlaceholderWithHtml(
+                $templatePath,
+                $tmpFile,
+                $html,
+                ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+            )
+            : false;
+        if (!$ok && class_exists('\\PhpOffice\\PhpWord\\PhpWord')) {
             $ok = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
-        } else {
-            $templatePath = resolveTemplatePath('template.docx', []);
-            $ok = is_file($templatePath) ? replaceDocxWithHtml($templatePath, $tmpFile, $html) : false;
+        }
+        if (!$ok && is_file($templatePath)) {
+            $ok = replaceDocxWithHtml($templatePath, $tmpFile, $html);
         }
         if (!$ok) {
             @unlink($tmpFile);
@@ -1388,7 +1449,17 @@ if ($action === 'generate_from_editor') {
                 $docxCreated = createDocxFromHtmlUsingPhpWord($tmpDocx, $html);
                 if (!$docxCreated) {
                     $templatePath = resolveTemplatePath('template.docx', []);
-                    $docxCreated = is_file($templatePath) ? replaceDocxWithHtml($templatePath, $tmpDocx, $html) : false;
+                    $docxCreated = is_file($templatePath)
+                        ? replaceDocxPlaceholderWithHtml(
+                            $templatePath,
+                            $tmpDocx,
+                            $html,
+                            ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+                        )
+                        : false;
+                    if (!$docxCreated && is_file($templatePath)) {
+                        $docxCreated = replaceDocxWithHtml($templatePath, $tmpDocx, $html);
+                    }
                 }
                 if ($docxCreated) {
                     $converted = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
