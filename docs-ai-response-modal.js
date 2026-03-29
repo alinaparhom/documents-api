@@ -1265,12 +1265,15 @@
 
     async function openTemplateEditor() {
       var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-      var htmlContent = '';
+      var templateFallbackHtml = '<p>Шаблон недоступен. Начните редактирование вручную.</p>';
+      var toast = typeof showToast === 'function'
+        ? showToast
+        : function (message) { window.alert(message); };
 
       function normalizeTemplateHtml(rawHtml) {
         var content = String(rawHtml || '').trim();
         if (!content) {
-          return '<p>Шаблон пустой. Начните редактирование.</p>';
+          return '<p>Шаблон пустой. Добавьте текст документа.</p>';
         }
         if (!/<html[\s>]/i.test(content)) {
           return content;
@@ -1279,455 +1282,447 @@
           var parser = new DOMParser();
           var parsed = parser.parseFromString(content, 'text/html');
           var bodyHtml = parsed.body ? parsed.body.innerHTML : content;
-          var headStyles = '';
-          if (parsed.head) {
-            headStyles = Array.prototype.map.call(parsed.head.querySelectorAll('style'), function (styleTag) {
-              return styleTag.outerHTML;
-            }).join('');
-          }
-          return headStyles + bodyHtml;
+          var styles = parsed.head
+            ? Array.prototype.map.call(parsed.head.querySelectorAll('style'), function (tag) { return tag.outerHTML; }).join('')
+            : '';
+          return styles + bodyHtml;
         } catch (e) {
           return content;
         }
       }
 
-      try {
-        var res = await fetch(apiUrl, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-          body: 'action=load_template_html'
-        });
-        var data = await res.json();
-        htmlContent = (res.ok && data && data.ok && data.html)
-          ? normalizeTemplateHtml(data.html)
-          : '<p>Не удалось загрузить шаблон. Создайте новый документ.</p>';
-      } catch (error) {
-        htmlContent = '<p>Ошибка загрузки шаблона</p>';
+      async function loadTemplateHtml() {
+        try {
+          var res = await fetch(apiUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+            body: 'action=load_template_html'
+          });
+          var data = await res.json();
+          if (!res.ok || !data || data.ok !== true) {
+            throw new Error(data && data.error ? data.error : 'Не удалось загрузить шаблон');
+          }
+          return normalizeTemplateHtml(data.html || '');
+        } catch (error) {
+          toast('Ошибка загрузки шаблона: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
+          return templateFallbackHtml;
+        }
       }
 
-      var editorModal = createOverlayModal('Полноценный редактор шаблона');
-      editorModal.content.style.maxWidth = '100vw';
-      editorModal.content.style.width = '100vw';
-      editorModal.content.style.background = 'rgba(255,255,255,.96)';
-      editorModal.content.style.border = '1px solid rgba(148,163,184,.35)';
+      var initialHtml = await loadTemplateHtml();
+
+      var editorModal = createOverlayModal('WYSIWYG-редактор шаблона');
+      editorModal.content.style.width = 'min(1400px, 95vw)';
+      editorModal.content.style.maxWidth = '95vw';
+      editorModal.content.style.height = '90vh';
       editorModal.content.style.padding = '0';
       editorModal.content.style.overflow = 'hidden';
-      editorModal.content.style.height = '100vh';
-      editorModal.content.style.borderRadius = '0';
+      editorModal.content.style.borderRadius = '18px';
+      editorModal.content.style.border = '1px solid rgba(148,163,184,.34)';
+      editorModal.content.style.background = 'linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%)';
 
       var appWrap = createElement('div', 'ai-editor-app');
       appWrap.style.display = 'flex';
       appWrap.style.flexDirection = 'column';
-      appWrap.style.height = '100vh';
+      appWrap.style.height = '100%';
+      appWrap.style.backdropFilter = 'blur(8px)';
 
-      var ribbon = createElement('div', 'ai-editor-ribbon');
-      ribbon.style.display = 'flex';
-      ribbon.style.flexWrap = 'wrap';
-      ribbon.style.gap = '8px';
-      ribbon.style.padding = '10px 12px';
-      ribbon.style.borderBottom = '1px solid rgba(148,163,184,.3)';
-      ribbon.style.background = '#f8fafc';
-      ribbon.style.alignItems = 'center';
-
-      var insertAnswerBtn = createElement('button', 'ai-chat-modal__export-btn', 'Вставить ответ ИИ');
-      var printBtn = createElement('button', 'ai-chat-modal__export-btn', '🖨️ Печать');
-      var saveDocxBtn = createElement('button', 'ai-chat-modal__send', 'Скачать DOCX');
-      var savePdfBtn = createElement('button', 'ai-chat-modal__send', 'Скачать PDF');
-      var loadTemplateBtn = createElement('button', 'ai-chat-modal__export-btn', '⟳ Загрузить шаблон');
-      [insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn, loadTemplateBtn].forEach(function (btn) {
-        btn.type = 'button';
-        btn.style.minHeight = '34px';
-      });
-      ribbon.append(insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn, loadTemplateBtn);
-
-      var formatBar1 = createElement('div', 'ai-editor-format');
-      formatBar1.style.display = 'flex';
-      formatBar1.style.flexWrap = 'wrap';
-      formatBar1.style.gap = '6px';
-      formatBar1.style.padding = '6px 12px';
-      formatBar1.style.borderBottom = '1px solid rgba(148,163,184,.2)';
-      formatBar1.style.background = '#ffffff';
-      formatBar1.style.alignItems = 'center';
-
-      function createLabel(text) {
-        var span = document.createElement('span');
-        span.textContent = text;
-        span.style.fontSize = '11px';
-        span.style.color = '#475569';
-        span.style.marginRight = '2px';
-        return span;
+      function makeToolbar() {
+        var bar = createElement('div', 'ai-editor-toolbar');
+        bar.style.display = 'flex';
+        bar.style.flexWrap = 'wrap';
+        bar.style.gap = '8px';
+        bar.style.alignItems = 'center';
+        bar.style.padding = '10px 12px';
+        bar.style.flexShrink = '0';
+        bar.style.background = 'rgba(255,255,255,.72)';
+        bar.style.borderBottom = '1px solid rgba(148,163,184,.25)';
+        return bar;
       }
 
-      var fontFamilySelect = document.createElement('select');
-      fontFamilySelect.className = 'ai-chat-modal__select';
-      fontFamilySelect.style.width = '130px';
-      ['Arial', 'Times New Roman', 'Calibri', 'Georgia', 'Verdana', 'Courier New'].forEach(function (font) {
-        var opt = document.createElement('option');
-        opt.value = font;
-        opt.textContent = font;
-        fontFamilySelect.appendChild(opt);
-      });
-      fontFamilySelect.value = 'Arial';
+      var topBar = makeToolbar();
+      var formatBar1 = makeToolbar();
+      var formatBar2 = makeToolbar();
 
-      var fontSizeSelect = document.createElement('select');
-      fontSizeSelect.className = 'ai-chat-modal__select';
-      fontSizeSelect.style.width = '76px';
-      [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36].forEach(function (size) {
-        var opt = document.createElement('option');
-        opt.value = size + 'px';
-        opt.textContent = size + 'px';
-        fontSizeSelect.appendChild(opt);
-      });
-      fontSizeSelect.value = '12px';
+      var pageBg = createElement('div', 'ai-editor-page-bg');
+      pageBg.style.flex = '1';
+      pageBg.style.overflow = 'auto';
+      pageBg.style.padding = '14px';
+      pageBg.style.background = 'linear-gradient(180deg, #dce7f7 0%, #d3dded 100%)';
 
-      var textColorInput = document.createElement('input');
-      textColorInput.type = 'color';
-      textColorInput.value = '#000000';
-      textColorInput.style.width = '36px';
-      textColorInput.style.height = '32px';
-      textColorInput.style.border = '1px solid #cbd5e1';
-      textColorInput.style.borderRadius = '6px';
-      textColorInput.style.cursor = 'pointer';
+      var page = createElement('div', 'ai-editor-page');
+      page.style.width = '210mm';
+      page.style.minHeight = '297mm';
+      page.style.margin = '0 auto';
+      page.style.background = '#fff';
+      page.style.borderRadius = '10px';
+      page.style.boxShadow = '0 18px 40px rgba(15,23,42,.18)';
+      page.style.transformOrigin = 'top center';
+      page.style.position = 'relative';
 
-      var bgColorInput = document.createElement('input');
-      bgColorInput.type = 'color';
-      bgColorInput.value = '#ffffff';
-      bgColorInput.style.width = '36px';
-      bgColorInput.style.height = '32px';
-      bgColorInput.style.border = '1px solid #cbd5e1';
-      bgColorInput.style.borderRadius = '6px';
-      bgColorInput.style.cursor = 'pointer';
+      var editorArea = createElement('div', 'ai-editor-content');
+      editorArea.setAttribute('contenteditable', 'true');
+      editorArea.setAttribute('spellcheck', 'true');
+      editorArea.innerHTML = initialHtml;
+      editorArea.style.minHeight = '297mm';
+      editorArea.style.padding = '22mm 20mm';
+      editorArea.style.outline = 'none';
+      editorArea.style.fontSize = '14px';
+      editorArea.style.lineHeight = '1.5';
+      editorArea.style.color = '#0f172a';
+      editorArea.style.wordBreak = 'break-word';
+      editorArea.style.webkitUserModify = 'read-write-plaintext-only';
+      editorArea.style.setProperty('webkitUserModify', 'read-write');
 
-      formatBar1.append(
-        createLabel('Шрифт:'), fontFamilySelect,
-        createLabel('Размер:'), fontSizeSelect,
-        createLabel('Цвет:'), textColorInput,
-        createLabel('Фон:'), bgColorInput
-      );
+      var contentStyles = document.createElement('style');
+      contentStyles.textContent = '.ai-editor-content table{width:100%;border-collapse:collapse;margin:8px 0;}' +
+        '.ai-editor-content td,.ai-editor-content th{border:1px solid #94a3b8;padding:6px;vertical-align:top;}' +
+        '.ai-editor-content ul,.ai-editor-content ol{padding-left:24px;}' +
+        '.ai-editor-content p{margin:0 0 10px;}' +
+        '.ai-editor-content a{color:#1d4ed8;text-decoration:underline;}';
 
-      var formatBar2 = createElement('div', 'ai-editor-format');
-      formatBar2.style.display = 'flex';
-      formatBar2.style.flexWrap = 'wrap';
-      formatBar2.style.gap = '6px';
-      formatBar2.style.padding = '6px 12px';
-      formatBar2.style.borderBottom = '1px solid rgba(148,163,184,.2)';
-      formatBar2.style.background = '#ffffff';
+      page.appendChild(contentStyles);
+      page.appendChild(editorArea);
+      pageBg.appendChild(page);
 
-      function createButton(text, cmd) {
-        var btn = createElement('button', 'ai-chat-modal__export-btn', text);
+      function createButton(text, primary) {
+        var btn = createElement('button', primary ? 'ai-chat-modal__send' : 'ai-chat-modal__export-btn', text);
         btn.type = 'button';
-        btn.style.minWidth = '44px';
-        btn.setAttribute('data-cmd', cmd);
+        btn.style.minHeight = '34px';
+        if (primary) {
+          btn.style.background = 'linear-gradient(135deg, #2563eb, #1d4ed8)';
+          btn.style.color = '#fff';
+        } else {
+          btn.style.background = '#f1f5f9';
+        }
         return btn;
       }
 
-      var boldBtn = createButton('B', 'bold');
-      var italicBtn = createButton('I', 'italic');
-      var underlineBtn = createButton('U', 'underline');
-      var strikeBtn = createButton('S', 'strikeThrough');
-      var leftBtn = createButton('⬅', 'justifyLeft');
-      var centerBtn = createButton('⬌', 'justifyCenter');
-      var rightBtn = createButton('➡', 'justifyRight');
-      var justifyBtn = createButton('☰', 'justifyFull');
-      var ulBtn = createButton('• Список', 'insertUnorderedList');
-      var olBtn = createButton('1. Список', 'insertOrderedList');
-      var indentBtn = createButton('↪', 'indent');
-      var outdentBtn = createButton('↩', 'outdent');
-      var linkBtn = createButton('🔗', 'createLink');
-      var tableBtn = createButton('📊', 'insertTable');
-      var undoBtn = createButton('↩️', 'undo');
-      var redoBtn = createButton('↪️', 'redo');
+      function createCommandButton(text, cmd) {
+        var btn = createButton(text, false);
+        btn.setAttribute('data-cmd', cmd);
+        btn.style.minWidth = '42px';
+        return btn;
+      }
 
-      formatBar2.append(
-        boldBtn, italicBtn, underlineBtn, strikeBtn,
-        leftBtn, centerBtn, rightBtn, justifyBtn,
-        ulBtn, olBtn, indentBtn, outdentBtn,
-        linkBtn, tableBtn, undoBtn, redoBtn
-      );
+      function createLabel(text) {
+        var lbl = document.createElement('span');
+        lbl.textContent = text;
+        lbl.style.fontSize = '12px';
+        lbl.style.color = '#475569';
+        return lbl;
+      }
 
-      var pageBg = createElement('div', 'ai-editor-page-bg');
-      pageBg.style.background = '#dbe3ee';
-      pageBg.style.padding = '12px';
-      pageBg.style.overflow = 'auto';
-      pageBg.style.flex = '1';
+      var insertAnswerBtn = createButton('Вставить ответ ИИ', false);
+      var printBtn = createButton('Печать', false);
+      var downloadDocxBtn = createButton('Скачать DOCX', true);
+      var downloadPdfBtn = createButton('Скачать PDF', true);
+      var reloadTemplateBtn = createButton('Загрузить шаблон', false);
+      var applyResponseBtn = createButton('Применить в ответ', false);
+      var applyRequestBtn = createButton('Применить в запрос', false);
+      topBar.append(insertAnswerBtn, printBtn, downloadDocxBtn, downloadPdfBtn, reloadTemplateBtn, applyResponseBtn, applyRequestBtn);
 
-      var page = createElement('div', 'ai-editor-page');
-      page.style.background = '#fff';
-      page.style.width = '210mm';
-      page.style.maxWidth = '100%';
-      page.style.margin = '0 auto';
-      page.style.boxShadow = '0 8px 22px rgba(15,23,42,.15)';
-      page.style.minHeight = '297mm';
-      page.style.borderRadius = '6px';
-      page.style.position = 'relative';
+      var fontSelect = document.createElement('select');
+      fontSelect.className = 'ai-chat-modal__select';
+      fontSelect.style.minWidth = '150px';
+      ['Arial', 'Calibri', 'Times New Roman', 'Georgia', 'Verdana', 'Tahoma', 'Courier New'].forEach(function (font) {
+        var opt = document.createElement('option');
+        opt.value = font;
+        opt.textContent = font;
+        fontSelect.appendChild(opt);
+      });
+      var sizeSelect = document.createElement('select');
+      sizeSelect.className = 'ai-chat-modal__select';
+      [9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36].forEach(function (size) {
+        var opt = document.createElement('option');
+        opt.value = String(size);
+        opt.textContent = size + ' px';
+        sizeSelect.appendChild(opt);
+      });
+      sizeSelect.value = '12';
 
-      var pageHint = createElement('div', 'ai-editor-page-hint', 'Лист A4 · формат шаблона сохранён');
-      pageHint.style.position = 'absolute';
-      pageHint.style.top = '10px';
-      pageHint.style.right = '12px';
-      pageHint.style.fontSize = '11px';
-      pageHint.style.color = '#64748b';
-      pageHint.style.pointerEvents = 'none';
+      var textColor = document.createElement('input');
+      textColor.type = 'color';
+      textColor.value = '#000000';
+      var bgColor = document.createElement('input');
+      bgColor.type = 'color';
+      bgColor.value = '#fff8c5';
+      [textColor, bgColor].forEach(function (input) {
+        input.style.width = '36px';
+        input.style.height = '34px';
+        input.style.padding = '2px';
+        input.style.border = '1px solid #cbd5e1';
+        input.style.borderRadius = '8px';
+        input.style.background = '#fff';
+      });
+      formatBar1.append(createLabel('Шрифт'), fontSelect, createLabel('Размер'), sizeSelect, createLabel('Цвет'), textColor, createLabel('Фон'), bgColor);
 
-      var editorArea = createElement('div', 'ai-chat-modal__live-preview');
-      editorArea.setAttribute('contenteditable', 'true');
-      editorArea.setAttribute('spellcheck', 'true');
-      editorArea.innerHTML = htmlContent;
-      editorArea.style.minHeight = '60vh';
-      editorArea.style.padding = '20mm 18mm 20mm 22mm';
-      editorArea.style.fontSize = '14px';
-      editorArea.style.lineHeight = '1.5';
-      editorArea.style.outline = 'none';
-      editorArea.style.color = '#111827';
-      editorArea.style.background = '#fff';
-      editorArea.style.wordBreak = 'break-word';
+      var cmdButtons = [
+        createCommandButton('B', 'bold'),
+        createCommandButton('I', 'italic'),
+        createCommandButton('U', 'underline'),
+        createCommandButton('S', 'strikeThrough'),
+        createCommandButton('⟸', 'justifyLeft'),
+        createCommandButton('☰', 'justifyCenter'),
+        createCommandButton('⟹', 'justifyRight'),
+        createCommandButton('≋', 'justifyFull'),
+        createCommandButton('• Список', 'insertUnorderedList'),
+        createCommandButton('1. Список', 'insertOrderedList'),
+        createCommandButton('↦', 'indent'),
+        createCommandButton('↤', 'outdent'),
+        createCommandButton('🔗', 'createLink'),
+        createCommandButton('▦', 'insertTable'),
+        createCommandButton('Tx', 'removeFormat'),
+        createCommandButton('↶', 'undo'),
+        createCommandButton('↷', 'redo')
+      ];
+      cmdButtons.forEach(function (btn) { formatBar2.appendChild(btn); });
 
-      page.appendChild(pageHint);
-      page.appendChild(editorArea);
-      pageBg.appendChild(page);
-      appWrap.append(ribbon, formatBar1, formatBar2, pageBg);
+      appWrap.append(topBar, formatBar1, formatBar2, pageBg);
       editorModal.content.appendChild(appWrap);
       openOverlay(editorModal);
 
-      if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) {
-        editorModal.content.style.width = '100vw';
-        editorModal.content.style.maxWidth = '100vw';
-        editorModal.content.style.height = '100vh';
-        editorModal.content.style.borderRadius = '0';
-        appWrap.style.height = '100vh';
-        pageBg.style.padding = '8px';
-        editorArea.style.padding = '14px';
-        editorArea.style.minHeight = '70vh';
-        pageHint.style.display = 'none';
+      if (!document.execCommand) {
+        toast('Ваш браузер ограниченно поддерживает форматирование редактора.');
       }
 
-      function applyCommand(command, value) {
+      function focusEditor() {
         editorArea.focus();
-        if (command === 'fontName' || command === 'fontSize' || command === 'foreColor' || command === 'backColor') {
-          document.execCommand(command, false, value);
-          return;
-        }
-        if (command === 'createLink') {
-          var url = prompt('Введите URL:', 'https://');
+      }
+
+      function escapeAndParagraph(text) {
+        return '<p>' + escapeHtml(String(text || '').replace(/\n/g, '<br>')) + '</p>';
+      }
+
+      function applyCommand(cmd, value) {
+        focusEditor();
+        if (cmd === 'createLink') {
+          var url = prompt('Введите URL', 'https://');
           if (url) {
-            document.execCommand(command, false, url);
+            document.execCommand('createLink', false, url);
           }
           return;
         }
-        if (command === 'insertTable') {
-          var rows = parseInt(prompt('Количество строк:', '3'), 10);
-          var cols = parseInt(prompt('Количество столбцов:', '3'), 10);
-          if (rows > 0 && cols > 0) {
-            var tableHtml = '<table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse; width:100%;"><tbody>';
-            for (var i = 0; i < rows; i++) {
-              tableHtml += '<tr>';
-              for (var j = 0; j < cols; j++) {
-                tableHtml += '<td style="border:1px solid #ccc; padding:6px;">&nbsp;</td>';
-              }
-              tableHtml += '</tr>';
+        if (cmd === 'insertTable') {
+          var rows = parseInt(prompt('Строки', '2'), 10);
+          var cols = parseInt(prompt('Столбцы', '2'), 10);
+          if (!rows || !cols || rows < 1 || cols < 1) {
+            return;
+          }
+          var html = '<table><tbody>';
+          for (var i = 0; i < rows; i++) {
+            html += '<tr>';
+            for (var j = 0; j < cols; j++) {
+              html += '<td>&nbsp;</td>';
             }
-            tableHtml += '</tbody></table><br>';
-            document.execCommand('insertHTML', false, tableHtml);
+            html += '</tr>';
           }
+          html += '</tbody></table><p></p>';
+          document.execCommand('insertHTML', false, html);
           return;
         }
-        document.execCommand(command, false, null);
+        document.execCommand(cmd, false, value || null);
       }
 
-      function createElementFromHTML(htmlString) {
-        var div = document.createElement('div');
-        div.innerHTML = String(htmlString || '').trim();
-        return div.firstChild;
-      }
-
-      function applyFontFamily() {
-        applyCommand('fontName', fontFamilySelect.value);
-      }
-
-      function applyFontSize() {
-        var size = fontSizeSelect.value;
-        var px = parseInt(size, 10);
-        if (isNaN(px)) {
-          return;
-        }
-        editorArea.focus();
+      function applyFontSizePx(pxSize) {
+        focusEditor();
         var selection = window.getSelection();
         if (!selection || !selection.rangeCount) {
           return;
         }
         var range = selection.getRangeAt(0);
         if (range.collapsed) {
-          var span = document.createElement('span');
-          span.style.fontSize = size;
-          span.innerHTML = '&nbsp;';
-          range.insertNode(span);
-          range.setStartAfter(span);
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
+          document.execCommand('fontSize', false, '3');
+          var fonts = editorArea.querySelectorAll('font[size="3"]');
+          if (fonts.length) {
+            fonts[fonts.length - 1].removeAttribute('size');
+            fonts[fonts.length - 1].style.fontSize = pxSize + 'px';
+          }
           return;
         }
         try {
-          var wrapper = document.createElement('span');
-          wrapper.style.fontSize = size;
-          range.surroundContents(wrapper);
+          var span = document.createElement('span');
+          span.style.fontSize = pxSize + 'px';
+          range.surroundContents(span);
         } catch (e) {
-          var fragment = range.cloneContents();
-          var holder = document.createElement('div');
-          holder.appendChild(fragment);
-          var html = '<span style="font-size:' + size + ';">' + holder.innerHTML + '</span>';
-          range.deleteContents();
-          var inserted = createElementFromHTML(html);
-          if (inserted) {
-            range.insertNode(inserted);
-          }
+          document.execCommand('fontSize', false, '3');
+          var editorFonts = editorArea.querySelectorAll('font[size="3"]');
+          Array.prototype.forEach.call(editorFonts, function (fontTag) {
+            fontTag.removeAttribute('size');
+            fontTag.style.fontSize = pxSize + 'px';
+          });
         }
       }
 
-      function applyTextColor() {
-        applyCommand('foreColor', textColorInput.value);
-      }
+      fontSelect.addEventListener('change', function () {
+        applyCommand('fontName', fontSelect.value);
+      });
+      sizeSelect.addEventListener('change', function () {
+        applyFontSizePx(parseInt(sizeSelect.value, 10));
+      });
+      textColor.addEventListener('change', function () {
+        applyCommand('foreColor', textColor.value);
+      });
+      bgColor.addEventListener('change', function () {
+        applyCommand('backColor', bgColor.value);
+      });
 
-      function applyBgColor() {
-        applyCommand('backColor', bgColorInput.value);
-      }
-
-      fontFamilySelect.addEventListener('change', applyFontFamily);
-      fontSizeSelect.addEventListener('change', applyFontSize);
-      textColorInput.addEventListener('change', applyTextColor);
-      bgColorInput.addEventListener('change', applyBgColor);
-
-      [
-        boldBtn, italicBtn, underlineBtn, strikeBtn,
-        leftBtn, centerBtn, rightBtn, justifyBtn,
-        ulBtn, olBtn, indentBtn, outdentBtn,
-        linkBtn, tableBtn, undoBtn, redoBtn
-      ].forEach(function (btn) {
+      cmdButtons.forEach(function (btn) {
         btn.addEventListener('click', function () {
           applyCommand(btn.getAttribute('data-cmd'));
         });
       });
 
       insertAnswerBtn.addEventListener('click', function () {
-        var answer = String(state.lastAssistantMessage || 'Ответ ИИ отсутствует');
-        editorArea.focus();
-        var selection = window.getSelection();
-        if (selection && selection.rangeCount > 0) {
-          var range = selection.getRangeAt(0);
-          range.deleteContents();
-          range.insertNode(document.createTextNode(answer));
-          range.collapse(false);
-        } else {
-          editorArea.innerHTML += '<p>' + escapeHtml(answer) + '</p>';
+        var text = String(state.lastAssistantMessage || '').trim();
+        if (!text) {
+          toast('Сначала получите ответ ИИ, затем вставляйте его.');
+          return;
         }
+        focusEditor();
+        document.execCommand('insertHTML', false, escapeAndParagraph(text));
       });
 
-      loadTemplateBtn.addEventListener('click', async function () {
-        try {
-          var templateRes = await fetch(apiUrl, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-            body: 'action=load_template_html'
-          });
-          var templateData = await templateRes.json();
-          editorArea.innerHTML = (templateRes.ok && templateData && templateData.ok && templateData.html)
-            ? normalizeTemplateHtml(templateData.html)
-            : '<p>Шаблон не загружен</p>';
-        } catch (e) {
-          editorArea.innerHTML = '<p>Ошибка перезагрузки шаблона</p>';
+      reloadTemplateBtn.addEventListener('click', async function () {
+        reloadTemplateBtn.disabled = true;
+        var prevText = reloadTemplateBtn.textContent;
+        reloadTemplateBtn.textContent = 'Загрузка...';
+        var freshHtml = await loadTemplateHtml();
+        editorArea.innerHTML = freshHtml;
+        state.templateDraft = editorArea.innerHTML;
+        reloadTemplateBtn.textContent = prevText;
+        reloadTemplateBtn.disabled = false;
+        focusEditor();
+      });
+
+      function getDocumentHtml() {
+        return String(editorArea.innerHTML || '').trim();
+      }
+
+      function getDocumentText() {
+        return String(editorArea.innerText || '').trim();
+      }
+
+      applyResponseBtn.addEventListener('click', function () {
+        var text = getDocumentText();
+        if (!text) {
+          toast('Документ пуст. Нечего применять в ответ.');
+          return;
         }
+        state.lastAssistantMessage = text;
+        editArea.value = text;
+        state.templateDraft = getDocumentHtml();
+        toast('Текст применён в последний ответ.');
+      });
+
+      applyRequestBtn.addEventListener('click', function () {
+        textarea.value = getDocumentText();
+        autoHeight(textarea);
+        state.templateDraft = getDocumentHtml();
+        toast('Текст применён в поле запроса.');
       });
 
       printBtn.addEventListener('click', function () {
         var printWindow = window.open('', '_blank');
         if (!printWindow) {
-          alert('Разрешите всплывающие окна для печати.');
+          toast('Разрешите всплывающие окна для печати.');
           return;
         }
-        printWindow.document.write('<html><head><title>Печать</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:Arial,sans-serif;padding:16px;}table{border-collapse:collapse;width:100%;}td,th{border:1px solid #aaa;padding:6px;}</style></head><body>' + editorArea.innerHTML + '</body></html>');
+        var html = '<!doctype html><html><head><meta charset="utf-8"><title>Печать документа</title><style>body{margin:0;padding:16mm;font-family:Arial,sans-serif;}table{border-collapse:collapse;width:100%;}td,th{border:1px solid #94a3b8;padding:6px;}a{color:#1d4ed8;text-decoration:underline;}</style></head><body>' + getDocumentHtml() + '</body></html>';
+        printWindow.document.open();
+        printWindow.document.write(html);
         printWindow.document.close();
         printWindow.focus();
         printWindow.print();
       });
 
-      async function saveDocument(format) {
+      async function exportDocumentFromEditor(format, buttonEl) {
+        var originalText = buttonEl.textContent;
+        buttonEl.disabled = true;
+        buttonEl.textContent = 'Генерация...';
         try {
-          saveDocxBtn.disabled = true;
-          savePdfBtn.disabled = true;
-          var formData = new FormData();
-          formData.append('action', 'generate_from_editor');
-          formData.append('format', format);
-          formData.append('html', editorArea.innerHTML);
-          formData.append('documentTitle', config.documentTitle || 'Отредактированный документ');
-          var response = await fetch(apiUrl, { method: 'POST', credentials: 'same-origin', body: formData });
+          var params = new URLSearchParams();
+          params.set('action', 'generate_from_editor');
+          params.set('format', format);
+          params.set('html', getDocumentHtml());
+          params.set('documentTitle', config.documentTitle || 'Документ');
+          var response = await fetch(apiUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+            body: params.toString()
+          });
           if (!response.ok) {
-            var errorPayload = null;
-            try {
-              errorPayload = await response.json();
-            } catch (e) {
-              errorPayload = null;
-            }
-            throw new Error(errorPayload && errorPayload.error ? errorPayload.error : 'Ошибка генерации');
+            throw new Error('Ошибка экспорта (' + response.status + ')');
           }
           var blob = await response.blob();
-          var url = URL.createObjectURL(blob);
+          var downloadUrl = URL.createObjectURL(blob);
           var a = document.createElement('a');
-          a.href = url;
-          a.download = 'document.' + format;
+          a.href = downloadUrl;
+          a.download = (config.documentTitle || 'document') + '.' + format;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+          URL.revokeObjectURL(downloadUrl);
+          state.templateDraft = getDocumentHtml();
         } catch (error) {
-          alert('Не удалось сохранить файл: ' + (error && error.message ? error.message : 'Ошибка'));
+          toast('Не удалось скачать ' + format.toUpperCase() + ': ' + (error && error.message ? error.message : 'ошибка'));
         } finally {
-          saveDocxBtn.disabled = false;
-          savePdfBtn.disabled = false;
+          buttonEl.disabled = false;
+          buttonEl.textContent = originalText;
         }
       }
 
-      saveDocxBtn.addEventListener('click', function () { saveDocument('docx'); });
-      savePdfBtn.addEventListener('click', function () { saveDocument('pdf'); });
+      downloadDocxBtn.addEventListener('click', function () { exportDocumentFromEditor('docx', downloadDocxBtn); });
+      downloadPdfBtn.addEventListener('click', function () { exportDocumentFromEditor('pdf', downloadPdfBtn); });
 
-      function syncA4Scale() {
+      function syncPageScale() {
         if (!pageBg || !page) {
           return;
         }
-        var isMobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
-        if (isMobile) {
-          page.style.transform = 'none';
-          page.style.width = '100%';
-          page.style.minHeight = 'auto';
-          pageBg.style.minHeight = 'auto';
+        var containerWidth = pageBg.clientWidth - 24;
+        if (containerWidth <= 0) {
           return;
         }
-        page.style.width = '210mm';
-        page.style.minHeight = '297mm';
-
-        var frameWidth = pageBg.clientWidth - 24;
-        var frameHeight = pageBg.clientHeight - 24;
-        if (frameWidth <= 0 || frameHeight <= 0) {
-          return;
-        }
-
         var mmToPx = 3.7795275591;
-        var a4Width = 210 * mmToPx;
-        var a4Height = 297 * mmToPx;
-        var scaleByWidth = frameWidth / a4Width;
-        var scaleByHeight = frameHeight / a4Height;
-        var nextScale = Math.min(scaleByWidth, scaleByHeight, 1);
-        nextScale = Math.max(0.5, nextScale);
-
-        page.style.transformOrigin = 'top center';
-        page.style.transform = 'scale(' + nextScale + ')';
-        pageBg.style.minHeight = Math.ceil((a4Height * nextScale) + 24) + 'px';
+        var pageWidth = 210 * mmToPx;
+        var scale = Math.min(containerWidth / pageWidth, 1);
+        scale = Math.max(scale, 0.7);
+        if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) {
+          scale = 1;
+        }
+        page.style.transform = 'scale(' + scale + ')';
+        pageBg.style.minHeight = Math.ceil((297 * mmToPx * scale) + 40) + 'px';
       }
 
-      syncA4Scale();
-      window.addEventListener('resize', syncA4Scale);
+      var resizeObserver = null;
+      if (window.ResizeObserver) {
+        resizeObserver = new ResizeObserver(syncPageScale);
+        resizeObserver.observe(pageBg);
+      }
+      window.addEventListener('resize', syncPageScale);
+      syncPageScale();
+
+      if (state.templateDraft) {
+        editorArea.innerHTML = state.templateDraft;
+      }
+
+      editorArea.addEventListener('input', function () {
+        state.templateDraft = getDocumentHtml();
+      });
+
+      var originalClose = editorModal.close;
+      editorModal.close = function () {
+        state.templateDraft = getDocumentHtml();
+        window.removeEventListener('resize', syncPageScale);
+        if (resizeObserver) {
+          resizeObserver.disconnect();
+        }
+        originalClose();
+      };
     }
+
 
 
     function resanitizeFileContents() {
