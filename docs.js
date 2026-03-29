@@ -13093,18 +13093,31 @@
         linkedFiles = currentDoc.files.map(function(file) {
           return {
             name: getAttachmentName(file),
-            url: resolveAttachmentUrl(file, { bustCache: true }) || ''
+            url: resolveAttachmentUrl(file, { bustCache: true }) || '',
+            size: file && file.size ? file.size : 0,
+            type: file && file.type ? String(file.type) : ''
           };
         }).filter(function(file) {
           return Boolean(file && file.url);
         });
       }
-      openAiBriefSummaryModal({
+      openAiResponseModal({
         apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
         showMessage: showMessage,
         documentData: currentDoc || doc || {},
+        documentTitle: currentDoc && currentDoc.title ? String(currentDoc.title) : '',
         pendingFiles: pendingFiles.slice(),
-        linkedFiles: linkedFiles
+        linkedFiles: linkedFiles,
+        briefMode: true,
+        contextDetail: 'brief',
+        aiBehavior: [
+          'Сделай краткий вывод только по ключевому в тексте.',
+          'Формат строго:',
+          'Причина: ...',
+          'Действия: пункт 1; пункт 2',
+          'Требования из файла: пункт 1; пункт 2',
+          'Пиши коротко, без воды.'
+        ].join('\n')
       });
     });
 

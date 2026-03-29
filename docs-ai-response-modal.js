@@ -970,6 +970,7 @@
     ensureStyles();
 
     var config = options && typeof options === 'object' ? options : {};
+    var isBriefMode = Boolean(config && config.briefMode);
     var state = {
       files: []
         .concat(normalizeFileObjects(config.pendingFiles || []))
@@ -989,7 +990,8 @@
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: '',
-      templateFile: null
+      templateFile: null,
+      briefMode: isBriefMode
     };
 
     state.ocrSummary = { totalLines: 0, droppedLines: 0, whitelistKept: 0 };
@@ -998,7 +1000,7 @@
     var panel = createElement('div', 'ai-chat-modal__panel');
     var header = createElement('div', 'ai-chat-modal__header');
     var titleWrap = createElement('div');
-    titleWrap.appendChild(createElement('div', 'ai-chat-modal__title', 'Ответ с помощью ИИ'));
+    titleWrap.appendChild(createElement('div', 'ai-chat-modal__title', isBriefMode ? 'Кратко ИИ' : 'Ответ с помощью ИИ'));
     titleWrap.appendChild(createElement('div', 'ai-chat-modal__subtitle', config.documentTitle ? ('Документ: ' + config.documentTitle) : 'Документ не указан'));
 
     var closeButton = createElement('button', 'ai-chat-modal__close', '×');
@@ -1046,12 +1048,16 @@
     settingsButton.style.fontSize = '11px';
 
     var messages = createElement('div', 'ai-chat-modal__messages');
-    messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
+    messages.appendChild(createMessage('assistant', isBriefMode
+      ? 'Выберите OCR у файла — после распознавания сразу дам краткий вывод по ключевому.'
+      : 'Привет! Напишите запрос — я подготовлю ответ.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
-    textarea.placeholder = 'Введите запрос (можно пусто — отправим OCR текст)';
-    var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
+    textarea.placeholder = isBriefMode
+      ? 'Короткий запрос (можно пусто — после OCR сделаю краткий вывод автоматически)'
+      : 'Введите запрос (можно пусто — отправим OCR текст)';
+    var sendButton = createElement('button', 'ai-chat-modal__send', isBriefMode ? 'Сделать кратко' : 'Отправить в ИИ');
     sendButton.type = 'button';
     var menuWrap = createElement('div');
     menuWrap.style.position = 'relative';
@@ -1889,6 +1895,47 @@
       }
     }
 
+    async function requestBriefSummaryForFile(fileEntry) {
+      var fileLabel = fileEntry && fileEntry.name ? fileEntry.name : 'файл';
+      var fileText = fileEntry && typeof fileEntry.content === 'string' ? fileEntry.content.trim() : '';
+      if (!fileText) {
+        throw new Error('После OCR не найден текст для краткого вывода.');
+      }
+
+      var briefPrompt = [
+        'Сделай краткий вывод по ключевому в тексте.',
+        'Ответ строго в 3 блоках:',
+        'Причина: ...',
+        'Действия: пункт 1; пункт 2',
+        'Требования из файла: пункт 1; пункт 2',
+        'Без длинных пересказов.'
+      ].join('\n');
+
+      var briefState = {
+        files: [fileEntry],
+        model: state.model,
+        responseStyle: state.responseStyle,
+        aiBehavior: state.aiBehavior,
+        contextDetail: 'brief',
+        contextSettings: state.contextSettings,
+        ocrMode: state.ocrMode
+      };
+      var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var response = await fetch(apiUrl + '?action=ai_response_analyze', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: buildRequestBlueprint(briefPrompt, briefState, config)
+      });
+      var payload = await response.json();
+      if (!response.ok || !payload || payload.ok !== true) {
+        throw new Error(payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')'));
+      }
+      var finalResponse = payload.response || payload.analysis || 'Краткий вывод не сформирован.';
+      finalResponse = sanitizeAssistantResponseText(cleanNumericArtifacts(String(finalResponse || '')).trim());
+      messages.appendChild(createMessage('assistant', 'Краткий вывод по файлу "' + fileLabel + '":\n' + finalResponse));
+      state.lastAssistantMessage = String(finalResponse || '');
+    }
+
     async function extractSingleFile(fileEntry) {
       if (!fileEntry || fileEntry.extracting) {
         return false;
@@ -1946,6 +1993,17 @@
         fileEntry.extracted = fileEntry.content !== '';
         fileEntry.extractError = fileEntry.extracted ? null : 'Пустой результат';
         resanitizeFileContents();
+        if (fileEntry.extracted && state.briefMode) {
+          var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
+          pending.innerHTML = '<span class="ai-chat-spinner"></span>ИИ делает краткий вывод...';
+          messages.appendChild(pending);
+          messages.scrollTop = messages.scrollHeight;
+          try {
+            await requestBriefSummaryForFile(fileEntry);
+          } finally {
+            pending.remove();
+          }
+        }
         return fileEntry.extracted;
       } catch (error) {
         fileEntry.extractError = error && error.message ? error.message : 'Не удалось извлечь текст';
@@ -1997,7 +2055,9 @@
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      var effectivePrompt = value || 'Подготовь официальный ответ по OCR-тексту вложений в деловом стиле.';
+      var effectivePrompt = value || (state.briefMode
+        ? 'Сделай краткий вывод по ключевому в OCR-тексте. Формат: Причина; Действия; Требования из файла.'
+        : 'Подготовь официальный ответ по OCR-тексту вложений в деловом стиле.');
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
