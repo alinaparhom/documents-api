@@ -1076,8 +1076,14 @@
     openTemplateButton.style.marginTop = '4px';
     openTemplateButton.style.width = '100%';
     openTemplateButton.style.textAlign = 'left';
+    var openTemplateEditorButton = createElement('button', 'ai-chat-modal__attach', '✏️ Редактировать шаблон');
+    openTemplateEditorButton.type = 'button';
+    openTemplateEditorButton.style.marginTop = '4px';
+    openTemplateEditorButton.style.width = '100%';
+    openTemplateEditorButton.style.textAlign = 'left';
     menuDropdown.appendChild(openEditButton);
     menuDropdown.appendChild(openTemplateButton);
+    menuDropdown.appendChild(openTemplateEditorButton);
     menuWrap.appendChild(menuButton);
     menuWrap.appendChild(menuDropdown);
     var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'OCR к отправке: 0 символов');
@@ -1255,6 +1261,249 @@
     function openOverlay(modalRef) {
       document.body.appendChild(modalRef.overlay);
       requestAnimationFrame(function () { modalRef.overlay.classList.add('ai-chat-modal--visible'); });
+    }
+
+    async function openTemplateEditor() {
+      var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var htmlContent = '';
+      function normalizeTemplateHtml(rawHtml) {
+        var content = String(rawHtml || '').trim();
+        if (!content) {
+          return '<p>Шаблон пустой. Начните редактирование.</p>';
+        }
+        if (!/<html[\s>]/i.test(content)) {
+          return content;
+        }
+        try {
+          var parser = new DOMParser();
+          var parsed = parser.parseFromString(content, 'text/html');
+          var bodyHtml = parsed.body ? parsed.body.innerHTML : content;
+          var headStyles = '';
+          if (parsed.head) {
+            headStyles = Array.prototype.map.call(parsed.head.querySelectorAll('style'), function (styleTag) {
+              return styleTag.outerHTML;
+            }).join('');
+          }
+          return headStyles + bodyHtml;
+        } catch (e) {
+          return content;
+        }
+      }
+      try {
+        var res = await fetch(apiUrl, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: 'action=load_template_html'
+        });
+        var data = await res.json();
+        htmlContent = (res.ok && data && data.ok && data.html)
+          ? normalizeTemplateHtml(data.html)
+          : '<p>Не удалось загрузить шаблон. Создайте новый документ.</p>';
+      } catch (error) {
+        htmlContent = '<p>Ошибка загрузки шаблона</p>';
+      }
+
+      var editorModal = createOverlayModal('Редактор шаблона');
+      editorModal.content.style.maxWidth = '1200px';
+      editorModal.content.style.width = '95vw';
+      editorModal.content.style.background = 'rgba(255,255,255,.86)';
+      editorModal.content.style.backdropFilter = 'blur(14px)';
+      editorModal.content.style.border = '1px solid rgba(148,163,184,.25)';
+      editorModal.content.style.padding = '0';
+      editorModal.content.style.overflow = 'hidden';
+
+      var appWrap = createElement('div', 'ai-editor-app');
+      appWrap.style.display = 'flex';
+      appWrap.style.flexDirection = 'column';
+      appWrap.style.maxHeight = '86vh';
+
+      var ribbon = createElement('div', 'ai-editor-ribbon');
+      ribbon.style.display = 'flex';
+      ribbon.style.flexWrap = 'wrap';
+      ribbon.style.gap = '8px';
+      ribbon.style.padding = '10px';
+      ribbon.style.borderBottom = '1px solid rgba(148,163,184,.25)';
+      ribbon.style.background = 'rgba(248,250,252,.9)';
+
+      var insertAnswerBtn = createElement('button', 'ai-chat-modal__export-btn', 'Вставить ответ ИИ');
+      var printBtn = createElement('button', 'ai-chat-modal__export-btn', '🖨️ Печать');
+      var saveDocxBtn = createElement('button', 'ai-chat-modal__send', 'Скачать DOCX');
+      var savePdfBtn = createElement('button', 'ai-chat-modal__send', 'Скачать PDF');
+      [insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn].forEach(function (btn) {
+        btn.type = 'button';
+      });
+      ribbon.append(insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn);
+
+      var formatBar = createElement('div', 'ai-editor-format');
+      formatBar.style.display = 'flex';
+      formatBar.style.flexWrap = 'wrap';
+      formatBar.style.gap = '6px';
+      formatBar.style.padding = '8px 10px';
+      formatBar.style.borderBottom = '1px solid rgba(148,163,184,.2)';
+      formatBar.style.background = 'rgba(255,255,255,.85)';
+      var boldBtn = createElement('button', 'ai-chat-modal__export-btn', 'B');
+      var italicBtn = createElement('button', 'ai-chat-modal__export-btn', 'I');
+      var underlineBtn = createElement('button', 'ai-chat-modal__export-btn', 'U');
+      var leftBtn = createElement('button', 'ai-chat-modal__export-btn', '⬅');
+      var centerBtn = createElement('button', 'ai-chat-modal__export-btn', '⬌');
+      var rightBtn = createElement('button', 'ai-chat-modal__export-btn', '➡');
+      var listBtn = createElement('button', 'ai-chat-modal__export-btn', '• Список');
+      [boldBtn, italicBtn, underlineBtn, leftBtn, centerBtn, rightBtn, listBtn].forEach(function (btn) {
+        btn.type = 'button';
+        btn.style.minWidth = '42px';
+      });
+      formatBar.append(boldBtn, italicBtn, underlineBtn, leftBtn, centerBtn, rightBtn, listBtn);
+
+      var pageBg = createElement('div', 'ai-editor-page-bg');
+      pageBg.style.background = '#dbe3ee';
+      pageBg.style.padding = '16px';
+      pageBg.style.overflow = 'auto';
+
+      var page = createElement('div', 'ai-editor-page');
+      page.style.background = '#fff';
+      page.style.width = '210mm';
+      page.style.maxWidth = '100%';
+      page.style.margin = '0 auto';
+      page.style.boxShadow = '0 8px 22px rgba(15,23,42,.12)';
+      page.style.minHeight = '297mm';
+      page.style.borderRadius = '6px';
+      page.style.position = 'relative';
+
+      var pageHint = createElement('div', 'ai-editor-page-hint', 'Лист A4 · формат шаблона сохранён');
+      pageHint.style.position = 'absolute';
+      pageHint.style.top = '10px';
+      pageHint.style.right = '12px';
+      pageHint.style.fontSize = '11px';
+      pageHint.style.color = '#64748b';
+      pageHint.style.pointerEvents = 'none';
+
+      var editorArea = createElement('div', 'ai-chat-modal__live-preview');
+      editorArea.setAttribute('contenteditable', 'true');
+      editorArea.setAttribute('spellcheck', 'true');
+      editorArea.innerHTML = htmlContent;
+      editorArea.style.minHeight = '60vh';
+      editorArea.style.padding = '20mm 18mm 20mm 22mm';
+      editorArea.style.fontSize = '14px';
+      editorArea.style.lineHeight = '1.5';
+      editorArea.style.outline = 'none';
+      editorArea.style.color = '#111827';
+      editorArea.style.background = '#fff';
+      editorArea.style.wordBreak = 'break-word';
+
+      page.appendChild(pageHint);
+      page.appendChild(editorArea);
+      pageBg.appendChild(page);
+      appWrap.appendChild(ribbon);
+      appWrap.appendChild(formatBar);
+      appWrap.appendChild(pageBg);
+      editorModal.content.appendChild(appWrap);
+      openOverlay(editorModal);
+
+      function syncA4Scale() {
+        if (!pageBg || !page) {
+          return;
+        }
+        var viewport = pageBg.clientWidth - 20;
+        if (viewport <= 0) {
+          return;
+        }
+        var pageWidthPx = page.getBoundingClientRect().width;
+        if (pageWidthPx <= 0) {
+          return;
+        }
+        var nextScale = viewport < pageWidthPx ? Math.max(0.72, viewport / pageWidthPx) : 1;
+        page.style.transformOrigin = 'top center';
+        page.style.transform = 'scale(' + nextScale + ')';
+        pageBg.style.minHeight = Math.ceil((page.offsetHeight * nextScale) + 24) + 'px';
+      }
+      syncA4Scale();
+      window.addEventListener('resize', syncA4Scale);
+
+      function applyFormat(command) {
+        editorArea.focus();
+        if (document.execCommand) {
+          document.execCommand(command, false, null);
+        }
+      }
+
+      insertAnswerBtn.addEventListener('click', function () {
+        var answer = String(state.lastAssistantMessage || 'Ответ ИИ отсутствует');
+        editorArea.focus();
+        var selection = window.getSelection();
+        if (selection && selection.rangeCount > 0) {
+          var range = selection.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createTextNode(answer));
+          range.collapse(false);
+        } else {
+          editorArea.innerHTML += '<p>' + escapeHtml(answer) + '</p>';
+        }
+      });
+      boldBtn.addEventListener('click', function () { applyFormat('bold'); });
+      italicBtn.addEventListener('click', function () { applyFormat('italic'); });
+      underlineBtn.addEventListener('click', function () { applyFormat('underline'); });
+      leftBtn.addEventListener('click', function () { applyFormat('justifyLeft'); });
+      centerBtn.addEventListener('click', function () { applyFormat('justifyCenter'); });
+      rightBtn.addEventListener('click', function () { applyFormat('justifyRight'); });
+      listBtn.addEventListener('click', function () { applyFormat('insertUnorderedList'); });
+
+      printBtn.addEventListener('click', function () {
+        var printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          alert('Разрешите всплывающие окна для печати.');
+          return;
+        }
+        printWindow.document.write('<html><head><title>Печать</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:Arial,sans-serif;padding:16px;color:#0f172a;}p{margin:0 0 10px;}</style></head><body>' + editorArea.innerHTML + '</body></html>');
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+      });
+
+      async function saveDocument(format) {
+        try {
+          saveDocxBtn.disabled = true;
+          savePdfBtn.disabled = true;
+          var formData = new FormData();
+          formData.append('action', 'generate_from_editor');
+          formData.append('format', format);
+          formData.append('html', editorArea.innerHTML);
+          formData.append('documentTitle', config.documentTitle || 'Отредактированный документ');
+          var response = await fetch(apiUrl, { method: 'POST', credentials: 'same-origin', body: formData });
+          if (!response.ok) {
+            var errorPayload = null;
+            try {
+              errorPayload = await response.json();
+            } catch (e) {
+              errorPayload = null;
+            }
+            var serverError = errorPayload && errorPayload.error ? errorPayload.error : 'Ошибка генерации';
+            throw new Error(serverError);
+          }
+          var responseType = (response.headers.get('content-type') || '').toLowerCase();
+          if (responseType.indexOf('application/json') !== -1) {
+            var payload = await response.json();
+            throw new Error(payload && payload.error ? payload.error : 'Сервер не вернул файл');
+          }
+          var blob = await response.blob();
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'document.' + format;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          alert('Не удалось сохранить файл: ' + (error && error.message ? error.message : 'Ошибка'));
+        } finally {
+          saveDocxBtn.disabled = false;
+          savePdfBtn.disabled = false;
+        }
+      }
+
+      saveDocxBtn.addEventListener('click', function () { saveDocument('docx'); });
+      savePdfBtn.addEventListener('click', function () { saveDocument('pdf'); });
     }
 
     function resanitizeFileContents() {
@@ -1632,6 +1881,10 @@
       }
       templateArea.value = state.templateDraft;
       openOverlay(templateModal);
+    });
+    openTemplateEditorButton.addEventListener('click', function () {
+      menuDropdown.style.display = 'none';
+      openTemplateEditor();
     });
 
     chooseTemplateButton.addEventListener('click', function () {
