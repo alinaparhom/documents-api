@@ -5,9 +5,9 @@
   var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
-  var DEFAULT_CONTEXT_FILE_CHARS_DETAILED = 12000;
+  var DEFAULT_CONTEXT_FILE_CHARS_DETAILED = 60000;
   var DEFAULT_CONTEXT_FILE_CHARS_BRIEF = 3500;
-  var DEFAULT_CONTEXT_TOTAL_CHARS_DETAILED = 45000;
+  var DEFAULT_CONTEXT_TOTAL_CHARS_DETAILED = 220000;
   var DEFAULT_CONTEXT_TOTAL_CHARS_BRIEF = 18000;
   var DEFAULT_LONG_ATTACHMENT_THRESHOLD = 7000;
   var pdfJsReadyPromise = null;
@@ -16,7 +16,7 @@
     + 'Обязательно используй формулировки: "В ответ на Ваш документ от [дата] № [номер] сообщаем следующее", "Отмечаем, что…", "Обращаем Ваше внимание на…".\n'
     + 'Тон: строгий, аргументированный, без эмоций.\n'
     + 'Структура: вступление (факт получения и рассмотрения), основная часть (анализ пунктов со ссылками на нормативные или внутренние требования), заключение (однозначное решение).\n'
-    + 'Допустимые решения: approve (одобрить), reject (отклонить с причинами), need_revision (отправить на доработку с перечнем изменений), acknowledge (принять к сведению без дальнейших действий), need_clarification (запросить недостающие данные).\n'
+    + 'Допустимые решения: approve (одобрить), reject (отклонить с причинами), need_clarification (запросить недостающие данные).\n'
     + 'Если данных недостаточно, явно запроси недостающую информацию и укажи, какое решение будет принято после её получения.\n'
     + 'Ответ должен быть развёрнутым: не кратким и не коротким.';
 
@@ -159,6 +159,9 @@
           stats.emptyDropped += 1;
         }
         return false;
+      }
+      if (currentMode === 'smart') {
+        return true;
       }
       if (isBusinessWhitelistLine(trimmed)) {
         if (stats) {
@@ -981,7 +984,7 @@
       contextSettings: buildContextSettings(config),
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
         ? config.ocrMode
-        : OCR_MODE_OPTIONS[0].value,
+        : 'raw',
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: ''
@@ -1506,8 +1509,6 @@
           var decisionMap = {
             approve: '✅ Одобрить',
             reject: '⛔ Отклонить',
-            need_revision: '🛠️ На доработку',
-            acknowledge: '📌 Принять к сведению',
             need_clarification: '❓ Нужны уточнения'
           };
           var decisionLabel = decisionMap[decisionBlock.decision] || String(decisionBlock.decision);
