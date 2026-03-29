@@ -1474,6 +1474,25 @@
           .replace(/[ \t]+\n/g, '\n')
           .replace(/\n{3,}/g, '\n\n')
           .trim();
+        var decisionBlock = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object'
+          ? payload.decisionBlock
+          : null;
+        if (decisionBlock && decisionBlock.decision) {
+          var decisionMap = {
+            approve: '✅ Согласовать',
+            reject: '⛔ Отклонить',
+            need_clarification: '❓ Нужны уточнения'
+          };
+          var decisionLabel = decisionMap[decisionBlock.decision] || String(decisionBlock.decision);
+          var decisionLines = ['Решение ИИ: ' + decisionLabel];
+          if (decisionBlock.decision_reason) {
+            decisionLines.push('Причина: ' + String(decisionBlock.decision_reason));
+          }
+          if (Array.isArray(decisionBlock.required_actions) && decisionBlock.required_actions.length) {
+            decisionLines.push('Действия: ' + decisionBlock.required_actions.slice(0, 3).join('; '));
+          }
+          finalResponse = decisionLines.join('\n') + '\n\n' + finalResponse;
+        }
         messages.appendChild(createMessage('assistant', finalResponse));
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';

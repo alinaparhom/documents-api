@@ -400,6 +400,104 @@ function parseAiJson(string $content): array
     return [];
 }
 
+
+
+function normalizeDecisionValue(string $value): string
+{
+    $normalized = mb_strtolower(trim($value));
+    if ($normalized === '') {
+        return '';
+    }
+    if (in_array($normalized, ['approve', 'approved', 'ok', 'accept', 'accepted', 'согласовать', 'утвердить'], true)) {
+        return 'approve';
+    }
+    if (in_array($normalized, ['reject', 'rejected', 'deny', 'decline', 'отклонить', 'отказать'], true)) {
+        return 'reject';
+    }
+    if (in_array($normalized, ['need_clarification', 'need_info', 'need_information', 'request_info', 'clarify', 'уточнить'], true)) {
+        return 'need_clarification';
+    }
+    return '';
+}
+
+function normalizeStringList(mixed $value, int $maxItems = 6, int $maxLen = 240): array
+{
+    if (!is_array($value)) {
+        $single = textFromMixed($value);
+        return $single !== '' ? [mb_substr($single, 0, $maxLen)] : [];
+    }
+    $result = [];
+    foreach ($value as $item) {
+        $text = textFromMixed($item);
+        if ($text === '') {
+            continue;
+        }
+        $result[] = mb_substr($text, 0, $maxLen);
+        if (count($result) >= $maxItems) {
+            break;
+        }
+    }
+    return $result;
+}
+
+function extractDecisionBlock(array $parsed): array
+{
+    $decision = normalizeDecisionValue(textFromMixed($parsed['decision'] ?? ''));
+    $decisionReason = textFromMixed($parsed['decision_reason'] ?? '');
+    $risks = normalizeStringList($parsed['risks'] ?? []);
+    $requiredActions = normalizeStringList($parsed['required_actions'] ?? []);
+
+    return [
+        'decision' => $decision,
+        'decision_reason' => $decisionReason,
+        'risks' => $risks,
+        'required_actions' => $requiredActions,
+        'valid' => $decision !== '' && $decisionReason !== '',
+    ];
+}
+
+function buildDecisionFallback(string $documentTitle, string $prompt, array $context = [], string $response = ''): array
+{
+    $text = mb_strtolower(trim($prompt . ' ' . textFromMixed($context['summary'] ?? '')));
+    $decision = 'need_clarification';
+    $reason = 'Недостаточно данных для однозначного решения, требуется уточнение условий и реквизитов.';
+
+    if (preg_match('/(отказ|не соглас|невозможн|нарушен|просроч|не соответствует)/u', $text)) {
+        $decision = 'reject';
+        $reason = 'Выявлены признаки риска/несоответствия, поэтому рекомендовано отклонить до устранения замечаний.';
+    } elseif (preg_match('/(соглас|утверд|принять|поддерж|исполнить|выполнено)/u', $text)) {
+        $decision = 'approve';
+        $reason = 'Формулировки письма указывают на возможность согласования и исполнения в штатном режиме.';
+    }
+
+    $risks = $decision === 'approve'
+        ? ['Риск неполных входных данных', 'Риск срыва сроков при отсутствии подтверждения']
+        : ['Риск принятия неверного решения без подтверждающих данных', 'Риск юридических претензий при неясных реквизитах'];
+
+    $requiredActions = $decision === 'reject'
+        ? ['Запросить исправленные документы', 'Повторно оценить после устранения замечаний']
+        : ['Проверить реквизиты и сроки', 'Зафиксировать решение в деловой переписке'];
+
+    $fallbackResponse = trim($response);
+    if ($fallbackResponse === '') {
+        $title = trim($documentTitle) !== '' ? $documentTitle : 'обращение';
+        $fallbackResponse = 'В ответ на Ваше письмо по теме «' . $title . '» сообщаем: требуется дополнительное уточнение данных перед финальным решением.';
+        if ($decision === 'approve') {
+            $fallbackResponse = 'В ответ на Ваше письмо по теме «' . $title . '» сообщаем: материалы рассмотрены, решение согласовано к исполнению.';
+        } elseif ($decision === 'reject') {
+            $fallbackResponse = 'В ответ на Ваше письмо по теме «' . $title . '» сообщаем: в текущем виде согласование невозможно, просим устранить замечания.';
+        }
+    }
+
+    return [
+        'decision' => $decision,
+        'decision_reason' => $reason,
+        'risks' => $risks,
+        'required_actions' => $requiredActions,
+        'response' => $fallbackResponse,
+    ];
+}
+
 function xmlEscape(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES | ENT_XML1, 'UTF-8');
@@ -1212,14 +1310,14 @@ if ($allowedModelsRaw !== '') {
     }
 }
 
-$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, response. "
+$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, decision, decision_reason, risks, required_actions, response. "
   . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview. "
   . "Главный источник текста — user payload: extractedTexts[*].text. "
   . "Если контент файла присутствует, не проси путь или имя файла повторно, а используй этот контент напрямую. "
   . "Если контент пустой, кратко сообщи, что файл не удалось прочитать. "
   . $styleInstruction . ' '
   . ($styleExampleInstruction !== '' ? ($styleExampleInstruction . ' ') : '')
-  . $behaviorInstruction;
+  . $behaviorInstruction . ' Решение decision должно быть строго одним из: approve, reject, need_clarification. Поля risks и required_actions верни массивами строк.';
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -1331,6 +1429,31 @@ if ($statusCode >= 400) {
 
 $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 $parsed = parseAiJson($content);
+$decisionBlock = extractDecisionBlock($parsed);
+
+if (!$decisionBlock['valid']) {
+    $repairBody = $body;
+    $repairBody['messages'][] = ['role' => 'assistant', 'content' => $content];
+    $repairBody['messages'][] = [
+        'role' => 'user',
+        'content' => 'Верни только корректный JSON без пояснений. Обязательные поля: analysis, decision (approve|reject|need_clarification), decision_reason, risks[], required_actions[], response.'
+    ];
+    $repairResult = performAiRequest($endpoint, $apiKey, $repairBody);
+    $repairResponseBody = $repairResult['body'];
+    if ($repairResponseBody !== false) {
+        $repairJson = json_decode((string)$repairResponseBody, true);
+        if (is_array($repairJson)) {
+            $repairContent = (string)($repairJson['choices'][0]['message']['content'] ?? '');
+            $repairParsed = parseAiJson($repairContent);
+            $repairDecision = extractDecisionBlock($repairParsed);
+            if ($repairDecision['valid']) {
+                $parsed = $repairParsed;
+                $content = $repairContent;
+                $decisionBlock = $repairDecision;
+            }
+        }
+    }
+}
 
 $analysis = '';
 if (isset($parsed['analysis']) && (is_string($parsed['analysis']) || is_numeric($parsed['analysis']) || is_bool($parsed['analysis']))) {
@@ -1368,6 +1491,12 @@ if (looksLikeJsonText($response) || $response === '') {
     }
 }
 
+if (!$decisionBlock['valid']) {
+    $decisionBlock = buildDecisionFallback($documentTitle, $prompt, $context, $response);
+} else {
+    $decisionBlock['response'] = $response;
+}
+
 if (mb_strlen($analysis) > 1200) {
     $analysis = mb_substr($analysis, 0, 1200) . '…';
 }
@@ -1382,4 +1511,10 @@ jsonResponse(200, [
     'neutral' => $neutral,
     'aggressive' => $aggressive,
     'promptStats' => $promptStats,
+    'decisionBlock' => [
+        'decision' => (string)($decisionBlock['decision'] ?? ''),
+        'decision_reason' => (string)($decisionBlock['decision_reason'] ?? ''),
+        'risks' => normalizeStringList($decisionBlock['risks'] ?? []),
+        'required_actions' => normalizeStringList($decisionBlock['required_actions'] ?? []),
+    ],
 ]);
