@@ -1927,6 +1927,18 @@
       '.documents-responses-danger{color:#dc2626;}' +
       '.documents-responses-actions .documents-button--ai{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));color:#ffffff;border-color:transparent;}' +
       '.documents-responses-actions .documents-button--ai:hover{filter:brightness(1.03);}' +
+      '.documents-brief-modal{position:fixed;inset:0;z-index:1700;background:rgba(148,163,184,0.2);backdrop-filter:blur(10px);display:flex;justify-content:center;align-items:center;padding:16px;box-sizing:border-box;}' +
+      '.documents-brief-panel{width:min(980px,100%);max-height:min(88vh,900px);background:rgba(255,255,255,0.9);border:1px solid rgba(255,255,255,0.8);border-radius:22px;box-shadow:0 24px 54px rgba(15,23,42,0.18);display:flex;flex-direction:column;overflow:hidden;}' +
+      '.documents-brief-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,0.95);}' +
+      '.documents-brief-title{font-size:18px;font-weight:700;color:#0f172a;}' +
+      '.documents-brief-subtitle{font-size:12px;color:#64748b;margin-top:2px;}' +
+      '.documents-brief-body{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:12px;padding:14px;min-height:0;flex:1;}' +
+      '.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;padding-right:2px;}' +
+      '.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.92);border-radius:12px;padding:10px 12px;text-align:left;color:#0f172a;font-size:13px;cursor:pointer;transition:all .2s ease;}' +
+      '.documents-brief-item:hover,.documents-brief-item:focus-visible{border-color:rgba(37,99,235,0.48);box-shadow:0 0 0 3px rgba(37,99,235,0.12);outline:none;}' +
+      '.documents-brief-item.is-active{background:rgba(239,246,255,0.96);border-color:rgba(37,99,235,0.52);}' +
+      '.documents-brief-preview{border:1px solid rgba(203,213,225,0.9);border-radius:16px;background:rgba(255,255,255,0.94);padding:14px;font-size:13px;line-height:1.5;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto;min-height:0;}' +
+      '.documents-brief-preview.is-loading{color:#2563eb;}' +
       '@media (max-width: 768px){' +
       '.documents-responses-modal{padding:8px;align-items:center;}' +
       '.documents-responses-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
@@ -1937,6 +1949,9 @@
       '.documents-responses-dropzone-badge{white-space:normal;}' +
       '.documents-responses-message textarea{min-height:80px;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px;}' +
+      '.documents-brief-modal{padding:8px;align-items:flex-end;}' +
+      '.documents-brief-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
+      '.documents-brief-body{grid-template-columns:1fr;padding:12px;}' +
       '}';
     document.head.appendChild(style);
   }
@@ -2019,6 +2034,189 @@
       .catch(function(error) {
         showMessage('error', error && error.message ? error.message : 'Не удалось открыть окно ИИ-ответа.');
       });
+  }
+
+  function collectBriefSentences(text, limit) {
+    var safeLimit = typeof limit === 'number' && limit > 0 ? limit : 8;
+    return String(text || '')
+      .split(/[\n.;!?]+/g)
+      .map(function(part) { return String(part || '').trim(); })
+      .filter(function(part) { return part.length > 5; })
+      .slice(0, safeLimit);
+  }
+
+  function buildBriefSummaryText(text) {
+    var lines = collectBriefSentences(text, 8);
+    var reason = lines.slice(0, 2).join('. ');
+    var actions = lines.slice(2, 5);
+    var requirements = lines.slice(5, 8);
+    return [
+      'Причина:',
+      reason || 'Нужны дополнительные сведения по документу и стоимости изменений.',
+      '',
+      'Действия:',
+      actions.length ? actions.map(function(item) { return '• ' + item; }).join('\n') : '• Получить недостающие сведения по стоимости.\n• Согласовать дальнейшие действия.',
+      '',
+      'Требования из файла:',
+      requirements.length ? requirements.map(function(item) { return '• ' + item; }).join('\n') : '• Проверить все изменения работ, суммы и основания.'
+    ].join('\n');
+  }
+
+  function requestOcrTextForSource(source, apiUrl) {
+    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var formData = new FormData();
+    formData.append('action', 'ocr_extract');
+    formData.append('language', 'rus');
+    if (source && source.fileObject) {
+      formData.append('file', source.fileObject);
+    } else if (source && source.url) {
+      formData.append('file_url', source.url);
+    } else {
+      return Promise.reject(new Error('Источник для OCR не найден.'));
+    }
+    return fetch(endpoint, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    }).then(function(response) {
+      return response.json().catch(function() { return null; }).then(function(payload) {
+        if (!response.ok || !payload || payload.ok !== true) {
+          throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+        }
+        var extractedText = payload && payload.text ? String(payload.text).trim() : '';
+        if (!extractedText) {
+          throw new Error('OCR не вернул текст.');
+        }
+        return extractedText;
+      });
+    });
+  }
+
+  function openAiBriefSummaryModal(config) {
+    ensureResponsesStyle();
+    var options = config && typeof config === 'object' ? config : {};
+    var documentData = options.documentData && typeof options.documentData === 'object' ? options.documentData : {};
+    var linkedFiles = Array.isArray(options.linkedFiles) ? options.linkedFiles : [];
+    var pendingFiles = Array.isArray(options.pendingFiles) ? options.pendingFiles : [];
+    var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : function() {};
+    var modal = createElement('div', 'documents-brief-modal');
+    var panel = createElement('div', 'documents-brief-panel');
+    var header = createElement('div', 'documents-brief-header');
+    var titleWrap = createElement('div', '');
+    titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите OCR или файл для краткого summary'));
+    var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+    var body = createElement('div', 'documents-brief-body');
+    var list = createElement('div', 'documents-brief-list');
+    var preview = createElement('pre', 'documents-brief-preview', 'Нажмите на источник слева, чтобы получить краткое резюме.');
+
+    var baseContextText = [
+      documentData.description,
+      documentData.summary,
+      documentData.instruction,
+      documentData.resolution
+    ].map(function(item) {
+      return String(item || '').trim();
+    }).filter(Boolean).join('\n');
+
+    var sources = [];
+    sources.push({
+      id: 'task_ocr',
+      label: 'OCR задачи',
+      text: baseContextText
+    });
+
+    linkedFiles.forEach(function(file, index) {
+      sources.push({
+        id: 'linked_' + index,
+        label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)),
+        text: '',
+        url: file && file.url ? String(file.url) : '',
+        extracted: false
+      });
+    });
+
+    pendingFiles.forEach(function(file, index) {
+      sources.push({
+        id: 'pending_' + index,
+        label: file && file.name ? String(file.name) : ('Новый файл ' + (index + 1)),
+        text: '',
+        fileObject: file,
+        extracted: false
+      });
+    });
+
+    function setPreviewLoading(loading, label) {
+      preview.classList.toggle('is-loading', Boolean(loading));
+      if (loading) {
+        preview.textContent = '⏳ Обрабатываю: ' + label;
+      }
+    }
+
+    function makeActive(button) {
+      Array.from(list.querySelectorAll('.documents-brief-item')).forEach(function(item) {
+        item.classList.remove('is-active');
+      });
+      button.classList.add('is-active');
+    }
+
+    function resolveSourceText(source) {
+      if (source.text && String(source.text).trim()) {
+        return Promise.resolve(String(source.text).trim());
+      }
+      return requestOcrTextForSource(source, options.apiUrl).then(function(ocrText) {
+        source.text = ocrText;
+        source.extracted = true;
+        return ocrText;
+      });
+    }
+
+    function addSourceButton(source) {
+      var button = createElement('button', 'documents-brief-item', source.label);
+      button.type = 'button';
+      button.addEventListener('click', function() {
+        makeActive(button);
+        setPreviewLoading(true, source.label);
+        resolveSourceText(source)
+          .then(function(sourceText) {
+            preview.classList.remove('is-loading');
+            preview.textContent = buildBriefSummaryText(sourceText);
+          })
+          .catch(function(error) {
+            preview.classList.remove('is-loading');
+            preview.textContent = 'Не удалось получить summary: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+            showStatusMessage('warning', 'Не удалось обработать "' + source.label + '".');
+          });
+      });
+      list.appendChild(button);
+    }
+
+    sources.forEach(addSourceButton);
+
+    if (!sources.length) {
+      list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
+    }
+
+    function closeBriefModal() {
+      closeModal(modal);
+    }
+
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', closeBriefModal);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeBriefModal();
+      }
+    });
+
+    header.appendChild(titleWrap);
+    header.appendChild(closeButton);
+    body.appendChild(list);
+    body.appendChild(preview);
+    panel.appendChild(header);
+    panel.appendChild(body);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
   }
 
   function ensureSearchStyles() {
@@ -12405,6 +12603,7 @@
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
     var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
+    var aiBriefButton = createElement('button', 'documents-button documents-button--ai', 'Кратко ИИ');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -12687,6 +12886,8 @@
       if (editingResponse && responseMessage && !pendingFiles.length) {
         saveButton.disabled = true;
         addButton.disabled = true;
+        aiButton.disabled = true;
+        aiBriefButton.disabled = true;
         closeButton.disabled = true;
         return fetch(buildApiUrl('response_text_update', { organization: state.organization }), {
           method: 'POST',
@@ -12713,6 +12914,8 @@
           .finally(function() {
             saveButton.disabled = false;
             addButton.disabled = false;
+            aiButton.disabled = false;
+            aiBriefButton.disabled = false;
             closeButton.disabled = false;
           });
       }
@@ -12724,6 +12927,8 @@
       }
       saveButton.disabled = true;
       addButton.disabled = true;
+      aiButton.disabled = true;
+      aiBriefButton.disabled = true;
       closeButton.disabled = true;
       var formData = new FormData();
       formData.append('action', 'response_upload');
@@ -12755,6 +12960,8 @@
         .finally(function() {
           saveButton.disabled = false;
           addButton.disabled = false;
+          aiButton.disabled = false;
+          aiBriefButton.disabled = false;
           closeButton.disabled = false;
         });
     }
@@ -12879,6 +13086,27 @@
         }
       });
     });
+    aiBriefButton.type = 'button';
+    aiBriefButton.addEventListener('click', function() {
+      var linkedFiles = [];
+      if (currentDoc && Array.isArray(currentDoc.files)) {
+        linkedFiles = currentDoc.files.map(function(file) {
+          return {
+            name: getAttachmentName(file),
+            url: resolveAttachmentUrl(file, { bustCache: true }) || ''
+          };
+        }).filter(function(file) {
+          return Boolean(file && file.url);
+        });
+      }
+      openAiBriefSummaryModal({
+        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
+        showMessage: showMessage,
+        documentData: currentDoc || doc || {},
+        pendingFiles: pendingFiles.slice(),
+        linkedFiles: linkedFiles
+      });
+    });
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
@@ -12892,6 +13120,7 @@
     });
 
     headerActions.appendChild(aiButton);
+    headerActions.appendChild(aiBriefButton);
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);

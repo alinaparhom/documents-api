@@ -12920,6 +12920,153 @@ async function updateTaskResponseText(task, storedName, textValue, setStatus) {
   return data;
 }
 
+function collectAiBriefSourceText(file, task) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+  const candidates = [
+    file.aiSummary,
+    file.summary,
+    file.shortSummary,
+    file.ocrSummary,
+    file.ocrText,
+    file.extractedText,
+    file.textContent,
+    file.content,
+    file.description,
+    file.note,
+    file.comment,
+  ];
+  const prepared = candidates.map((value) => normalizeValue(value)).filter(Boolean);
+  if (prepared.length) {
+    return prepared.join('\n');
+  }
+
+  const fileName = normalizeValue(file.originalName) || normalizeValue(file.name) || 'Файл';
+  const fallbackTaskText = [
+    normalizeValue(task && task.instruction),
+    normalizeValue(task && task.summary),
+    normalizeValue(task && task.resolution),
+  ].filter(Boolean).join('. ');
+  return fallbackTaskText ? `${fileName}. ${fallbackTaskText}` : `${fileName}. Для файла пока нет OCR-текста.`;
+}
+
+function extractAiBriefSentences(text, limit = 3) {
+  const source = normalizeValue(text);
+  if (!source) {
+    return [];
+  }
+  return source
+    .split(/[\n.;!?]+/g)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 4)
+    .slice(0, limit);
+}
+
+function buildAiBriefSummary(text) {
+  const sentences = extractAiBriefSentences(text, 8);
+  const reason = sentences.slice(0, 2).join('. ');
+  const actions = sentences.slice(2, 4);
+  const requirements = sentences.slice(4, 8);
+  const reasonText = reason || 'Нужны уточнения по документу и следующему шагу.';
+  const actionsText = actions.length
+    ? actions.map((item) => `• ${item}`).join('\n')
+    : '• Получить недостающие сведения.\n• Согласовать дальнейшие действия.';
+  const requirementsText = requirements.length
+    ? requirements.map((item) => `• ${item}`).join('\n')
+    : '• Проверить файл целиком: реквизиты, суммы и изменения работ.';
+  return `Причина:\n${reasonText}.\n\nДействия:\n${actionsText}\n\nТребования из файла:\n${requirementsText}`;
+}
+
+function openAiBriefDialog(context = {}) {
+  const task = context && context.task ? context.task : {};
+  const files = Array.isArray(task.files) ? task.files : [];
+  const responses = Array.isArray(task.responses) ? task.responses : [];
+  const ocrSourceText = [
+    normalizeValue(task.summary),
+    normalizeValue(task.instruction),
+    normalizeValue(task.resolution),
+    ...responses.map((item) => normalizeValue(item && item.textContent)),
+  ].filter(Boolean).join('\n');
+
+  const root = document.createElement('div');
+  root.className = 'appdosc-ai-brief';
+  root.style.cssText = 'position:fixed;inset:0;z-index:2600;background:rgba(15,23,42,.45);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
+
+  const panel = document.createElement('div');
+  panel.style.cssText = 'width:min(920px,100%);max-height:92dvh;overflow:hidden;border-radius:20px 20px 12px 12px;border:1px solid rgba(255,255,255,.75);background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(248,250,252,.93));box-shadow:0 20px 50px rgba(15,23,42,.24);display:flex;flex-direction:column;';
+
+  const header = document.createElement('div');
+  header.style.cssText = 'padding:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid rgba(148,163,184,.24);';
+  const title = document.createElement('div');
+  title.innerHTML = '<div style="font-size:16px;font-weight:700;color:#0f172a">Кратко ИИ</div><div style="font-size:12px;color:#64748b">Выберите файл или OCR для быстрого резюме</div>';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = 'Закрыть';
+  closeButton.style.cssText = 'border:none;border-radius:12px;padding:10px 14px;background:rgba(148,163,184,.18);font-weight:600;color:#0f172a;';
+  header.append(title, closeButton);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,2fr);gap:10px;padding:10px;min-height:0;flex:1;';
+
+  const list = document.createElement('div');
+  list.style.cssText = 'display:flex;flex-direction:column;gap:8px;overflow:auto;padding-right:2px;';
+  const preview = document.createElement('pre');
+  preview.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;border:1px solid rgba(148,163,184,.28);border-radius:14px;background:rgba(255,255,255,.9);padding:12px;overflow:auto;font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#0f172a;';
+  preview.textContent = 'Нажмите на файл слева, чтобы получить короткое понятное резюме.';
+
+  const createListButton = (label, payloadText) => {
+    const itemButton = document.createElement('button');
+    itemButton.type = 'button';
+    itemButton.textContent = label;
+    itemButton.style.cssText = 'text-align:left;border:1px solid rgba(148,163,184,.28);background:rgba(255,255,255,.88);color:#0f172a;border-radius:12px;padding:10px 12px;font-size:13px;';
+    itemButton.addEventListener('click', () => {
+      preview.textContent = buildAiBriefSummary(payloadText);
+    });
+    return itemButton;
+  };
+
+  list.appendChild(createListButton('OCR задачи', ocrSourceText || 'OCR-текст недоступен.'));
+  files.forEach((file, index) => {
+    const fileName = normalizeValue(file && file.originalName) || normalizeValue(file && file.name) || `Файл ${index + 1}`;
+    const sourceText = collectAiBriefSourceText(file, task);
+    list.appendChild(createListButton(fileName, sourceText));
+  });
+
+  if (!files.length) {
+    const empty = document.createElement('div');
+    empty.textContent = 'Файлы не загружены.';
+    empty.style.cssText = 'font-size:12px;color:#64748b;padding:6px 2px;';
+    list.appendChild(empty);
+  }
+
+  body.append(list, preview);
+  panel.append(header, body);
+  root.appendChild(panel);
+  document.body.appendChild(root);
+
+  const close = () => {
+    root.remove();
+    document.removeEventListener('keydown', onEsc);
+  };
+  const onEsc = (event) => {
+    if (event.key === 'Escape') {
+      close();
+    }
+  };
+  closeButton.addEventListener('click', close);
+  root.addEventListener('click', (event) => {
+    if (event.target === root) {
+      close();
+    }
+  });
+  document.addEventListener('keydown', onEsc);
+
+  if (window.matchMedia('(max-width: 720px)').matches) {
+    body.style.gridTemplateColumns = '1fr';
+  }
+}
+
 function createResponseUploadControls(task, entry, setStatus) {
   if (!taskUserCanUploadResponse(task, entry)) {
     return null;
@@ -12937,6 +13084,10 @@ function createResponseUploadControls(task, entry, setStatus) {
   aiButton.type = 'button';
   aiButton.className = 'appdosc-card__action appdosc-card__action--response appdosc-card__action--response-ai';
   aiButton.textContent = 'Ответ с помощью ИИ';
+  const aiBriefButton = document.createElement('button');
+  aiBriefButton.type = 'button';
+  aiBriefButton.className = 'appdosc-card__action appdosc-card__action--response appdosc-card__action--response-ai';
+  aiBriefButton.textContent = 'Кратко ИИ';
 
   const meta = document.createElement('div');
   meta.className = 'appdosc-card__assign-response-meta';
@@ -13003,6 +13154,13 @@ function createResponseUploadControls(task, entry, setStatus) {
       onStatus: setStatus,
     });
   });
+  aiBriefButton.addEventListener('click', () => {
+    openAiBriefDialog({
+      task,
+      entry,
+      onStatus: setStatus,
+    });
+  });
 
   textInput.addEventListener('input', () => {
     const length = String(textInput.value || '').length;
@@ -13018,6 +13176,7 @@ function createResponseUploadControls(task, entry, setStatus) {
 
     button.disabled = true;
     aiButton.disabled = true;
+    aiBriefButton.disabled = true;
     textSaveButton.disabled = true;
     textInput.disabled = true;
     wrapper.dataset.loading = 'true';
@@ -13047,6 +13206,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     } finally {
       button.disabled = false;
       aiButton.disabled = false;
+      aiBriefButton.disabled = false;
       textSaveButton.disabled = false;
       textInput.disabled = false;
       delete wrapper.dataset.loading;
@@ -13065,6 +13225,7 @@ function createResponseUploadControls(task, entry, setStatus) {
 
     button.disabled = true;
     aiButton.disabled = true;
+    aiBriefButton.disabled = true;
     textSaveButton.disabled = true;
     textInput.disabled = true;
     wrapper.dataset.loading = 'true';
@@ -13089,6 +13250,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     } finally {
       button.disabled = false;
       aiButton.disabled = false;
+      aiBriefButton.disabled = false;
       textSaveButton.disabled = false;
       textInput.disabled = false;
       delete wrapper.dataset.loading;
@@ -13096,7 +13258,7 @@ function createResponseUploadControls(task, entry, setStatus) {
   });
 
   textActions.append(textSaveButton, textCounter);
-  wrapper.append(button, aiButton, meta, textInput, textActions, input);
+  wrapper.append(button, aiButton, aiBriefButton, meta, textInput, textActions, input);
   return wrapper;
 }
 
