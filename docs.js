@@ -1927,17 +1927,17 @@
       '.documents-responses-danger{color:#dc2626;}' +
       '.documents-responses-actions .documents-button--ai{background:linear-gradient(135deg, rgba(37,99,235,0.9), rgba(14,165,233,0.9));color:#ffffff;border-color:transparent;}' +
       '.documents-responses-actions .documents-button--ai:hover{filter:brightness(1.03);}' +
-      '.documents-brief-modal{position:fixed;inset:0;z-index:1700;background:rgba(148,163,184,0.2);backdrop-filter:blur(10px);display:flex;justify-content:center;align-items:center;padding:16px;box-sizing:border-box;}' +
-      '.documents-brief-panel{width:min(980px,100%);max-height:min(88vh,900px);background:rgba(255,255,255,0.9);border:1px solid rgba(255,255,255,0.8);border-radius:22px;box-shadow:0 24px 54px rgba(15,23,42,0.18);display:flex;flex-direction:column;overflow:hidden;}' +
-      '.documents-brief-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,0.95);}' +
+      '.documents-brief-modal{position:fixed;inset:0;z-index:1700;background:linear-gradient(180deg, rgba(148,163,184,0.24), rgba(148,163,184,0.3));backdrop-filter:blur(12px);display:flex;justify-content:center;align-items:center;padding:16px;box-sizing:border-box;}' +
+      '.documents-brief-panel{width:min(980px,100%);max-height:min(90vh,920px);background:linear-gradient(165deg, rgba(255,255,255,0.97), rgba(255,255,255,0.9));border:1px solid rgba(255,255,255,0.95);border-radius:24px;box-shadow:0 30px 60px rgba(15,23,42,0.2);display:flex;flex-direction:column;overflow:hidden;}' +
+      '.documents-brief-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;border-bottom:1px solid rgba(226,232,240,0.95);background:rgba(255,255,255,0.7);}' +
       '.documents-brief-title{font-size:18px;font-weight:700;color:#0f172a;}' +
       '.documents-brief-subtitle{font-size:12px;color:#64748b;margin-top:2px;}' +
-      '.documents-brief-body{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:12px;padding:14px;min-height:0;flex:1;}' +
-      '.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;padding-right:2px;}' +
-      '.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.92);border-radius:12px;padding:10px 12px;text-align:left;color:#0f172a;font-size:13px;cursor:pointer;transition:all .2s ease;}' +
+      '.documents-brief-body{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:14px;padding:14px;min-height:0;flex:1;background:linear-gradient(180deg, rgba(248,250,252,0.55), rgba(255,255,255,0.78));}' +
+      '.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;padding:2px 4px 2px 0;}' +
+      '.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.96);border-radius:14px;padding:11px 12px;text-align:left;color:#0f172a;font-size:13px;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 20px rgba(15,23,42,0.05);}' +
       '.documents-brief-item:hover,.documents-brief-item:focus-visible{border-color:rgba(37,99,235,0.48);box-shadow:0 0 0 3px rgba(37,99,235,0.12);outline:none;}' +
-      '.documents-brief-item.is-active{background:rgba(239,246,255,0.96);border-color:rgba(37,99,235,0.52);}' +
-      '.documents-brief-preview{border:1px solid rgba(203,213,225,0.9);border-radius:16px;background:rgba(255,255,255,0.94);padding:14px;font-size:13px;line-height:1.5;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto;min-height:0;}' +
+      '.documents-brief-item.is-active{background:linear-gradient(135deg, rgba(239,246,255,0.96), rgba(255,255,255,0.98));border-color:rgba(37,99,235,0.52);}' +
+      '.documents-brief-preview{border:1px solid rgba(203,213,225,0.9);border-radius:18px;background:rgba(255,255,255,0.98);padding:16px;font-size:13px;line-height:1.58;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto;min-height:0;box-shadow:inset 0 1px 0 rgba(255,255,255,0.75), 0 12px 26px rgba(15,23,42,0.06);}' +
       '.documents-brief-preview.is-loading{color:#2563eb;}' +
       '@media (max-width: 768px){' +
       '.documents-responses-modal{padding:8px;align-items:center;}' +
@@ -1950,7 +1950,7 @@
       '.documents-responses-message textarea{min-height:80px;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px;}' +
       '.documents-brief-modal{padding:8px;align-items:flex-end;}' +
-      '.documents-brief-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
+      '.documents-brief-panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;}' +
       '.documents-brief-body{grid-template-columns:1fr;padding:12px;}' +
       '}';
     document.head.appendChild(style);
@@ -2220,7 +2220,7 @@
     var header = createElement('div', 'documents-brief-header');
     var titleWrap = createElement('div', '');
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите OCR или файл для краткого summary'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите источник: текст задачи или файл'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
@@ -2236,11 +2236,13 @@
     }).filter(Boolean).join('\n');
 
     var sources = [];
-    sources.push({
-      id: 'task_ocr',
-      label: 'OCR задачи',
-      text: baseContextText
-    });
+    if (baseContextText) {
+      sources.push({
+        id: 'task_context',
+        label: 'Текст задачи',
+        text: baseContextText
+      });
+    }
 
     linkedFiles.forEach(function(file, index) {
       sources.push({
@@ -2279,6 +2281,9 @@
     function resolveSourceText(source) {
       if (source.text && String(source.text).trim()) {
         return Promise.resolve(String(source.text).trim());
+      }
+      if (!source || (!source.fileObject && !source.url)) {
+        return Promise.reject(new Error('Для этого источника нет текста. Добавьте файл или заполните описание задачи.'));
       }
       return requestOcrTextForSource(source, options.apiUrl).then(function(ocrText) {
         source.text = ocrText;
