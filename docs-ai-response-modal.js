@@ -1276,36 +1276,88 @@
       }
 
       var editorModal = createOverlayModal('Редактор шаблона');
-      var editorToolbar = createElement('div', 'ai-chat-modal__export-buttons');
-      editorToolbar.style.justifyContent = 'flex-start';
-      editorToolbar.style.gap = '6px';
+      editorModal.content.style.maxWidth = '1200px';
+      editorModal.content.style.width = '95vw';
+      editorModal.content.style.background = 'rgba(255,255,255,.86)';
+      editorModal.content.style.backdropFilter = 'blur(14px)';
+      editorModal.content.style.border = '1px solid rgba(148,163,184,.25)';
+      editorModal.content.style.padding = '0';
+      editorModal.content.style.overflow = 'hidden';
+
+      var appWrap = createElement('div', 'ai-editor-app');
+      appWrap.style.display = 'flex';
+      appWrap.style.flexDirection = 'column';
+      appWrap.style.maxHeight = '86vh';
+
+      var ribbon = createElement('div', 'ai-editor-ribbon');
+      ribbon.style.display = 'flex';
+      ribbon.style.flexWrap = 'wrap';
+      ribbon.style.gap = '8px';
+      ribbon.style.padding = '10px';
+      ribbon.style.borderBottom = '1px solid rgba(148,163,184,.25)';
+      ribbon.style.background = 'rgba(248,250,252,.9)';
+
       var insertAnswerBtn = createElement('button', 'ai-chat-modal__export-btn', 'Вставить ответ ИИ');
-      var boldBtn = createElement('button', 'ai-chat-modal__export-btn', 'Ж');
-      var italicBtn = createElement('button', 'ai-chat-modal__export-btn', 'К');
-      var listBtn = createElement('button', 'ai-chat-modal__export-btn', '• Список');
       var printBtn = createElement('button', 'ai-chat-modal__export-btn', '🖨️ Печать');
       var saveDocxBtn = createElement('button', 'ai-chat-modal__send', 'Скачать DOCX');
       var savePdfBtn = createElement('button', 'ai-chat-modal__send', 'Скачать PDF');
-      [insertAnswerBtn, boldBtn, italicBtn, listBtn, printBtn, saveDocxBtn, savePdfBtn].forEach(function (btn) {
+      [insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn].forEach(function (btn) {
         btn.type = 'button';
       });
-      editorToolbar.append(insertAnswerBtn, boldBtn, italicBtn, listBtn, printBtn, saveDocxBtn, savePdfBtn);
+      ribbon.append(insertAnswerBtn, printBtn, saveDocxBtn, savePdfBtn);
+
+      var formatBar = createElement('div', 'ai-editor-format');
+      formatBar.style.display = 'flex';
+      formatBar.style.flexWrap = 'wrap';
+      formatBar.style.gap = '6px';
+      formatBar.style.padding = '8px 10px';
+      formatBar.style.borderBottom = '1px solid rgba(148,163,184,.2)';
+      formatBar.style.background = 'rgba(255,255,255,.85)';
+      var boldBtn = createElement('button', 'ai-chat-modal__export-btn', 'B');
+      var italicBtn = createElement('button', 'ai-chat-modal__export-btn', 'I');
+      var underlineBtn = createElement('button', 'ai-chat-modal__export-btn', 'U');
+      var leftBtn = createElement('button', 'ai-chat-modal__export-btn', '⬅');
+      var centerBtn = createElement('button', 'ai-chat-modal__export-btn', '⬌');
+      var rightBtn = createElement('button', 'ai-chat-modal__export-btn', '➡');
+      var listBtn = createElement('button', 'ai-chat-modal__export-btn', '• Список');
+      [boldBtn, italicBtn, underlineBtn, leftBtn, centerBtn, rightBtn, listBtn].forEach(function (btn) {
+        btn.type = 'button';
+        btn.style.minWidth = '42px';
+      });
+      formatBar.append(boldBtn, italicBtn, underlineBtn, leftBtn, centerBtn, rightBtn, listBtn);
+
+      var pageBg = createElement('div', 'ai-editor-page-bg');
+      pageBg.style.background = '#dbe3ee';
+      pageBg.style.padding = '16px';
+      pageBg.style.overflow = 'auto';
+
+      var page = createElement('div', 'ai-editor-page');
+      page.style.background = '#fff';
+      page.style.maxWidth = '900px';
+      page.style.margin = '0 auto';
+      page.style.boxShadow = '0 8px 22px rgba(15,23,42,.12)';
+      page.style.minHeight = '60vh';
+      page.style.borderRadius = '6px';
 
       var editorArea = createElement('div', 'ai-chat-modal__live-preview');
       editorArea.setAttribute('contenteditable', 'true');
       editorArea.setAttribute('spellcheck', 'true');
       editorArea.innerHTML = htmlContent;
-      editorArea.style.minHeight = '360px';
-      editorArea.style.maxHeight = '70vh';
-      editorArea.style.overflow = 'auto';
-      editorArea.style.padding = '12px';
-      editorArea.style.border = '1px solid rgba(148,163,184,.35)';
-      editorArea.style.background = 'rgba(255,255,255,.9)';
-      editorArea.style.fontSize = '14px';
-      editorArea.style.lineHeight = '1.5';
+      editorArea.style.minHeight = '60vh';
+      editorArea.style.padding = '40px 46px';
+      editorArea.style.fontSize = '15px';
+      editorArea.style.lineHeight = '1.55';
+      editorArea.style.fontFamily = "'Times New Roman', Georgia, serif";
+      editorArea.style.outline = 'none';
+      editorArea.style.color = '#111827';
+      editorArea.style.background = '#fff';
 
-      editorModal.content.appendChild(editorToolbar);
-      editorModal.content.appendChild(editorArea);
+      page.appendChild(editorArea);
+      pageBg.appendChild(page);
+      appWrap.appendChild(ribbon);
+      appWrap.appendChild(formatBar);
+      appWrap.appendChild(pageBg);
+      editorModal.content.appendChild(appWrap);
       openOverlay(editorModal);
 
       function applyFormat(command) {
@@ -1330,6 +1382,10 @@
       });
       boldBtn.addEventListener('click', function () { applyFormat('bold'); });
       italicBtn.addEventListener('click', function () { applyFormat('italic'); });
+      underlineBtn.addEventListener('click', function () { applyFormat('underline'); });
+      leftBtn.addEventListener('click', function () { applyFormat('justifyLeft'); });
+      centerBtn.addEventListener('click', function () { applyFormat('justifyCenter'); });
+      rightBtn.addEventListener('click', function () { applyFormat('justifyRight'); });
       listBtn.addEventListener('click', function () { applyFormat('insertUnorderedList'); });
 
       printBtn.addEventListener('click', function () {
@@ -1346,6 +1402,8 @@
 
       async function saveDocument(format) {
         try {
+          saveDocxBtn.disabled = true;
+          savePdfBtn.disabled = true;
           var formData = new FormData();
           formData.append('action', 'generate_from_editor');
           formData.append('format', format);
@@ -1353,7 +1411,19 @@
           formData.append('documentTitle', config.documentTitle || 'Отредактированный документ');
           var response = await fetch(apiUrl, { method: 'POST', credentials: 'same-origin', body: formData });
           if (!response.ok) {
-            throw new Error('Ошибка генерации');
+            var errorPayload = null;
+            try {
+              errorPayload = await response.json();
+            } catch (e) {
+              errorPayload = null;
+            }
+            var serverError = errorPayload && errorPayload.error ? errorPayload.error : 'Ошибка генерации';
+            throw new Error(serverError);
+          }
+          var responseType = (response.headers.get('content-type') || '').toLowerCase();
+          if (responseType.indexOf('application/json') !== -1) {
+            var payload = await response.json();
+            throw new Error(payload && payload.error ? payload.error : 'Сервер не вернул файл');
           }
           var blob = await response.blob();
           var url = URL.createObjectURL(blob);
@@ -1366,6 +1436,9 @@
           URL.revokeObjectURL(url);
         } catch (error) {
           alert('Не удалось сохранить файл: ' + (error && error.message ? error.message : 'Ошибка'));
+        } finally {
+          saveDocxBtn.disabled = false;
+          savePdfBtn.disabled = false;
         }
       }
 

@@ -706,6 +706,44 @@ function createPdfFromText(string $outputPath, string $documentTitle, string $an
     return is_file($outputPath) && filesize($outputPath) > 0;
 }
 
+function convertDocxToPdfViaLibreOffice(string $docxPath, string $outputPath): bool
+{
+    if (!is_file($docxPath) || filesize($docxPath) <= 0) {
+        return false;
+    }
+    $soffice = trim((string)@shell_exec('command -v soffice 2>/dev/null'));
+    if ($soffice === '') {
+        return false;
+    }
+    $outDir = dirname($outputPath);
+    if (!is_dir($outDir)) {
+        return false;
+    }
+    $command = escapeshellarg($soffice)
+        . ' --headless --convert-to pdf --outdir '
+        . escapeshellarg($outDir)
+        . ' '
+        . escapeshellarg($docxPath)
+        . ' 2>&1';
+    @shell_exec($command);
+    $generatedPdf = preg_replace('/\.[^.]+$/u', '.pdf', $docxPath);
+    if (!is_string($generatedPdf) || !is_file($generatedPdf) || filesize($generatedPdf) <= 0) {
+        return false;
+    }
+    $moved = @rename($generatedPdf, $outputPath);
+    if (!$moved) {
+        $content = @file_get_contents($generatedPdf);
+        if (!is_string($content) || $content === '') {
+            return false;
+        }
+        if (@file_put_contents($outputPath, $content) === false) {
+            return false;
+        }
+        @unlink($generatedPdf);
+    }
+    return is_file($outputPath) && filesize($outputPath) > 0;
+}
+
 function htmlToPlainText(string $html): string
 {
     $text = trim(strip_tags($html));
@@ -1345,8 +1383,30 @@ if ($action === 'generate_from_editor') {
         }
         $text = htmlToPlainText($html);
         if (!createPdfFromText($tmpFile, $documentTitle, $text)) {
-            @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'Ошибка создания PDF']);
+            $tmpDocx = tempnam(sys_get_temp_dir(), 'editor_docx_');
+            if ($tmpDocx !== false) {
+                $docxCreated = createDocxFromHtmlUsingPhpWord($tmpDocx, $html);
+                if (!$docxCreated) {
+                    $templatePath = resolveTemplatePath('template.docx', []);
+                    $docxCreated = is_file($templatePath) ? replaceDocxWithHtml($templatePath, $tmpDocx, $html) : false;
+                }
+                if ($docxCreated) {
+                    $converted = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
+                    if (!$converted) {
+                        @unlink($tmpDocx);
+                        @unlink($tmpFile);
+                        jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или LibreOffice (soffice)']);
+                    }
+                } else {
+                    @unlink($tmpDocx);
+                    @unlink($tmpFile);
+                    jsonResponse(500, ['ok' => false, 'error' => 'Не удалось подготовить DOCX для конвертации в PDF']);
+                }
+                @unlink($tmpDocx);
+            } else {
+                @unlink($tmpFile);
+                jsonResponse(500, ['ok' => false, 'error' => 'Ошибка создания временного DOCX для PDF']);
+            }
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="edited.pdf"');
