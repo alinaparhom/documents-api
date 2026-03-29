@@ -11,6 +11,8 @@
   var DEFAULT_CONTEXT_TOTAL_CHARS_BRIEF = 18000;
   var DEFAULT_LONG_ATTACHMENT_THRESHOLD = 7000;
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
+  var EDITOR_ROUTE_PAYLOAD_KEY = 'documents_editor_route_payload_v1';
+  var EXTERNAL_EDITOR_URL = '/js/documents/app/editor.html';
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
   var DEFAULT_AI_BEHAVIOR = 'Ты — руководитель организации, уполномоченный принимать окончательное решение по документу.\n'
@@ -1263,6 +1265,40 @@
       requestAnimationFrame(function () { modalRef.overlay.classList.add('ai-chat-modal--visible'); });
     }
 
+    function openExternalTemplateEditor() {
+      var payload = {
+        title: String(config.documentTitle || 'Документ').trim() || 'Документ',
+        html: String(state.templateDraft || '').trim() || String(editArea && editArea.value ? editArea.value : '').trim(),
+        source: 'ai_modal',
+        ts: Date.now()
+      };
+      try {
+        window.localStorage.setItem(EDITOR_ROUTE_PAYLOAD_KEY, JSON.stringify(payload));
+      } catch (storageError) {
+        // ignore
+      }
+
+      var route = EXTERNAL_EDITOR_URL + '?from=ai_modal';
+      var opened = false;
+      try {
+        window.open(route, '_blank', 'noopener');
+        opened = true;
+      } catch (openError) {
+        opened = false;
+      }
+
+      if (!opened) {
+        try {
+          window.location.href = route;
+          opened = true;
+        } catch (locationError) {
+          opened = false;
+        }
+      }
+
+      return opened;
+    }
+
     async function openTemplateEditor() {
       var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
       var templateFallbackHtml = '<p>Шаблон недоступен. Начните редактирование вручную.</p>';
@@ -2145,6 +2181,9 @@
     });
     openTemplateEditorButton.addEventListener('click', function () {
       menuDropdown.style.display = 'none';
+      if (openExternalTemplateEditor()) {
+        return;
+      }
       openTemplateEditor();
     });
 
