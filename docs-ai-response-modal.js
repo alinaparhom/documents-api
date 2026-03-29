@@ -622,6 +622,23 @@
     return msg;
   }
 
+  function sanitizeAssistantResponseText(text) {
+    var value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    var lines = value.split('\n').filter(function (line) {
+      var trimmed = String(line || '').trim();
+      if (!trimmed) {
+        return true;
+      }
+      if (/^сформируй\s+официальный\s+ответ/i.test(trimmed)) {
+        return false;
+      }
+      return !/^решение\s*ии\s*:/i.test(trimmed)
+        && !/^причина\s*:/i.test(trimmed)
+        && !/^действия\s*:/i.test(trimmed);
+    });
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
   function closeWithAnimation(root) {
     root.classList.add('ai-chat-modal--closing');
     setTimeout(function () {
@@ -1438,10 +1455,7 @@
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      var effectivePrompt = value || 'Сформируй официальный ответ на основе OCR-текста файла.';
-      if (!value) {
-        effectivePrompt += ' Исправь очевидные OCR-ошибки, не цитируй мусорные символы, дай деловой структурированный текст.';
-      }
+      var effectivePrompt = value || 'Подготовь официальный ответ по OCR-тексту вложений в деловом стиле.';
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
@@ -1474,10 +1488,11 @@
           .replace(/[ \t]+\n/g, '\n')
           .replace(/\n{3,}/g, '\n\n')
           .trim();
+        finalResponse = sanitizeAssistantResponseText(finalResponse);
         var decisionBlock = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object'
           ? payload.decisionBlock
           : null;
-        if (decisionBlock && decisionBlock.decision) {
+        if (decisionBlock && decisionBlock.decision && !/^решение\s*ии\s*:/i.test(finalResponse)) {
           var decisionMap = {
             approve: '✅ Согласовать',
             reject: '⛔ Отклонить',
