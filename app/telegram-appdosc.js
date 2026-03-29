@@ -265,6 +265,7 @@ const STATUS_FILTERS = Object.values(STATUS_SUMMARY_CONFIG).map((config) => conf
 const DIRECTOR_LOG_TASK_LIMIT = 15;
 const SUMMARY_FILE_LABEL = 'Общее';
 const SUMMARY_FILE_PDF_NAME = 'Общее.pdf';
+const DOC_EDITOR_BODY_MAX_LENGTH = 6000;
 
 let pdfLogThrottleAt = 0;
 let lastTasksLoadAt = 0;
@@ -1196,6 +1197,13 @@ const state = {
     version: '',
     updatedAt: '',
   },
+  docEditor: {
+    open: false,
+    taskId: '',
+    body: '',
+    header: '',
+    footer: '',
+  },
   director: {
     initialized: false,
     knownTaskKeys: new Set(),
@@ -1838,6 +1846,7 @@ const FALLBACK_CARD_TEMPLATE = `
     </div>
     <div class="appdosc-card__actions">
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
+      <button type="button" class="appdosc-card__action" data-card-doc-edit>Редактировать</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
   </footer>
@@ -1896,6 +1905,14 @@ function initElements() {
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
+  elements.docEditor = document.querySelector('[data-doc-editor]');
+  elements.docEditorHeader = document.querySelector('[data-doc-editor-header]');
+  elements.docEditorBody = document.querySelector('[data-doc-editor-body]');
+  elements.docEditorFooter = document.querySelector('[data-doc-editor-footer]');
+  elements.docEditorHint = document.querySelector('[data-doc-editor-hint]');
+  elements.docEditorSave = document.querySelector('[data-doc-editor-save]');
+  elements.docEditorDownload = document.querySelector('[data-doc-editor-download]');
+  elements.docEditorClose = Array.from(document.querySelectorAll('[data-doc-editor-close]'));
 
   logIosStage('elements_initialized', {
     cardsContainer: Boolean(elements.cardsContainer),
@@ -3112,6 +3129,11 @@ function createCard(task, index, anchorRegistry) {
   const viewButton = card.querySelector('[data-card-view]');
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
+  }
+
+  const docEditorButton = card.querySelector('[data-card-doc-edit]');
+  if (docEditorButton) {
+    docEditorButton.addEventListener('click', () => openDocEditor(task));
   }
 
   updateCardViewInfo(card, task);
@@ -11606,6 +11628,89 @@ function clearStatus() {
   elements.status.className = 'appdosc__status-message';
 }
 
+
+function getDocEditorData() {
+  return {
+    taskId: state.docEditor.taskId || '',
+    header: normalizeValue(elements.docEditorHeader && elements.docEditorHeader.textContent) || '',
+    body: normalizeValue(elements.docEditorBody && elements.docEditorBody.innerText) || '',
+    footer: normalizeValue(elements.docEditorFooter && elements.docEditorFooter.textContent) || '',
+  };
+}
+
+function setDocEditorHint(message, isError = false) {
+  if (!elements.docEditorHint) {
+    return;
+  }
+  elements.docEditorHint.textContent = message;
+  setClass(elements.docEditorHint, 'is-error', Boolean(isError));
+}
+
+function setDocEditorData(data = {}) {
+  if (elements.docEditorHeader) {
+    elements.docEditorHeader.textContent = normalizeValue(data.header) || 'Реквизиты предприятия не указаны';
+  }
+  if (elements.docEditorBody) {
+    elements.docEditorBody.innerText = normalizeValue(data.body) || '';
+  }
+  if (elements.docEditorFooter) {
+    elements.docEditorFooter.textContent = normalizeValue(data.footer) || 'Подпись / ФИО / должность';
+  }
+  setDocEditorHint(`Лимит текста: до ${DOC_EDITOR_BODY_MAX_LENGTH} символов.`);
+}
+
+function validateDocEditorBody() {
+  if (!elements.docEditorBody) {
+    return false;
+  }
+  const body = normalizeValue(elements.docEditorBody.innerText) || '';
+  if (!body) {
+    setDocEditorHint('Основной текст не может быть пустым.', true);
+    return false;
+  }
+  if (body.length > DOC_EDITOR_BODY_MAX_LENGTH) {
+    setDocEditorHint(`Текст слишком длинный. Максимум ${DOC_EDITOR_BODY_MAX_LENGTH} символов.`, true);
+    return false;
+  }
+  setDocEditorHint(`Символов: ${body.length}/${DOC_EDITOR_BODY_MAX_LENGTH}`);
+  return true;
+}
+
+function openDocEditor(task) {
+  if (!elements.docEditor || !task) {
+    return;
+  }
+
+  const taskId = normalizeValue(task.id || task.taskId || task.registryNumber || '');
+  const organization = normalizeValue(getTaskOrganization(task) || task.organization);
+  const header = organization ? `Реквизиты: ${organization}` : 'Реквизиты предприятия не указаны';
+  const footer = normalizeValue(task.executor) || normalizeValue(resolveExecutor(task)) || 'Подпись / ФИО / должность';
+  const body = normalizeValue(task.resolution) || normalizeValue(task.summary) || normalizeValue(task.instruction) || '';
+
+  state.docEditor.open = true;
+  state.docEditor.taskId = taskId;
+  state.docEditor.header = header;
+  state.docEditor.footer = footer;
+  state.docEditor.body = body;
+
+  setDocEditorData({ header, footer, body });
+  elements.docEditor.hidden = false;
+  document.body.style.overflowX = 'hidden';
+  if (elements.docEditorBody) {
+    elements.docEditorBody.focus();
+  }
+}
+
+function closeDocEditor() {
+  if (!elements.docEditor) {
+    return;
+  }
+  elements.docEditor.hidden = true;
+  state.docEditor.open = false;
+  document.body.style.overflowX = '';
+}
+
+
 function handleSummaryBadgeClick(filter) {
   const normalizedTarget = normalizeTaskFilter(filter);
   const previousFilters = normalizeTaskFilters(state.taskFilter);
@@ -11661,6 +11766,43 @@ function attachEvents() {
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
+  }
+  if (Array.isArray(elements.docEditorClose)) {
+    elements.docEditorClose.forEach((button) => {
+      button.addEventListener('click', closeDocEditor);
+    });
+  }
+  if (elements.docEditorBody) {
+    elements.docEditorBody.addEventListener('input', validateDocEditorBody);
+  }
+  if (elements.docEditorSave) {
+    elements.docEditorSave.addEventListener('click', () => {
+      if (!validateDocEditorBody()) {
+        return;
+      }
+      const payload = getDocEditorData();
+      state.docEditor.body = payload.body;
+      setStatus('success', 'Документ сохранён локально.');
+    });
+  }
+  if (elements.docEditorDownload) {
+    elements.docEditorDownload.addEventListener('click', () => {
+      if (!validateDocEditorBody()) {
+        return;
+      }
+      const data = getDocEditorData();
+      const text = `${data.header}
+
+${data.body}
+
+${data.footer}`;
+      const blob = new Blob([text], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `document-task-${data.taskId || 'draft'}.pdf`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    });
   }
 
   document.addEventListener('visibilitychange', () => {

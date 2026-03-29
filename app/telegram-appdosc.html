@@ -29,6 +29,132 @@
     <noscript>
       <link rel="stylesheet" href="/css/telegram-appdosc.css" />
     </noscript>
+    <style>
+      html,
+      body {
+        overflow-x: hidden;
+      }
+
+      .doc-editor {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        background: rgba(15, 23, 42, 0.36);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+
+      .doc-editor[hidden] {
+        display: none;
+      }
+
+      .doc-editor__backdrop {
+        position: absolute;
+        inset: 0;
+      }
+
+      .doc-editor__dialog {
+        position: relative;
+        width: min(860px, 100%);
+        max-height: 96vh;
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        border-radius: 18px 18px 0 0;
+        box-shadow: 0 -18px 34px rgba(15, 23, 42, 0.22);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .doc-editor__header,
+      .doc-editor__footer {
+        padding: 14px 16px;
+        background: rgba(248, 250, 252, 0.85);
+      }
+
+      .doc-editor__header {
+        border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+      }
+
+      .doc-editor__footer {
+        border-top: 1px solid rgba(148, 163, 184, 0.24);
+      }
+
+      .doc-editor__body-wrap {
+        padding: 12px 16px 8px;
+        overflow-y: auto;
+      }
+
+      .doc-editor__body {
+        min-height: 200px;
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.36);
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.88);
+        outline: none;
+        line-height: 1.5;
+        font-size: 16px;
+        color: #0f172a;
+      }
+
+      .doc-editor__body:focus {
+        border-color: rgba(37, 99, 235, 0.45);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+      }
+
+      .doc-editor__hint {
+        margin-top: 8px;
+        font-size: 13px;
+        color: #475569;
+      }
+
+      .doc-editor__hint.is-error {
+        color: #b91c1c;
+      }
+
+      .doc-editor__actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+        background: rgba(255, 255, 255, 0.94);
+      }
+
+      .doc-editor__button {
+        min-height: 48px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        font-size: 15px;
+        font-weight: 600;
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .doc-editor__button--primary {
+        background: linear-gradient(180deg, #3b82f6, #2563eb);
+        color: #fff;
+        border-color: rgba(37, 99, 235, 0.6);
+      }
+
+      .doc-editor__button--ghost {
+        color: #0f172a;
+      }
+
+      @media (max-width: 640px) {
+        .doc-editor__dialog {
+          max-height: 100vh;
+          border-radius: 14px 14px 0 0;
+        }
+
+        .doc-editor__actions {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+
   </head>
   <body>
     <div class="appdosc" data-app>
@@ -306,6 +432,26 @@
       </div>
     </div>
 
+    <section class="doc-editor" data-doc-editor hidden>
+      <div class="doc-editor__backdrop" data-doc-editor-close></div>
+      <div class="doc-editor__dialog" role="dialog" aria-modal="true" aria-labelledby="doc-editor-title">
+        <div class="doc-editor__header">
+          <div id="doc-editor-title">Редактор документа</div>
+          <div data-doc-editor-header>Реквизиты предприятия</div>
+        </div>
+        <div class="doc-editor__body-wrap">
+          <div class="doc-editor__body" data-doc-editor-body contenteditable="true" spellcheck="true"></div>
+          <div class="doc-editor__hint" data-doc-editor-hint>Введите текст документа.</div>
+        </div>
+        <div class="doc-editor__footer" data-doc-editor-footer>Подпись / ФИО / должность</div>
+        <div class="doc-editor__actions">
+          <button type="button" class="doc-editor__button doc-editor__button--primary" data-doc-editor-save>Сохранить</button>
+          <button type="button" class="doc-editor__button" data-doc-editor-download>Скачать PDF</button>
+          <button type="button" class="doc-editor__button doc-editor__button--ghost" data-doc-editor-close>Закрыть</button>
+        </div>
+      </div>
+    </section>
+
     <template id="appdosc-card-template">
       <article class="appdosc-card" data-card>
         <header class="appdosc-card__header" data-card-toggle>
@@ -364,6 +510,7 @@
           </div>
           <div class="appdosc-card__actions">
             <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
+            <button type="button" class="appdosc-card__action" data-card-doc-edit>Редактировать</button>
           </div>
         </footer>
         <div class="appdosc-card__instruction" data-card-instruction hidden>
