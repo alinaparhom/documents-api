@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <title>PDF/DOC Редактор</title>
+    <style>
+      :root {
+        --bg: #eef3ff;
+        --surface: rgba(255, 255, 255, 0.78);
+        --surface-strong: rgba(255, 255, 255, 0.94);
+        --border: rgba(108, 138, 224, 0.26);
+        --text: #1a2340;
+        --muted: #5f6b8f;
+        --primary: #4b7bff;
+        --primary-2: #77a0ff;
+        --danger: #db4265;
+        --ok: #1d8a5a;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at 10% 0%, #fff 0%, var(--bg) 55%, #e5ecff 100%);
+        min-height: 100dvh;
+        padding: calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));
+      }
+
+      .layout {
+        max-width: 1180px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 10px 28px rgba(68, 98, 177, 0.12);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+
+      .controls { padding: 14px; }
+      .preview { padding: 10px; }
+
+      h1 { margin: 0; font-size: 1.15rem; }
+      .sub { margin: 6px 0 12px; color: var(--muted); font-size: .9rem; }
+
+      .field { margin-bottom: 10px; }
+      .field label { display: block; margin-bottom: 6px; color: var(--muted); font-size: .84rem; }
+
+      input, textarea, select {
+        width: 100%;
+        border: 1px solid var(--border);
+        background: var(--surface-strong);
+        color: var(--text);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: .95rem;
+      }
+
+      textarea { min-height: 120px; resize: vertical; }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .btn-main {
+        background: linear-gradient(145deg, var(--primary), var(--primary-2));
+        color: #fff;
+      }
+
+      .btn-alt {
+        color: var(--primary);
+        background: rgba(75, 123, 255, .14);
+      }
+
+      .status { min-height: 20px; margin-top: 8px; font-size: .84rem; color: var(--muted); }
+      .status.error { color: var(--danger); }
+      .status.ok { color: var(--ok); }
+
+      .sheet {
+        width: 100%;
+        max-width: 210mm;
+        min-height: 297mm;
+        margin: 0 auto;
+        background: #fff;
+        color: #111;
+        border-radius: 8px;
+        box-shadow: 0 0 1px rgba(0,0,0,.3), 0 12px 26px rgba(0,0,0,.1);
+        padding: 16mm 14mm;
+      }
+
+      .head { text-align: center; border-bottom: 1px solid #d7deef; padding-bottom: 8px; }
+      .title { text-align: center; margin: 14px 0; font-size: 1.2rem; }
+      .body { white-space: pre-wrap; line-height: 1.55; min-height: 180px; }
+      .sign { margin-top: 34px; display: flex; justify-content: space-between; gap: 10px; }
+      .sign-line { border-top: 1px solid #222; min-width: 190px; text-align: center; padding-top: 4px; }
+
+      @media (min-width: 1024px) {
+        .layout { grid-template-columns: minmax(320px, 390px) 1fr; }
+        .controls { position: sticky; top: 12px; align-self: start; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <section class="card controls">
+        <h1>Шаблонный редактор</h1>
+        <p class="sub">Заполняйте поля — документ справа меняется моментально.</p>
+
+        <div class="field">
+          <label for="company">Компания</label>
+          <input id="company" value='ОАО "Амкодор"' maxlength="120" />
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label for="docDate">Дата</label>
+            <input id="docDate" type="date" />
+          </div>
+          <div class="field">
+            <label for="format">Формат</label>
+            <select id="format">
+              <option value="pdf">PDF</option>
+              <option value="doc">Word (.doc)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="title">Заголовок</label>
+          <input id="title" value="Служебная записка" maxlength="120" />
+        </div>
+
+        <div class="field">
+          <label for="text">Текст</label>
+          <textarea id="text" maxlength="12000">Укажите здесь переменный текст для документа.</textarea>
+        </div>
+
+        <div class="field">
+          <label for="signatory">Подписант</label>
+          <input id="signatory" value="Иванов И.И." maxlength="120" />
+        </div>
+
+        <div class="actions">
+          <button id="download" class="btn-main" type="button">Скачать</button>
+          <button id="reset" class="btn-alt" type="button">Сброс</button>
+        </div>
+        <div id="status" class="status"></div>
+      </section>
+
+      <section class="card preview">
+        <article id="sheet" class="sheet">
+          <header class="head">
+            <strong id="vCompany">ОАО "Амкодор"</strong><br />
+            <small id="vDate"></small>
+          </header>
+          <h2 id="vTitle" class="title">Служебная записка</h2>
+          <main id="vText" class="body">Укажите здесь переменный текст для документа.</main>
+          <footer class="sign">
+            <div>Ответственный:</div>
+            <div id="vSignatory" class="sign-line">Иванов И.И.</div>
+          </footer>
+        </article>
+      </section>
+    </div>
+
+    <script>
+      const form = {
+        company: document.getElementById('company'),
+        docDate: document.getElementById('docDate'),
+        format: document.getElementById('format'),
+        title: document.getElementById('title'),
+        text: document.getElementById('text'),
+        signatory: document.getElementById('signatory')
+      };
+
+      const view = {
+        company: document.getElementById('vCompany'),
+        date: document.getElementById('vDate'),
+        title: document.getElementById('vTitle'),
+        text: document.getElementById('vText'),
+        signatory: document.getElementById('vSignatory')
+      };
+
+      const sheet = document.getElementById('sheet');
+      const status = document.getElementById('status');
+      const downloadButton = document.getElementById('download');
+      const resetButton = document.getElementById('reset');
+      const exportUrl = new URL('./save-document.php', window.location.href).toString();
+
+      const defaults = {
+        company: 'ОАО "Амкодор"',
+        title: 'Служебная записка',
+        text: 'Укажите здесь переменный текст для документа.',
+        signatory: 'Иванов И.И.',
+        format: 'pdf'
+      };
+
+      const escapeHtml = (value) => value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+
+      const showStatus = (msg, type = '') => {
+        status.textContent = msg;
+        status.className = `status ${type}`.trim();
+      };
+
+      const humanDate = (isoDate) => {
+        if (!isoDate) return 'Дата не указана';
+        const parsed = new Date(`${isoDate}T00:00:00`);
+        if (Number.isNaN(parsed.getTime())) return 'Дата не указана';
+        return parsed.toLocaleDateString('ru-RU');
+      };
+
+      const updatePreview = () => {
+        view.company.textContent = form.company.value.trim() || 'Компания';
+        view.date.textContent = humanDate(form.docDate.value);
+        view.title.textContent = form.title.value.trim() || 'Без названия';
+        view.text.textContent = form.text.value.trim() || ' ';
+        view.signatory.textContent = form.signatory.value.trim() || 'Подпись';
+      };
+
+      const prepareExportHtml = () => {
+        updatePreview();
+        return `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8" /><title>${escapeHtml(view.title.textContent)}</title></head><body>${sheet.outerHTML}</body></html>`;
+      };
+
+      const buildFileName = () => {
+        const raw = (form.title.value || 'document').trim();
+        const safe = raw.replace(/[^a-zA-Zа-яА-Я0-9-_ ]/g, '').trim();
+        return safe || 'document';
+      };
+
+      const toggleButtons = (disabled) => {
+        downloadButton.disabled = disabled;
+        resetButton.disabled = disabled;
+      };
+
+      const download = async () => {
+        const format = form.format.value;
+        if (!['pdf', 'doc'].includes(format)) {
+          showStatus('Неверный формат файла.', 'error');
+          return;
+        }
+
+        showStatus('Подготавливаем файл...');
+
+        const payload = {
+          html: prepareExportHtml(),
+          fileName: buildFileName(),
+          format
+        };
+
+        try {
+          toggleButtons(true);
+          const response = await fetch(exportUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || 'Ошибка сервера');
+          }
+
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${payload.fileName}.${format}`;
+          a.click();
+          URL.revokeObjectURL(url);
+          showStatus('Документ успешно скачан.', 'ok');
+        } catch (error) {
+          showStatus(`Ошибка скачивания: ${error.message}`, 'error');
+        } finally {
+          toggleButtons(false);
+        }
+      };
+
+      const setDefaultDate = () => {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        form.docDate.value = `${y}-${m}-${d}`;
+      };
+
+      const resetForm = () => {
+        form.company.value = defaults.company;
+        form.title.value = defaults.title;
+        form.text.value = defaults.text;
+        form.signatory.value = defaults.signatory;
+        form.format.value = defaults.format;
+        setDefaultDate();
+        updatePreview();
+        showStatus('Шаблон сброшен.');
+      };
+
+      Object.values(form).forEach((input) => input.addEventListener('input', updatePreview));
+      downloadButton.addEventListener('click', download);
+      resetButton.addEventListener('click', resetForm);
+
+      if (window.Telegram && window.Telegram.WebApp) {
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand();
+      }
+
+      resetForm();
+    </script>
+  </body>
+</html>

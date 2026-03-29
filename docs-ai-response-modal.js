@@ -1095,6 +1095,29 @@
         });
     }
 
+    function resolveTemplateEditorUrl() {
+      if (config && config.templateEditorUrl) {
+        return String(config.templateEditorUrl);
+      }
+      if (window.DOCUMENTS_TEMPLATE_EDITOR_URL) {
+        return String(window.DOCUMENTS_TEMPLATE_EDITOR_URL);
+      }
+      return '/js/documents/app/pdf/editor.html';
+    }
+
+    function openTemplateEditorWindow() {
+      var editorUrl = resolveTemplateEditorUrl();
+      if (!editorUrl) {
+        return false;
+      }
+      if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.openLink === 'function') {
+        window.Telegram.WebApp.openLink(editorUrl, { try_instant_view: false });
+        return true;
+      }
+      var opened = window.open(editorUrl, '_blank', 'noopener,noreferrer');
+      return Boolean(opened);
+    }
+
     function createOverlayModal(titleText) {
       var overlay = createElement('div', ROOT_CLASS);
       overlay.style.zIndex = '2000';
@@ -1544,6 +1567,11 @@
     });
     openTemplateButton.addEventListener('click', async function () {
       menuDropdown.style.display = 'none';
+      if (openTemplateEditorWindow()) {
+        messages.appendChild(createMessage('assistant', 'Открыл отдельный редактор шаблона. Проверьте новую вкладку.'));
+        messages.scrollTop = messages.scrollHeight;
+        return;
+      }
       if (!state.templateDraft) {
         var templateUrl = config.templateUrl || '/template.docx';
         try {
