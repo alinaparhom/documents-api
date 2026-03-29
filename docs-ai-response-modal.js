@@ -1307,17 +1307,19 @@
       }
 
       var editorModal = createOverlayModal('Полноценный редактор шаблона');
-      editorModal.content.style.maxWidth = '1400px';
-      editorModal.content.style.width = '95vw';
+      editorModal.content.style.maxWidth = '100vw';
+      editorModal.content.style.width = '100vw';
       editorModal.content.style.background = 'rgba(255,255,255,.96)';
       editorModal.content.style.border = '1px solid rgba(148,163,184,.35)';
       editorModal.content.style.padding = '0';
       editorModal.content.style.overflow = 'hidden';
+      editorModal.content.style.height = '100vh';
+      editorModal.content.style.borderRadius = '0';
 
       var appWrap = createElement('div', 'ai-editor-app');
       appWrap.style.display = 'flex';
       appWrap.style.flexDirection = 'column';
-      appWrap.style.maxHeight = '90vh';
+      appWrap.style.height = '100vh';
 
       var ribbon = createElement('div', 'ai-editor-ribbon');
       ribbon.style.display = 'flex';
@@ -1446,7 +1448,7 @@
 
       var pageBg = createElement('div', 'ai-editor-page-bg');
       pageBg.style.background = '#dbe3ee';
-      pageBg.style.padding = '16px';
+      pageBg.style.padding = '12px';
       pageBg.style.overflow = 'auto';
       pageBg.style.flex = '1';
 
@@ -1493,7 +1495,7 @@
         editorModal.content.style.maxWidth = '100vw';
         editorModal.content.style.height = '100vh';
         editorModal.content.style.borderRadius = '0';
-        appWrap.style.maxHeight = '100vh';
+        appWrap.style.height = '100vh';
         pageBg.style.padding = '8px';
         editorArea.style.padding = '14px';
         editorArea.style.minHeight = '70vh';
@@ -1690,23 +1692,37 @@
       savePdfBtn.addEventListener('click', function () { saveDocument('pdf'); });
 
       function syncA4Scale() {
-        if (!pageBg || !page || (window.matchMedia && window.matchMedia('(max-width: 768px)').matches)) {
+        if (!pageBg || !page) {
+          return;
+        }
+        var isMobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+        if (isMobile) {
           page.style.transform = 'none';
+          page.style.width = '100%';
+          page.style.minHeight = 'auto';
           pageBg.style.minHeight = 'auto';
           return;
         }
-        var viewport = pageBg.clientWidth - 20;
-        if (viewport <= 0) {
+        page.style.width = '210mm';
+        page.style.minHeight = '297mm';
+
+        var frameWidth = pageBg.clientWidth - 24;
+        var frameHeight = pageBg.clientHeight - 24;
+        if (frameWidth <= 0 || frameHeight <= 0) {
           return;
         }
-        var pageWidthPx = page.getBoundingClientRect().width;
-        if (pageWidthPx <= 0) {
-          return;
-        }
-        var nextScale = viewport < pageWidthPx ? Math.max(0.72, viewport / pageWidthPx) : 1;
+
+        var mmToPx = 3.7795275591;
+        var a4Width = 210 * mmToPx;
+        var a4Height = 297 * mmToPx;
+        var scaleByWidth = frameWidth / a4Width;
+        var scaleByHeight = frameHeight / a4Height;
+        var nextScale = Math.min(scaleByWidth, scaleByHeight, 1);
+        nextScale = Math.max(0.5, nextScale);
+
         page.style.transformOrigin = 'top center';
         page.style.transform = 'scale(' + nextScale + ')';
-        pageBg.style.minHeight = Math.ceil((page.offsetHeight * nextScale) + 24) + 'px';
+        pageBg.style.minHeight = Math.ceil((a4Height * nextScale) + 24) + 'px';
       }
 
       syncA4Scale();
