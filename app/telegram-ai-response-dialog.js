@@ -1,7 +1,16 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v6';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
 const DOCS_API_ENDPOINT = '/js/documents/api-docs.php';
-const DOCX_TEMPLATE_URLS = ['/app/templates/template.docx', '/templates/template.docx', './templates/template.docx', 'templates/template.docx'];
+const DOCX_TEMPLATE_URLS = [
+  '/app/templates/template.docx',
+  '/app/templates/template.docs',
+  '/templates/template.docx',
+  '/templates/template.docs',
+  './templates/template.docx',
+  './templates/template.docs',
+  'templates/template.docx',
+  'templates/template.docs',
+];
 const PDF_TEMPLATE_URLS = ['/app/templates/template.pdf', '/templates/template.pdf', './templates/template.pdf', 'templates/template.pdf'];
 const EDITOR_DRAFT_KEY = 'miniapp_editor_draft_v2';
 const EDITOR_ROUTE_PAYLOAD_KEY = 'miniapp_editor_route_payload_v1';
@@ -87,9 +96,10 @@ function ensureScript(src, globalKey) {
 
 const ensureMammoth = () => ensureScript('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', 'mammoth');
 const ensureJsPdf = () => ensureScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'jspdf');
+const ensureDocxPreview = () => ensureScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.2/dist/docx-preview.min.js', 'docx');
 
 const BASE_ALLOWED_TAGS = new Set(['P', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'A', 'SPAN', 'DIV', 'BLOCKQUOTE']);
-const TEMPLATE_ALLOWED_TAGS = new Set([...BASE_ALLOWED_TAGS, 'SECTION', 'HEADER', 'FOOTER']);
+const TEMPLATE_ALLOWED_TAGS = new Set([...BASE_ALLOWED_TAGS, 'SECTION', 'HEADER', 'FOOTER', 'STYLE']);
 const SAFE_STYLE_PROPERTIES = new Set([
   'text-align',
   'font-size',
@@ -189,6 +199,8 @@ function sanitizeHtml(inputHtml, options = {}) {
             return;
           }
 
+          if (tag === 'STYLE' && name === 'type') return;
+
           if (tag === 'A' && name === 'href') {
             const href = String(attr.value || '').trim();
             if (!/^https?:\/\//i.test(href)) {
@@ -200,7 +212,7 @@ function sanitizeHtml(inputHtml, options = {}) {
             return;
           }
 
-          if (!['href', 'target', 'rel', 'colspan', 'rowspan'].includes(name)) {
+          if (!['href', 'target', 'rel', 'colspan', 'rowspan', 'type'].includes(name)) {
             child.removeAttribute(attr.name);
           }
         });
@@ -242,12 +254,33 @@ async function fetchTemplateBuffer(urls) {
 }
 
 async function getTemplateHtml() {
-  const mammoth = await ensureMammoth();
   const { buffer, url } = await fetchTemplateBuffer(DOCX_TEMPLATE_URLS);
-  const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
-  const html = sanitizeTemplateHtml(result && result.value ? result.value : '');
-  if (!html.trim()) throw new Error('DOCX не удалось конвертировать');
-  return { html, url, messages: Array.isArray(result && result.messages) ? result.messages : [] };
+  try {
+    const docxPreview = await ensureDocxPreview();
+    if (!docxPreview || typeof docxPreview.renderAsync !== 'function') {
+      throw new Error('docx-preview не инициализирован');
+    }
+
+    const container = document.createElement('div');
+    await docxPreview.renderAsync(buffer, container, null, {
+      className: 'docx',
+      ignoreWidth: false,
+      ignoreHeight: false,
+      ignoreFonts: false,
+      breakPages: true,
+      inWrapper: true,
+    });
+
+    const html = sanitizeTemplateHtml(container.innerHTML || '');
+    if (!html.trim()) throw new Error('DOCX не удалось отрисовать');
+    return { html, url, messages: [], renderer: 'docx-preview' };
+  } catch (_) {
+    const mammoth = await ensureMammoth();
+    const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+    const html = sanitizeTemplateHtml(result && result.value ? result.value : '');
+    if (!html.trim()) throw new Error('DOCX не удалось конвертировать');
+    return { html, url, messages: Array.isArray(result && result.messages) ? result.messages : [], renderer: 'mammoth' };
+  }
 }
 
 function fillDocxHtml(templateHtml, aiText) {
@@ -574,12 +607,12 @@ function openAiResponseDialog(context = {}) {
     state.controllers.add(controller);
 
     try {
-      const { html, url, messages: warnings } = await getTemplateHtml();
+      const { html, url, messages: warnings, renderer } = await getTemplateHtml();
       if (state.destroyed) return;
       state.templateType = 'docx';
       state.templateHtml = html;
       editable.innerHTML = sanitizeTemplateHtml(draft && draft.html ? draft.html : fillDocxHtml(html, state.assistantText));
-      editorSubtitle.textContent = `DOCX: ${url} • requestId: ${state.requestId || '—'} • ${warnings.length ? `Предупреждений: ${warnings.length}` : 'без предупреждений'}`;
+      editorSubtitle.textContent = `DOCX: ${url} • ${renderer || 'renderer'} • requestId: ${state.requestId || '—'} • ${warnings.length ? `Предупреждений: ${warnings.length}` : 'без предупреждений'}`;
       pdfNote.hidden = true;
     } catch (error) {
       state.templateType = 'pdf';
