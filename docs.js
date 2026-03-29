@@ -2070,6 +2070,44 @@
     var actions = Array.isArray(decision.required_actions) ? decision.required_actions : [];
     var requirements = Array.isArray(decision.requirements) ? decision.requirements : [];
     var participants = '';
+    var cleanedActions = [];
+    var cleanedRequirements = [];
+
+    function normalizeSentence(text) {
+      var value = String(text || '')
+        .replace(/-\s*\n\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .replace(/[.:;,\s]+$/g, '')
+        .trim();
+      if (!value) {
+        return '';
+      }
+      if (value.length < 12) {
+        return '';
+      }
+      if (/^[\d.\-–—\s]+$/.test(value)) {
+        return '';
+      }
+      if (/^(прошу вас|прошу|1|2|3)\b/i.test(value)) {
+        return '';
+      }
+      return value.charAt(0).toUpperCase() + value.slice(1);
+    }
+
+    function sanitizeList(items, maxItems) {
+      var seen = {};
+      return (Array.isArray(items) ? items : [])
+        .map(normalizeSentence)
+        .filter(function(item) {
+          var key = item.toLowerCase();
+          if (!item || seen[key]) {
+            return false;
+          }
+          seen[key] = true;
+          return true;
+        })
+        .slice(0, maxItems);
+    }
 
     risks.some(function(item) {
       var line = String(item || '').trim();
@@ -2082,19 +2120,24 @@
       }
       return false;
     });
+    analysis = normalizeSentence(analysis) || 'Не удалось определить суть документа.';
+    cleanedActions = sanitizeList(actions, 4);
+    cleanedRequirements = sanitizeList(requirements, 4);
 
     return [
-      'О чем файл:',
-      analysis || 'Не удалось определить суть документа.',
+      '✨ Кратко по документу',
       '',
-      'Кто прислал / кому:',
+      '📄 О чем файл',
+      analysis,
+      '',
+      '👤 Кто прислал / кому',
       participants || 'Не удалось точно определить отправителя и получателя.',
       '',
-      'Важные детали:',
-      actions.length ? actions.map(function(item) { return '• ' + item; }).join('\n') : '• Важные детали не найдены.',
+      '🔎 Важные детали',
+      cleanedActions.length ? cleanedActions.map(function(item) { return '• ' + item; }).join('\n') : '• Важные детали не найдены.',
       '',
-      'Требования:',
-      requirements.length ? requirements.map(function(item) { return '• ' + item; }).join('\n') : '• Явные требования не выделены.'
+      '✅ Требования',
+      cleanedRequirements.length ? cleanedRequirements.map(function(item) { return '• ' + item; }).join('\n') : '• Явные требования не выделены.'
     ].join('\n');
   }
 
