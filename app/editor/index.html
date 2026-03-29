@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Editor • Documents API</title>
+    <link rel="stylesheet" href="/js/documents/app/editor/editor.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.2.5/dist/purify.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/html-docx-js/dist/html-docx.min.js"></script>
+    <script defer src="/js/documents/app/editor/editor.js"></script>
+  </head>
+  <body>
+    <div class="editor-app">
+      <header class="editor-ribbon glass" role="banner">
+        <div class="toolbar-scroll" aria-label="Панель инструментов">
+          <button type="button" class="tool-btn" data-command="bold"><b>B</b></button>
+          <button type="button" class="tool-btn" data-command="italic"><i>I</i></button>
+          <button type="button" class="tool-btn" data-command="underline"><u>U</u></button>
+          <button type="button" class="tool-btn" data-command="justifyLeft">⬅</button>
+          <button type="button" class="tool-btn" data-command="justifyCenter">↔</button>
+          <button type="button" class="tool-btn" data-command="justifyRight">➡</button>
+          <button type="button" class="tool-btn" data-command="insertUnorderedList">• List</button>
+          <button type="button" class="tool-btn" data-command="insertOrderedList">1. List</button>
+          <button type="button" class="tool-btn" data-action="insert-table">Таблица</button>
+          <button type="button" class="tool-btn" data-action="load-template">Загрузить шаблон</button>
+          <button type="button" class="tool-btn" data-action="insert-ai">Вставить ответ ИИ</button>
+          <button type="button" class="tool-btn" data-action="export-docx">DOCX</button>
+          <button type="button" class="tool-btn" data-action="export-pdf">PDF</button>
+          <button type="button" class="tool-btn" data-action="print">Печать</button>
+        </div>
+        <div class="header-status" data-header-status>Готово</div>
+      </header>
+
+      <main class="editor-canvas-wrap">
+        <article
+          class="editor-canvas glass"
+          contenteditable="true"
+          data-editor
+          aria-label="Редактор документа"
+        >
+          <p>Начните вводить текст...</p>
+        </article>
+      </main>
+
+      <footer class="status-bar glass">
+        <span data-char-count>0 символов</span>
+        <span data-save-status>Черновик не сохранён</span>
+      </footer>
+    </div>
+
+    <div class="toast" data-toast hidden></div>
+  </body>
+</html>

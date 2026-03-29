@@ -752,6 +752,64 @@ function htmlToPlainText(string $html): string
     return trim((string)$text);
 }
 
+function sanitizeEditorHtml(string $html): string
+{
+    $html = trim($html);
+    if ($html === '') {
+        return '';
+    }
+
+    $dom = new DOMDocument();
+    $loaded = @$dom->loadHTML(
+        '<?xml encoding="utf-8" ?>' . $html,
+        LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD | LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET
+    );
+    if (!$loaded) {
+        return '';
+    }
+
+    $xpath = new DOMXPath($dom);
+    $dangerousNodes = $xpath->query('//script|//style|//iframe|//object|//embed|//link|//meta');
+    if ($dangerousNodes instanceof DOMNodeList) {
+        for ($i = $dangerousNodes->length - 1; $i >= 0; $i -= 1) {
+            $node = $dangerousNodes->item($i);
+            if ($node && $node->parentNode) {
+                $node->parentNode->removeChild($node);
+            }
+        }
+    }
+
+    $allNodes = $xpath->query('//*');
+    if ($allNodes instanceof DOMNodeList) {
+        foreach ($allNodes as $node) {
+            if (!$node instanceof DOMElement || !$node->hasAttributes()) {
+                continue;
+            }
+            $toRemove = [];
+            foreach ($node->attributes as $attribute) {
+                $name = strtolower((string)$attribute->name);
+                $value = strtolower(trim((string)$attribute->value));
+                if (str_starts_with($name, 'on')) {
+                    $toRemove[] = $attribute->name;
+                    continue;
+                }
+                if (
+                    ($name === 'href' || $name === 'src' || $name === 'xlink:href')
+                    && str_starts_with($value, 'javascript:')
+                ) {
+                    $toRemove[] = $attribute->name;
+                }
+            }
+            foreach ($toRemove as $attributeName) {
+                $node->removeAttribute($attributeName);
+            }
+        }
+    }
+
+    $clean = (string)$dom->saveHTML();
+    return trim(preg_replace('/^<\\?xml[^>]+>/i', '', $clean) ?? $clean);
+}
+
 function nodeToHtml(DOMNode $node, DOMXPath $xpath): string
 {
     $html = '';
@@ -1351,9 +1409,17 @@ if ($action === 'generate_from_editor') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $html = trim((string)($_POST['html'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? 'Ответ'));
+    $maxEditorHtmlBytes = 5 * 1024 * 1024;
 
     if ($html === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'HTML пустой']);
+    }
+    if (strlen($html) > $maxEditorHtmlBytes) {
+        jsonResponse(413, ['ok' => false, 'error' => 'HTML слишком большой (максимум 5 МБ)']);
+    }
+    $html = sanitizeEditorHtml($html);
+    if ($html === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'HTML не прошёл проверку безопасности']);
     }
     if ($format !== 'docx' && $format !== 'pdf') {
         jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
