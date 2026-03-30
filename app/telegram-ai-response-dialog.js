@@ -3,6 +3,7 @@ const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
 const DOCS_API_ENDPOINT = '/js/documents/api-docs.php';
 const DOCX_TEMPLATE_URLS = ['/app/templates/template.docx', '/templates/template.docx', './templates/template.docx', 'templates/template.docx'];
 const PDF_TEMPLATE_URLS = ['/app/templates/template.pdf', '/templates/template.pdf', './templates/template.pdf', 'templates/template.pdf'];
+const PDF_NOTE_TEXT = 'Для правок используйте DOCX, PDF — для отправки.';
 const EDITOR_DRAFT_KEY = 'miniapp_editor_draft_v2';
 const EDITOR_ROUTE_PAYLOAD_KEY = 'miniapp_editor_route_payload_v1';
 const REQUEST_TIMEOUT_MS = 12000;
@@ -727,7 +728,8 @@ function openAiResponseDialog(context = {}) {
         <div class="appdosc-ai-dialog__top-actions">
           <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-editor-close>Назад</button>
           <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-save-top>Сохранить</button>
-          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-top>Экспорт</button>
+          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-docx-top>Скачать DOCX (редактируемый)</button>
+          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-pdf-top>Скачать PDF (финальный)</button>
           <button type="button" class="appdosc-ai-dialog__btn" data-send-chat-top>В чат</button>
         </div>
       </div>
@@ -746,8 +748,8 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__status" data-status>Автосохранение включено</div>
       <div class="appdosc-ai-dialog__sticky">
         <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-save>Сохранить</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-docx>Экспорт DOCX</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-pdf>Экспорт PDF</button>
+        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-docx>Скачать DOCX (редактируемый)</button>
+        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-pdf>Скачать PDF (финальный)</button>
         <button type="button" class="appdosc-ai-dialog__btn" data-send-chat>Отправить в чат</button>
       </div>
     </div>`;
@@ -897,7 +899,8 @@ function openAiResponseDialog(context = {}) {
       state.templateHtml = html;
       editable.innerHTML = sanitizeTemplateHtml(draft && draft.html ? draft.html : fillDocxHtml(html, state.assistantText));
       editorSubtitle.textContent = `DOCX: ${url} • requestId: ${state.requestId || '—'} • ${warnings.length ? `Предупреждений: ${warnings.length}` : 'без предупреждений'}`;
-      pdfNote.hidden = true;
+      pdfNote.hidden = false;
+      pdfNote.textContent = PDF_NOTE_TEXT;
     } catch (error) {
       state.templateType = 'pdf';
       state.templateHtml = '';
@@ -905,9 +908,9 @@ function openAiResponseDialog(context = {}) {
       pdfNote.hidden = false;
       try {
         const pdfMeta = await fetchTemplateBuffer(PDF_TEMPLATE_URLS);
-        pdfNote.textContent = `DOCX недоступен. Используется PDF шаблон (${pdfMeta.url}) + аннотационный текст.`;
+        pdfNote.textContent = `${PDF_NOTE_TEXT} DOCX-шаблон недоступен, PDF собран по fallback-шаблону (${pdfMeta.url}).`;
       } catch (_) {
-        pdfNote.textContent = 'DOCX и PDF шаблоны недоступны. Можно продолжить в текстовом режиме.';
+        pdfNote.textContent = `${PDF_NOTE_TEXT} DOCX-шаблон недоступен, PDF формируется в текстовом fallback-режиме.`;
       }
       editorSubtitle.textContent = `Fallback режим PDF • requestId: ${state.requestId || '—'}`;
       notify('warning', `Ошибка шаблона: ${error && error.message ? error.message : 'неизвестно'}`);
@@ -1002,6 +1005,9 @@ function openAiResponseDialog(context = {}) {
 
   const runExportDocx = async () => {
     try {
+      if ((state.templateType || 'docx') !== 'docx' || !String(state.templateHtml || '').trim()) {
+        throw new Error('DOCX-шаблон недоступен. Редактируемый DOCX сейчас не может быть собран.');
+      }
       const html = sanitizeTemplateHtml(editable.innerHTML);
       if (!html.trim()) throw new Error('Редактор пуст');
       const payload = new FormData();
@@ -1026,10 +1032,32 @@ function openAiResponseDialog(context = {}) {
 
   const runExportPdf = async () => {
     try {
-      const text = extractPlainTextFromHtml(sanitizeTemplateHtml(editable.innerHTML));
-      if (!text) throw new Error('Нет текста для PDF');
+      const html = sanitizeTemplateHtml(editable.innerHTML);
+      if (!html.trim()) throw new Error('Нет содержимого для PDF');
+      const payload = new FormData();
+      payload.append('action', 'generate_from_html');
+      payload.append('format', 'pdf');
+      payload.append('documentTitle', 'Ответ ИИ (финальный PDF)');
+      payload.append('html', html);
+
+      let serverPdfError = null;
+      try {
+        const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: payload, credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`Ошибка сервера (${response.status})`);
+        const blob = await response.blob();
+        const contentType = String(response.headers.get('content-type') || blob.type || '').toLowerCase();
+        if (!contentType.includes('pdf')) throw new Error('Сервер не вернул PDF');
+        downloadBlob(blob, 'answer.pdf');
+        notify('success', 'PDF скачан (финальная версия, не для глубокого редактирования).');
+        return;
+      } catch (error) {
+        serverPdfError = error;
+      }
+
+      const text = extractPlainTextFromHtml(html);
+      if (!text) throw (serverPdfError || new Error('Нет текста для PDF'));
       downloadBlob(await createPdfBlobFromText(text), 'answer.pdf');
-      notify('success', 'PDF скачан.');
+      notify('warning', 'PDF скачан в fallback-режиме (не для глубокого редактирования).');
     } catch (error) {
       notify('error', error && error.message ? error.message : 'Ошибка PDF экспорта');
     }
@@ -1061,9 +1089,8 @@ function openAiResponseDialog(context = {}) {
   root.querySelector('[data-save-top]').addEventListener('click', runSave);
   root.querySelector('[data-export-docx]').addEventListener('click', runExportDocx);
   root.querySelector('[data-export-pdf]').addEventListener('click', runExportPdf);
-  root.querySelector('[data-export-top]').addEventListener('click', () => {
-    if ((state.templateType || 'docx') === 'pdf') runExportPdf(); else runExportDocx();
-  });
+  root.querySelector('[data-export-docx-top]').addEventListener('click', runExportDocx);
+  root.querySelector('[data-export-pdf-top]').addEventListener('click', runExportPdf);
   root.querySelector('[data-send-chat]').addEventListener('click', runSendChat);
   root.querySelector('[data-send-chat-top]').addEventListener('click', runSendChat);
 
