@@ -1091,10 +1091,77 @@
     var editInfo = createElement('div', 'ai-chat-modal__empty', '');
     editInfo.style.fontSize = '12px';
     editInfo.style.marginBottom = '6px';
-    var editArea = createElement('textarea', 'ai-chat-modal__textarea');
-    editArea.rows = 12;
-    editArea.style.maxHeight = '320px';
-    editArea.style.minHeight = '220px';
+    var blockDefinitions = [
+      { key: 'header', title: 'Шапка' },
+      { key: 'main', title: 'Основной текст' },
+      { key: 'deadlines', title: 'Сроки' },
+      { key: 'signature', title: 'Подпись' }
+    ];
+    var editBlocksWrap = createElement('div', 'ai-chat-template-viewer');
+    var editBlockInputs = {};
+    function splitToBlocks(value) {
+      var text = String(value || '').trim();
+      if (!text) {
+        return { header: '', main: '', deadlines: '', signature: '' };
+      }
+      var lines = text.split('\n').map(function (line) { return line.trim(); }).filter(Boolean);
+      var chunk = Math.max(1, Math.ceil(lines.length / 4));
+      return {
+        header: lines.slice(0, chunk).join('\n'),
+        main: lines.slice(chunk, chunk * 2).join('\n'),
+        deadlines: lines.slice(chunk * 2, chunk * 3).join('\n'),
+        signature: lines.slice(chunk * 3).join('\n')
+      };
+    }
+    function buildBlocksText() {
+      return blockDefinitions.map(function (block) {
+        return String(editBlockInputs[block.key] && editBlockInputs[block.key].value || '').trim();
+      }).filter(Boolean).join('\n\n');
+    }
+    function mutateBlockText(input, action) {
+      var source = String(input.value || '').trim();
+      if (!source) {
+        return;
+      }
+      if (action === 'short') {
+        source = source.replace(/\s+/g, ' ');
+        if (source.length > 220) {
+          source = source.slice(0, 220).trim() + '…';
+        }
+      } else if (action === 'hard') {
+        source = source.replace(/\b(возможно|постараемся|по возможности)\b/gi, '').replace(/\bпланируем\b/gi, 'выполним');
+      } else if (action === 'neutral') {
+        source = source.replace(/\b(обязаны|немедленно|строго)\b/gi, 'необходимо').replace(/\bвыполним\b/gi, 'планируем выполнить');
+      }
+      input.value = source.trim().replace(/\s{2,}/g, ' ');
+    }
+    blockDefinitions.forEach(function (block) {
+      var blockCard = createElement('div', 'ai-chat-modal__context');
+      var head = createElement('div', 'ai-chat-modal__context-title', block.title);
+      var actions = createElement('div', 'ai-chat-template-tabs');
+      var shortBtn = createElement('button', 'ai-chat-modal__export-btn', 'Сократить');
+      var hardBtn = createElement('button', 'ai-chat-modal__export-btn', 'Сделать жёстче');
+      var neutralBtn = createElement('button', 'ai-chat-modal__export-btn', 'Сделать нейтральнее');
+      [shortBtn, hardBtn, neutralBtn].forEach(function (btn) {
+        btn.type = 'button';
+        btn.style.minHeight = '44px';
+      });
+      actions.appendChild(shortBtn);
+      actions.appendChild(hardBtn);
+      actions.appendChild(neutralBtn);
+      var input = createElement('textarea', 'ai-chat-modal__textarea');
+      input.rows = 4;
+      input.style.maxHeight = '180px';
+      input.style.minHeight = '96px';
+      editBlockInputs[block.key] = input;
+      shortBtn.addEventListener('click', function () { mutateBlockText(input, 'short'); });
+      hardBtn.addEventListener('click', function () { mutateBlockText(input, 'hard'); });
+      neutralBtn.addEventListener('click', function () { mutateBlockText(input, 'neutral'); });
+      blockCard.appendChild(head);
+      blockCard.appendChild(actions);
+      blockCard.appendChild(input);
+      editBlocksWrap.appendChild(blockCard);
+    });
     var editActions = createElement('div', 'ai-chat-modal__export-buttons');
     var editApply = createElement('button', 'ai-chat-modal__send', 'Обновить');
     var editDocx = createElement('button', 'ai-chat-modal__export-btn', 'Скачать DOCX');
@@ -1102,7 +1169,7 @@
     var editCopy = createElement('button', 'ai-chat-modal__export-btn', 'Копировать в буфер');
     [editApply, editDocx, editPdf, editCopy].forEach(function (btn) { btn.type = 'button'; editActions.appendChild(btn); });
     editModal.content.appendChild(editInfo);
-    editModal.content.appendChild(editArea);
+    editModal.content.appendChild(editBlocksWrap);
     editModal.content.appendChild(editActions);
 
     var templateModal = createOverlayModal('Шаблон документа');
@@ -1713,7 +1780,7 @@
     });
 
     editApply.addEventListener('click', function () {
-      var next = String(editArea.value || '').trim();
+      var next = buildBlocksText();
       if (!next) {
         alert('Введите текст для обновления.');
         return;
@@ -1728,13 +1795,13 @@
       editModal.close();
     });
     editDocx.addEventListener('click', function () {
-      exportDocument('docx', String(editArea.value || '').trim());
+      exportDocument('docx', buildBlocksText());
     });
     editPdf.addEventListener('click', function () {
-      exportDocument('pdf', String(editArea.value || '').trim());
+      exportDocument('pdf', buildBlocksText());
     });
     editCopy.addEventListener('click', function () {
-      var text = String(editArea.value || '').trim();
+      var text = buildBlocksText();
       if (!text) {
         return;
       }

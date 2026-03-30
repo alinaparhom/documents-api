@@ -5,12 +5,19 @@ const DOCX_TEMPLATE_URLS = ['/app/templates/template.docx', '/templates/template
 const PDF_TEMPLATE_URLS = ['/app/templates/template.pdf', '/templates/template.pdf', './templates/template.pdf', 'templates/template.pdf'];
 const PDF_NOTE_TEXT = 'Для правок используйте DOCX, PDF — для отправки.';
 const EDITOR_DRAFT_KEY = 'miniapp_editor_draft_v2';
+const EDITOR_DRAFT_VERSIONS_KEY = 'miniapp_editor_draft_versions_v1';
 const EDITOR_ROUTE_PAYLOAD_KEY = 'miniapp_editor_route_payload_v1';
 const REQUEST_TIMEOUT_MS = 12000;
 const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
 const FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
+const EDITOR_SECTION_DEFS = [
+  { key: 'header', label: 'Шапка', placeholder: 'Например: Кому, от кого, № письма, тема.' },
+  { key: 'main', label: 'Основной текст', placeholder: 'Основной ответ по сути, без воды.' },
+  { key: 'deadlines', label: 'Сроки', placeholder: 'Укажите даты в формате ДД.ММ.ГГГГ.' },
+  { key: 'signature', label: 'Подпись', placeholder: 'ФИО, должность, контакты.' },
+];
 const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ.\n'
   + '\n'
   + 'ЭТО НЕ ПРОСТО РЕКОМЕНДАЦИЯ. ЭТО ЖЕСТКИЕ ПРАВИЛА. НАРУШЕНИЯ НЕДОПУСТИМЫ.\n'
@@ -94,7 +101,7 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__btn{border:none;min-height:42px;padding:10px 14px;border-radius:14px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
     .appdosc-ai-dialog__btn--ghost{background:rgba(148,163,184,.15);color:#0f172a}
     .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed}
-    .appdosc-ai-dialog__editor{position:fixed;inset:0;z-index:2800;display:none;background:rgba(241,245,249,.74);backdrop-filter:blur(10px)}
+    .appdosc-ai-dialog__editor{position:fixed;inset:0;z-index:2800;display:none;background:rgba(241,245,249,.74);backdrop-filter:blur(10px);padding-bottom:env(safe-area-inset-bottom,0px)}
     .appdosc-ai-dialog__editor--open{display:flex}
     .appdosc-ai-dialog__editor-panel{width:100%;height:100dvh;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.97),rgba(255,255,255,.9));padding:calc(8px + env(safe-area-inset-top,0px)) calc(10px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px))}
     .appdosc-ai-dialog__editor-header{padding:10px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border:1px solid rgba(148,163,184,.2);border-radius:16px;background:rgba(255,255,255,.75);backdrop-filter:blur(8px)}
@@ -102,16 +109,23 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__editor-subtitle{font-size:12px;color:#64748b;margin-top:2px}
     .appdosc-ai-dialog__top-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .appdosc-ai-dialog__toolbar{position:sticky;top:0;z-index:2;display:flex;gap:8px;flex-wrap:wrap;padding:8px 10px;background:rgba(255,255,255,.92);border-bottom:1px solid rgba(148,163,184,.18)}
-    .appdosc-ai-dialog__body{flex:1;min-height:0;overflow:auto;padding:12px 4px 96px}
-    .appdosc-ai-dialog__editable{min-height:52dvh;border:1px solid rgba(148,163,184,.34);border-radius:16px;padding:14px;background:#fff;line-height:1.55;outline:none;white-space:normal}
-    .appdosc-ai-dialog__editable p{margin:0 0 .75em}
-    .appdosc-ai-dialog__editable p:last-child{margin-bottom:0}
-    .appdosc-ai-dialog__editable table{width:100%;border-collapse:collapse}
-    .appdosc-ai-dialog__editable td,.appdosc-ai-dialog__editable th{border:1px solid rgba(148,163,184,.42);padding:6px}
+    .appdosc-ai-dialog__body{flex:1;min-height:0;overflow:auto;padding:12px 4px 124px}
+    .appdosc-ai-dialog__sections{display:grid;gap:10px}
+    .appdosc-ai-dialog__section{border:1px solid rgba(148,163,184,.28);border-radius:16px;padding:10px;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.85));backdrop-filter:blur(8px)}
+    .appdosc-ai-dialog__section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+    .appdosc-ai-dialog__section-title{font-size:14px;font-weight:700;color:#0f172a}
+    .appdosc-ai-dialog__quick-actions{display:flex;gap:6px;flex-wrap:wrap}
+    .appdosc-ai-dialog__quick{border:1px solid rgba(148,163,184,.36);background:rgba(255,255,255,.86);color:#0f172a;min-height:34px;padding:6px 10px;border-radius:999px;font-size:12px;cursor:pointer}
+    .appdosc-ai-dialog__section-input{width:100%;min-height:96px;border:1px solid rgba(148,163,184,.34);border-radius:12px;padding:10px 12px;resize:vertical;font-size:14px;line-height:1.45;background:#fff;color:#0f172a}
+    .appdosc-ai-dialog__template-health{padding:10px;border-radius:12px;font-size:13px;font-weight:600}
+    .appdosc-ai-dialog__template-health--ok{background:rgba(220,252,231,.8);color:#166534}
+    .appdosc-ai-dialog__template-health--warn{background:rgba(254,249,195,.8);color:#854d0e}
+    .appdosc-ai-dialog__template-health--danger{background:rgba(254,226,226,.84);color:#991b1b}
     .appdosc-ai-dialog__pdf-note{margin-top:10px;border:1px dashed rgba(148,163,184,.45);border-radius:12px;padding:10px;background:rgba(255,255,255,.86);font-size:12px;color:#334155}
     .appdosc-ai-dialog__status{font-size:12px;color:#64748b;padding:0 12px 8px}
-    .appdosc-ai-dialog__sticky{position:fixed;left:0;right:0;bottom:0;z-index:3;display:flex;gap:8px;overflow:auto;padding:8px calc(10px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));background:rgba(255,255,255,.94);border-top:1px solid rgba(148,163,184,.2)}
-    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__btn{flex:1;min-height:48px;font-size:15px}}
+    .appdosc-ai-dialog__sticky{position:fixed;left:0;right:0;bottom:0;z-index:3;display:flex;gap:8px;overflow:auto;padding:10px calc(10px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));background:rgba(255,255,255,.96);border-top:1px solid rgba(148,163,184,.2)}
+    .appdosc-ai-dialog__btn{min-height:44px}
+    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__btn{flex:1;min-height:48px;font-size:15px}.appdosc-ai-dialog__top-actions{display:none}}
   `;
   document.head.appendChild(style);
 }
@@ -340,8 +354,89 @@ function extractPlainTextFromHtml(html) {
   return String(node.textContent || '').trim();
 }
 
+function normalizeEditorSections(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return EDITOR_SECTION_DEFS.reduce((acc, section) => {
+    acc[section.key] = String(source[section.key] || '').trim();
+    return acc;
+  }, {});
+}
+
+function htmlToEditorSections(html) {
+  const lines = extractPlainTextFromHtml(html).split('\n').map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return normalizeEditorSections();
+  const chunk = Math.ceil(lines.length / EDITOR_SECTION_DEFS.length);
+  const sections = {};
+  EDITOR_SECTION_DEFS.forEach((section, index) => {
+    const start = index * chunk;
+    const end = index === EDITOR_SECTION_DEFS.length - 1 ? lines.length : start + chunk;
+    sections[section.key] = lines.slice(start, end).join('\n').trim();
+  });
+  return normalizeEditorSections(sections);
+}
+
+function editorSectionsToHtml(sections) {
+  const safe = normalizeEditorSections(sections);
+  return EDITOR_SECTION_DEFS
+    .map((section) => {
+      const title = `<h3>${section.label}</h3>`;
+      const body = textToParagraphHtml(safe[section.key] || '—');
+      return `<section data-block="${section.key}">${title}${body}</section>`;
+    })
+    .join('');
+}
+
+function applyQuickActionToText(text, action) {
+  const source = String(text || '').trim();
+  if (!source) return '';
+  if (action === 'shorten') {
+    const compact = source.replace(/\s+/g, ' ').trim();
+    return compact.length > 220 ? `${compact.slice(0, 220).trim()}…` : compact;
+  }
+  if (action === 'harder') {
+    return source
+      .replace(/\b(пожалуйста|по возможности|возможно)\b/gi, '')
+      .replace(/\b(планируем|постараемся)\b/gi, 'выполним')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+  if (action === 'neutral') {
+    return source
+      .replace(/\b(обязаны|немедленно|строго)\b/gi, 'необходимо')
+      .replace(/\b(выполним)\b/gi, 'планируем выполнить')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+  return source;
+}
+
+function computeTemplateRisk(sections) {
+  const values = EDITOR_SECTION_DEFS.map((section) => String(sections[section.key] || '').trim());
+  const filled = values.filter(Boolean).length;
+  const totalChars = values.reduce((acc, item) => acc + item.length, 0);
+  if (filled === EDITOR_SECTION_DEFS.length && totalChars > 140) return { text: 'Шаблон цел · риск низкий', tone: 'ok' };
+  if (filled >= 2 && totalChars > 60) return { text: 'Шаблон частично заполнен · риск средний', tone: 'warn' };
+  return { text: 'Высокий риск поломки шаблона', tone: 'danger' };
+}
+
 function saveDraft(data) {
   try { localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(data)); } catch (_) {}
+}
+
+function pushDraftVersion(data) {
+  try {
+    const list = JSON.parse(localStorage.getItem(EDITOR_DRAFT_VERSIONS_KEY) || '[]');
+    const safeList = Array.isArray(list) ? list : [];
+    const next = {
+      ts: Date.now(),
+      sections: normalizeEditorSections(data && data.sections),
+      templateType: data && data.templateType ? data.templateType : 'docx',
+    };
+    const last = safeList[safeList.length - 1];
+    if (last && JSON.stringify(last.sections) === JSON.stringify(next.sections)) return;
+    const updated = safeList.concat(next).slice(-30);
+    localStorage.setItem(EDITOR_DRAFT_VERSIONS_KEY, JSON.stringify(updated));
+  } catch (_) {}
 }
 
 function loadDraft() {
@@ -691,6 +786,7 @@ function openAiResponseDialog(context = {}) {
     attachedFiles: [],
     models: FALLBACK_MODEL_OPTIONS.slice(),
     model: FALLBACK_MODEL_OPTIONS[0].value,
+    editorSections: normalizeEditorSections(),
   };
 
   const notify = (type, message) => {
@@ -733,16 +829,9 @@ function openAiResponseDialog(context = {}) {
           <button type="button" class="appdosc-ai-dialog__btn" data-send-chat-top>В чат</button>
         </div>
       </div>
-      <div class="appdosc-ai-dialog__toolbar">
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-bold>B</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-italic>I</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-ul>• Список</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-ol>1. Список</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-link>Ссылка</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-table>Таблица</button>
-      </div>
       <div class="appdosc-ai-dialog__body">
-        <div class="appdosc-ai-dialog__editable" data-editable contenteditable="true" spellcheck="true"></div>
+        <div class="appdosc-ai-dialog__template-health appdosc-ai-dialog__template-health--warn" data-template-health>Проверка шаблона...</div>
+        <div class="appdosc-ai-dialog__sections" data-sections></div>
         <div class="appdosc-ai-dialog__pdf-note" data-pdf-note hidden></div>
       </div>
       <div class="appdosc-ai-dialog__status" data-status>Автосохранение включено</div>
@@ -762,7 +851,8 @@ function openAiResponseDialog(context = {}) {
   const modelSelect = root.querySelector('[data-model]');
   const openEditorBtn = root.querySelector('[data-open-editor]');
   const attachmentsNode = root.querySelector('[data-attachments]');
-  const editable = root.querySelector('[data-editable]');
+  const sectionsRoot = root.querySelector('[data-sections]');
+  const templateHealthNode = root.querySelector('[data-template-health]');
   const editorSubtitle = root.querySelector('[data-editor-subtitle]');
   const statusNode = root.querySelector('[data-status]');
   const pdfNote = root.querySelector('[data-pdf-note]');
@@ -835,7 +925,6 @@ function openAiResponseDialog(context = {}) {
     state.controllers.forEach((c) => c.abort());
     state.controllers.clear();
     clearTimeout(state.autosaveTimer);
-    mutationObserver.disconnect();
     resizeObserver.disconnect();
     window.removeEventListener('popstate', onPopState);
     window.removeEventListener('keydown', onEscClose);
@@ -844,20 +933,55 @@ function openAiResponseDialog(context = {}) {
     if (location.pathname === '/editor') history.replaceState({}, '', '/');
   };
 
+  const collectEditorSections = () => {
+    const result = {};
+    EDITOR_SECTION_DEFS.forEach((section) => {
+      const field = root.querySelector(`[data-section-input="${section.key}"]`);
+      result[section.key] = field ? String(field.value || '').trim() : '';
+    });
+    return normalizeEditorSections(result);
+  };
+
+  const updateTemplateHealth = () => {
+    const health = computeTemplateRisk(state.editorSections);
+    templateHealthNode.className = `appdosc-ai-dialog__template-health appdosc-ai-dialog__template-health--${health.tone}`;
+    templateHealthNode.textContent = health.text;
+  };
+
+  const renderSectionCards = () => {
+    sectionsRoot.innerHTML = '';
+    EDITOR_SECTION_DEFS.forEach((section) => {
+      const card = document.createElement('section');
+      card.className = 'appdosc-ai-dialog__section';
+      card.innerHTML = `
+        <div class="appdosc-ai-dialog__section-head">
+          <div class="appdosc-ai-dialog__section-title">${section.label}</div>
+          <div class="appdosc-ai-dialog__quick-actions">
+            <button type="button" class="appdosc-ai-dialog__quick" data-quick-action="shorten" data-section="${section.key}">Сократить</button>
+            <button type="button" class="appdosc-ai-dialog__quick" data-quick-action="harder" data-section="${section.key}">Сделать жёстче</button>
+            <button type="button" class="appdosc-ai-dialog__quick" data-quick-action="neutral" data-section="${section.key}">Сделать нейтральнее</button>
+          </div>
+        </div>
+        <textarea class="appdosc-ai-dialog__section-input" data-section-input="${section.key}" placeholder="${section.placeholder}">${state.editorSections[section.key] || ''}</textarea>
+      `;
+      sectionsRoot.appendChild(card);
+    });
+    updateTemplateHealth();
+  };
+
   const saveNow = () => {
     if (!state.isEditorOpen || state.destroyed) return;
-    saveDraft({ html: sanitizeTemplateHtml(editable.innerHTML), templateType: state.templateType, ts: Date.now() });
+    state.editorSections = collectEditorSections();
+    saveDraft({ html: editorSectionsToHtml(state.editorSections), sections: state.editorSections, templateType: state.templateType, ts: Date.now() });
+    pushDraftVersion({ sections: state.editorSections, templateType: state.templateType });
     statusNode.textContent = `Автосохранение: ${new Date().toLocaleTimeString('ru-RU')}`;
+    updateTemplateHealth();
   };
 
   const scheduleSave = () => {
     clearTimeout(state.autosaveTimer);
     state.autosaveTimer = setTimeout(saveNow, 1200);
   };
-
-  const mutationObserver = new MutationObserver(scheduleSave);
-  mutationObserver.observe(editable, { subtree: true, childList: true, characterData: true });
-  editable.addEventListener('input', scheduleSave);
 
   const resizeObserver = new ResizeObserver(() => {
     document.documentElement.style.setProperty('--app-vh', `${window.innerHeight}px`);
@@ -897,14 +1021,24 @@ function openAiResponseDialog(context = {}) {
       if (state.destroyed) return;
       state.templateType = 'docx';
       state.templateHtml = html;
-      editable.innerHTML = sanitizeTemplateHtml(draft && draft.html ? draft.html : fillDocxHtml(html, state.assistantText));
+      state.editorSections = normalizeEditorSections(
+        draft && draft.sections
+          ? draft.sections
+          : htmlToEditorSections(draft && draft.html ? draft.html : fillDocxHtml(html, state.assistantText))
+      );
+      renderSectionCards();
       editorSubtitle.textContent = `DOCX: ${url} • requestId: ${state.requestId || '—'} • ${warnings.length ? `Предупреждений: ${warnings.length}` : 'без предупреждений'}`;
       pdfNote.hidden = false;
       pdfNote.textContent = PDF_NOTE_TEXT;
     } catch (error) {
       state.templateType = 'pdf';
       state.templateHtml = '';
-      editable.innerHTML = sanitizeTemplateHtml(draft && draft.html ? draft.html : textToParagraphHtml(state.assistantText || 'Введите текст документа'));
+      state.editorSections = normalizeEditorSections(
+        draft && draft.sections
+          ? draft.sections
+          : htmlToEditorSections(draft && draft.html ? draft.html : textToParagraphHtml(state.assistantText || 'Введите текст документа'))
+      );
+      renderSectionCards();
       pdfNote.hidden = false;
       try {
         const pdfMeta = await fetchTemplateBuffer(PDF_TEMPLATE_URLS);
@@ -917,7 +1051,8 @@ function openAiResponseDialog(context = {}) {
     } finally {
       state.controllers.delete(controller);
       statusNode.textContent = 'Готово к редактированию';
-      editable.focus();
+      const firstField = root.querySelector('[data-section-input]');
+      if (firstField instanceof HTMLTextAreaElement) firstField.focus();
     }
   };
 
@@ -987,16 +1122,27 @@ function openAiResponseDialog(context = {}) {
 
   openEditorBtn.addEventListener('click', openEditor);
   root.querySelector('[data-editor-close]').addEventListener('click', closeEditor);
-  root.querySelector('[data-bold]').addEventListener('click', () => wrapSelectionWithTag(editable, 'strong'));
-  root.querySelector('[data-italic]').addEventListener('click', () => wrapSelectionWithTag(editable, 'em'));
-  root.querySelector('[data-ul]').addEventListener('click', () => insertList(editable, false));
-  root.querySelector('[data-ol]').addEventListener('click', () => insertList(editable, true));
-  root.querySelector('[data-link]').addEventListener('click', () => {
-    const href = window.prompt('Введите ссылку (http/https)');
-    if (!href) return;
-    if (!insertLink(editable, href)) notify('warning', 'Некорректная ссылка или не выбран текст.');
+  sectionsRoot.addEventListener('input', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLTextAreaElement) || !target.hasAttribute('data-section-input')) return;
+    const key = target.getAttribute('data-section-input');
+    if (!key) return;
+    state.editorSections[key] = String(target.value || '');
+    updateTemplateHealth();
+    scheduleSave();
   });
-  root.querySelector('[data-table]').addEventListener('click', () => insertTable(editable));
+  sectionsRoot.addEventListener('click', (event) => {
+    const btn = event.target instanceof Element ? event.target.closest('[data-quick-action]') : null;
+    if (!btn) return;
+    const action = btn.getAttribute('data-quick-action') || '';
+    const key = btn.getAttribute('data-section') || '';
+    const area = root.querySelector(`[data-section-input="${key}"]`);
+    if (!(area instanceof HTMLTextAreaElement)) return;
+    area.value = applyQuickActionToText(area.value, action);
+    state.editorSections[key] = area.value;
+    updateTemplateHealth();
+    scheduleSave();
+  });
 
   const runSave = () => {
     saveNow();
@@ -1008,7 +1154,8 @@ function openAiResponseDialog(context = {}) {
       if ((state.templateType || 'docx') !== 'docx' || !String(state.templateHtml || '').trim()) {
         throw new Error('DOCX-шаблон недоступен. Редактируемый DOCX сейчас не может быть собран.');
       }
-      const html = sanitizeTemplateHtml(editable.innerHTML);
+      state.editorSections = collectEditorSections();
+      const html = sanitizeTemplateHtml(editorSectionsToHtml(state.editorSections));
       if (!html.trim()) throw new Error('Редактор пуст');
       const payload = new FormData();
       payload.append('action', 'generate_from_html');
@@ -1032,7 +1179,8 @@ function openAiResponseDialog(context = {}) {
 
   const runExportPdf = async () => {
     try {
-      const html = sanitizeTemplateHtml(editable.innerHTML);
+      state.editorSections = collectEditorSections();
+      const html = sanitizeTemplateHtml(editorSectionsToHtml(state.editorSections));
       if (!html.trim()) throw new Error('Нет содержимого для PDF');
       const payload = new FormData();
       payload.append('action', 'generate_from_html');
@@ -1064,7 +1212,8 @@ function openAiResponseDialog(context = {}) {
   };
 
   const runSendChat = () => {
-    const text = extractPlainTextFromHtml(sanitizeTemplateHtml(editable.innerHTML));
+    state.editorSections = collectEditorSections();
+    const text = extractPlainTextFromHtml(sanitizeTemplateHtml(editorSectionsToHtml(state.editorSections)));
     if (!text) {
       notify('warning', 'Нет текста для отправки');
       return;
