@@ -489,11 +489,9 @@
       '.ai-chat-template-tabs{display:flex;gap:8px;flex-wrap:wrap;}' +
       '.ai-chat-template-editor{display:flex;gap:8px;flex-wrap:wrap;}' +
       '.ai-chat-template-input{width:100%;min-height:74px;max-height:160px;resize:vertical;border:1px solid rgba(148,163,184,.4);border-radius:10px;padding:10px;background:#fff;font-size:13px;line-height:1.4;}' +
-      '.ai-chat-template-surface{flex:1;min-height:0;height:100%;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#f8fafc;overflow:auto;}' +
-      '.ai-chat-template-docx{padding:16px;line-height:1.55;background:#fff;max-width:980px;margin:0 auto;min-height:100%;outline:none;}' +
-      '.ai-chat-template-docx table{width:100%;border-collapse:collapse;}' +
-      '.ai-chat-template-docx td,.ai-chat-template-docx th{border:1px solid rgba(148,163,184,.45);padding:6px;}' +
-      '.ai-chat-template-pdf{width:100%;height:100%;min-height:100%;border:none;background:#fff;}' +
+      '.ai-chat-template-surface{flex:1;min-height:0;height:100%;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#e2e8f0;overflow:hidden;}' +
+      '.ai-chat-template-frame{width:100%;height:100%;border:none;background:#fff;}' +
+      '.ai-chat-template-editor-preview{margin-top:8px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:#fff;padding:10px;min-height:96px;max-height:180px;overflow:auto;font-size:13px;line-height:1.5;white-space:pre-wrap;}' +
       '.ai-chat-modal__ocr-hint{margin-top:4px;padding:6px 8px;border-radius:8px;background:rgba(239,246,255,.8);border:1px solid rgba(147,197,253,.55);font-size:11px;color:#1e3a8a;line-height:1.35;}' +
       '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
@@ -1244,20 +1242,23 @@
     templateEditor.appendChild(downloadPdfFromTemplateButton);
 
     var templateSurface = createElement('div', 'ai-chat-template-surface');
-    var templateDocxView = createElement('div', 'ai-chat-template-docx', 'Загрузка DOCX...');
-    templateDocxView.setAttribute('contenteditable', 'true');
-    templateDocxView.setAttribute('spellcheck', 'true');
+    var templateDocxFrame = document.createElement('iframe');
+    templateDocxFrame.className = 'ai-chat-template-frame';
+    templateDocxFrame.title = 'Просмотр DOCX шаблона';
     var templatePdfFrame = document.createElement('iframe');
-    templatePdfFrame.className = 'ai-chat-template-pdf';
+    templatePdfFrame.className = 'ai-chat-template-frame';
     templatePdfFrame.title = 'Просмотр PDF шаблона';
     templatePdfFrame.hidden = true;
-    templateSurface.appendChild(templateDocxView);
+    templateSurface.appendChild(templateDocxFrame);
     templateSurface.appendChild(templatePdfFrame);
+
+    var templatePreview = createElement('div', 'ai-chat-template-editor-preview', 'Текст для вставки появится здесь.');
 
     templateViewer.appendChild(templateInfo);
     templateViewer.appendChild(templateTabs);
     templateViewer.appendChild(templateEditor);
     templateViewer.appendChild(templateSurface);
+    templateViewer.appendChild(templatePreview);
     templateModal.content.appendChild(templateViewer);
 
     var templateState = {
@@ -1265,7 +1266,8 @@
       docxLoaded: false,
       pdfLoaded: false,
       docxUrl: '',
-      pdfUrl: ''
+      pdfUrl: '',
+      editedText: ''
     };
     var templateDocxCandidates = [
       config.templateDocxUrl,
@@ -1282,6 +1284,18 @@
       '/template.pdf'
     ].filter(Boolean);
 
+    function textToSimpleHtml(text) {
+      return escapeHtml(String(text || '')).replace(/\n/g, '<br>');
+    }
+
+    function absoluteUrl(rawUrl) {
+      try {
+        return new URL(String(rawUrl || ''), window.location.origin).href;
+      } catch (error) {
+        return String(rawUrl || '');
+      }
+    }
+
     async function resolveFirstAvailableTemplateUrl(candidates) {
       var list = Array.isArray(candidates) ? candidates.slice() : [];
       for (var i = 0; i < list.length; i += 1) {
@@ -1295,52 +1309,58 @@
             return url;
           }
         } catch (error) {
-          // пробуем следующий путь
+          // следующий путь
         }
       }
       return '';
     }
 
-    async function loadFirstDocxTemplateBuffer() {
-      var list = Array.isArray(templateDocxCandidates) ? templateDocxCandidates.slice() : [];
-      for (var i = 0; i < list.length; i += 1) {
-        var url = String(list[i] || '').trim();
-        if (!url) {
-          continue;
-        }
-        try {
-          var response = await fetch(url, { credentials: 'same-origin' });
-          if (!response.ok) {
-            continue;
-          }
-          return { url: url, buffer: await response.arrayBuffer() };
-        } catch (error) {
-          // пробуем следующий путь
-        }
-      }
-      return null;
+    function setTemplateTab(tabName) {
+      templateState.activeTab = tabName === 'pdf' ? 'pdf' : 'docx';
+      var isDocx = templateState.activeTab === 'docx';
+      templateDocxFrame.hidden = !isDocx;
+      templatePdfFrame.hidden = isDocx;
+      templateDocxTab.className = isDocx ? 'ai-chat-modal__send' : 'ai-chat-modal__export-btn';
+      templatePdfTab.className = isDocx ? 'ai-chat-modal__export-btn' : 'ai-chat-modal__send';
     }
 
-    function applyTextToTemplate(text) {
-      var rawText = String(text || '').trim();
-      if (!rawText) {
+    async function loadTemplateDocx() {
+      if (templateState.docxLoaded) {
         return;
       }
-      var escaped = escapeHtml(rawText).replace(/\n/g, '<br>');
-      var markerRegex = /(\{\{AI_RESPONSE\}\}|\[AI_RESPONSE\]|\{AI_RESPONSE\}|\[\[AI_RESPONSE\]\])/g;
-      if (markerRegex.test(templateDocxView.innerHTML)) {
-        templateDocxView.innerHTML = templateDocxView.innerHTML.replace(markerRegex, escaped);
-      } else {
-        var block = document.createElement('p');
-        block.innerHTML = escaped;
-        templateDocxView.appendChild(block);
+      if (!templateState.docxUrl) {
+        templateState.docxUrl = await resolveFirstAvailableTemplateUrl(templateDocxCandidates);
       }
+      if (!templateState.docxUrl) {
+        templateInfo.textContent = 'Ошибка DOCX: не найден путь к template.docx';
+        return;
+      }
+      var srcAbsolute = absoluteUrl(templateState.docxUrl);
+      templateDocxFrame.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(srcAbsolute);
+      templateInfo.textContent = 'DOCX загружен: ' + templateState.docxUrl;
+      templateState.docxLoaded = true;
     }
 
-    async function exportDocxFromTemplateHtml(format, buttonEl) {
-      var html = String(templateDocxView.innerHTML || '').trim();
-      if (!html) {
-        templateInfo.textContent = 'Нет содержимого для экспорта.';
+    async function loadTemplatePdf() {
+      if (templateState.pdfLoaded) {
+        return;
+      }
+      if (!templateState.pdfUrl) {
+        templateState.pdfUrl = await resolveFirstAvailableTemplateUrl(templatePdfCandidates);
+      }
+      if (!templateState.pdfUrl) {
+        templateInfo.textContent = 'Ошибка PDF: не найден путь к template.pdf';
+        return;
+      }
+      templatePdfFrame.src = templateState.pdfUrl;
+      templateInfo.textContent = 'PDF загружен: ' + templateState.pdfUrl;
+      templateState.pdfLoaded = true;
+    }
+
+    async function exportEditedText(format, buttonEl) {
+      var text = String(templateState.editedText || '').trim();
+      if (!text) {
+        templateInfo.textContent = 'Введите текст перед скачиванием.';
         return;
       }
       var previousText = buttonEl.textContent;
@@ -1351,7 +1371,7 @@
         var params = new URLSearchParams();
         params.set('action', 'generate_from_editor');
         params.set('format', format);
-        params.set('html', html);
+        params.set('html', '<div>' + textToSimpleHtml(text) + '</div>');
         params.set('documentTitle', config.documentTitle || 'template');
         var response = await fetch(apiUrl, {
           method: 'POST',
@@ -1379,65 +1399,26 @@
       }
     }
 
-    function setTemplateTab(tabName) {
-      templateState.activeTab = tabName === 'pdf' ? 'pdf' : 'docx';
-      var isDocx = templateState.activeTab === 'docx';
-      templateDocxView.hidden = !isDocx;
-      templatePdfFrame.hidden = isDocx;
-      templateDocxTab.className = isDocx ? 'ai-chat-modal__send' : 'ai-chat-modal__export-btn';
-      templatePdfTab.className = isDocx ? 'ai-chat-modal__export-btn' : 'ai-chat-modal__send';
-    }
-
-    async function loadTemplateDocx() {
-      if (templateState.docxLoaded) {
-        return;
-      }
-      templateDocxView.textContent = 'Загрузка DOCX...';
-      try {
-        var templateData = await loadFirstDocxTemplateBuffer();
-        if (!templateData || !templateData.buffer) {
-          throw new Error('template.docx не найден');
-        }
-        templateState.docxUrl = templateData.url;
-        var mammoth = await ensureMammoth();
-        var result = await mammoth.convertToHtml({ arrayBuffer: templateData.buffer });
-        var html = result && typeof result.value === 'string' ? result.value : '';
-        templateDocxView.innerHTML = html || '<p>DOCX пустой.</p>';
-        templateInfo.textContent = 'DOCX загружен: ' + templateState.docxUrl;
-        templateState.docxLoaded = true;
-      } catch (error) {
-        templateDocxView.textContent = 'Не удалось загрузить DOCX шаблон.';
-        templateInfo.textContent = 'Ошибка DOCX: ' + (error && error.message ? error.message : 'неизвестно');
-      }
-    }
-
-    async function loadTemplatePdf() {
-      if (templateState.pdfLoaded) {
-        return;
-      }
-      if (!templateState.pdfUrl) {
-        templateState.pdfUrl = await resolveFirstAvailableTemplateUrl(templatePdfCandidates);
-      }
-      if (!templateState.pdfUrl) {
-        templateInfo.textContent = 'Ошибка PDF: не найден путь к template.pdf';
-        return;
-      }
-      templatePdfFrame.src = templateState.pdfUrl;
-      templateInfo.textContent = 'PDF загружается: ' + templateState.pdfUrl;
-      templateState.pdfLoaded = true;
-    }
-
     applyTemplateTextButton.addEventListener('click', function () {
-      applyTextToTemplate(templateInputText.value);
-      templateInfo.textContent = 'Текст вставлен в шаблон.';
+      templateState.editedText = String(templateInputText.value || '').trim();
+      if (!templateState.editedText) {
+        templatePreview.textContent = 'Текст для вставки появится здесь.';
+        templateInfo.textContent = 'Введите текст для вставки.';
+        return;
+      }
+      templatePreview.innerHTML = textToSimpleHtml(templateState.editedText);
+      templateInfo.textContent = 'Текст обновлён. Можно скачать DOCX или PDF.';
+    });
+    templateInputText.addEventListener('input', function () {
+      templateState.editedText = String(templateInputText.value || '');
+      templatePreview.innerHTML = textToSimpleHtml(templateState.editedText);
     });
     downloadDocxFromTemplateButton.addEventListener('click', function () {
-      exportDocxFromTemplateHtml('docx', downloadDocxFromTemplateButton);
+      exportEditedText('docx', downloadDocxFromTemplateButton);
     });
     downloadPdfFromTemplateButton.addEventListener('click', function () {
-      exportDocxFromTemplateHtml('pdf', downloadPdfFromTemplateButton);
+      exportEditedText('pdf', downloadPdfFromTemplateButton);
     });
-
     function openOverlay(modalRef) {
       document.body.appendChild(modalRef.overlay);
       requestAnimationFrame(function () { modalRef.overlay.classList.add('ai-chat-modal--visible'); });
