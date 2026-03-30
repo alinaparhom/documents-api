@@ -1418,7 +1418,14 @@
             credentials: 'same-origin',
             body: formData
           });
-          var payload = await response.json();
+          var rawResponseText = await response.text();
+          var payload = null;
+          try {
+            payload = rawResponseText ? JSON.parse(rawResponseText) : null;
+          } catch (parseError) {
+            var preview = String(rawResponseText || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+            throw new Error('OCR вернул не JSON ответ: ' + (preview || 'пустой ответ'));
+          }
           if (!response.ok || !payload || payload.ok !== true) {
             throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
           }
