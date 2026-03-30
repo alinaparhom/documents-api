@@ -13,6 +13,7 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
+  var docxPreviewReadyPromise = null;
   var DEFAULT_AI_BEHAVIOR = 'Ты — руководитель организации, уполномоченный принимать окончательное решение по документу.\n'
     + 'Обязательно используй формулировки: "В ответ на Ваш документ от [дата] № [номер] сообщаем следующее", "Отмечаем, что…", "Обращаем Ваше внимание на…".\n'
     + 'Тон: строгий, аргументированный, без эмоций.\n'
@@ -487,15 +488,16 @@
       '.ai-chat-modal__template-btn{min-width:130px;}' +
       '.ai-chat-template-viewer{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;}' +
       '.ai-chat-template-tabs{display:flex;gap:8px;flex-wrap:wrap;}' +
-      '.ai-chat-template-editor{display:flex;gap:8px;flex-wrap:wrap;}' +
-      '.ai-chat-template-input{width:100%;min-height:74px;max-height:160px;resize:vertical;border:1px solid rgba(148,163,184,.4);border-radius:10px;padding:10px;background:#fff;font-size:13px;line-height:1.4;}' +
       '.ai-chat-template-surface{flex:1;min-height:0;height:100%;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#e2e8f0;overflow:hidden;}' +
-      '.ai-chat-template-frame{width:100%;height:100%;border:none;background:#fff;}' +
-      '.ai-chat-template-editor-preview{margin-top:8px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:#fff;padding:10px;min-height:96px;max-height:180px;overflow:auto;font-size:13px;line-height:1.5;white-space:pre-wrap;}' +
+      '.ai-chat-template-document{width:100%;height:100%;overflow:auto;background:#f1f5f9;padding:14px;}' +
+      '.ai-chat-template-page{max-width:980px;min-height:calc(100% - 8px);margin:0 auto 14px;background:#fff;border-radius:10px;box-shadow:0 12px 28px rgba(15,23,42,.14);padding:18px;line-height:1.56;outline:none;}' +
+      '.ai-chat-template-page:last-child{margin-bottom:0;}' +
+      '.ai-chat-template-page table{width:100%;border-collapse:collapse;}' +
+      '.ai-chat-template-page td,.ai-chat-template-page th{border:1px solid rgba(148,163,184,.45);padding:6px;}' +
       '.ai-chat-modal__ocr-hint{margin-top:4px;padding:6px 8px;border-radius:8px;background:rgba(239,246,255,.8);border:1px solid rgba(147,197,253,.55);font-size:11px;color:#1e3a8a;line-height:1.35;}' +
       '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}.ai-chat-template-input{min-height:92px;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}.ai-chat-template-page{padding:12px;}}';
     document.head.appendChild(style);
   }
 
@@ -753,6 +755,40 @@
         text = text.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
         return text.slice(0, MAX_EXTRACT_CHARS);
       });
+  }
+
+  function ensureDocxPreviewLoaded() {
+    if (docxPreviewReadyPromise) {
+      return docxPreviewReadyPromise;
+    }
+    docxPreviewReadyPromise = new Promise(function (resolve, reject) {
+      if (typeof window === 'undefined') {
+        reject(new Error('no_window'));
+        return;
+      }
+      if (window.docx && typeof window.docx.renderAsync === 'function') {
+        resolve(window.docx);
+        return;
+      }
+      var script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js';
+      script.async = true;
+      script.onload = function () {
+        if (window.docx && typeof window.docx.renderAsync === 'function') {
+          resolve(window.docx);
+        } else {
+          reject(new Error('docx_preview_missing'));
+        }
+      };
+      script.onerror = function () {
+        reject(new Error('docx_preview_load_failed'));
+      };
+      document.head.appendChild(script);
+    }).catch(function (error) {
+      docxPreviewReadyPromise = null;
+      throw error;
+    });
+    return docxPreviewReadyPromise;
   }
 
   function ensurePdfJsLoaded() {
@@ -1227,38 +1263,25 @@
     templatePdfTab.type = 'button';
     templateTabs.appendChild(templateDocxTab);
     templateTabs.appendChild(templatePdfTab);
-    var templateEditor = createElement('div', 'ai-chat-template-editor');
-    var templateInputText = createElement('textarea', 'ai-chat-template-input');
-    templateInputText.placeholder = 'Вставьте ваш текст. Он будет аккуратно подставлен в DOCX шаблон.';
-    var applyTemplateTextButton = createElement('button', 'ai-chat-modal__send', 'Вставить текст');
+    var templateActions = createElement('div', 'ai-chat-template-tabs');
     var downloadDocxFromTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать DOCX');
     var downloadPdfFromTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать PDF');
-    applyTemplateTextButton.type = 'button';
     downloadDocxFromTemplateButton.type = 'button';
     downloadPdfFromTemplateButton.type = 'button';
-    templateEditor.appendChild(templateInputText);
-    templateEditor.appendChild(applyTemplateTextButton);
-    templateEditor.appendChild(downloadDocxFromTemplateButton);
-    templateEditor.appendChild(downloadPdfFromTemplateButton);
+    templateActions.appendChild(downloadDocxFromTemplateButton);
+    templateActions.appendChild(downloadPdfFromTemplateButton);
 
     var templateSurface = createElement('div', 'ai-chat-template-surface');
-    var templateDocxFrame = document.createElement('iframe');
-    templateDocxFrame.className = 'ai-chat-template-frame';
-    templateDocxFrame.title = 'Просмотр DOCX шаблона';
-    var templatePdfFrame = document.createElement('iframe');
-    templatePdfFrame.className = 'ai-chat-template-frame';
-    templatePdfFrame.title = 'Просмотр PDF шаблона';
-    templatePdfFrame.hidden = true;
-    templateSurface.appendChild(templateDocxFrame);
-    templateSurface.appendChild(templatePdfFrame);
-
-    var templatePreview = createElement('div', 'ai-chat-template-editor-preview', 'Текст для вставки появится здесь.');
+    var templateDocxEditor = createElement('div', 'ai-chat-template-document');
+    var templatePdfEditor = createElement('div', 'ai-chat-template-document');
+    templatePdfEditor.hidden = true;
+    templateSurface.appendChild(templateDocxEditor);
+    templateSurface.appendChild(templatePdfEditor);
 
     templateViewer.appendChild(templateInfo);
     templateViewer.appendChild(templateTabs);
-    templateViewer.appendChild(templateEditor);
+    templateViewer.appendChild(templateActions);
     templateViewer.appendChild(templateSurface);
-    templateViewer.appendChild(templatePreview);
     templateModal.content.appendChild(templateViewer);
 
     var templateState = {
@@ -1266,8 +1289,7 @@
       docxLoaded: false,
       pdfLoaded: false,
       docxUrl: '',
-      pdfUrl: '',
-      editedText: ''
+      pdfUrl: ''
     };
     var templateDocxCandidates = [
       config.templateDocxUrl,
@@ -1283,18 +1305,6 @@
       '/templates/template.pdf',
       '/template.pdf'
     ].filter(Boolean);
-
-    function textToSimpleHtml(text) {
-      return escapeHtml(String(text || '')).replace(/\n/g, '<br>');
-    }
-
-    function absoluteUrl(rawUrl) {
-      try {
-        return new URL(String(rawUrl || ''), window.location.origin).href;
-      } catch (error) {
-        return String(rawUrl || '');
-      }
-    }
 
     async function resolveFirstAvailableTemplateUrl(candidates) {
       var list = Array.isArray(candidates) ? candidates.slice() : [];
@@ -1315,13 +1325,27 @@
       return '';
     }
 
+    function escapeEditorHtml(html) {
+      var parser = new DOMParser();
+      var parsed = parser.parseFromString(String(html || ''), 'text/html');
+      return parsed.body ? parsed.body.innerHTML : String(html || '');
+    }
+
     function setTemplateTab(tabName) {
       templateState.activeTab = tabName === 'pdf' ? 'pdf' : 'docx';
       var isDocx = templateState.activeTab === 'docx';
-      templateDocxFrame.hidden = !isDocx;
-      templatePdfFrame.hidden = isDocx;
+      templateDocxEditor.hidden = !isDocx;
+      templatePdfEditor.hidden = isDocx;
       templateDocxTab.className = isDocx ? 'ai-chat-modal__send' : 'ai-chat-modal__export-btn';
       templatePdfTab.className = isDocx ? 'ai-chat-modal__export-btn' : 'ai-chat-modal__send';
+    }
+
+    function makeEditablePage(html) {
+      var page = createElement('div', 'ai-chat-template-page');
+      page.setAttribute('contenteditable', 'true');
+      page.setAttribute('spellcheck', 'true');
+      page.innerHTML = html;
+      return page;
     }
 
     async function loadTemplateDocx() {
@@ -1335,10 +1359,37 @@
         templateInfo.textContent = 'Ошибка DOCX: не найден путь к template.docx';
         return;
       }
-      var srcAbsolute = absoluteUrl(templateState.docxUrl);
-      templateDocxFrame.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(srcAbsolute);
-      templateInfo.textContent = 'DOCX загружен: ' + templateState.docxUrl;
-      templateState.docxLoaded = true;
+      try {
+        var response = await fetch(templateState.docxUrl, { credentials: 'same-origin' });
+        if (!response.ok) {
+          throw new Error('DOCX недоступен (' + response.status + ')');
+        }
+        var buffer = await response.arrayBuffer();
+        var docxLib = await ensureDocxPreviewLoaded();
+        var temp = document.createElement('div');
+        await docxLib.renderAsync(buffer, temp, null, {
+          inWrapper: false,
+          breakPages: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          useBase64URL: true,
+        });
+        templateDocxEditor.innerHTML = '';
+        var docPages = temp.querySelectorAll('.docx');
+        if (docPages.length) {
+          Array.prototype.forEach.call(docPages, function (node) {
+            templateDocxEditor.appendChild(makeEditablePage(node.innerHTML || '<p></p>'));
+          });
+        } else {
+          templateDocxEditor.appendChild(makeEditablePage(temp.innerHTML || '<p>Документ пустой.</p>'));
+        }
+        templateInfo.textContent = 'DOCX загружен и доступен для прямого редактирования.';
+        templateState.docxLoaded = true;
+      } catch (error) {
+        templateDocxEditor.innerHTML = '';
+        templateDocxEditor.appendChild(makeEditablePage('<p>Не удалось загрузить DOCX шаблон.</p>'));
+        templateInfo.textContent = 'Ошибка DOCX: ' + (error && error.message ? error.message : 'неизвестно');
+      }
     }
 
     async function loadTemplatePdf() {
@@ -1352,15 +1403,39 @@
         templateInfo.textContent = 'Ошибка PDF: не найден путь к template.pdf';
         return;
       }
-      templatePdfFrame.src = templateState.pdfUrl;
-      templateInfo.textContent = 'PDF загружен: ' + templateState.pdfUrl;
-      templateState.pdfLoaded = true;
+      try {
+        var pdfResponse = await fetch(templateState.pdfUrl, { credentials: 'same-origin' });
+        if (!pdfResponse.ok) {
+          throw new Error('PDF недоступен (' + pdfResponse.status + ')');
+        }
+        var pdfBuffer = await pdfResponse.arrayBuffer();
+        var pdfjsLib = await ensurePdfJsLoaded();
+        var loadingTask = pdfjsLib.getDocument({ data: pdfBuffer });
+        var pdfDoc = await loadingTask.promise;
+        templatePdfEditor.innerHTML = '';
+        for (var pageNum = 1; pageNum <= pdfDoc.numPages; pageNum += 1) {
+          var page = await pdfDoc.getPage(pageNum);
+          var textContent = await page.getTextContent();
+          var lines = (textContent.items || []).map(function (item) {
+            return item && item.str ? item.str : '';
+          }).filter(Boolean);
+          var html = '<h3>Страница ' + pageNum + '</h3><p>' + escapeHtml(lines.join(' ')) + '</p>';
+          templatePdfEditor.appendChild(makeEditablePage(html));
+        }
+        templateInfo.textContent = 'PDF загружен и доступен для прямого редактирования.';
+        templateState.pdfLoaded = true;
+      } catch (error) {
+        templatePdfEditor.innerHTML = '';
+        templatePdfEditor.appendChild(makeEditablePage('<p>Не удалось загрузить PDF шаблон.</p>'));
+        templateInfo.textContent = 'Ошибка PDF: ' + (error && error.message ? error.message : 'неизвестно');
+      }
     }
 
-    async function exportEditedText(format, buttonEl) {
-      var text = String(templateState.editedText || '').trim();
-      if (!text) {
-        templateInfo.textContent = 'Введите текст перед скачиванием.';
+    async function exportActiveEditor(format, buttonEl) {
+      var editor = templateState.activeTab === 'pdf' ? templatePdfEditor : templateDocxEditor;
+      var html = escapeEditorHtml(editor && editor.innerHTML ? editor.innerHTML : '');
+      if (!String(html || '').trim()) {
+        templateInfo.textContent = 'Документ пустой. Нечего скачивать.';
         return;
       }
       var previousText = buttonEl.textContent;
@@ -1371,7 +1446,7 @@
         var params = new URLSearchParams();
         params.set('action', 'generate_from_editor');
         params.set('format', format);
-        params.set('html', '<div>' + textToSimpleHtml(text) + '</div>');
+        params.set('html', html);
         params.set('documentTitle', config.documentTitle || 'template');
         var response = await fetch(apiUrl, {
           method: 'POST',
@@ -1399,25 +1474,11 @@
       }
     }
 
-    applyTemplateTextButton.addEventListener('click', function () {
-      templateState.editedText = String(templateInputText.value || '').trim();
-      if (!templateState.editedText) {
-        templatePreview.textContent = 'Текст для вставки появится здесь.';
-        templateInfo.textContent = 'Введите текст для вставки.';
-        return;
-      }
-      templatePreview.innerHTML = textToSimpleHtml(templateState.editedText);
-      templateInfo.textContent = 'Текст обновлён. Можно скачать DOCX или PDF.';
-    });
-    templateInputText.addEventListener('input', function () {
-      templateState.editedText = String(templateInputText.value || '');
-      templatePreview.innerHTML = textToSimpleHtml(templateState.editedText);
-    });
     downloadDocxFromTemplateButton.addEventListener('click', function () {
-      exportEditedText('docx', downloadDocxFromTemplateButton);
+      exportActiveEditor('docx', downloadDocxFromTemplateButton);
     });
     downloadPdfFromTemplateButton.addEventListener('click', function () {
-      exportEditedText('pdf', downloadPdfFromTemplateButton);
+      exportActiveEditor('pdf', downloadPdfFromTemplateButton);
     });
     function openOverlay(modalRef) {
       document.body.appendChild(modalRef.overlay);
