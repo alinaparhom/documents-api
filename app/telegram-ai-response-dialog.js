@@ -10,6 +10,7 @@ const REQUEST_TIMEOUT_MS = 12000;
 const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
+const MAX_CHAT_ATTACHMENT_PREVIEW = 800;
 const FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
 const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ.\n'
   + '\n'
@@ -83,12 +84,16 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__composer{padding:12px calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:8px;background:#ffffff}
     .appdosc-ai-dialog__model{width:100%;min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;background:#fff;color:#0f172a}
     .appdosc-ai-dialog__input{min-height:80px;max-height:190px;resize:none;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;outline:none}
-    .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:8px;max-height:180px;overflow:auto;padding-right:2px}
-    .appdosc-ai-dialog__attachment{display:flex;flex-direction:column;gap:6px;padding:9px;border-radius:12px;background:linear-gradient(145deg,#ffffff,#f8fbff);border:1px solid rgba(148,163,184,.3);box-shadow:0 8px 18px rgba(15,23,42,.06)}
+    .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:6px;max-height:156px;overflow:auto;padding-right:2px}
+    .appdosc-ai-dialog__attachment-tools{display:flex;gap:8px;flex-wrap:wrap}
+    .appdosc-ai-dialog__attachment{display:flex;flex-direction:column;gap:4px;padding:7px 8px;border-radius:11px;background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(248,251,255,.9));border:1px solid rgba(148,163,184,.24);box-shadow:0 4px 12px rgba(15,23,42,.06)}
+    .appdosc-ai-dialog__attachment.is-selected{border-color:rgba(37,99,235,.5);box-shadow:0 10px 20px rgba(37,99,235,.16)}
     .appdosc-ai-dialog__attachment-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
-    .appdosc-ai-dialog__attachment-name{font-size:12px;font-weight:600;color:#1e293b;word-break:break-word}
-    .appdosc-ai-dialog__attachment-meta{font-size:11px;color:#475569;white-space:nowrap}
-    .appdosc-ai-dialog__attachment-preview{font-size:12px;line-height:1.45;color:#334155;background:rgba(241,245,249,.8);border:1px solid rgba(203,213,225,.8);border-radius:10px;padding:8px;max-height:84px;overflow:auto;white-space:pre-wrap}
+    .appdosc-ai-dialog__attachment-actions{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .appdosc-ai-dialog__attachment-check{display:flex;align-items:center;gap:6px;font-size:12px;color:#334155}
+    .appdosc-ai-dialog__attachment-name{font-size:12px;font-weight:600;color:#1e293b;word-break:break-word;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+    .appdosc-ai-dialog__attachment-meta{font-size:10px;color:#475569;white-space:nowrap}
+    .appdosc-ai-dialog__attachment-preview{font-size:11px;line-height:1.35;color:#334155;background:rgba(241,245,249,.72);border:1px solid rgba(203,213,225,.7);border-radius:8px;padding:6px;max-height:52px;overflow:auto;white-space:pre-wrap}
     .appdosc-ai-dialog__attachment-preview.is-empty{color:#94a3b8}
     .appdosc-ai-dialog__buttons{display:flex;flex-wrap:wrap;gap:8px}
     .appdosc-ai-dialog__btn{border:none;min-height:42px;padding:10px 14px;border-radius:14px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
@@ -489,8 +494,47 @@ function detectFileName(file, index) {
 }
 
 function detectFileUrl(file) {
-  const value = file && (file.url || file.previewUrl || file.previewPdfUrl || file.pdfUrl || file.pdf || file.fileUrl || file.downloadUrl);
-  return typeof value === 'string' ? value : '';
+  const urls = detectFileUrls(file);
+  return urls[0] || '';
+}
+
+function toAbsoluteUrlSafe(value) {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  if (/^https?:\/\//i.test(input)) return input;
+  if (input.startsWith('//')) {
+    const protocol = (typeof location !== 'undefined' && location.protocol) ? location.protocol : 'https:';
+    return `${protocol}${input}`;
+  }
+  if (typeof location === 'undefined' || !location.origin) return input;
+  try {
+    if (input.startsWith('/')) return `${location.origin}${input}`;
+    return new URL(input, `${location.origin}/`).toString();
+  } catch (_) {
+    return input;
+  }
+}
+
+function detectFileUrls(file) {
+  const raw = [
+    file && file.resolvedUrl,
+    file && file.fileUrl,
+    file && file.downloadUrl,
+    file && file.url,
+    file && file.previewUrl,
+    file && file.previewPdfUrl,
+    file && file.pdfUrl,
+    file && file.pdf,
+  ];
+  const result = [];
+  const seen = new Set();
+  raw.forEach((item) => {
+    const value = toAbsoluteUrlSafe(item);
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    result.push(value);
+  });
+  return result;
 }
 
 function detectFileType(file) {
@@ -515,55 +559,57 @@ function isTextLikeMeta(fileMeta) {
 }
 
 async function fetchExternalFileContent(fileMeta) {
-  const response = await fetchWithTimeout(fileMeta.url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 6000);
-  if (!response.ok) throw new Error(`Файл недоступен (${response.status})`);
-  if (isTextLikeMeta(fileMeta)) {
-    return (await response.text()).trim();
+  const candidates = Array.isArray(fileMeta && fileMeta.urls) && fileMeta.urls.length
+    ? fileMeta.urls
+    : [fileMeta && fileMeta.url].filter(Boolean);
+  if (!candidates.length) {
+    throw new Error('У файла нет доступной ссылки');
   }
-  const form = new FormData();
-  form.append('action', 'ocr_extract');
-  form.append('language', 'rus');
-  form.append('file_url', fileMeta.url);
-  const ocrResponse = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ocr_extract`, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
-  const payload = await ocrResponse.json().catch(() => null);
-  if (!ocrResponse.ok || !payload || payload.ok !== true) {
-    throw new Error((payload && payload.error) || 'OCR временно недоступен');
+
+  let lastError = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const url = String(candidates[i] || '').trim();
+    if (!url) continue;
+    try {
+      const response = await fetchWithTimeout(url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 6000);
+      if (!response.ok) {
+        throw new Error(`Файл недоступен (${response.status})`);
+      }
+      fileMeta.url = url;
+      if (isTextLikeMeta(fileMeta)) {
+        return (await response.text()).trim();
+      }
+      const form = new FormData();
+      form.append('action', 'ocr_extract');
+      form.append('language', 'rus');
+      form.append('file_url', url);
+      const ocrResponse = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ocr_extract`, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
+      const payload = await ocrResponse.json().catch(() => null);
+      if (!ocrResponse.ok || !payload || payload.ok !== true) {
+        throw new Error((payload && payload.error) || 'OCR временно недоступен');
+      }
+      return String(payload.text || '').trim();
+    } catch (error) {
+      lastError = error;
+    }
   }
-  return String(payload.text || '').trim();
+  throw lastError || new Error('Файл недоступен');
 }
 
 async function collectTaskAttachmentTexts(task, appendBubble) {
   const files = Array.isArray(task && task.files) ? task.files.slice(0, MAX_AUTO_CONTEXT_FILES) : [];
   if (!files.length) return [];
   const prepared = files.map((file, index) => ({
+    id: `file_${index + 1}`,
     name: detectFileName(file, index),
     type: detectFileType(file),
+    urls: detectFileUrls(file),
     url: detectFileUrl(file),
     size: Number(file && file.size) || 0,
-  })).filter((file) => file.url);
+  })).filter((file) => file.url || (Array.isArray(file.urls) && file.urls.length));
 
   if (!prepared.length) return [];
-  appendBubble(`Подключаю вложения задачи: ${prepared.length} шт. Читаю текст и OCR для вложений.`, 'assistant');
-  let totalChars = 0;
-  for (let i = 0; i < prepared.length; i += 1) {
-    const file = prepared[i];
-    if (totalChars >= MAX_AUTO_CONTEXT_TEXT_CHARS) break;
-    try {
-      const raw = await fetchExternalFileContent(file);
-      const text = String(raw || '').trim();
-      if (!text) {
-        file.extractError = 'Пустой текст';
-        continue;
-      }
-      const next = Math.max(0, MAX_AUTO_CONTEXT_TEXT_CHARS - totalChars);
-      file.text = text.slice(0, next);
-      file.extracted = true;
-      totalChars += file.text.length;
-      appendBubble(`Содержимое "${file.name}":\n${file.text.slice(0, 800)}${file.text.length > 800 ? '\n…' : ''}`, 'assistant');
-    } catch (error) {
-      file.extractError = error && error.message ? error.message : 'Ошибка чтения';
-    }
-  }
+  appendBubble(`Найдено вложений: ${prepared.length}. Выберите нужные и нажмите «Прочитать выбранные».`, 'assistant');
   return prepared;
 }
 
@@ -677,18 +723,11 @@ function openAiResponseDialog(context = {}) {
   if (existing) return;
 
   const state = {
-    isEditorOpen: false,
-    assistantText: '',
-    templateType: 'docx',
-    requestId: '',
-    templateHtml: '',
-    controllers: new Set(),
-    autosaveTimer: null,
     destroyed: false,
-    historyPushed: false,
     isSending: false,
     chatHistory: [],
     attachedFiles: [],
+    selectedAttachmentIds: new Set(),
     models: FALLBACK_MODEL_OPTIONS.slice(),
     model: FALLBACK_MODEL_OPTIONS[0].value,
   };
@@ -704,7 +743,7 @@ function openAiResponseDialog(context = {}) {
   root.innerHTML = `
     <div class="appdosc-ai-dialog__panel">
       <div class="appdosc-ai-dialog__header">
-        <div><div class="appdosc-ai-dialog__title">Ответ с помощью ИИ</div><div class="appdosc-ai-dialog__subtitle">Mobile-first fullscreen /editor</div></div>
+        <div><div class="appdosc-ai-dialog__title">Ответ с помощью ИИ</div><div class="appdosc-ai-dialog__subtitle">Выберите файлы и получите решение</div></div>
         <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-close>Закрыть</button>
       </div>
       <div class="appdosc-ai-dialog__messages" data-messages></div>
@@ -713,59 +752,19 @@ function openAiResponseDialog(context = {}) {
         <select class="appdosc-ai-dialog__model" data-model aria-label="Модель ИИ"></select>
         <textarea class="appdosc-ai-dialog__input" data-input placeholder="Введите запрос для ИИ"></textarea>
         <div class="appdosc-ai-dialog__buttons">
-          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-open-editor disabled>Открыть /editor</button>
+          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-auto-decision>Сгенерировать решение</button>
           <button type="button" class="appdosc-ai-dialog__btn" data-send>Отправить</button>
         </div>
       </div>
     </div>`;
-
-  const editor = document.createElement('div');
-  editor.className = 'appdosc-ai-dialog__editor';
-  editor.innerHTML = `
-    <div class="appdosc-ai-dialog__editor-panel" role="dialog" aria-label="Редактор документа">
-      <div class="appdosc-ai-dialog__editor-header">
-        <div><div class="appdosc-ai-dialog__editor-title">/editor</div><div class="appdosc-ai-dialog__editor-subtitle" data-editor-subtitle>Загрузка шаблона...</div></div>
-        <div class="appdosc-ai-dialog__top-actions">
-          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-editor-close>Назад</button>
-          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-save-top>Сохранить</button>
-          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-docx-top>Скачать DOCX (редактируемый)</button>
-          <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-pdf-top>Скачать PDF (финальный)</button>
-          <button type="button" class="appdosc-ai-dialog__btn" data-send-chat-top>В чат</button>
-        </div>
-      </div>
-      <div class="appdosc-ai-dialog__toolbar">
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-bold>B</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-italic>I</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-ul>• Список</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-ol>1. Список</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-link>Ссылка</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-table>Таблица</button>
-      </div>
-      <div class="appdosc-ai-dialog__body">
-        <div class="appdosc-ai-dialog__editable" data-editable contenteditable="true" spellcheck="true"></div>
-        <div class="appdosc-ai-dialog__pdf-note" data-pdf-note hidden></div>
-      </div>
-      <div class="appdosc-ai-dialog__status" data-status>Автосохранение включено</div>
-      <div class="appdosc-ai-dialog__sticky">
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-save>Сохранить</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-docx>Скачать DOCX (редактируемый)</button>
-        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-export-pdf>Скачать PDF (финальный)</button>
-        <button type="button" class="appdosc-ai-dialog__btn" data-send-chat>Отправить в чат</button>
-      </div>
-    </div>`;
-  root.appendChild(editor);
   document.body.appendChild(root);
   window.__aiDialogInstance = root;
 
   const messages = root.querySelector('[data-messages]');
   const input = root.querySelector('[data-input]');
   const modelSelect = root.querySelector('[data-model]');
-  const openEditorBtn = root.querySelector('[data-open-editor]');
+  const autoDecisionBtn = root.querySelector('[data-auto-decision]');
   const attachmentsNode = root.querySelector('[data-attachments]');
-  const editable = root.querySelector('[data-editable]');
-  const editorSubtitle = root.querySelector('[data-editor-subtitle]');
-  const statusNode = root.querySelector('[data-status]');
-  const pdfNote = root.querySelector('[data-pdf-note]');
 
   const appendBubble = (text, role) => {
     const bubble = document.createElement('div');
@@ -775,7 +774,7 @@ function openAiResponseDialog(context = {}) {
     messages.scrollTop = messages.scrollHeight;
   };
 
-  appendBubble('Введите запрос. После ответа откройте /editor.', 'assistant');
+  appendBubble('Выберите нужные файлы, нажмите «Прочитать выбранные», затем отправьте запрос или «Сгенерировать решение».', 'assistant');
   const renderModelOptions = () => {
     modelSelect.innerHTML = '';
     (state.models || []).forEach((entry) => {
@@ -801,10 +800,73 @@ function openAiResponseDialog(context = {}) {
       return;
     }
     attachmentsNode.hidden = false;
+    const tools = document.createElement('div');
+    tools.className = 'appdosc-ai-dialog__attachment-tools';
+    const readSelectedBtn = document.createElement('button');
+    readSelectedBtn.type = 'button';
+    readSelectedBtn.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+    readSelectedBtn.textContent = 'Прочитать выбранные';
+    readSelectedBtn.disabled = !state.attachedFiles.some((file) => state.selectedAttachmentIds.has(file.id));
+    readSelectedBtn.addEventListener('click', async () => {
+      const selected = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+      if (!selected.length) return;
+      let totalChars = 0;
+      const extractedForContext = [];
+      for (let i = 0; i < selected.length; i += 1) {
+        const file = selected[i];
+        if (totalChars >= MAX_AUTO_CONTEXT_TEXT_CHARS) break;
+        try {
+          if (!file.extracted || !String(file.text || '').trim()) {
+            const raw = await fetchExternalFileContent(file);
+            const text = String(raw || '').trim();
+            if (!text) {
+              file.extractError = 'Пустой текст';
+              continue;
+            }
+            const next = Math.max(0, MAX_AUTO_CONTEXT_TEXT_CHARS - totalChars);
+            file.text = text.slice(0, next);
+            file.extracted = true;
+          }
+          const normalized = String(file.text || '').trim();
+          if (!normalized) continue;
+          file.extractError = '';
+          totalChars += normalized.length;
+          extractedForContext.push(file);
+        } catch (error) {
+          file.extractError = error && error.message ? error.message : 'Ошибка чтения';
+          file.extracted = false;
+        }
+      }
+
+      context.extractedTexts = extractedForContext.map((file) => ({
+        name: file.name,
+        type: file.type || 'text/plain',
+        text: file.text,
+      }));
+
+      const mergedChatText = extractedForContext.map((file) => (
+        `📄 ${file.name}\n${String(file.text || '').slice(0, MAX_CHAT_ATTACHMENT_PREVIEW)}${String(file.text || '').length > MAX_CHAT_ATTACHMENT_PREVIEW ? '\n…' : ''}`
+      )).join('\n\n');
+      if (mergedChatText) {
+        appendBubble(`Загружены выбранные файлы (${extractedForContext.length}):\n\n${mergedChatText}`, 'assistant');
+      } else {
+        appendBubble('Не удалось прочитать выбранные файлы. Проверьте OCR/доступ к файлам.', 'assistant');
+      }
+      renderAttachments();
+      if (extractedForContext.length) {
+        runAutoDecision();
+      }
+    });
+    tools.appendChild(readSelectedBtn);
+    attachmentsNode.appendChild(tools);
+
     state.attachedFiles.forEach((file) => {
       const chip = document.createElement('div');
       chip.className = 'appdosc-ai-dialog__attachment';
-      const status = file.extracted ? '✅ текст' : (file.extractError ? '⚠️ OCR' : '⭕ файл');
+      if (state.selectedAttachmentIds.has(file.id)) {
+        chip.classList.add('is-selected');
+      }
+      const status = file.extracted ? '✅ готов' : (file.extractError ? '⚠️ OCR' : '⭕ не прочитан');
       const topNode = document.createElement('div');
       topNode.className = 'appdosc-ai-dialog__attachment-top';
       const nameNode = document.createElement('span');
@@ -820,121 +882,98 @@ function openAiResponseDialog(context = {}) {
       previewNode.className = 'appdosc-ai-dialog__attachment-preview';
       const previewText = String(file.text || '').trim();
       if (previewText) {
-        previewNode.textContent = previewText.slice(0, 260) + (previewText.length > 260 ? '…' : '');
+        previewNode.textContent = previewText.slice(0, 120) + (previewText.length > 120 ? '…' : '');
       } else {
         previewNode.classList.add('is-empty');
         previewNode.textContent = file.extractError ? `Ошибка: ${file.extractError}` : 'Текст файла появится после OCR/чтения.';
       }
       chip.appendChild(previewNode);
+      const actionsNode = document.createElement('div');
+      actionsNode.className = 'appdosc-ai-dialog__attachment-actions';
+      const checkLabel = document.createElement('label');
+      checkLabel.className = 'appdosc-ai-dialog__attachment-check';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = state.selectedAttachmentIds.has(file.id);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) state.selectedAttachmentIds.add(file.id); else state.selectedAttachmentIds.delete(file.id);
+        renderAttachments();
+      });
+      checkLabel.appendChild(checkbox);
+      checkLabel.appendChild(document.createTextNode('В общий контекст'));
+      const oneFileReadBtn = document.createElement('button');
+      oneFileReadBtn.type = 'button';
+      oneFileReadBtn.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+      oneFileReadBtn.textContent = 'Прочитать';
+      oneFileReadBtn.addEventListener('click', async () => {
+        try {
+          const raw = await fetchExternalFileContent(file);
+          const text = String(raw || '').trim();
+          if (!text) throw new Error('Пустой текст');
+          file.text = text.slice(0, MAX_AUTO_CONTEXT_TEXT_CHARS);
+          file.extracted = true;
+          file.extractError = '';
+          state.selectedAttachmentIds.add(file.id);
+          context.extractedTexts = state.attachedFiles
+            .filter((item) => state.selectedAttachmentIds.has(item.id) && item.extracted && item.text)
+            .map((item) => ({ name: item.name, type: item.type || 'text/plain', text: item.text }));
+          appendBubble(`Содержимое "${file.name}":\n${file.text.slice(0, MAX_CHAT_ATTACHMENT_PREVIEW)}${file.text.length > MAX_CHAT_ATTACHMENT_PREVIEW ? '\n…' : ''}`, 'assistant');
+        } catch (error) {
+          file.extractError = error && error.message ? error.message : 'Ошибка чтения';
+          file.extracted = false;
+        }
+        renderAttachments();
+      });
+      actionsNode.appendChild(checkLabel);
+      actionsNode.appendChild(oneFileReadBtn);
+      chip.appendChild(actionsNode);
       attachmentsNode.appendChild(chip);
     });
   };
 
   const cleanup = () => {
     state.destroyed = true;
-    state.controllers.forEach((c) => c.abort());
-    state.controllers.clear();
-    clearTimeout(state.autosaveTimer);
-    mutationObserver.disconnect();
-    resizeObserver.disconnect();
-    window.removeEventListener('popstate', onPopState);
     window.removeEventListener('keydown', onEscClose);
     if (window.__aiDialogInstance === root) window.__aiDialogInstance = null;
     root.remove();
-    if (location.pathname === '/editor') history.replaceState({}, '', '/');
-  };
-
-  const saveNow = () => {
-    if (!state.isEditorOpen || state.destroyed) return;
-    saveDraft({ html: sanitizeTemplateHtml(editable.innerHTML), templateType: state.templateType, ts: Date.now() });
-    statusNode.textContent = `Автосохранение: ${new Date().toLocaleTimeString('ru-RU')}`;
-  };
-
-  const scheduleSave = () => {
-    clearTimeout(state.autosaveTimer);
-    state.autosaveTimer = setTimeout(saveNow, 1200);
-  };
-
-  const mutationObserver = new MutationObserver(scheduleSave);
-  mutationObserver.observe(editable, { subtree: true, childList: true, characterData: true });
-  editable.addEventListener('input', scheduleSave);
-
-  const resizeObserver = new ResizeObserver(() => {
-    document.documentElement.style.setProperty('--app-vh', `${window.innerHeight}px`);
-  });
-  resizeObserver.observe(document.body);
-
-  const openEditor = async () => {
-    state.isEditorOpen = true;
-    editor.classList.add('appdosc-ai-dialog__editor--open');
-    if (!state.historyPushed) {
-      const search = new URLSearchParams({
-        source: 'ai',
-        template: state.templateType || 'docx',
-        requestId: state.requestId || '',
-      });
-      saveEditorRoutePayload({
-        source: 'ai',
-        template: state.templateType || 'docx',
-        requestId: state.requestId || '',
-        assistantText: state.assistantText || '',
-      });
-      history.pushState({ miniEditor: true }, '', `/editor?${search.toString()}`);
-      state.historyPushed = true;
-    }
-    editorSubtitle.textContent = 'Загрузка шаблона...';
-    statusNode.textContent = 'Подготовка редактора...';
-
-    const draft = loadDraft();
-    const routePayload = loadEditorRoutePayload() || {};
-    if (!state.assistantText && routePayload.assistantText) state.assistantText = String(routePayload.assistantText);
-    if (!state.requestId && routePayload.requestId) state.requestId = String(routePayload.requestId);
-    const controller = new AbortController();
-    state.controllers.add(controller);
-
-    try {
-      const { html, url, messages: warnings } = await getTemplateHtml();
-      if (state.destroyed) return;
-      state.templateType = 'docx';
-      state.templateHtml = html;
-      editable.innerHTML = sanitizeTemplateHtml(draft && draft.html ? draft.html : fillDocxHtml(html, state.assistantText));
-      editorSubtitle.textContent = `DOCX: ${url} • requestId: ${state.requestId || '—'} • ${warnings.length ? `Предупреждений: ${warnings.length}` : 'без предупреждений'}`;
-      pdfNote.hidden = false;
-      pdfNote.textContent = PDF_NOTE_TEXT;
-    } catch (error) {
-      state.templateType = 'pdf';
-      state.templateHtml = '';
-      editable.innerHTML = sanitizeTemplateHtml(draft && draft.html ? draft.html : textToParagraphHtml(state.assistantText || 'Введите текст документа'));
-      pdfNote.hidden = false;
-      try {
-        const pdfMeta = await fetchTemplateBuffer(PDF_TEMPLATE_URLS);
-        pdfNote.textContent = `${PDF_NOTE_TEXT} DOCX-шаблон недоступен, PDF собран по fallback-шаблону (${pdfMeta.url}).`;
-      } catch (_) {
-        pdfNote.textContent = `${PDF_NOTE_TEXT} DOCX-шаблон недоступен, PDF формируется в текстовом fallback-режиме.`;
-      }
-      editorSubtitle.textContent = `Fallback режим PDF • requestId: ${state.requestId || '—'}`;
-      notify('warning', `Ошибка шаблона: ${error && error.message ? error.message : 'неизвестно'}`);
-    } finally {
-      state.controllers.delete(controller);
-      statusNode.textContent = 'Готово к редактированию';
-      editable.focus();
-    }
-  };
-
-  const closeEditor = () => {
-    state.isEditorOpen = false;
-    editor.classList.remove('appdosc-ai-dialog__editor--open');
-    if (location.pathname === '/editor') history.replaceState({}, '', '/');
-    state.historyPushed = false;
-  };
-
-  const onPopState = () => {
-    if (location.pathname !== '/editor' && state.isEditorOpen) closeEditor();
   };
 
   const onEscClose = (event) => {
     if (event.key !== 'Escape') return;
-    if (state.isEditorOpen) closeEditor(); else cleanup();
+    cleanup();
+  };
+
+  const runAutoDecision = async () => {
+    if (state.isSending) return;
+    const hasFiles = Array.isArray(context.extractedTexts) && context.extractedTexts.length > 0;
+    const prompt = hasFiles
+      ? 'Проанализируй выбранные файлы, учти историю переписки и настройки aiBehavior. Дай итоговое решение и краткий план действий.'
+      : 'Учти историю переписки и настройки aiBehavior. Сформируй итоговое решение по задаче.';
+    appendBubble('Авто-запрос: сформируй решение по задаче.', 'user');
+    state.chatHistory.push({ role: 'user', text: prompt, ts: Date.now() });
+    state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+    state.isSending = true;
+    input.disabled = true;
+    autoDecisionBtn.disabled = true;
+    root.querySelector('[data-send]').disabled = true;
+    try {
+      const assistantReply = await requestAssistantReply(prompt, { ...context, model: state.model }, state.chatHistory);
+      appendBubble(assistantReply, 'assistant');
+      state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
+      state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+      notify('success', 'Решение сгенерировано.');
+    } catch (error) {
+      const fallback = buildAssistantReply(prompt, context);
+      appendBubble(fallback, 'assistant');
+      state.chatHistory.push({ role: 'assistant', text: fallback, ts: Date.now() });
+      state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+      notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
+    } finally {
+      state.isSending = false;
+      input.disabled = false;
+      autoDecisionBtn.disabled = false;
+      root.querySelector('[data-send]').disabled = false;
+    }
   };
 
   root.querySelector('[data-close]').addEventListener('click', cleanup);
@@ -966,17 +1005,14 @@ function openAiResponseDialog(context = {}) {
       assistantReply = buildAssistantReply(prompt, context);
       notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
     }
-    state.assistantText = assistantReply;
-    state.requestId = String((context && (context.requestId || (context.task && context.task.id))) || Date.now());
-    appendBubble(state.assistantText, 'assistant');
-    state.chatHistory.push({ role: 'assistant', text: state.assistantText, ts: Date.now() });
+    appendBubble(assistantReply, 'assistant');
+    state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
     state.chatHistory = normalizeHistoryMessages(state.chatHistory);
     input.value = '';
     input.disabled = false;
     state.isSending = false;
     sendBtn.disabled = false;
-    openEditorBtn.disabled = false;
-    notify('success', 'Ответ ИИ готов. Откройте /editor.');
+    notify('success', 'Ответ ИИ готов.');
   });
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -985,135 +1021,8 @@ function openAiResponseDialog(context = {}) {
     }
   });
 
-  openEditorBtn.addEventListener('click', openEditor);
-  root.querySelector('[data-editor-close]').addEventListener('click', closeEditor);
-  root.querySelector('[data-bold]').addEventListener('click', () => wrapSelectionWithTag(editable, 'strong'));
-  root.querySelector('[data-italic]').addEventListener('click', () => wrapSelectionWithTag(editable, 'em'));
-  root.querySelector('[data-ul]').addEventListener('click', () => insertList(editable, false));
-  root.querySelector('[data-ol]').addEventListener('click', () => insertList(editable, true));
-  root.querySelector('[data-link]').addEventListener('click', () => {
-    const href = window.prompt('Введите ссылку (http/https)');
-    if (!href) return;
-    if (!insertLink(editable, href)) notify('warning', 'Некорректная ссылка или не выбран текст.');
-  });
-  root.querySelector('[data-table]').addEventListener('click', () => insertTable(editable));
-
-  const runSave = () => {
-    saveNow();
-    notify('success', 'Документ сохранён.');
-  };
-
-  const runExportDocx = async () => {
-    try {
-      if ((state.templateType || 'docx') !== 'docx' || !String(state.templateHtml || '').trim()) {
-        throw new Error('DOCX-шаблон недоступен. Редактируемый DOCX сейчас не может быть собран.');
-      }
-      const html = sanitizeTemplateHtml(editable.innerHTML);
-      if (!html.trim()) throw new Error('Редактор пуст');
-      const payload = new FormData();
-      payload.append('action', 'generate_from_html');
-      payload.append('format', 'docx');
-      payload.append('documentTitle', 'Ответ ИИ');
-      payload.append('html', html);
-
-      const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: payload, credentials: 'same-origin' });
-      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-      if (!response.ok) throw new Error(`Ошибка сервера (${response.status})`);
-      const blob = await response.blob();
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      const looksZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
-      if (!looksZip && contentType.includes('text/html')) throw new Error('Сервер вернул HTML вместо DOCX');
-      downloadBlob(blob, 'answer.docx');
-      notify('success', 'DOCX скачан.');
-    } catch (error) {
-      notify('error', error && error.message ? error.message : 'Ошибка экспорта DOCX');
-    }
-  };
-
-  const runExportPdf = async () => {
-    try {
-      const html = sanitizeTemplateHtml(editable.innerHTML);
-      if (!html.trim()) throw new Error('Нет содержимого для PDF');
-      const payload = new FormData();
-      payload.append('action', 'generate_from_html');
-      payload.append('format', 'pdf');
-      payload.append('documentTitle', 'Ответ ИИ (финальный PDF)');
-      payload.append('html', html);
-
-      let serverPdfError = null;
-      try {
-        const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: payload, credentials: 'same-origin' });
-        if (!response.ok) throw new Error(`Ошибка сервера (${response.status})`);
-        const blob = await response.blob();
-        const contentType = String(response.headers.get('content-type') || blob.type || '').toLowerCase();
-        if (!contentType.includes('pdf')) throw new Error('Сервер не вернул PDF');
-        downloadBlob(blob, 'answer.pdf');
-        notify('success', 'PDF скачан (финальная версия, не для глубокого редактирования).');
-        return;
-      } catch (error) {
-        serverPdfError = error;
-      }
-
-      const text = extractPlainTextFromHtml(html);
-      if (!text) throw (serverPdfError || new Error('Нет текста для PDF'));
-      downloadBlob(await createPdfBlobFromText(text), 'answer.pdf');
-      notify('warning', 'PDF скачан в fallback-режиме (не для глубокого редактирования).');
-    } catch (error) {
-      notify('error', error && error.message ? error.message : 'Ошибка PDF экспорта');
-    }
-  };
-
-  const runSendChat = () => {
-    const text = extractPlainTextFromHtml(sanitizeTemplateHtml(editable.innerHTML));
-    if (!text) {
-      notify('warning', 'Нет текста для отправки');
-      return;
-    }
-    if (typeof context.onApplyText === 'function') context.onApplyText(text);
-    try {
-      if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.sendData === 'function') {
-        window.Telegram.WebApp.sendData(JSON.stringify({
-          type: 'editor_send',
-          source: 'ai',
-          templateType: state.templateType,
-          requestId: state.requestId || null,
-          text,
-        }));
-      }
-    } catch (_) {}
-    notify('success', 'Текст отправлен в чат.');
-    closeEditor();
-  };
-
-  root.querySelector('[data-save]').addEventListener('click', runSave);
-  root.querySelector('[data-save-top]').addEventListener('click', runSave);
-  root.querySelector('[data-export-docx]').addEventListener('click', runExportDocx);
-  root.querySelector('[data-export-pdf]').addEventListener('click', runExportPdf);
-  root.querySelector('[data-export-docx-top]').addEventListener('click', runExportDocx);
-  root.querySelector('[data-export-pdf-top]').addEventListener('click', runExportPdf);
-  root.querySelector('[data-send-chat]').addEventListener('click', runSendChat);
-  root.querySelector('[data-send-chat-top]').addEventListener('click', runSendChat);
-
-  const maybeOpenEditorFromRoute = () => {
-    if (location.pathname !== '/editor') return;
-    const params = new URLSearchParams(location.search || '');
-    const source = params.get('source') || '';
-    const template = params.get('template') || 'docx';
-    const requestId = params.get('requestId') || '';
-    const routePayload = loadEditorRoutePayload() || {};
-    if (source === 'ai' || routePayload.assistantText) {
-      state.templateType = template === 'pdf' ? 'pdf' : 'docx';
-      state.requestId = requestId || state.requestId;
-      state.assistantText = routePayload.assistantText || state.assistantText;
-      openEditorBtn.disabled = !state.assistantText;
-      if (state.assistantText) appendBubble(state.assistantText, 'assistant');
-      openEditor();
-    }
-  };
-
-  window.addEventListener('popstate', onPopState);
+  autoDecisionBtn.addEventListener('click', runAutoDecision);
   window.addEventListener('keydown', onEscClose);
-  maybeOpenEditorFromRoute();
   fetchAvailableModels()
     .then((models) => {
       state.models = models;
@@ -1136,9 +1045,8 @@ function openAiResponseDialog(context = {}) {
     context.extractedTexts = files
       .filter((file) => file.extracted && file.text)
       .map((file) => ({ name: file.name, type: file.type || 'text/plain', text: file.text }));
-    const readyCount = context.extractedTexts.length;
     if (files.length) {
-      appendBubble(`Вложения готовы: ${readyCount}/${files.length}. Можете отправлять запрос — ИИ учтёт текст файлов.`, 'assistant');
+      appendBubble('Чтобы ИИ учёл файлы, отметьте их и нажмите «Прочитать выбранные».', 'assistant');
     }
     renderAttachments();
   }).catch((error) => {
