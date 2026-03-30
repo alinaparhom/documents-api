@@ -154,18 +154,7 @@ async function requestTelegramOcrByUrl(fileUrl) {
 
 async function requestTelegramBriefAi(sourceLabel, text) {
   const normalizedText = String(text || '').trim();
-  const fileOnlyPrompt = [
-    'Режим: изолированный анализ только текста файла.',
-    'Используй исключительно extractedTexts и никаких других данных.',
-    'Запрещено учитывать карточку задачи, Telegram-данные, роли, имена из интерфейса и внешние догадки.',
-    'Если факт не найден в тексте файла, явно пиши: "не указано в файле".',
-    'Пиши просто и понятно для новичка.',
-    'Нужен только структурированный результат по содержимому файла.',
-    'Поле analysis: 2-3 простых информативных предложения по сути документа.',
-    'Поле required_actions: 3-5 конкретных фактов из файла (суммы, адреса, сроки, работы).',
-    'Поле requirements: 3-5 понятных шагов, что делать дальше по документу.',
-    'Не пиши обрывки строк и части слов.'
-  ].join(' ');
+  const fileOnlyPrompt = 'Режим "Кратко ИИ". Поле analysis: 2-3 предложения о сути документа. В risks первой строкой верни "Отправитель: ...; Получатель: ...". Если данных нет, пиши "Отправитель: не определён; Получатель: не определён". В required_actions перечисли 3-5 ключевых фактов/деталей. В requirements перечисли ключевые требования.';
   const context = {
     extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: normalizedText.slice(0, 12000) }],
     aiBehavior: fileOnlyPrompt,
@@ -173,8 +162,8 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   };
   const formData = new FormData();
   formData.append('action', 'ai_response_analyze');
-  formData.append('documentTitle', 'Файл для изолированного анализа');
-  formData.append('prompt', `${fileOnlyPrompt} Верни: analysis, risks, required_actions, requirements.`);
+  formData.append('documentTitle', sourceLabel || 'Файл');
+  formData.append('prompt', 'Кратко проанализируй OCR-текст и выдели важные детали, отправителя и получателя.');
   formData.append('responseStyle', 'concise');
   formData.append('context', JSON.stringify(context));
   const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
@@ -185,141 +174,119 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   return payload;
 }
 
-function normalizeTelegramOcrText(text) {
+function collectTelegramBriefSentences(text, limit) {
+  const safeLimit = typeof limit === 'number' && limit > 0 ? limit : 8;
   return String(text || '')
-    .replace(/-\s*\n\s*/g, '')
-    .replace(/\s*\n+\s*/g, '\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\u00A0/g, ' ')
-    .trim();
+    .split(/[\n.;!?]+/g)
+    .map((part) => String(part || '').trim())
+    .filter((part) => part.length > 5)
+    .slice(0, safeLimit);
 }
 
-function cleanTelegramSentence(text) {
-  return String(text || '')
-    .replace(/\s+/g, ' ')
-    .replace(/[;,:-]+$/g, '')
-    .trim();
+function buildTelegramBriefSummaryText(text) {
+  const lines = collectTelegramBriefSentences(text, 8);
+  const reason = lines.slice(0, 2).join('. ');
+  const actions = lines.slice(2, 5);
+  const requirements = lines.slice(5, 8);
+  return [
+    '✨ Кратко по документу',
+    '',
+    '📄 О чем файл',
+    reason || 'Нужны дополнительные сведения по документу и стоимости изменений.',
+    '',
+    '🔎 Важные детали',
+    actions.length ? actions.map((item) => `• ${item}`).join('\n') : '• Важные детали не найдены.',
+    '',
+    '✅ Требования',
+    requirements.length ? requirements.map((item) => `• ${item}`).join('\n') : '• Явные требования не выделены.'
+  ].join('\n');
 }
 
-function getTelegramSentencePool(text) {
-  const normalized = normalizeTelegramOcrText(text);
-  if (!normalized) return [];
-  return normalized
-    .split(/(?<=[.!?])\s+|\n+/u)
-    .map(cleanTelegramSentence)
-    .filter((line) => line.length >= 16);
-}
+function buildTelegramAiBriefSummaryText(payload) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  let analysis = data.analysis ? String(data.analysis).trim() : '';
+  const decision = data.decisionBlock && typeof data.decisionBlock === 'object' ? data.decisionBlock : {};
+  const risks = Array.isArray(decision.risks) ? decision.risks : [];
+  const actions = Array.isArray(decision.required_actions) ? decision.required_actions : [];
+  const requirements = Array.isArray(decision.requirements) ? decision.requirements : [];
+  let participants = '';
 
-function isWeakTelegramAnalysis(text) {
-  const normalized = normalizeValue(text).toLowerCase();
-  if (!normalized) return true;
-  return normalized.includes('не указано в файле')
-    || normalized.includes('не удалось определить')
-    || normalized.includes('нет данных');
-}
-
-function buildTelegramAnalysisFallback(sourceText) {
-  const sentencePool = getTelegramSentencePool(sourceText);
-  if (!sentencePool.length) {
-    return 'Не удалось собрать понятное резюме из текста файла.';
-  }
-  const picked = sentencePool.slice(0, 3);
-  return picked.join('. ') + (/[.!?]$/.test(picked[picked.length - 1]) ? '' : '.');
-}
-
-function sanitizeTelegramAiList(items, limit) {
-  if (!Array.isArray(items)) return [];
-  return items
-    .map((item) => cleanTelegramSentence(item))
-    .filter((item) => item.length >= 12 && !/не указано в файле/i.test(item))
-    .slice(0, limit);
-}
-
-function pickTelegramFactsFromText(sourceText, limit) {
-  const sentencePool = getTelegramSentencePool(sourceText);
-  if (!sentencePool.length) return [];
-  const scored = sentencePool
-    .map((line) => {
-      let score = 0;
-      if (/\d/.test(line)) score += 2;
-      if (/руб|срок|этап|договор|контракт|работ|объект|адрес|дата|стоим|монтаж|демонтаж/i.test(line)) score += 3;
-      if (line.length > 80) score += 1;
-      return { line, score };
-    })
-    .sort((a, b) => b.score - a.score);
-  const unique = [];
-  scored.forEach((entry) => {
-    if (unique.length >= limit) return;
-    if (unique.some((line) => line === entry.line)) return;
-    unique.push(entry.line);
-  });
-  return unique.slice(0, limit);
-}
-
-function buildTelegramStepsFallback(sourceText, limit) {
-  const facts = pickTelegramFactsFromText(sourceText, limit + 1);
-  if (!facts.length) return [];
-  return facts.slice(0, limit).map((fact) => `Проверить и выполнить по документу: ${fact}`);
-}
-
-function extractPartyByLabel(text, labelVariants) {
-  const safeText = String(text || '');
-  if (!safeText) return '';
-  const escapedLabels = labelVariants
-    .map((label) => String(label || '').trim())
-    .filter(Boolean)
-    .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  if (!escapedLabels.length) return '';
-  const pattern = new RegExp(`(?:${escapedLabels.join('|')})\\s*[:\\-]\\s*([^\\n\\r;]+)`, 'i');
-  const match = safeText.match(pattern);
-  return match && match[1] ? String(match[1]).trim() : '';
-}
-
-function buildTelegramBriefSections(payload, sourceText) {
-  const analysis = payload && payload.analysis ? cleanTelegramSentence(payload.analysis) : '';
-  const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
-  const aiActions = sanitizeTelegramAiList(block.required_actions, 5);
-  const aiRequirements = sanitizeTelegramAiList(block.requirements, 4);
-  const actions = aiActions.length ? aiActions : pickTelegramFactsFromText(sourceText, 5);
-  const requirements = aiRequirements.length ? aiRequirements : buildTelegramStepsFallback(sourceText, 4);
-  const sender = extractPartyByLabel(sourceText, ['отправитель', 'sender', 'from']);
-  const recipient = extractPartyByLabel(sourceText, ['получатель', 'адресат', 'recipient', 'to']);
-  const participants = `Отправитель: ${sender || 'не указано в файле'}; Получатель: ${recipient || 'не указано в файле'}`;
-  return {
-    analysis: !isWeakTelegramAnalysis(analysis) ? analysis : buildTelegramAnalysisFallback(sourceText),
-    participants,
-    actions,
-    requirements,
+  const normalizeSentence = (text) => {
+    const value = String(text || '')
+      .replace(/-\s*\n\s*/g, '')
+      .replace(/\s+/g, ' ')
+      .replace(/[.:;,\s]+$/g, '')
+      .trim();
+    if (!value || value.length < 12 || /^[\d.\-–—\s]+$/.test(value) || /^(прошу вас|прошу|1|2|3)\b/i.test(value)) {
+      return '';
+    }
+    return value.charAt(0).toUpperCase() + value.slice(1);
   };
+
+  const isNoisyItem = (value, mode) => {
+    const text = String(value || '').toLowerCase();
+    if (!text) return true;
+    if (/-\s*$/.test(text) || text.includes('объек-')) return true;
+    if (text.includes('рубл') && !/\d/.test(text)) return true;
+    return mode === 'requirements' && /(в настоящее время|прошу вас|принять реш)/.test(text);
+  };
+
+  const sanitizeList = (items, maxItems, mode, excludeMap) => {
+    const seen = {};
+    return (Array.isArray(items) ? items : [])
+      .map(normalizeSentence)
+      .filter((item) => {
+        const key = item.toLowerCase();
+        if (!item || seen[key] || (excludeMap && excludeMap[key]) || isNoisyItem(item, mode)) {
+          return false;
+        }
+        seen[key] = true;
+        return true;
+      })
+      .slice(0, maxItems);
+  };
+
+  risks.some((item) => {
+    const line = String(item || '').trim();
+    if (!line) return false;
+    if (/^отправитель\s*:/i.test(line) || /^кто\s+прислал\s*:/i.test(line)) {
+      participants = line;
+      return true;
+    }
+    return false;
+  });
+
+  analysis = normalizeSentence(analysis) || 'Не удалось определить суть документа.';
+  const cleanedActions = sanitizeList(actions, 4, 'actions');
+  const actionsMap = {};
+  cleanedActions.forEach((item) => {
+    actionsMap[String(item).toLowerCase()] = true;
+  });
+  const cleanedRequirements = sanitizeList(requirements, 4, 'requirements', actionsMap);
+
+  return [
+    '✨ Кратко по документу',
+    '',
+    '📄 О чем файл',
+    analysis,
+    '',
+    '👤 Кто прислал / кому',
+    participants || 'Не удалось точно определить отправителя и получателя.',
+    '',
+    '🔎 Важные детали',
+    cleanedActions.length ? cleanedActions.map((item) => `• ${item}`).join('\n') : '• Важные детали не найдены.',
+    '',
+    '✅ Требования',
+    cleanedRequirements.length ? cleanedRequirements.map((item) => `• ${item}`).join('\n') : '• Явные требования не выделены.'
+  ].join('\n');
 }
 
 function renderTelegramBriefPreview(container, payload, sourceText) {
-  const sections = buildTelegramBriefSections(payload, sourceText);
-  const detailsHtml = sections.actions.length
-    ? `<ul>${sections.actions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-    : '<p>Ключевые детали не указаны в файле.</p>';
-  const stepsHtml = sections.requirements.length
-    ? `<ul>${sections.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-    : '<p>Следующие шаги не указаны в файле.</p>';
-
-  container.innerHTML = `
-    <section class="appdosc-brief-ai__section">
-      <h4>О чем файл</h4>
-      <p>${escapeHtml(sections.analysis)}</p>
-    </section>
-    <section class="appdosc-brief-ai__section">
-      <h4>Отправитель и получатель</h4>
-      <p>${escapeHtml(sections.participants)}</p>
-    </section>
-    <section class="appdosc-brief-ai__section">
-      <h4>Важные детали из файла</h4>
-      ${detailsHtml}
-    </section>
-    <section class="appdosc-brief-ai__section">
-      <h4>Что сделать дальше</h4>
-      ${stepsHtml}
-    </section>
-  `;
+  container.innerHTML = '';
+  const output = document.createElement('pre');
+  output.className = 'appdosc-brief-ai__placeholder';
+  output.textContent = payload ? buildTelegramAiBriefSummaryText(payload) : buildTelegramBriefSummaryText(sourceText);
+  container.appendChild(output);
 }
 
 function openTelegramBriefModal(task, statusHandler) {
@@ -360,15 +327,16 @@ function openTelegramBriefModal(task, statusHandler) {
     button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>Вложение</small></span>`;
     button.addEventListener('click', async () => {
       activate(button);
+      let sourceText = '';
       try {
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
-        const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
+        sourceText = source.text || await requestTelegramOcrByUrl(source.url);
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
         renderTelegramBriefPreview(preview, aiPayload, sourceText);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
-        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${escapeHtml(message)}</p>`;
+        renderTelegramBriefPreview(preview, null, sourceText);
         if (typeof statusHandler === 'function') statusHandler('warning', `ИИ временно недоступен. Детали: ${message}`);
       }
     });
