@@ -18,8 +18,16 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script src="/cache-version.php"></script>
     <script>
+      (function setRuntimeAssetVersion() {
+        const serverVersion = String(window.__ASSET_VERSION__ || '').trim();
+        const runtimeNonce = Date.now().toString(36);
+        window.__RUNTIME_ASSET_VERSION__ = serverVersion
+          ? `${serverVersion}-${runtimeNonce}`
+          : runtimeNonce;
+      })();
+
       (function attachVersionedStylesheet() {
-        const version = (window.__ASSET_VERSION__ || Date.now()).toString();
+        const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()).toString();
         const stylesheet = document.createElement('link');
         stylesheet.rel = 'stylesheet';
         stylesheet.href = '/css/telegram-appdosc.css?v=' + encodeURIComponent(version);
@@ -465,7 +473,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
       (function attachVersionedModule() {
-        const version = (window.__ASSET_VERSION__ || Date.now()).toString();
+        const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()).toString();
         const moduleScript = document.createElement('script');
         moduleScript.type = 'module';
         moduleScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);

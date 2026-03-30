@@ -1973,13 +1973,13 @@ $statusCode = (int)$requestResult['status'];
 
 if ($responseBody === false) {
     logApiDocs('error', 'AI request failed', ['curlError' => $curlError]);
-    jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError]);
+    jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
 }
 
 $responseJson = json_decode($responseBody, true);
 if (!is_array($responseJson)) {
     logApiDocs('error', 'AI API returned non-JSON', ['response' => mb_substr($responseBody, 0, 500)]);
-    jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API']);
+    jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API', 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
 }
 
 if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
@@ -1999,7 +1999,7 @@ if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
 
         if ($retryResponseBody === false) {
             logApiDocs('error', 'Google AI retry request failed', ['curlError' => $retryCurlError]);
-            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $retryCurlError]);
+            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $retryCurlError, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
         }
 
         $retryJson = json_decode($retryResponseBody, true);
@@ -2020,7 +2020,7 @@ if ($statusCode >= 400) {
     $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
     if ($statusCode === 403 && $unsupportedRegion) {
         logApiDocs('error', 'AI provider blocked by region, no local fallback in autonomous mode', ['status' => $statusCode]);
-        jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
     }
     if ($statusCode === 429) {
         $waitSeconds = 20;
@@ -2111,7 +2111,7 @@ if (looksLikeJsonText($response) || $response === '') {
         'documentTitle' => $documentTitle,
         'contentPreview' => mb_substr($content, 0, 220),
     ]);
-    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.']);
+    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
 }
 $decisionBlock['response'] = $response;
 if (!isset($decisionBlock['requirements']) || !is_array($decisionBlock['requirements'])) {
@@ -2127,6 +2127,8 @@ if (mb_strlen($response) > 8000) {
 
 jsonResponse(200, [
     'ok' => true,
+    'model' => $effectiveModel,
+    'retryAfterSeconds' => $retryAfterSeconds,
     'analysis' => $analysis,
     'response' => $response,
     'neutral' => $neutral,

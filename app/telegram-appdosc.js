@@ -42,7 +42,10 @@ function ensureAiDialogScriptLoaded() {
       }
 
       const script = document.createElement('script');
-      script.src = '/js/documents/app/telegram-ai-response-dialog.js?v=' + encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
+      const runtimeVersion = String(window.__RUNTIME_ASSET_VERSION__ || '').trim();
+      const assetVersion = String(window.__ASSET_VERSION__ || '').trim();
+      const cacheVersion = runtimeVersion || (assetVersion ? `${assetVersion}-${Date.now().toString(36)}` : Date.now().toString(36));
+      script.src = '/js/documents/app/telegram-ai-response-dialog.js?v=' + encodeURIComponent(cacheVersion);
       script.defer = true;
       script.dataset.aiDialogScript = 'true';
       script.onload = () => {
@@ -170,14 +173,16 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   };
   const formData = new FormData();
   formData.append('action', 'ai_response_analyze');
-  formData.append('documentTitle', 'Файл для изолированного анализа');
-  formData.append('prompt', `${fileOnlyPrompt} Верни: analysis, risks, required_actions, requirements.`);
+  formData.append('documentTitle', sourceLabel || 'Файл');
+  formData.append('prompt', 'Кратко проанализируй OCR-текст и выдели важные детали, отправителя и получателя.');
   formData.append('responseStyle', 'concise');
   formData.append('context', JSON.stringify(context));
   const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error((payload && payload.error) || 'ИИ временно недоступен');
+    const retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
+    const model = String((payload && payload.model) || 'неизвестно');
+    throw new Error(`ИИ временно недоступен. Подождите ${retryAfterSeconds} сек. Модель: ${model}.`);
   }
   return payload;
 }
@@ -288,7 +293,6 @@ function buildTelegramBriefSections(payload, sourceText) {
     actions,
     requirements,
   };
-}
 
 function renderTelegramBriefPreview(container, payload, sourceText) {
   const sections = buildTelegramBriefSections(payload, sourceText);
@@ -357,16 +361,17 @@ function openTelegramBriefModal(task, statusHandler) {
     button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>Вложение</small></span>`;
     button.addEventListener('click', async () => {
       activate(button);
+      let sourceText = '';
       try {
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
-        const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
+        sourceText = source.text || await requestTelegramOcrByUrl(source.url);
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
         renderTelegramBriefPreview(preview, aiPayload, sourceText);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
-        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${escapeHtml(message)}</p>`;
-        if (typeof statusHandler === 'function') statusHandler('warning', `ИИ временно недоступен. Детали: ${message}`);
+        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.\n${escapeHtml(message)}</p>`;
+        if (typeof statusHandler === 'function') statusHandler('warning', message);
       }
     });
     list.appendChild(button);

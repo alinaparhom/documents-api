@@ -2226,7 +2226,9 @@
     }).then(function(response) {
       return response.json().catch(function() { return null; }).then(function(payload) {
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(payload && payload.error ? payload.error : ('Ошибка анализа ИИ (' + response.status + ')'));
+          var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
+          var model = payload && payload.model ? String(payload.model) : 'неизвестно';
+          throw new Error('ИИ временно недоступен. Подождите ' + retryAfterSeconds + ' сек. Модель: ' + model + '.');
         }
         return payload;
       });
@@ -2245,29 +2247,13 @@
     var header = createElement('div', 'documents-brief-header');
     var titleWrap = createElement('div', '');
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите источник: текст задачи или файл'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для OCR и краткого анализа ИИ'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
     var preview = createElement('pre', 'documents-brief-preview', 'Нажмите на источник слева, чтобы получить краткое резюме.');
 
-    var baseContextText = [
-      documentData.description,
-      documentData.summary,
-      documentData.instruction,
-      documentData.resolution
-    ].map(function(item) {
-      return String(item || '').trim();
-    }).filter(Boolean).join('\n');
-
     var sources = [];
-    if (baseContextText) {
-      sources.push({
-        id: 'task_context',
-        label: 'Текст задачи',
-        text: baseContextText
-      });
-    }
 
     linkedFiles.forEach(function(file, index) {
       sources.push({
@@ -2320,9 +2306,7 @@
     function addSourceButton(source) {
       var button = createElement('button', 'documents-brief-item');
       var nameNode = createElement('span', 'documents-brief-item-name', source.label);
-      var metaLabel = source.id === 'task_context'
-        ? 'Текст карточки задачи'
-        : (source.fileObject ? 'Новый файл (локально)' : 'Файл из документа');
+      var metaLabel = source.fileObject ? 'Новый файл (локально)' : 'Файл из документа';
       var metaNode = createElement('span', 'documents-brief-item-meta', metaLabel);
       button.appendChild(nameNode);
       button.appendChild(metaNode);
@@ -2355,12 +2339,9 @@
                 if (timerId) {
                   window.clearInterval(timerId);
                 }
-                var elapsed = Math.floor((Date.now() - aiStartedAt) / 1000);
-                var retryAfter = Math.max(10, 45 - elapsed);
-                var waitHint = 'ИИ временно недоступен. Попробуйте снова через ~' + retryAfter + ' сек.';
                 preview.classList.remove('is-loading');
-                preview.textContent = waitHint + '\n\n' + buildBriefSummaryText(sourceText) + '\n\n[Fallback] ' + (error && error.message ? error.message : 'неизвестная ошибка');
-                showStatusMessage('warning', 'ИИ недоступен для "' + source.label + '". ' + waitHint + ' Пока показан краткий fallback.');
+                preview.textContent = 'Ошибка анализа.\n' + (error && error.message ? error.message : 'неизвестная ошибка');
+                showStatusMessage('warning', error && error.message ? error.message : 'ИИ временно недоступен. Попробуйте позже.');
               });
           })
           .catch(function(error) {
