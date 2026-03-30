@@ -1904,7 +1904,7 @@ if (!$availableModels) {
 }
 $availableModels = array_values(array_unique($availableModels));
 
-$systemMessage = "ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ С ОПЫТОМ 15 ЛЕТ. Верни только JSON объект с полями: analysis, decision, decision_reason, risks, required_actions, response. "
+$systemMessage = "ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ С ОПЫТОМ 15 ЛЕТ. Верни JSON объект, где главное поле — response (готовый текст письма). Остальные поля допускаются как вспомогательные. "
   . "Отвечай только в деловом стиле: сухо, четко, без воды, без эмодзи, без извинений и без неуверенных формулировок. "
   . "Не начинай с фраз вида «Рассмотрев ваше письмо...». Первое предложение — сразу по делу. "
   . "Всегда анализируй контекст из user payload: files[*].preview и extractedTexts[*].text. Если контент пустой — кратко укажи это в analysis. "
@@ -1913,9 +1913,8 @@ $systemMessage = "ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТ
   . "Каждому действию укажи реалистичную дату в формате ДД.ММ.ГГГГ. Если срок просрочен, укажи новый срок без оправданий. "
   . $styleInstruction . ' '
   . $styleExampleInstruction . ' '
-  . $behaviorInstruction . ' Решение decision должно быть строго одним из: approve, reject, need_clarification. '
-  . 'Если style=positive, по умолчанию выбирай approve; если style=negative, по умолчанию выбирай reject; если style=neutral, выбирай need_clarification при нехватке данных, иначе approve/reject по сути. '
-  . 'Поля risks и required_actions верни массивами строк. Поле response — только готовый текст письма без служебных заголовков.';
+  . $behaviorInstruction . ' Сфокусируй максимум ресурсов ответа на поле response. '
+  . 'Поле response — только готовый текст письма без служебных заголовков, без "Решение ИИ", "Причина", "Действия".';
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -1930,6 +1929,7 @@ $userPayload = [
 $body = [
     'model' => $effectiveModel,
     'temperature' => 0.7,
+    'max_tokens' => 1600,
     'messages' => [
         ['role' => 'system', 'content' => $systemMessage],
         ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
