@@ -1982,6 +1982,19 @@ if (!$availableModels) {
     $availableModels = [$model];
 }
 $availableModels = array_values(array_unique($availableModels));
+if (!in_array($effectiveModel, $availableModels, true)) {
+    logApiDocs('warn', 'Requested model is not in local whitelist', [
+        'requestedModel' => $effectiveModel,
+        'availableModels' => $availableModels,
+    ]);
+    jsonResponse(422, [
+        'ok' => false,
+        'error' => 'Выбранная модель не разрешена в настройках сервера. Выберите модель из доступного списка.',
+        'code' => 'MODEL_NOT_ALLOWED',
+        'requestedModel' => $effectiveModel,
+        'availableModels' => $availableModels,
+    ]);
+}
 
 $systemMessage = "ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ С ОПЫТОМ 15 ЛЕТ. Верни JSON объект, где главное поле — response (готовый текст письма). Остальные поля допускаются как вспомогательные. "
   . "Отвечай только в деловом стиле: сухо, четко, без воды, без эмодзи, без извинений и без неуверенных формулировок. "
