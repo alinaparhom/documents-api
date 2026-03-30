@@ -688,8 +688,16 @@ async function requestAssistantReply(userMessage, context, history) {
 
 function openAiResponseDialog(context = {}) {
   ensureAiDialogStyles();
-  const existing = window.__aiDialogInstance || document.querySelector(DIALOG_ROOT_SELECTOR);
-  if (existing) return;
+  const existingRef = window.__aiDialogInstance;
+  if (existingRef && existingRef.isConnected) return;
+  if (existingRef && !existingRef.isConnected) {
+    window.__aiDialogInstance = null;
+  }
+  const existing = document.querySelector(DIALOG_ROOT_SELECTOR);
+  if (existing) {
+    window.__aiDialogInstance = existing;
+    return;
+  }
 
   const state = {
     destroyed: false,
@@ -940,7 +948,9 @@ function openAiResponseDialog(context = {}) {
     state.destroyed = true;
     window.removeEventListener('keydown', onEscClose);
     if (window.__aiDialogInstance === root) window.__aiDialogInstance = null;
-    root.remove();
+    if (root && root.isConnected) {
+      root.remove();
+    }
   };
 
   const onEscClose = (event) => {
@@ -1069,4 +1079,5 @@ function openAiResponseDialog(context = {}) {
 
 if (typeof window !== 'undefined') {
   window.openAiResponseDialog = openAiResponseDialog;
+  window.openDocumentsAiResponseModal = openAiResponseDialog;
 }
