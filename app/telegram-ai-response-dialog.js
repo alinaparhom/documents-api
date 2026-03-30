@@ -6,6 +6,7 @@ const PDF_TEMPLATE_URLS = ['/app/templates/template.pdf', '/templates/template.p
 const EDITOR_DRAFT_KEY = 'miniapp_editor_draft_v2';
 const EDITOR_ROUTE_PAYLOAD_KEY = 'miniapp_editor_route_payload_v1';
 const REQUEST_TIMEOUT_MS = 12000;
+const CHAT_HISTORY_LIMIT = 16;
 
 const SCRIPT_CACHE = new Map();
 
@@ -419,6 +420,76 @@ function buildAssistantReply(userMessage, context) {
   return `Черновик ответа ИИ\n\nЗадача №${taskId}\n${text}`;
 }
 
+function normalizeHistoryMessages(history) {
+  return (Array.isArray(history) ? history : [])
+    .map((item) => ({
+      role: item && item.role === 'assistant' ? 'assistant' : 'user',
+      text: String(item && item.text ? item.text : '').trim(),
+      ts: Number(item && item.ts ? item.ts : Date.now()),
+    }))
+    .filter((item) => item.text)
+    .slice(-CHAT_HISTORY_LIMIT);
+}
+
+function buildChatHistoryContext(history) {
+  return normalizeHistoryMessages(history).map((item) => ({
+    role: item.role,
+    text: item.text,
+    ts: item.ts,
+  }));
+}
+
+function parseAiPayload(payload) {
+  if (!payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || 'ИИ временно недоступен');
+  }
+  if (typeof payload.response === 'string' && payload.response.trim()) {
+    return payload.response.trim();
+  }
+  const raw = payload.raw && payload.raw.content ? payload.raw.content : '';
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+        return parsed.response.trim();
+      }
+    } catch (_) {}
+    return raw.trim();
+  }
+  return '';
+}
+
+async function requestAssistantReply(userMessage, context, history) {
+  const prompt = String(userMessage || '').trim();
+  if (!prompt) return '';
+  const task = context && context.task ? context.task : {};
+  const form = new FormData();
+  form.append('action', 'ai_response_analyze');
+  form.append('documentTitle', String(task.title || task.name || 'Задача'));
+  form.append('prompt', prompt);
+  form.append('responseStyle', 'neutral');
+  form.append('aiBehavior', 'Учитывай историю диалога chatHistory. Если пользователь просит переделать/исправить ответ — обнови предыдущий ответ с учетом замечаний.');
+  form.append('context', JSON.stringify({
+    task: {
+      id: task.id || null,
+      title: task.title || task.name || '',
+      description: task.description || task.text || '',
+    },
+    chatHistory: buildChatHistoryContext(history),
+    source: 'telegram_mini_app_dialog',
+  }));
+  const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 8000);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error((payload && payload.error) || `Ошибка сервера (${response.status})`);
+  }
+  const assistantText = parseAiPayload(payload);
+  if (!assistantText) {
+    throw new Error('ИИ вернул пустой ответ');
+  }
+  return assistantText;
+}
+
 function openAiResponseDialog(context = {}) {
   ensureAiDialogStyles();
   const existing = window.__aiDialogInstance || document.querySelector(DIALOG_ROOT_SELECTOR);
@@ -434,6 +505,8 @@ function openAiResponseDialog(context = {}) {
     autosaveTimer: null,
     destroyed: false,
     historyPushed: false,
+    isSending: false,
+    chatHistory: [],
   };
 
   const notify = (type, message) => {
@@ -622,14 +695,34 @@ function openAiResponseDialog(context = {}) {
   };
 
   root.querySelector('[data-close]').addEventListener('click', cleanup);
-  root.querySelector('[data-send]').addEventListener('click', () => {
+  const sendBtn = root.querySelector('[data-send]');
+  root.querySelector('[data-send]').addEventListener('click', async () => {
+    if (state.isSending) return;
     const prompt = String(input.value || '').trim();
     if (!prompt) return;
     appendBubble(prompt, 'user');
-    state.assistantText = buildAssistantReply(prompt, context);
+    state.chatHistory.push({ role: 'user', text: prompt, ts: Date.now() });
+    state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+    state.isSending = true;
+    sendBtn.disabled = true;
+    input.disabled = true;
+    notify('info', 'Генерируем ответ ИИ...');
+    let assistantReply = '';
+    try {
+      assistantReply = await requestAssistantReply(prompt, context, state.chatHistory);
+    } catch (error) {
+      assistantReply = buildAssistantReply(prompt, context);
+      notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
+    }
+    state.assistantText = assistantReply;
     state.requestId = String((context && (context.requestId || (context.task && context.task.id))) || Date.now());
     appendBubble(state.assistantText, 'assistant');
+    state.chatHistory.push({ role: 'assistant', text: state.assistantText, ts: Date.now() });
+    state.chatHistory = normalizeHistoryMessages(state.chatHistory);
     input.value = '';
+    input.disabled = false;
+    state.isSending = false;
+    sendBtn.disabled = false;
     openEditorBtn.disabled = false;
     notify('success', 'Ответ ИИ готов. Откройте /editor.');
   });
