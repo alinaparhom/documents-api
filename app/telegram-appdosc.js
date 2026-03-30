@@ -162,44 +162,15 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   return payload;
 }
 
-function extractParticipantsFromFileText(fileTextRaw) {
-  const fileText = String(fileTextRaw || '').replace(/\r/g, '\n');
-  if (!fileText) {
-    return 'Отправитель: не указано; Получатель: не указано';
-  }
-
-  const findLineValue = (patterns) => {
-    for (let i = 0; i < patterns.length; i += 1) {
-      const match = patterns[i].exec(fileText);
-      if (match && match[1]) {
-        const value = String(match[1]).replace(/\s+/g, ' ').trim();
-        if (value) {
-          return value;
-        }
-      }
-    }
-    return '';
-  };
-
-  const sender = findLineValue([
-    /(?:^|\n)\s*(?:отправитель|от кого|from)\s*[:\-]\s*([^\n]+)/i,
-    /(?:^|\n)\s*(?:подписант|инициатор)\s*[:\-]\s*([^\n]+)/i,
-  ]);
-  const recipient = findLineValue([
-    /(?:^|\n)\s*(?:получатель|кому|to)\s*[:\-]\s*([^\n]+)/i,
-    /(?:^|\n)\s*(?:адресат)\s*[:\-]\s*([^\n]+)/i,
-  ]);
-
-  return `Отправитель: ${sender || 'не указано'}; Получатель: ${recipient || 'не указано'}`;
-}
-
-function buildTelegramBriefText(payload, fileTextRaw) {
+function buildTelegramBriefText(payload) {
   const analysis = payload && payload.analysis ? String(payload.analysis).trim() : '';
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
   const actions = Array.isArray(block.required_actions) ? block.required_actions.slice(0, 4) : [];
   const requirements = Array.isArray(block.requirements) ? block.requirements.slice(0, 3) : [];
   const decisionReason = block && block.decision_reason ? String(block.decision_reason).trim() : '';
-  const participantsLine = extractParticipantsFromFileText(fileTextRaw);
+  const participants = Array.isArray(block.risks) ? block.risks.find((line) => /^отправитель\s*:/i.test(String(line || '').trim())) : '';
+  const participantsLine = participants
+    || 'Отправитель: не определён; Получатель: не определён';
   return [
     '✨ Кратко по документу',
     '',
@@ -261,7 +232,7 @@ function openTelegramBriefModal(task, statusHandler) {
         const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
         preview.textContent = '⏳ ИИ анализирует документ...';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
-        preview.textContent = buildTelegramBriefText(aiPayload, sourceText);
+        preview.textContent = buildTelegramBriefText(aiPayload);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
         preview.textContent = `ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${message}`;
@@ -7385,10 +7356,11 @@ function updateStatusButtonsSelection(container, currentStatus) {
   if (!container) {
     return;
   }
-  const normalizedCurrent = normalizeName(currentStatus);
+  const currentKey = getStatusSummaryKey(currentStatus);
   container.querySelectorAll('[data-status-value]').forEach((button) => {
     const value = button.dataset.statusValue || '';
-    const isActive = normalizedCurrent !== '' && normalizeName(value) === normalizedCurrent;
+    const buttonKey = getStatusSummaryKey(value);
+    const isActive = currentKey !== '' && buttonKey !== '' && buttonKey === currentKey;
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
 }
@@ -7402,9 +7374,14 @@ async function handleStatusButtonClick(container, button, task, status) {
     return;
   }
 
-  const normalizedTarget = normalizeName(targetStatus);
+  if (button.getAttribute('aria-pressed') === 'true') {
+    return;
+  }
+
   const currentStatus = getTaskStatusValue(task);
-  if (normalizedTarget !== '' && normalizedTarget === normalizeName(currentStatus)) {
+  const currentStatusKey = getStatusSummaryKey(currentStatus);
+  const targetStatusKey = getStatusSummaryKey(targetStatus);
+  if (targetStatusKey && currentStatusKey && targetStatusKey === currentStatusKey) {
     return;
   }
 
@@ -7442,7 +7419,10 @@ async function handleStatusButtonClick(container, button, task, status) {
     });
     updateStatusButtonsSelection(container, targetStatus);
     setStatus('success', 'Статус обновлён.');
-    await loadTasks(true);
+    const refreshPromise = loadTasks(true);
+    if (refreshPromise && typeof refreshPromise.catch === 'function') {
+      refreshPromise.catch(() => {});
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logClientEvent('task_status_error', {
