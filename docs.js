@@ -1962,6 +1962,14 @@
   }
 
   var aiResponseModalScriptPromise = null;
+  var aiResponseModalScriptBase = (function() {
+    try {
+      if (document.currentScript && document.currentScript.src) {
+        return String(document.currentScript.src).split('?')[0].replace(/[^/]+$/, '');
+      }
+    } catch (error) {}
+    return '';
+  })();
 
   function ensureAiResponseModalScript() {
     if (window.openDocumentsAiResponseModal) {
@@ -1972,21 +1980,22 @@
     }
     aiResponseModalScriptPromise = new Promise(function(resolve, reject) {
       var version = (window.__ASSET_VERSION__ || Date.now()).toString();
-      var scriptDirectory = '';
+      var scriptDirectory = aiResponseModalScriptBase || '';
       var scripts = document.getElementsByTagName('script');
       for (var s = scripts.length - 1; s >= 0; s -= 1) {
         var source = scripts[s] && scripts[s].src ? String(scripts[s].src) : '';
-        var docsIndex = source.indexOf('/docs.js');
-        if (docsIndex === -1) {
-          docsIndex = source.indexOf('/js/documents/docs.js');
+        if (!source) {
+          continue;
         }
-        if (docsIndex !== -1) {
-          scriptDirectory = source.slice(0, source.lastIndexOf('/') + 1);
+        var normalizedSource = source.split('?')[0];
+        if (/\/docs(\.min)?\.js$/i.test(normalizedSource) || /\/js\/documents\/docs(\.min)?\.js$/i.test(normalizedSource)) {
+          scriptDirectory = normalizedSource.slice(0, normalizedSource.lastIndexOf('/') + 1);
           break;
         }
       }
 
       var candidates = [
+        (window.DOCUMENTS_ASSET_BASE_URL ? String(window.DOCUMENTS_ASSET_BASE_URL).replace(/\/+$/, '') + '/docs-ai-response-modal.js' : ''),
         '/js/documents/docs-ai-response-modal.js',
         '/docs-ai-response-modal.js',
         'docs-ai-response-modal.js',
@@ -1995,6 +2004,9 @@
       if (scriptDirectory) {
         candidates.unshift(scriptDirectory + 'docs-ai-response-modal.js');
       }
+      candidates = candidates.filter(function(src) {
+        return Boolean(src);
+      });
       var index = 0;
 
       function loadNext() {
