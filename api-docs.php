@@ -180,6 +180,34 @@ function safeJsonDecode(?string $value): array
     return is_array($decoded) ? $decoded : [];
 }
 
+function normalizeRetryAfterSeconds(mixed $rawValue, int $default = 8, int $min = 3): int
+{
+    $resolvedDefault = $default >= $min ? $default : $min;
+
+    if (is_string($rawValue)) {
+        $rawValue = trim($rawValue);
+    }
+
+    if ($rawValue === '' || $rawValue === null || !is_numeric($rawValue)) {
+        return $resolvedDefault;
+    }
+
+    $seconds = (int)ceil((float)$rawValue);
+    if ($seconds < $min) {
+        return $min;
+    }
+    return $seconds;
+}
+
+function withRetryPayload(int $retryAfterSeconds): array
+{
+    return [
+        'retryAfterSeconds' => $retryAfterSeconds,
+        // Для обратной совместимости со старым фронтом.
+        'retryAfter' => $retryAfterSeconds,
+    ];
+}
+
 function buildFilesSummary(array $files): array
 {
     $summary = [];
@@ -1839,6 +1867,7 @@ if ($action === 'ocr_extract') {
 $apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
 $model = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
 $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+$retryAfterSeconds = normalizeRetryAfterSeconds($env['AI_RETRY_AFTER_SECONDS'] ?? null);
 $isGroqKey = str_starts_with($apiKey, 'gsk_');
 if ($baseUrl === 'https://api.openai.com/v1' && $isGroqKey) {
     $baseUrl = 'https://api.groq.com/openai/v1';
@@ -2023,13 +2052,13 @@ $statusCode = (int)$requestResult['status'];
 
 if ($responseBody === false) {
     logApiDocs('error', 'AI request failed', ['curlError' => $curlError]);
-    jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
+    jsonResponse(502, array_merge(['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError, 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
 }
 
 $responseJson = json_decode($responseBody, true);
 if (!is_array($responseJson)) {
     logApiDocs('error', 'AI API returned non-JSON', ['response' => mb_substr($responseBody, 0, 500)]);
-    jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API', 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
+    jsonResponse(502, array_merge(['ok' => false, 'error' => 'Некорректный ответ AI API', 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
 }
 
 if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
@@ -2049,7 +2078,7 @@ if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
 
         if ($retryResponseBody === false) {
             logApiDocs('error', 'Google AI retry request failed', ['curlError' => $retryCurlError]);
-            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $retryCurlError, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
+            jsonResponse(502, array_merge(['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $retryCurlError, 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
         }
 
         $retryJson = json_decode($retryResponseBody, true);
@@ -2070,19 +2099,19 @@ if ($statusCode >= 400) {
     $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
     if ($statusCode === 403 && $unsupportedRegion) {
         logApiDocs('error', 'AI provider blocked by region, no local fallback in autonomous mode', ['status' => $statusCode]);
-        jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
+        jsonResponse(502, array_merge(['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode, 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
     }
     if ($statusCode === 429) {
-        $waitSeconds = 20;
+        $waitSeconds = $retryAfterSeconds;
         if (preg_match('/try again in\s+([0-9.]+)\s*s/i', $message, $match)) {
-            $waitSeconds = max(3, (int)ceil((float)$match[1]));
+            $waitSeconds = normalizeRetryAfterSeconds($match[1], $retryAfterSeconds);
         }
-        jsonResponse(429, [
+        jsonResponse(429, array_merge([
             'ok' => false,
             'error' => 'До бесплатной попытки осталось: ' . $waitSeconds . ' сек.',
             'status' => $statusCode,
-            'retryAfter' => $waitSeconds,
-        ]);
+            'model' => $effectiveModel,
+        ], withRetryPayload($waitSeconds)));
     }
     $modelUnavailable = stripos($message, 'model') !== false
         && (
@@ -2092,15 +2121,15 @@ if ($statusCode >= 400) {
             || stripos($message, 'does not exist') !== false
         );
     if ($modelUnavailable) {
-        jsonResponse(503, [
+        jsonResponse(503, array_merge([
             'ok' => false,
             'error' => 'Текущая модель временно недоступна. Выберите другую модель из списка.',
             'status' => $statusCode,
             'requestedModel' => $effectiveModel,
             'availableModels' => $availableModels,
-        ]);
+        ], withRetryPayload($retryAfterSeconds)));
     }
-    jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
+    jsonResponse(502, array_merge(['ok' => false, 'error' => $message, 'status' => $statusCode, 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
 }
 
 $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
@@ -2161,7 +2190,7 @@ if (looksLikeJsonText($response) || $response === '') {
         'documentTitle' => $documentTitle,
         'contentPreview' => mb_substr($content, 0, 220),
     ]);
-    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
+    jsonResponse(502, array_merge(['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
 }
 $decisionBlock['response'] = $response;
 if (!isset($decisionBlock['requirements']) || !is_array($decisionBlock['requirements'])) {
@@ -2178,7 +2207,7 @@ if (mb_strlen($response) > 8000) {
 jsonResponse(200, [
     'ok' => true,
     'model' => $effectiveModel,
-    'retryAfterSeconds' => $retryAfterSeconds,
+    ...withRetryPayload($retryAfterSeconds),
     'analysis' => $analysis,
     'response' => $response,
     'neutral' => $neutral,
