@@ -238,14 +238,14 @@ function normalizeIntSetting(mixed $rawValue, int $default, int $min, int $max):
 function resolveAiGenerationSettings(array $env, array $requestData): array
 {
     $temperature = normalizeFloatSetting(
-        $requestData['temperature'] ?? ($env['AI_TEMPERATURE'] ?? 0.85),
-        0.85,
+        $requestData['temperature'] ?? ($env['AI_TEMPERATURE'] ?? 0.75),
+        0.75,
         0.0,
         2.0
     );
     $topP = normalizeFloatSetting(
-        $requestData['top_p'] ?? ($env['AI_TOP_P'] ?? 0.95),
-        0.95,
+        $requestData['top_p'] ?? ($env['AI_TOP_P'] ?? 0.9),
+        0.9,
         0.0,
         1.0
     );
@@ -262,8 +262,8 @@ function resolveAiGenerationSettings(array $env, array $requestData): array
         2.0
     );
     $maxTokens = normalizeIntSetting(
-        $requestData['max_tokens'] ?? ($env['AI_MAX_TOKENS'] ?? 2500),
-        2500,
+        $requestData['max_tokens'] ?? ($env['AI_MAX_TOKENS'] ?? 1800),
+        1800,
         256,
         6000
     );
@@ -2077,6 +2077,7 @@ if (!in_array($effectiveModel, $availableModels, true)) {
 $systemMessage = "Ты — ИИ, выполняющий роль сотрудника строительной организации с опытом 15 лет. "
   . "Верни JSON-объект, где главное поле — response (готовый текст официального письма), остальные поля — вспомогательные. "
   . "Ответ должен быть максимально подробным: минимум 20–30 предложений в поле response, с раскрытием каждого тезиса через пояснения, причины и практические детали. "
+  . "Запрещено повторять одну и ту же мысль более одного раза. Каждое предложение должно нести новую информацию. Используй лаконичные формулировки. Объём формируй за счёт деталей, а не за счёт повторов. "
   . "Используй структуру response: 1) вводная часть по письму, 2) фактическое состояние работ, 3) анализ причин и зависимостей, 4) позиция подрядчика, 5) встречные требования к координации, 6) предупреждение о фиксации препятствий. "
   . "Опирайся на данные из user payload, особенно files[*].preview и extractedTexts[*].text. Если контента недостаточно — кратко укажи это в analysis. "
   . "Для каждого действия указывай реалистичный срок в формате ДД.ММ.ГГГГ. "
