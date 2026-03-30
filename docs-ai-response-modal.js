@@ -917,6 +917,7 @@
     filesBox.style.gridColumn = '1 / span 2';
     filesBox.style.margin = '0';
     var filesWrap = createElement('div', 'ai-chat-modal__files');
+    var filesHint = createElement('div', 'ai-chat-modal__empty', 'Можно прикрепить несколько файлов: ИИ учтёт общий контекст всех файлов.');
     var attachButton = createElement('button', 'ai-chat-modal__attach', '+ Прикрепить файл');
     attachButton.type = 'button';
     attachButton.style.marginTop = '4px';
@@ -1724,6 +1725,7 @@
     header.appendChild(closeButton);
 
     filesBox.appendChild(filesWrap);
+    filesBox.appendChild(filesHint);
     filesBox.appendChild(contextUsageHint);
     filesBox.appendChild(attachButton);
 
