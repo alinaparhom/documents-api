@@ -1719,6 +1719,11 @@ if ($action === 'ocr_extract') {
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
+    $ocrExtraFields = [
+        'OCREngine' => '2',
+        'scale' => 'true',
+        'detectOrientation' => 'true',
+    ];
 
     if (!$files && $ocrFileUrl === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
@@ -1768,7 +1773,8 @@ if ($action === 'ocr_extract') {
             $ocrApiKey,
             $preparedFile,
             $targetLanguage,
-            $ocrFileUrl !== '' ? $ocrFileUrl : null
+            $ocrFileUrl !== '' ? $ocrFileUrl : null,
+            $ocrExtraFields
         );
         $ocrResponseBody = $ocrResult['body'];
         $ocrCurlError = (string)$ocrResult['curl_error'];
@@ -1836,6 +1842,9 @@ if ($action === 'ocr_extract') {
             'ocrRequest' => [
                 'language' => $targetLanguage,
                 'viaUrl' => $ocrFileUrl !== '',
+                'engine' => $ocrExtraFields['OCREngine'],
+                'scale' => $ocrExtraFields['scale'],
+                'detectOrientation' => $ocrExtraFields['detectOrientation'],
             ],
             'pages' => $pageRaw,
         ],
