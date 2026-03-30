@@ -6,6 +6,59 @@ const PDF_TEMPLATE_URLS = ['/app/templates/template.pdf', '/templates/template.p
 const EDITOR_DRAFT_KEY = 'miniapp_editor_draft_v2';
 const EDITOR_ROUTE_PAYLOAD_KEY = 'miniapp_editor_route_payload_v1';
 const REQUEST_TIMEOUT_MS = 12000;
+const CHAT_HISTORY_LIMIT = 16;
+const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ.\n'
+  + '\n'
+  + 'ЭТО НЕ ПРОСТО РЕКОМЕНДАЦИЯ. ЭТО ЖЕСТКИЕ ПРАВИЛА. НАРУШЕНИЯ НЕДОПУСТИМЫ.\n'
+  + '\n'
+  + '1. ТВОЯ ЛИЧНОСТЬ И СТИЛЬ\n'
+  + '- Ты — профессионал с 15-летним стажем в строительстве.\n'
+  + '- Ты отвечаешь только в деловом стиле, сухо, четко, без воды.\n'
+  + '- Ты не извиняешься, не оправдываешься, не используешь слова "к сожалению", "извините", "возможно", "попробуем".\n'
+  + '- Твои слова: "выполним", "обеспечим", "сделано", "готово", "срок — [дата]".\n'
+  + '- Ты не используешь восклицательные знаки, кроме официальных обращений.\n'
+  + '- Ты не используешь эмодзи, смайлы и неформальные выражения.\n'
+  + '\n'
+  + '2. ЗАПРЕЩЕНО НАВСЕГДА\n'
+  + '- Запрещено пересказывать текст письма.\n'
+  + '- Запрещено начинать ответ с фразы "Рассмотрев ваше письмо..." или аналогов.\n'
+  + '- Запрещено использовать цитаты из запроса.\n'
+  + '- Запрещено отвечать общими фразами без конкретики.\n'
+  + '- Запрещено писать "мы работаем над этим" без указания сроков.\n'
+  + '- Запрещено использовать пассивный залог: только активный.\n'
+  + '- Запрещено писать длинные вступления: первое предложение сразу по делу.\n'
+  + '\n'
+  + '3. АНАЛИЗ ВХОДНОГО ТЕКСТА\n'
+  + '- Вычленяй все требования, включая косвенные.\n'
+  + '- Определяй взаимосвязи и приоритеты требований.\n'
+  + '- Определяй автора, получателя и объект строительства.\n'
+  + '- Если срок просрочен, предлагай новый реалистичный срок.\n'
+  + '- Требования не пересказывай: анализируй и строй ответ по сути.\n'
+  + '\n'
+  + '4. ПРАВИЛА ФОРМАТА И СОДЕРЖАНИЯ\n'
+  + '- Не используй маркированные списки с цифрами из исходного письма.\n'
+  + '- Используй связные предложения или маркировку только для группировки.\n'
+  + '- По каждому требованию указывай действие и дату в формате ДД.ММ.ГГГГ.\n'
+  + '- Если требование выполнено, подтверждай это одним предложением.\n'
+  + '- Используй глаголы: "выполняем", "завершим", "обеспечим", "приступаем".\n'
+  + '- Не используй слова "попытка", "надеемся", "стараемся".\n'
+  + '- Используй слова "гарантируем", "обеспечим", "выполним".\n'
+  + '\n'
+  + '5. СЛУЖЕБНЫЙ ПРИМЕР ЖЕСТКОГО ДЕЛОВОГО ТОНА\n'
+  + 'Отмечаем, что требования и утверждения о невыполненных работах могут носить односторонний характер и не отражать фактическое состояние площадки. Работы выполняем по утвержденному графику. По позициям, зависящим от смежников, фиксируем объективные ограничения и даем обновленные сроки. При отсутствии координации со стороны смежных организаций указываем это как фактор влияния на фронт работ и подтверждаем дальнейшие действия по обеспечению выполнения.\n'
+  + '\n'
+  + '6. ПРОВЕРКА ПЕРЕД ОТПРАВКОЙ\n'
+  + '- Нет пересказа исходного письма.\n'
+  + '- По каждому требованию есть дата или подтверждение выполнения.\n'
+  + '- Начало ответа сразу по делу.\n'
+  + '- Нет слов "к сожалению", "извините", "возможно".\n'
+  + '- Даты в формате ДД.ММ.ГГГГ.\n'
+  + '- Тон уверенный и профессиональный.\n'
+  + '\n'
+  + '7. ДОПОЛНИТЕЛЬНО\n'
+  + '- Если в письме есть ссылки на фото, учитывай их как зоны ответственности.\n'
+  + '- Если указано несколько объектов, отвечай по каждому отдельно.\n'
+  + '- Если требуется обеспечить фронт работ, явно указывай дату передачи фронта.';
 
 const SCRIPT_CACHE = new Map();
 
@@ -419,6 +472,78 @@ function buildAssistantReply(userMessage, context) {
   return `Черновик ответа ИИ\n\nЗадача №${taskId}\n${text}`;
 }
 
+function normalizeHistoryMessages(history) {
+  return (Array.isArray(history) ? history : [])
+    .map((item) => ({
+      role: item && item.role === 'assistant' ? 'assistant' : 'user',
+      text: String(item && item.text ? item.text : '').trim(),
+      ts: Number(item && item.ts ? item.ts : Date.now()),
+    }))
+    .filter((item) => item.text)
+    .slice(-CHAT_HISTORY_LIMIT);
+}
+
+function buildChatHistoryContext(history) {
+  return normalizeHistoryMessages(history).map((item) => ({
+    role: item.role,
+    text: item.text,
+    ts: item.ts,
+  }));
+}
+
+function parseAiPayload(payload) {
+  if (!payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || 'ИИ временно недоступен');
+  }
+  if (typeof payload.response === 'string' && payload.response.trim()) {
+    return payload.response.trim();
+  }
+  const raw = payload.raw && payload.raw.content ? payload.raw.content : '';
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+        return parsed.response.trim();
+      }
+    } catch (_) {}
+    return raw.trim();
+  }
+  return '';
+}
+
+async function requestAssistantReply(userMessage, context, history) {
+  const prompt = String(userMessage || '').trim();
+  if (!prompt) return '';
+  const task = context && context.task ? context.task : {};
+  const form = new FormData();
+  form.append('action', 'ai_response_analyze');
+  form.append('documentTitle', String(task.title || task.name || 'Задача'));
+  form.append('prompt', `${prompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
+  form.append('responseStyle', 'neutral');
+  const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
+  const behaviorText = behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR;
+  form.append('aiBehavior', behaviorText);
+  form.append('context', JSON.stringify({
+    task: {
+      id: task.id || null,
+      title: task.title || task.name || '',
+      description: task.description || task.text || '',
+    },
+    chatHistory: buildChatHistoryContext(history),
+    source: 'telegram_mini_app_dialog',
+  }));
+  const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 8000);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error((payload && payload.error) || `Ошибка сервера (${response.status})`);
+  }
+  const assistantText = parseAiPayload(payload);
+  if (!assistantText) {
+    throw new Error('ИИ вернул пустой ответ');
+  }
+  return assistantText;
+}
+
 function openAiResponseDialog(context = {}) {
   ensureAiDialogStyles();
   const existing = window.__aiDialogInstance || document.querySelector(DIALOG_ROOT_SELECTOR);
@@ -434,6 +559,8 @@ function openAiResponseDialog(context = {}) {
     autosaveTimer: null,
     destroyed: false,
     historyPushed: false,
+    isSending: false,
+    chatHistory: [],
   };
 
   const notify = (type, message) => {
@@ -622,14 +749,34 @@ function openAiResponseDialog(context = {}) {
   };
 
   root.querySelector('[data-close]').addEventListener('click', cleanup);
-  root.querySelector('[data-send]').addEventListener('click', () => {
+  const sendBtn = root.querySelector('[data-send]');
+  root.querySelector('[data-send]').addEventListener('click', async () => {
+    if (state.isSending) return;
     const prompt = String(input.value || '').trim();
     if (!prompt) return;
     appendBubble(prompt, 'user');
-    state.assistantText = buildAssistantReply(prompt, context);
+    state.chatHistory.push({ role: 'user', text: prompt, ts: Date.now() });
+    state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+    state.isSending = true;
+    sendBtn.disabled = true;
+    input.disabled = true;
+    notify('info', 'Генерируем ответ ИИ...');
+    let assistantReply = '';
+    try {
+      assistantReply = await requestAssistantReply(prompt, context, state.chatHistory);
+    } catch (error) {
+      assistantReply = buildAssistantReply(prompt, context);
+      notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
+    }
+    state.assistantText = assistantReply;
     state.requestId = String((context && (context.requestId || (context.task && context.task.id))) || Date.now());
     appendBubble(state.assistantText, 'assistant');
+    state.chatHistory.push({ role: 'assistant', text: state.assistantText, ts: Date.now() });
+    state.chatHistory = normalizeHistoryMessages(state.chatHistory);
     input.value = '';
+    input.disabled = false;
+    state.isSending = false;
+    sendBtn.disabled = false;
     openEditorBtn.disabled = false;
     notify('success', 'Ответ ИИ готов. Откройте /editor.');
   });
