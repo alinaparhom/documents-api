@@ -199,6 +199,84 @@ function normalizeRetryAfterSeconds(mixed $rawValue, int $default = 8, int $min 
     return $seconds;
 }
 
+function normalizeFloatSetting(mixed $rawValue, float $default, float $min, float $max): float
+{
+    if (is_string($rawValue)) {
+        $rawValue = trim($rawValue);
+    }
+    if ($rawValue === '' || $rawValue === null || !is_numeric($rawValue)) {
+        return $default;
+    }
+    $value = (float)$rawValue;
+    if ($value < $min) {
+        return $min;
+    }
+    if ($value > $max) {
+        return $max;
+    }
+    return $value;
+}
+
+function normalizeIntSetting(mixed $rawValue, int $default, int $min, int $max): int
+{
+    if (is_string($rawValue)) {
+        $rawValue = trim($rawValue);
+    }
+    if ($rawValue === '' || $rawValue === null || !is_numeric($rawValue)) {
+        return $default;
+    }
+    $value = (int)$rawValue;
+    if ($value < $min) {
+        return $min;
+    }
+    if ($value > $max) {
+        return $max;
+    }
+    return $value;
+}
+
+function resolveAiGenerationSettings(array $env, array $requestData): array
+{
+    $temperature = normalizeFloatSetting(
+        $requestData['temperature'] ?? ($env['AI_TEMPERATURE'] ?? 0.85),
+        0.85,
+        0.0,
+        2.0
+    );
+    $topP = normalizeFloatSetting(
+        $requestData['top_p'] ?? ($env['AI_TOP_P'] ?? 0.95),
+        0.95,
+        0.0,
+        1.0
+    );
+    $presencePenalty = normalizeFloatSetting(
+        $requestData['presence_penalty'] ?? ($env['AI_PRESENCE_PENALTY'] ?? 0.3),
+        0.3,
+        -2.0,
+        2.0
+    );
+    $frequencyPenalty = normalizeFloatSetting(
+        $requestData['frequency_penalty'] ?? ($env['AI_FREQUENCY_PENALTY'] ?? 0.2),
+        0.2,
+        -2.0,
+        2.0
+    );
+    $maxTokens = normalizeIntSetting(
+        $requestData['max_tokens'] ?? ($env['AI_MAX_TOKENS'] ?? 2500),
+        2500,
+        256,
+        6000
+    );
+
+    return [
+        'temperature' => $temperature,
+        'top_p' => $topP,
+        'presence_penalty' => $presencePenalty,
+        'frequency_penalty' => $frequencyPenalty,
+        'max_tokens' => $maxTokens,
+    ];
+}
+
 function withRetryPayload(int $retryAfterSeconds): array
 {
     return [
@@ -2018,10 +2096,15 @@ $userPayload = [
     'aiRuntime' => $runtimeConfig,
 ];
 
+$generationSettings = resolveAiGenerationSettings($env, $_POST);
+
 $body = [
     'model' => $effectiveModel,
-    'temperature' => 0.7,
-    'max_tokens' => 1600,
+    'temperature' => $generationSettings['temperature'],
+    'top_p' => $generationSettings['top_p'],
+    'presence_penalty' => $generationSettings['presence_penalty'],
+    'frequency_penalty' => $generationSettings['frequency_penalty'],
+    'max_tokens' => $generationSettings['max_tokens'],
     'messages' => [
         ['role' => 'system', 'content' => $systemMessage],
         ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
