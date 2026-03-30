@@ -1900,6 +1900,14 @@ if ($allowedModelsRaw !== '') {
     }
 }
 
+$retryAfterSeconds = (int)($env['AI_RETRY_AFTER_SECONDS'] ?? 45);
+if ($retryAfterSeconds < 10) {
+    $retryAfterSeconds = 10;
+}
+if ($retryAfterSeconds > 600) {
+    $retryAfterSeconds = 600;
+}
+
 $systemMessage = "ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ С ОПЫТОМ 15 ЛЕТ. Верни только JSON объект с полями: analysis, decision, decision_reason, risks, required_actions, response. "
   . "Отвечай только в деловом стиле: сухо, четко, без воды, без эмодзи, без извинений и без неуверенных формулировок. "
   . "Не начинай с фраз вида «Рассмотрев ваше письмо...». Первое предложение — сразу по делу. "
@@ -1969,13 +1977,13 @@ $statusCode = (int)$requestResult['status'];
 
 if ($responseBody === false) {
     logApiDocs('error', 'AI request failed', ['curlError' => $curlError]);
-    jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError]);
+    jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $curlError, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
 }
 
 $responseJson = json_decode($responseBody, true);
 if (!is_array($responseJson)) {
     logApiDocs('error', 'AI API returned non-JSON', ['response' => mb_substr($responseBody, 0, 500)]);
-    jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API']);
+    jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API', 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
 }
 
 if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
@@ -1995,7 +2003,7 @@ if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
 
         if ($retryResponseBody === false) {
             logApiDocs('error', 'Google AI retry request failed', ['curlError' => $retryCurlError]);
-            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $retryCurlError]);
+            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $retryCurlError, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
         }
 
         $retryJson = json_decode($retryResponseBody, true);
@@ -2016,9 +2024,9 @@ if ($statusCode >= 400) {
     $unsupportedRegion = stripos($message, 'Country, region, or territory not supported') !== false;
     if ($statusCode === 403 && $unsupportedRegion) {
         logApiDocs('error', 'AI provider blocked by region, no local fallback in autonomous mode', ['status' => $statusCode]);
-        jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
     }
-    jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
+    jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode, 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
 }
 
 $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
@@ -2053,7 +2061,7 @@ if (!$decisionBlock['valid']) {
         'documentTitle' => $documentTitle,
         'promptPreview' => mb_substr($prompt, 0, 180),
     ]);
-    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул некорректный decision JSON. Повторите запрос.']);
+    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул некорректный decision JSON. Повторите запрос.', 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
 }
 
 $analysis = '';
@@ -2094,7 +2102,7 @@ if (looksLikeJsonText($response) || $response === '') {
         'documentTitle' => $documentTitle,
         'contentPreview' => mb_substr($content, 0, 220),
     ]);
-    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.']);
+    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel, 'retryAfterSeconds' => $retryAfterSeconds]);
 }
 $decisionBlock['response'] = $response;
 if (!isset($decisionBlock['requirements']) || !is_array($decisionBlock['requirements'])) {
@@ -2110,6 +2118,8 @@ if (mb_strlen($response) > 8000) {
 
 jsonResponse(200, [
     'ok' => true,
+    'model' => $effectiveModel,
+    'retryAfterSeconds' => $retryAfterSeconds,
     'analysis' => $analysis,
     'response' => $response,
     'neutral' => $neutral,

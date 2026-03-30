@@ -169,7 +169,10 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error((payload && payload.error) || 'ИИ временно недоступен');
+    const retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
+    const model = String((payload && payload.model) || 'неизвестно');
+    const reason = (payload && payload.error) || 'ИИ временно недоступен';
+    throw new Error(`${reason}. Повторите через ${retryAfterSeconds} сек. Модель: ${model}.`);
   }
   return payload;
 }
@@ -181,25 +184,6 @@ function collectTelegramBriefSentences(text, limit) {
     .map((part) => String(part || '').trim())
     .filter((part) => part.length > 5)
     .slice(0, safeLimit);
-}
-
-function buildTelegramBriefSummaryText(text) {
-  const lines = collectTelegramBriefSentences(text, 8);
-  const reason = lines.slice(0, 2).join('. ');
-  const actions = lines.slice(2, 5);
-  const requirements = lines.slice(5, 8);
-  return [
-    '✨ Кратко по документу',
-    '',
-    '📄 О чем файл',
-    reason || 'Нужны дополнительные сведения по документу и стоимости изменений.',
-    '',
-    '🔎 Важные детали',
-    actions.length ? actions.map((item) => `• ${item}`).join('\n') : '• Важные детали не найдены.',
-    '',
-    '✅ Требования',
-    requirements.length ? requirements.map((item) => `• ${item}`).join('\n') : '• Явные требования не выделены.'
-  ].join('\n');
 }
 
 function buildTelegramAiBriefSummaryText(payload) {
@@ -285,7 +269,7 @@ function renderTelegramBriefPreview(container, payload, sourceText) {
   container.innerHTML = '';
   const output = document.createElement('pre');
   output.className = 'appdosc-brief-ai__placeholder';
-  output.textContent = payload ? buildTelegramAiBriefSummaryText(payload) : buildTelegramBriefSummaryText(sourceText);
+  output.textContent = buildTelegramAiBriefSummaryText(payload);
   container.appendChild(output);
 }
 
@@ -336,7 +320,7 @@ function openTelegramBriefModal(task, statusHandler) {
         renderTelegramBriefPreview(preview, aiPayload, sourceText);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
-        renderTelegramBriefPreview(preview, null, sourceText);
+        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.\n${escapeHtml(message)}</p>`;
         if (typeof statusHandler === 'function') statusHandler('warning', `ИИ временно недоступен. Детали: ${message}`);
       }
     });
