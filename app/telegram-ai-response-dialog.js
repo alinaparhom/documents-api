@@ -10,6 +10,7 @@ const REQUEST_TIMEOUT_MS = 12000;
 const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
+const MAX_CHAT_ATTACHMENT_PREVIEW = 800;
 const FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
 const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ.\n'
   + '\n'
@@ -84,8 +85,12 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__model{width:100%;min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;background:#fff;color:#0f172a}
     .appdosc-ai-dialog__input{min-height:80px;max-height:190px;resize:none;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;outline:none}
     .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:8px;max-height:180px;overflow:auto;padding-right:2px}
+    .appdosc-ai-dialog__attachment-tools{display:flex;gap:8px;flex-wrap:wrap}
     .appdosc-ai-dialog__attachment{display:flex;flex-direction:column;gap:6px;padding:9px;border-radius:12px;background:linear-gradient(145deg,#ffffff,#f8fbff);border:1px solid rgba(148,163,184,.3);box-shadow:0 8px 18px rgba(15,23,42,.06)}
+    .appdosc-ai-dialog__attachment.is-selected{border-color:rgba(37,99,235,.5);box-shadow:0 10px 20px rgba(37,99,235,.16)}
     .appdosc-ai-dialog__attachment-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .appdosc-ai-dialog__attachment-actions{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .appdosc-ai-dialog__attachment-check{display:flex;align-items:center;gap:6px;font-size:12px;color:#334155}
     .appdosc-ai-dialog__attachment-name{font-size:12px;font-weight:600;color:#1e293b;word-break:break-word}
     .appdosc-ai-dialog__attachment-meta{font-size:11px;color:#475569;white-space:nowrap}
     .appdosc-ai-dialog__attachment-preview{font-size:12px;line-height:1.45;color:#334155;background:rgba(241,245,249,.8);border:1px solid rgba(203,213,225,.8);border-radius:10px;padding:8px;max-height:84px;overflow:auto;white-space:pre-wrap}
@@ -536,6 +541,7 @@ async function collectTaskAttachmentTexts(task, appendBubble) {
   const files = Array.isArray(task && task.files) ? task.files.slice(0, MAX_AUTO_CONTEXT_FILES) : [];
   if (!files.length) return [];
   const prepared = files.map((file, index) => ({
+    id: `file_${index + 1}`,
     name: detectFileName(file, index),
     type: detectFileType(file),
     url: detectFileUrl(file),
@@ -543,27 +549,7 @@ async function collectTaskAttachmentTexts(task, appendBubble) {
   })).filter((file) => file.url);
 
   if (!prepared.length) return [];
-  appendBubble(`Подключаю вложения задачи: ${prepared.length} шт. Читаю текст и OCR для вложений.`, 'assistant');
-  let totalChars = 0;
-  for (let i = 0; i < prepared.length; i += 1) {
-    const file = prepared[i];
-    if (totalChars >= MAX_AUTO_CONTEXT_TEXT_CHARS) break;
-    try {
-      const raw = await fetchExternalFileContent(file);
-      const text = String(raw || '').trim();
-      if (!text) {
-        file.extractError = 'Пустой текст';
-        continue;
-      }
-      const next = Math.max(0, MAX_AUTO_CONTEXT_TEXT_CHARS - totalChars);
-      file.text = text.slice(0, next);
-      file.extracted = true;
-      totalChars += file.text.length;
-      appendBubble(`Содержимое "${file.name}":\n${file.text.slice(0, 800)}${file.text.length > 800 ? '\n…' : ''}`, 'assistant');
-    } catch (error) {
-      file.extractError = error && error.message ? error.message : 'Ошибка чтения';
-    }
-  }
+  appendBubble(`Найдено вложений: ${prepared.length}. Выберите нужные и нажмите «Прочитать выбранные».`, 'assistant');
   return prepared;
 }
 
@@ -689,6 +675,7 @@ function openAiResponseDialog(context = {}) {
     isSending: false,
     chatHistory: [],
     attachedFiles: [],
+    selectedAttachmentIds: new Set(),
     models: FALLBACK_MODEL_OPTIONS.slice(),
     model: FALLBACK_MODEL_OPTIONS[0].value,
   };
@@ -801,9 +788,69 @@ function openAiResponseDialog(context = {}) {
       return;
     }
     attachmentsNode.hidden = false;
+    const tools = document.createElement('div');
+    tools.className = 'appdosc-ai-dialog__attachment-tools';
+    const readSelectedBtn = document.createElement('button');
+    readSelectedBtn.type = 'button';
+    readSelectedBtn.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+    readSelectedBtn.textContent = 'Прочитать выбранные';
+    readSelectedBtn.disabled = !state.attachedFiles.some((file) => state.selectedAttachmentIds.has(file.id));
+    readSelectedBtn.addEventListener('click', async () => {
+      const selected = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+      if (!selected.length) return;
+      let totalChars = 0;
+      const extractedForContext = [];
+      for (let i = 0; i < selected.length; i += 1) {
+        const file = selected[i];
+        if (totalChars >= MAX_AUTO_CONTEXT_TEXT_CHARS) break;
+        try {
+          if (!file.extracted || !String(file.text || '').trim()) {
+            const raw = await fetchExternalFileContent(file);
+            const text = String(raw || '').trim();
+            if (!text) {
+              file.extractError = 'Пустой текст';
+              continue;
+            }
+            const next = Math.max(0, MAX_AUTO_CONTEXT_TEXT_CHARS - totalChars);
+            file.text = text.slice(0, next);
+            file.extracted = true;
+          }
+          const normalized = String(file.text || '').trim();
+          if (!normalized) continue;
+          file.extractError = '';
+          totalChars += normalized.length;
+          extractedForContext.push(file);
+        } catch (error) {
+          file.extractError = error && error.message ? error.message : 'Ошибка чтения';
+          file.extracted = false;
+        }
+      }
+
+      context.extractedTexts = extractedForContext.map((file) => ({
+        name: file.name,
+        type: file.type || 'text/plain',
+        text: file.text,
+      }));
+
+      const mergedChatText = extractedForContext.map((file) => (
+        `📄 ${file.name}\n${String(file.text || '').slice(0, MAX_CHAT_ATTACHMENT_PREVIEW)}${String(file.text || '').length > MAX_CHAT_ATTACHMENT_PREVIEW ? '\n…' : ''}`
+      )).join('\n\n');
+      if (mergedChatText) {
+        appendBubble(`Загружены выбранные файлы (${extractedForContext.length}):\n\n${mergedChatText}`, 'assistant');
+      } else {
+        appendBubble('Не удалось прочитать выбранные файлы. Проверьте OCR/доступ к файлам.', 'assistant');
+      }
+      renderAttachments();
+    });
+    tools.appendChild(readSelectedBtn);
+    attachmentsNode.appendChild(tools);
+
     state.attachedFiles.forEach((file) => {
       const chip = document.createElement('div');
       chip.className = 'appdosc-ai-dialog__attachment';
+      if (state.selectedAttachmentIds.has(file.id)) {
+        chip.classList.add('is-selected');
+      }
       const status = file.extracted ? '✅ текст' : (file.extractError ? '⚠️ OCR' : '⭕ файл');
       const topNode = document.createElement('div');
       topNode.className = 'appdosc-ai-dialog__attachment-top';
@@ -826,6 +873,45 @@ function openAiResponseDialog(context = {}) {
         previewNode.textContent = file.extractError ? `Ошибка: ${file.extractError}` : 'Текст файла появится после OCR/чтения.';
       }
       chip.appendChild(previewNode);
+      const actionsNode = document.createElement('div');
+      actionsNode.className = 'appdosc-ai-dialog__attachment-actions';
+      const checkLabel = document.createElement('label');
+      checkLabel.className = 'appdosc-ai-dialog__attachment-check';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = state.selectedAttachmentIds.has(file.id);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) state.selectedAttachmentIds.add(file.id); else state.selectedAttachmentIds.delete(file.id);
+        renderAttachments();
+      });
+      checkLabel.appendChild(checkbox);
+      checkLabel.appendChild(document.createTextNode('В общий контекст'));
+      const oneFileReadBtn = document.createElement('button');
+      oneFileReadBtn.type = 'button';
+      oneFileReadBtn.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
+      oneFileReadBtn.textContent = 'Прочитать';
+      oneFileReadBtn.addEventListener('click', async () => {
+        try {
+          const raw = await fetchExternalFileContent(file);
+          const text = String(raw || '').trim();
+          if (!text) throw new Error('Пустой текст');
+          file.text = text.slice(0, MAX_AUTO_CONTEXT_TEXT_CHARS);
+          file.extracted = true;
+          file.extractError = '';
+          state.selectedAttachmentIds.add(file.id);
+          context.extractedTexts = state.attachedFiles
+            .filter((item) => state.selectedAttachmentIds.has(item.id) && item.extracted && item.text)
+            .map((item) => ({ name: item.name, type: item.type || 'text/plain', text: item.text }));
+          appendBubble(`Содержимое "${file.name}":\n${file.text.slice(0, MAX_CHAT_ATTACHMENT_PREVIEW)}${file.text.length > MAX_CHAT_ATTACHMENT_PREVIEW ? '\n…' : ''}`, 'assistant');
+        } catch (error) {
+          file.extractError = error && error.message ? error.message : 'Ошибка чтения';
+          file.extracted = false;
+        }
+        renderAttachments();
+      });
+      actionsNode.appendChild(checkLabel);
+      actionsNode.appendChild(oneFileReadBtn);
+      chip.appendChild(actionsNode);
       attachmentsNode.appendChild(chip);
     });
   };
@@ -1136,9 +1222,8 @@ function openAiResponseDialog(context = {}) {
     context.extractedTexts = files
       .filter((file) => file.extracted && file.text)
       .map((file) => ({ name: file.name, type: file.type || 'text/plain', text: file.text }));
-    const readyCount = context.extractedTexts.length;
     if (files.length) {
-      appendBubble(`Вложения готовы: ${readyCount}/${files.length}. Можете отправлять запрос — ИИ учтёт текст файлов.`, 'assistant');
+      appendBubble('Чтобы ИИ учёл файлы, отметьте их и нажмите «Прочитать выбранные».', 'assistant');
     }
     renderAttachments();
   }).catch((error) => {
