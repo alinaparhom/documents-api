@@ -1726,25 +1726,6 @@ if ($action === 'ocr_extract') {
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
-    $ocrEngine = trim((string)($_POST['ocr_engine'] ?? '2'));
-    $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
-    $ocrDetectOrientation = trim((string)($_POST['detect_orientation'] ?? 'true'));
-    $ocrOverlayRequired = trim((string)($_POST['is_overlay_required'] ?? 'false'));
-    $ocrPreprocessEnabled = in_array(
-        strtolower(trim((string)($env['OCR_PREPROCESS'] ?? '0'))),
-        ['1', 'true', 'yes', 'on'],
-        true
-    );
-    $ocrExtraFields = [
-        'OCREngine' => $ocrEngine !== '' ? $ocrEngine : '2',
-        'scale' => $ocrScale !== '' ? $ocrScale : 'true',
-        'detectOrientation' => $ocrDetectOrientation !== '' ? $ocrDetectOrientation : 'true',
-        'isOverlayRequired' => $ocrOverlayRequired !== '' ? $ocrOverlayRequired : 'false',
-    ];
-    $ocrTempDir = ensureOcrTempDir();
-    register_shutdown_function(static function () use ($ocrTempDir): void {
-        cleanupDirectory($ocrTempDir);
-    });
 
     if (!$files && $ocrFileUrl === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
@@ -1759,7 +1740,6 @@ if ($action === 'ocr_extract') {
                 'raw' => [
                     'source' => 'direct_text',
                     'extension' => detectFileExtension($files[0]),
-                    'preprocessingApplied' => false,
                 ],
             ]);
         }
@@ -1770,18 +1750,11 @@ if ($action === 'ocr_extract') {
     }
 
     $preparedFiles = [];
-    $preprocessingApplied = false;
-    $preprocessMode = 'url';
-    $preprocessDiagnostics = [];
     if ($ocrFileUrl === '') {
-        $preparedMeta = buildPreparedOcrFiles($files[0], $ocrPreprocessEnabled, $ocrTempDir);
-        $preparedFiles = isset($preparedMeta['files']) && is_array($preparedMeta['files']) ? $preparedMeta['files'] : [];
-        $preprocessingApplied = !empty($preparedMeta['preprocessed']);
-        $preprocessMode = (string)($preparedMeta['mode'] ?? 'none');
-        $preprocessDiagnostics = isset($preparedMeta['diagnostics']) && is_array($preparedMeta['diagnostics']) ? $preparedMeta['diagnostics'] : [];
-        if (!$preparedFiles) {
-            jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не подготовлен']);
+        if (!$files) {
+            jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
         }
+        $preparedFiles = [$files[0]];
     }
 
     $allParsedResults = [];
@@ -1798,8 +1771,7 @@ if ($action === 'ocr_extract') {
             $ocrApiKey,
             $preparedFile,
             $targetLanguage,
-            $ocrFileUrl !== '' ? $ocrFileUrl : null,
-            $ocrExtraFields
+            $ocrFileUrl !== '' ? $ocrFileUrl : null
         );
         $ocrResponseBody = $ocrResult['body'];
         $ocrCurlError = (string)$ocrResult['curl_error'];
@@ -1864,19 +1836,11 @@ if ($action === 'ocr_extract') {
         'ok' => true,
         'text' => $ocrText,
         'raw' => [
-            'preprocessingApplied' => $preprocessingApplied,
-            'preprocessEnabled' => $ocrPreprocessEnabled,
-            'preprocessMode' => $preprocessMode,
             'pagesProcessed' => count($pageRaw),
             'ocrRequest' => [
                 'language' => $targetLanguage,
-                'engine' => $ocrExtraFields['OCREngine'],
-                'scale' => $ocrExtraFields['scale'],
-                'detectOrientation' => $ocrExtraFields['detectOrientation'],
-                'isOverlayRequired' => $ocrExtraFields['isOverlayRequired'],
                 'viaUrl' => $ocrFileUrl !== '',
             ],
-            'preprocessDiagnostics' => $preprocessDiagnostics,
             'pages' => $pageRaw,
         ],
     ]);
