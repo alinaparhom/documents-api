@@ -494,8 +494,47 @@ function detectFileName(file, index) {
 }
 
 function detectFileUrl(file) {
-  const value = file && (file.url || file.previewUrl || file.previewPdfUrl || file.pdfUrl || file.pdf || file.fileUrl || file.downloadUrl);
-  return typeof value === 'string' ? value : '';
+  const urls = detectFileUrls(file);
+  return urls[0] || '';
+}
+
+function toAbsoluteUrlSafe(value) {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  if (/^https?:\/\//i.test(input)) return input;
+  if (input.startsWith('//')) {
+    const protocol = (typeof location !== 'undefined' && location.protocol) ? location.protocol : 'https:';
+    return `${protocol}${input}`;
+  }
+  if (typeof location === 'undefined' || !location.origin) return input;
+  try {
+    if (input.startsWith('/')) return `${location.origin}${input}`;
+    return new URL(input, `${location.origin}/`).toString();
+  } catch (_) {
+    return input;
+  }
+}
+
+function detectFileUrls(file) {
+  const raw = [
+    file && file.resolvedUrl,
+    file && file.fileUrl,
+    file && file.downloadUrl,
+    file && file.url,
+    file && file.previewUrl,
+    file && file.previewPdfUrl,
+    file && file.pdfUrl,
+    file && file.pdf,
+  ];
+  const result = [];
+  const seen = new Set();
+  raw.forEach((item) => {
+    const value = toAbsoluteUrlSafe(item);
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    result.push(value);
+  });
+  return result;
 }
 
 function detectFileType(file) {
@@ -520,21 +559,41 @@ function isTextLikeMeta(fileMeta) {
 }
 
 async function fetchExternalFileContent(fileMeta) {
-  const response = await fetchWithTimeout(fileMeta.url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 6000);
-  if (!response.ok) throw new Error(`Файл недоступен (${response.status})`);
-  if (isTextLikeMeta(fileMeta)) {
-    return (await response.text()).trim();
+  const candidates = Array.isArray(fileMeta && fileMeta.urls) && fileMeta.urls.length
+    ? fileMeta.urls
+    : [fileMeta && fileMeta.url].filter(Boolean);
+  if (!candidates.length) {
+    throw new Error('У файла нет доступной ссылки');
   }
-  const form = new FormData();
-  form.append('action', 'ocr_extract');
-  form.append('language', 'rus');
-  form.append('file_url', fileMeta.url);
-  const ocrResponse = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ocr_extract`, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
-  const payload = await ocrResponse.json().catch(() => null);
-  if (!ocrResponse.ok || !payload || payload.ok !== true) {
-    throw new Error((payload && payload.error) || 'OCR временно недоступен');
+
+  let lastError = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const url = String(candidates[i] || '').trim();
+    if (!url) continue;
+    try {
+      const response = await fetchWithTimeout(url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 6000);
+      if (!response.ok) {
+        throw new Error(`Файл недоступен (${response.status})`);
+      }
+      fileMeta.url = url;
+      if (isTextLikeMeta(fileMeta)) {
+        return (await response.text()).trim();
+      }
+      const form = new FormData();
+      form.append('action', 'ocr_extract');
+      form.append('language', 'rus');
+      form.append('file_url', url);
+      const ocrResponse = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ocr_extract`, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
+      const payload = await ocrResponse.json().catch(() => null);
+      if (!ocrResponse.ok || !payload || payload.ok !== true) {
+        throw new Error((payload && payload.error) || 'OCR временно недоступен');
+      }
+      return String(payload.text || '').trim();
+    } catch (error) {
+      lastError = error;
+    }
   }
-  return String(payload.text || '').trim();
+  throw lastError || new Error('Файл недоступен');
 }
 
 async function collectTaskAttachmentTexts(task, appendBubble) {
@@ -544,9 +603,10 @@ async function collectTaskAttachmentTexts(task, appendBubble) {
     id: `file_${index + 1}`,
     name: detectFileName(file, index),
     type: detectFileType(file),
+    urls: detectFileUrls(file),
     url: detectFileUrl(file),
     size: Number(file && file.size) || 0,
-  })).filter((file) => file.url);
+  })).filter((file) => file.url || (Array.isArray(file.urls) && file.urls.length));
 
   if (!prepared.length) return [];
   appendBubble(`Найдено вложений: ${prepared.length}. Выберите нужные и нажмите «Прочитать выбранные».`, 'assistant');
