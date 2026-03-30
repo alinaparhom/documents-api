@@ -1592,28 +1592,6 @@
           .replace(/\n{3,}/g, '\n\n')
           .trim();
         finalResponse = sanitizeAssistantResponseText(finalResponse);
-        var decisionBlock = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object'
-          ? payload.decisionBlock
-          : null;
-        if (decisionBlock && decisionBlock.decision && !/^решение\s*ии\s*:/i.test(finalResponse)) {
-          var decisionMap = {
-            approve: '✅ Одобрить',
-            reject: '⛔ Отклонить',
-            need_clarification: '❓ Нужны уточнения'
-          };
-          var decisionLabel = decisionMap[decisionBlock.decision] || String(decisionBlock.decision);
-          var decisionLines = ['Решение ИИ: ' + decisionLabel];
-          if (decisionBlock.decision_reason) {
-            decisionLines.push('Причина: ' + String(decisionBlock.decision_reason));
-          }
-          if (Array.isArray(decisionBlock.required_actions) && decisionBlock.required_actions.length) {
-            decisionLines.push('Действия: ' + decisionBlock.required_actions.slice(0, 3).join('; '));
-          }
-          if (Array.isArray(decisionBlock.requirements) && decisionBlock.requirements.length) {
-            decisionLines.push('Требования из файла: ' + decisionBlock.requirements.slice(0, 3).join('; '));
-          }
-          finalResponse = decisionLines.join('\n') + '\n\n' + finalResponse;
-        }
         messages.appendChild(createMessage('assistant', finalResponse));
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
