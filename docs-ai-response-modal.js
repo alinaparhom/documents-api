@@ -13,15 +13,16 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
-  var DEFAULT_AI_BEHAVIOR = 'Ты — компетентный сотрудник строительной организации.\n'
-    + 'Отвечай на официальные письма только в положительном и конструктивном ключе.\n'
-    + 'Не пересказывай исходный текст письма, анализируй суть требований.\n'
-    + 'Давай конкретику: что уже сделано, что делается, сроки выполнения и ответственные действия.\n'
-    + 'Формат ответа: обращение, деловой структурированный ответ, конкретные сроки и действия, подтверждение готовности выполнить фронт работ, деловая подпись.\n'
-    + 'Стиль: профессиональный, деловой, краткий и убедительный.';
+  var DEFAULT_AI_BEHAVIOR = 'ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ.\n'
+    + 'Пиши сухо, четко и профессионально: без извинений, без неопределенности и без пересказа исходного письма.\n'
+    + 'Анализируй все требования и давай конкретные действия с датами в формате ДД.ММ.ГГГГ.\n'
+    + 'Структура ответа обязательна: обращение, выполнено, выполняем с датами, подтверждение готовности обеспечить фронт работ, деловая подпись.\n'
+    + 'Тон определяется выбранным стилем: положительный (одобрение/выполнение), отрицательный (отклонение/невыполнение), нейтральный (рассмотрение).';
 
   var STYLE_OPTIONS = [
-    { value: 'positive', label: 'Положительный (деловой)' }
+    { value: 'positive', label: 'Положительный (одобрение, выполнение)' },
+    { value: 'negative', label: 'Отрицательный (отклонение, не выполнение)' },
+    { value: 'neutral', label: 'Нейтральный (рассмотрение)' }
   ];
   var OCR_MODE_OPTIONS = [
     { value: 'raw', label: 'OCR: как в файле (без очистки)' }
@@ -900,12 +901,12 @@
 
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
-    textarea.placeholder = 'Введите запрос (можно пусто — отправим OCR текст)';
+    textarea.placeholder = 'Введите запрос (можно пусто — отправим текст вложений)';
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
     sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
     templateButton.type = 'button';
-    var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'OCR к отправке: 0 символов');
+    var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'Текст к отправке: 0 символов');
     contextUsageHint.style.margin = '6px 0 0';
     contextUsageHint.style.fontSize = '11px';
     contextUsageHint.style.textAlign = 'left';
@@ -987,19 +988,6 @@
     }
 
     var aiSettingsModal = createOverlayModal('Настройки поведения ИИ');
-    var ocrModeField = createElement('label', 'ai-chat-modal__field');
-    ocrModeField.appendChild(createElement('span', '', 'Режим OCR'));
-    var ocrModeSelect = createElement('select', 'ai-chat-modal__select');
-    OCR_MODE_OPTIONS.forEach(function (opt) {
-      var option = document.createElement('option');
-      option.value = opt.value;
-      option.textContent = opt.label;
-      ocrModeSelect.appendChild(option);
-    });
-    ocrModeSelect.value = state.ocrMode;
-    ocrModeField.appendChild(ocrModeSelect);
-    var ocrHint = createElement('div', 'ai-chat-modal__ocr-hint', 'OCR сохраняет текст как есть, без дополнительной очистки строк.');
-    ocrModeField.appendChild(ocrHint);
     var contextDetailField = createElement('label', 'ai-chat-modal__field');
     contextDetailField.appendChild(createElement('span', '', 'Передача контекста'));
     var contextDetailSelect = createElement('select', 'ai-chat-modal__select');
@@ -1023,7 +1011,6 @@
     settingsSave.type = 'button';
     settingsActions.appendChild(settingsCancel);
     settingsActions.appendChild(settingsSave);
-    aiSettingsModal.content.appendChild(ocrModeField);
     aiSettingsModal.content.appendChild(contextDetailField);
     aiSettingsModal.content.appendChild(settingsInput);
     aiSettingsModal.content.appendChild(settingsActions);
@@ -1289,10 +1276,7 @@
     }
 
     function updateOcrHint() {
-      if (!ocrHint) {
-        return;
-      }
-      ocrHint.textContent = 'OCR сохраняет текст как есть, без дополнительной очистки строк.';
+      return;
     }
 
     function renderModelOptions() {
@@ -1316,15 +1300,15 @@
       state.files.forEach(function (file) {
         var chip = createElement('div', 'ai-chat-chip');
         var ocrStatus = file.extracting
-          ? '⏳ OCR'
-          : (file.extracted ? '✅ OCR' : (file.extractError ? '⚠️ OCR' : '⭕ OCR'));
+          ? '⏳ Текст'
+          : (file.extracted ? '✅ Текст' : (file.extractError ? '⚠️ Текст' : '⭕ Текст'));
         chip.innerHTML = ''
           + '<span>' + detectIcon(file) + '</span>'
           + '<span>' + escapeHtml(file.name) + '</span>'
           + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>'
           + '<span class="ai-chat-chip__meta">' + escapeHtml(ocrStatus) + '</span>';
 
-        var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ OCR' : '📄 OCR');
+        var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ Текст' : '📄 Текст');
         ocr.type = 'button';
         ocr.disabled = !!file.extracting;
         ocr.addEventListener('click', function () {
@@ -1353,7 +1337,7 @@
       }
       var prepared = prepareContextPayload(state, state.contextSettings);
       var stats = prepared.stats || {};
-      contextUsageHint.textContent = 'OCR к отправке: ' + String(stats.preparedChars || 0)
+      contextUsageHint.textContent = 'Текст к отправке: ' + String(stats.preparedChars || 0)
         + ' символов • режим: ' + (stats.mode === 'brief' ? 'кратко' : 'подробно')
         + ' • файлов: ' + String(stats.filesUsed || 0)
         + (stats.truncatedFiles ? (' • сжато: ' + String(stats.truncatedFiles)) : '');
@@ -1421,16 +1405,16 @@
             payload = rawResponseText ? JSON.parse(rawResponseText) : null;
           } catch (parseError) {
             var preview = String(rawResponseText || '').replace(/\s+/g, ' ').trim().slice(0, 180);
-            throw new Error('OCR вернул не JSON ответ: ' + (preview || 'пустой ответ'));
+            throw new Error('Сервис извлечения текста вернул не JSON ответ: ' + (preview || 'пустой ответ'));
           }
           if (!response.ok || !payload || payload.ok !== true) {
-            throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+            throw new Error(payload && payload.error ? payload.error : ('Ошибка извлечения текста (' + response.status + ')'));
           }
           extractedText = String(payload.text || '');
           if (!extractedText) {
-            throw new Error('OCR не вернул текст. Проверьте качество файла.');
+            throw new Error('Сервис извлечения не вернул текст. Проверьте качество файла.');
           }
-          messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText));
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + extractedText));
         }
 
         fileEntry.rawContent = String(extractedText || '');
@@ -1486,11 +1470,11 @@
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       });
       if (!value && !hasFileContent) {
-        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст через OCR у файла.', true));
+        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст из файла.', true));
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      var effectivePrompt = value || 'Подготовь официальный ответ по OCR-тексту вложений в деловом стиле.';
+      var effectivePrompt = value || 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
@@ -1586,7 +1570,6 @@
     closeButton.addEventListener('click', closeModal);
     settingsButton.addEventListener('click', function () {
       settingsInput.value = state.aiBehavior;
-      ocrModeSelect.value = state.ocrMode;
       openOverlay(aiSettingsModal);
     });
 
@@ -1595,7 +1578,6 @@
     });
     settingsSave.addEventListener('click', function () {
       state.aiBehavior = String(settingsInput.value || '').trim();
-      state.ocrMode = ocrModeSelect.value;
       resanitizeFileContents();
       aiSettingsModal.close();
     });
