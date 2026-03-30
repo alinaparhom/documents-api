@@ -12,6 +12,50 @@ const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
 
+function loadExternalScript(src, marker) {
+  return new Promise((resolve, reject) => {
+    if (!src) {
+      reject(new Error('Пустой путь скрипта ИИ.'));
+      return;
+    }
+    const existing = document.querySelector(`script[${marker}]`);
+    if (existing) {
+      if (typeof window.openAiResponseDialog === 'function') {
+        resolve(window.openAiResponseDialog);
+        return;
+      }
+      if (existing.dataset.loaded === 'true') {
+        reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+        return;
+      }
+      existing.addEventListener('load', () => {
+        if (typeof window.openAiResponseDialog === 'function') {
+          resolve(window.openAiResponseDialog);
+        } else {
+          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+        }
+      }, { once: true });
+      existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = src;
+    script.defer = true;
+    script.setAttribute(marker, 'true');
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      if (typeof window.openAiResponseDialog === 'function') {
+        resolve(window.openAiResponseDialog);
+      } else {
+        reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+      }
+    };
+    script.onerror = () => reject(new Error(`Не удалось загрузить скрипт ИИ: ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
 function escapeHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -27,37 +71,22 @@ function ensureAiDialogScriptLoaded() {
   }
 
   if (!aiDialogLoader) {
-    aiDialogLoader = new Promise((resolve, reject) => {
-      const existing = document.querySelector('script[data-ai-dialog-script]');
-      if (existing) {
-        existing.addEventListener('load', () => {
-          if (typeof window.openAiResponseDialog === 'function') {
-            resolve(window.openAiResponseDialog);
-          } else {
-            reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
-          }
-        }, { once: true });
-        existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
-        return;
+    const runtimeVersion = String(window.__RUNTIME_ASSET_VERSION__ || '').trim();
+    const assetVersion = String(window.__ASSET_VERSION__ || '').trim();
+    const cacheVersion = runtimeVersion || (assetVersion ? `${assetVersion}-${Date.now().toString(36)}` : Date.now().toString(36));
+    const candidates = [
+      `/js/documents/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+      `./telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+      `/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+    ];
+    const tryLoad = (index) => {
+      if (index >= candidates.length) {
+        return Promise.reject(new Error('Не удалось загрузить ИИ-скрипт ни по одному пути.'));
       }
+      return loadExternalScript(candidates[index], `data-ai-dialog-script-${index}`).catch(() => tryLoad(index + 1));
+    };
 
-      const script = document.createElement('script');
-      const runtimeVersion = String(window.__RUNTIME_ASSET_VERSION__ || '').trim();
-      const assetVersion = String(window.__ASSET_VERSION__ || '').trim();
-      const cacheVersion = runtimeVersion || (assetVersion ? `${assetVersion}-${Date.now().toString(36)}` : Date.now().toString(36));
-      script.src = '/js/documents/app/telegram-ai-response-dialog.js?v=' + encodeURIComponent(cacheVersion);
-      script.defer = true;
-      script.dataset.aiDialogScript = 'true';
-      script.onload = () => {
-        if (typeof window.openAiResponseDialog === 'function') {
-          resolve(window.openAiResponseDialog);
-        } else {
-          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
-        }
-      };
-      script.onerror = () => reject(new Error('Не удалось загрузить скрипт ИИ.'));
-      document.head.appendChild(script);
-    }).catch((error) => {
+    aiDialogLoader = tryLoad(0).catch((error) => {
       aiDialogLoader = null;
       throw error;
     });
@@ -98,7 +127,8 @@ async function openAiDialogSafely(context = {}) {
     });
   } catch (error) {
     if (typeof context.onStatus === 'function') {
-      context.onStatus('error', 'Не удалось открыть ИИ-диалог. Обновите страницу.');
+      const errorText = error instanceof Error ? error.message : 'неизвестная ошибка';
+      context.onStatus('error', `Не удалось открыть ИИ-диалог: ${errorText}`);
     }
     logClientEvent('task_view_error', {
       reason: 'ai_dialog_open_failed',
