@@ -1613,6 +1613,9 @@
         var payload = await response.json();
         if (!response.ok || !payload || payload.ok !== true) {
           var apiError = new Error(payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')'));
+          if (payload && payload.code) {
+            apiError.code = String(payload.code);
+          }
           if (payload && payload.retryAfter) {
             apiError.retryAfter = Number(payload.retryAfter || 0);
           }
@@ -1637,6 +1640,14 @@
         pending.remove();
         if (error && Number(error.retryAfter) > 0) {
           showRetryCountdown(Number(error.retryAfter));
+        } else if (error && error.code === 'MODEL_NOT_ALLOWED' && Array.isArray(error.availableModels) && error.availableModels.length) {
+          state.models = normalizeModelList(error.availableModels);
+          renderModelOptions();
+          if (!state.models.some(function (entry) { return entry.value === state.model; })) {
+            state.model = state.models[0] ? state.models[0].value : state.model;
+          }
+          modelSelect.value = state.model;
+          messages.appendChild(createMessage('assistant', 'Выбрана недоступная модель. Переключил на доступную: ' + state.model + '. Можно выбрать другую в списке моделей.', true));
         } else if (error && Array.isArray(error.availableModels) && error.availableModels.length) {
           messages.appendChild(createMessage('assistant', (error.message || 'Модель недоступна.') + '\nДоступные модели: ' + error.availableModels.join(', '), true));
         } else {

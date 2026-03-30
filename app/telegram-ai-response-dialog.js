@@ -9,6 +9,7 @@ const REQUEST_TIMEOUT_MS = 12000;
 const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
+const FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
 const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ.\n'
   + '\n'
   + 'ЭТО НЕ ПРОСТО РЕКОМЕНДАЦИЯ. ЭТО ЖЕСТКИЕ ПРАВИЛА. НАРУШЕНИЯ НЕДОПУСТИМЫ.\n'
@@ -79,6 +80,7 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__bubble--assistant{align-self:flex-start;background:#ffffff;border:1px solid rgba(148,163,184,.3)}
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
     .appdosc-ai-dialog__composer{padding:12px calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:8px;background:#ffffff}
+    .appdosc-ai-dialog__model{width:100%;min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;background:#fff;color:#0f172a}
     .appdosc-ai-dialog__input{min-height:80px;max-height:190px;resize:none;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;outline:none}
     .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:8px;max-height:180px;overflow:auto;padding-right:2px}
     .appdosc-ai-dialog__attachment{display:flex;flex-direction:column;gap:6px;padding:9px;border-radius:12px;background:linear-gradient(145deg,#ffffff,#f8fbff);border:1px solid rgba(148,163,184,.3);box-shadow:0 8px 18px rgba(15,23,42,.06)}
@@ -603,6 +605,29 @@ function parseAiPayload(payload) {
   return '';
 }
 
+function normalizeModelList(models) {
+  const source = Array.isArray(models) ? models : [];
+  const unique = [];
+  const seen = new Set();
+  source.forEach((model) => {
+    const value = String(model || '').trim();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    unique.push({ value, label: value });
+  });
+  return unique.length ? unique : FALLBACK_MODEL_OPTIONS.slice();
+}
+
+async function fetchAvailableModels() {
+  const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`Ошибка загрузки моделей (${response.status})`);
+  const payload = await response.json().catch(() => null);
+  if (!payload || payload.ok !== true || !Array.isArray(payload.models)) {
+    throw new Error('Список моделей недоступен');
+  }
+  return normalizeModelList(payload.models);
+}
+
 async function requestAssistantReply(userMessage, context, history) {
   const prompt = String(userMessage || '').trim();
   if (!prompt) return '';
@@ -612,6 +637,9 @@ async function requestAssistantReply(userMessage, context, history) {
   form.append('documentTitle', String(task.title || task.name || 'Задача'));
   form.append('prompt', `${prompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
   form.append('responseStyle', 'neutral');
+  if (context && context.model) {
+    form.append('model', String(context.model));
+  }
   const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
   const behaviorText = behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR;
   form.append('aiBehavior', behaviorText);
@@ -630,7 +658,10 @@ async function requestAssistantReply(userMessage, context, history) {
   const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 8000);
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error((payload && payload.error) || `Ошибка сервера (${response.status})`);
+    const error = new Error((payload && payload.error) || `Ошибка сервера (${response.status})`);
+    if (payload && payload.code) error.code = String(payload.code);
+    if (payload && Array.isArray(payload.availableModels)) error.availableModels = payload.availableModels;
+    throw error;
   }
   const assistantText = parseAiPayload(payload);
   if (!assistantText) {
@@ -657,6 +688,8 @@ function openAiResponseDialog(context = {}) {
     isSending: false,
     chatHistory: [],
     attachedFiles: [],
+    models: FALLBACK_MODEL_OPTIONS.slice(),
+    model: FALLBACK_MODEL_OPTIONS[0].value,
   };
 
   const notify = (type, message) => {
@@ -676,6 +709,7 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__messages" data-messages></div>
       <div class="appdosc-ai-dialog__composer">
         <div class="appdosc-ai-dialog__attachments" data-attachments hidden></div>
+        <select class="appdosc-ai-dialog__model" data-model aria-label="Модель ИИ"></select>
         <textarea class="appdosc-ai-dialog__input" data-input placeholder="Введите запрос для ИИ"></textarea>
         <div class="appdosc-ai-dialog__buttons">
           <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-open-editor disabled>Открыть /editor</button>
@@ -723,6 +757,7 @@ function openAiResponseDialog(context = {}) {
 
   const messages = root.querySelector('[data-messages]');
   const input = root.querySelector('[data-input]');
+  const modelSelect = root.querySelector('[data-model]');
   const openEditorBtn = root.querySelector('[data-open-editor]');
   const attachmentsNode = root.querySelector('[data-attachments]');
   const editable = root.querySelector('[data-editable]');
@@ -739,6 +774,22 @@ function openAiResponseDialog(context = {}) {
   };
 
   appendBubble('Введите запрос. После ответа откройте /editor.', 'assistant');
+  const renderModelOptions = () => {
+    modelSelect.innerHTML = '';
+    (state.models || []).forEach((entry) => {
+      const option = document.createElement('option');
+      option.value = entry.value;
+      option.textContent = entry.label;
+      modelSelect.appendChild(option);
+    });
+    if (!(state.models || []).some((entry) => entry.value === state.model)) {
+      state.model = state.models[0] ? state.models[0].value : FALLBACK_MODEL_OPTIONS[0].value;
+    }
+    modelSelect.value = state.model;
+  };
+  modelSelect.addEventListener('change', () => {
+    state.model = modelSelect.value || state.model;
+  });
 
   const renderAttachments = () => {
     if (!attachmentsNode) return;
@@ -898,8 +949,17 @@ function openAiResponseDialog(context = {}) {
     notify('info', 'Генерируем ответ ИИ...');
     let assistantReply = '';
     try {
-      assistantReply = await requestAssistantReply(prompt, context, state.chatHistory);
+      assistantReply = await requestAssistantReply(prompt, { ...context, model: state.model }, state.chatHistory);
     } catch (error) {
+      if (error && error.code === 'MODEL_NOT_ALLOWED' && Array.isArray(error.availableModels) && error.availableModels.length) {
+        state.models = normalizeModelList(error.availableModels);
+        renderModelOptions();
+        notify('warning', `Модель недоступна. Выберите другую: ${state.models.map((item) => item.value).join(', ')}`);
+        input.disabled = false;
+        state.isSending = false;
+        sendBtn.disabled = false;
+        return;
+      }
       assistantReply = buildAssistantReply(prompt, context);
       notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
     }
@@ -1027,6 +1087,15 @@ function openAiResponseDialog(context = {}) {
   window.addEventListener('popstate', onPopState);
   window.addEventListener('keydown', onEscClose);
   maybeOpenEditorFromRoute();
+  fetchAvailableModels()
+    .then((models) => {
+      state.models = models;
+      if (!models.some((entry) => entry.value === state.model)) state.model = models[0].value;
+      renderModelOptions();
+    })
+    .catch(() => {
+      renderModelOptions();
+    });
   collectTaskAttachmentTexts(context && context.task, appendBubble).then((files) => {
     state.attachedFiles = files;
     context.attachedFiles = files.map((file) => ({
