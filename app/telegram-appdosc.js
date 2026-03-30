@@ -8,9 +8,18 @@ const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
-const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v1';
+const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function ensureAiDialogScriptLoaded() {
   if (window && typeof window.openAiResponseDialog === 'function') {
@@ -101,19 +110,26 @@ function ensureTelegramBriefModalStyle() {
   style.id = TELEGRAM_BRIEF_MODAL_STYLE_ID;
   style.textContent = `
     .appdosc-brief-ai{position:fixed;inset:0;z-index:2800;background:rgba(15,23,42,.32);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:8px}
-    .appdosc-brief-ai__panel{width:min(980px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.98),rgba(255,255,255,.92));border-radius:20px;border:1px solid rgba(255,255,255,.9);overflow:hidden}
+    .appdosc-brief-ai__panel{width:min(980px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.94));border-radius:22px;border:1px solid rgba(255,255,255,.9);overflow:hidden;box-shadow:0 14px 38px rgba(15,23,42,.16)}
     .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid rgba(226,232,240,.95)}
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
     .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,300px) minmax(0,1fr);gap:10px;padding:12px;min-height:0;flex:1}
     .appdosc-brief-ai__list{display:flex;flex-direction:column;gap:8px;overflow:auto}
-    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:12px;padding:10px;text-align:left;opacity:1}
+    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.92);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:14px;padding:11px;text-align:left;opacity:1}
     .appdosc-brief-ai__item span{display:block;word-break:break-word;overflow-wrap:anywhere}
     .appdosc-brief-ai__item strong{font-size:13px;color:#0f172a}
     .appdosc-brief-ai__item small{font-size:11px;color:#64748b}
-    .appdosc-brief-ai__item.is-active{border-color:rgba(37,99,235,.55);background:rgba(239,246,255,.9)}
-    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:#fff;padding:12px;white-space:pre-wrap;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
-    @media (max-width:768px){.appdosc-brief-ai__body{grid-template-columns:1fr}}
+    .appdosc-brief-ai__item.is-active{border-color:rgba(59,130,246,.6);background:rgba(239,246,255,.9)}
+    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.92);border-radius:16px;background:rgba(255,255,255,.86);padding:12px;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
+    .appdosc-brief-ai__placeholder{margin:0;color:#64748b;white-space:pre-wrap}
+    .appdosc-brief-ai__section{border:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.88);border-radius:14px;padding:10px 11px}
+    .appdosc-brief-ai__section + .appdosc-brief-ai__section{margin-top:8px}
+    .appdosc-brief-ai__section h4{margin:0 0 6px 0;font-size:12px;color:#334155;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+    .appdosc-brief-ai__section p{margin:0;color:#0f172a;white-space:pre-wrap}
+    .appdosc-brief-ai__section ul{margin:0;padding-left:18px;color:#0f172a}
+    .appdosc-brief-ai__section li + li{margin-top:5px}
+    @media (max-width:768px){.appdosc-brief-ai{padding:0}.appdosc-brief-ai__panel{max-height:100dvh;border-radius:0}.appdosc-brief-ai__body{grid-template-columns:1fr}}
   `;
   document.head.appendChild(style);
 }
@@ -134,14 +150,23 @@ async function requestTelegramOcrByUrl(fileUrl) {
 }
 
 async function requestTelegramBriefAi(sourceLabel, text) {
+  const normalizedText = String(text || '').trim();
+  const fileOnlyPrompt = [
+    'Режим: изолированный анализ только текста файла.',
+    'Используй исключительно extractedTexts и никаких других данных.',
+    'Запрещено учитывать карточку задачи, Telegram-данные, роли, имена из интерфейса и внешние догадки.',
+    'Если факт не найден в тексте файла, явно пиши: "не указано в файле".',
+    'Пиши просто и понятно для новичка.',
+    'Нужен только структурированный результат по содержимому файла.'
+  ].join(' ');
   const context = {
-    extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: String(text || '').slice(0, 12000) }],
-    aiBehavior: 'Режим "Кратко ИИ". Кратко и понятно: о чем документ, кто отправитель/получатель, 3-4 ключевые детали.'
+    extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: normalizedText.slice(0, 12000) }],
+    aiBehavior: fileOnlyPrompt
   };
   const formData = new FormData();
   formData.append('action', 'ai_response_analyze');
-  formData.append('documentTitle', sourceLabel);
-  formData.append('prompt', 'Сделай короткое и понятное summary документа.');
+  formData.append('documentTitle', 'Файл для изолированного анализа');
+  formData.append('prompt', `${fileOnlyPrompt} Верни: analysis, risks, required_actions, requirements.`);
   formData.append('responseStyle', 'concise');
   formData.append('context', JSON.stringify(context));
   const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
@@ -152,35 +177,51 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   return payload;
 }
 
-function buildTelegramBriefText(payload, task) {
+function buildTelegramBriefSections(payload) {
   const analysis = payload && payload.analysis ? String(payload.analysis).trim() : '';
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
-  const actions = Array.isArray(block.required_actions) ? block.required_actions.slice(0, 4) : [];
-  const requirements = Array.isArray(block.requirements) ? block.requirements.slice(0, 3) : [];
-  const decisionReason = block && block.decision_reason ? String(block.decision_reason).trim() : '';
+  const actions = Array.isArray(block.required_actions)
+    ? block.required_actions.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 5)
+    : [];
+  const requirements = Array.isArray(block.requirements)
+    ? block.requirements.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 4)
+    : [];
   const participants = Array.isArray(block.risks) ? block.risks.find((line) => /^отправитель\s*:/i.test(String(line || '').trim())) : '';
-  const taskSender = normalizeValue(task && task.correspondent) || normalizeValue(task && task.organization);
-  const taskRecipient = normalizeValue(task && task.organization);
-  const participantsLine = participants
-    || ((taskSender || taskRecipient) ? `Отправитель: ${taskSender || 'не определён'}; Получатель: ${taskRecipient || 'не определён'}` : 'Не удалось точно определить.');
-  return [
-    '✨ Кратко по документу',
-    '',
-    '📄 О чем файл',
-    analysis || 'Не удалось определить суть документа.',
-    '',
-    '👤 Кто прислал / кому',
-    participantsLine,
-    '',
-    '❓ Зачем это письмо',
-    decisionReason || 'Согласовать изменения по работам и принять решение о дальнейших действиях.',
-    '',
-    '🔎 Важные детали',
-    actions.length ? actions.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Детали не выделены.',
-    '',
-    '✅ Что нужно сделать',
-    requirements.length ? requirements.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Проверить требования документа и дать официальный ответ.'
-  ].join('\n');
+  return {
+    analysis: analysis || 'Суть документа не указана в файле.',
+    participants: participants || 'Отправитель: не указано в файле; Получатель: не указано в файле',
+    actions,
+    requirements,
+  };
+}
+
+function renderTelegramBriefPreview(container, payload) {
+  const sections = buildTelegramBriefSections(payload);
+  const detailsHtml = sections.actions.length
+    ? `<ul>${sections.actions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+    : '<p>Ключевые детали не указаны в файле.</p>';
+  const stepsHtml = sections.requirements.length
+    ? `<ul>${sections.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+    : '<p>Следующие шаги не указаны в файле.</p>';
+
+  container.innerHTML = `
+    <section class="appdosc-brief-ai__section">
+      <h4>О чем файл</h4>
+      <p>${escapeHtml(sections.analysis)}</p>
+    </section>
+    <section class="appdosc-brief-ai__section">
+      <h4>Отправитель и получатель</h4>
+      <p>${escapeHtml(sections.participants)}</p>
+    </section>
+    <section class="appdosc-brief-ai__section">
+      <h4>Важные детали из файла</h4>
+      ${detailsHtml}
+    </section>
+    <section class="appdosc-brief-ai__section">
+      <h4>Что сделать дальше</h4>
+      ${stepsHtml}
+    </section>
+  `;
 }
 
 function openTelegramBriefModal(task, statusHandler) {
@@ -195,14 +236,14 @@ function openTelegramBriefModal(task, statusHandler) {
       </div>
       <div class="appdosc-brief-ai__body">
         <div class="appdosc-brief-ai__list" data-list></div>
-        <pre class="appdosc-brief-ai__preview" data-preview>Нажмите на источник слева.</pre>
+        <div class="appdosc-brief-ai__preview" data-preview>
+          <p class="appdosc-brief-ai__placeholder">Выберите файл слева — покажу краткий изолированный разбор только по его тексту.</p>
+        </div>
       </div>
     </div>`;
   const list = modal.querySelector('[data-list]');
   const preview = modal.querySelector('[data-preview]');
   const sources = [];
-  const taskText = [task && task.summary, task && task.instruction, task && task.resolution].map((v) => String(v || '').trim()).filter(Boolean).join('\n');
-  if (taskText) sources.push({ label: 'Текст задачи', text: taskText, type: 'context' });
   (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
     const name = getAttachmentName(file, index + 1);
     const url = resolveFileFetchUrl(file);
@@ -218,25 +259,25 @@ function openTelegramBriefModal(task, statusHandler) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-brief-ai__item';
-    button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>${source.type === 'file' ? 'Вложение' : 'Карточка задачи'}</small></span>`;
+    button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>Вложение</small></span>`;
     button.addEventListener('click', async () => {
       activate(button);
       try {
-        preview.textContent = '⏳ Подготовка текста...';
+        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
         const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
-        preview.textContent = '⏳ ИИ анализирует документ...';
+        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
-        preview.textContent = buildTelegramBriefText(aiPayload, task);
+        renderTelegramBriefPreview(preview, aiPayload);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
-        preview.textContent = `ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${message}`;
-        if (typeof statusHandler === 'function') statusHandler('warning', preview.textContent);
+        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${escapeHtml(message)}</p>`;
+        if (typeof statusHandler === 'function') statusHandler('warning', `ИИ временно недоступен. Детали: ${message}`);
       }
     });
     list.appendChild(button);
   });
   if (!sources.length) {
-    list.innerHTML = '<div class="appdosc-empty">Нет текста или файлов для анализа.</div>';
+    list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
   }
   document.body.appendChild(modal);
 }
@@ -7350,10 +7391,11 @@ function updateStatusButtonsSelection(container, currentStatus) {
   if (!container) {
     return;
   }
-  const normalizedCurrent = normalizeName(currentStatus);
+  const currentKey = getStatusSummaryKey(currentStatus);
   container.querySelectorAll('[data-status-value]').forEach((button) => {
     const value = button.dataset.statusValue || '';
-    const isActive = normalizedCurrent !== '' && normalizeName(value) === normalizedCurrent;
+    const buttonKey = getStatusSummaryKey(value);
+    const isActive = currentKey !== '' && buttonKey !== '' && buttonKey === currentKey;
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
 }
@@ -7367,9 +7409,14 @@ async function handleStatusButtonClick(container, button, task, status) {
     return;
   }
 
-  const normalizedTarget = normalizeName(targetStatus);
+  if (button.getAttribute('aria-pressed') === 'true') {
+    return;
+  }
+
   const currentStatus = getTaskStatusValue(task);
-  if (normalizedTarget !== '' && normalizedTarget === normalizeName(currentStatus)) {
+  const currentStatusKey = getStatusSummaryKey(currentStatus);
+  const targetStatusKey = getStatusSummaryKey(targetStatus);
+  if (targetStatusKey && currentStatusKey && targetStatusKey === currentStatusKey) {
     return;
   }
 
@@ -7407,7 +7454,10 @@ async function handleStatusButtonClick(container, button, task, status) {
     });
     updateStatusButtonsSelection(container, targetStatus);
     setStatus('success', 'Статус обновлён.');
-    await loadTasks(true);
+    const refreshPromise = loadTasks(true);
+    if (refreshPromise && typeof refreshPromise.catch === 'function') {
+      refreshPromise.catch(() => {});
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logClientEvent('task_status_error', {
