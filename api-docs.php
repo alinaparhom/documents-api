@@ -359,6 +359,7 @@ function performOcrRequest(
     }
 
     $postFields = [
+        'apikey' => $apiKey,
         'language' => $language,
     ];
     foreach ($extraPostFields as $key => $value) {
@@ -381,11 +382,8 @@ function performOcrRequest(
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => [
-            'apikey: ' . $apiKey,
-        ],
         CURLOPT_POSTFIELDS => $postFields,
-        CURLOPT_TIMEOUT => 120,
+        CURLOPT_TIMEOUT => 300,
     ]);
 
     $responseBody = curl_exec($ch);
@@ -1774,15 +1772,20 @@ if ($action === 'ocr_extract') {
         jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
     }
 
-    $parts = [];
     $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
+    $parts = [];
     foreach ($parsedResults as $entry) {
         if (is_array($entry) && isset($entry['ParsedText']) && is_string($entry['ParsedText'])) {
             $parts[] = $entry['ParsedText'];
         }
     }
 
-    $ocrText = implode("\n", $parts);
+    $firstParsedText = '';
+    if (isset($parsedResults[0]) && is_array($parsedResults[0]) && isset($parsedResults[0]['ParsedText']) && is_string($parsedResults[0]['ParsedText'])) {
+        $firstParsedText = $parsedResults[0]['ParsedText'];
+    }
+    $allParsedText = implode("\n", $parts);
+    $ocrText = $firstParsedText !== '' ? $firstParsedText : $allParsedText;
     jsonResponse(200, [
         'ok' => true,
         'text' => $ocrText,
@@ -1797,6 +1800,7 @@ if ($action === 'ocr_extract') {
                 'scale' => $ocrExtraFields['scale'],
                 'detectOrientation' => $ocrExtraFields['detectOrientation'],
             ],
+            'allParsedText' => $allParsedText,
             'response' => $ocrJson,
         ],
     ]);
