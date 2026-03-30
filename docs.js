@@ -2228,8 +2228,7 @@
         if (!response.ok || !payload || payload.ok !== true) {
           var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
           var model = payload && payload.model ? String(payload.model) : 'неизвестно';
-          var reason = payload && payload.error ? payload.error : ('Ошибка анализа ИИ (' + response.status + ')');
-          throw new Error(reason + '. Повторите через ' + retryAfterSeconds + ' сек. Модель: ' + model + '.');
+          throw new Error('ИИ временно недоступен. Подождите ' + retryAfterSeconds + ' сек. Модель: ' + model + '.');
         }
         return payload;
       });
@@ -2342,7 +2341,7 @@
                 }
                 preview.classList.remove('is-loading');
                 preview.textContent = 'Ошибка анализа.\n' + (error && error.message ? error.message : 'неизвестная ошибка');
-                showStatusMessage('warning', 'ИИ недоступен для "' + source.label + '". ' + (error && error.message ? error.message : 'Попробуйте позже.'));
+                showStatusMessage('warning', error && error.message ? error.message : 'ИИ временно недоступен. Попробуйте позже.');
               });
           })
           .catch(function(error) {

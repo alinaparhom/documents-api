@@ -171,8 +171,7 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   if (!response.ok || !payload || payload.ok !== true) {
     const retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
     const model = String((payload && payload.model) || 'неизвестно');
-    const reason = (payload && payload.error) || 'ИИ временно недоступен';
-    throw new Error(`${reason}. Повторите через ${retryAfterSeconds} сек. Модель: ${model}.`);
+    throw new Error(`ИИ временно недоступен. Подождите ${retryAfterSeconds} сек. Модель: ${model}.`);
   }
   return payload;
 }
@@ -321,7 +320,7 @@ function openTelegramBriefModal(task, statusHandler) {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
         preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.\n${escapeHtml(message)}</p>`;
-        if (typeof statusHandler === 'function') statusHandler('warning', `ИИ временно недоступен. Детали: ${message}`);
+        if (typeof statusHandler === 'function') statusHandler('warning', message);
       }
     });
     list.appendChild(button);
