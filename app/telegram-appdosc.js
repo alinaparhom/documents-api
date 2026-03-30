@@ -152,17 +152,15 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   return payload;
 }
 
-function buildTelegramBriefText(payload, task) {
+function buildTelegramBriefText(payload) {
   const analysis = payload && payload.analysis ? String(payload.analysis).trim() : '';
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
   const actions = Array.isArray(block.required_actions) ? block.required_actions.slice(0, 4) : [];
   const requirements = Array.isArray(block.requirements) ? block.requirements.slice(0, 3) : [];
   const decisionReason = block && block.decision_reason ? String(block.decision_reason).trim() : '';
   const participants = Array.isArray(block.risks) ? block.risks.find((line) => /^отправитель\s*:/i.test(String(line || '').trim())) : '';
-  const taskSender = normalizeValue(task && task.correspondent) || normalizeValue(task && task.organization);
-  const taskRecipient = normalizeValue(task && task.organization);
   const participantsLine = participants
-    || ((taskSender || taskRecipient) ? `Отправитель: ${taskSender || 'не определён'}; Получатель: ${taskRecipient || 'не определён'}` : 'Не удалось точно определить.');
+    || 'Отправитель: не определён; Получатель: не определён';
   return [
     '✨ Кратко по документу',
     '',
@@ -201,8 +199,6 @@ function openTelegramBriefModal(task, statusHandler) {
   const list = modal.querySelector('[data-list]');
   const preview = modal.querySelector('[data-preview]');
   const sources = [];
-  const taskText = [task && task.summary, task && task.instruction, task && task.resolution].map((v) => String(v || '').trim()).filter(Boolean).join('\n');
-  if (taskText) sources.push({ label: 'Текст задачи', text: taskText, type: 'context' });
   (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
     const name = getAttachmentName(file, index + 1);
     const url = resolveFileFetchUrl(file);
@@ -226,7 +222,7 @@ function openTelegramBriefModal(task, statusHandler) {
         const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
         preview.textContent = '⏳ ИИ анализирует документ...';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
-        preview.textContent = buildTelegramBriefText(aiPayload, task);
+        preview.textContent = buildTelegramBriefText(aiPayload);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
         preview.textContent = `ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${message}`;
@@ -236,7 +232,7 @@ function openTelegramBriefModal(task, statusHandler) {
     list.appendChild(button);
   });
   if (!sources.length) {
-    list.innerHTML = '<div class="appdosc-empty">Нет текста или файлов для анализа.</div>';
+    list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
   }
   document.body.appendChild(modal);
 }
