@@ -344,7 +344,14 @@ function extractTextWithoutOcr(array $file): string
     return '';
 }
 
-function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
+function performOcrRequest(
+    string $endpoint,
+    string $apiKey,
+    array $file,
+    string $language = 'rus',
+    ?string $fileUrl = null,
+    array $options = []
+): array
 {
     $ch = curl_init($endpoint);
     if ($ch === false) {
@@ -354,6 +361,22 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     $postFields = [
         'language' => $language,
     ];
+    foreach ($options as $key => $value) {
+        if (!is_string($key) || trim($key) === '') {
+            continue;
+        }
+        if (is_string($value)) {
+            $normalized = trim($value);
+            if ($normalized === '') {
+                continue;
+            }
+            $postFields[$key] = $normalized;
+            continue;
+        }
+        if (is_int($value) || is_float($value) || is_bool($value)) {
+            $postFields[$key] = $value;
+        }
+    }
     if (is_string($fileUrl) && trim($fileUrl) !== '') {
         $postFields['url'] = trim($fileUrl);
     } else {
@@ -382,6 +405,21 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     curl_close($ch);
 
     return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
+}
+
+function envBool(array $env, string $key, bool $default = false): bool
+{
+    if (!array_key_exists($key, $env)) {
+        return $default;
+    }
+    $value = strtolower(trim((string)$env[$key]));
+    if (in_array($value, ['1', 'true', 'yes', 'on'], true)) {
+        return true;
+    }
+    if (in_array($value, ['0', 'false', 'no', 'off'], true)) {
+        return false;
+    }
+    return $default;
 }
 
 function textFromMixed(mixed $value): string
@@ -1507,6 +1545,24 @@ if ($action === 'ocr_extract') {
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
+    $ocrEngine = trim((string)($env['OCR_ENGINE'] ?? ''));
+    $ocrFileType = trim((string)($env['OCR_FILETYPE'] ?? ''));
+    $ocrOptions = [];
+    if ($ocrEngine !== '' && ctype_digit($ocrEngine)) {
+        $ocrOptions['OCREngine'] = (int)$ocrEngine;
+    }
+    if ($ocrFileType !== '') {
+        $ocrOptions['filetype'] = strtolower($ocrFileType);
+    }
+    if (array_key_exists('OCR_IS_TABLE', $env)) {
+        $ocrOptions['isTable'] = envBool($env, 'OCR_IS_TABLE') ? 1 : 0;
+    }
+    if (array_key_exists('OCR_SCALE', $env)) {
+        $ocrOptions['scale'] = envBool($env, 'OCR_SCALE') ? 1 : 0;
+    }
+    if (array_key_exists('OCR_DETECT_ORIENTATION', $env)) {
+        $ocrOptions['detectOrientation'] = envBool($env, 'OCR_DETECT_ORIENTATION') ? 1 : 0;
+    }
 
     if (!$files && $ocrFileUrl === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
@@ -1530,7 +1586,14 @@ if ($action === 'ocr_extract') {
         jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
     }
 
-    $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $files ? $files[0] : [], $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrFileUrl);
+    $ocrResult = performOcrRequest(
+        $ocrBaseUrl,
+        $ocrApiKey,
+        $files ? $files[0] : [],
+        $ocrLanguage !== '' ? $ocrLanguage : 'rus',
+        $ocrFileUrl,
+        $ocrOptions
+    );
     $ocrResponseBody = $ocrResult['body'];
     $ocrCurlError = (string)$ocrResult['curl_error'];
     $ocrStatusCode = (int)$ocrResult['status'];
@@ -1572,10 +1635,20 @@ if ($action === 'ocr_extract') {
     }
 
     $ocrText = trim(implode("\n\n", $parts));
+    logApiDocs('info', 'OCR processed', [
+        'endpoint' => $ocrBaseUrl,
+        'language' => $ocrLanguage !== '' ? $ocrLanguage : 'rus',
+        'options' => $ocrOptions,
+        'textLength' => mb_strlen($ocrText),
+    ]);
     jsonResponse(200, [
         'ok' => true,
         'text' => $ocrText,
         'raw' => $ocrJson,
+        'meta' => [
+            'provider' => 'ocr_space',
+            'options' => $ocrOptions,
+        ],
     ]);
 }
 
