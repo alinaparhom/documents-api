@@ -1745,21 +1745,13 @@ if ($action === 'ocr_extract') {
     $preparedFiles = [];
     $prepareMode = 'url';
     $preparedPagesCount = 0;
-    $ocrTempDir = ensureOcrTempDir();
-    register_shutdown_function(static function () use ($ocrTempDir): void {
-        cleanupDirectory($ocrTempDir);
-    });
     if ($ocrFileUrl === '') {
         if (!$files) {
             jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
         }
-        $preparedMeta = buildPreparedOcrFiles($files[0], false, $ocrTempDir);
-        $preparedFiles = isset($preparedMeta['files']) && is_array($preparedMeta['files']) ? $preparedMeta['files'] : [];
-        $prepareMode = (string)($preparedMeta['mode'] ?? 'original');
-        $preparedPagesCount = count($preparedFiles);
-        if (!$preparedFiles) {
-            jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не подготовлен']);
-        }
+        $preparedFiles = [$files[0]];
+        $prepareMode = 'original_upload';
+        $preparedPagesCount = 1;
     }
 
     $allParsedResults = [];
