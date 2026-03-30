@@ -917,9 +917,13 @@
     filesBox.style.gridColumn = '1 / span 2';
     filesBox.style.margin = '0';
     var filesWrap = createElement('div', 'ai-chat-modal__files');
+    var filesHint = createElement('div', 'ai-chat-modal__empty', 'Можно прикрепить несколько файлов: ИИ учтёт общий контекст всех файлов.');
     var attachButton = createElement('button', 'ai-chat-modal__attach', '+ Прикрепить файл');
+    var extractAllButton = createElement('button', 'ai-chat-modal__attach', '📚 Прочитать все файлы');
     attachButton.type = 'button';
     attachButton.style.marginTop = '4px';
+    extractAllButton.type = 'button';
+    extractAllButton.style.marginTop = '4px';
 
     var hiddenInput = document.getElementById(FILE_INPUT_ID);
     if (!hiddenInput) {
@@ -1425,16 +1429,16 @@
 
       try {
         var extractedText = '';
-        if (fileEntry.fileObject && isTextLike(fileEntry.fileObject)) {
+        if (fileEntry.fileObject) {
           extractedText = await fileToText(fileEntry.fileObject);
-          if (!String(extractedText || '').trim() && !isPdfLike(fileEntry.fileObject)) {
-            throw new Error('Текстовый файл пустой или не читается');
+          if (!String(extractedText || '').trim()) {
+            throw new Error('Не удалось прочитать файл');
           }
           messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
-        } else if (fileEntry.url && isTextLike(fileEntry)) {
+        } else if (fileEntry.url && (isTextLike(fileEntry) || isPdfLike(fileEntry))) {
           extractedText = await fetchExternalFileContent(fileEntry);
-          if (!String(extractedText || '').trim() && !isPdfLike(fileEntry)) {
-            throw new Error('Не удалось прочитать текст по ссылке');
+          if (!String(extractedText || '').trim()) {
+            throw new Error('Не удалось прочитать файл по ссылке');
           }
           messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
         } else {
@@ -1459,8 +1463,7 @@
           try {
             payload = rawResponseText ? JSON.parse(rawResponseText) : null;
           } catch (parseError) {
-            var preview = String(rawResponseText || '').replace(/\s+/g, ' ').trim().slice(0, 180);
-            throw new Error('Сервис извлечения текста вернул не JSON ответ: ' + (preview || 'пустой ответ'));
+            throw new Error('Сервис извлечения текста временно недоступен (неверный формат ответа).');
           }
           if (!response.ok || !payload || payload.ok !== true) {
             throw new Error(payload && payload.error ? payload.error : ('Ошибка извлечения текста (' + response.status + ')'));
@@ -1701,6 +1704,9 @@
     attachButton.addEventListener('click', function () {
       hiddenInput.click();
     });
+    extractAllButton.addEventListener('click', function () {
+      autoExtractFiles(state.files);
+    });
 
     hiddenInput.addEventListener('change', function () {
       var selected = hiddenInput.files ? Array.from(hiddenInput.files) : [];
@@ -1724,8 +1730,10 @@
     header.appendChild(closeButton);
 
     filesBox.appendChild(filesWrap);
+    filesBox.appendChild(filesHint);
     filesBox.appendChild(contextUsageHint);
     filesBox.appendChild(attachButton);
+    filesBox.appendChild(extractAllButton);
 
     modelField.appendChild(modelSelect);
     styleField.appendChild(styleSelect);

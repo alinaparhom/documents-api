@@ -1349,6 +1349,51 @@ function applyInputBudget(array $entries, int $maxChars): array
     $selected = [];
     $usedChars = 0;
     $usedFiles = [];
+    $selectedFingerprints = [];
+    $fileFirstChunkUsed = [];
+    $minDistinctFiles = min(2, count($chunks));
+    $minCharsPerFile = max(700, min(3000, (int)floor($maxChars / max(1, $minDistinctFiles))));
+
+    foreach ($chunks as $chunk) {
+        if (count($fileFirstChunkUsed) >= $minDistinctFiles || $usedChars >= $maxChars) {
+            break;
+        }
+        $fileName = $chunk['name'];
+        if (isset($fileFirstChunkUsed[$fileName])) {
+            continue;
+        }
+        $available = $maxChars - $usedChars;
+        if ($available < 200) {
+            break;
+        }
+        $budgetForChunk = min($available, $minCharsPerFile);
+        if ($budgetForChunk < 200) {
+            continue;
+        }
+        $text = $chunk['text'];
+        $length = mb_strlen($text);
+        if ($length > $budgetForChunk) {
+            $text = mb_substr($text, 0, $budgetForChunk) . '…';
+            $length = mb_strlen($text);
+        }
+        if ($length <= 0) {
+            continue;
+        }
+        $fingerprint = md5(mb_strtolower($fileName . '|' . $chunk['type'] . '|' . $text));
+        if (isset($selectedFingerprints[$fingerprint])) {
+            continue;
+        }
+        $selectedFingerprints[$fingerprint] = true;
+        $selected[] = [
+            'name' => $fileName,
+            'type' => $chunk['type'],
+            'text' => $text,
+        ];
+        $fileFirstChunkUsed[$fileName] = true;
+        $usedChars += $length;
+        $usedFiles[$fileName] = true;
+    }
+
     foreach ($chunks as $chunk) {
         if ($usedChars >= $maxChars) {
             break;
@@ -1366,6 +1411,11 @@ function applyInputBudget(array $entries, int $maxChars): array
             $text = mb_substr($text, 0, $available) . '…';
             $length = mb_strlen($text);
         }
+        $fingerprint = md5(mb_strtolower($chunk['name'] . '|' . $chunk['type'] . '|' . $text));
+        if (isset($selectedFingerprints[$fingerprint])) {
+            continue;
+        }
+        $selectedFingerprints[$fingerprint] = true;
         $selected[] = [
             'name' => $chunk['name'],
             'type' => $chunk['type'],
