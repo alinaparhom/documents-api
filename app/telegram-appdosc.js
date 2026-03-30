@@ -7350,10 +7350,11 @@ function updateStatusButtonsSelection(container, currentStatus) {
   if (!container) {
     return;
   }
-  const normalizedCurrent = normalizeName(currentStatus);
+  const currentKey = getStatusSummaryKey(currentStatus);
   container.querySelectorAll('[data-status-value]').forEach((button) => {
     const value = button.dataset.statusValue || '';
-    const isActive = normalizedCurrent !== '' && normalizeName(value) === normalizedCurrent;
+    const buttonKey = getStatusSummaryKey(value);
+    const isActive = currentKey !== '' && buttonKey !== '' && buttonKey === currentKey;
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
 }
@@ -7367,9 +7368,14 @@ async function handleStatusButtonClick(container, button, task, status) {
     return;
   }
 
-  const normalizedTarget = normalizeName(targetStatus);
+  if (button.getAttribute('aria-pressed') === 'true') {
+    return;
+  }
+
   const currentStatus = getTaskStatusValue(task);
-  if (normalizedTarget !== '' && normalizedTarget === normalizeName(currentStatus)) {
+  const currentStatusKey = getStatusSummaryKey(currentStatus);
+  const targetStatusKey = getStatusSummaryKey(targetStatus);
+  if (targetStatusKey && currentStatusKey && targetStatusKey === currentStatusKey) {
     return;
   }
 
@@ -7407,7 +7413,10 @@ async function handleStatusButtonClick(container, button, task, status) {
     });
     updateStatusButtonsSelection(container, targetStatus);
     setStatus('success', 'Статус обновлён.');
-    await loadTasks(true);
+    const refreshPromise = loadTasks(true);
+    if (refreshPromise && typeof refreshPromise.catch === 'function') {
+      refreshPromise.catch(() => {});
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logClientEvent('task_status_error', {
