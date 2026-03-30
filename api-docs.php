@@ -344,7 +344,14 @@ function extractTextWithoutOcr(array $file): string
     return '';
 }
 
-function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
+function performOcrRequest(
+    string $endpoint,
+    string $apiKey,
+    array $file,
+    string $language = 'rus',
+    ?string $fileUrl = null,
+    array $extraPostFields = []
+): array
 {
     $ch = curl_init($endpoint);
     if ($ch === false) {
@@ -354,6 +361,11 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     $postFields = [
         'language' => $language,
     ];
+    foreach ($extraPostFields as $key => $value) {
+        if (is_string($key) && $key !== '' && (is_scalar($value) || $value === null)) {
+            $postFields[$key] = $value;
+        }
+    }
     if (is_string($fileUrl) && trim($fileUrl) !== '') {
         $postFields['url'] = trim($fileUrl);
     } else {
@@ -382,6 +394,36 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     curl_close($ch);
 
     return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
+}
+
+function getImageDiagnostics(string $filePath): array
+{
+    $meta = [
+        'path' => $filePath,
+        'exists' => is_file($filePath),
+        'sizeBytes' => is_file($filePath) ? (int)@filesize($filePath) : 0,
+    ];
+    if (!class_exists('Imagick') || !is_file($filePath)) {
+        $meta['imagick'] = false;
+        return $meta;
+    }
+    $meta['imagick'] = true;
+    try {
+        $img = new Imagick();
+        $img->readImage($filePath);
+        $res = $img->getImageResolution();
+        $meta['format'] = (string)$img->getImageFormat();
+        $meta['width'] = (int)$img->getImageWidth();
+        $meta['height'] = (int)$img->getImageHeight();
+        $meta['depth'] = (int)$img->getImageDepth();
+        $meta['xDpi'] = isset($res['x']) ? (float)$res['x'] : 0.0;
+        $meta['yDpi'] = isset($res['y']) ? (float)$res['y'] : 0.0;
+        $img->clear();
+        $img->destroy();
+    } catch (Throwable $e) {
+        $meta['error'] = $e->getMessage();
+    }
+    return $meta;
 }
 
 function ensureOcrTempDir(): string
@@ -498,19 +540,29 @@ function convertPdfToImages(string $pdfPath, string $tempDir, int $targetDpi = 3
 function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tempDir): array
 {
     $tmpName = (string)($file['tmp_name'] ?? '');
-    if ($tmpName === '' || !is_file($tmpName)) {
-        return ['files' => [], 'preprocessed' => false, 'mode' => 'none'];
-    }
-    $extension = detectFileExtension($file);
-    $isPdf = $extension === 'pdf';
     $targetDpi = 300;
+    $diagnostics = [
+        'imagickAvailable' => class_exists('Imagick'),
+        'targetDpi' => $targetDpi,
+        'sourceExtension' => detectFileExtension($file),
+        'sourceMime' => (string)($file['type'] ?? ''),
+        'sourceSizeBytes' => (int)($file['size'] ?? 0),
+    ];
+    if ($tmpName === '' || !is_file($tmpName)) {
+        $diagnostics['error'] = 'source_not_found';
+        return ['files' => [], 'preprocessed' => false, 'mode' => 'none', 'diagnostics' => $diagnostics];
+    }
+    $extension = $diagnostics['sourceExtension'];
+    $isPdf = $extension === 'pdf';
 
     if ($isPdf) {
         $pages = convertPdfToImages($tmpName, $tempDir, $targetDpi);
         if (!$pages) {
-            return ['files' => [$file], 'preprocessed' => false, 'mode' => 'pdf_original'];
+            $diagnostics['pdfPagesGenerated'] = 0;
+            return ['files' => [$file], 'preprocessed' => false, 'mode' => 'pdf_original', 'diagnostics' => $diagnostics];
         }
         $prepared = [];
+        $preparedDiagnostics = [];
         foreach ($pages as $i => $pagePath) {
             $prepared[] = [
                 'name' => 'page-' . ($i + 1) . '.png',
@@ -518,19 +570,25 @@ function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tem
                 'type' => 'image/png',
                 'size' => (int)@filesize($pagePath),
             ];
+            $preparedDiagnostics[] = getImageDiagnostics($pagePath);
         }
-        return ['files' => $prepared, 'preprocessed' => $preprocessEnabled, 'mode' => 'pdf_pages'];
+        $diagnostics['pdfPagesGenerated'] = count($prepared);
+        $diagnostics['prepared'] = $preparedDiagnostics;
+        return ['files' => $prepared, 'preprocessed' => $preprocessEnabled, 'mode' => 'pdf_pages', 'diagnostics' => $diagnostics];
     }
 
     if (!$preprocessEnabled) {
-        return ['files' => [$file], 'preprocessed' => false, 'mode' => 'original'];
+        $diagnostics['prepared'] = [getImageDiagnostics($tmpName)];
+        return ['files' => [$file], 'preprocessed' => false, 'mode' => 'original', 'diagnostics' => $diagnostics];
     }
 
     $preparedPath = $tempDir . '/preprocessed.png';
     $ok = preprocessImageForOcr($tmpName, $preparedPath, $targetDpi);
     if (!$ok) {
-        return ['files' => [$file], 'preprocessed' => false, 'mode' => 'fallback_original'];
+        $diagnostics['prepared'] = [getImageDiagnostics($tmpName)];
+        return ['files' => [$file], 'preprocessed' => false, 'mode' => 'fallback_original', 'diagnostics' => $diagnostics];
     }
+    $diagnostics['prepared'] = [getImageDiagnostics($preparedPath)];
 
     return [
         'files' => [[
@@ -541,6 +599,7 @@ function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tem
         ]],
         'preprocessed' => true,
         'mode' => 'image_preprocessed',
+        'diagnostics' => $diagnostics,
     ];
 }
 
@@ -1667,11 +1726,21 @@ if ($action === 'ocr_extract') {
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
+    $ocrEngine = trim((string)($_POST['ocr_engine'] ?? '2'));
+    $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
+    $ocrDetectOrientation = trim((string)($_POST['detect_orientation'] ?? 'true'));
+    $ocrOverlayRequired = trim((string)($_POST['is_overlay_required'] ?? 'false'));
     $ocrPreprocessEnabled = in_array(
         strtolower(trim((string)($env['OCR_PREPROCESS'] ?? '0'))),
         ['1', 'true', 'yes', 'on'],
         true
     );
+    $ocrExtraFields = [
+        'OCREngine' => $ocrEngine !== '' ? $ocrEngine : '2',
+        'scale' => $ocrScale !== '' ? $ocrScale : 'true',
+        'detectOrientation' => $ocrDetectOrientation !== '' ? $ocrDetectOrientation : 'true',
+        'isOverlayRequired' => $ocrOverlayRequired !== '' ? $ocrOverlayRequired : 'false',
+    ];
     $ocrTempDir = ensureOcrTempDir();
     register_shutdown_function(static function () use ($ocrTempDir): void {
         cleanupDirectory($ocrTempDir);
@@ -1703,11 +1772,13 @@ if ($action === 'ocr_extract') {
     $preparedFiles = [];
     $preprocessingApplied = false;
     $preprocessMode = 'url';
+    $preprocessDiagnostics = [];
     if ($ocrFileUrl === '') {
         $preparedMeta = buildPreparedOcrFiles($files[0], $ocrPreprocessEnabled, $ocrTempDir);
         $preparedFiles = isset($preparedMeta['files']) && is_array($preparedMeta['files']) ? $preparedMeta['files'] : [];
         $preprocessingApplied = !empty($preparedMeta['preprocessed']);
         $preprocessMode = (string)($preparedMeta['mode'] ?? 'none');
+        $preprocessDiagnostics = isset($preparedMeta['diagnostics']) && is_array($preparedMeta['diagnostics']) ? $preparedMeta['diagnostics'] : [];
         if (!$preparedFiles) {
             jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не подготовлен']);
         }
@@ -1721,10 +1792,19 @@ if ($action === 'ocr_extract') {
     }
 
     foreach ($preparedFiles as $index => $preparedFile) {
-        $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $preparedFile, $targetLanguage, $ocrFileUrl !== '' ? $ocrFileUrl : null);
+        $startedAt = microtime(true);
+        $ocrResult = performOcrRequest(
+            $ocrBaseUrl,
+            $ocrApiKey,
+            $preparedFile,
+            $targetLanguage,
+            $ocrFileUrl !== '' ? $ocrFileUrl : null,
+            $ocrExtraFields
+        );
         $ocrResponseBody = $ocrResult['body'];
         $ocrCurlError = (string)$ocrResult['curl_error'];
         $ocrStatusCode = (int)$ocrResult['status'];
+        $durationMs = (int)round((microtime(true) - $startedAt) * 1000);
 
         if ($ocrResponseBody === false) {
             logApiDocs('error', 'OCR request failed', ['curlError' => $ocrCurlError, 'page' => $index + 1]);
@@ -1760,6 +1840,7 @@ if ($action === 'ocr_extract') {
         $pageRaw[] = [
             'page' => $index + 1,
             'status' => $ocrStatusCode,
+            'durationMs' => $durationMs,
             'response' => $ocrJson,
         ];
 
@@ -1787,6 +1868,15 @@ if ($action === 'ocr_extract') {
             'preprocessEnabled' => $ocrPreprocessEnabled,
             'preprocessMode' => $preprocessMode,
             'pagesProcessed' => count($pageRaw),
+            'ocrRequest' => [
+                'language' => $targetLanguage,
+                'engine' => $ocrExtraFields['OCREngine'],
+                'scale' => $ocrExtraFields['scale'],
+                'detectOrientation' => $ocrExtraFields['detectOrientation'],
+                'isOverlayRequired' => $ocrExtraFields['isOverlayRequired'],
+                'viaUrl' => $ocrFileUrl !== '',
+            ],
+            'preprocessDiagnostics' => $preprocessDiagnostics,
             'pages' => $pageRaw,
         ],
     ]);
