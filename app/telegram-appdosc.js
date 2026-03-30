@@ -8,9 +8,18 @@ const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
-const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v1';
+const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function ensureAiDialogScriptLoaded() {
   if (window && typeof window.openAiResponseDialog === 'function') {
@@ -101,19 +110,26 @@ function ensureTelegramBriefModalStyle() {
   style.id = TELEGRAM_BRIEF_MODAL_STYLE_ID;
   style.textContent = `
     .appdosc-brief-ai{position:fixed;inset:0;z-index:2800;background:rgba(15,23,42,.32);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:8px}
-    .appdosc-brief-ai__panel{width:min(980px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.98),rgba(255,255,255,.92));border-radius:20px;border:1px solid rgba(255,255,255,.9);overflow:hidden}
+    .appdosc-brief-ai__panel{width:min(980px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.94));border-radius:22px;border:1px solid rgba(255,255,255,.9);overflow:hidden;box-shadow:0 14px 38px rgba(15,23,42,.16)}
     .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid rgba(226,232,240,.95)}
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
     .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,300px) minmax(0,1fr);gap:10px;padding:12px;min-height:0;flex:1}
     .appdosc-brief-ai__list{display:flex;flex-direction:column;gap:8px;overflow:auto}
-    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:12px;padding:10px;text-align:left;opacity:1}
+    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.92);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:14px;padding:11px;text-align:left;opacity:1}
     .appdosc-brief-ai__item span{display:block;word-break:break-word;overflow-wrap:anywhere}
     .appdosc-brief-ai__item strong{font-size:13px;color:#0f172a}
     .appdosc-brief-ai__item small{font-size:11px;color:#64748b}
-    .appdosc-brief-ai__item.is-active{border-color:rgba(37,99,235,.55);background:rgba(239,246,255,.9)}
-    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:#fff;padding:12px;white-space:pre-wrap;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
-    @media (max-width:768px){.appdosc-brief-ai__body{grid-template-columns:1fr}}
+    .appdosc-brief-ai__item.is-active{border-color:rgba(59,130,246,.6);background:rgba(239,246,255,.9)}
+    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.92);border-radius:16px;background:rgba(255,255,255,.86);padding:12px;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
+    .appdosc-brief-ai__placeholder{margin:0;color:#64748b;white-space:pre-wrap}
+    .appdosc-brief-ai__section{border:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.88);border-radius:14px;padding:10px 11px}
+    .appdosc-brief-ai__section + .appdosc-brief-ai__section{margin-top:8px}
+    .appdosc-brief-ai__section h4{margin:0 0 6px 0;font-size:12px;color:#334155;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+    .appdosc-brief-ai__section p{margin:0;color:#0f172a;white-space:pre-wrap}
+    .appdosc-brief-ai__section ul{margin:0;padding-left:18px;color:#0f172a}
+    .appdosc-brief-ai__section li + li{margin-top:5px}
+    @media (max-width:768px){.appdosc-brief-ai{padding:0}.appdosc-brief-ai__panel{max-height:100dvh;border-radius:0}.appdosc-brief-ai__body{grid-template-columns:1fr}}
   `;
   document.head.appendChild(style);
 }
@@ -135,23 +151,22 @@ async function requestTelegramOcrByUrl(fileUrl) {
 
 async function requestTelegramBriefAi(sourceLabel, text) {
   const normalizedText = String(text || '').trim();
+  const fileOnlyPrompt = [
+    'Режим: изолированный анализ только текста файла.',
+    'Используй исключительно extractedTexts и никаких других данных.',
+    'Запрещено учитывать карточку задачи, Telegram-данные, роли, имена из интерфейса и внешние догадки.',
+    'Если факт не найден в тексте файла, явно пиши: "не указано в файле".',
+    'Пиши просто и понятно для новичка.',
+    'Нужен только структурированный результат по содержимому файла.'
+  ].join(' ');
   const context = {
     extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: normalizedText.slice(0, 12000) }],
-    aiBehavior: [
-      'Режим "Кратко ИИ" для Telegram Mini App.',
-      'Анализируй строго только текст из extractedTexts.',
-      'Запрещено использовать любые поля карточки задачи, названия организаций из интерфейса или внешние догадки.',
-      'Дай очень понятный и информативный результат для новичка.',
-      'В analysis: 3-5 простых предложений о сути документа и главной цели.',
-      'В risks первой строкой верни: "Отправитель: ...; Получатель: ...". Если в тексте не указано — "не указано".',
-      'В required_actions перечисли 4-6 ключевых фактов, дат, сумм и решений из файла.',
-      'В requirements перечисли 3-5 конкретных следующих шагов, которые логично сделать по тексту файла.',
-    ].join(' ')
+    aiBehavior: fileOnlyPrompt
   };
   const formData = new FormData();
   formData.append('action', 'ai_response_analyze');
-  formData.append('documentTitle', sourceLabel);
-  formData.append('prompt', 'Сделай информативное и понятное резюме строго по тексту файла без использования контекста задачи.');
+  formData.append('documentTitle', 'Файл для изолированного анализа');
+  formData.append('prompt', `${fileOnlyPrompt} Верни: analysis, risks, required_actions, requirements.`);
   formData.append('responseStyle', 'concise');
   formData.append('context', JSON.stringify(context));
   const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
@@ -162,33 +177,51 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   return payload;
 }
 
-function buildTelegramBriefText(payload) {
+function buildTelegramBriefSections(payload) {
   const analysis = payload && payload.analysis ? String(payload.analysis).trim() : '';
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
-  const actions = Array.isArray(block.required_actions) ? block.required_actions.slice(0, 4) : [];
-  const requirements = Array.isArray(block.requirements) ? block.requirements.slice(0, 3) : [];
-  const decisionReason = block && block.decision_reason ? String(block.decision_reason).trim() : '';
+  const actions = Array.isArray(block.required_actions)
+    ? block.required_actions.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 5)
+    : [];
+  const requirements = Array.isArray(block.requirements)
+    ? block.requirements.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 4)
+    : [];
   const participants = Array.isArray(block.risks) ? block.risks.find((line) => /^отправитель\s*:/i.test(String(line || '').trim())) : '';
-  const participantsLine = participants
-    || 'Отправитель: не определён; Получатель: не определён';
-  return [
-    '✨ Кратко по документу',
-    '',
-    '📄 О чем файл',
-    analysis || 'Не удалось определить суть документа.',
-    '',
-    '👤 Кто прислал / кому',
-    participantsLine,
-    '',
-    '❓ Зачем это письмо',
-    decisionReason || 'В тексте файла цель письма явно не указана.',
-    '',
-    '🔎 Важные детали',
-    actions.length ? actions.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• В тексте файла не удалось выделить важные детали.',
-    '',
-    '✅ Что нужно сделать',
-    requirements.length ? requirements.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• В файле нет явных шагов — нужно уточнение у автора документа.'
-  ].join('\n');
+  return {
+    analysis: analysis || 'Суть документа не указана в файле.',
+    participants: participants || 'Отправитель: не указано в файле; Получатель: не указано в файле',
+    actions,
+    requirements,
+  };
+}
+
+function renderTelegramBriefPreview(container, payload) {
+  const sections = buildTelegramBriefSections(payload);
+  const detailsHtml = sections.actions.length
+    ? `<ul>${sections.actions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+    : '<p>Ключевые детали не указаны в файле.</p>';
+  const stepsHtml = sections.requirements.length
+    ? `<ul>${sections.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+    : '<p>Следующие шаги не указаны в файле.</p>';
+
+  container.innerHTML = `
+    <section class="appdosc-brief-ai__section">
+      <h4>О чем файл</h4>
+      <p>${escapeHtml(sections.analysis)}</p>
+    </section>
+    <section class="appdosc-brief-ai__section">
+      <h4>Отправитель и получатель</h4>
+      <p>${escapeHtml(sections.participants)}</p>
+    </section>
+    <section class="appdosc-brief-ai__section">
+      <h4>Важные детали из файла</h4>
+      ${detailsHtml}
+    </section>
+    <section class="appdosc-brief-ai__section">
+      <h4>Что сделать дальше</h4>
+      ${stepsHtml}
+    </section>
+  `;
 }
 
 function openTelegramBriefModal(task, statusHandler) {
@@ -203,7 +236,9 @@ function openTelegramBriefModal(task, statusHandler) {
       </div>
       <div class="appdosc-brief-ai__body">
         <div class="appdosc-brief-ai__list" data-list></div>
-        <pre class="appdosc-brief-ai__preview" data-preview>Нажмите на источник слева.</pre>
+        <div class="appdosc-brief-ai__preview" data-preview>
+          <p class="appdosc-brief-ai__placeholder">Выберите файл слева — покажу краткий изолированный разбор только по его тексту.</p>
+        </div>
       </div>
     </div>`;
   const list = modal.querySelector('[data-list]');
@@ -228,15 +263,15 @@ function openTelegramBriefModal(task, statusHandler) {
     button.addEventListener('click', async () => {
       activate(button);
       try {
-        preview.textContent = '⏳ Подготовка текста...';
+        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
         const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
-        preview.textContent = '⏳ ИИ анализирует документ...';
+        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
-        preview.textContent = buildTelegramBriefText(aiPayload);
+        renderTelegramBriefPreview(preview, aiPayload);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
-        preview.textContent = `ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${message}`;
-        if (typeof statusHandler === 'function') statusHandler('warning', preview.textContent);
+        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${escapeHtml(message)}</p>`;
+        if (typeof statusHandler === 'function') statusHandler('warning', `ИИ временно недоступен. Детали: ${message}`);
       }
     });
     list.appendChild(button);
