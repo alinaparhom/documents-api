@@ -336,15 +336,15 @@
     var style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = '' +
-      '.ai-chat-modal{position:fixed;inset:0;z-index:1900;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(15,23,42,.44);backdrop-filter:blur(5px);opacity:0;transition:opacity .2s ease;}' +
+      '.ai-chat-modal{position:fixed;inset:0;z-index:1900;display:flex;align-items:center;justify-content:center;padding:14px;background:radial-gradient(circle at top,rgba(59,130,246,.22),rgba(15,23,42,.56));backdrop-filter:blur(10px);opacity:0;transition:opacity .25s ease;}' +
       '.ai-chat-modal--visible{opacity:1;}' +
       '.ai-chat-modal--closing{opacity:0;}' +
-      '.ai-chat-modal__panel{width:min(1900px,98vw);height:96vh;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.92),rgba(248,250,252,.86));border:1px solid rgba(203,213,225,.7);border-radius:18px;overflow:hidden;box-shadow:0 20px 55px rgba(15,23,42,.22);}' +
-      '.ai-chat-modal__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,rgba(255,255,255,.76),rgba(248,250,252,.62));}' +
+      '.ai-chat-modal__panel{width:min(1200px,98vw);height:94vh;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.9),rgba(248,250,252,.78));border:1px solid rgba(255,255,255,.6);border-radius:22px;overflow:hidden;box-shadow:0 24px 64px rgba(15,23,42,.28);backdrop-filter:blur(12px);}' +
+      '.ai-chat-modal__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid rgba(226,232,240,.7);background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(248,250,252,.64));}' +
       '.ai-chat-modal__title{font-size:14px;font-weight:700;color:#0f172a;}' +
       '.ai-chat-modal__subtitle{margin-top:1px;font-size:11px;color:#64748b;}' +
       '.ai-chat-modal__close{border:none;background:rgba(148,163,184,.18);width:32px;height:32px;border-radius:999px;font-size:18px;line-height:1;cursor:pointer;}' +
-      '.ai-chat-modal__content{display:flex;flex-direction:column;gap:10px;padding:11px;min-height:0;flex:1;}' +
+      '.ai-chat-modal__content{display:flex;flex-direction:column;gap:10px;padding:12px;min-height:0;flex:1;}' +
       '.ai-chat-modal__context{border:1px solid rgba(226,232,240,.88);border-radius:12px;padding:8px;background:rgba(255,255,255,.72);backdrop-filter:blur(2px);}' +
       '.ai-chat-modal__context-title{font-size:11px;font-weight:700;color:#334155;margin-bottom:3px;}' +
       '.ai-chat-modal__files{display:flex;flex-wrap:wrap;gap:5px;min-height:20px;}' +
@@ -359,15 +359,16 @@
       '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
       '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
       '.ai-chat-modal__input{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:rgba(255,255,255,.95);padding:7px 8px;font-size:12px;color:#0f172a;outline:none;}' +
-      '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:11px;background:rgba(248,250,252,.52);border:1px solid rgba(226,232,240,.82);border-radius:12px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth;}' +
-      '.ai-chat-msg{max-width:84%;padding:8px 10px;border-radius:12px;font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:0 2px 8px rgba(15,23,42,.05);}' +
+      '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:12px;background:rgba(248,250,252,.58);border:1px solid rgba(226,232,240,.75);border-radius:16px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth;box-shadow:inset 0 1px 0 rgba(255,255,255,.65);}' +
+      '.ai-chat-msg{max-width:88%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.46;white-space:pre-wrap;word-break:break-word;box-shadow:0 6px 18px rgba(15,23,42,.08);}' +
       '.ai-chat-msg--user{margin-left:auto;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-bottom-right-radius:6px;}' +
       '.ai-chat-msg--assistant{margin-right:auto;background:#fff;border:1px solid rgba(226,232,240,.9);color:#0f172a;border-bottom-left-radius:6px;}' +
       '.ai-chat-msg--error{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.9);color:#991b1b;}' +
-      '.ai-chat-modal__composer{display:flex;gap:6px;align-items:flex-end;}' +
-      '.ai-chat-modal__textarea{flex:1;min-height:40px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;background:#fff;outline:none;}' +
-      '.ai-chat-modal__send{border:none;border-radius:10px;padding:8px 11px;min-height:40px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;cursor:pointer;}' +
-      '.ai-chat-modal__send:disabled{opacity:.6;cursor:not-allowed;}' +      '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
+      '.ai-chat-modal__composer{display:flex;gap:8px;align-items:flex-end;}' +
+      '.ai-chat-modal__textarea{flex:1;min-height:44px;max-height:140px;resize:none;border:1px solid rgba(148,163,184,.4);border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.4;background:rgba(255,255,255,.95);outline:none;}' +
+      '.ai-chat-modal__send{border:none;border-radius:12px;padding:9px 13px;min-height:44px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;cursor:pointer;box-shadow:0 8px 20px rgba(37,99,235,.25);}' +
+      '.ai-chat-modal__send:disabled{opacity:.6;cursor:not-allowed;box-shadow:none;}' +
+      '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
       '.ai-chat-modal__export-area{margin-top:4px;border-top:1px solid rgba(226,232,240,.88);padding-top:8px;display:flex;flex-direction:column;gap:6px;}' +
       '.ai-chat-modal__export-header{font-size:11px;font-weight:600;color:#334155;}' +
       '.ai-chat-modal__editable-response{width:100%;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px;font-size:12px;font-family:inherit;resize:vertical;background:#fff;min-height:84px;}' +
@@ -834,7 +835,14 @@
     formData.append('prompt', userText);
     formData.append('model', state.model);
     formData.append('responseStyle', state.responseStyle);
-    formData.append('aiBehavior', state.aiBehavior || '');
+    var behaviorText = String(state.aiBehavior || '').trim();
+    if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
+      behaviorText = '';
+    }
+    if (behaviorText.length > 2400) {
+      behaviorText = behaviorText.slice(0, 2400);
+    }
+    formData.append('aiBehavior', behaviorText);
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
@@ -1497,6 +1505,7 @@
 
     function closeModal() {
       document.removeEventListener('keydown', onEsc);
+      clearRetryCountdown();
       hiddenInput.value = '';
       closeWithAnimation(root);
     }
@@ -1505,6 +1514,30 @@
       if (event.key === 'Escape') {
         closeModal();
       }
+    }
+
+    var retryCountdownTimer = null;
+    function clearRetryCountdown() {
+      if (retryCountdownTimer) {
+        clearInterval(retryCountdownTimer);
+        retryCountdownTimer = null;
+      }
+    }
+    function showRetryCountdown(seconds) {
+      var remaining = Math.max(1, Number(seconds || 1));
+      var countdownMessage = createMessage('assistant', 'До бесплатной попытки осталось: ' + remaining + ' сек.', true);
+      messages.appendChild(countdownMessage);
+      messages.scrollTop = messages.scrollHeight;
+      clearRetryCountdown();
+      retryCountdownTimer = setInterval(function () {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearRetryCountdown();
+          countdownMessage.innerHTML = escapeHtml('Можно отправить повторно.');
+          return;
+        }
+        countdownMessage.innerHTML = escapeHtml('До бесплатной попытки осталось: ' + remaining + ' сек.');
+      }, 1000);
     }
 
 
@@ -1545,7 +1578,14 @@
 
         var payload = await response.json();
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')'));
+          var apiError = new Error(payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')'));
+          if (payload && payload.retryAfter) {
+            apiError.retryAfter = Number(payload.retryAfter || 0);
+          }
+          if (payload && Array.isArray(payload.availableModels)) {
+            apiError.availableModels = payload.availableModels.slice(0, 6);
+          }
+          throw apiError;
         }
 
         pending.remove();
@@ -1555,35 +1595,19 @@
           .replace(/\n{3,}/g, '\n\n')
           .trim();
         finalResponse = sanitizeAssistantResponseText(finalResponse);
-        var decisionBlock = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object'
-          ? payload.decisionBlock
-          : null;
-        if (decisionBlock && decisionBlock.decision && !/^решение\s*ии\s*:/i.test(finalResponse)) {
-          var decisionMap = {
-            approve: '✅ Одобрить',
-            reject: '⛔ Отклонить',
-            need_clarification: '❓ Нужны уточнения'
-          };
-          var decisionLabel = decisionMap[decisionBlock.decision] || String(decisionBlock.decision);
-          var decisionLines = ['Решение ИИ: ' + decisionLabel];
-          if (decisionBlock.decision_reason) {
-            decisionLines.push('Причина: ' + String(decisionBlock.decision_reason));
-          }
-          if (Array.isArray(decisionBlock.required_actions) && decisionBlock.required_actions.length) {
-            decisionLines.push('Действия: ' + decisionBlock.required_actions.slice(0, 3).join('; '));
-          }
-          if (Array.isArray(decisionBlock.requirements) && decisionBlock.requirements.length) {
-            decisionLines.push('Требования из файла: ' + decisionBlock.requirements.slice(0, 3).join('; '));
-          }
-          finalResponse = decisionLines.join('\n') + '\n\n' + finalResponse;
-        }
         messages.appendChild(createMessage('assistant', finalResponse));
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
         autoHeight(textarea);
       } catch (error) {
         pending.remove();
-        messages.appendChild(createMessage('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Не удалось получить ответ.'), true));
+        if (error && Number(error.retryAfter) > 0) {
+          showRetryCountdown(Number(error.retryAfter));
+        } else if (error && Array.isArray(error.availableModels) && error.availableModels.length) {
+          messages.appendChild(createMessage('assistant', (error.message || 'Модель недоступна.') + '\nДоступные модели: ' + error.availableModels.join(', '), true));
+        } else {
+          messages.appendChild(createMessage('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Не удалось получить ответ.'), true));
+        }
       } finally {
         setLoading(false);
         messages.scrollTop = messages.scrollHeight;

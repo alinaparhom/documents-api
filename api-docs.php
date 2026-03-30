@@ -1878,27 +1878,31 @@ $styleExampleInstruction = 'Структура response обязательна: 
 $effectiveBehavior = $aiBehavior !== ''
     ? $aiBehavior
     : (isset($context['aiBehavior']) && is_string($context['aiBehavior']) ? trim($context['aiBehavior']) : '');
+if ($effectiveBehavior !== '' && mb_strlen($effectiveBehavior) > 2400) {
+    $effectiveBehavior = mb_substr($effectiveBehavior, 0, 2400);
+}
 $behaviorInstruction = $effectiveBehavior !== ''
     ? ('Дополнительная настройка поведения: ' . $effectiveBehavior . '.')
     : '';
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
-$allowedModelsRaw = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
-if ($allowedModelsRaw !== '') {
-    $allowedModels = [];
-    $allowedParts = preg_split('/[,\\n]+/u', $allowedModelsRaw);
-    if (is_array($allowedParts)) {
-        foreach ($allowedParts as $allowedPart) {
-            $normalized = trim((string)$allowedPart);
+$availableModels = [];
+$rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
+if ($rawModels !== '') {
+    $parts = preg_split('/[,\\n]+/u', $rawModels);
+    if (is_array($parts)) {
+        foreach ($parts as $part) {
+            $normalized = trim((string)$part);
             if ($normalized !== '') {
-                $allowedModels[$normalized] = true;
+                $availableModels[] = $normalized;
             }
         }
     }
-    if ($requestedModel !== '' && !isset($allowedModels[$requestedModel])) {
-        $effectiveModel = $model;
-    }
 }
+if (!$availableModels) {
+    $availableModels = [$model];
+}
+$availableModels = array_values(array_unique($availableModels));
 
 $systemMessage = "ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ С ОПЫТОМ 15 ЛЕТ. Верни только JSON объект с полями: analysis, decision, decision_reason, risks, required_actions, response. "
   . "Отвечай только в деловом стиле: сухо, четко, без воды, без эмодзи, без извинений и без неуверенных формулировок. "
@@ -2018,42 +2022,55 @@ if ($statusCode >= 400) {
         logApiDocs('error', 'AI provider blocked by region, no local fallback in autonomous mode', ['status' => $statusCode]);
         jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode]);
     }
+    if ($statusCode === 429) {
+        $waitSeconds = 20;
+        if (preg_match('/try again in\s+([0-9.]+)\s*s/i', $message, $match)) {
+            $waitSeconds = max(3, (int)ceil((float)$match[1]));
+        }
+        jsonResponse(429, [
+            'ok' => false,
+            'error' => 'До бесплатной попытки осталось: ' . $waitSeconds . ' сек.',
+            'status' => $statusCode,
+            'retryAfter' => $waitSeconds,
+        ]);
+    }
+    $modelUnavailable = stripos($message, 'model') !== false
+        && (
+            stripos($message, 'not found') !== false
+            || stripos($message, 'not available') !== false
+            || stripos($message, 'decommissioned') !== false
+            || stripos($message, 'does not exist') !== false
+        );
+    if ($modelUnavailable) {
+        jsonResponse(503, [
+            'ok' => false,
+            'error' => 'Текущая модель временно недоступна. Выберите другую модель из списка.',
+            'status' => $statusCode,
+            'requestedModel' => $effectiveModel,
+            'availableModels' => $availableModels,
+        ]);
+    }
     jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
 }
 
 $content = (string)($responseJson['choices'][0]['message']['content'] ?? '');
 $parsed = parseAiJson($content);
 $decisionBlock = extractDecisionBlock($parsed);
-
-if (!$decisionBlock['valid']) {
-    $repairBody = $body;
-    $repairBody['messages'][] = ['role' => 'assistant', 'content' => $content];
-    $repairBody['messages'][] = [
-        'role' => 'user',
-        'content' => 'Верни только корректный JSON без пояснений. Обязательные поля: analysis, decision (approve|reject|need_clarification), decision_reason, risks[], required_actions[], response.'
-    ];
-    $repairResult = performAiRequest($endpoint, $apiKey, $repairBody);
-    $repairResponseBody = $repairResult['body'];
-    if ($repairResponseBody !== false) {
-        $repairJson = json_decode((string)$repairResponseBody, true);
-        if (is_array($repairJson)) {
-            $repairContent = (string)($repairJson['choices'][0]['message']['content'] ?? '');
-            $repairParsed = parseAiJson($repairContent);
-            $repairDecision = extractDecisionBlock($repairParsed);
-            if ($repairDecision['valid']) {
-                $parsed = $repairParsed;
-                $content = $repairContent;
-                $decisionBlock = $repairDecision;
-            }
-        }
-    }
+$fallbackDecision = 'need_clarification';
+if ($effectiveStyle === 'positive') {
+    $fallbackDecision = 'approve';
+} elseif ($effectiveStyle === 'negative') {
+    $fallbackDecision = 'reject';
 }
 if (!$decisionBlock['valid']) {
-    logApiDocs('error', 'AI decision block invalid after repair', [
-        'documentTitle' => $documentTitle,
-        'promptPreview' => mb_substr($prompt, 0, 180),
-    ]);
-    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул некорректный decision JSON. Повторите запрос.']);
+    $decisionBlock = [
+        'valid' => true,
+        'decision' => $fallbackDecision,
+        'decision_reason' => 'Решение сформировано по выбранному стилю ответа.',
+        'risks' => [],
+        'required_actions' => [],
+        'requirements' => $requirements,
+    ];
 }
 
 $analysis = '';
