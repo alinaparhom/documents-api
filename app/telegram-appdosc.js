@@ -12,6 +12,26 @@ const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
 
+function resolveAssetBasePath() {
+  const defaultBase = '/js/documents/app/';
+  const rawBase = typeof window !== 'undefined' ? String(window.__ASSET_BASE__ || '').trim() : '';
+  const normalizedBase = rawBase || defaultBase;
+  const withTrailingSlash = normalizedBase.endsWith('/') ? normalizedBase : `${normalizedBase}/`;
+  if (typeof window !== 'undefined') {
+    window.__ASSET_BASE__ = withTrailingSlash;
+  }
+  return withTrailingSlash;
+}
+
+async function probeScriptCandidateStatus(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+    return response.status;
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+}
+
 function loadExternalScript(src, marker) {
   return new Promise((resolve, reject) => {
     if (!src) {
@@ -71,19 +91,31 @@ function ensureAiDialogScriptLoaded() {
   }
 
   if (!aiDialogLoader) {
+    const assetBase = resolveAssetBasePath();
     const runtimeVersion = String(window.__RUNTIME_ASSET_VERSION__ || '').trim();
     const assetVersion = String(window.__ASSET_VERSION__ || '').trim();
     const cacheVersion = runtimeVersion || (assetVersion ? `${assetVersion}-${Date.now().toString(36)}` : Date.now().toString(36));
     const candidates = [
-      `/js/documents/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+      `${assetBase}telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
       `./telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
       `/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
     ];
-    const tryLoad = (index) => {
+    const tryLoad = async (index) => {
       if (index >= candidates.length) {
         return Promise.reject(new Error('Не удалось загрузить ИИ-скрипт ни по одному пути.'));
       }
-      return loadExternalScript(candidates[index], `data-ai-dialog-script-${index}`).catch(() => tryLoad(index + 1));
+      const candidate = candidates[index];
+      try {
+        const status = await probeScriptCandidateStatus(candidate);
+        console.info('[AI dialog] Проверка кандидата перед загрузкой:', candidate, `HTTP ${status}`);
+      } catch (probeError) {
+        console.warn('[AI dialog] Не удалось получить HTTP-статус кандидата:', candidate, probeError instanceof Error ? probeError.message : probeError);
+      }
+
+      return loadExternalScript(candidate, `data-ai-dialog-script-${index}`).catch((loadError) => {
+        console.warn('[AI dialog] Ошибка загрузки кандидата:', candidate, loadError instanceof Error ? loadError.message : loadError);
+        return tryLoad(index + 1);
+      });
     };
 
     aiDialogLoader = tryLoad(0).catch((error) => {
@@ -127,8 +159,8 @@ async function openAiDialogSafely(context = {}) {
     });
   } catch (error) {
     if (typeof context.onStatus === 'function') {
-      const errorText = error instanceof Error ? error.message : 'неизвестная ошибка';
-      context.onStatus('error', `Не удалось открыть ИИ-диалог: ${errorText}`);
+      const uiErrorText = 'Модуль ИИ не загружен, проверьте путь ассетов.';
+      context.onStatus('error', uiErrorText);
     }
     logClientEvent('task_view_error', {
       reason: 'ai_dialog_open_failed',

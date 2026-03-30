@@ -26,6 +26,13 @@
           : runtimeNonce;
       })();
 
+      (function setAssetBasePath() {
+        const configuredBase = String(window.__ASSET_BASE__ || '').trim();
+        const fallbackBase = '/js/documents/app/';
+        const selectedBase = configuredBase || fallbackBase;
+        window.__ASSET_BASE__ = selectedBase.endsWith('/') ? selectedBase : `${selectedBase}/`;
+      })();
+
       (function attachVersionedStylesheet() {
         const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()).toString();
         const stylesheet = document.createElement('link');
@@ -476,7 +483,7 @@
         const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()).toString();
         const moduleScript = document.createElement('script');
         moduleScript.type = 'module';
-        moduleScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
+        moduleScript.src = window.__ASSET_BASE__ + 'telegram-appdosc.js?v=' + encodeURIComponent(version);
         document.body.appendChild(moduleScript);
       })();
     </script>
