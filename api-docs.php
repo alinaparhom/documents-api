@@ -543,6 +543,52 @@ function optimizeImageForOcrUpload(
     return is_file($outputPath);
 }
 
+function splitImageForOcr(string $sourcePath, string $tempDir, string $prefix, int $parts = 2, int $overlapPx = 90): array
+{
+    if (!class_exists('Imagick') || !is_file($sourcePath) || $parts < 2) {
+        return [];
+    }
+    try {
+        $image = new Imagick();
+        $image->readImage($sourcePath);
+        $width = (int)$image->getImageWidth();
+        $height = (int)$image->getImageHeight();
+        if ($width <= 0 || $height <= 0) {
+            $image->clear();
+            $image->destroy();
+            return [];
+        }
+
+        $chunkHeight = (int)max(1, ceil($height / $parts));
+        $paths = [];
+        for ($i = 0; $i < $parts; $i++) {
+            $y = max(0, $i * $chunkHeight - ($i > 0 ? $overlapPx : 0));
+            $segmentBottom = ($i + 1) * $chunkHeight + ($i < $parts - 1 ? $overlapPx : 0);
+            $h = max(1, min($height - $y, $segmentBottom - $y));
+
+            $part = clone $image;
+            $part->cropImage($width, $h, 0, $y);
+            $part->setImagePage(0, 0, 0, 0);
+            $part->setImageFormat('jpeg');
+            $part->setImageCompression(Imagick::COMPRESSION_JPEG);
+            $part->setImageCompressionQuality(86);
+            $part->stripImage();
+            $path = $tempDir . '/' . $prefix . '-chunk-' . ($i + 1) . '.jpg';
+            if ($part->writeImage($path) && is_file($path)) {
+                $paths[] = $path;
+            }
+            $part->clear();
+            $part->destroy();
+        }
+        $image->clear();
+        $image->destroy();
+        return $paths;
+    } catch (Throwable $e) {
+        logApiDocs('warn', 'OCR image split failed', ['error' => $e->getMessage()]);
+        return [];
+    }
+}
+
 function countPdfPages(string $pdfPath): int
 {
     if (!class_exists('Imagick') || !is_file($pdfPath)) {
@@ -589,11 +635,30 @@ function convertPdfToImages(string $pdfPath, string $tempDir, int $targetDpi = 2
             $page->setImageFormat('jpeg');
             $rawImagePath = $tempDir . '/page-' . str_pad((string)$index, 4, '0', STR_PAD_LEFT) . '.jpg';
             $optimizedPath = $tempDir . '/page-' . str_pad((string)$index, 4, '0', STR_PAD_LEFT) . '-ocr.jpg';
-            if ($page->writeImage($rawImagePath) && optimizeImageForOcrUpload($rawImagePath, $optimizedPath)) {
-                @unlink($rawImagePath);
-                $imagePath = $optimizedPath;
-                $result[] = $imagePath;
-                $index += 1;
+            if ($page->writeImage($rawImagePath)) {
+                $rawSize = is_file($rawImagePath) ? (int)@filesize($rawImagePath) : 0;
+                if ($rawSize > 1000000) {
+                    $chunkPrefix = 'page-' . str_pad((string)$index, 4, '0', STR_PAD_LEFT);
+                    $chunksCount = $rawSize > 2300000 ? 3 : 2;
+                    $chunkFiles = splitImageForOcr($rawImagePath, $tempDir, $chunkPrefix, $chunksCount);
+                    foreach ($chunkFiles as $chunkFile) {
+                        $chunkOptimized = preg_replace('/\.jpg$/i', '-ocr.jpg', $chunkFile) ?: ($chunkFile . '-ocr.jpg');
+                        if (optimizeImageForOcrUpload($chunkFile, $chunkOptimized)) {
+                            $result[] = $chunkOptimized;
+                        }
+                        @unlink($chunkFile);
+                    }
+                    @unlink($rawImagePath);
+                    $index += 1;
+                    continue;
+                }
+
+                if (optimizeImageForOcrUpload($rawImagePath, $optimizedPath)) {
+                    @unlink($rawImagePath);
+                    $imagePath = $optimizedPath;
+                    $result[] = $imagePath;
+                    $index += 1;
+                }
             }
         }
         $imagick->clear();
@@ -629,7 +694,8 @@ function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tem
         $diagnostics['pdfPagesDetected'] = $pdfPages;
         $diagnostics['ocrFreeMaxBytes'] = 1000000;
 
-        if ($sourceSize > 0 && $sourceSize <= 1000000 && $pdfPages > 0 && $pdfPages <= 3) {
+        $preferDirectPdf = false;
+        if ($preferDirectPdf && $sourceSize > 0 && $sourceSize <= 1000000 && $pdfPages > 0 && $pdfPages <= 3) {
             $diagnostics['pdfDirectUpload'] = true;
             $diagnostics['prepared'] = [getImageDiagnostics($tmpName)];
             return ['files' => [$file], 'preprocessed' => false, 'mode' => 'pdf_original_safe', 'diagnostics' => $diagnostics];
