@@ -130,6 +130,19 @@
       .trim();
   }
 
+  function hasUsefulExtractedText(text) {
+    var normalized = String(text || '').trim();
+    if (!normalized) {
+      return false;
+    }
+    var placeholders = [
+      '[В PDF не найден извлекаемый текст]',
+      '[Не удалось извлечь текст из PDF]',
+      '[Файл слишком большой для промпта]'
+    ];
+    return placeholders.indexOf(normalized) === -1;
+  }
+
   function sliceByChars(value, maxChars) {
     var text = String(value || '');
     if (!maxChars || text.length <= maxChars) {
@@ -1418,7 +1431,8 @@
       }
     }
 
-    async function extractSingleFile(fileEntry) {
+    async function extractSingleFile(fileEntry, options) {
+      var opts = options && typeof options === 'object' ? options : {};
       if (!fileEntry || fileEntry.extracting) {
         return false;
       }
@@ -1431,17 +1445,24 @@
         var extractedText = '';
         if (fileEntry.fileObject) {
           extractedText = await fileToText(fileEntry.fileObject);
-          if (!String(extractedText || '').trim()) {
-            throw new Error('Не удалось прочитать файл');
+          if (hasUsefulExtractedText(extractedText)) {
+            if (!opts.silent) {
+              messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
+            }
+          } else {
+            extractedText = '';
           }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
         } else if (fileEntry.url && (isTextLike(fileEntry) || isPdfLike(fileEntry))) {
           extractedText = await fetchExternalFileContent(fileEntry);
-          if (!String(extractedText || '').trim()) {
-            throw new Error('Не удалось прочитать файл по ссылке');
+          if (hasUsefulExtractedText(extractedText)) {
+            if (!opts.silent) {
+              messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
+            }
+          } else {
+            extractedText = '';
           }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
-        } else {
+        }
+        if (!hasUsefulExtractedText(extractedText)) {
           var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
           var formData = new FormData();
           formData.append('action', 'ocr_extract');
@@ -1472,7 +1493,9 @@
           if (!extractedText) {
             throw new Error('Сервис извлечения не вернул текст. Проверьте качество файла.');
           }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + extractedText));
+          if (!opts.silent) {
+            messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + extractedText));
+          }
         }
 
         fileEntry.rawContent = String(extractedText || '');
@@ -1499,9 +1522,17 @@
         return;
       }
       setLoading(true);
+      var combinedParts = [];
       for (var i = 0; i < list.length; i += 1) {
         // eslint-disable-next-line no-await-in-loop
-        await extractSingleFile(list[i]);
+        await extractSingleFile(list[i], { silent: true });
+        if (list[i] && hasUsefulExtractedText(list[i].content)) {
+          combinedParts.push('Файл: ' + (list[i].name || 'Без названия') + '\n' + String(list[i].content || ''));
+        }
+      }
+      if (combinedParts.length) {
+        messages.appendChild(createMessage('assistant', 'Объединённый контекст из файлов:\n\n' + combinedParts.join('\n\n====================\n\n')));
+        messages.scrollTop = messages.scrollHeight;
       }
       setLoading(false);
     }
