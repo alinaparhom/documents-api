@@ -64,15 +64,10 @@
 
 
   function filterOcrArtifacts(text, mode, diagnostics) {
-    var normalized = String(text || '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\u00a0/g, ' ')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+    var normalized = String(text || '');
     var stats = diagnostics && typeof diagnostics === 'object' ? diagnostics : null;
     if (stats) {
-      stats.totalLines = normalized ? normalized.split('\n').length : 0;
+      stats.totalLines = normalized ? normalized.split(/\r\n|\r|\n/).length : 0;
       stats.whitelistKept = 0;
       stats.noiseDropped = 0;
       stats.emptyDropped = 0;
@@ -1737,13 +1732,13 @@
           if (!String(extractedText || '').trim() && !isPdfLike(fileEntry.fileObject)) {
             throw new Error('Текстовый файл пустой или не читается');
           }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
         } else if (fileEntry.url && isTextLike(fileEntry)) {
           extractedText = await fetchExternalFileContent(fileEntry);
           if (!String(extractedText || '').trim() && !isPdfLike(fileEntry)) {
             throw new Error('Не удалось прочитать текст по ссылке');
           }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
         } else {
           var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
           var formData = new FormData();
@@ -1765,14 +1760,14 @@
           if (!response.ok || !payload || payload.ok !== true) {
             throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
           }
-          extractedText = String(payload.text || '').trim();
+          extractedText = String(payload.text || '');
           if (!extractedText) {
             throw new Error('OCR не вернул текст. Проверьте качество файла.');
           }
-          messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText.slice(0, 1200)));
+          messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText));
         }
 
-        fileEntry.rawContent = String(extractedText || '').trim();
+        fileEntry.rawContent = String(extractedText || '');
         fileEntry.ocrDiagnostics = {};
         fileEntry.content = filterOcrArtifacts(fileEntry.rawContent, state.ocrMode, fileEntry.ocrDiagnostics);
         fileEntry.extracted = fileEntry.content !== '';

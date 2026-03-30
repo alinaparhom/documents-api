@@ -1829,14 +1829,11 @@ if ($action === 'ocr_extract') {
     $parts = [];
     foreach ($allParsedResults as $entry) {
         if (is_array($entry) && isset($entry['ParsedText']) && is_string($entry['ParsedText'])) {
-            $textPart = trim($entry['ParsedText']);
-            if ($textPart !== '') {
-                $parts[] = $textPart;
-            }
+            $parts[] = $entry['ParsedText'];
         }
     }
 
-    $ocrText = trim(implode("\n\n", $parts));
+    $ocrText = implode("\n", $parts);
     jsonResponse(200, [
         'ok' => true,
         'text' => $ocrText,
