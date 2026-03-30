@@ -238,14 +238,14 @@ function normalizeIntSetting(mixed $rawValue, int $default, int $min, int $max):
 function resolveAiGenerationSettings(array $env, array $requestData): array
 {
     $temperature = normalizeFloatSetting(
-        $requestData['temperature'] ?? ($env['AI_TEMPERATURE'] ?? 0.85),
-        0.85,
+        $requestData['temperature'] ?? ($env['AI_TEMPERATURE'] ?? 0.75),
+        0.75,
         0.0,
         2.0
     );
     $topP = normalizeFloatSetting(
-        $requestData['top_p'] ?? ($env['AI_TOP_P'] ?? 0.95),
-        0.95,
+        $requestData['top_p'] ?? ($env['AI_TOP_P'] ?? 0.9),
+        0.9,
         0.0,
         1.0
     );
@@ -262,8 +262,8 @@ function resolveAiGenerationSettings(array $env, array $requestData): array
         2.0
     );
     $maxTokens = normalizeIntSetting(
-        $requestData['max_tokens'] ?? ($env['AI_MAX_TOKENS'] ?? 2500),
-        2500,
+        $requestData['max_tokens'] ?? ($env['AI_MAX_TOKENS'] ?? 1800),
+        1800,
         256,
         6000
     );
@@ -2031,7 +2031,7 @@ if ($effectiveStyle === 'positive') {
 } elseif ($effectiveStyle === 'negative') {
     $styleInstruction = 'Тон ответа: отрицательный (отклонение/невыполнение) — четко указывай причину отклонения и что требуется для пересмотра.';
 }
-$styleExampleInstruction = 'Структура response обязательна: обращение, что уже выполнено, что выполняем с датами (ДД.ММ.ГГГГ), подтверждение обеспечения фронта работ, деловая подпись.';
+$styleExampleInstruction = 'Структура response обязательна: обращение, фактический статус работ (выполнено/выполняется/приостановлено), план действий с датами (ДД.ММ.ГГГГ), подтверждение условий для фронта работ, деловая подпись.';
 $effectiveBehavior = $aiBehavior !== ''
     ? $aiBehavior
     : (isset($context['aiBehavior']) && is_string($context['aiBehavior']) ? trim($context['aiBehavior']) : '');
@@ -2074,19 +2074,27 @@ if (!in_array($effectiveModel, $availableModels, true)) {
     ]);
 }
 
-$systemMessage = "ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ С ОПЫТОМ 15 ЛЕТ. Верни JSON объект, где главное поле — response (готовый текст письма). Остальные поля допускаются как вспомогательные. "
-  . "Отвечай только в деловом стиле: сухо, четко, без воды, без эмодзи, без извинений и без неуверенных формулировок. "
-  . "Не начинай с фраз вида «Рассмотрев ваше письмо...». Первое предложение — сразу по делу. "
-  . "Всегда анализируй контекст из user payload: files[*].preview и extractedTexts[*].text. Если контент пустой — кратко укажи это в analysis. "
-  . "Запрещено пересказывать исходный текст письма и цитировать его. "
-  . "В response пиши готовый официальный ответ: обращение, что выполнено, что выполняем с датами, подтверждение готовности обеспечить фронт работ, деловая подпись. "
-  . "Каждому действию укажи реалистичную дату в формате ДД.ММ.ГГГГ. Если срок просрочен, укажи новый срок без оправданий. "
+$systemMessage = "Ты — ИИ, выполняющий роль сотрудника строительной организации с опытом 15 лет. "
+  . "Верни JSON-объект, где главное поле — response (готовый текст официального письма), остальные поля — вспомогательные. "
+  . "Ответ должен быть подробным и структурным: ориентир 10–15 предложений в поле response, с фактами, датами и конкретными действиями без воды. "
+  . "Запрещено повторять одну и ту же мысль более одного раза. Каждое предложение должно нести новую информацию. Используй лаконичные формулировки. Объём формируй за счёт деталей, а не за счёт повторов. "
+  . "Всегда указывай дату и номер письма, на которое даётся ответ (если есть во входных данных), номер контракта/договора (если указан), а также роль нашей организации в проекте (подрядчик/субподрядчик/генподрядчик). "
+  . "Обязательно добавляй адресата в шапке, а в конце — корректный блок подписи: должность, наименование организации, ФИО и место для подписи. "
+  . "Всегда указывай чёткие сроки в формате ДД.ММ.ГГГГ и конкретизируй, какие документы, кому и до какой даты передаются. "
+  . "Не смешивай скептический и соглашательский тон в одном письме: выбирай единую линию. "
+  . "Если работы приостановлены, не утверждай, что они выполняются по графику. Избегай противоречий с фактами из входного документа. "
+  . "Если во входных данных нет даты, номера письма, номера договора или ФИО — не выдумывай, вместо этого используй нейтральную формулировку без фиктивных реквизитов. "
+  . "Используй структуру response: 1) вводная часть по письму, 2) фактическое состояние работ, 3) анализ причин и зависимостей, 4) позиция подрядчика, 5) встречные требования к координации, 6) предупреждение о фиксации препятствий. "
+  . "Опирайся на данные из user payload, особенно files[*].preview и extractedTexts[*].text. Если контента недостаточно — кратко укажи это в analysis. "
+  . "Для каждого действия указывай реалистичный срок в формате ДД.ММ.ГГГГ. "
+  . "Используй формулировки делового строительного документооборота, включая обороты: «носят односторонний характер», «обусловлено технологической необходимостью», «не могут быть выполнены ввиду отсутствия координации», «зависят от комплексной готовности объекта». "
   . $styleInstruction . ' '
   . $styleExampleInstruction . ' '
-  . $behaviorInstruction . ' Сфокусируй максимум ресурсов ответа на поле response. '
-  . 'Поле response — только готовый текст письма без служебных заголовков, без "Решение ИИ", "Причина", "Действия".';
+  . $behaviorInstruction . ' '
+  . 'Поле response — только готовый текст письма без служебных заголовков.';
 
 $userPayload = [
+    'instruction' => 'Сформируй официальный ответ в деловом стиле: 10-15 предложений, без повторов, с датой/номером письма, реквизитами контракта, сроками и корректным блоком подписи.',
     'documentTitle' => $documentTitle,
     'prompt' => $prompt,
     'context' => $context,
@@ -2157,23 +2165,36 @@ if (!is_array($responseJson)) {
     jsonResponse(502, array_merge(['ok' => false, 'error' => 'Некорректный ответ AI API', 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
 }
 
-if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
+if ($statusCode >= 400) {
     $errorMessage = isset($responseJson['error']['message']) && is_string($responseJson['error']['message'])
         ? $responseJson['error']['message']
         : '';
     $isUnsupportedField = stripos($errorMessage, 'response_format') !== false
         || stripos($errorMessage, 'temperature') !== false
-        || stripos($errorMessage, 'Unknown name') !== false;
+        || stripos($errorMessage, 'top_p') !== false
+        || stripos($errorMessage, 'presence_penalty') !== false
+        || stripos($errorMessage, 'frequency_penalty') !== false
+        || stripos($errorMessage, 'max_tokens') !== false
+        || stripos($errorMessage, 'max_completion_tokens') !== false
+        || stripos($errorMessage, 'Unknown name') !== false
+        || stripos($errorMessage, 'unsupported') !== false;
     if ($isUnsupportedField) {
         $retryBody = $body;
-        unset($retryBody['response_format'], $retryBody['temperature']);
+        unset(
+            $retryBody['response_format'],
+            $retryBody['temperature'],
+            $retryBody['top_p'],
+            $retryBody['presence_penalty'],
+            $retryBody['frequency_penalty']
+        );
+        $retryBody['max_tokens'] = min((int)($generationSettings['max_tokens'] ?? 1800), 1800);
         $retryResult = performAiRequest($endpoint, $apiKey, $retryBody);
         $retryResponseBody = $retryResult['body'];
         $retryCurlError = (string)$retryResult['curl_error'];
         $retryStatusCode = (int)$retryResult['status'];
 
         if ($retryResponseBody === false) {
-            logApiDocs('error', 'Google AI retry request failed', ['curlError' => $retryCurlError]);
+            logApiDocs('error', 'AI retry request failed after unsupported fields', ['curlError' => $retryCurlError]);
             jsonResponse(502, array_merge(['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $retryCurlError, 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
         }
 
@@ -2181,6 +2202,12 @@ if ($statusCode >= 400 && $isGoogleOpenAiCompat) {
         if (is_array($retryJson)) {
             $responseJson = $retryJson;
             $statusCode = $retryStatusCode;
+            logApiDocs('info', 'AI request recovered via retry without unsupported fields', [
+                'model' => $effectiveModel,
+                'providerBaseUrl' => $baseUrl,
+                'initialStatus' => $requestResult['status'],
+                'retryStatus' => $retryStatusCode,
+            ]);
         }
     }
 }
@@ -2296,8 +2323,8 @@ if (!isset($decisionBlock['requirements']) || !is_array($decisionBlock['requirem
 if (mb_strlen($analysis) > 1200) {
     $analysis = mb_substr($analysis, 0, 1200) . '…';
 }
-if (mb_strlen($response) > 8000) {
-    $response = mb_substr($response, 0, 8000) . '…';
+if (mb_strlen($response) > 20000) {
+    $response = mb_substr($response, 0, 20000) . '…';
 }
 
 jsonResponse(200, [
