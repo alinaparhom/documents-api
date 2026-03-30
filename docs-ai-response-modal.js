@@ -1243,9 +1243,44 @@
       activeTab: 'docx',
       docxLoaded: false,
       pdfLoaded: false,
-      docxUrl: config.templateDocxUrl || '/template.docx',
-      pdfUrl: config.templatePdfUrl || '/template.pdf'
+      docxUrl: '',
+      pdfUrl: ''
     };
+    var templateDocxCandidates = [
+      config.templateDocxUrl,
+      '/js/documents/app/templates/template.docx',
+      '/app/templates/template.docx',
+      '/templates/template.docx',
+      '/template.docx'
+    ].filter(Boolean);
+    var templatePdfCandidates = [
+      config.templatePdfUrl,
+      '/js/documents/app/templates/template.pdf',
+      '/app/templates/template.pdf',
+      '/templates/template.pdf',
+      '/template.pdf'
+    ].filter(Boolean);
+
+    async function resolveFirstAvailableTemplateUrl(candidates) {
+      var list = Array.isArray(candidates) ? candidates.slice() : [];
+      var lastTried = '';
+      for (var i = 0; i < list.length; i += 1) {
+        var url = String(list[i] || '').trim();
+        if (!url) {
+          continue;
+        }
+        lastTried = url;
+        try {
+          var response = await fetch(url, { method: 'HEAD', credentials: 'same-origin' });
+          if (response && response.ok) {
+            return url;
+          }
+        } catch (error) {
+          // пробуем следующий путь
+        }
+      }
+      return lastTried;
+    }
 
     function setTemplateTab(tabName) {
       templateState.activeTab = tabName === 'pdf' ? 'pdf' : 'docx';
@@ -1262,6 +1297,12 @@
       }
       templateDocxView.textContent = 'Загрузка DOCX...';
       try {
+        if (!templateState.docxUrl) {
+          templateState.docxUrl = await resolveFirstAvailableTemplateUrl(templateDocxCandidates);
+        }
+        if (!templateState.docxUrl) {
+          throw new Error('Не найден путь к template.docx');
+        }
         var response = await fetch(templateState.docxUrl, { credentials: 'same-origin' });
         if (!response.ok) {
           throw new Error('template.docx не найден (' + response.status + ')');
@@ -1281,6 +1322,13 @@
 
     async function loadTemplatePdf() {
       if (templateState.pdfLoaded) {
+        return;
+      }
+      if (!templateState.pdfUrl) {
+        templateState.pdfUrl = await resolveFirstAvailableTemplateUrl(templatePdfCandidates);
+      }
+      if (!templateState.pdfUrl) {
+        templateInfo.textContent = 'Ошибка PDF: не найден путь к template.pdf';
         return;
       }
       templatePdfFrame.src = templateState.pdfUrl;
