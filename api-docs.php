@@ -512,13 +512,6 @@ function convertPdfToImages(string $pdfPath, string $tempDir, int $targetDpi = 3
             if (!$page instanceof Imagick) {
                 continue;
             }
-            $page->setImageColorspace(Imagick::COLORSPACE_GRAY);
-            $page->deskewImage(0.4 * Imagick::getQuantum());
-            $page->contrastImage(true);
-            $page->contrastImage(true);
-            $page->reduceNoiseImage(1);
-            $page->normalizeImage();
-            $page->thresholdImage(0.62 * Imagick::getQuantum());
             $page->setImageUnits(Imagick::RESOLUTION_PIXELSPERINCH);
             $page->setImageResolution($targetDpi, $targetDpi);
             $page->setImageFormat('png');
@@ -1750,11 +1743,23 @@ if ($action === 'ocr_extract') {
     }
 
     $preparedFiles = [];
+    $prepareMode = 'url';
+    $preparedPagesCount = 0;
+    $ocrTempDir = ensureOcrTempDir();
+    register_shutdown_function(static function () use ($ocrTempDir): void {
+        cleanupDirectory($ocrTempDir);
+    });
     if ($ocrFileUrl === '') {
         if (!$files) {
             jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
         }
-        $preparedFiles = [$files[0]];
+        $preparedMeta = buildPreparedOcrFiles($files[0], false, $ocrTempDir);
+        $preparedFiles = isset($preparedMeta['files']) && is_array($preparedMeta['files']) ? $preparedMeta['files'] : [];
+        $prepareMode = (string)($preparedMeta['mode'] ?? 'original');
+        $preparedPagesCount = count($preparedFiles);
+        if (!$preparedFiles) {
+            jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не подготовлен']);
+        }
     }
 
     $allParsedResults = [];
@@ -1837,6 +1842,8 @@ if ($action === 'ocr_extract') {
         'text' => $ocrText,
         'raw' => [
             'pagesProcessed' => count($pageRaw),
+            'prepareMode' => $prepareMode,
+            'preparedPagesCount' => $preparedPagesCount,
             'ocrRequest' => [
                 'language' => $targetLanguage,
                 'viaUrl' => $ocrFileUrl !== '',
