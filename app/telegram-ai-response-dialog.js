@@ -80,9 +80,13 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
     .appdosc-ai-dialog__composer{padding:12px calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:8px;background:#ffffff}
     .appdosc-ai-dialog__input{min-height:80px;max-height:190px;resize:none;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;outline:none}
-    .appdosc-ai-dialog__attachments{display:flex;flex-wrap:wrap;gap:6px}
-    .appdosc-ai-dialog__attachment{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:10px;background:#eef2ff;border:1px solid rgba(129,140,248,.35);font-size:12px;color:#1e293b}
-    .appdosc-ai-dialog__attachment-meta{font-size:11px;color:#475569}
+    .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:8px;max-height:180px;overflow:auto;padding-right:2px}
+    .appdosc-ai-dialog__attachment{display:flex;flex-direction:column;gap:6px;padding:9px;border-radius:12px;background:linear-gradient(145deg,#ffffff,#f8fbff);border:1px solid rgba(148,163,184,.3);box-shadow:0 8px 18px rgba(15,23,42,.06)}
+    .appdosc-ai-dialog__attachment-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .appdosc-ai-dialog__attachment-name{font-size:12px;font-weight:600;color:#1e293b;word-break:break-word}
+    .appdosc-ai-dialog__attachment-meta{font-size:11px;color:#475569;white-space:nowrap}
+    .appdosc-ai-dialog__attachment-preview{font-size:12px;line-height:1.45;color:#334155;background:rgba(241,245,249,.8);border:1px solid rgba(203,213,225,.8);border-radius:10px;padding:8px;max-height:84px;overflow:auto;white-space:pre-wrap}
+    .appdosc-ai-dialog__attachment-preview.is-empty{color:#94a3b8}
     .appdosc-ai-dialog__buttons{display:flex;flex-wrap:wrap;gap:8px}
     .appdosc-ai-dialog__btn{border:none;min-height:42px;padding:10px 14px;border-radius:14px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
     .appdosc-ai-dialog__btn--ghost{background:rgba(148,163,184,.15);color:#0f172a}
@@ -513,19 +517,16 @@ async function fetchExternalFileContent(fileMeta) {
   if (isTextLikeMeta(fileMeta)) {
     return (await response.text()).trim();
   }
-  if (isPdfLikeMeta(fileMeta)) {
-    const form = new FormData();
-    form.append('action', 'ocr_extract');
-    form.append('language', 'rus');
-    form.append('file_url', fileMeta.url);
-    const ocrResponse = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ocr_extract`, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
-    const payload = await ocrResponse.json().catch(() => null);
-    if (!ocrResponse.ok || !payload || payload.ok !== true) {
-      throw new Error((payload && payload.error) || 'OCR временно недоступен');
-    }
-    return String(payload.text || '').trim();
+  const form = new FormData();
+  form.append('action', 'ocr_extract');
+  form.append('language', 'rus');
+  form.append('file_url', fileMeta.url);
+  const ocrResponse = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ocr_extract`, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
+  const payload = await ocrResponse.json().catch(() => null);
+  if (!ocrResponse.ok || !payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || 'OCR временно недоступен');
   }
-  return '';
+  return String(payload.text || '').trim();
 }
 
 async function collectTaskAttachmentTexts(task, appendBubble) {
@@ -539,7 +540,7 @@ async function collectTaskAttachmentTexts(task, appendBubble) {
   })).filter((file) => file.url);
 
   if (!prepared.length) return [];
-  appendBubble(`Подключаю вложения задачи: ${prepared.length} шт. Пытаюсь прочитать текст (OCR для PDF).`, 'assistant');
+  appendBubble(`Подключаю вложения задачи: ${prepared.length} шт. Читаю текст и OCR для вложений.`, 'assistant');
   let totalChars = 0;
   for (let i = 0; i < prepared.length; i += 1) {
     const file = prepared[i];
@@ -555,6 +556,7 @@ async function collectTaskAttachmentTexts(task, appendBubble) {
       file.text = text.slice(0, next);
       file.extracted = true;
       totalChars += file.text.length;
+      appendBubble(`Содержимое "${file.name}":\n${file.text.slice(0, 800)}${file.text.length > 800 ? '\n…' : ''}`, 'assistant');
     } catch (error) {
       file.extractError = error && error.message ? error.message : 'Ошибка чтения';
     }
@@ -750,13 +752,27 @@ function openAiResponseDialog(context = {}) {
       const chip = document.createElement('div');
       chip.className = 'appdosc-ai-dialog__attachment';
       const status = file.extracted ? '✅ текст' : (file.extractError ? '⚠️ OCR' : '⭕ файл');
+      const topNode = document.createElement('div');
+      topNode.className = 'appdosc-ai-dialog__attachment-top';
       const nameNode = document.createElement('span');
+      nameNode.className = 'appdosc-ai-dialog__attachment-name';
       nameNode.textContent = `📎 ${file.name}`;
       const metaNode = document.createElement('span');
       metaNode.className = 'appdosc-ai-dialog__attachment-meta';
       metaNode.textContent = status;
-      chip.appendChild(nameNode);
-      chip.appendChild(metaNode);
+      topNode.appendChild(nameNode);
+      topNode.appendChild(metaNode);
+      chip.appendChild(topNode);
+      const previewNode = document.createElement('div');
+      previewNode.className = 'appdosc-ai-dialog__attachment-preview';
+      const previewText = String(file.text || '').trim();
+      if (previewText) {
+        previewNode.textContent = previewText.slice(0, 260) + (previewText.length > 260 ? '…' : '');
+      } else {
+        previewNode.classList.add('is-empty');
+        previewNode.textContent = file.extractError ? `Ошибка: ${file.extractError}` : 'Текст файла появится после OCR/чтения.';
+      }
+      chip.appendChild(previewNode);
       attachmentsNode.appendChild(chip);
     });
   };
