@@ -27,9 +27,7 @@
     { value: 'informational', label: 'Спокойный (информационный)' }
   ];
   var OCR_MODE_OPTIONS = [
-    { value: 'smart', label: 'OCR: умная очистка' },
-    { value: 'strict', label: 'OCR: строгая очистка' },
-    { value: 'raw', label: 'OCR: максимально исходный текст' }
+    { value: 'raw', label: 'OCR: как в файле (без очистки)' }
   ];
   var CONTEXT_DETAIL_OPTIONS = [
     { value: 'detailed', label: 'Подробно' },
@@ -64,140 +62,18 @@
       .replace(/\bкоп\b\.?/gi, 'копеек');
   }
 
-  function isNoisyLine(line) {
-    var raw = String(line || '').trim();
-    if (!raw) {
-      return true;
-    }
-    if (isBusinessWhitelistLine(raw) || hasRequisitePattern(raw)) {
-      return false;
-    }
-    var letters = (raw.match(/[A-Za-zА-Яа-яЁё]/g) || []).length;
-    var digits = (raw.match(/\d/g) || []).length;
-    var noise = (raw.match(/[^\w\sА-Яа-яЁё.,:;!?()«»"'\-–—/]/g) || []).length;
-    var shortBroken = raw.length <= 3 && letters === 0;
-    var mostlyNoise = raw.length > 0 && (noise / raw.length) > 0.33 && letters < 2;
-    var randomToken = raw.length <= 6 && letters === 0 && digits <= 1 && /\W/.test(raw);
-    return shortBroken || mostlyNoise || randomToken;
-  }
-
-  function hasRequisitePattern(line) {
-    var value = String(line || '').trim();
-    if (!value) {
-      return false;
-    }
-    var patterns = [
-      /\b(исх|вх)\.?\s*(№|N|No)?\s*[\w\-\/]+/i,
-      /(^|[\s:])№\s*[\w\-\/]+/i,
-      /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/,
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
-      /(\+?\d[\d\s()\-]{8,}\d)/,
-      /\b[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.[А-ЯЁ]\.\b/,
-      /\b[А-ЯЁ]\.[А-ЯЁ]\.\s*[А-ЯЁ][а-яё]+\b/
-    ];
-    return patterns.some(function (pattern) {
-      return pattern.test(value);
-    });
-  }
-
-  function isBusinessWhitelistLine(line) {
-    var value = String(line || '').trim();
-    if (!value) {
-      return false;
-    }
-    var patterns = [
-      /^\s*(от|отправитель|sender)\s*[:\-]/i,
-      /^\s*(кому|получатель|recipient|to)\s*[:\-]/i,
-      /^\s*(тема|subject)\s*[:\-]/i,
-      /^\s*(исх|вх)\.?\s*(№|N|No)?\s*[:\-]?\s*[\w\-\/]+/i,
-      /^\s*(дата|date)\s*[:\-]/i,
-      /(^|[\s:])№\s*[\w\-\/]+/i,
-      /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/
-    ];
-    return patterns.some(function (pattern) {
-      return pattern.test(value);
-    }) || hasRequisitePattern(value);
-  }
 
   function filterOcrArtifacts(text, mode, diagnostics) {
-    var currentMode = mode || 'smart';
-    var normalized = String(text || '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\u00a0/g, ' ')
-      .replace(/[‐‑‒–—]/g, '-')
-      .replace(/-\n(?=\S)/g, '')
-      .replace(/[ \t]+\n/g, '\n');
-
+    var normalized = String(text || '');
     var stats = diagnostics && typeof diagnostics === 'object' ? diagnostics : null;
     if (stats) {
-      stats.totalLines = 0;
+      stats.totalLines = normalized ? normalized.split(/\r\n|\r|\n/).length : 0;
       stats.whitelistKept = 0;
       stats.noiseDropped = 0;
       stats.emptyDropped = 0;
-      stats.mode = currentMode;
+      stats.mode = mode || 'raw';
     }
-
-    if (currentMode === 'raw') {
-      if (stats) {
-        stats.totalLines = normalized ? normalized.split('\n').length : 0;
-      }
-      return cleanNumericArtifacts(normalized)
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-    }
-
-    var baseNormalized = currentMode === 'strict'
-      ? normalized.replace(/\s{2,}/g, ' ')
-      : normalized;
-    var lines = baseNormalized.split('\n');
-    if (stats) {
-      stats.totalLines = lines.length;
-    }
-    var cleaned = lines.filter(function (line) {
-      var trimmed = String(line || '').trim();
-      if (!trimmed) {
-        if (stats) {
-          stats.emptyDropped += 1;
-        }
-        return false;
-      }
-      if (currentMode === 'smart') {
-        return true;
-      }
-      if (isBusinessWhitelistLine(trimmed)) {
-        if (stats) {
-          stats.whitelistKept += 1;
-        }
-        return true;
-      }
-      if (isNoisyLine(trimmed)) {
-        if (stats) {
-          stats.noiseDropped += 1;
-        }
-        return false;
-      }
-      return true;
-    }).map(function (line) {
-      return cleanNumericArtifacts(line)
-        .replace(currentMode === 'strict' ? /\s{2,}/g : /[ \t]{3,}/g, ' ')
-        .trim();
-    }).filter(Boolean);
-
-    var result = cleaned.join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-    if (!result) {
-      result = cleanNumericArtifacts(normalized).replace(/\n{3,}/g, '\n\n').trim();
-    }
-    result = result
-      .replace(/Miack/gi, 'Минск')
-      .replace(/реш мие/gi, 'решение')
-      .replace(/сгоянка/gi, 'стоянка')
-      .replace(/общесгвенного/gi, 'общественного');
-    if (currentMode === 'strict') {
-      result = extractBusinessCore(result);
-    }
-    return result;
+    return normalized;
   }
 
   function normalizeContextText(text) {
@@ -406,35 +282,6 @@
         totalLimit: totalLimit
       }
     };
-  }
-
-  function extractBusinessCore(text) {
-    var source = String(text || '');
-    var startMatchers = [
-      /В связи с полученными изменениями проектной документации/i,
-      /для продолжения выполнения работ по монтажу системы кондиционирования/i,
-      /Прошу Вас:/i
-    ];
-    var start = -1;
-    for (var i = 0; i < startMatchers.length; i += 1) {
-      var match = source.match(startMatchers[i]);
-      if (match && typeof match.index === 'number') {
-        start = match.index;
-        break;
-      }
-    }
-    if (start < 0) {
-      return source.trim();
-    }
-    var trimmed = source.slice(start).trim();
-    var endMatchers = [/Гл\.\s*инженер/i, /Главн(ый|ого)\s+инженер/i];
-    for (var j = 0; j < endMatchers.length; j += 1) {
-      var endMatch = trimmed.match(endMatchers[j]);
-      if (endMatch && typeof endMatch.index === 'number') {
-        return trimmed.slice(0, endMatch.index).trim();
-      }
-    }
-    return trimmed;
   }
 
   function ensureStyles() {
@@ -992,8 +839,6 @@
       templateFile: null
     };
 
-    state.ocrSummary = { totalLines: 0, droppedLines: 0, whitelistKept: 0 };
-
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'ai-chat-modal__panel');
     var header = createElement('div', 'ai-chat-modal__header');
@@ -1169,7 +1014,7 @@
 
     var aiSettingsModal = createOverlayModal('Настройки поведения ИИ');
     var ocrModeField = createElement('label', 'ai-chat-modal__field');
-    ocrModeField.appendChild(createElement('span', '', 'Режим OCR-очистки'));
+    ocrModeField.appendChild(createElement('span', '', 'Режим OCR'));
     var ocrModeSelect = createElement('select', 'ai-chat-modal__select');
     OCR_MODE_OPTIONS.forEach(function (opt) {
       var option = document.createElement('option');
@@ -1179,7 +1024,7 @@
     });
     ocrModeSelect.value = state.ocrMode;
     ocrModeField.appendChild(ocrModeSelect);
-    var ocrHint = createElement('div', 'ai-chat-modal__ocr-hint', 'Если пропали важные строки (номер, дата, реквизиты), переключите режим OCR на «raw».');
+    var ocrHint = createElement('div', 'ai-chat-modal__ocr-hint', 'OCR сохраняет текст как есть, без дополнительной очистки строк.');
     ocrModeField.appendChild(ocrHint);
     var contextDetailField = createElement('label', 'ai-chat-modal__field');
     contextDetailField.appendChild(createElement('span', '', 'Передача контекста'));
@@ -1768,9 +1613,6 @@
 
 
     function resanitizeFileContents() {
-      var totalLines = 0;
-      var droppedLines = 0;
-      var whitelistKept = 0;
       state.files.forEach(function (file) {
         if (!file) {
           return;
@@ -1781,12 +1623,8 @@
         }
         file.ocrDiagnostics = {};
         file.content = filterOcrArtifacts(sourceText, state.ocrMode, file.ocrDiagnostics);
-        totalLines += Number(file.ocrDiagnostics.totalLines || 0);
-        droppedLines += Number(file.ocrDiagnostics.noiseDropped || 0) + Number(file.ocrDiagnostics.emptyDropped || 0);
-        whitelistKept += Number(file.ocrDiagnostics.whitelistKept || 0);
         file.extracted = Boolean(file.content);
       });
-      state.ocrSummary = { totalLines: totalLines, droppedLines: droppedLines, whitelistKept: whitelistKept };
       updateOcrHint();
       renderFiles();
     }
@@ -1795,14 +1633,7 @@
       if (!ocrHint) {
         return;
       }
-      var summary = state.ocrSummary || {};
-      var dropped = Number(summary.droppedLines || 0);
-      var kept = Number(summary.whitelistKept || 0);
-      if (state.ocrMode === 'raw') {
-        ocrHint.textContent = 'Режим raw: строки не отбрасываются, сохраняется максимально исходный OCR-текст.';
-        return;
-      }
-      ocrHint.textContent = 'Отброшено строк: ' + dropped + '. Сохранено по белому списку: ' + kept + '. Если пропали важные данные, выберите «raw».';
+      ocrHint.textContent = 'OCR сохраняет текст как есть, без дополнительной очистки строк.';
     }
 
     function renderModelOptions() {
@@ -1828,15 +1659,11 @@
         var ocrStatus = file.extracting
           ? '⏳ OCR'
           : (file.extracted ? '✅ OCR' : (file.extractError ? '⚠️ OCR' : '⭕ OCR'));
-        var droppedLines = file.ocrDiagnostics
-          ? (Number(file.ocrDiagnostics.noiseDropped || 0) + Number(file.ocrDiagnostics.emptyDropped || 0))
-          : 0;
         chip.innerHTML = ''
           + '<span>' + detectIcon(file) + '</span>'
           + '<span>' + escapeHtml(file.name) + '</span>'
           + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>'
-          + '<span class="ai-chat-chip__meta">' + escapeHtml(ocrStatus) + '</span>'
-          + '<span class="ai-chat-chip__meta">−' + escapeHtml(String(droppedLines)) + ' строк</span>';
+          + '<span class="ai-chat-chip__meta">' + escapeHtml(ocrStatus) + '</span>';
 
         var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ OCR' : '📄 OCR');
         ocr.type = 'button';
@@ -1905,13 +1732,13 @@
           if (!String(extractedText || '').trim() && !isPdfLike(fileEntry.fileObject)) {
             throw new Error('Текстовый файл пустой или не читается');
           }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
         } else if (fileEntry.url && isTextLike(fileEntry)) {
           extractedText = await fetchExternalFileContent(fileEntry);
           if (!String(extractedText || '').trim() && !isPdfLike(fileEntry)) {
             throw new Error('Не удалось прочитать текст по ссылке');
           }
-          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '').trim().slice(0, 1200)));
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + String(extractedText || '')));
         } else {
           var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
           var formData = new FormData();
@@ -1933,14 +1760,14 @@
           if (!response.ok || !payload || payload.ok !== true) {
             throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
           }
-          extractedText = String(payload.text || '').trim();
+          extractedText = String(payload.text || '');
           if (!extractedText) {
             throw new Error('OCR не вернул текст. Проверьте качество файла.');
           }
-          messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText.slice(0, 1200)));
+          messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText));
         }
 
-        fileEntry.rawContent = String(extractedText || '').trim();
+        fileEntry.rawContent = String(extractedText || '');
         fileEntry.ocrDiagnostics = {};
         fileEntry.content = filterOcrArtifacts(fileEntry.rawContent, state.ocrMode, fileEntry.ocrDiagnostics);
         fileEntry.extracted = fileEntry.content !== '';

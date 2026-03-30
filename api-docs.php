@@ -512,13 +512,6 @@ function convertPdfToImages(string $pdfPath, string $tempDir, int $targetDpi = 3
             if (!$page instanceof Imagick) {
                 continue;
             }
-            $page->setImageColorspace(Imagick::COLORSPACE_GRAY);
-            $page->deskewImage(0.4 * Imagick::getQuantum());
-            $page->contrastImage(true);
-            $page->contrastImage(true);
-            $page->reduceNoiseImage(1);
-            $page->normalizeImage();
-            $page->thresholdImage(0.62 * Imagick::getQuantum());
             $page->setImageUnits(Imagick::RESOLUTION_PIXELSPERINCH);
             $page->setImageResolution($targetDpi, $targetDpi);
             $page->setImageFormat('png');
@@ -1726,25 +1719,11 @@ if ($action === 'ocr_extract') {
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
-    $ocrEngine = trim((string)($_POST['ocr_engine'] ?? '2'));
-    $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
-    $ocrDetectOrientation = trim((string)($_POST['detect_orientation'] ?? 'true'));
-    $ocrOverlayRequired = trim((string)($_POST['is_overlay_required'] ?? 'false'));
-    $ocrPreprocessEnabled = in_array(
-        strtolower(trim((string)($env['OCR_PREPROCESS'] ?? '0'))),
-        ['1', 'true', 'yes', 'on'],
-        true
-    );
     $ocrExtraFields = [
-        'OCREngine' => $ocrEngine !== '' ? $ocrEngine : '2',
-        'scale' => $ocrScale !== '' ? $ocrScale : 'true',
-        'detectOrientation' => $ocrDetectOrientation !== '' ? $ocrDetectOrientation : 'true',
-        'isOverlayRequired' => $ocrOverlayRequired !== '' ? $ocrOverlayRequired : 'false',
+        'OCREngine' => '2',
+        'scale' => 'true',
+        'detectOrientation' => 'true',
     ];
-    $ocrTempDir = ensureOcrTempDir();
-    register_shutdown_function(static function () use ($ocrTempDir): void {
-        cleanupDirectory($ocrTempDir);
-    });
 
     if (!$files && $ocrFileUrl === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
@@ -1759,7 +1738,6 @@ if ($action === 'ocr_extract') {
                 'raw' => [
                     'source' => 'direct_text',
                     'extension' => detectFileExtension($files[0]),
-                    'preprocessingApplied' => false,
                 ],
             ]);
         }
@@ -1770,18 +1748,15 @@ if ($action === 'ocr_extract') {
     }
 
     $preparedFiles = [];
-    $preprocessingApplied = false;
-    $preprocessMode = 'url';
-    $preprocessDiagnostics = [];
+    $prepareMode = 'url';
+    $preparedPagesCount = 0;
     if ($ocrFileUrl === '') {
-        $preparedMeta = buildPreparedOcrFiles($files[0], $ocrPreprocessEnabled, $ocrTempDir);
-        $preparedFiles = isset($preparedMeta['files']) && is_array($preparedMeta['files']) ? $preparedMeta['files'] : [];
-        $preprocessingApplied = !empty($preparedMeta['preprocessed']);
-        $preprocessMode = (string)($preparedMeta['mode'] ?? 'none');
-        $preprocessDiagnostics = isset($preparedMeta['diagnostics']) && is_array($preparedMeta['diagnostics']) ? $preparedMeta['diagnostics'] : [];
-        if (!$preparedFiles) {
-            jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не подготовлен']);
+        if (!$files) {
+            jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
         }
+        $preparedFiles = [$files[0]];
+        $prepareMode = 'original_upload';
+        $preparedPagesCount = 1;
     }
 
     $allParsedResults = [];
@@ -1852,31 +1827,25 @@ if ($action === 'ocr_extract') {
     $parts = [];
     foreach ($allParsedResults as $entry) {
         if (is_array($entry) && isset($entry['ParsedText']) && is_string($entry['ParsedText'])) {
-            $textPart = trim($entry['ParsedText']);
-            if ($textPart !== '') {
-                $parts[] = $textPart;
-            }
+            $parts[] = $entry['ParsedText'];
         }
     }
 
-    $ocrText = trim(implode("\n\n", $parts));
+    $ocrText = implode("\n", $parts);
     jsonResponse(200, [
         'ok' => true,
         'text' => $ocrText,
         'raw' => [
-            'preprocessingApplied' => $preprocessingApplied,
-            'preprocessEnabled' => $ocrPreprocessEnabled,
-            'preprocessMode' => $preprocessMode,
             'pagesProcessed' => count($pageRaw),
+            'prepareMode' => $prepareMode,
+            'preparedPagesCount' => $preparedPagesCount,
             'ocrRequest' => [
                 'language' => $targetLanguage,
+                'viaUrl' => $ocrFileUrl !== '',
                 'engine' => $ocrExtraFields['OCREngine'],
                 'scale' => $ocrExtraFields['scale'],
                 'detectOrientation' => $ocrExtraFields['detectOrientation'],
-                'isOverlayRequired' => $ocrExtraFields['isOverlayRequired'],
-                'viaUrl' => $ocrFileUrl !== '',
             ],
-            'preprocessDiagnostics' => $preprocessDiagnostics,
             'pages' => $pageRaw,
         ],
     ]);
