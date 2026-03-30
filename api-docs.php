@@ -497,7 +497,71 @@ function preprocessImageForOcr(string $sourcePath, string $outputPath, int $targ
     }
 }
 
-function convertPdfToImages(string $pdfPath, string $tempDir, int $targetDpi = 300): array
+function optimizeImageForOcrUpload(
+    string $sourcePath,
+    string $outputPath,
+    int $maxBytes = 1000000,
+    int $initialQuality = 82
+): bool
+{
+    if (!class_exists('Imagick') || !is_file($sourcePath)) {
+        return false;
+    }
+    try {
+        $image = new Imagick();
+        $image->readImage($sourcePath);
+        $image->setImageFormat('jpeg');
+        $image->setImageCompression(Imagick::COMPRESSION_JPEG);
+        $image->stripImage();
+
+        $quality = max(45, min(95, $initialQuality));
+        $width = (int)$image->getImageWidth();
+        $height = (int)$image->getImageHeight();
+        for ($attempt = 0; $attempt < 8; $attempt++) {
+            $image->setImageCompressionQuality($quality);
+            $image->writeImage($outputPath);
+            $size = is_file($outputPath) ? (int)@filesize($outputPath) : 0;
+            if ($size > 0 && $size <= $maxBytes) {
+                $image->clear();
+                $image->destroy();
+                return true;
+            }
+
+            if ($attempt >= 3 && $width > 1200 && $height > 1200) {
+                $width = (int)max(1200, round($width * 0.9));
+                $height = (int)max(1200, round($height * 0.9));
+                $image->resizeImage($width, $height, Imagick::FILTER_LANCZOS, 1);
+            }
+            $quality = max(45, $quality - 7);
+        }
+        $image->clear();
+        $image->destroy();
+    } catch (Throwable $e) {
+        logApiDocs('warn', 'OCR image optimize failed', ['error' => $e->getMessage()]);
+        return false;
+    }
+    return is_file($outputPath);
+}
+
+function countPdfPages(string $pdfPath): int
+{
+    if (!class_exists('Imagick') || !is_file($pdfPath)) {
+        return 0;
+    }
+    try {
+        $imagick = new Imagick();
+        $imagick->pingImage($pdfPath);
+        $count = (int)$imagick->getNumberImages();
+        $imagick->clear();
+        $imagick->destroy();
+        return max(0, $count);
+    } catch (Throwable $e) {
+        logApiDocs('warn', 'PDF pages count failed', ['error' => $e->getMessage()]);
+        return 0;
+    }
+}
+
+function convertPdfToImages(string $pdfPath, string $tempDir, int $targetDpi = 200, bool $aggressivePreprocess = false): array
 {
     if (!class_exists('Imagick')) {
         return [];
@@ -513,17 +577,21 @@ function convertPdfToImages(string $pdfPath, string $tempDir, int $targetDpi = 3
                 continue;
             }
             $page->setImageColorspace(Imagick::COLORSPACE_GRAY);
-            $page->deskewImage(0.4 * Imagick::getQuantum());
-            $page->contrastImage(true);
-            $page->contrastImage(true);
-            $page->reduceNoiseImage(1);
+            $page->deskewImage(0.35 * Imagick::getQuantum());
             $page->normalizeImage();
-            $page->thresholdImage(0.62 * Imagick::getQuantum());
+            if ($aggressivePreprocess) {
+                $page->contrastImage(true);
+                $page->reduceNoiseImage(1);
+                $page->thresholdImage(0.64 * Imagick::getQuantum());
+            }
             $page->setImageUnits(Imagick::RESOLUTION_PIXELSPERINCH);
             $page->setImageResolution($targetDpi, $targetDpi);
-            $page->setImageFormat('png');
-            $imagePath = $tempDir . '/page-' . str_pad((string)$index, 4, '0', STR_PAD_LEFT) . '.png';
-            if ($page->writeImage($imagePath) && is_file($imagePath)) {
+            $page->setImageFormat('jpeg');
+            $rawImagePath = $tempDir . '/page-' . str_pad((string)$index, 4, '0', STR_PAD_LEFT) . '.jpg';
+            $optimizedPath = $tempDir . '/page-' . str_pad((string)$index, 4, '0', STR_PAD_LEFT) . '-ocr.jpg';
+            if ($page->writeImage($rawImagePath) && optimizeImageForOcrUpload($rawImagePath, $optimizedPath)) {
+                @unlink($rawImagePath);
+                $imagePath = $optimizedPath;
                 $result[] = $imagePath;
                 $index += 1;
             }
@@ -540,7 +608,7 @@ function convertPdfToImages(string $pdfPath, string $tempDir, int $targetDpi = 3
 function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tempDir): array
 {
     $tmpName = (string)($file['tmp_name'] ?? '');
-    $targetDpi = 300;
+    $targetDpi = 200;
     $diagnostics = [
         'imagickAvailable' => class_exists('Imagick'),
         'targetDpi' => $targetDpi,
@@ -556,7 +624,18 @@ function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tem
     $isPdf = $extension === 'pdf';
 
     if ($isPdf) {
-        $pages = convertPdfToImages($tmpName, $tempDir, $targetDpi);
+        $pdfPages = countPdfPages($tmpName);
+        $sourceSize = (int)($diagnostics['sourceSizeBytes'] ?? 0);
+        $diagnostics['pdfPagesDetected'] = $pdfPages;
+        $diagnostics['ocrFreeMaxBytes'] = 1000000;
+
+        if ($sourceSize > 0 && $sourceSize <= 1000000 && $pdfPages > 0 && $pdfPages <= 3) {
+            $diagnostics['pdfDirectUpload'] = true;
+            $diagnostics['prepared'] = [getImageDiagnostics($tmpName)];
+            return ['files' => [$file], 'preprocessed' => false, 'mode' => 'pdf_original_safe', 'diagnostics' => $diagnostics];
+        }
+
+        $pages = convertPdfToImages($tmpName, $tempDir, $targetDpi, $preprocessEnabled);
         if (!$pages) {
             $diagnostics['pdfPagesGenerated'] = 0;
             return ['files' => [$file], 'preprocessed' => false, 'mode' => 'pdf_original', 'diagnostics' => $diagnostics];
@@ -565,9 +644,9 @@ function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tem
         $preparedDiagnostics = [];
         foreach ($pages as $i => $pagePath) {
             $prepared[] = [
-                'name' => 'page-' . ($i + 1) . '.png',
+                'name' => 'page-' . ($i + 1) . '.jpg',
                 'tmp_name' => $pagePath,
-                'type' => 'image/png',
+                'type' => 'image/jpeg',
                 'size' => (int)@filesize($pagePath),
             ];
             $preparedDiagnostics[] = getImageDiagnostics($pagePath);
