@@ -83,7 +83,9 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__composer{padding:10px calc(10px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px)}
     .appdosc-ai-dialog__model{width:100%;min-height:40px;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;background:#fff;color:#0f172a}
     .appdosc-ai-dialog__input{min-height:64px;max-height:160px;resize:none;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;outline:none}
-    .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:5px;max-height:142px;overflow:auto;padding-right:2px}
+    .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:5px}
+    .appdosc-ai-dialog__attachments-toggle{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid rgba(148,163,184,.28);background:rgba(255,255,255,.85);color:#0f172a;border-radius:11px;padding:8px 10px;font-size:12px;font-weight:600}
+    .appdosc-ai-dialog__attachments-body{display:flex;flex-direction:column;gap:5px;max-height:142px;overflow:auto;padding-right:2px}
     .appdosc-ai-dialog__attachment-tools{display:flex;gap:6px;flex-wrap:wrap}
     .appdosc-ai-dialog__attachment{display:flex;flex-direction:column;gap:4px;padding:6px 8px;border-radius:10px;background:linear-gradient(145deg,rgba(255,255,255,.92),rgba(248,251,255,.86));border:1px solid rgba(148,163,184,.22);box-shadow:0 2px 8px rgba(15,23,42,.05)}
     .appdosc-ai-dialog__attachment.is-selected{border-color:rgba(37,99,235,.5);box-shadow:0 10px 20px rgba(37,99,235,.16)}
@@ -728,6 +730,7 @@ function openAiResponseDialog(context = {}) {
     chatHistory: [],
     attachedFiles: [],
     selectedAttachmentIds: new Set(),
+    attachmentsCollapsed: true,
     models: FALLBACK_MODEL_OPTIONS.slice(),
     model: FALLBACK_MODEL_OPTIONS[0].value,
   };
@@ -831,6 +834,22 @@ function openAiResponseDialog(context = {}) {
       return;
     }
     attachmentsNode.hidden = false;
+    const selectedCount = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id)).length;
+    const readyCount = state.attachedFiles.filter((file) => file.extracted).length;
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'appdosc-ai-dialog__attachments-toggle';
+    toggleBtn.innerHTML = `<span>Файлы: ${state.attachedFiles.length} · Контекст: ${selectedCount} · Готово: ${readyCount}</span><span>${state.attachmentsCollapsed ? '▾' : '▴'}</span>`;
+    toggleBtn.addEventListener('click', () => {
+      state.attachmentsCollapsed = !state.attachmentsCollapsed;
+      renderAttachments();
+    });
+    attachmentsNode.appendChild(toggleBtn);
+    if (state.attachmentsCollapsed) {
+      return;
+    }
+    const body = document.createElement('div');
+    body.className = 'appdosc-ai-dialog__attachments-body';
     const tools = document.createElement('div');
     tools.className = 'appdosc-ai-dialog__attachment-tools';
     const readSelectedBtn = document.createElement('button');
@@ -886,7 +905,7 @@ function openAiResponseDialog(context = {}) {
       }
     });
     tools.appendChild(readSelectedBtn);
-    attachmentsNode.appendChild(tools);
+    body.appendChild(tools);
 
     state.attachedFiles.forEach((file) => {
       const chip = document.createElement('div');
@@ -945,8 +964,9 @@ function openAiResponseDialog(context = {}) {
       actionsNode.appendChild(checkLabel);
       actionsNode.appendChild(oneFileReadBtn);
       chip.appendChild(actionsNode);
-      attachmentsNode.appendChild(chip);
+      body.appendChild(chip);
     });
+    attachmentsNode.appendChild(body);
   };
 
   const cleanup = () => {
