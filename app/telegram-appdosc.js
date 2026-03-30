@@ -117,9 +117,10 @@ function ensureTelegramBriefModalStyle() {
     .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid rgba(226,232,240,.95)}
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
+    .appdosc-brief-ai__mode{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 8px;border-radius:999px;background:rgba(219,234,254,.7);border:1px solid rgba(147,197,253,.8);font-size:11px;color:#1e3a8a;font-weight:600}
     .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,300px) minmax(0,1fr);gap:10px;padding:12px;min-height:0;flex:1}
     .appdosc-brief-ai__list{display:flex;flex-direction:column;gap:8px;overflow:auto}
-    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.92);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:14px;padding:11px;text-align:left;opacity:1}
+    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.92);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:14px;padding:11px;text-align:left;opacity:1;min-height:56px}
     .appdosc-brief-ai__item span{display:block;word-break:break-word;overflow-wrap:anywhere}
     .appdosc-brief-ai__item strong{font-size:13px;color:#0f172a}
     .appdosc-brief-ai__item small{font-size:11px;color:#64748b}
@@ -161,10 +162,12 @@ async function requestTelegramBriefAi(sourceLabel, text) {
     'Если факт не найден в тексте файла, явно пиши: "не указано в файле".',
     'Пиши просто и понятно для новичка.',
     'Нужен только структурированный результат по содержимому файла.',
-    'Поле analysis: 2-3 простых информативных предложения по сути документа.',
-    'Поле required_actions: 3-5 конкретных фактов из файла (суммы, адреса, сроки, работы).',
-    'Поле requirements: 3-5 понятных шагов, что делать дальше по документу.',
-    'Не пиши обрывки строк и части слов.'
+    'Ответ строго в JSON без markdown и без пояснений.',
+    'Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}.',
+    'analysis: 2-3 коротких предложения о сути документа.',
+    'required_actions: 3-5 конкретных фактов из текста (суммы, даты, адреса, этапы, работы).',
+    'requirements: 3-5 понятных шагов, что сделать дальше по документу.',
+    'Каждый пункт 6-140 символов, без обрывков строк и частей слов.'
   ].join(' ');
   const context = {
     extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: normalizedText.slice(0, 12000) }],
@@ -174,7 +177,7 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   const formData = new FormData();
   formData.append('action', 'ai_response_analyze');
   formData.append('documentTitle', sourceLabel || 'Файл');
-  formData.append('prompt', 'Кратко проанализируй OCR-текст и выдели важные детали, отправителя и получателя.');
+  formData.append('prompt', 'Сделай краткий и точный вывод по тексту файла. Верни только JSON заданного формата, без markdown.');
   formData.append('responseStyle', 'concise');
   formData.append('context', JSON.stringify(context));
   const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
@@ -199,6 +202,7 @@ function normalizeTelegramOcrText(text) {
 function cleanTelegramSentence(text) {
   return String(text || '')
     .replace(/\s+/g, ' ')
+    .replace(/^[•\-–—\d.)\s]+/u, '')
     .replace(/[;,:-]+$/g, '')
     .trim();
 }
@@ -293,6 +297,7 @@ function buildTelegramBriefSections(payload, sourceText) {
     actions,
     requirements,
   };
+}
 
 function renderTelegramBriefPreview(container, payload, sourceText) {
   const sections = buildTelegramBriefSections(payload, sourceText);
@@ -330,7 +335,11 @@ function openTelegramBriefModal(task, statusHandler) {
   modal.innerHTML = `
     <div class="appdosc-brief-ai__panel">
       <div class="appdosc-brief-ai__header">
-        <div><div class="appdosc-brief-ai__title">Кратко ИИ</div><div class="appdosc-brief-ai__sub">Выберите источник для анализа</div></div>
+        <div>
+          <div class="appdosc-brief-ai__title">Кратко ИИ</div>
+          <div class="appdosc-brief-ai__sub">Краткий вывод по документу</div>
+          <div class="appdosc-brief-ai__mode">Только текст выбранного файла</div>
+        </div>
         <button type="button" class="appdosc-card__action" data-close>Закрыть</button>
       </div>
       <div class="appdosc-brief-ai__body">
@@ -363,8 +372,15 @@ function openTelegramBriefModal(task, statusHandler) {
       activate(button);
       let sourceText = '';
       try {
+        button.disabled = true;
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
         sourceText = source.text || await requestTelegramOcrByUrl(source.url);
+        source.text = sourceText;
+        if (normalizeTelegramOcrText(sourceText).length < 80) {
+          renderTelegramBriefPreview(preview, null, sourceText);
+          if (typeof statusHandler === 'function') statusHandler('info', 'Текста мало: показан краткий вывод без запроса к ИИ.');
+          return;
+        }
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
         renderTelegramBriefPreview(preview, aiPayload, sourceText);
@@ -372,6 +388,8 @@ function openTelegramBriefModal(task, statusHandler) {
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
         preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.\n${escapeHtml(message)}</p>`;
         if (typeof statusHandler === 'function') statusHandler('warning', message);
+      } finally {
+        button.disabled = false;
       }
     });
     list.appendChild(button);
@@ -380,6 +398,10 @@ function openTelegramBriefModal(task, statusHandler) {
     list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
   }
   document.body.appendChild(modal);
+  const firstButton = list.querySelector('.appdosc-brief-ai__item');
+  if (firstButton instanceof HTMLButtonElement) {
+    firstButton.click();
+  }
 }
 
 const ALLOWED_LOG_EVENTS = new Set([

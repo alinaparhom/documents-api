@@ -1932,9 +1932,10 @@
       '.documents-brief-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;border-bottom:1px solid rgba(226,232,240,0.95);background:rgba(255,255,255,0.7);}' +
       '.documents-brief-title{font-size:18px;font-weight:700;color:#0f172a;}' +
       '.documents-brief-subtitle{font-size:12px;color:#64748b;margin-top:2px;}' +
+      '.documents-brief-mode{display:inline-flex;align-items:center;margin-top:6px;padding:4px 8px;border-radius:999px;border:1px solid rgba(147,197,253,0.85);background:rgba(219,234,254,0.75);color:#1e3a8a;font-size:11px;font-weight:600;}' +
       '.documents-brief-body{display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);gap:14px;padding:14px;min-height:0;flex:1;background:linear-gradient(180deg, rgba(248,250,252,0.55), rgba(255,255,255,0.78));}' +
       '.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;padding:2px 6px 2px 0;scrollbar-width:thin;}' +
-      '.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.96);border-radius:14px;padding:11px 12px;text-align:left;color:#0f172a;font-size:13px;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 20px rgba(15,23,42,0.05);display:flex;flex-direction:column;align-items:flex-start;gap:4px;}' +
+      '.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.96);border-radius:14px;padding:11px 12px;text-align:left;color:#0f172a;font-size:13px;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 20px rgba(15,23,42,0.05);display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:56px;}' +
       '.documents-brief-item-name{display:block;width:100%;font-size:13px;font-weight:600;line-height:1.35;white-space:normal;word-break:break-word;overflow-wrap:anywhere;}' +
       '.documents-brief-item-meta{display:block;width:100%;font-size:11px;color:#64748b;white-space:normal;word-break:break-word;overflow-wrap:anywhere;}' +
       '.documents-brief-item:hover,.documents-brief-item:focus-visible{border-color:rgba(37,99,235,0.48);box-shadow:0 0 0 3px rgba(37,99,235,0.12);outline:none;}' +
@@ -2211,12 +2212,12 @@
           text: briefText
         }
       ],
-      aiBehavior: 'Режим "Кратко ИИ". Поле analysis: 2-3 предложения о сути документа. В risks первой строкой верни "Отправитель: ...; Получатель: ...". Если данных нет, пиши "Отправитель: не определён; Получатель: не определён". В required_actions перечисли 3-5 ключевых фактов/деталей. В requirements перечисли ключевые требования.'
+      aiBehavior: 'Режим "Кратко ИИ". Используй только extractedTexts. Верни только JSON без markdown. Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. analysis: 2-3 коротких предложения. required_actions: 3-5 конкретных фактов из файла. requirements: 3-5 шагов, что делать дальше. Если нет данных — пиши "не указано в файле".'
     };
     var formData = new FormData();
     formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', sourceLabel);
-    formData.append('prompt', 'Кратко проанализируй OCR-текст и выдели важные детали, отправителя и получателя.');
+    formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
     formData.append('responseStyle', 'concise');
     formData.append('context', JSON.stringify(context));
     return fetch(endpoint, {
@@ -2247,7 +2248,8 @@
     var header = createElement('div', 'documents-brief-header');
     var titleWrap = createElement('div', '');
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для OCR и краткого анализа ИИ'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Краткий вывод по документу'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Только текст выбранного файла'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
@@ -2314,9 +2316,16 @@
       button.type = 'button';
       button.addEventListener('click', function() {
         makeActive(button);
+        button.disabled = true;
         setPreviewLoading(true, source.label);
         resolveSourceText(source)
           .then(function(sourceText) {
+            if (String(sourceText || '').trim().length < 80) {
+              preview.classList.remove('is-loading');
+              preview.textContent = buildBriefSummaryText(sourceText);
+              showStatusMessage('info', 'Текста мало: показан краткий локальный вывод без ИИ.');
+              return;
+            }
             var aiStartedAt = Date.now();
             var estimatedSeconds = 35;
             var timerId = null;
@@ -2342,12 +2351,16 @@
                 preview.classList.remove('is-loading');
                 preview.textContent = 'Ошибка анализа.\n' + (error && error.message ? error.message : 'неизвестная ошибка');
                 showStatusMessage('warning', error && error.message ? error.message : 'ИИ временно недоступен. Попробуйте позже.');
+              })
+              .finally(function() {
+                button.disabled = false;
               });
           })
           .catch(function(error) {
             preview.classList.remove('is-loading');
             preview.textContent = 'Не удалось получить summary: ' + (error && error.message ? error.message : 'неизвестная ошибка');
             showStatusMessage('warning', 'Не удалось обработать "' + source.label + '".');
+            button.disabled = false;
           });
       });
       list.appendChild(button);
@@ -2379,6 +2392,10 @@
     panel.appendChild(body);
     modal.appendChild(panel);
     document.body.appendChild(modal);
+    var firstSourceButton = list.querySelector('.documents-brief-item');
+    if (firstSourceButton) {
+      firstSourceButton.click();
+    }
   }
 
   function ensureSearchStyles() {
