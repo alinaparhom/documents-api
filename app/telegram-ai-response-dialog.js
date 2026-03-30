@@ -950,10 +950,16 @@ function openAiResponseDialog(context = {}) {
 
   const runAutoDecision = async () => {
     if (state.isSending) return;
+    const hasSelectedFiles = state.selectedAttachmentIds instanceof Set && state.selectedAttachmentIds.size > 0;
     const hasFiles = Array.isArray(context.extractedTexts) && context.extractedTexts.length > 0;
+    if (hasSelectedFiles && !hasFiles) {
+      appendBubble('Ошибка: выбранные файлы ещё не прочитаны. Нажмите «Прочитать выбранные» и повторите.', 'assistant');
+      notify('warning', 'Контекст из файлов не готов.');
+      return;
+    }
     const prompt = hasFiles
-      ? 'Проанализируй выбранные файлы, учти историю переписки и настройки aiBehavior. Дай итоговое решение и краткий план действий.'
-      : 'Учти историю переписки и настройки aiBehavior. Сформируй итоговое решение по задаче.';
+      ? 'Проанализируй выбранные файлы, учти историю переписки и настройки aiBehavior. Дай итоговое решение и краткий план действий. Не предлагай локальные решения, при недостатке данных сразу сообщи об ошибке.'
+      : 'Учти историю переписки и настройки aiBehavior. Сформируй итоговое решение по задаче. Не предлагай локальные решения, при недостатке данных сразу сообщи об ошибке.';
     appendBubble('Авто-запрос: сформируй решение по задаче.', 'user');
     state.chatHistory.push({ role: 'user', text: prompt, ts: Date.now() });
     state.chatHistory = normalizeHistoryMessages(state.chatHistory);
