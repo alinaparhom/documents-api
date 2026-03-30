@@ -485,17 +485,19 @@
       '.ai-chat-modal__export-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;background:#f1f5f9;color:#1e293b;cursor:pointer;transition:all .2s;min-height:38px;}' +
       '.ai-chat-modal__export-btn:hover{background:#e2e8f0;}' +
       '.ai-chat-modal__template-btn{min-width:130px;}' +
-      '.ai-chat-template-viewer{display:flex;flex-direction:column;gap:8px;min-height:72vh;}' +
+      '.ai-chat-template-viewer{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;}' +
       '.ai-chat-template-tabs{display:flex;gap:8px;flex-wrap:wrap;}' +
-      '.ai-chat-template-surface{flex:1;min-height:58vh;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#f8fafc;overflow:auto;}' +
-      '.ai-chat-template-docx{padding:16px;line-height:1.55;background:#fff;max-width:980px;margin:0 auto;min-height:58vh;}' +
+      '.ai-chat-template-editor{display:flex;gap:8px;flex-wrap:wrap;}' +
+      '.ai-chat-template-input{width:100%;min-height:74px;max-height:160px;resize:vertical;border:1px solid rgba(148,163,184,.4);border-radius:10px;padding:10px;background:#fff;font-size:13px;line-height:1.4;}' +
+      '.ai-chat-template-surface{flex:1;min-height:0;height:100%;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#f8fafc;overflow:auto;}' +
+      '.ai-chat-template-docx{padding:16px;line-height:1.55;background:#fff;max-width:980px;margin:0 auto;min-height:100%;outline:none;}' +
       '.ai-chat-template-docx table{width:100%;border-collapse:collapse;}' +
       '.ai-chat-template-docx td,.ai-chat-template-docx th{border:1px solid rgba(148,163,184,.45);padding:6px;}' +
-      '.ai-chat-template-pdf{width:100%;min-height:58vh;border:none;background:#fff;}' +
+      '.ai-chat-template-pdf{width:100%;height:100%;min-height:100%;border:none;background:#fff;}' +
       '.ai-chat-modal__ocr-hint{margin-top:4px;padding:6px 8px;border-radius:8px;background:rgba(239,246,255,.8);border:1px solid rgba(147,197,253,.55);font-size:11px;color:#1e3a8a;line-height:1.35;}' +
       '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}.ai-chat-template-input{min-height:92px;}}';
     document.head.appendChild(style);
   }
 
@@ -1214,6 +1216,9 @@
     templatePanel.style.maxWidth = '100vw';
     templatePanel.style.maxHeight = '100vh';
     templatePanel.style.borderRadius = '0';
+    templateModal.content.style.height = '100%';
+    templateModal.content.style.minHeight = '0';
+    templateModal.content.style.padding = '10px';
 
     var templateViewer = createElement('div', 'ai-chat-template-viewer');
     var templateInfo = createElement('div', 'ai-chat-modal__empty', 'Загрузка шаблонов...');
@@ -1224,9 +1229,24 @@
     templatePdfTab.type = 'button';
     templateTabs.appendChild(templateDocxTab);
     templateTabs.appendChild(templatePdfTab);
+    var templateEditor = createElement('div', 'ai-chat-template-editor');
+    var templateInputText = createElement('textarea', 'ai-chat-template-input');
+    templateInputText.placeholder = 'Вставьте ваш текст. Он будет аккуратно подставлен в DOCX шаблон.';
+    var applyTemplateTextButton = createElement('button', 'ai-chat-modal__send', 'Вставить текст');
+    var downloadDocxFromTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать DOCX');
+    var downloadPdfFromTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать PDF');
+    applyTemplateTextButton.type = 'button';
+    downloadDocxFromTemplateButton.type = 'button';
+    downloadPdfFromTemplateButton.type = 'button';
+    templateEditor.appendChild(templateInputText);
+    templateEditor.appendChild(applyTemplateTextButton);
+    templateEditor.appendChild(downloadDocxFromTemplateButton);
+    templateEditor.appendChild(downloadPdfFromTemplateButton);
 
     var templateSurface = createElement('div', 'ai-chat-template-surface');
     var templateDocxView = createElement('div', 'ai-chat-template-docx', 'Загрузка DOCX...');
+    templateDocxView.setAttribute('contenteditable', 'true');
+    templateDocxView.setAttribute('spellcheck', 'true');
     var templatePdfFrame = document.createElement('iframe');
     templatePdfFrame.className = 'ai-chat-template-pdf';
     templatePdfFrame.title = 'Просмотр PDF шаблона';
@@ -1236,6 +1256,7 @@
 
     templateViewer.appendChild(templateInfo);
     templateViewer.appendChild(templateTabs);
+    templateViewer.appendChild(templateEditor);
     templateViewer.appendChild(templateSurface);
     templateModal.content.appendChild(templateViewer);
 
@@ -1263,15 +1284,13 @@
 
     async function resolveFirstAvailableTemplateUrl(candidates) {
       var list = Array.isArray(candidates) ? candidates.slice() : [];
-      var lastTried = '';
       for (var i = 0; i < list.length; i += 1) {
         var url = String(list[i] || '').trim();
         if (!url) {
           continue;
         }
-        lastTried = url;
         try {
-          var response = await fetch(url, { method: 'HEAD', credentials: 'same-origin' });
+          var response = await fetch(url, { credentials: 'same-origin' });
           if (response && response.ok) {
             return url;
           }
@@ -1279,7 +1298,85 @@
           // пробуем следующий путь
         }
       }
-      return lastTried;
+      return '';
+    }
+
+    async function loadFirstDocxTemplateBuffer() {
+      var list = Array.isArray(templateDocxCandidates) ? templateDocxCandidates.slice() : [];
+      for (var i = 0; i < list.length; i += 1) {
+        var url = String(list[i] || '').trim();
+        if (!url) {
+          continue;
+        }
+        try {
+          var response = await fetch(url, { credentials: 'same-origin' });
+          if (!response.ok) {
+            continue;
+          }
+          return { url: url, buffer: await response.arrayBuffer() };
+        } catch (error) {
+          // пробуем следующий путь
+        }
+      }
+      return null;
+    }
+
+    function applyTextToTemplate(text) {
+      var rawText = String(text || '').trim();
+      if (!rawText) {
+        return;
+      }
+      var escaped = escapeHtml(rawText).replace(/\n/g, '<br>');
+      var markerRegex = /(\{\{AI_RESPONSE\}\}|\[AI_RESPONSE\]|\{AI_RESPONSE\}|\[\[AI_RESPONSE\]\])/g;
+      if (markerRegex.test(templateDocxView.innerHTML)) {
+        templateDocxView.innerHTML = templateDocxView.innerHTML.replace(markerRegex, escaped);
+      } else {
+        var block = document.createElement('p');
+        block.innerHTML = escaped;
+        templateDocxView.appendChild(block);
+      }
+    }
+
+    async function exportDocxFromTemplateHtml(format, buttonEl) {
+      var html = String(templateDocxView.innerHTML || '').trim();
+      if (!html) {
+        templateInfo.textContent = 'Нет содержимого для экспорта.';
+        return;
+      }
+      var previousText = buttonEl.textContent;
+      buttonEl.disabled = true;
+      buttonEl.textContent = 'Генерация...';
+      try {
+        var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+        var params = new URLSearchParams();
+        params.set('action', 'generate_from_editor');
+        params.set('format', format);
+        params.set('html', html);
+        params.set('documentTitle', config.documentTitle || 'template');
+        var response = await fetch(apiUrl, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: params.toString()
+        });
+        if (!response.ok) {
+          throw new Error('Ошибка экспорта (' + response.status + ')');
+        }
+        var blob = await response.blob();
+        var downloadUrl = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = 'template.' + format;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+      } catch (error) {
+        templateInfo.textContent = 'Ошибка экспорта: ' + (error && error.message ? error.message : 'неизвестно');
+      } finally {
+        buttonEl.disabled = false;
+        buttonEl.textContent = previousText;
+      }
     }
 
     function setTemplateTab(tabName) {
@@ -1297,19 +1394,13 @@
       }
       templateDocxView.textContent = 'Загрузка DOCX...';
       try {
-        if (!templateState.docxUrl) {
-          templateState.docxUrl = await resolveFirstAvailableTemplateUrl(templateDocxCandidates);
+        var templateData = await loadFirstDocxTemplateBuffer();
+        if (!templateData || !templateData.buffer) {
+          throw new Error('template.docx не найден');
         }
-        if (!templateState.docxUrl) {
-          throw new Error('Не найден путь к template.docx');
-        }
-        var response = await fetch(templateState.docxUrl, { credentials: 'same-origin' });
-        if (!response.ok) {
-          throw new Error('template.docx не найден (' + response.status + ')');
-        }
-        var buffer = await response.arrayBuffer();
+        templateState.docxUrl = templateData.url;
         var mammoth = await ensureMammoth();
-        var result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+        var result = await mammoth.convertToHtml({ arrayBuffer: templateData.buffer });
         var html = result && typeof result.value === 'string' ? result.value : '';
         templateDocxView.innerHTML = html || '<p>DOCX пустой.</p>';
         templateInfo.textContent = 'DOCX загружен: ' + templateState.docxUrl;
@@ -1335,6 +1426,17 @@
       templateInfo.textContent = 'PDF загружается: ' + templateState.pdfUrl;
       templateState.pdfLoaded = true;
     }
+
+    applyTemplateTextButton.addEventListener('click', function () {
+      applyTextToTemplate(templateInputText.value);
+      templateInfo.textContent = 'Текст вставлен в шаблон.';
+    });
+    downloadDocxFromTemplateButton.addEventListener('click', function () {
+      exportDocxFromTemplateHtml('docx', downloadDocxFromTemplateButton);
+    });
+    downloadPdfFromTemplateButton.addEventListener('click', function () {
+      exportDocxFromTemplateHtml('pdf', downloadPdfFromTemplateButton);
+    });
 
     function openOverlay(modalRef) {
       document.body.appendChild(modalRef.overlay);
