@@ -134,14 +134,24 @@ async function requestTelegramOcrByUrl(fileUrl) {
 }
 
 async function requestTelegramBriefAi(sourceLabel, text) {
+  const normalizedText = String(text || '').trim();
   const context = {
-    extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: String(text || '').slice(0, 12000) }],
-    aiBehavior: 'Режим "Кратко ИИ". Кратко и понятно: о чем документ, кто отправитель/получатель, 3-4 ключевые детали.'
+    extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: normalizedText.slice(0, 12000) }],
+    aiBehavior: [
+      'Режим "Кратко ИИ" для Telegram Mini App.',
+      'Анализируй строго только текст из extractedTexts.',
+      'Запрещено использовать любые поля карточки задачи, названия организаций из интерфейса или внешние догадки.',
+      'Дай очень понятный и информативный результат для новичка.',
+      'В analysis: 3-5 простых предложений о сути документа и главной цели.',
+      'В risks первой строкой верни: "Отправитель: ...; Получатель: ...". Если в тексте не указано — "не указано".',
+      'В required_actions перечисли 4-6 ключевых фактов, дат, сумм и решений из файла.',
+      'В requirements перечисли 3-5 конкретных следующих шагов, которые логично сделать по тексту файла.',
+    ].join(' ')
   };
   const formData = new FormData();
   formData.append('action', 'ai_response_analyze');
   formData.append('documentTitle', sourceLabel);
-  formData.append('prompt', 'Сделай короткое и понятное summary документа.');
+  formData.append('prompt', 'Сделай информативное и понятное резюме строго по тексту файла без использования контекста задачи.');
   formData.append('responseStyle', 'concise');
   formData.append('context', JSON.stringify(context));
   const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
@@ -171,13 +181,13 @@ function buildTelegramBriefText(payload) {
     participantsLine,
     '',
     '❓ Зачем это письмо',
-    decisionReason || 'Согласовать изменения по работам и принять решение о дальнейших действиях.',
+    decisionReason || 'В тексте файла цель письма явно не указана.',
     '',
     '🔎 Важные детали',
-    actions.length ? actions.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Детали не выделены.',
+    actions.length ? actions.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• В тексте файла не удалось выделить важные детали.',
     '',
     '✅ Что нужно сделать',
-    requirements.length ? requirements.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Проверить требования документа и дать официальный ответ.'
+    requirements.length ? requirements.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• В файле нет явных шагов — нужно уточнение у автора документа.'
   ].join('\n');
 }
 
@@ -214,7 +224,7 @@ function openTelegramBriefModal(task, statusHandler) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-brief-ai__item';
-    button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>${source.type === 'file' ? 'Вложение' : 'Карточка задачи'}</small></span>`;
+    button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>Вложение</small></span>`;
     button.addEventListener('click', async () => {
       activate(button);
       try {
