@@ -1862,33 +1862,25 @@ if ($requirements) {
 }
 
 $effectiveStyle = $responseStyle !== ''
-    ? $responseStyle
-    : (isset($context['responseStyle']) && is_string($context['responseStyle']) ? trim($context['responseStyle']) : '');
-$styleInstruction = 'Пиши в официально-деловом стиле.';
-$styleExampleInstruction = "Ориентируйся на форму ответа: «В ответ на Ваш документ от 20.03.2026 № 15/02 сообщаем следующее... Отмечаем, что... Обращаем Ваше внимание на...»";
-if ($effectiveStyle === 'aggressive') {
-    $styleInstruction = 'Пиши напористо, уверенно и жёстко, но без оскорблений.';
-    $styleExampleInstruction = '';
-} elseif ($effectiveStyle === 'informational') {
-    $styleInstruction = 'Пиши спокойно, нейтрально и максимально информативно.';
-} elseif ($effectiveStyle === 'neutral') {
-    $styleInstruction = 'Пиши в нейтральном официально-деловом тоне.';
-} elseif ($effectiveStyle === 'concise') {
-    // Обратная совместимость со старыми значениями
-    $styleInstruction = 'Пиши кратко и строго по делу.';
-    $styleExampleInstruction = '';
-} elseif ($effectiveStyle === 'friendly') {
-    // Обратная совместимость со старыми значениями
-    $styleInstruction = 'Пиши развёрнуто, дружелюбно и понятно.';
-    $styleExampleInstruction = '';
-} elseif ($effectiveStyle === 'technical') {
-    // Обратная совместимость со старыми значениями
-    $styleInstruction = 'Пиши технически, с пояснениями и структурой.';
-    $styleExampleInstruction = '';
+    ? mb_strtolower($responseStyle)
+    : (isset($context['responseStyle']) && is_string($context['responseStyle']) ? mb_strtolower(trim($context['responseStyle'])) : 'neutral');
+if (!in_array($effectiveStyle, ['positive', 'negative', 'neutral'], true)) {
+    $effectiveStyle = 'neutral';
 }
+
+$styleInstruction = 'Тон ответа: нейтральный (рассмотрение) — фиксируем текущее состояние, подтверждаем рассмотрение и указываем следующие действия с датами.';
+if ($effectiveStyle === 'positive') {
+    $styleInstruction = 'Тон ответа: положительный (одобрение/выполнение) — подтверждай выполнение, обеспечивай результат и фиксируй сроки.';
+} elseif ($effectiveStyle === 'negative') {
+    $styleInstruction = 'Тон ответа: отрицательный (отклонение/невыполнение) — четко указывай причину отклонения и что требуется для пересмотра.';
+}
+$styleExampleInstruction = 'Структура response обязательна: обращение, что уже выполнено, что выполняем с датами (ДД.ММ.ГГГГ), подтверждение обеспечения фронта работ, деловая подпись.';
 $effectiveBehavior = $aiBehavior !== ''
     ? $aiBehavior
     : (isset($context['aiBehavior']) && is_string($context['aiBehavior']) ? trim($context['aiBehavior']) : '');
+if ($effectiveBehavior !== '' && mb_strlen($effectiveBehavior) > 2400) {
+    $effectiveBehavior = mb_substr($effectiveBehavior, 0, 2400);
+}
 $behaviorInstruction = $effectiveBehavior !== ''
     ? ('Дополнительная настройка поведения: ' . $effectiveBehavior . '.')
     : '';
@@ -1911,22 +1903,18 @@ if ($allowedModelsRaw !== '') {
     }
 }
 
-$systemMessage = "Ты помощник по деловой переписке на русском языке. Верни только JSON объект с полями: analysis, decision, decision_reason, risks, required_actions, response. "
-  . "Всегда в первую очередь анализируй файлы из user payload: files[*].preview. "
-  . "Главный источник текста — user payload: extractedTexts[*].text. "
-  . "Если контент файла присутствует, не проси путь или имя файла повторно, а используй этот контент напрямую. "
-  . "Если контент пустой, кратко сообщи, что файл не удалось прочитать. "
-  . "В response пиши развёрнутый официальный ответ (не краткий и не короткий), в роли руководителя или иного уполномоченного лица, принимающего окончательное решение. "
-  . "Обязательно используй формулировки: «В ответ на Ваш документ от [дата] № [номер] сообщаем следующее», «Отмечаем, что…», «Обращаем Ваше внимание на…». "
-  . "Соблюдай структуру: вступление, основная часть, заключение. "
-  . "Не пересказывай OCR-текст дословно и не переписывай весь документ. Определи, что требуется в документе, и прими решение по сути требований. "
-  . "При достаточности данных выбирай только approve или reject; need_clarification используй только если ключевых данных объективно не хватает. "
+$systemMessage = "ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ С ОПЫТОМ 15 ЛЕТ. Верни только JSON объект с полями: analysis, decision, decision_reason, risks, required_actions, response. "
+  . "Отвечай только в деловом стиле: сухо, четко, без воды, без эмодзи, без извинений и без неуверенных формулировок. "
+  . "Не начинай с фраз вида «Рассмотрев ваше письмо...». Первое предложение — сразу по делу. "
+  . "Всегда анализируй контекст из user payload: files[*].preview и extractedTexts[*].text. Если контент пустой — кратко укажи это в analysis. "
+  . "Запрещено пересказывать исходный текст письма и цитировать его. "
+  . "В response пиши готовый официальный ответ: обращение, что выполнено, что выполняем с датами, подтверждение готовности обеспечить фронт работ, деловая подпись. "
+  . "Каждому действию укажи реалистичную дату в формате ДД.ММ.ГГГГ. Если срок просрочен, укажи новый срок без оправданий. "
   . $styleInstruction . ' '
-  . ($styleExampleInstruction !== '' ? ($styleExampleInstruction . ' ') : '')
-  . $behaviorInstruction . ' Решение decision должно быть строго одним из: approve, reject, need_clarification. Поля risks и required_actions верни массивами строк. '
-  . 'При наличии requirements из OCR обязательно опирайся на них и сформируй решение по этим пунктам. '
-  . 'Если данных недостаточно, запроси недостающие сведения и укажи, что после их получения будет принято решение need_clarification. '
-  . 'Поле response — это только готовый официальный ответ на письмо без служебных фраз, без повторения задания пользователя, без строк "Решение ИИ:", "Причина:", "Действия:".';
+  . $styleExampleInstruction . ' '
+  . $behaviorInstruction . ' Решение decision должно быть строго одним из: approve, reject, need_clarification. '
+  . 'Если style=positive, по умолчанию выбирай approve; если style=negative, по умолчанию выбирай reject; если style=neutral, выбирай need_clarification при нехватке данных, иначе approve/reject по сути. '
+  . 'Поля risks и required_actions верни массивами строк. Поле response — только готовый текст письма без служебных заголовков.';
 
 $userPayload = [
     'documentTitle' => $documentTitle,
@@ -1940,7 +1928,8 @@ $userPayload = [
 
 $body = [
     'model' => $effectiveModel,
-    'temperature' => 0.3,
+    'temperature' => 0.7,
+    'max_tokens' => 900,
     'messages' => [
         ['role' => 'system', 'content' => $systemMessage],
         ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
@@ -2033,6 +2022,18 @@ if ($statusCode >= 400) {
         logApiDocs('error', 'AI provider blocked by region, no local fallback in autonomous mode', ['status' => $statusCode]);
         jsonResponse(502, ['ok' => false, 'error' => 'Провайдер ИИ недоступен в вашем регионе. Локальный fallback отключён.', 'status' => $statusCode]);
     }
+    if ($statusCode === 429) {
+        $waitSeconds = 20;
+        if (preg_match('/try again in\s+([0-9.]+)\s*s/i', $message, $match)) {
+            $waitSeconds = max(3, (int)ceil((float)$match[1]));
+        }
+        jsonResponse(429, [
+            'ok' => false,
+            'error' => 'До бесплатной попытки осталось: ' . $waitSeconds . ' сек.',
+            'status' => $statusCode,
+            'retryAfter' => $waitSeconds,
+        ]);
+    }
     jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $statusCode]);
 }
 
@@ -2068,7 +2069,20 @@ if (!$decisionBlock['valid']) {
         'documentTitle' => $documentTitle,
         'promptPreview' => mb_substr($prompt, 0, 180),
     ]);
-    jsonResponse(502, ['ok' => false, 'error' => 'ИИ вернул некорректный decision JSON. Повторите запрос.']);
+    $fallbackDecision = 'need_clarification';
+    if ($effectiveStyle === 'positive') {
+        $fallbackDecision = 'approve';
+    } elseif ($effectiveStyle === 'negative') {
+        $fallbackDecision = 'reject';
+    }
+    $decisionBlock = [
+        'valid' => true,
+        'decision' => $fallbackDecision,
+        'decision_reason' => 'Решение сформировано по выбранному стилю ответа.',
+        'risks' => [],
+        'required_actions' => [],
+        'requirements' => $requirements,
+    ];
 }
 
 $analysis = '';
@@ -2076,27 +2090,32 @@ if (isset($parsed['analysis']) && (is_string($parsed['analysis']) || is_numeric(
     $analysis = textFromMixed($parsed['analysis']);
 }
 $response = sanitizeGeneratedResponse(textFromMixed($parsed['response'] ?? ''), $runtimeConfig['sanitizePrefixes'] ?? []);
+$positive = textFromMixed($parsed['positive'] ?? '');
+$negative = textFromMixed($parsed['negative'] ?? '');
 $neutral = textFromMixed($parsed['neutral'] ?? '');
-$aggressive = textFromMixed($parsed['aggressive'] ?? '');
 
 if ($response === '') {
-    $selectedTone = isset($context['selectedTone']) && is_string($context['selectedTone'])
-        ? trim($context['selectedTone'])
-        : '';
-    if (($effectiveStyle === 'aggressive' || $effectiveStyle === 'concise' || $selectedTone === 'aggressive') && $aggressive !== '') {
-        $response = sanitizeGeneratedResponse($aggressive, $runtimeConfig['sanitizePrefixes'] ?? []);
+    if ($effectiveStyle === 'positive' && $positive !== '') {
+        $response = sanitizeGeneratedResponse($positive, $runtimeConfig['sanitizePrefixes'] ?? []);
+    } elseif ($effectiveStyle === 'negative' && $negative !== '') {
+        $response = sanitizeGeneratedResponse($negative, $runtimeConfig['sanitizePrefixes'] ?? []);
+    } elseif ($effectiveStyle === 'neutral' && $neutral !== '') {
+        $response = sanitizeGeneratedResponse($neutral, $runtimeConfig['sanitizePrefixes'] ?? []);
+    } elseif ($positive !== '') {
+        $response = sanitizeGeneratedResponse($positive, $runtimeConfig['sanitizePrefixes'] ?? []);
+    } elseif ($negative !== '') {
+        $response = sanitizeGeneratedResponse($negative, $runtimeConfig['sanitizePrefixes'] ?? []);
     } elseif ($neutral !== '') {
         $response = sanitizeGeneratedResponse($neutral, $runtimeConfig['sanitizePrefixes'] ?? []);
-    } elseif ($aggressive !== '') {
-        $response = sanitizeGeneratedResponse($aggressive, $runtimeConfig['sanitizePrefixes'] ?? []);
     }
 }
 
-if ($analysis === '' && $response === '' && $neutral === '' && $aggressive === '') {
+if ($analysis === '' && $response === '' && $neutral === '' && $positive === '' && $negative === '') {
     $analysis = 'ИИ вернул ответ в свободной форме.';
     $response = sanitizeGeneratedResponse($content, $runtimeConfig['sanitizePrefixes'] ?? []);
     $neutral = $content;
-    $aggressive = $content;
+    $positive = $content;
+    $negative = $content;
 }
 
 if (looksLikeJsonText($response) || $response === '') {
@@ -2123,7 +2142,8 @@ jsonResponse(200, [
     'analysis' => $analysis,
     'response' => $response,
     'neutral' => $neutral,
-    'aggressive' => $aggressive,
+    'positive' => $positive,
+    'negative' => $negative,
     'promptStats' => $promptStats,
     'decisionBlock' => [
         'decision' => (string)($decisionBlock['decision'] ?? ''),
