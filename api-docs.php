@@ -693,33 +693,9 @@ function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tem
         $sourceSize = (int)($diagnostics['sourceSizeBytes'] ?? 0);
         $diagnostics['pdfPagesDetected'] = $pdfPages;
         $diagnostics['ocrFreeMaxBytes'] = 1000000;
-
-        $preferDirectPdf = false;
-        if ($preferDirectPdf && $sourceSize > 0 && $sourceSize <= 1000000 && $pdfPages > 0 && $pdfPages <= 3) {
-            $diagnostics['pdfDirectUpload'] = true;
-            $diagnostics['prepared'] = [getImageDiagnostics($tmpName)];
-            return ['files' => [$file], 'preprocessed' => false, 'mode' => 'pdf_original_safe', 'diagnostics' => $diagnostics];
-        }
-
-        $pages = convertPdfToImages($tmpName, $tempDir, $targetDpi, $preprocessEnabled);
-        if (!$pages) {
-            $diagnostics['pdfPagesGenerated'] = 0;
-            return ['files' => [$file], 'preprocessed' => false, 'mode' => 'pdf_original', 'diagnostics' => $diagnostics];
-        }
-        $prepared = [];
-        $preparedDiagnostics = [];
-        foreach ($pages as $i => $pagePath) {
-            $prepared[] = [
-                'name' => 'page-' . ($i + 1) . '.jpg',
-                'tmp_name' => $pagePath,
-                'type' => 'image/jpeg',
-                'size' => (int)@filesize($pagePath),
-            ];
-            $preparedDiagnostics[] = getImageDiagnostics($pagePath);
-        }
-        $diagnostics['pdfPagesGenerated'] = count($prepared);
-        $diagnostics['prepared'] = $preparedDiagnostics;
-        return ['files' => $prepared, 'preprocessed' => $preprocessEnabled, 'mode' => 'pdf_pages', 'diagnostics' => $diagnostics];
+        $diagnostics['pdfPassthrough'] = true;
+        $diagnostics['prepared'] = [getImageDiagnostics($tmpName)];
+        return ['files' => [$file], 'preprocessed' => false, 'mode' => 'pdf_original_passthrough', 'diagnostics' => $diagnostics];
     }
 
     if (!$preprocessEnabled) {
