@@ -1719,113 +1719,64 @@ if ($action === 'ocr_extract') {
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
-    $ocrExtraFields = [
-        'OCREngine' => '2',
-        'scale' => 'true',
-        'detectOrientation' => 'true',
-    ];
-
-    if (!$files && $ocrFileUrl === '') {
-        jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
-    }
-
-    if ($files) {
-        $directText = extractTextWithoutOcr($files[0]);
-        if ($directText !== '') {
-            jsonResponse(200, [
-                'ok' => true,
-                'text' => $directText,
-                'raw' => [
-                    'source' => 'direct_text',
-                    'extension' => detectFileExtension($files[0]),
-                ],
-            ]);
-        }
-    }
+    $ocrEngine = trim((string)($_POST['OCREngine'] ?? '2'));
+    $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
+    $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? 'true'));
 
     if ($ocrApiKey === '') {
         jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
     }
-
-    $preparedFiles = [];
-    $prepareMode = 'url';
-    $preparedPagesCount = 0;
-    if ($ocrFileUrl === '') {
-        if (!$files) {
-            jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
-        }
-        $preparedFiles = [$files[0]];
-        $prepareMode = 'original_upload';
-        $preparedPagesCount = 1;
-    }
-
-    $allParsedResults = [];
-    $pageRaw = [];
     $targetLanguage = $ocrLanguage !== '' ? $ocrLanguage : 'rus';
-    if ($ocrFileUrl !== '') {
-        $preparedFiles = [[]];
+    if (!$files && $ocrFileUrl === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
     }
 
-    foreach ($preparedFiles as $index => $preparedFile) {
-        $startedAt = microtime(true);
-        $ocrResult = performOcrRequest(
-            $ocrBaseUrl,
-            $ocrApiKey,
-            $preparedFile,
-            $targetLanguage,
-            $ocrFileUrl !== '' ? $ocrFileUrl : null,
-            $ocrExtraFields
-        );
-        $ocrResponseBody = $ocrResult['body'];
-        $ocrCurlError = (string)$ocrResult['curl_error'];
-        $ocrStatusCode = (int)$ocrResult['status'];
-        $durationMs = (int)round((microtime(true) - $startedAt) * 1000);
+    $ocrExtraFields = [
+        'OCREngine' => $ocrEngine !== '' ? $ocrEngine : '2',
+        'scale' => $ocrScale !== '' ? $ocrScale : 'true',
+        'detectOrientation' => $ocrDetectOrientation !== '' ? $ocrDetectOrientation : 'true',
+    ];
+    $preparedFile = $ocrFileUrl !== '' ? [] : $files[0];
+    $ocrResult = performOcrRequest(
+        $ocrBaseUrl,
+        $ocrApiKey,
+        $preparedFile,
+        $targetLanguage,
+        $ocrFileUrl !== '' ? $ocrFileUrl : null,
+        $ocrExtraFields
+    );
+    $ocrResponseBody = $ocrResult['body'];
+    $ocrCurlError = (string)$ocrResult['curl_error'];
+    $ocrStatusCode = (int)$ocrResult['status'];
 
-        if ($ocrResponseBody === false) {
-            logApiDocs('error', 'OCR request failed', ['curlError' => $ocrCurlError, 'page' => $index + 1]);
-            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError]);
-        }
+    if ($ocrResponseBody === false) {
+        logApiDocs('error', 'OCR request failed', ['curlError' => $ocrCurlError]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError]);
+    }
 
-        $ocrJson = json_decode((string)$ocrResponseBody, true);
-        if (!is_array($ocrJson)) {
-            logApiDocs('error', 'OCR API returned non-JSON', ['response' => mb_substr((string)$ocrResponseBody, 0, 500), 'page' => $index + 1]);
-            jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ OCR API']);
-        }
+    $ocrJson = json_decode((string)$ocrResponseBody, true);
+    if (!is_array($ocrJson)) {
+        logApiDocs('error', 'OCR API returned non-JSON', ['response' => mb_substr((string)$ocrResponseBody, 0, 500)]);
+        jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ OCR API']);
+    }
 
-        if ($ocrStatusCode >= 400) {
-            $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-            if ($message === '') {
-                $message = 'OCR API error';
-            }
-            jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode, 'page' => $index + 1]);
+    if ($ocrStatusCode >= 400) {
+        $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+        if ($message === '') {
+            $message = 'OCR API error';
         }
+        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+    }
 
-        $hasErrorOnProcessing = isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true;
-        if ($hasErrorOnProcessing) {
-            $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-            jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл', 'page' => $index + 1]);
-        }
-
-        $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
-        foreach ($parsedResults as $parsedEntry) {
-            if (is_array($parsedEntry)) {
-                $allParsedResults[] = $parsedEntry;
-            }
-        }
-        $pageRaw[] = [
-            'page' => $index + 1,
-            'status' => $ocrStatusCode,
-            'durationMs' => $durationMs,
-            'response' => $ocrJson,
-        ];
-
-        if ($ocrFileUrl !== '') {
-            break;
-        }
+    $hasErrorOnProcessing = isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true;
+    if ($hasErrorOnProcessing) {
+        $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+        jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
     }
 
     $parts = [];
-    foreach ($allParsedResults as $entry) {
+    $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
+    foreach ($parsedResults as $entry) {
         if (is_array($entry) && isset($entry['ParsedText']) && is_string($entry['ParsedText'])) {
             $parts[] = $entry['ParsedText'];
         }
@@ -1836,9 +1787,9 @@ if ($action === 'ocr_extract') {
         'ok' => true,
         'text' => $ocrText,
         'raw' => [
-            'pagesProcessed' => count($pageRaw),
-            'prepareMode' => $prepareMode,
-            'preparedPagesCount' => $preparedPagesCount,
+            'pagesProcessed' => count($parsedResults),
+            'prepareMode' => $ocrFileUrl !== '' ? 'url' : 'original_upload',
+            'preparedPagesCount' => $ocrFileUrl !== '' ? 0 : 1,
             'ocrRequest' => [
                 'language' => $targetLanguage,
                 'viaUrl' => $ocrFileUrl !== '',
@@ -1846,7 +1797,7 @@ if ($action === 'ocr_extract') {
                 'scale' => $ocrExtraFields['scale'],
                 'detectOrientation' => $ocrExtraFields['detectOrientation'],
             ],
-            'pages' => $pageRaw,
+            'response' => $ocrJson,
         ],
     ]);
 }
