@@ -10,7 +10,6 @@ const REQUEST_TIMEOUT_MS = 12000;
 const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
-const MAX_CHAT_ATTACHMENT_PREVIEW = 800;
 const FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
 const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ.\n'
   + '\n'
@@ -74,31 +73,34 @@ function ensureAiDialogStyles() {
   style.textContent = `
     .appdosc-ai-dialog{position:fixed;inset:0;z-index:2500;display:flex;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}
     .appdosc-ai-dialog__panel{width:min(920px,100%);height:100dvh;margin:auto;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.96),rgba(255,255,255,.9));border:1px solid rgba(255,255,255,.8);box-shadow:0 20px 45px rgba(15,23,42,.2);overflow:hidden;border-radius:20px 20px 0 0}
-    .appdosc-ai-dialog__header{padding:12px;display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid rgba(148,163,184,.2)}
+    .appdosc-ai-dialog__header{padding:10px 12px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(148,163,184,.2)}
     .appdosc-ai-dialog__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-ai-dialog__subtitle{font-size:12px;color:#64748b;margin-top:2px}
-    .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:#f8fafc}
-    .appdosc-ai-dialog__bubble{max-width:90%;padding:10px 12px;border-radius:14px;line-height:1.5;font-size:13px;white-space:pre-wrap;word-break:break-word;color:#0f172a}
+    .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,#f8fafc,#f1f5f9)}
+    .appdosc-ai-dialog__bubble{max-width:92%;padding:8px 10px;border-radius:12px;line-height:1.45;font-size:12px;white-space:pre-wrap;word-break:break-word;color:#0f172a}
     .appdosc-ai-dialog__bubble--assistant{align-self:flex-start;background:#ffffff;border:1px solid rgba(148,163,184,.3)}
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
-    .appdosc-ai-dialog__composer{padding:12px calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:8px;background:#ffffff}
-    .appdosc-ai-dialog__model{width:100%;min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;background:#fff;color:#0f172a}
-    .appdosc-ai-dialog__input{min-height:80px;max-height:190px;resize:none;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:10px 12px;font-size:14px;outline:none}
-    .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:6px;max-height:156px;overflow:auto;padding-right:2px}
-    .appdosc-ai-dialog__attachment-tools{display:flex;gap:8px;flex-wrap:wrap}
-    .appdosc-ai-dialog__attachment{display:flex;flex-direction:column;gap:4px;padding:7px 8px;border-radius:11px;background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(248,251,255,.9));border:1px solid rgba(148,163,184,.24);box-shadow:0 4px 12px rgba(15,23,42,.06)}
+    .appdosc-ai-dialog__composer{padding:10px calc(10px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px)}
+    .appdosc-ai-dialog__model{width:100%;min-height:40px;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;background:#fff;color:#0f172a}
+    .appdosc-ai-dialog__input{min-height:64px;max-height:160px;resize:none;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;outline:none}
+    .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:5px}
+    .appdosc-ai-dialog__attachments-toggle{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid rgba(148,163,184,.28);background:rgba(255,255,255,.85);color:#0f172a;border-radius:11px;padding:8px 10px;font-size:12px;font-weight:600}
+    .appdosc-ai-dialog__attachments-body{display:flex;flex-direction:column;gap:5px;max-height:142px;overflow:auto;padding-right:2px}
+    .appdosc-ai-dialog__attachment-tools{display:flex;gap:6px;flex-wrap:wrap}
+    .appdosc-ai-dialog__attachment{display:flex;flex-direction:column;gap:4px;padding:6px 8px;border-radius:10px;background:linear-gradient(145deg,rgba(255,255,255,.92),rgba(248,251,255,.86));border:1px solid rgba(148,163,184,.22);box-shadow:0 2px 8px rgba(15,23,42,.05)}
     .appdosc-ai-dialog__attachment.is-selected{border-color:rgba(37,99,235,.5);box-shadow:0 10px 20px rgba(37,99,235,.16)}
     .appdosc-ai-dialog__attachment-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
-    .appdosc-ai-dialog__attachment-actions{display:flex;justify-content:space-between;align-items:center;gap:8px}
-    .appdosc-ai-dialog__attachment-check{display:flex;align-items:center;gap:6px;font-size:12px;color:#334155}
-    .appdosc-ai-dialog__attachment-name{font-size:12px;font-weight:600;color:#1e293b;word-break:break-word;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
-    .appdosc-ai-dialog__attachment-meta{font-size:10px;color:#475569;white-space:nowrap}
-    .appdosc-ai-dialog__attachment-preview{font-size:11px;line-height:1.35;color:#334155;background:rgba(241,245,249,.72);border:1px solid rgba(203,213,225,.7);border-radius:8px;padding:6px;max-height:52px;overflow:auto;white-space:pre-wrap}
-    .appdosc-ai-dialog__attachment-preview.is-empty{color:#94a3b8}
+    .appdosc-ai-dialog__attachment-actions{display:flex;justify-content:space-between;align-items:center;gap:6px}
+    .appdosc-ai-dialog__attachment-check{display:flex;align-items:center;gap:6px;font-size:11px;color:#334155;padding:4px 8px;border-radius:999px;background:rgba(148,163,184,.12)}
+    .appdosc-ai-dialog__attachment-check input{accent-color:#2563eb}
+    .appdosc-ai-dialog__attachment-name{font-size:11px;font-weight:600;color:#1e293b;word-break:break-word;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+    .appdosc-ai-dialog__attachment-meta{font-size:10px;color:#1e40af;white-space:nowrap;padding:2px 7px;border-radius:999px;background:rgba(219,234,254,.75)}
     .appdosc-ai-dialog__buttons{display:flex;flex-wrap:wrap;gap:8px}
-    .appdosc-ai-dialog__btn{border:none;min-height:42px;padding:10px 14px;border-radius:14px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
+    .appdosc-ai-dialog__btn{border:none;min-height:38px;padding:8px 12px;border-radius:12px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
     .appdosc-ai-dialog__btn--ghost{background:rgba(148,163,184,.15);color:#0f172a}
     .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed}
+    .appdosc-ai-dialog__file-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+    .appdosc-ai-dialog__file-reveal{border:1px solid rgba(37,99,235,.28);background:rgba(239,246,255,.9);color:#1e3a8a;border-radius:10px;padding:6px 8px;font-size:11px;line-height:1.2}
     .appdosc-ai-dialog__editor{position:fixed;inset:0;z-index:2800;display:none;background:rgba(241,245,249,.74);backdrop-filter:blur(10px)}
     .appdosc-ai-dialog__editor--open{display:flex}
     .appdosc-ai-dialog__editor-panel{width:100%;height:100dvh;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.97),rgba(255,255,255,.9));padding:calc(8px + env(safe-area-inset-top,0px)) calc(10px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px))}
@@ -728,6 +730,7 @@ function openAiResponseDialog(context = {}) {
     chatHistory: [],
     attachedFiles: [],
     selectedAttachmentIds: new Set(),
+    attachmentsCollapsed: true,
     models: FALLBACK_MODEL_OPTIONS.slice(),
     model: FALLBACK_MODEL_OPTIONS[0].value,
   };
@@ -773,6 +776,37 @@ function openAiResponseDialog(context = {}) {
     messages.appendChild(bubble);
     messages.scrollTop = messages.scrollHeight;
   };
+  const appendBubbleNode = (node, role) => {
+    const bubble = document.createElement('div');
+    bubble.className = `appdosc-ai-dialog__bubble appdosc-ai-dialog__bubble--${role}`;
+    bubble.appendChild(node);
+    messages.appendChild(bubble);
+    messages.scrollTop = messages.scrollHeight;
+  };
+  const appendFileTextRevealMessage = (files) => {
+    const wrap = document.createElement('div');
+    const title = document.createElement('div');
+    title.textContent = `Файлы прочитаны: ${files.length}.`;
+    wrap.appendChild(title);
+    const actions = document.createElement('div');
+    actions.className = 'appdosc-ai-dialog__file-actions';
+    files.forEach((file) => {
+      const text = String(file.text || '').trim();
+      if (!text) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'appdosc-ai-dialog__file-reveal';
+      btn.textContent = `Показать: ${String(file.name || 'файл').slice(0, 26)}`;
+      btn.addEventListener('click', () => {
+        appendBubble(`Содержимое «${file.name}»:\n${text}`, 'assistant');
+      });
+      actions.appendChild(btn);
+    });
+    if (actions.childElementCount) {
+      wrap.appendChild(actions);
+    }
+    appendBubbleNode(wrap, 'assistant');
+  };
 
   appendBubble('Выберите нужные файлы, нажмите «Прочитать выбранные», затем отправьте запрос или «Сгенерировать решение».', 'assistant');
   const renderModelOptions = () => {
@@ -800,6 +834,22 @@ function openAiResponseDialog(context = {}) {
       return;
     }
     attachmentsNode.hidden = false;
+    const selectedCount = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id)).length;
+    const readyCount = state.attachedFiles.filter((file) => file.extracted).length;
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'appdosc-ai-dialog__attachments-toggle';
+    toggleBtn.innerHTML = `<span>Файлы: ${state.attachedFiles.length} · Контекст: ${selectedCount} · Готово: ${readyCount}</span><span>${state.attachmentsCollapsed ? '▾' : '▴'}</span>`;
+    toggleBtn.addEventListener('click', () => {
+      state.attachmentsCollapsed = !state.attachmentsCollapsed;
+      renderAttachments();
+    });
+    attachmentsNode.appendChild(toggleBtn);
+    if (state.attachmentsCollapsed) {
+      return;
+    }
+    const body = document.createElement('div');
+    body.className = 'appdosc-ai-dialog__attachments-body';
     const tools = document.createElement('div');
     tools.className = 'appdosc-ai-dialog__attachment-tools';
     const readSelectedBtn = document.createElement('button');
@@ -844,11 +894,8 @@ function openAiResponseDialog(context = {}) {
         text: file.text,
       }));
 
-      const mergedChatText = extractedForContext.map((file) => (
-        `📄 ${file.name}\n${String(file.text || '').slice(0, MAX_CHAT_ATTACHMENT_PREVIEW)}${String(file.text || '').length > MAX_CHAT_ATTACHMENT_PREVIEW ? '\n…' : ''}`
-      )).join('\n\n');
-      if (mergedChatText) {
-        appendBubble(`Загружены выбранные файлы (${extractedForContext.length}):\n\n${mergedChatText}`, 'assistant');
+      if (extractedForContext.length) {
+        appendFileTextRevealMessage(extractedForContext);
       } else {
         appendBubble('Не удалось прочитать выбранные файлы. Проверьте OCR/доступ к файлам.', 'assistant');
       }
@@ -858,7 +905,7 @@ function openAiResponseDialog(context = {}) {
       }
     });
     tools.appendChild(readSelectedBtn);
-    attachmentsNode.appendChild(tools);
+    body.appendChild(tools);
 
     state.attachedFiles.forEach((file) => {
       const chip = document.createElement('div');
@@ -866,28 +913,18 @@ function openAiResponseDialog(context = {}) {
       if (state.selectedAttachmentIds.has(file.id)) {
         chip.classList.add('is-selected');
       }
-      const status = file.extracted ? '✅ готов' : (file.extractError ? '⚠️ OCR' : '⭕ не прочитан');
+      const status = file.extracted ? 'Готов' : (file.extractError ? 'Ошибка OCR' : 'Не прочитан');
       const topNode = document.createElement('div');
       topNode.className = 'appdosc-ai-dialog__attachment-top';
       const nameNode = document.createElement('span');
       nameNode.className = 'appdosc-ai-dialog__attachment-name';
-      nameNode.textContent = `📎 ${file.name}`;
+      nameNode.textContent = file.name;
       const metaNode = document.createElement('span');
       metaNode.className = 'appdosc-ai-dialog__attachment-meta';
       metaNode.textContent = status;
       topNode.appendChild(nameNode);
       topNode.appendChild(metaNode);
       chip.appendChild(topNode);
-      const previewNode = document.createElement('div');
-      previewNode.className = 'appdosc-ai-dialog__attachment-preview';
-      const previewText = String(file.text || '').trim();
-      if (previewText) {
-        previewNode.textContent = previewText.slice(0, 120) + (previewText.length > 120 ? '…' : '');
-      } else {
-        previewNode.classList.add('is-empty');
-        previewNode.textContent = file.extractError ? `Ошибка: ${file.extractError}` : 'Текст файла появится после OCR/чтения.';
-      }
-      chip.appendChild(previewNode);
       const actionsNode = document.createElement('div');
       actionsNode.className = 'appdosc-ai-dialog__attachment-actions';
       const checkLabel = document.createElement('label');
@@ -900,11 +937,11 @@ function openAiResponseDialog(context = {}) {
         renderAttachments();
       });
       checkLabel.appendChild(checkbox);
-      checkLabel.appendChild(document.createTextNode('В общий контекст'));
+      checkLabel.appendChild(document.createTextNode('Контекст'));
       const oneFileReadBtn = document.createElement('button');
       oneFileReadBtn.type = 'button';
       oneFileReadBtn.className = 'appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost';
-      oneFileReadBtn.textContent = 'Прочитать';
+      oneFileReadBtn.textContent = file.extracted ? 'Обновить' : 'Считать';
       oneFileReadBtn.addEventListener('click', async () => {
         try {
           const raw = await fetchExternalFileContent(file);
@@ -917,7 +954,7 @@ function openAiResponseDialog(context = {}) {
           context.extractedTexts = state.attachedFiles
             .filter((item) => state.selectedAttachmentIds.has(item.id) && item.extracted && item.text)
             .map((item) => ({ name: item.name, type: item.type || 'text/plain', text: item.text }));
-          appendBubble(`Содержимое "${file.name}":\n${file.text.slice(0, MAX_CHAT_ATTACHMENT_PREVIEW)}${file.text.length > MAX_CHAT_ATTACHMENT_PREVIEW ? '\n…' : ''}`, 'assistant');
+          appendFileTextRevealMessage([file]);
         } catch (error) {
           file.extractError = error && error.message ? error.message : 'Ошибка чтения';
           file.extracted = false;
@@ -927,8 +964,9 @@ function openAiResponseDialog(context = {}) {
       actionsNode.appendChild(checkLabel);
       actionsNode.appendChild(oneFileReadBtn);
       chip.appendChild(actionsNode);
-      attachmentsNode.appendChild(chip);
+      body.appendChild(chip);
     });
+    attachmentsNode.appendChild(body);
   };
 
   const cleanup = () => {
