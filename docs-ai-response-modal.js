@@ -13,18 +13,63 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
-  var DEFAULT_AI_BEHAVIOR = 'Ты — руководитель организации, уполномоченный принимать окончательное решение по документу.\n'
-    + 'Обязательно используй формулировки: "В ответ на Ваш документ от [дата] № [номер] сообщаем следующее", "Отмечаем, что…", "Обращаем Ваше внимание на…".\n'
-    + 'Тон: строгий, аргументированный, без эмоций.\n'
-    + 'Структура: вступление (факт получения и рассмотрения), основная часть (анализ пунктов со ссылками на нормативные или внутренние требования), заключение (однозначное решение).\n'
-    + 'Допустимые решения: approve (одобрить), reject (отклонить с причинами), need_clarification (запросить недостающие данные).\n'
-    + 'Если данных недостаточно, явно запроси недостающую информацию и укажи, какое решение будет принято после её получения.\n'
-    + 'Ответ должен быть развёрнутым: не кратким и не коротким.';
+  var DEFAULT_AI_BEHAVIOR = 'ТЫ — ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ, КОТОРЫЙ ВЫПОЛНЯЕТ РОЛЬ СОТРУДНИКА СТРОИТЕЛЬНОЙ ОРГАНИЗАЦИИ.\n'
+    + '\n'
+    + 'ЭТО НЕ ПРОСТО РЕКОМЕНДАЦИЯ. ЭТО ЖЕСТКИЕ ПРАВИЛА. НАРУШЕНИЯ НЕДОПУСТИМЫ.\n'
+    + '\n'
+    + '1. ТВОЯ ЛИЧНОСТЬ И СТИЛЬ\n'
+    + '- Ты — профессионал с 15-летним стажем в строительстве.\n'
+    + '- Ты отвечаешь только в деловом стиле, сухо, четко, без воды.\n'
+    + '- Ты не извиняешься, не оправдываешься, не используешь слова "к сожалению", "извините", "возможно", "попробуем".\n'
+    + '- Твои слова: "выполним", "обеспечим", "сделано", "готово", "срок — [дата]".\n'
+    + '- Ты не используешь восклицательные знаки, кроме официальных обращений.\n'
+    + '- Ты не используешь эмодзи, смайлы и неформальные выражения.\n'
+    + '\n'
+    + '2. ЗАПРЕЩЕНО НАВСЕГДА\n'
+    + '- Запрещено пересказывать текст письма.\n'
+    + '- Запрещено начинать ответ с фразы "Рассмотрев ваше письмо..." или аналогов.\n'
+    + '- Запрещено использовать цитаты из запроса.\n'
+    + '- Запрещено отвечать общими фразами без конкретики.\n'
+    + '- Запрещено писать "мы работаем над этим" без указания сроков.\n'
+    + '- Запрещено использовать пассивный залог: только активный.\n'
+    + '- Запрещено писать длинные вступления: первое предложение сразу по делу.\n'
+    + '\n'
+    + '3. АНАЛИЗ ВХОДНОГО ТЕКСТА\n'
+    + '- Вычленяй все требования, включая косвенные.\n'
+    + '- Определяй взаимосвязи и приоритеты требований.\n'
+    + '- Определяй автора, получателя и объект строительства.\n'
+    + '- Если срок просрочен, предлагай новый реалистичный срок.\n'
+    + '- Требования не пересказывай: анализируй и строй ответ по сути.\n'
+    + '\n'
+    + '4. ПРАВИЛА ФОРМАТА И СОДЕРЖАНИЯ\n'
+    + '- Не используй маркированные списки с цифрами из исходного письма.\n'
+    + '- Используй связные предложения или маркировку только для группировки.\n'
+    + '- По каждому требованию указывай действие и дату в формате ДД.ММ.ГГГГ.\n'
+    + '- Если требование выполнено, подтверждай это одним предложением.\n'
+    + '- Используй глаголы: "выполняем", "завершим", "обеспечим", "приступаем".\n'
+    + '- Не используй слова "попытка", "надеемся", "стараемся".\n'
+    + '- Используй слова "гарантируем", "обеспечим", "выполним".\n'
+    + '\n'
+    + '5. СЛУЖЕБНЫЙ ПРИМЕР ЖЕСТКОГО ДЕЛОВОГО ТОНА\n'
+    + 'Отмечаем, что требования и утверждения о невыполненных работах могут носить односторонний характер и не отражать фактическое состояние площадки. Работы выполняем по утвержденному графику. По позициям, зависящим от смежников, фиксируем объективные ограничения и даем обновленные сроки. При отсутствии координации со стороны смежных организаций указываем это как фактор влияния на фронт работ и подтверждаем дальнейшие действия по обеспечению выполнения.\n'
+    + '\n'
+    + '6. ПРОВЕРКА ПЕРЕД ОТПРАВКОЙ\n'
+    + '- Нет пересказа исходного письма.\n'
+    + '- По каждому требованию есть дата или подтверждение выполнения.\n'
+    + '- Начало ответа сразу по делу.\n'
+    + '- Нет слов "к сожалению", "извините", "возможно".\n'
+    + '- Даты в формате ДД.ММ.ГГГГ.\n'
+    + '- Тон уверенный и профессиональный.\n'
+    + '\n'
+    + '7. ДОПОЛНИТЕЛЬНО\n'
+    + '- Если в письме есть ссылки на фото, учитывай их как зоны ответственности.\n'
+    + '- Если указано несколько объектов, отвечай по каждому отдельно.\n'
+    + '- Если требуется обеспечить фронт работ, явно указывай дату передачи фронта.';
 
   var STYLE_OPTIONS = [
-    { value: 'neutral', label: 'Нейтральный стиль' },
-    { value: 'aggressive', label: 'Агрессивный стиль' },
-    { value: 'informational', label: 'Спокойный (информационный)' }
+    { value: 'positive', label: 'Положительный (одобрение, выполнение)' },
+    { value: 'negative', label: 'Отрицательный (отклонение, не выполнение)' },
+    { value: 'neutral', label: 'Нейтральный (рассмотрение)' }
   ];
   var OCR_MODE_OPTIONS = [
     { value: 'raw', label: 'OCR: как в файле (без очистки)' }
@@ -291,15 +336,15 @@
     var style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = '' +
-      '.ai-chat-modal{position:fixed;inset:0;z-index:1900;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(15,23,42,.44);backdrop-filter:blur(5px);opacity:0;transition:opacity .2s ease;}' +
+      '.ai-chat-modal{position:fixed;inset:0;z-index:1900;display:flex;align-items:center;justify-content:center;padding:14px;background:radial-gradient(circle at top,rgba(59,130,246,.22),rgba(15,23,42,.56));backdrop-filter:blur(10px);opacity:0;transition:opacity .25s ease;}' +
       '.ai-chat-modal--visible{opacity:1;}' +
       '.ai-chat-modal--closing{opacity:0;}' +
-      '.ai-chat-modal__panel{width:min(1900px,98vw);height:96vh;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.92),rgba(248,250,252,.86));border:1px solid rgba(203,213,225,.7);border-radius:18px;overflow:hidden;box-shadow:0 20px 55px rgba(15,23,42,.22);}' +
-      '.ai-chat-modal__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,rgba(255,255,255,.76),rgba(248,250,252,.62));}' +
+      '.ai-chat-modal__panel{width:min(1200px,98vw);height:94vh;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.9),rgba(248,250,252,.78));border:1px solid rgba(255,255,255,.6);border-radius:22px;overflow:hidden;box-shadow:0 24px 64px rgba(15,23,42,.28);backdrop-filter:blur(12px);}' +
+      '.ai-chat-modal__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid rgba(226,232,240,.7);background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(248,250,252,.64));}' +
       '.ai-chat-modal__title{font-size:14px;font-weight:700;color:#0f172a;}' +
       '.ai-chat-modal__subtitle{margin-top:1px;font-size:11px;color:#64748b;}' +
       '.ai-chat-modal__close{border:none;background:rgba(148,163,184,.18);width:32px;height:32px;border-radius:999px;font-size:18px;line-height:1;cursor:pointer;}' +
-      '.ai-chat-modal__content{display:flex;flex-direction:column;gap:10px;padding:11px;min-height:0;flex:1;}' +
+      '.ai-chat-modal__content{display:flex;flex-direction:column;gap:10px;padding:12px;min-height:0;flex:1;}' +
       '.ai-chat-modal__context{border:1px solid rgba(226,232,240,.88);border-radius:12px;padding:8px;background:rgba(255,255,255,.72);backdrop-filter:blur(2px);}' +
       '.ai-chat-modal__context-title{font-size:11px;font-weight:700;color:#334155;margin-bottom:3px;}' +
       '.ai-chat-modal__files{display:flex;flex-wrap:wrap;gap:5px;min-height:20px;}' +
@@ -314,15 +359,16 @@
       '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
       '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
       '.ai-chat-modal__input{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:rgba(255,255,255,.95);padding:7px 8px;font-size:12px;color:#0f172a;outline:none;}' +
-      '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:11px;background:rgba(248,250,252,.52);border:1px solid rgba(226,232,240,.82);border-radius:12px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth;}' +
-      '.ai-chat-msg{max-width:84%;padding:8px 10px;border-radius:12px;font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:0 2px 8px rgba(15,23,42,.05);}' +
+      '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:12px;background:rgba(248,250,252,.58);border:1px solid rgba(226,232,240,.75);border-radius:16px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth;box-shadow:inset 0 1px 0 rgba(255,255,255,.65);}' +
+      '.ai-chat-msg{max-width:88%;padding:10px 12px;border-radius:14px;font-size:13px;line-height:1.46;white-space:pre-wrap;word-break:break-word;box-shadow:0 6px 18px rgba(15,23,42,.08);}' +
       '.ai-chat-msg--user{margin-left:auto;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-bottom-right-radius:6px;}' +
       '.ai-chat-msg--assistant{margin-right:auto;background:#fff;border:1px solid rgba(226,232,240,.9);color:#0f172a;border-bottom-left-radius:6px;}' +
       '.ai-chat-msg--error{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.9);color:#991b1b;}' +
-      '.ai-chat-modal__composer{display:flex;gap:6px;align-items:flex-end;}' +
-      '.ai-chat-modal__textarea{flex:1;min-height:40px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;background:#fff;outline:none;}' +
-      '.ai-chat-modal__send{border:none;border-radius:10px;padding:8px 11px;min-height:40px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;cursor:pointer;}' +
-      '.ai-chat-modal__send:disabled{opacity:.6;cursor:not-allowed;}' +      '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
+      '.ai-chat-modal__composer{display:flex;gap:8px;align-items:flex-end;}' +
+      '.ai-chat-modal__textarea{flex:1;min-height:44px;max-height:140px;resize:none;border:1px solid rgba(148,163,184,.4);border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.4;background:rgba(255,255,255,.95);outline:none;}' +
+      '.ai-chat-modal__send{border:none;border-radius:12px;padding:9px 13px;min-height:44px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;cursor:pointer;box-shadow:0 8px 20px rgba(37,99,235,.25);}' +
+      '.ai-chat-modal__send:disabled{opacity:.6;cursor:not-allowed;box-shadow:none;}' +
+      '.ai-chat-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(148,163,184,.35);border-top-color:#2563eb;border-radius:50%;animation:ai-chat-spin .8s linear infinite;vertical-align:middle;margin-right:6px;}' +
       '.ai-chat-modal__export-area{margin-top:4px;border-top:1px solid rgba(226,232,240,.88);padding-top:8px;display:flex;flex-direction:column;gap:6px;}' +
       '.ai-chat-modal__export-header{font-size:11px;font-weight:600;color:#334155;}' +
       '.ai-chat-modal__editable-response{width:100%;border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:8px;font-size:12px;font-family:inherit;resize:vertical;background:#fff;min-height:84px;}' +
@@ -789,7 +835,14 @@
     formData.append('prompt', userText);
     formData.append('model', state.model);
     formData.append('responseStyle', state.responseStyle);
-    formData.append('aiBehavior', state.aiBehavior || '');
+    var behaviorText = String(state.aiBehavior || '').trim();
+    if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
+      behaviorText = '';
+    }
+    if (behaviorText.length > 2400) {
+      behaviorText = behaviorText.slice(0, 2400);
+    }
+    formData.append('aiBehavior', behaviorText);
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
@@ -903,12 +956,12 @@
 
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
-    textarea.placeholder = 'Введите запрос (можно пусто — отправим OCR текст)';
+    textarea.placeholder = 'Введите запрос (можно пусто — отправим текст вложений)';
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
     sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
     templateButton.type = 'button';
-    var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'OCR к отправке: 0 символов');
+    var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'Текст к отправке: 0 символов');
     contextUsageHint.style.margin = '6px 0 0';
     contextUsageHint.style.fontSize = '11px';
     contextUsageHint.style.textAlign = 'left';
@@ -990,19 +1043,6 @@
     }
 
     var aiSettingsModal = createOverlayModal('Настройки поведения ИИ');
-    var ocrModeField = createElement('label', 'ai-chat-modal__field');
-    ocrModeField.appendChild(createElement('span', '', 'Режим OCR'));
-    var ocrModeSelect = createElement('select', 'ai-chat-modal__select');
-    OCR_MODE_OPTIONS.forEach(function (opt) {
-      var option = document.createElement('option');
-      option.value = opt.value;
-      option.textContent = opt.label;
-      ocrModeSelect.appendChild(option);
-    });
-    ocrModeSelect.value = state.ocrMode;
-    ocrModeField.appendChild(ocrModeSelect);
-    var ocrHint = createElement('div', 'ai-chat-modal__ocr-hint', 'OCR сохраняет текст как есть, без дополнительной очистки строк.');
-    ocrModeField.appendChild(ocrHint);
     var contextDetailField = createElement('label', 'ai-chat-modal__field');
     contextDetailField.appendChild(createElement('span', '', 'Передача контекста'));
     var contextDetailSelect = createElement('select', 'ai-chat-modal__select');
@@ -1026,7 +1066,6 @@
     settingsSave.type = 'button';
     settingsActions.appendChild(settingsCancel);
     settingsActions.appendChild(settingsSave);
-    aiSettingsModal.content.appendChild(ocrModeField);
     aiSettingsModal.content.appendChild(contextDetailField);
     aiSettingsModal.content.appendChild(settingsInput);
     aiSettingsModal.content.appendChild(settingsActions);
@@ -1292,10 +1331,7 @@
     }
 
     function updateOcrHint() {
-      if (!ocrHint) {
-        return;
-      }
-      ocrHint.textContent = 'OCR сохраняет текст как есть, без дополнительной очистки строк.';
+      return;
     }
 
     function renderModelOptions() {
@@ -1319,15 +1355,15 @@
       state.files.forEach(function (file) {
         var chip = createElement('div', 'ai-chat-chip');
         var ocrStatus = file.extracting
-          ? '⏳ OCR'
-          : (file.extracted ? '✅ OCR' : (file.extractError ? '⚠️ OCR' : '⭕ OCR'));
+          ? '⏳ Текст'
+          : (file.extracted ? '✅ Текст' : (file.extractError ? '⚠️ Текст' : '⭕ Текст'));
         chip.innerHTML = ''
           + '<span>' + detectIcon(file) + '</span>'
           + '<span>' + escapeHtml(file.name) + '</span>'
           + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>'
           + '<span class="ai-chat-chip__meta">' + escapeHtml(ocrStatus) + '</span>';
 
-        var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ OCR' : '📄 OCR');
+        var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ Текст' : '📄 Текст');
         ocr.type = 'button';
         ocr.disabled = !!file.extracting;
         ocr.addEventListener('click', function () {
@@ -1356,7 +1392,7 @@
       }
       var prepared = prepareContextPayload(state, state.contextSettings);
       var stats = prepared.stats || {};
-      contextUsageHint.textContent = 'OCR к отправке: ' + String(stats.preparedChars || 0)
+      contextUsageHint.textContent = 'Текст к отправке: ' + String(stats.preparedChars || 0)
         + ' символов • режим: ' + (stats.mode === 'brief' ? 'кратко' : 'подробно')
         + ' • файлов: ' + String(stats.filesUsed || 0)
         + (stats.truncatedFiles ? (' • сжато: ' + String(stats.truncatedFiles)) : '');
@@ -1424,16 +1460,16 @@
             payload = rawResponseText ? JSON.parse(rawResponseText) : null;
           } catch (parseError) {
             var preview = String(rawResponseText || '').replace(/\s+/g, ' ').trim().slice(0, 180);
-            throw new Error('OCR вернул не JSON ответ: ' + (preview || 'пустой ответ'));
+            throw new Error('Сервис извлечения текста вернул не JSON ответ: ' + (preview || 'пустой ответ'));
           }
           if (!response.ok || !payload || payload.ok !== true) {
-            throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+            throw new Error(payload && payload.error ? payload.error : ('Ошибка извлечения текста (' + response.status + ')'));
           }
           extractedText = String(payload.text || '');
           if (!extractedText) {
-            throw new Error('OCR не вернул текст. Проверьте качество файла.');
+            throw new Error('Сервис извлечения не вернул текст. Проверьте качество файла.');
           }
-          messages.appendChild(createMessage('assistant', 'OCR текст из ' + fileLabel + ':\n' + extractedText));
+          messages.appendChild(createMessage('assistant', 'Текст из ' + fileLabel + ':\n' + extractedText));
         }
 
         fileEntry.rawContent = String(extractedText || '');
@@ -1469,6 +1505,7 @@
 
     function closeModal() {
       document.removeEventListener('keydown', onEsc);
+      clearRetryCountdown();
       hiddenInput.value = '';
       closeWithAnimation(root);
     }
@@ -1477,6 +1514,30 @@
       if (event.key === 'Escape') {
         closeModal();
       }
+    }
+
+    var retryCountdownTimer = null;
+    function clearRetryCountdown() {
+      if (retryCountdownTimer) {
+        clearInterval(retryCountdownTimer);
+        retryCountdownTimer = null;
+      }
+    }
+    function showRetryCountdown(seconds) {
+      var remaining = Math.max(1, Number(seconds || 1));
+      var countdownMessage = createMessage('assistant', 'До бесплатной попытки осталось: ' + remaining + ' сек.', true);
+      messages.appendChild(countdownMessage);
+      messages.scrollTop = messages.scrollHeight;
+      clearRetryCountdown();
+      retryCountdownTimer = setInterval(function () {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearRetryCountdown();
+          countdownMessage.innerHTML = escapeHtml('Можно отправить повторно.');
+          return;
+        }
+        countdownMessage.innerHTML = escapeHtml('До бесплатной попытки осталось: ' + remaining + ' сек.');
+      }, 1000);
     }
 
 
@@ -1489,11 +1550,11 @@
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       });
       if (!value && !hasFileContent) {
-        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст через OCR у файла.', true));
+        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст из файла.', true));
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      var effectivePrompt = value || 'Подготовь официальный ответ по OCR-тексту вложений в деловом стиле.';
+      var effectivePrompt = value || 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
 
       state.model = modelSelect.value;
       state.responseStyle = styleSelect.value;
@@ -1517,7 +1578,14 @@
 
         var payload = await response.json();
         if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')'));
+          var apiError = new Error(payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')'));
+          if (payload && payload.retryAfter) {
+            apiError.retryAfter = Number(payload.retryAfter || 0);
+          }
+          if (payload && Array.isArray(payload.availableModels)) {
+            apiError.availableModels = payload.availableModels.slice(0, 6);
+          }
+          throw apiError;
         }
 
         pending.remove();
@@ -1527,35 +1595,19 @@
           .replace(/\n{3,}/g, '\n\n')
           .trim();
         finalResponse = sanitizeAssistantResponseText(finalResponse);
-        var decisionBlock = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object'
-          ? payload.decisionBlock
-          : null;
-        if (decisionBlock && decisionBlock.decision && !/^решение\s*ии\s*:/i.test(finalResponse)) {
-          var decisionMap = {
-            approve: '✅ Одобрить',
-            reject: '⛔ Отклонить',
-            need_clarification: '❓ Нужны уточнения'
-          };
-          var decisionLabel = decisionMap[decisionBlock.decision] || String(decisionBlock.decision);
-          var decisionLines = ['Решение ИИ: ' + decisionLabel];
-          if (decisionBlock.decision_reason) {
-            decisionLines.push('Причина: ' + String(decisionBlock.decision_reason));
-          }
-          if (Array.isArray(decisionBlock.required_actions) && decisionBlock.required_actions.length) {
-            decisionLines.push('Действия: ' + decisionBlock.required_actions.slice(0, 3).join('; '));
-          }
-          if (Array.isArray(decisionBlock.requirements) && decisionBlock.requirements.length) {
-            decisionLines.push('Требования из файла: ' + decisionBlock.requirements.slice(0, 3).join('; '));
-          }
-          finalResponse = decisionLines.join('\n') + '\n\n' + finalResponse;
-        }
         messages.appendChild(createMessage('assistant', finalResponse));
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
         autoHeight(textarea);
       } catch (error) {
         pending.remove();
-        messages.appendChild(createMessage('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Не удалось получить ответ.'), true));
+        if (error && Number(error.retryAfter) > 0) {
+          showRetryCountdown(Number(error.retryAfter));
+        } else if (error && Array.isArray(error.availableModels) && error.availableModels.length) {
+          messages.appendChild(createMessage('assistant', (error.message || 'Модель недоступна.') + '\nДоступные модели: ' + error.availableModels.join(', '), true));
+        } else {
+          messages.appendChild(createMessage('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Не удалось получить ответ.'), true));
+        }
       } finally {
         setLoading(false);
         messages.scrollTop = messages.scrollHeight;
@@ -1589,7 +1641,6 @@
     closeButton.addEventListener('click', closeModal);
     settingsButton.addEventListener('click', function () {
       settingsInput.value = state.aiBehavior;
-      ocrModeSelect.value = state.ocrMode;
       openOverlay(aiSettingsModal);
     });
 
@@ -1598,7 +1649,6 @@
     });
     settingsSave.addEventListener('click', function () {
       state.aiBehavior = String(settingsInput.value || '').trim();
-      state.ocrMode = ocrModeSelect.value;
       resanitizeFileContents();
       aiSettingsModal.close();
     });
