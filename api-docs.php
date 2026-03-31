@@ -2005,8 +2005,30 @@ if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxConte
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
+$briefModeRaw = $_POST['briefMode'] ?? '';
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
+
+$briefMode = false;
+if (is_bool($briefModeRaw)) {
+    $briefMode = $briefModeRaw;
+} elseif (is_numeric($briefModeRaw)) {
+    $briefMode = (int)$briefModeRaw === 1;
+} elseif (is_string($briefModeRaw)) {
+    $normalizedBriefMode = mb_strtolower(trim($briefModeRaw));
+    $briefMode = in_array($normalizedBriefMode, ['1', 'true', 'yes', 'on'], true);
+}
+if (!$briefMode && isset($context['isolatedFileMode'])) {
+    $isolatedModeRaw = $context['isolatedFileMode'];
+    if (is_bool($isolatedModeRaw)) {
+        $briefMode = $isolatedModeRaw;
+    } elseif (is_numeric($isolatedModeRaw)) {
+        $briefMode = (int)$isolatedModeRaw === 1;
+    } elseif (is_string($isolatedModeRaw)) {
+        $normalizedIsolatedMode = mb_strtolower(trim($isolatedModeRaw));
+        $briefMode = in_array($normalizedIsolatedMode, ['1', 'true', 'yes', 'on'], true);
+    }
+}
 
 if (
     $action !== ''
@@ -2745,12 +2767,25 @@ if ($analysis === '' && $response === '' && $neutral === '' && $positive === '' 
     $negative = $content;
 }
 
-if (looksLikeJsonText($response) || $response === '') {
+if ((looksLikeJsonText($response) || $response === '') && !$briefMode) {
     logApiDocs('error', 'AI returned empty or JSON-like response text', [
         'documentTitle' => $documentTitle,
         'contentPreview' => mb_substr($content, 0, 220),
     ]);
     jsonResponse(502, array_merge(['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
+}
+if ($briefMode && (looksLikeJsonText($response) || $response === '')) {
+    if ($analysis !== '') {
+        $response = $analysis;
+    } elseif ($neutral !== '') {
+        $response = sanitizeGeneratedResponse($neutral, $runtimeConfig['sanitizePrefixes'] ?? []);
+    } elseif ($positive !== '') {
+        $response = sanitizeGeneratedResponse($positive, $runtimeConfig['sanitizePrefixes'] ?? []);
+    } elseif ($negative !== '') {
+        $response = sanitizeGeneratedResponse($negative, $runtimeConfig['sanitizePrefixes'] ?? []);
+    } else {
+        $response = 'Краткий анализ сформирован без отдельного текста письма.';
+    }
 }
 $decisionBlock['response'] = $response;
 if (!isset($decisionBlock['requirements']) || !is_array($decisionBlock['requirements'])) {
