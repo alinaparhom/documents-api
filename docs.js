@@ -2135,14 +2135,6 @@
         .slice(0, maxItems);
     }
 
-    function collectSentences(text, maxItems) {
-      return String(text || '')
-        .split(/[\n.;!?]+/g)
-        .map(normalizeSentence)
-        .filter(Boolean)
-        .slice(0, maxItems);
-    }
-
     risks.some(function(item) {
       var line = String(item || '').trim();
       if (!line) {
@@ -2154,21 +2146,16 @@
       }
       return false;
     });
-    analysis = normalizeSentence(analysis) || normalizeSentence(responseText) || 'Не удалось определить суть документа.';
+    analysis = normalizeSentence(analysis) || 'ИИ не вернул понятный блок «О чем файл».';
     cleanedActions = sanitizeList(actions, 4, 'actions');
-    if (!cleanedActions.length) {
-      cleanedActions = collectSentences(responseText, 4);
-    }
     var actionsMap = {};
     cleanedActions.forEach(function(item) {
       actionsMap[String(item).toLowerCase()] = true;
     });
     cleanedRequirements = sanitizeList(requirements, 4, 'requirements', actionsMap);
-    if (!cleanedRequirements.length) {
-      cleanedRequirements = collectSentences(responseText, 6).filter(function(item) {
-        return !actionsMap[String(item).toLowerCase()];
-      }).slice(0, 4);
-    }
+    var normalizedResponse = normalizeSentence(responseText);
+    var responseLooksDuplicated = normalizedResponse && analysis
+      && normalizedResponse.toLowerCase() === analysis.toLowerCase();
 
     return [
       'Краткий вывод ИИ',
@@ -2177,16 +2164,18 @@
       analysis,
       '',
       'Что решил ИИ',
-      normalizeSentence(responseText) || 'Ответ ИИ не содержит отдельного текстового вывода.',
+      responseLooksDuplicated
+        ? 'ИИ вернул тот же текст, что и в блоке «О чем файл». Отдельное решение не сформировано.'
+        : (normalizedResponse || 'ИИ не вернул отдельный блок решения.'),
       '',
       'Кто прислал / кому',
       participants || 'Не удалось точно определить отправителя и получателя.',
       '',
       'Важные детали',
-      cleanedActions.length ? cleanedActions.map(function(item) { return '• ' + item; }).join('\n') : '• Важные детали не найдены.',
+      cleanedActions.length ? cleanedActions.map(function(item) { return '• ' + item; }).join('\n') : '• ИИ не выделил важные детали.',
       '',
       'Что сделать дальше',
-      cleanedRequirements.length ? cleanedRequirements.map(function(item) { return '• ' + item; }).join('\n') : '• Явные требования не выделены.'
+      cleanedRequirements.length ? cleanedRequirements.map(function(item) { return '• ' + item; }).join('\n') : '• ИИ не вернул шаги по документу.'
     ].join('\n');
   }
 
@@ -2257,11 +2246,17 @@
     }).then(function(response) {
       return response.json().catch(function() { return null; }).then(function(payload) {
         if (!response.ok || !payload || payload.ok !== true) {
+          var statusCode = response && typeof response.status === 'number' ? response.status : 0;
+          var serverError = payload && payload.error ? String(payload.error).trim() : '';
           var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
-          var model = payload && payload.model ? String(payload.model) : 'неизвестно';
-          var suggestedModel = payload && payload.suggestedModel ? String(payload.suggestedModel) : '';
-          var fallbackHint = suggestedModel ? (' Попробуйте модель: ' + suggestedModel + '.') : '';
-          throw new Error('ИИ временно недоступен. Подождите ' + retryAfterSeconds + ' сек. Модель: ' + model + '.' + fallbackHint);
+          var retryHint = ' Повторите через ' + retryAfterSeconds + ' сек.';
+          if (statusCode === 429) {
+            throw new Error((serverError || 'Слишком много запросов к ИИ.') + retryHint);
+          }
+          if (statusCode >= 500) {
+            throw new Error((serverError || 'ИИ-сервис перегружен или временно недоступен.') + retryHint);
+          }
+          throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ').'));
         }
         return payload;
       });

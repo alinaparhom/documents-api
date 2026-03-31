@@ -291,9 +291,16 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   const response = request && request.response;
   const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
+    const statusCode = response && Number.isFinite(response.status) ? response.status : 0;
+    const serverError = payload && payload.error ? String(payload.error).trim() : '';
     const retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
-    const model = String((payload && payload.model) || 'неизвестно');
-    throw new Error(`ИИ временно недоступен. Подождите ${retryAfterSeconds} сек. Модель: ${model}.`);
+    if (statusCode === 429) {
+      throw new Error(`${serverError || 'Слишком много запросов к ИИ.'} Повторите через ${retryAfterSeconds} сек.`);
+    }
+    if (statusCode >= 500) {
+      throw new Error(`${serverError || 'ИИ-сервис перегружен или временно недоступен.'} Повторите через ${retryAfterSeconds} сек.`);
+    }
+    throw new Error(serverError || `Ошибка ИИ (${statusCode}).`);
   }
   return payload;
 }
