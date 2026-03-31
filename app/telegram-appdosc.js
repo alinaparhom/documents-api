@@ -291,9 +291,16 @@ async function requestTelegramBriefAi(sourceLabel, text) {
   const response = request && request.response;
   const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
+    const statusCode = response && Number.isFinite(response.status) ? response.status : 0;
+    const serverError = payload && payload.error ? String(payload.error).trim() : '';
     const retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
-    const model = String((payload && payload.model) || 'неизвестно');
-    throw new Error(`ИИ временно недоступен. Подождите ${retryAfterSeconds} сек. Модель: ${model}.`);
+    if (statusCode === 429) {
+      throw new Error(`${serverError || 'Слишком много запросов к ИИ.'} Повторите через ${retryAfterSeconds} сек.`);
+    }
+    if (statusCode >= 500) {
+      throw new Error(`${serverError || 'ИИ-сервис перегружен или временно недоступен.'} Повторите через ${retryAfterSeconds} сек.`);
+    }
+    throw new Error(serverError || `Ошибка ИИ (${statusCode}).`);
   }
   return payload;
 }
@@ -511,12 +518,6 @@ function openTelegramBriefModal(task, statusHandler) {
         source.text = sourceText;
         if (!normalizeTelegramOcrText(sourceText)) {
           throw new Error('Файл прочитан, но текст пустой. Проверьте качество файла.');
-        }
-        if (normalizeTelegramOcrText(sourceText).length < 80) {
-          renderTelegramBriefPreview(preview, null, sourceText);
-          setStatus('Текста мало, показан упрощённый вывод без запроса к ИИ.', 'success');
-          if (typeof statusHandler === 'function') statusHandler('info', 'Текста мало: показан краткий вывод без запроса к ИИ.');
-          return;
         }
         setStatus(`Анализ ИИ: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
