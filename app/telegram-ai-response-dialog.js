@@ -1,7 +1,12 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v8';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
 const DOCS_API_ENDPOINT = '/js/documents/api-docs.php';
-const REQUEST_TIMEOUT_MS = 12000;
+const REQUEST_TIMEOUT_MS = 35000;
+const REQUEST_TIMEOUT_MAX_MS = 70000;
+const TIMEOUT_CONTEXT_STEP_CHARS = 45000;
+const TIMEOUT_PER_CONTEXT_STEP_MS = 8000;
+const SOFT_RETRY_DELAY_MS = 1200;
+const SOFT_RETRY_CODES = new Set(['AI_TIMEOUT', 'NETWORK_ERROR', 'AI_TEMPORARY']);
 const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
@@ -112,9 +117,31 @@ function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
         timeoutError.code = 'AI_TIMEOUT';
         throw timeoutError;
       }
+      if (error instanceof TypeError) {
+        const networkError = new Error('Проблема с сетью. Проверьте интернет и повторите попытку.');
+        networkError.code = 'NETWORK_ERROR';
+        throw networkError;
+      }
       throw error;
     })
     .finally(() => clearTimeout(timer));
+}
+
+function getContextChars(context) {
+  const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
+  return extractedTexts.reduce((sum, item) => sum + String((item && item.text) || '').length, 0);
+}
+
+function calculateAiTimeoutMs(context, history, userMessage) {
+  const contextChars = getContextChars(context);
+  const historyChars = Array.isArray(history)
+    ? history.reduce((sum, item) => sum + String((item && item.text) || '').length, 0)
+    : 0;
+  const promptChars = String(userMessage || '').length;
+  const totalChars = contextChars + historyChars + promptChars;
+  const dynamicSteps = Math.ceil(totalChars / TIMEOUT_CONTEXT_STEP_CHARS);
+  const timeoutMs = REQUEST_TIMEOUT_MS + (dynamicSteps * TIMEOUT_PER_CONTEXT_STEP_MS);
+  return Math.max(REQUEST_TIMEOUT_MS, Math.min(REQUEST_TIMEOUT_MAX_MS, timeoutMs));
 }
 
 function ensureScript(src, globalKey) {
@@ -198,6 +225,24 @@ function isContextOverflowError(error) {
     || message.includes('REQUEST TOO LARGE')
     || message.includes('TOO MANY TOKENS')
     || message.includes('MAX CONTEXT');
+}
+
+function buildReadableAiError(error) {
+  if (!error) return 'Ошибка ИИ. Попробуйте ещё раз.';
+  if (isContextOverflowError(error)) {
+    return 'Контекст слишком большой для выбранной модели. Уберите часть файлов или сократите запрос.';
+  }
+  const code = String(error.code || '').toUpperCase();
+  if (code === 'AI_TIMEOUT') {
+    return 'Таймаут ответа ИИ. Попробуйте ещё раз — лучше с меньшим объёмом контекста.';
+  }
+  if (code === 'NETWORK_ERROR') {
+    return 'Сетевая ошибка. Проверьте интернет и повторите отправку.';
+  }
+  if (code === 'RATE_LIMITED') {
+    return String(error.message || 'Слишком много запросов. Подождите и повторите.');
+  }
+  return String(error.message || 'Ошибка ИИ. Попробуйте ещё раз.');
 }
 
 function detectFileName(file, index) {
@@ -411,7 +456,8 @@ async function requestAssistantReply(userMessage, context, history) {
     extractedTexts,
     source: 'telegram_mini_app_dialog',
   }));
-  const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 8000);
+  const timeoutMs = calculateAiTimeoutMs(context, history, userMessage);
+  const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: form, credentials: 'same-origin' }, timeoutMs);
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     let message = (payload && payload.error) || `Ошибка сервера (${response.status})`;
@@ -427,6 +473,8 @@ async function requestAssistantReply(userMessage, context, history) {
       error.code = error.code || 'RATE_LIMITED';
       error.retryAfterSeconds = Math.max(5, Number((payload && payload.retryAfterSeconds) || response.headers.get('Retry-After')) || 30);
       error.model = String((payload && payload.model) || resolveAiModel(context) || DEFAULT_AI_MODEL);
+    } else if (response.status >= 500 || response.status === 408) {
+      error.code = error.code || 'AI_TEMPORARY';
     }
     throw error;
   }
@@ -441,15 +489,20 @@ async function requestAssistantWithSmartRetry(userMessage, context, history) {
   try {
     return await requestAssistantReply(userMessage, context, history);
   } catch (error) {
-    if (!isContextOverflowError(error)) {
-      throw error;
+    if (isContextOverflowError(error)) {
+      const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
+      if (!extractedTexts.length) {
+        throw error;
+      }
+      const retryContext = { ...context, extractedTexts: [] };
+      return requestAssistantReply(userMessage, retryContext, history);
     }
-    const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
-    if (!extractedTexts.length) {
-      throw error;
+    const shouldSoftRetry = SOFT_RETRY_CODES.has(String(error && error.code || '').toUpperCase());
+    if (shouldSoftRetry) {
+      await new Promise((resolve) => setTimeout(resolve, SOFT_RETRY_DELAY_MS));
+      return requestAssistantReply(userMessage, context, history);
     }
-    const retryContext = { ...context, extractedTexts: [] };
-    return requestAssistantReply(userMessage, retryContext, history);
+    throw error;
   }
 }
 
@@ -601,6 +654,21 @@ function openAiResponseDialog(context = {}) {
     bubble.textContent = text;
     messages.appendChild(bubble);
     messages.scrollTop = messages.scrollHeight;
+  };
+  const appendPendingBubble = (text = 'Готовим ответ...') => {
+    const bubble = document.createElement('div');
+    bubble.className = 'appdosc-ai-dialog__bubble appdosc-ai-dialog__bubble--assistant';
+    bubble.textContent = text;
+    messages.appendChild(bubble);
+    messages.scrollTop = messages.scrollHeight;
+    return {
+      update(nextText) {
+        bubble.textContent = String(nextText || text);
+      },
+      remove() {
+        if (bubble.isConnected) bubble.remove();
+      },
+    };
   };
   const appendBubbleNode = (node, role) => {
     const bubble = document.createElement('div');
@@ -836,14 +904,17 @@ function openAiResponseDialog(context = {}) {
     input.disabled = true;
     autoDecisionBtn.disabled = true;
     root.querySelector('[data-send]').disabled = true;
+    const pending = appendPendingBubble('Готовим ответ...');
     try {
       const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
+      pending.remove();
       appendBubble(assistantReply, 'assistant');
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);
       notify('success', 'Решение сгенерировано.');
     } catch (error) {
-      const errorMessage = error && error.message ? error.message : 'Ошибка ИИ. Попробуйте ещё раз.';
+      pending.remove();
+      const errorMessage = buildReadableAiError(error);
       const modelsHandled = applyAvailableModelsFromError(error);
       appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
       notify('warning', errorMessage);
@@ -874,12 +945,14 @@ function openAiResponseDialog(context = {}) {
     sendBtn.disabled = true;
     input.disabled = true;
     notify('info', 'Генерируем ответ ИИ...');
+    const pending = appendPendingBubble('Готовим ответ...');
     let assistantReply = '';
     try {
       assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
     } catch (error) {
+      pending.remove();
       assistantReply = '';
-      const errorMessage = error && error.message ? error.message : 'Ошибка ИИ. Попробуйте ещё раз.';
+      const errorMessage = buildReadableAiError(error);
       const modelsHandled = applyAvailableModelsFromError(error);
       appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
       notify('warning', errorMessage);
@@ -893,6 +966,7 @@ function openAiResponseDialog(context = {}) {
       }
     }
     if (assistantReply) {
+      pending.remove();
       appendBubble(assistantReply, 'assistant');
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);

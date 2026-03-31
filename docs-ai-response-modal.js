@@ -10,6 +10,11 @@
   var DEFAULT_CONTEXT_TOTAL_CHARS_DETAILED = 220000;
   var DEFAULT_CONTEXT_TOTAL_CHARS_BRIEF = 18000;
   var DEFAULT_LONG_ATTACHMENT_THRESHOLD = 7000;
+  var AI_REQUEST_TIMEOUT_MS = 35000;
+  var AI_REQUEST_TIMEOUT_MAX_MS = 70000;
+  var AI_TIMEOUT_CONTEXT_STEP_CHARS = 45000;
+  var AI_TIMEOUT_STEP_MS = 8000;
+  var AI_SOFT_RETRY_DELAY_MS = 1200;
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
@@ -95,6 +100,64 @@
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+  }
+
+  function fetchWithTimeout(url, options, timeoutMs) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, Math.max(1000, Number(timeoutMs || AI_REQUEST_TIMEOUT_MS)));
+    var safeOptions = options && typeof options === 'object' ? options : {};
+    return fetch(url, Object.assign({}, safeOptions, { signal: controller.signal }))
+      .catch(function (error) {
+        if (error && error.name === 'AbortError') {
+          var timeoutError = new Error('Таймаут ответа ИИ. Попробуйте ещё раз с меньшим объёмом контекста.');
+          timeoutError.code = 'AI_TIMEOUT';
+          throw timeoutError;
+        }
+        if (error instanceof TypeError) {
+          var networkError = new Error('Сетевая ошибка. Проверьте интернет и повторите.');
+          networkError.code = 'NETWORK_ERROR';
+          throw networkError;
+        }
+        throw error;
+      })
+      .finally(function () { clearTimeout(timer); });
+  }
+
+  function calculateAiTimeoutMs(prompt, state) {
+    var promptChars = String(prompt || '').length;
+    var filesChars = Array.isArray(state && state.files)
+      ? state.files.reduce(function (sum, file) { return sum + String(file && file.content || '').length; }, 0)
+      : 0;
+    var historyChars = Array.isArray(state && state.history)
+      ? state.history.reduce(function (sum, item) { return sum + String(item && item.text || '').length; }, 0)
+      : 0;
+    var totalChars = promptChars + filesChars + historyChars;
+    var steps = Math.ceil(totalChars / AI_TIMEOUT_CONTEXT_STEP_CHARS);
+    var timeout = AI_REQUEST_TIMEOUT_MS + (steps * AI_TIMEOUT_STEP_MS);
+    return Math.max(AI_REQUEST_TIMEOUT_MS, Math.min(AI_REQUEST_TIMEOUT_MAX_MS, timeout));
+  }
+
+  function isContextOverflowError(error) {
+    var code = String(error && error.code || '').toUpperCase();
+    var message = String(error && error.message || '').toUpperCase();
+    return code === 'CONTEXT_TOO_LARGE'
+      || code === 'PAYLOAD_TOO_LARGE'
+      || message.indexOf('MAX CONTEXT') >= 0
+      || message.indexOf('TOO MANY TOKENS') >= 0;
+  }
+
+  function humanizeAiError(error) {
+    if (!error) return 'Ошибка ИИ. Попробуйте ещё раз.';
+    if (isContextOverflowError(error)) {
+      return 'Контекст слишком большой для модели. Уберите часть файлов или переключите режим на «Кратко».';
+    }
+    if (String(error.code || '').toUpperCase() === 'AI_TIMEOUT') {
+      return 'Таймаут ответа ИИ. Попробуйте повторить запрос.';
+    }
+    if (String(error.code || '').toUpperCase() === 'NETWORK_ERROR') {
+      return 'Сетевая ошибка. Проверьте интернет и повторите.';
+    }
+    return String(error.message || 'Ошибка ИИ. Попробуйте ещё раз.');
   }
 
   function hasUsefulExtractedText(text) {
@@ -1806,7 +1869,7 @@
 
       messages.appendChild(createMessage('user', effectivePrompt));
       var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
-      pending.innerHTML = '<span class="ai-chat-spinner"></span>ИИ готовит ответ...';
+      pending.innerHTML = '<span class="ai-chat-spinner"></span>Готовим ответ...';
       messages.appendChild(pending);
       messages.scrollTop = messages.scrollHeight;
       setLoading(true);
@@ -1814,11 +1877,12 @@
       try {
         await hydrateFileContents(state);
         var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-        var response = await fetch(apiUrl + '?action=ai_response_analyze', {
+        var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
+        var response = await fetchWithTimeout(apiUrl + '?action=ai_response_analyze', {
           method: 'POST',
           credentials: 'same-origin',
           body: buildRequestBlueprint(effectivePrompt, state, config)
-        });
+        }, timeoutMs);
 
         var payload = await response.json();
         if (!response.ok || !payload || payload.ok !== true) {
@@ -1842,6 +1906,9 @@
           if (payload && Array.isArray(payload.availableModels)) {
             apiError.availableModels = payload.availableModels.slice(0, 6);
           }
+          if (response.status >= 500 || response.status === 408) {
+            apiError.code = apiError.code || 'AI_TEMPORARY';
+          }
           throw apiError;
         }
 
@@ -1857,6 +1924,30 @@
         textarea.value = '';
         autoHeight(textarea);
       } catch (error) {
+        if (error && (error.code === 'AI_TIMEOUT' || error.code === 'NETWORK_ERROR' || error.code === 'AI_TEMPORARY')) {
+          pending.innerHTML = '<span class="ai-chat-spinner"></span>Готовим ответ... повторная попытка';
+          await new Promise(function (resolve) { setTimeout(resolve, AI_SOFT_RETRY_DELAY_MS); });
+          try {
+            var secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
+              method: 'POST',
+              credentials: 'same-origin',
+              body: buildRequestBlueprint(effectivePrompt, state, config)
+            }, calculateAiTimeoutMs(effectivePrompt, state));
+            var secondPayload = await secondResponse.json();
+            if (!secondResponse.ok || !secondPayload || secondPayload.ok !== true) {
+              throw error;
+            }
+            pending.remove();
+            var retryText = sanitizeAssistantResponseText(cleanNumericArtifacts(String(secondPayload.response || secondPayload.analysis || '')).trim());
+            messages.appendChild(createMessage('assistant', retryText || 'Пустой ответ от API.'));
+            state.lastAssistantMessage = String(retryText || '');
+            textarea.value = '';
+            autoHeight(textarea);
+            setLoading(false);
+            messages.scrollTop = messages.scrollHeight;
+            return;
+          } catch (_) {}
+        }
         pending.remove();
         if (error && Number(error.retryAfter) > 0) {
           showRetryCountdown(Number(error.retryAfter));
@@ -1873,7 +1964,7 @@
             messages.appendChild(createMessage('assistant', 'Часть моделей временно недоступна. Список обновлён автоматически.', true));
           }
         } else {
-          messages.appendChild(createMessage('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Не удалось получить ответ.'), true));
+          messages.appendChild(createMessage('assistant', 'Ошибка: ' + humanizeAiError(error), true));
         }
       } finally {
         setLoading(false);
