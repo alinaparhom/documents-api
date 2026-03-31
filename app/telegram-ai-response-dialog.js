@@ -7,6 +7,7 @@ const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
 const MAX_AI_BEHAVIOR_CHARS = 2400;
 const DEFAULT_AI_MODEL = 'llama-3.3-70b-versatile';
+const MODEL_FALLBACK_OPTIONS = [{ value: DEFAULT_AI_MODEL, label: DEFAULT_AI_MODEL }];
 const RESPONSE_STYLE_OPTIONS = [
   { value: 'positive', label: 'Положительный' },
   { value: 'negative', label: 'Отрицательный' },
@@ -160,6 +161,32 @@ function normalizeAiBehavior(value) {
 function resolveAiModel(context) {
   const modelFromContext = String(context && context.aiModel || '').trim();
   return modelFromContext || DEFAULT_AI_MODEL;
+}
+
+function normalizeModelList(rawModels) {
+  if (!Array.isArray(rawModels) || !rawModels.length) {
+    return MODEL_FALLBACK_OPTIONS.slice();
+  }
+  return rawModels
+    .map((entry) => {
+      const value = typeof entry === 'string'
+        ? entry.trim()
+        : String(entry && entry.value ? entry.value : '').trim();
+      if (!value) return null;
+      return { value, label: value };
+    })
+    .filter(Boolean);
+}
+
+async function fetchAvailableModels() {
+  try {
+    const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) return MODEL_FALLBACK_OPTIONS.slice();
+    return normalizeModelList(payload.models);
+  } catch (_) {
+    return MODEL_FALLBACK_OPTIONS.slice();
+  }
 }
 
 function isContextOverflowError(error) {
@@ -336,6 +363,28 @@ function parseAiPayload(payload) {
   return '';
 }
 
+function sanitizeAssistantText(text) {
+  let value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!value) return '';
+  value = value.replace(/<think[\s\S]*?<\/think>/gi, '');
+  value = value.replace(/<\/?think>/gi, '');
+  const lines = value
+    .split('\n')
+    .map((line) => String(line || '').trimEnd());
+  const deduped = [];
+  lines.forEach((line) => {
+    const normalized = line.trim();
+    if (!normalized) {
+      if (deduped.length && deduped[deduped.length - 1] !== '') deduped.push('');
+      return;
+    }
+    if (/\(подпись\)/i.test(normalized)) return;
+    if (deduped.length && deduped[deduped.length - 1].trim() === normalized) return;
+    deduped.push(line);
+  });
+  return deduped.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 async function requestAssistantReply(userMessage, context, history) {
   const prompt = String(userMessage || '').trim();
   if (!prompt) return '';
@@ -365,12 +414,23 @@ async function requestAssistantReply(userMessage, context, history) {
   const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 8000);
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    const error = new Error((payload && payload.error) || `Ошибка сервера (${response.status})`);
+    let message = (payload && payload.error) || `Ошибка сервера (${response.status})`;
+    if (response.status === 429) {
+      const retryAfterSeconds = Math.max(5, Number((payload && payload.retryAfterSeconds) || response.headers.get('Retry-After')) || 30);
+      const model = String((payload && payload.model) || resolveAiModel(context) || DEFAULT_AI_MODEL);
+      message = `Слишком много запросов (429). Подождите ${retryAfterSeconds} сек и повторите. Модель: ${model}.`;
+    }
+    const error = new Error(message);
     if (payload && payload.code) error.code = String(payload.code);
     if (payload && Array.isArray(payload.availableModels)) error.availableModels = payload.availableModels;
+    if (response.status === 429) {
+      error.code = error.code || 'RATE_LIMITED';
+      error.retryAfterSeconds = Math.max(5, Number((payload && payload.retryAfterSeconds) || response.headers.get('Retry-After')) || 30);
+      error.model = String((payload && payload.model) || resolveAiModel(context) || DEFAULT_AI_MODEL);
+    }
     throw error;
   }
-  const assistantText = parseAiPayload(payload);
+  const assistantText = sanitizeAssistantText(parseAiPayload(payload));
   if (!assistantText) {
     throw new Error('ИИ вернул пустой ответ');
   }
@@ -414,6 +474,10 @@ function openAiResponseDialog(context = {}) {
     attachedFiles: [],
     selectedAttachmentIds: new Set(),
     responseStyle: 'neutral',
+    selectedModel: resolveAiModel(context),
+    availableModels: MODEL_FALLBACK_OPTIONS.slice(),
+    rateLimitUntil: 0,
+    rateLimitTimer: null,
   };
 
   const notify = (type, message) => {
@@ -433,10 +497,19 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__messages" data-messages></div>
       <div class="appdosc-ai-dialog__composer">
         <textarea class="appdosc-ai-dialog__input" data-input placeholder="Коротко напишите задачу для ответа"></textarea>
-        <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Вариант ответа</label>
-        <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:40px;max-height:40px">
-          ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${item.value}">${item.label}</option>`).join('')}
-        </select>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div style="flex:1;min-width:0">
+            <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Стиль</label>
+            <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:36px;max-height:36px;padding:4px 8px">
+              ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${item.value}">${item.label}</option>`).join('')}
+            </select>
+          </div>
+          <div style="flex:1;min-width:0">
+            <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-model-select">Модель</label>
+            <select class="appdosc-ai-dialog__input" id="appdosc-model-select" data-model style="min-height:36px;max-height:36px;padding:4px 8px"></select>
+          </div>
+        </div>
+        <div class="appdosc-ai-dialog__attachments-hint" data-rate-limit-hint hidden></div>
         <details class="appdosc-ai-dialog__advanced" open>
           <summary><span>Файлы для контекста</span><span>▾</span></summary>
           <div class="appdosc-ai-dialog__advanced-body">
@@ -455,8 +528,72 @@ function openAiResponseDialog(context = {}) {
   const messages = root.querySelector('[data-messages]');
   const input = root.querySelector('[data-input]');
   const responseStyleSelect = root.querySelector('[data-response-style]');
+  const modelSelect = root.querySelector('[data-model]');
   const autoDecisionBtn = root.querySelector('[data-auto-decision]');
   const attachmentsNode = root.querySelector('[data-attachments]');
+  const rateLimitHint = root.querySelector('[data-rate-limit-hint]');
+  const sendBtn = root.querySelector('[data-send]');
+
+  const getRateLimitSecondsLeft = () => Math.max(0, Math.ceil((state.rateLimitUntil - Date.now()) / 1000));
+  const applyRateLimitState = () => {
+    const locked = getRateLimitSecondsLeft() > 0;
+    if (locked) {
+      const seconds = getRateLimitSecondsLeft();
+      if (rateLimitHint) {
+        rateLimitHint.hidden = false;
+        rateLimitHint.textContent = `Лимит запросов. Подождите ${seconds} сек, затем отправьте снова.`;
+      }
+      sendBtn.disabled = true;
+      autoDecisionBtn.disabled = true;
+      input.disabled = true;
+      if (!state.rateLimitTimer) {
+        state.rateLimitTimer = setInterval(() => {
+          if (state.destroyed) return;
+          if (getRateLimitSecondsLeft() <= 0) {
+            clearInterval(state.rateLimitTimer);
+            state.rateLimitTimer = null;
+            applyRateLimitState();
+            return;
+          }
+          applyRateLimitState();
+        }, 1000);
+      }
+      return true;
+    }
+    if (rateLimitHint) {
+      rateLimitHint.hidden = true;
+      rateLimitHint.textContent = '';
+    }
+    if (state.rateLimitTimer) {
+      clearInterval(state.rateLimitTimer);
+      state.rateLimitTimer = null;
+    }
+    if (!state.isSending) {
+      sendBtn.disabled = false;
+      autoDecisionBtn.disabled = false;
+      input.disabled = false;
+    }
+    return false;
+  };
+
+  const applyAvailableModelsFromError = (error) => {
+    if (!error || !Array.isArray(error.availableModels) || !error.availableModels.length) return false;
+    const nextModels = normalizeModelList(error.availableModels);
+    state.availableModels = nextModels;
+    const hasCurrent = nextModels.some((entry) => entry.value === state.selectedModel);
+    if (!hasCurrent) {
+      state.selectedModel = nextModels[0] ? nextModels[0].value : DEFAULT_AI_MODEL;
+      appendBubble(`Текущая модель недоступна. Автоматически переключил на: ${state.selectedModel}.`, 'assistant');
+      notify('warning', `Модель переключена на ${state.selectedModel}`);
+    } else {
+      appendBubble(`Часть моделей временно недоступна. Доступные: ${nextModels.map((item) => item.value).join(', ')}.`, 'assistant');
+    }
+    if (modelSelect) {
+      modelSelect.innerHTML = nextModels.map((entry) => `<option value="${entry.value}">${entry.label}</option>`).join('');
+      modelSelect.value = state.selectedModel;
+    }
+    return true;
+  };
 
   const appendBubble = (text, role) => {
     const bubble = document.createElement('div');
@@ -664,6 +801,10 @@ function openAiResponseDialog(context = {}) {
   const cleanup = () => {
     state.destroyed = true;
     window.removeEventListener('keydown', onEscClose);
+    if (state.rateLimitTimer) {
+      clearInterval(state.rateLimitTimer);
+      state.rateLimitTimer = null;
+    }
     if (window.__aiDialogInstance === root) window.__aiDialogInstance = null;
     if (root && root.isConnected) {
       root.remove();
@@ -677,6 +818,7 @@ function openAiResponseDialog(context = {}) {
 
   const runAutoDecision = async () => {
     if (state.isSending) return;
+    if (applyRateLimitState()) return;
     const hasSelectedFiles = state.selectedAttachmentIds instanceof Set && state.selectedAttachmentIds.size > 0;
     const hasFiles = Array.isArray(context.extractedTexts) && context.extractedTexts.length > 0;
     if (hasSelectedFiles && !hasFiles) {
@@ -695,27 +837,34 @@ function openAiResponseDialog(context = {}) {
     autoDecisionBtn.disabled = true;
     root.querySelector('[data-send]').disabled = true;
     try {
-      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle }, state.chatHistory);
+      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
       appendBubble(assistantReply, 'assistant');
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);
       notify('success', 'Решение сгенерировано.');
     } catch (error) {
       const errorMessage = error && error.message ? error.message : 'Ошибка ИИ. Попробуйте ещё раз.';
+      const modelsHandled = applyAvailableModelsFromError(error);
       appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
       notify('warning', errorMessage);
+      if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
+        const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
+        state.rateLimitUntil = Date.now() + (waitSeconds * 1000);
+        applyRateLimitState();
+      }
+      if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
+        appendBubble('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.', 'assistant');
+      }
     } finally {
       state.isSending = false;
-      input.disabled = false;
-      autoDecisionBtn.disabled = false;
-      root.querySelector('[data-send]').disabled = false;
+      applyRateLimitState();
     }
   };
 
   root.querySelector('[data-close]').addEventListener('click', cleanup);
-  const sendBtn = root.querySelector('[data-send]');
   root.querySelector('[data-send]').addEventListener('click', async () => {
     if (state.isSending) return;
+    if (applyRateLimitState()) return;
     const prompt = String(input.value || '').trim();
     if (!prompt) return;
     appendBubble(prompt, 'user');
@@ -727,12 +876,21 @@ function openAiResponseDialog(context = {}) {
     notify('info', 'Генерируем ответ ИИ...');
     let assistantReply = '';
     try {
-      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle }, state.chatHistory);
+      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
     } catch (error) {
       assistantReply = '';
       const errorMessage = error && error.message ? error.message : 'Ошибка ИИ. Попробуйте ещё раз.';
+      const modelsHandled = applyAvailableModelsFromError(error);
       appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
       notify('warning', errorMessage);
+      if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
+        const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
+        state.rateLimitUntil = Date.now() + (waitSeconds * 1000);
+        applyRateLimitState();
+      }
+      if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
+        appendBubble('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.', 'assistant');
+      }
     }
     if (assistantReply) {
       appendBubble(assistantReply, 'assistant');
@@ -740,9 +898,8 @@ function openAiResponseDialog(context = {}) {
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);
     }
     input.value = '';
-    input.disabled = false;
     state.isSending = false;
-    sendBtn.disabled = false;
+    applyRateLimitState();
     notify('success', 'Ответ ИИ готов.');
   });
   input.addEventListener('keydown', (event) => {
@@ -759,6 +916,21 @@ function openAiResponseDialog(context = {}) {
       state.responseStyle = String(responseStyleSelect.value || 'neutral');
     });
   }
+  fetchAvailableModels().then((models) => {
+    state.availableModels = normalizeModelList(models);
+    if (!state.availableModels.some((entry) => entry.value === state.selectedModel)) {
+      state.selectedModel = state.availableModels[0] ? state.availableModels[0].value : DEFAULT_AI_MODEL;
+    }
+    if (modelSelect) {
+      modelSelect.innerHTML = state.availableModels
+        .map((entry) => `<option value="${entry.value}">${entry.label}</option>`)
+        .join('');
+      modelSelect.value = state.selectedModel;
+      modelSelect.addEventListener('change', () => {
+        state.selectedModel = String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL;
+      });
+    }
+  });
   window.addEventListener('keydown', onEscClose);
   collectTaskAttachmentTexts(context && context.task, appendBubble).then((files) => {
     state.attachedFiles = files;

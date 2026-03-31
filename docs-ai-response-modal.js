@@ -528,10 +528,15 @@
 
   function sanitizeAssistantResponseText(text) {
     var value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    value = value.replace(/<think[\s\S]*?<\/think>/gi, '');
+    value = value.replace(/<\/?think>/gi, '');
     var lines = value.split('\n').filter(function (line) {
       var trimmed = String(line || '').trim();
       if (!trimmed) {
         return true;
+      }
+      if (/\(подпись\)/i.test(trimmed)) {
+        return false;
       }
       if (/^(сформируй|подготовь)\s+официальный\s+ответ/i.test(trimmed)) {
         return false;
@@ -540,7 +545,21 @@
         && !/^причина\s*:/i.test(trimmed)
         && !/^действия\s*:/i.test(trimmed);
     });
-    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    var deduped = [];
+    lines.forEach(function (line) {
+      var normalized = String(line || '').trim();
+      if (!normalized) {
+        if (deduped.length && deduped[deduped.length - 1] !== '') {
+          deduped.push('');
+        }
+        return;
+      }
+      if (deduped.length && String(deduped[deduped.length - 1] || '').trim() === normalized) {
+        return;
+      }
+      deduped.push(line);
+    });
+    return deduped.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   }
 
   function closeWithAnimation(root) {
@@ -1803,12 +1822,22 @@
 
         var payload = await response.json();
         if (!response.ok || !payload || payload.ok !== true) {
-          var apiError = new Error(payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')'));
+          var retryAfterSeconds = Math.max(5, Number(payload && (payload.retryAfterSeconds || payload.retryAfter) || response.headers.get('Retry-After')) || 0);
+          var errorMessage = payload && payload.error ? payload.error : ('Ошибка API (' + response.status + ')');
+          if (response.status === 429) {
+            var modelName = String(payload && payload.model ? payload.model : (state.model || 'неизвестно'));
+            errorMessage = 'Слишком много запросов (429). Подождите ' + (retryAfterSeconds || 30) + ' сек и повторите. Модель: ' + modelName + '.';
+          }
+          var apiError = new Error(errorMessage);
           if (payload && payload.code) {
             apiError.code = String(payload.code);
           }
-          if (payload && payload.retryAfter) {
-            apiError.retryAfter = Number(payload.retryAfter || 0);
+          if (response.status === 429) {
+            apiError.code = apiError.code || 'RATE_LIMITED';
+            apiError.model = String(payload && payload.model ? payload.model : (state.model || 'неизвестно'));
+            apiError.retryAfter = retryAfterSeconds || 30;
+          } else if (retryAfterSeconds > 0) {
+            apiError.retryAfter = retryAfterSeconds;
           }
           if (payload && Array.isArray(payload.availableModels)) {
             apiError.availableModels = payload.availableModels.slice(0, 6);
@@ -1831,16 +1860,18 @@
         pending.remove();
         if (error && Number(error.retryAfter) > 0) {
           showRetryCountdown(Number(error.retryAfter));
-        } else if (error && error.code === 'MODEL_NOT_ALLOWED' && Array.isArray(error.availableModels) && error.availableModels.length) {
+        }
+        if (error && Array.isArray(error.availableModels) && error.availableModels.length) {
           state.models = normalizeModelList(error.availableModels);
           renderModelOptions();
           if (!state.models.some(function (entry) { return entry.value === state.model; })) {
             state.model = state.models[0] ? state.models[0].value : state.model;
+            modelSelect.value = state.model;
+            messages.appendChild(createMessage('assistant', 'Часть моделей недоступна. Автоматически переключил на: ' + state.model + '.', true));
+          } else {
+            modelSelect.value = state.model;
+            messages.appendChild(createMessage('assistant', 'Часть моделей временно недоступна. Список обновлён автоматически.', true));
           }
-          modelSelect.value = state.model;
-          messages.appendChild(createMessage('assistant', 'Выбрана недоступная модель. Переключил на доступную: ' + state.model + '. Можно выбрать другую в списке моделей.', true));
-        } else if (error && Array.isArray(error.availableModels) && error.availableModels.length) {
-          messages.appendChild(createMessage('assistant', (error.message || 'Модель недоступна.') + '\nДоступные модели: ' + error.availableModels.join(', '), true));
         } else {
           messages.appendChild(createMessage('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Не удалось получить ответ.'), true));
         }
