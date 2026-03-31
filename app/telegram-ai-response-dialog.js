@@ -5,7 +5,19 @@ const REQUEST_TIMEOUT_MS = 12000;
 const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
-const FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
+const MAX_AI_BEHAVIOR_CHARS = 2400;
+const RESPONSE_STYLE_OPTIONS = [
+  { value: 'positive', label: 'Положительный' },
+  { value: 'negative', label: 'Отрицательный' },
+  { value: 'neutral', label: 'Нейтральный' },
+];
+const CONTEXT_OVERFLOW_CODES = new Set([
+  'CONTEXT_TOO_LARGE',
+  'PAYLOAD_TOO_LARGE',
+  'REQUEST_TOO_LARGE',
+  'INPUT_TOO_LONG',
+  'PROMPT_TOO_LONG',
+]);
 const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — СОТРУДНИК СТРОИТЕЛЬНОЙ КОМПАНИИ, КОТОРЫЙ ГОТОВИТ ОФИЦИАЛЬНЫЕ ОТВЕТЫ НА ВХОДЯЩИЕ ПИСЬМА.\n'
   + '\n'
   + 'ТВОЯ ЗАДАЧА — НЕ ПЕРЕСКАЗЫВАТЬ ТЕКСТ ПИСЬМА, А ДАВАТЬ РЕШЕНИЕ.\n'
@@ -91,7 +103,16 @@ function ensureAiDialogStyles() {
 function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+  return fetch(url, { ...options, signal: controller.signal })
+    .catch((error) => {
+      if (error && error.name === 'AbortError') {
+        const timeoutError = new Error('Сервер ИИ не ответил вовремя (таймаут). Попробуйте ещё раз.');
+        timeoutError.code = 'AI_TIMEOUT';
+        throw timeoutError;
+      }
+      throw error;
+    })
+    .finally(() => clearTimeout(timer));
 }
 
 function ensureScript(src, globalKey) {
@@ -125,10 +146,25 @@ function ensureScript(src, globalKey) {
 }
 
 
-function buildAssistantReply(userMessage, context) {
-  const taskId = context && context.task && context.task.id ? String(context.task.id) : '—';
-  const text = String(userMessage || '').trim();
-  return `Черновик ответа ИИ\n\nЗадача №${taskId}\n${text}`;
+function normalizeAiBehavior(value) {
+  let behavior = String(value || '').trim();
+  if (!behavior) return '';
+  if (behavior === DEFAULT_SITE_AI_BEHAVIOR.trim()) return '';
+  if (behavior.length > MAX_AI_BEHAVIOR_CHARS) {
+    behavior = behavior.slice(0, MAX_AI_BEHAVIOR_CHARS);
+  }
+  return behavior;
+}
+
+function isContextOverflowError(error) {
+  const message = String(error && error.message || '').toUpperCase();
+  const code = String(error && error.code || '').toUpperCase();
+  if (CONTEXT_OVERFLOW_CODES.has(code)) return true;
+  return message.includes('CONTEXT_TOO_LARGE')
+    || message.includes('PAYLOAD_TOO_LARGE')
+    || message.includes('REQUEST TOO LARGE')
+    || message.includes('TOO MANY TOKENS')
+    || message.includes('MAX CONTEXT');
 }
 
 function detectFileName(file, index) {
@@ -294,29 +330,6 @@ function parseAiPayload(payload) {
   return '';
 }
 
-function normalizeModelList(models) {
-  const source = Array.isArray(models) ? models : [];
-  const unique = [];
-  const seen = new Set();
-  source.forEach((model) => {
-    const value = String(model || '').trim();
-    if (!value || seen.has(value)) return;
-    seen.add(value);
-    unique.push({ value, label: value });
-  });
-  return unique.length ? unique : FALLBACK_MODEL_OPTIONS.slice();
-}
-
-async function fetchAvailableModels() {
-  const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' });
-  if (!response.ok) throw new Error(`Ошибка загрузки моделей (${response.status})`);
-  const payload = await response.json().catch(() => null);
-  if (!payload || payload.ok !== true || !Array.isArray(payload.models)) {
-    throw new Error('Список моделей недоступен');
-  }
-  return normalizeModelList(payload.models);
-}
-
 async function requestAssistantReply(userMessage, context, history) {
   const prompt = String(userMessage || '').trim();
   if (!prompt) return '';
@@ -325,12 +338,10 @@ async function requestAssistantReply(userMessage, context, history) {
   form.append('action', 'ai_response_analyze');
   form.append('documentTitle', String(task.title || task.name || 'Задача'));
   form.append('prompt', `${prompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
-  form.append('responseStyle', 'neutral');
-  if (context && context.model) {
-    form.append('model', String(context.model));
-  }
+  const responseStyle = context && context.responseStyle ? String(context.responseStyle) : 'neutral';
+  form.append('responseStyle', responseStyle);
   const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
-  const behaviorText = behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR;
+  const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
   form.append('aiBehavior', behaviorText);
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
   form.append('context', JSON.stringify({
@@ -359,6 +370,22 @@ async function requestAssistantReply(userMessage, context, history) {
   return assistantText;
 }
 
+async function requestAssistantWithSmartRetry(userMessage, context, history) {
+  try {
+    return await requestAssistantReply(userMessage, context, history);
+  } catch (error) {
+    if (!isContextOverflowError(error)) {
+      throw error;
+    }
+    const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
+    if (!extractedTexts.length) {
+      throw error;
+    }
+    const retryContext = { ...context, extractedTexts: [] };
+    return requestAssistantReply(userMessage, retryContext, history);
+  }
+}
+
 function openAiResponseDialog(context = {}) {
   ensureAiDialogStyles();
   const existingRef = window.__aiDialogInstance;
@@ -379,8 +406,7 @@ function openAiResponseDialog(context = {}) {
     chatHistory: [],
     attachedFiles: [],
     selectedAttachmentIds: new Set(),
-    models: FALLBACK_MODEL_OPTIONS.slice(),
-    model: FALLBACK_MODEL_OPTIONS[0].value,
+    responseStyle: 'neutral',
   };
 
   const notify = (type, message) => {
@@ -400,6 +426,10 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__messages" data-messages></div>
       <div class="appdosc-ai-dialog__composer">
         <textarea class="appdosc-ai-dialog__input" data-input placeholder="Коротко напишите задачу для ответа"></textarea>
+        <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Вариант ответа</label>
+        <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:40px;max-height:40px">
+          ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${item.value}">${item.label}</option>`).join('')}
+        </select>
         <details class="appdosc-ai-dialog__advanced" open>
           <summary><span>Файлы для контекста</span><span>▾</span></summary>
           <div class="appdosc-ai-dialog__advanced-body">
@@ -417,6 +447,7 @@ function openAiResponseDialog(context = {}) {
 
   const messages = root.querySelector('[data-messages]');
   const input = root.querySelector('[data-input]');
+  const responseStyleSelect = root.querySelector('[data-response-style]');
   const autoDecisionBtn = root.querySelector('[data-auto-decision]');
   const attachmentsNode = root.querySelector('[data-attachments]');
 
@@ -657,17 +688,15 @@ function openAiResponseDialog(context = {}) {
     autoDecisionBtn.disabled = true;
     root.querySelector('[data-send]').disabled = true;
     try {
-      const assistantReply = await requestAssistantWithFallback(prompt, state.chatHistory);
+      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle }, state.chatHistory);
       appendBubble(assistantReply, 'assistant');
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);
       notify('success', 'Решение сгенерировано.');
     } catch (error) {
-      const fallback = buildAssistantReply(prompt, context);
-      appendBubble(fallback, 'assistant');
-      state.chatHistory.push({ role: 'assistant', text: fallback, ts: Date.now() });
-      state.chatHistory = normalizeHistoryMessages(state.chatHistory);
-      notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
+      const errorMessage = error && error.message ? error.message : 'Ошибка ИИ. Попробуйте ещё раз.';
+      appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
+      notify('warning', errorMessage);
     } finally {
       state.isSending = false;
       input.disabled = false;
@@ -691,14 +720,18 @@ function openAiResponseDialog(context = {}) {
     notify('info', 'Генерируем ответ ИИ...');
     let assistantReply = '';
     try {
-      assistantReply = await requestAssistantWithFallback(prompt, state.chatHistory);
+      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle }, state.chatHistory);
     } catch (error) {
-      assistantReply = buildAssistantReply(prompt, context);
-      notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
+      assistantReply = '';
+      const errorMessage = error && error.message ? error.message : 'Ошибка ИИ. Попробуйте ещё раз.';
+      appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
+      notify('warning', errorMessage);
     }
-    appendBubble(assistantReply, 'assistant');
-    state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
-    state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+    if (assistantReply) {
+      appendBubble(assistantReply, 'assistant');
+      state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
+      state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+    }
     input.value = '';
     input.disabled = false;
     state.isSending = false;
@@ -713,28 +746,13 @@ function openAiResponseDialog(context = {}) {
   });
 
   autoDecisionBtn.addEventListener('click', runAutoDecision);
+  if (responseStyleSelect) {
+    responseStyleSelect.value = state.responseStyle;
+    responseStyleSelect.addEventListener('change', () => {
+      state.responseStyle = String(responseStyleSelect.value || 'neutral');
+    });
+  }
   window.addEventListener('keydown', onEscClose);
-
-  const requestAssistantWithFallback = async (prompt, history) => {
-    try {
-      return await requestAssistantReply(prompt, { ...context, model: state.model }, history);
-    } catch (error) {
-      if (error && error.code === 'MODEL_NOT_ALLOWED' && Array.isArray(error.availableModels) && error.availableModels.length) {
-        state.models = normalizeModelList(error.availableModels);
-        state.model = state.models[0].value;
-        notify('warning', `Текущая модель недоступна. Автоматически переключили на: ${state.model}.`);
-        return requestAssistantReply(prompt, { ...context, model: state.model }, history);
-      }
-      throw error;
-    }
-  };
-
-  fetchAvailableModels()
-    .then((models) => {
-      state.models = models;
-      if (!models.some((entry) => entry.value === state.model)) state.model = models[0].value;
-    })
-    .catch(() => {});
   collectTaskAttachmentTexts(context && context.task, appendBubble).then((files) => {
     state.attachedFiles = files;
     context.attachedFiles = files.map((file) => ({
