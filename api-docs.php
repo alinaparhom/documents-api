@@ -912,6 +912,67 @@ function buildPreparedOcrFiles(array $file, bool $preprocessEnabled, string $tem
     ];
 }
 
+function shrinkImageToLimit(string $sourcePath, string $targetPath, int $maxBytes): array
+{
+    $result = [
+        'ok' => false,
+        'path' => $sourcePath,
+        'sizeBytes' => is_file($sourcePath) ? (int)@filesize($sourcePath) : 0,
+        'attempts' => [],
+    ];
+    if ($maxBytes <= 0 || !is_file($sourcePath)) {
+        return $result;
+    }
+    if ($result['sizeBytes'] > 0 && $result['sizeBytes'] <= $maxBytes) {
+        $result['ok'] = true;
+        return $result;
+    }
+    if (!class_exists('Imagick')) {
+        return $result;
+    }
+    try {
+        $qualitySteps = [78, 68, 58, 50, 42, 35];
+        $scaleSteps = [1.0, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52];
+        $base = new Imagick();
+        $base->readImage($sourcePath);
+        $base->setImageColorspace(Imagick::COLORSPACE_GRAY);
+        $baseWidth = max(1, (int)$base->getImageWidth());
+        $baseHeight = max(1, (int)$base->getImageHeight());
+
+        foreach ($scaleSteps as $scale) {
+            $width = max(900, (int)round($baseWidth * $scale));
+            $height = max(1200, (int)round($baseHeight * $scale));
+            foreach ($qualitySteps as $quality) {
+                $img = clone $base;
+                $img->resizeImage($width, $height, Imagick::FILTER_LANCZOS, 1, true);
+                $img->setImageFormat('jpeg');
+                $img->setImageCompressionQuality($quality);
+                $img->stripImage();
+                $written = $img->writeImage($targetPath);
+                $size = $written && is_file($targetPath) ? (int)@filesize($targetPath) : 0;
+                $result['attempts'][] = ['scale' => $scale, 'quality' => $quality, 'sizeBytes' => $size];
+                $img->clear();
+                $img->destroy();
+                if ($written && $size > 0 && $size <= $maxBytes) {
+                    $result['ok'] = true;
+                    $result['path'] = $targetPath;
+                    $result['sizeBytes'] = $size;
+                    $base->clear();
+                    $base->destroy();
+                    return $result;
+                }
+            }
+        }
+        $base->clear();
+        $base->destroy();
+    } catch (Throwable $e) {
+        $result['error'] = $e->getMessage();
+    }
+    $result['sizeBytes'] = is_file($targetPath) ? (int)@filesize($targetPath) : $result['sizeBytes'];
+    $result['path'] = is_file($targetPath) ? $targetPath : $sourcePath;
+    return $result;
+}
+
 function textFromMixed(mixed $value): string
 {
     if (is_string($value)) {
@@ -2320,6 +2381,8 @@ if ($action === 'ocr_extract') {
     $ocrEngine = trim((string)($_POST['OCREngine'] ?? '2'));
     $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
     $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? 'true'));
+    $ocrPreprocessRaw = trim((string)($_POST['preprocess'] ?? '1'));
+    $ocrMaxSizeKbRaw = (int)($_POST['max_size_kb'] ?? ($env['OCR_MAX_FILE_KB'] ?? 1024));
 
     if ($ocrApiKey === '') {
         jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
@@ -2329,59 +2392,163 @@ if ($action === 'ocr_extract') {
     }
 
     $targetLanguage = $ocrLanguage !== '' ? $ocrLanguage : 'rus';
+    $ocrPreprocessEnabled = !in_array(mb_strtolower($ocrPreprocessRaw), ['0', 'false', 'off', 'no'], true);
+    $ocrMaxSizeKb = max(128, min(8192, $ocrMaxSizeKbRaw > 0 ? $ocrMaxSizeKbRaw : 1024));
+    $ocrMaxBytes = $ocrMaxSizeKb * 1024;
     $ocrExtraFields = [
         'OCREngine' => $ocrEngine !== '' ? $ocrEngine : '2',
         'scale' => $ocrScale !== '' ? $ocrScale : 'true',
         'detectOrientation' => $ocrDetectOrientation !== '' ? $ocrDetectOrientation : 'true',
     ];
 
-    $uploadFile = $ocrFileUrl === '' ? $files[0] : [];
-    $ocrResult = performOcrRequest(
-        $ocrBaseUrl,
-        $ocrApiKey,
-        $uploadFile,
-        $targetLanguage,
-        $ocrFileUrl !== '' ? $ocrFileUrl : null,
-        $ocrExtraFields
-    );
-    $ocrResponseBody = $ocrResult['body'];
-    $ocrCurlError = (string)$ocrResult['curl_error'];
-    $ocrStatusCode = (int)$ocrResult['status'];
-
-    if ($ocrResponseBody === false) {
-        jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError]);
-    }
-
-    $ocrJson = json_decode((string)$ocrResponseBody, true);
-    if (!is_array($ocrJson)) {
-        $preview = mb_substr(trim(preg_replace('/\s+/u', ' ', (string)$ocrResponseBody) ?? ''), 0, 200);
-        jsonResponse(502, ['ok' => false, 'error' => 'OCR вернул не JSON ответ', 'preview' => $preview]);
-    }
-
-    if ($ocrStatusCode >= 400) {
-        $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-        if ($message === '') {
-            $message = 'OCR API error';
+    if ($ocrFileUrl !== '') {
+        $ocrResult = performOcrRequest(
+            $ocrBaseUrl,
+            $ocrApiKey,
+            [],
+            $targetLanguage,
+            $ocrFileUrl,
+            $ocrExtraFields
+        );
+        $ocrResponseBody = $ocrResult['body'];
+        $ocrCurlError = (string)$ocrResult['curl_error'];
+        $ocrStatusCode = (int)$ocrResult['status'];
+        if ($ocrResponseBody === false) {
+            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError]);
         }
-        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+        $ocrJson = json_decode((string)$ocrResponseBody, true);
+        if (!is_array($ocrJson)) {
+            $preview = mb_substr(trim(preg_replace('/\s+/u', ' ', (string)$ocrResponseBody) ?? ''), 0, 200);
+            jsonResponse(502, ['ok' => false, 'error' => 'OCR вернул не JSON ответ', 'preview' => $preview]);
+        }
+        if ($ocrStatusCode >= 400) {
+            $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+            if ($message === '') {
+                $message = 'OCR API error';
+            }
+            jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+        }
+        if (isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true) {
+            $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+            jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
+        }
+        $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
+        $ocrText = '';
+        if (isset($parsedResults[0]) && is_array($parsedResults[0]) && isset($parsedResults[0]['ParsedText']) && is_string($parsedResults[0]['ParsedText'])) {
+            $ocrText = $parsedResults[0]['ParsedText'];
+        }
+        jsonResponse(200, [
+            'ok' => true,
+            'text' => $ocrText,
+            'raw' => [
+                'response' => $ocrJson,
+            ],
+        ]);
     }
 
-    if (isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true) {
-        $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-        jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
+    $tempDir = ensureOcrTempDir();
+    $prepared = buildPreparedOcrFiles($files[0], $ocrPreprocessEnabled, $tempDir);
+    $preparedFiles = isset($prepared['files']) && is_array($prepared['files']) ? $prepared['files'] : [];
+    if (!$preparedFiles) {
+        cleanupDirectory($tempDir);
+        jsonResponse(400, ['ok' => false, 'error' => 'Не удалось подготовить файл для OCR']);
     }
 
-    $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
-    $ocrText = '';
-    if (isset($parsedResults[0]) && is_array($parsedResults[0]) && isset($parsedResults[0]['ParsedText']) && is_string($parsedResults[0]['ParsedText'])) {
-        $ocrText = $parsedResults[0]['ParsedText'];
+    $texts = [];
+    $rawResponses = [];
+    $fileDiagnostics = [];
+    foreach ($preparedFiles as $index => $preparedFile) {
+        $currentPath = (string)($preparedFile['tmp_name'] ?? '');
+        $currentSize = (int)($preparedFile['size'] ?? (is_file($currentPath) ? @filesize($currentPath) : 0));
+        $effectiveFile = $preparedFile;
+        $compression = ['ok' => true, 'sizeBytes' => $currentSize, 'path' => $currentPath, 'attempts' => []];
+
+        if ($currentSize > $ocrMaxBytes) {
+            $compressedPath = $tempDir . '/compressed-' . str_pad((string)($index + 1), 4, '0', STR_PAD_LEFT) . '.jpg';
+            $compression = shrinkImageToLimit($currentPath, $compressedPath, $ocrMaxBytes);
+            if ($compression['ok'] === true && is_file((string)$compression['path'])) {
+                $effectiveFile = [
+                    'name' => 'compressed-' . ($index + 1) . '.jpg',
+                    'tmp_name' => (string)$compression['path'],
+                    'type' => 'image/jpeg',
+                    'size' => (int)($compression['sizeBytes'] ?? 0),
+                ];
+            }
+        }
+
+        $effectiveSize = (int)($effectiveFile['size'] ?? 0);
+        if ($effectiveSize <= 0 && is_file((string)($effectiveFile['tmp_name'] ?? ''))) {
+            $effectiveSize = (int)@filesize((string)$effectiveFile['tmp_name']);
+            $effectiveFile['size'] = $effectiveSize;
+        }
+        if ($effectiveSize > $ocrMaxBytes) {
+            cleanupDirectory($tempDir);
+            jsonResponse(400, [
+                'ok' => false,
+                'error' => 'Файл слишком большой для OCR лимита ' . $ocrMaxSizeKb . ' КБ. Попробуйте загрузить по страницам или уменьшить качество.',
+                'page' => $index + 1,
+                'sizeBytes' => $effectiveSize,
+            ]);
+        }
+
+        $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $effectiveFile, $targetLanguage, null, $ocrExtraFields);
+        $ocrResponseBody = $ocrResult['body'];
+        $ocrCurlError = (string)$ocrResult['curl_error'];
+        $ocrStatusCode = (int)$ocrResult['status'];
+        if ($ocrResponseBody === false) {
+            cleanupDirectory($tempDir);
+            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError, 'page' => $index + 1]);
+        }
+
+        $ocrJson = json_decode((string)$ocrResponseBody, true);
+        if (!is_array($ocrJson)) {
+            $preview = mb_substr(trim(preg_replace('/\s+/u', ' ', (string)$ocrResponseBody) ?? ''), 0, 200);
+            cleanupDirectory($tempDir);
+            jsonResponse(502, ['ok' => false, 'error' => 'OCR вернул не JSON ответ', 'preview' => $preview, 'page' => $index + 1]);
+        }
+        if ($ocrStatusCode >= 400) {
+            $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+            if ($message === '') {
+                $message = 'OCR API error';
+            }
+            cleanupDirectory($tempDir);
+            jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode, 'page' => $index + 1]);
+        }
+        if (isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true) {
+            $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+            cleanupDirectory($tempDir);
+            jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл', 'page' => $index + 1]);
+        }
+
+        $rawResponses[] = $ocrJson;
+        $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
+        foreach ($parsedResults as $parsed) {
+            if (is_array($parsed) && isset($parsed['ParsedText']) && is_string($parsed['ParsedText'])) {
+                $textPart = trim($parsed['ParsedText']);
+                if ($textPart !== '') {
+                    $texts[] = $textPart;
+                }
+            }
+        }
+        $fileDiagnostics[] = [
+            'index' => $index + 1,
+            'sourceSizeBytes' => $currentSize,
+            'finalSizeBytes' => $effectiveSize,
+            'compressed' => $currentSize > $effectiveSize,
+            'compression' => $compression,
+        ];
     }
+    cleanupDirectory($tempDir);
+    $ocrText = trim(implode("\n\n", $texts));
 
     jsonResponse(200, [
         'ok' => true,
         'text' => $ocrText,
         'raw' => [
-            'response' => $ocrJson,
+            'responses' => $rawResponses,
+            'preparation' => $prepared,
+            'files' => $fileDiagnostics,
+            'maxFileKb' => $ocrMaxSizeKb,
         ],
     ]);
 }
