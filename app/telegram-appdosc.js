@@ -143,19 +143,25 @@ function ensureTelegramBriefModalStyle() {
   style.id = TELEGRAM_BRIEF_MODAL_STYLE_ID;
   style.textContent = `
     .appdosc-brief-ai{position:fixed;inset:0;z-index:2800;background:rgba(15,23,42,.32);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:8px}
-    .appdosc-brief-ai__panel{width:min(980px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.94));border-radius:22px;border:1px solid rgba(255,255,255,.9);overflow:hidden;box-shadow:0 14px 38px rgba(15,23,42,.16)}
-    .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid rgba(226,232,240,.95)}
+    .appdosc-brief-ai__panel{width:min(920px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.94));border-radius:22px;border:1px solid rgba(255,255,255,.9);overflow:hidden;box-shadow:0 14px 38px rgba(15,23,42,.16)}
+    .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(226,232,240,.95)}
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
     .appdosc-brief-ai__mode{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 8px;border-radius:999px;background:rgba(219,234,254,.7);border:1px solid rgba(147,197,253,.8);font-size:11px;color:#1e3a8a;font-weight:600}
-    .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,300px) minmax(0,1fr);gap:10px;padding:12px;min-height:0;flex:1}
+    .appdosc-brief-ai__hint{margin-top:6px;font-size:11px;color:#475569}
+    .appdosc-brief-ai__status{margin:0;padding:6px 10px;border-bottom:1px solid rgba(226,232,240,.85);font-size:12px;color:#334155;background:rgba(248,250,252,.88)}
+    .appdosc-brief-ai__status[data-tone="loading"]{color:#1d4ed8}
+    .appdosc-brief-ai__status[data-tone="error"]{color:#b91c1c}
+    .appdosc-brief-ai__status[data-tone="success"]{color:#166534}
+    .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,290px) minmax(0,1fr);gap:10px;padding:10px;min-height:0;flex:1}
     .appdosc-brief-ai__list{display:flex;flex-direction:column;gap:8px;overflow:auto}
-    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.92);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:14px;padding:11px;text-align:left;opacity:1;min-height:56px}
+    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.92);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:14px;padding:10px;text-align:left;opacity:1;min-height:54px;transition:.2s ease}
+    .appdosc-brief-ai__item:disabled{opacity:.6}
     .appdosc-brief-ai__item span{display:block;word-break:break-word;overflow-wrap:anywhere}
     .appdosc-brief-ai__item strong{font-size:13px;color:#0f172a}
     .appdosc-brief-ai__item small{font-size:11px;color:#64748b}
-    .appdosc-brief-ai__item.is-active{border-color:rgba(59,130,246,.6);background:rgba(239,246,255,.9)}
-    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.92);border-radius:16px;background:rgba(255,255,255,.86);padding:12px;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
+    .appdosc-brief-ai__item.is-active{border-color:rgba(59,130,246,.6);background:rgba(239,246,255,.9);box-shadow:0 8px 18px rgba(59,130,246,.16)}
+    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.92);border-radius:16px;background:rgba(255,255,255,.9);padding:12px;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
     .appdosc-brief-ai__placeholder{margin:0;color:#64748b;white-space:pre-wrap}
     .appdosc-brief-ai__section{border:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.88);border-radius:14px;padding:10px 11px}
     .appdosc-brief-ai__section + .appdosc-brief-ai__section{margin-top:8px}
@@ -163,7 +169,7 @@ function ensureTelegramBriefModalStyle() {
     .appdosc-brief-ai__section p{margin:0;color:#0f172a;white-space:pre-wrap}
     .appdosc-brief-ai__section ul{margin:0;padding-left:18px;color:#0f172a}
     .appdosc-brief-ai__section li + li{margin-top:5px}
-    @media (max-width:768px){.appdosc-brief-ai{padding:0}.appdosc-brief-ai__panel{max-height:100dvh;border-radius:0}.appdosc-brief-ai__body{grid-template-columns:1fr}}
+    @media (max-width:768px){.appdosc-brief-ai{padding:0}.appdosc-brief-ai__panel{max-height:100dvh;border-radius:0}.appdosc-brief-ai__body{grid-template-columns:1fr}.appdosc-brief-ai__list{flex-direction:row;overflow:auto;padding-bottom:2px}.appdosc-brief-ai__item{min-width:180px}}
   `;
   document.head.appendChild(style);
 }
@@ -369,9 +375,11 @@ function openTelegramBriefModal(task, statusHandler) {
           <div class="appdosc-brief-ai__title">Кратко ИИ</div>
           <div class="appdosc-brief-ai__sub">Краткий вывод по документу</div>
           <div class="appdosc-brief-ai__mode">Только текст выбранного файла</div>
+          <div class="appdosc-brief-ai__hint">1) Выберите файл → 2) Дождитесь анализа → 3) Скопируйте нужные пункты.</div>
         </div>
         <button type="button" class="appdosc-card__action" data-close>Закрыть</button>
       </div>
+      <p class="appdosc-brief-ai__status" data-status data-tone="idle">Выберите файл для анализа.</p>
       <div class="appdosc-brief-ai__body">
         <div class="appdosc-brief-ai__list" data-list></div>
         <div class="appdosc-brief-ai__preview" data-preview>
@@ -381,7 +389,15 @@ function openTelegramBriefModal(task, statusHandler) {
     </div>`;
   const list = modal.querySelector('[data-list]');
   const preview = modal.querySelector('[data-preview]');
+  const statusNode = modal.querySelector('[data-status]');
   const sources = [];
+  let activeRequestId = 0;
+
+  const setStatus = (message, tone = 'idle') => {
+    if (!statusNode) return;
+    statusNode.textContent = message;
+    statusNode.setAttribute('data-tone', tone);
+  };
   (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
     const name = getAttachmentName(file, index + 1);
     const url = resolveFileFetchUrl(file);
@@ -399,24 +415,36 @@ function openTelegramBriefModal(task, statusHandler) {
     button.className = 'appdosc-brief-ai__item';
     button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>Вложение</small></span>`;
     button.addEventListener('click', async () => {
+      const requestId = ++activeRequestId;
       activate(button);
       let sourceText = '';
       try {
         button.disabled = true;
+        setStatus(`Подготовка файла: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
         sourceText = source.text || await requestTelegramOcrByUrl(source.url);
+        if (requestId !== activeRequestId) return;
         source.text = sourceText;
+        if (!normalizeTelegramOcrText(sourceText)) {
+          throw new Error('Файл прочитан, но текст пустой. Проверьте качество файла.');
+        }
         if (normalizeTelegramOcrText(sourceText).length < 80) {
           renderTelegramBriefPreview(preview, null, sourceText);
+          setStatus('Текста мало, показан упрощённый вывод без запроса к ИИ.', 'success');
           if (typeof statusHandler === 'function') statusHandler('info', 'Текста мало: показан краткий вывод без запроса к ИИ.');
           return;
         }
+        setStatus(`Анализ ИИ: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
+        if (requestId !== activeRequestId) return;
         renderTelegramBriefPreview(preview, aiPayload, sourceText);
+        setStatus('Готово. Разбор сформирован только по выбранному файлу.', 'success');
       } catch (error) {
+        if (requestId !== activeRequestId) return;
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
         preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.\n${escapeHtml(message)}</p>`;
+        setStatus(`Ошибка: ${message}`, 'error');
         if (typeof statusHandler === 'function') statusHandler('warning', message);
       } finally {
         button.disabled = false;
