@@ -6,6 +6,7 @@ const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
 const MAX_AI_BEHAVIOR_CHARS = 2400;
+const DEFAULT_AI_MODEL = 'llama-3.3-70b-versatile';
 const RESPONSE_STYLE_OPTIONS = [
   { value: 'positive', label: 'Положительный' },
   { value: 'negative', label: 'Отрицательный' },
@@ -154,6 +155,11 @@ function normalizeAiBehavior(value) {
     behavior = behavior.slice(0, MAX_AI_BEHAVIOR_CHARS);
   }
   return behavior;
+}
+
+function resolveAiModel(context) {
+  const modelFromContext = String(context && context.aiModel || '').trim();
+  return modelFromContext || DEFAULT_AI_MODEL;
 }
 
 function isContextOverflowError(error) {
@@ -338,6 +344,7 @@ async function requestAssistantReply(userMessage, context, history) {
   form.append('action', 'ai_response_analyze');
   form.append('documentTitle', String(task.title || task.name || 'Задача'));
   form.append('prompt', `${prompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
+  form.append('model', resolveAiModel(context));
   const responseStyle = context && context.responseStyle ? String(context.responseStyle) : 'neutral';
   form.append('responseStyle', responseStyle);
   const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
