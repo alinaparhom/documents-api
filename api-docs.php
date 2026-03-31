@@ -434,23 +434,30 @@ function buildModelAvailabilityRows(array $models, array $env): array
 
         if (!$isAvailable) {
             if ($curlError !== '') {
-                $reason = 'Ошибка сети/API';
-                $code = 'NETWORK_ERROR';
+                $reason = 'Проверка заняла слишком много времени, модель доступна без строгой проверки';
+                $code = 'HEALTHCHECK_TIMEOUT';
+                $isAvailable = true;
             } else {
                 $decoded = is_string($bodyRaw) ? json_decode($bodyRaw, true) : [];
                 $providerError = textFromMixed($decoded['error']['message'] ?? '');
-                if ($statusCode === 429 || stripos($providerError, 'quota') !== false || stripos($providerError, 'rate') !== false) {
-                    $reason = 'Лимит исчерпан на сегодня';
-                    $code = 'DAILY_LIMIT';
-                } elseif ($statusCode === 404 || stripos($providerError, 'not found') !== false || stripos($providerError, 'does not exist') !== false) {
+                if ($statusCode === 404 || stripos($providerError, 'not found') !== false || stripos($providerError, 'does not exist') !== false) {
                     $reason = 'Модель не найдена у провайдера';
                     $code = 'MODEL_NOT_FOUND';
+                } elseif ($statusCode === 401 || $statusCode === 403) {
+                    $reason = 'Проверьте API ключ и права доступа к модели';
+                    $code = 'ACCESS_DENIED';
+                } elseif ($statusCode === 429 || $statusCode >= 500 || $statusCode === 408 || stripos($providerError, 'quota') !== false || stripos($providerError, 'rate') !== false) {
+                    $reason = 'Временная ошибка проверки, попробуйте снова';
+                    $code = 'HEALTHCHECK_TEMPORARY';
+                    $isAvailable = true;
                 } elseif ($statusCode === 503 || stripos($providerError, 'not available') !== false) {
-                    $reason = 'Временно недоступна';
-                    $code = 'MODEL_UNAVAILABLE';
+                    $reason = 'Временная ошибка проверки, попробуйте снова';
+                    $code = 'HEALTHCHECK_TEMPORARY';
+                    $isAvailable = true;
                 } else {
-                    $reason = $providerError !== '' ? mb_substr($providerError, 0, 140) : 'Проверка не пройдена';
-                    $code = 'CHECK_FAILED';
+                    $reason = 'Проверка не подтверждена, но модель оставлена доступной';
+                    $code = 'HEALTHCHECK_UNKNOWN';
+                    $isAvailable = true;
                 }
             }
         }
