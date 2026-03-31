@@ -11,7 +11,7 @@ const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
 const MAX_AI_BEHAVIOR_CHARS = 2400;
-const DEFAULT_AI_MODEL = 'llama-3.3-70b-versatile';
+const DEFAULT_AI_MODEL = 'gpt-4o-mini';
 const MODEL_FALLBACK_OPTIONS = [{ value: DEFAULT_AI_MODEL, label: DEFAULT_AI_MODEL }];
 const RESPONSE_STYLE_OPTIONS = [
   { value: 'positive', label: 'Положительный' },
@@ -511,6 +511,13 @@ async function requestAssistantWithSmartRetry(userMessage, context, history) {
   try {
     return await requestAssistantReply(userMessage, context, history);
   } catch (error) {
+    const errorCode = String(error && error.code || '').toUpperCase();
+    if (errorCode === 'MODEL_NOT_ALLOWED' && Array.isArray(error && error.availableModels) && error.availableModels.length) {
+      const normalizedModels = normalizeModelList(error.availableModels);
+      const fallbackModel = pickFirstAvailableModel(normalizedModels);
+      const retryContext = { ...context, aiModel: fallbackModel };
+      return requestAssistantReply(userMessage, retryContext, history);
+    }
     if (isContextOverflowError(error)) {
       const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
       if (!extractedTexts.length) {
@@ -519,7 +526,7 @@ async function requestAssistantWithSmartRetry(userMessage, context, history) {
       const retryContext = { ...context, extractedTexts: [] };
       return requestAssistantReply(userMessage, retryContext, history);
     }
-    const shouldSoftRetry = SOFT_RETRY_CODES.has(String(error && error.code || '').toUpperCase());
+    const shouldSoftRetry = SOFT_RETRY_CODES.has(errorCode);
     if (shouldSoftRetry) {
       await new Promise((resolve) => setTimeout(resolve, SOFT_RETRY_DELAY_MS));
       return requestAssistantReply(userMessage, context, history);
