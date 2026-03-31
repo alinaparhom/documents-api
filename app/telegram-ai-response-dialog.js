@@ -11,8 +11,8 @@ const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
 const MAX_AI_BEHAVIOR_CHARS = 2400;
-const DEFAULT_AI_MODEL = 'gpt-4o-mini';
-const MODEL_FALLBACK_OPTIONS = [{ value: DEFAULT_AI_MODEL, label: DEFAULT_AI_MODEL }];
+const DEFAULT_AI_MODEL = '';
+const MODEL_FALLBACK_OPTIONS = [{ value: DEFAULT_AI_MODEL, label: 'Авто (.env)', available: true, isDefault: true }];
 const RESPONSE_STYLE_OPTIONS = [
   { value: 'positive', label: 'Положительный' },
   { value: 'negative', label: 'Отрицательный' },
@@ -460,7 +460,10 @@ async function requestAssistantReply(userMessage, context, history) {
   form.append('action', 'ai_response_analyze');
   form.append('documentTitle', String(task.title || task.name || 'Задача'));
   form.append('prompt', `${prompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
-  form.append('model', resolveAiModel(context));
+  const resolvedModel = resolveAiModel(context);
+  if (resolvedModel) {
+    form.append('model', resolvedModel);
+  }
   const responseStyle = context && context.responseStyle ? String(context.responseStyle) : 'neutral';
   form.append('responseStyle', responseStyle);
   const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
