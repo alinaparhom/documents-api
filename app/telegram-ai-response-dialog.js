@@ -1,6 +1,6 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v8';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
-const DOCS_API_ENDPOINT = '/js/documents/api-docs.php';
+const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const REQUEST_TIMEOUT_MS = 35000;
 const REQUEST_TIMEOUT_MAX_MS = 70000;
 const TIMEOUT_CONTEXT_STEP_CHARS = 45000;
@@ -127,6 +127,57 @@ function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     .finally(() => clearTimeout(timer));
 }
 
+function getDocsAiEndpoints() {
+  const configured = String((window && window.DOCUMENTS_AI_API_URL) || '').trim();
+  const endpoints = configured ? [configured, ...DOCS_AI_FALLBACK_ENDPOINTS] : DOCS_AI_FALLBACK_ENDPOINTS.slice();
+  return Array.from(new Set(endpoints.filter(Boolean)));
+}
+
+function withEndpointError(error, endpoint, fallbackMessage) {
+  const endpointText = endpoint ? ` Endpoint: ${endpoint}` : '';
+  const message = String((error && error.message) || fallbackMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+  const nextError = new Error(`${message}${endpointText}`);
+  if (error && error.code) nextError.code = error.code;
+  if (error && error.retryAfterSeconds) nextError.retryAfterSeconds = error.retryAfterSeconds;
+  if (error && error.model) nextError.model = error.model;
+  if (error && Array.isArray(error.availableModels)) nextError.availableModels = error.availableModels;
+  nextError.endpoint = endpoint || '';
+  return nextError;
+}
+
+async function postDocsAiWithFallback(createFormData, options = {}) {
+  const endpoints = getDocsAiEndpoints();
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : REQUEST_TIMEOUT_MS;
+  const credentials = options.credentials || 'same-origin';
+  let lastResult = null;
+  for (let index = 0; index < endpoints.length; index += 1) {
+    const endpoint = endpoints[index];
+    let response = null;
+    let payload = null;
+    try {
+      response = await fetchWithTimeout(endpoint, { method: 'POST', body: createFormData(), credentials }, timeoutMs);
+      payload = await response.json().catch(() => null);
+    } catch (error) {
+      lastResult = { endpoint, error, response, payload };
+      continue;
+    }
+    const shouldTryNextEndpoint = (response.status === 404 || response.status === 405 || !payload) && index < endpoints.length - 1;
+    if (shouldTryNextEndpoint) {
+      lastResult = { endpoint, response, payload };
+      continue;
+    }
+    return { endpoint, response, payload };
+  }
+  if (lastResult && lastResult.error) {
+    throw withEndpointError(lastResult.error, lastResult.endpoint, options.fallbackErrorMessage);
+  }
+  if (lastResult) {
+    const fallbackError = new Error(options.fallbackErrorMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+    throw withEndpointError(fallbackError, lastResult.endpoint, options.fallbackErrorMessage);
+  }
+  throw new Error(options.fallbackErrorMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+}
+
 function getContextChars(context) {
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
   return extractedTexts.reduce((sum, item) => sum + String((item && item.text) || '').length, 0);
@@ -221,8 +272,13 @@ function pickFirstAvailableModel(models) {
 
 async function fetchAvailableModels() {
   try {
-    const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS);
-    const payload = await response.json().catch(() => null);
+    const request = await postDocsAiWithFallback(() => {
+      const form = new FormData();
+      form.append('action', 'ai_models');
+      return form;
+    }, { timeoutMs: REQUEST_TIMEOUT_MS });
+    const response = request && request.response;
+    const payload = request && request.payload;
     if (!response.ok || !payload || payload.ok !== true) {
       return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: EMPTY_AI_MODEL };
     }
@@ -354,14 +410,18 @@ async function fetchExternalFileContent(fileMeta) {
       if (isTextLikeMeta(fileMeta)) {
         return (await response.text()).trim();
       }
-      const form = new FormData();
-      form.append('action', 'ocr_extract');
-      form.append('language', 'rus');
-      form.append('file_url', url);
-      const ocrResponse = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ocr_extract`, { method: 'POST', body: form, credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
-      const payload = await ocrResponse.json().catch(() => null);
+      const ocrRequest = await postDocsAiWithFallback(() => {
+        const form = new FormData();
+        form.append('action', 'ocr_extract');
+        form.append('language', 'rus');
+        form.append('file_url', url);
+        return form;
+      }, { timeoutMs: REQUEST_TIMEOUT_MS + 12000, fallbackErrorMessage: 'OCR временно недоступен' });
+      const ocrResponse = ocrRequest && ocrRequest.response;
+      const payload = ocrRequest && ocrRequest.payload;
+      const endpoint = ocrRequest && ocrRequest.endpoint;
       if (!ocrResponse.ok || !payload || payload.ok !== true) {
-        throw new Error((payload && payload.error) || 'OCR временно недоступен');
+        throw new Error(`${(payload && payload.error) || 'OCR временно недоступен'}. Endpoint: ${endpoint || 'неизвестно'}`);
       }
       return String(payload.text || '').trim();
     } catch (error) {
@@ -456,27 +516,13 @@ async function requestAssistantReply(userMessage, context, history) {
   const prompt = String(userMessage || '').trim();
   if (!prompt) return '';
   const task = context && context.task ? context.task : {};
-  const form = new FormData();
-  form.append('action', 'ai_response_analyze');
-  form.append('documentTitle', String(task.title || task.name || 'Задача'));
-  form.append('prompt', `${prompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
   const resolvedModel = resolveAiModel(context);
-  if (resolvedModel) {
-    form.append('model', resolvedModel);
-  }
   const responseStyle = context && context.responseStyle ? String(context.responseStyle) : 'neutral';
-  form.append('responseStyle', responseStyle);
   const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
   const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
-  form.append('aiBehavior', behaviorText);
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
-  form.append('extractedTexts', JSON.stringify(extractedTexts));
   const generationParams = context && context.generationParams ? context.generationParams : {};
-  form.append('temperature', String(Number(generationParams.temperature) || 0.7));
-  form.append('top_p', String(Number(generationParams.top_p) || 1));
-  form.append('frequency_penalty', String(Number(generationParams.frequency_penalty) || 0));
-  form.append('presence_penalty', String(Number(generationParams.presence_penalty) || 0));
-  form.append('context', JSON.stringify({
+  const serializedContext = JSON.stringify({
     task: {
       id: task.id || null,
       title: task.title || task.name || '',
@@ -486,10 +532,29 @@ async function requestAssistantReply(userMessage, context, history) {
     attachedFiles: Array.isArray(context && context.attachedFiles) ? context.attachedFiles : [],
     extractedTexts,
     source: 'telegram_mini_app_dialog',
-  }));
+  });
   const timeoutMs = calculateAiTimeoutMs(context, history, userMessage);
-  const response = await fetchWithTimeout(DOCS_API_ENDPOINT, { method: 'POST', body: form, credentials: 'same-origin' }, timeoutMs);
-  const payload = await response.json().catch(() => null);
+  const request = await postDocsAiWithFallback(() => {
+    const retryForm = new FormData();
+    retryForm.append('action', 'ai_response_analyze');
+    retryForm.append('documentTitle', String(task.title || task.name || 'Задача'));
+    retryForm.append('prompt', `${prompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
+    if (resolvedModel) {
+      retryForm.append('model', resolvedModel);
+    }
+    retryForm.append('responseStyle', responseStyle);
+    retryForm.append('aiBehavior', behaviorText);
+    retryForm.append('extractedTexts', JSON.stringify(extractedTexts));
+    retryForm.append('temperature', String(Number(generationParams.temperature) || 0.7));
+    retryForm.append('top_p', String(Number(generationParams.top_p) || 1));
+    retryForm.append('frequency_penalty', String(Number(generationParams.frequency_penalty) || 0));
+    retryForm.append('presence_penalty', String(Number(generationParams.presence_penalty) || 0));
+    retryForm.append('context', serializedContext);
+    return retryForm;
+  }, { timeoutMs });
+  const response = request && request.response;
+  const payload = request && request.payload;
+  const endpoint = request && request.endpoint;
   if (!response.ok) {
     let message = (payload && payload.error) || `Ошибка сервера (${response.status})`;
     if (response.status === 429) {
@@ -497,7 +562,7 @@ async function requestAssistantReply(userMessage, context, history) {
       const model = String((payload && payload.model) || resolveAiModel(context) || 'не выбрана');
       message = `Слишком много запросов (429). Подождите ${retryAfterSeconds} сек и повторите. Модель: ${model}.`;
     }
-    const error = new Error(message);
+    const error = new Error(`${message}. Endpoint: ${endpoint || 'неизвестно'}`);
     if (payload && payload.code) error.code = String(payload.code);
     if (payload && Array.isArray(payload.availableModels)) error.availableModels = payload.availableModels;
     if (response.status === 429) {
@@ -509,7 +574,15 @@ async function requestAssistantReply(userMessage, context, history) {
     }
     throw error;
   }
-  const assistantText = sanitizeAssistantText(parseAiPayload(payload));
+  if (!payload) {
+    throw new Error(`Сервис вернул некорректный JSON. Endpoint: ${endpoint || 'неизвестно'}`);
+  }
+  let assistantText = '';
+  try {
+    assistantText = sanitizeAssistantText(parseAiPayload(payload));
+  } catch (error) {
+    throw withEndpointError(error, endpoint, 'ИИ временно недоступен');
+  }
   if (!assistantText) {
     throw new Error('ИИ вернул пустой ответ');
   }
