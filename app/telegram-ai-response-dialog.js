@@ -1,4 +1,4 @@
-const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v6';
+const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v7';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
 const DOCS_API_ENDPOINT = '/js/documents/api-docs.php';
 const DOCX_TEMPLATE_URLS = ['/app/templates/template.docx', '/templates/template.docx', './templates/template.docx', 'templates/template.docx'];
@@ -39,17 +39,17 @@ function ensureAiDialogStyles() {
   style.id = DIALOG_STYLE_ID;
   style.textContent = `
     .appdosc-ai-dialog{position:fixed;inset:0;z-index:2500;display:flex;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}
-    .appdosc-ai-dialog__panel{width:min(920px,100%);height:100dvh;margin:auto;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.96),rgba(255,255,255,.9));border:1px solid rgba(255,255,255,.8);box-shadow:0 20px 45px rgba(15,23,42,.2);overflow:hidden;border-radius:20px 20px 0 0}
-    .appdosc-ai-dialog__header{padding:10px 12px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(148,163,184,.2)}
-    .appdosc-ai-dialog__title{font-size:16px;font-weight:700;color:#0f172a}
-    .appdosc-ai-dialog__subtitle{font-size:12px;color:#64748b;margin-top:2px}
-    .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,#f8fafc,#f1f5f9)}
-    .appdosc-ai-dialog__bubble{max-width:92%;padding:8px 10px;border-radius:12px;line-height:1.45;font-size:12px;white-space:pre-wrap;word-break:break-word;color:#0f172a}
+    .appdosc-ai-dialog__panel{width:min(760px,100%);height:100dvh;margin:auto;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(255,255,255,.88));border:1px solid rgba(255,255,255,.82);box-shadow:0 20px 45px rgba(15,23,42,.15);overflow:hidden;border-radius:20px 20px 0 0}
+    .appdosc-ai-dialog__header{padding:9px 10px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(148,163,184,.2)}
+    .appdosc-ai-dialog__title{font-size:15px;font-weight:700;color:#0f172a}
+    .appdosc-ai-dialog__subtitle{font-size:11px;color:#64748b;margin-top:2px}
+    .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,#f8fafc,#f1f5f9)}
+    .appdosc-ai-dialog__bubble{max-width:94%;padding:7px 9px;border-radius:12px;line-height:1.4;font-size:12px;white-space:pre-wrap;word-break:break-word;color:#0f172a}
     .appdosc-ai-dialog__bubble--assistant{align-self:flex-start;background:#ffffff;border:1px solid rgba(148,163,184,.3)}
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
-    .appdosc-ai-dialog__composer{padding:10px calc(10px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px)}
-    .appdosc-ai-dialog__model{width:100%;min-height:40px;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;background:#fff;color:#0f172a}
-    .appdosc-ai-dialog__input{min-height:64px;max-height:160px;resize:none;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;outline:none}
+    .appdosc-ai-dialog__composer{padding:8px calc(10px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px)}
+    .appdosc-ai-dialog__model{width:100%;min-height:36px;border:1px solid rgba(148,163,184,.32);border-radius:10px;padding:7px 9px;font-size:12px;background:#fff;color:#0f172a}
+    .appdosc-ai-dialog__input{min-height:52px;max-height:124px;resize:none;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;outline:none}
     .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:5px}
     .appdosc-ai-dialog__attachments-toggle{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid rgba(148,163,184,.28);background:rgba(255,255,255,.85);color:#0f172a;border-radius:11px;padding:8px 10px;font-size:12px;font-weight:600}
     .appdosc-ai-dialog__attachments-body{display:flex;flex-direction:column;gap:5px;max-height:142px;overflow:auto;padding-right:2px}
@@ -62,8 +62,12 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__attachment-check input{accent-color:#2563eb}
     .appdosc-ai-dialog__attachment-name{font-size:11px;font-weight:600;color:#1e293b;word-break:break-word;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
     .appdosc-ai-dialog__attachment-meta{font-size:10px;color:#1e40af;white-space:nowrap;padding:2px 7px;border-radius:999px;background:rgba(219,234,254,.75)}
-    .appdosc-ai-dialog__buttons{display:flex;flex-wrap:wrap;gap:8px}
-    .appdosc-ai-dialog__btn{border:none;min-height:38px;padding:8px 12px;border-radius:12px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
+    .appdosc-ai-dialog__advanced{border:1px solid rgba(148,163,184,.24);border-radius:11px;background:rgba(255,255,255,.74)}
+    .appdosc-ai-dialog__advanced > summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:8px 10px;font-size:12px;color:#334155;font-weight:600}
+    .appdosc-ai-dialog__advanced > summary::-webkit-details-marker{display:none}
+    .appdosc-ai-dialog__advanced-body{padding:0 8px 8px;display:flex;flex-direction:column;gap:6px}
+    .appdosc-ai-dialog__buttons{display:flex;gap:6px}
+    .appdosc-ai-dialog__btn{border:none;min-height:36px;padding:8px 11px;border-radius:11px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
     .appdosc-ai-dialog__btn--ghost{background:rgba(148,163,184,.15);color:#0f172a}
     .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed}
     .appdosc-ai-dialog__file-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
@@ -85,7 +89,7 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__pdf-note{margin-top:10px;border:1px dashed rgba(148,163,184,.45);border-radius:12px;padding:10px;background:rgba(255,255,255,.86);font-size:12px;color:#334155}
     .appdosc-ai-dialog__status{font-size:12px;color:#64748b;padding:0 12px 8px}
     .appdosc-ai-dialog__sticky{position:fixed;left:0;right:0;bottom:0;z-index:3;display:flex;gap:8px;overflow:auto;padding:8px calc(10px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));background:rgba(255,255,255,.94);border-top:1px solid rgba(148,163,184,.2)}
-    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__btn{flex:1;min-height:48px;font-size:15px}}
+    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__btn{flex:1;min-height:42px;font-size:14px}}
   `;
   document.head.appendChild(style);
 }
@@ -721,14 +725,19 @@ function openAiResponseDialog(context = {}) {
   root.innerHTML = `
     <div class="appdosc-ai-dialog__panel">
       <div class="appdosc-ai-dialog__header">
-        <div><div class="appdosc-ai-dialog__title">Ответ с помощью ИИ</div><div class="appdosc-ai-dialog__subtitle">Выберите файлы и получите решение</div></div>
+        <div><div class="appdosc-ai-dialog__title">Ответ с помощью ИИ</div><div class="appdosc-ai-dialog__subtitle">Компактный режим: только главное</div></div>
         <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-close>Закрыть</button>
       </div>
       <div class="appdosc-ai-dialog__messages" data-messages></div>
       <div class="appdosc-ai-dialog__composer">
-        <div class="appdosc-ai-dialog__attachments" data-attachments hidden></div>
-        <select class="appdosc-ai-dialog__model" data-model aria-label="Модель ИИ"></select>
-        <textarea class="appdosc-ai-dialog__input" data-input placeholder="Введите запрос для ИИ"></textarea>
+        <textarea class="appdosc-ai-dialog__input" data-input placeholder="Коротко напишите задачу для ответа"></textarea>
+        <details class="appdosc-ai-dialog__advanced">
+          <summary><span>Файлы и модель</span><span>▾</span></summary>
+          <div class="appdosc-ai-dialog__advanced-body">
+            <select class="appdosc-ai-dialog__model" data-model aria-label="Модель ИИ"></select>
+            <div class="appdosc-ai-dialog__attachments" data-attachments hidden></div>
+          </div>
+        </details>
         <div class="appdosc-ai-dialog__buttons">
           <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-auto-decision>Сгенерировать решение</button>
           <button type="button" class="appdosc-ai-dialog__btn" data-send>Отправить</button>
