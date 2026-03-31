@@ -391,31 +391,17 @@ function extractPartyByLabel(text, labelVariants) {
 
 function buildTelegramBriefSections(payload, sourceText) {
   const analysis = payload && payload.analysis ? cleanTelegramSentence(payload.analysis) : '';
-  const responseText = payload && payload.response ? cleanTelegramSentence(payload.response) : '';
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
-  const blockResponseText = block && block.response ? cleanTelegramSentence(block.response) : '';
   const aiActions = sanitizeTelegramAiList(block.required_actions, 5);
   const aiRequirements = sanitizeTelegramAiList(block.requirements, 4);
-  const fallbackResponse = responseText || blockResponseText;
-  const actions = aiActions.length ? aiActions : (getTelegramSentencePool(fallbackResponse).slice(0, 5).length
-    ? getTelegramSentencePool(fallbackResponse).slice(0, 5)
-    : pickTelegramFactsFromText(sourceText, 5));
-  const requirements = aiRequirements.length ? aiRequirements : (getTelegramSentencePool(fallbackResponse).slice(0, 6)
-    .filter((line) => !actions.includes(line))
-    .slice(0, 4).length
-    ? getTelegramSentencePool(fallbackResponse).slice(0, 6).filter((line) => !actions.includes(line)).slice(0, 4)
-    : buildTelegramStepsFallback(sourceText, 4));
-  const risks = Array.isArray(block && block.risks) ? block.risks : [];
-  const partiesFromRisks = risks
-    .map((line) => cleanTelegramSentence(line))
-    .find((line) => /^отправитель\s*:/i.test(line) || /^кто\s+прислал\s*:/i.test(line));
+  const actions = aiActions.length ? aiActions : pickTelegramFactsFromText(sourceText, 5);
+  const requirements = aiRequirements.length ? aiRequirements : buildTelegramStepsFallback(sourceText, 4);
   const sender = extractPartyByLabel(sourceText, ['отправитель', 'sender', 'from']);
   const recipient = extractPartyByLabel(sourceText, ['получатель', 'адресат', 'recipient', 'to']);
   const participants = `Отправитель: ${sender || 'не указано в файле'}; Получатель: ${recipient || 'не указано в файле'}`;
   return {
-    analysis: !isWeakTelegramAnalysis(analysis) ? analysis : (fallbackResponse || buildTelegramAnalysisFallback(sourceText)),
-    responseText: fallbackResponse,
-    participants: partiesFromRisks || participants,
+    analysis: !isWeakTelegramAnalysis(analysis) ? analysis : buildTelegramAnalysisFallback(sourceText),
+    participants,
     actions,
     requirements,
   };
@@ -434,10 +420,6 @@ function renderTelegramBriefPreview(container, payload, sourceText) {
     <section class="appdosc-brief-ai__section">
       <h4>О чем файл</h4>
       <p>${escapeHtml(sections.analysis)}</p>
-    </section>
-    <section class="appdosc-brief-ai__section">
-      <h4>Что решил ИИ</h4>
-      <p>${escapeHtml(sections.responseText || 'Отдельный текстовый вывод не вернулся от ИИ.')}</p>
     </section>
     <section class="appdosc-brief-ai__section">
       <h4>Отправитель и получатель</h4>
