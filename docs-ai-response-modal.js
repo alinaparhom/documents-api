@@ -359,6 +359,8 @@
       '.ai-chat-modal__export-btn:hover{background:#e2e8f0;}' +
       '.ai-chat-modal__template-btn{min-width:130px;}' +
       '.ai-chat-template-viewer{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;}' +
+      '.ai-chat-template-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}' +
+      '.ai-chat-template-file-meta{font-size:12px;color:#475569;}' +
       '.ai-chat-template-tabs{display:flex;gap:8px;flex-wrap:wrap;}' +
       '.ai-chat-template-editor{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;}' +
       '.ai-chat-editor{border:1px solid rgba(148,163,184,.35);border-radius:14px;background:rgba(255,255,255,.88);backdrop-filter:blur(6px);overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.7);display:flex;flex-direction:column;min-height:0;}' +
@@ -1115,10 +1117,50 @@
     templatePanel.style.borderRadius = '0';
     templateModal.content.style.height = '100%';
     templateModal.content.style.minHeight = '0';
-    templateModal.content.style.padding = '10px';
+    templateModal.content.style.padding = '8px';
+    var templatePreviewModal = createOverlayModal('Предпросмотр шаблона');
+    templatePreviewModal.overlay.style.padding = '0';
+    templatePreviewModal.overlay.style.alignItems = 'stretch';
+    templatePreviewModal.overlay.style.justifyContent = 'stretch';
+    var templatePreviewPanel = templatePreviewModal.content.parentNode;
+    templatePreviewPanel.style.width = '100vw';
+    templatePreviewPanel.style.height = '100vh';
+    templatePreviewPanel.style.maxWidth = '100vw';
+    templatePreviewPanel.style.maxHeight = '100vh';
+    templatePreviewPanel.style.borderRadius = '0';
+    templatePreviewModal.content.style.height = '100%';
+    templatePreviewModal.content.style.minHeight = '0';
+    templatePreviewModal.content.style.padding = '0';
+    var templatePreviewFrameFull = document.createElement('iframe');
+    templatePreviewFrameFull.className = 'ai-chat-template-frame';
+    templatePreviewFrameFull.title = 'Полный предпросмотр DOCX шаблона';
+    templatePreviewFrameFull.style.height = '100%';
+    templatePreviewModal.content.appendChild(templatePreviewFrameFull);
 
     var templateViewer = createElement('div', 'ai-chat-template-viewer');
     var templateInfo = createElement('div', 'ai-chat-modal__empty', 'Загрузка шаблонов...');
+    var templateTopActions = createElement('div', 'ai-chat-template-actions');
+    var templateUploadButton = createElement('button', 'ai-chat-modal__send', 'Открыть мой шаблон DOCX');
+    var insertAiTextButton = createElement('button', 'ai-chat-modal__export-btn', 'Вставить текст ИИ');
+    var fullPreviewButton = createElement('button', 'ai-chat-modal__export-btn', 'Полный предпросмотр');
+    var templateMarkerInput = createElement('input', 'ai-chat-modal__input');
+    var templateFileMeta = createElement('div', 'ai-chat-template-file-meta', 'Шаблон: по умолчанию');
+    var templateFileInput = document.createElement('input');
+    templateUploadButton.type = 'button';
+    insertAiTextButton.type = 'button';
+    fullPreviewButton.type = 'button';
+    templateMarkerInput.type = 'text';
+    templateMarkerInput.value = 'Текст';
+    templateMarkerInput.style.display = 'none';
+    templateFileInput.type = 'file';
+    templateFileInput.accept = '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    templateFileInput.style.display = 'none';
+    templateTopActions.appendChild(templateUploadButton);
+    templateTopActions.appendChild(insertAiTextButton);
+    templateTopActions.appendChild(fullPreviewButton);
+    templateTopActions.appendChild(templateFileMeta);
+    templateTopActions.appendChild(templateMarkerInput);
+    templateTopActions.appendChild(templateFileInput);
     var templateTabs = createElement('div', 'ai-chat-template-tabs');
     var templateDocxTab = createElement('button', 'ai-chat-modal__send', 'DOCX');
     var templatePdfTab = createElement('button', 'ai-chat-modal__export-btn', 'PDF');
@@ -1126,6 +1168,7 @@
     templatePdfTab.type = 'button';
     templateTabs.appendChild(templateDocxTab);
     templateTabs.appendChild(templatePdfTab);
+    templateTabs.hidden = true;
     var templateEditor = createElement('div', 'ai-chat-template-editor');
     var templateEditorInstance = createRichEditor('Вставьте или напишите текст для шаблона...', { fullHeight: true });
     var templateActions = createElement('div', 'ai-chat-editor__toolbar');
@@ -1163,6 +1206,7 @@
     templateSurface.appendChild(templatePdfFrame);
     templateSurfaceWrap.appendChild(templateSurfaceSummary);
     templateSurfaceWrap.appendChild(templateSurface);
+    templateSurfaceWrap.hidden = true;
 
     var templatePreviewWrap = createElement('details', 'ai-chat-template-preview-wrap');
     var templatePreviewSummary = document.createElement('summary');
@@ -1170,8 +1214,10 @@
     var templatePreview = createElement('div', 'ai-chat-template-editor-preview', 'Текст для вставки появится здесь.');
     templatePreviewWrap.appendChild(templatePreviewSummary);
     templatePreviewWrap.appendChild(templatePreview);
+    templatePreviewWrap.hidden = true;
 
     templateViewer.appendChild(templateInfo);
+    templateViewer.appendChild(templateTopActions);
     templateViewer.appendChild(templateTabs);
     templateViewer.appendChild(templateEditor);
     templateViewer.appendChild(templateSurfaceWrap);
@@ -1184,7 +1230,8 @@
       pdfLoaded: false,
       docxUrl: '',
       pdfUrl: '',
-      editedText: ''
+      editedText: '',
+      customTemplateObjectUrl: ''
     };
     window.templateEditorInstance = templateEditorInstance;
     var templateDocxCandidates = [
@@ -1330,7 +1377,10 @@
       }
       var srcAbsolute = absoluteUrl(templateState.docxUrl);
       templateDocxFrame.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(srcAbsolute);
-      templateInfo.textContent = 'DOCX загружен: ' + templateState.docxUrl;
+      templateInfo.textContent = 'Шаблон загружен. Ответ ИИ будет вставлен в поле «Текст».';
+      if (!templateState.customTemplateObjectUrl) {
+        templateFileMeta.textContent = 'Шаблон: по умолчанию';
+      }
       templateState.docxLoaded = true;
     }
 
@@ -1362,16 +1412,20 @@
       buttonEl.textContent = 'Генерация...';
       try {
         var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-        var params = new URLSearchParams();
-        params.set('action', 'generate_from_editor');
-        params.set('format', format);
-        params.set('html', structuredHtml);
-        params.set('documentTitle', config.documentTitle || 'template');
+        var markerValue = String(templateMarkerInput.value || '{{AI_RESPONSE}}').trim() || '{{AI_RESPONSE}}';
+        var formData = new FormData();
+        formData.append('action', 'generate_from_html');
+        formData.append('format', format);
+        formData.append('html', structuredHtml);
+        formData.append('documentTitle', config.documentTitle || 'template');
+        formData.append('placeholders', JSON.stringify([markerValue, '{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']));
+        if (state.templateFile && state.templateFile.fileObject) {
+          formData.append('templateFile', state.templateFile.fileObject, state.templateFile.fileObject.name || 'template.docx');
+        }
         var response = await fetch(apiUrl, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-          body: params.toString()
+          body: formData
         });
         if (!response.ok) {
           throw new Error('Ошибка экспорта (' + response.status + ')');
@@ -1402,6 +1456,46 @@
       }
       templatePreview.innerHTML = normalizeEditorHtml(templateEditorInstance.getHTML(), templateState.editedText);
       templateInfo.textContent = 'Текст обновлён. Можно скачать DOCX или PDF.';
+    });
+    templateUploadButton.addEventListener('click', function () {
+      templateFileInput.click();
+    });
+    fullPreviewButton.addEventListener('click', async function () {
+      await loadTemplateDocx();
+      if (templateDocxFrame && templateDocxFrame.src) {
+        templatePreviewFrameFull.src = templateDocxFrame.src;
+      }
+      openOverlay(templatePreviewModal);
+    });
+    templateFileInput.addEventListener('change', function (event) {
+      var selectedFile = event && event.target && event.target.files ? event.target.files[0] : null;
+      if (!selectedFile) {
+        return;
+      }
+      if (templateState.customTemplateObjectUrl) {
+        URL.revokeObjectURL(templateState.customTemplateObjectUrl);
+        templateState.customTemplateObjectUrl = '';
+      }
+      templateState.customTemplateObjectUrl = URL.createObjectURL(selectedFile);
+      templateState.docxUrl = templateState.customTemplateObjectUrl;
+      templateState.docxLoaded = false;
+      state.templateFile = { fileObject: selectedFile, name: selectedFile.name || 'template.docx' };
+      templateFileMeta.textContent = 'Шаблон: ' + (selectedFile.name || 'template.docx');
+      setTemplateTab('docx');
+      loadTemplateDocx();
+      templateInfo.textContent = 'Шаблон открыт. Ответ ИИ будет вставлен в поле «Текст».';
+      templateFileInput.value = '';
+    });
+    insertAiTextButton.addEventListener('click', function () {
+      var aiText = String(state.lastAssistantMessage || '').trim();
+      if (!aiText) {
+        templateInfo.textContent = 'Сначала получите ответ от ИИ, затем нажмите «Вставить текст ИИ».';
+        return;
+      }
+      templateEditorInstance.setText(aiText);
+      templateState.editedText = aiText;
+      templatePreview.innerHTML = normalizeEditorHtml(templateEditorInstance.getHTML(), aiText);
+      templateInfo.textContent = 'Текст ИИ вставлен в редактор. Нажмите «Применить» или сразу экспортируйте.';
     });
     templateEditorInstance.surface.addEventListener('input', function () {
       templateState.editedText = String(templateEditorInstance.getText() || '');
@@ -1634,6 +1728,10 @@
       document.removeEventListener('keydown', onEsc);
       clearRetryCountdown();
       hiddenInput.value = '';
+      if (templateState && templateState.customTemplateObjectUrl) {
+        URL.revokeObjectURL(templateState.customTemplateObjectUrl);
+        templateState.customTemplateObjectUrl = '';
+      }
       closeWithAnimation(root);
     }
 
