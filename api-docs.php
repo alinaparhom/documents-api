@@ -336,6 +336,38 @@ function withRetryPayload(int $retryAfterSeconds): array
     ];
 }
 
+function getAiCachePath(string $name): string
+{
+    $directory = __DIR__ . '/app/cache';
+    if (!is_dir($directory)) {
+        @mkdir($directory, 0775, true);
+    }
+    return $directory . '/' . $name . '.json';
+}
+
+function readJsonCache(string $name): array
+{
+    $path = getAiCachePath($name);
+    if (!is_file($path)) {
+        return [];
+    }
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || $raw === '') {
+        return [];
+    }
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function writeJsonCache(string $name, array $payload): void
+{
+    $path = getAiCachePath($name);
+    @file_put_contents(
+        $path,
+        json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE)
+    );
+}
+
 function buildModelAvailabilityRows(array $models, array $env): array
 {
     $normalizedModels = [];
@@ -360,8 +392,25 @@ function buildModelAvailabilityRows(array $models, array $env): array
     }
 
     $endpoint = rtrim($baseUrl, '/') . '/chat/completions';
+    $cacheTtl = normalizeIntSetting($env['AI_MODELS_CACHE_TTL'] ?? 600, 600, 60, 3600);
+    $cacheKey = hash('sha256', implode('|', [
+        $endpoint,
+        implode(',', $normalizedModels),
+        substr(hash('sha256', $apiKey), 0, 12),
+    ]));
+    $cache = readJsonCache('ai-model-health');
+    $cachedRows = [];
+    $cachedAt = (int)($cache[$cacheKey]['timestamp'] ?? 0);
+    if ($cachedAt > 0 && (time() - $cachedAt) <= $cacheTtl) {
+        $cachedRows = $cache[$cacheKey]['rows'] ?? [];
+    }
+
     $result = [];
     foreach ($normalizedModels as $modelName) {
+        if (isset($cachedRows[$modelName]) && is_array($cachedRows[$modelName])) {
+            $result[] = $cachedRows[$modelName];
+            continue;
+        }
         $probeBody = [
             'model' => $modelName,
             'max_tokens' => 1,
@@ -370,7 +419,12 @@ function buildModelAvailabilityRows(array $models, array $env): array
                 ['role' => 'user', 'content' => 'ping'],
             ],
         ];
-        $requestResult = performAiRequest($endpoint, $apiKey, $probeBody);
+        $requestResult = performAiRequestWithRetry($endpoint, $apiKey, $probeBody, [
+            'timeout' => 20,
+            'connect_timeout' => 8,
+            'attempts' => 2,
+            'base_delay_ms' => 400,
+        ]);
         $statusCode = (int)($requestResult['status'] ?? 0);
         $bodyRaw = $requestResult['body'];
         $curlError = trim((string)($requestResult['curl_error'] ?? ''));
@@ -380,23 +434,30 @@ function buildModelAvailabilityRows(array $models, array $env): array
 
         if (!$isAvailable) {
             if ($curlError !== '') {
-                $reason = 'Ошибка сети/API';
-                $code = 'NETWORK_ERROR';
+                $reason = 'Проверка заняла слишком много времени, модель доступна без строгой проверки';
+                $code = 'HEALTHCHECK_TIMEOUT';
+                $isAvailable = true;
             } else {
                 $decoded = is_string($bodyRaw) ? json_decode($bodyRaw, true) : [];
                 $providerError = textFromMixed($decoded['error']['message'] ?? '');
-                if ($statusCode === 429 || stripos($providerError, 'quota') !== false || stripos($providerError, 'rate') !== false) {
-                    $reason = 'Лимит исчерпан на сегодня';
-                    $code = 'DAILY_LIMIT';
-                } elseif ($statusCode === 404 || stripos($providerError, 'not found') !== false || stripos($providerError, 'does not exist') !== false) {
+                if ($statusCode === 404 || stripos($providerError, 'not found') !== false || stripos($providerError, 'does not exist') !== false) {
                     $reason = 'Модель не найдена у провайдера';
                     $code = 'MODEL_NOT_FOUND';
+                } elseif ($statusCode === 401 || $statusCode === 403) {
+                    $reason = 'Проверьте API ключ и права доступа к модели';
+                    $code = 'ACCESS_DENIED';
+                } elseif ($statusCode === 429 || $statusCode >= 500 || $statusCode === 408 || stripos($providerError, 'quota') !== false || stripos($providerError, 'rate') !== false) {
+                    $reason = 'Временная ошибка проверки, попробуйте снова';
+                    $code = 'HEALTHCHECK_TEMPORARY';
+                    $isAvailable = true;
                 } elseif ($statusCode === 503 || stripos($providerError, 'not available') !== false) {
-                    $reason = 'Временно недоступна';
-                    $code = 'MODEL_UNAVAILABLE';
+                    $reason = 'Временная ошибка проверки, попробуйте снова';
+                    $code = 'HEALTHCHECK_TEMPORARY';
+                    $isAvailable = true;
                 } else {
-                    $reason = $providerError !== '' ? mb_substr($providerError, 0, 140) : 'Проверка не пройдена';
-                    $code = 'CHECK_FAILED';
+                    $reason = 'Проверка не подтверждена, но модель оставлена доступной';
+                    $code = 'HEALTHCHECK_UNKNOWN';
+                    $isAvailable = true;
                 }
             }
         }
@@ -413,7 +474,13 @@ function buildModelAvailabilityRows(array $models, array $env): array
             $entry['statusCode'] = $code;
         }
         $result[] = $entry;
+        $cachedRows[$modelName] = $entry;
     }
+    $cache[$cacheKey] = [
+        'timestamp' => time(),
+        'rows' => $cachedRows,
+    ];
+    writeJsonCache('ai-model-health', $cache);
     return $result;
 }
 
@@ -2451,6 +2518,9 @@ if (!$isGroq && !$isGoogleOpenAiCompat) {
 $endpoint = rtrim($baseUrl, '/') . '/chat/completions';
 function performAiRequest(string $endpoint, string $apiKey, array $body): array
 {
+    $timeout = normalizeIntSetting($body['_request_timeout'] ?? 90, 90, 10, 300);
+    $connectTimeout = normalizeIntSetting($body['_connect_timeout'] ?? 10, 10, 3, 60);
+    unset($body['_request_timeout'], $body['_connect_timeout']);
     $ch = curl_init($endpoint);
     if ($ch === false) {
         return ['status' => 500, 'body' => false, 'curl_error' => 'Не удалось инициализировать cURL'];
@@ -2464,7 +2534,8 @@ function performAiRequest(string $endpoint, string $apiKey, array $body): array
             'Content-Type: application/json',
         ],
         CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        CURLOPT_TIMEOUT => 90,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => $connectTimeout,
     ]);
 
     $responseBody = curl_exec($ch);
@@ -2475,7 +2546,42 @@ function performAiRequest(string $endpoint, string $apiKey, array $body): array
     return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
 }
 
-$requestResult = performAiRequest($endpoint, $apiKey, $body);
+function performAiRequestWithRetry(string $endpoint, string $apiKey, array $body, array $options = []): array
+{
+    $attempts = normalizeIntSetting($options['attempts'] ?? 2, 2, 1, 5);
+    $baseDelayMs = normalizeIntSetting($options['base_delay_ms'] ?? 500, 500, 100, 3000);
+    $timeout = normalizeIntSetting($options['timeout'] ?? 90, 90, 10, 300);
+    $connectTimeout = normalizeIntSetting($options['connect_timeout'] ?? 10, 10, 3, 60);
+    $retryStatuses = [408, 425, 429, 500, 502, 503, 504];
+    $lastResult = ['status' => 0, 'body' => false, 'curl_error' => ''];
+
+    for ($attempt = 1; $attempt <= $attempts; $attempt += 1) {
+        $requestBody = $body;
+        $requestBody['_request_timeout'] = $timeout;
+        $requestBody['_connect_timeout'] = $connectTimeout;
+        $lastResult = performAiRequest($endpoint, $apiKey, $requestBody);
+        $statusCode = (int)($lastResult['status'] ?? 0);
+        $curlError = trim((string)($lastResult['curl_error'] ?? ''));
+        $shouldRetry = $curlError !== '' || in_array($statusCode, $retryStatuses, true);
+        if (!$shouldRetry || $attempt >= $attempts) {
+            return $lastResult;
+        }
+        $sleepMs = $baseDelayMs * (2 ** ($attempt - 1));
+        usleep($sleepMs * 1000);
+    }
+
+    return $lastResult;
+}
+
+$requestAttempts = normalizeIntSetting($env['AI_REQUEST_RETRY_ATTEMPTS'] ?? 2, 2, 1, 5);
+$requestTimeout = normalizeIntSetting($env['AI_REQUEST_TIMEOUT'] ?? 120, 120, 20, 300);
+$connectTimeout = normalizeIntSetting($env['AI_CONNECT_TIMEOUT'] ?? 12, 12, 3, 60);
+$requestResult = performAiRequestWithRetry($endpoint, $apiKey, $body, [
+    'attempts' => $requestAttempts,
+    'timeout' => $requestTimeout,
+    'connect_timeout' => $connectTimeout,
+    'base_delay_ms' => 500,
+]);
 $responseBody = $requestResult['body'];
 $curlError = (string)$requestResult['curl_error'];
 $statusCode = (int)$requestResult['status'];
@@ -2514,7 +2620,12 @@ if ($statusCode >= 400) {
             $retryBody['frequency_penalty']
         );
         $retryBody['max_tokens'] = min((int)($generationSettings['max_tokens'] ?? 1800), 1800);
-        $retryResult = performAiRequest($endpoint, $apiKey, $retryBody);
+        $retryResult = performAiRequestWithRetry($endpoint, $apiKey, $retryBody, [
+            'attempts' => $requestAttempts,
+            'timeout' => $requestTimeout,
+            'connect_timeout' => $connectTimeout,
+            'base_delay_ms' => 500,
+        ]);
         $retryResponseBody = $retryResult['body'];
         $retryCurlError = (string)$retryResult['curl_error'];
         $retryStatusCode = (int)$retryResult['status'];
