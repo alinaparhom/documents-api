@@ -1112,12 +1112,17 @@
       };
     });
 
+    var generationParams = state.generationParams || {};
     var generationParameters = {
-      temperature: 0.7,
-      top_p: 1,
-      frequency_penalty: 0,
-      presence_penalty: 0
+      temperature: Number(generationParams.temperature),
+      top_p: Number(generationParams.top_p),
+      frequency_penalty: Number(generationParams.frequency_penalty),
+      presence_penalty: Number(generationParams.presence_penalty)
     };
+    if (!Number.isFinite(generationParameters.temperature)) generationParameters.temperature = 0.7;
+    if (!Number.isFinite(generationParameters.top_p)) generationParameters.top_p = 1;
+    if (!Number.isFinite(generationParameters.frequency_penalty)) generationParameters.frequency_penalty = 0;
+    if (!Number.isFinite(generationParameters.presence_penalty)) generationParameters.presence_penalty = 0;
     context.parameters = generationParameters;
 
     var formData = new FormData();
@@ -1127,11 +1132,10 @@
     if (state.model) {
       formData.append('model', state.model);
     }
-    var generationParams = state.generationParams || { temperature: 0.7, top_p: 1, frequency_penalty: 0, presence_penalty: 0 };
-    formData.append('temperature', String(generationParams.temperature));
-    formData.append('top_p', String(generationParams.top_p));
-    formData.append('frequency_penalty', String(generationParams.frequency_penalty));
-    formData.append('presence_penalty', String(generationParams.presence_penalty));
+    formData.append('temperature', String(generationParameters.temperature));
+    formData.append('top_p', String(generationParameters.top_p));
+    formData.append('frequency_penalty', String(generationParameters.frequency_penalty));
+    formData.append('presence_penalty', String(generationParameters.presence_penalty));
     formData.append('responseStyle', state.responseStyle);
     var behaviorText = String(state.aiBehavior || '').trim();
     if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
@@ -1141,10 +1145,6 @@
       behaviorText = behaviorText.slice(0, 10000);
     }
     formData.append('aiBehavior', behaviorText);
-    formData.append('temperature', String(generationParameters.temperature));
-    formData.append('top_p', String(generationParameters.top_p));
-    formData.append('frequency_penalty', String(generationParameters.frequency_penalty));
-    formData.append('presence_penalty', String(generationParameters.presence_penalty));
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
