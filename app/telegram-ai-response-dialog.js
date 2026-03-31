@@ -209,10 +209,23 @@ async function fetchAvailableModels() {
   try {
     const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok !== true) return MODEL_FALLBACK_OPTIONS.slice();
-    return normalizeModelList(payload.models);
+    if (!response.ok || !payload || payload.ok !== true) {
+      return {
+        models: MODEL_FALLBACK_OPTIONS.slice(),
+        defaultModel: DEFAULT_AI_MODEL,
+      };
+    }
+    const models = normalizeModelList(payload.models);
+    const defaultModel = String(payload.defaultModel || '').trim() || DEFAULT_AI_MODEL;
+    if (!models.some((item) => item.value === defaultModel)) {
+      models.unshift({ value: defaultModel, label: defaultModel });
+    }
+    return { models, defaultModel };
   } catch (_) {
-    return MODEL_FALLBACK_OPTIONS.slice();
+    return {
+      models: MODEL_FALLBACK_OPTIONS.slice(),
+      defaultModel: DEFAULT_AI_MODEL,
+    };
   }
 }
 
@@ -1113,10 +1126,16 @@ function openAiResponseDialog(context = {}) {
       state.responseStyle = String(responseStyleSelect.value || 'neutral');
     });
   }
-  fetchAvailableModels().then((models) => {
-    state.availableModels = normalizeModelList(models);
-    if (!state.availableModels.some((entry) => entry.value === state.selectedModel)) {
-      state.selectedModel = state.availableModels[0] ? state.availableModels[0].value : DEFAULT_AI_MODEL;
+  fetchAvailableModels().then((modelPayload) => {
+    const nextModels = normalizeModelList(modelPayload && modelPayload.models);
+    const defaultModel = String(modelPayload && modelPayload.defaultModel || '').trim();
+    state.availableModels = nextModels;
+    const hasCurrent = state.availableModels.some((entry) => entry.value === state.selectedModel);
+    if (!hasCurrent) {
+      const modelFromServer = state.availableModels.find((entry) => entry.value === defaultModel);
+      state.selectedModel = modelFromServer
+        ? modelFromServer.value
+        : (state.availableModels[0] ? state.availableModels[0].value : DEFAULT_AI_MODEL);
     }
     if (modelSelect) {
       modelSelect.textContent = '';
