@@ -555,7 +555,7 @@ function openAiResponseDialog(context = {}) {
     responseStyle: 'neutral',
     selectedModel: resolveAiModel(context),
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
-    rateLimitUntil: 0,
+    rateLimits: {},
     rateLimitTimer: null,
   };
 
@@ -611,14 +611,23 @@ function openAiResponseDialog(context = {}) {
   const rateLimitHint = root.querySelector('[data-rate-limit-hint]');
   const sendBtn = root.querySelector('[data-send]');
 
-  const getRateLimitSecondsLeft = () => Math.max(0, Math.ceil((state.rateLimitUntil - Date.now()) / 1000));
+  const getRateLimitSecondsLeft = (modelName = state.selectedModel) => {
+    const key = String(modelName || '').trim();
+    const until = Number(state.rateLimits[key] || 0);
+    return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+  };
+  const setModelRateLimit = (modelName, waitSeconds) => {
+    const key = String(modelName || '').trim() || String(state.selectedModel || '').trim();
+    const seconds = Math.max(5, Number(waitSeconds) || 30);
+    state.rateLimits[key] = Date.now() + (seconds * 1000);
+  };
   const applyRateLimitState = () => {
-    const locked = getRateLimitSecondsLeft() > 0;
+    const locked = getRateLimitSecondsLeft(state.selectedModel) > 0;
     if (locked) {
-      const seconds = getRateLimitSecondsLeft();
+      const seconds = getRateLimitSecondsLeft(state.selectedModel);
       if (rateLimitHint) {
         rateLimitHint.hidden = false;
-        rateLimitHint.textContent = `Лимит запросов. Подождите ${seconds} сек, затем отправьте снова.`;
+        rateLimitHint.textContent = `Лимит у модели ${state.selectedModel}: подождите ${seconds} сек или переключите модель.`;
       }
       sendBtn.disabled = true;
       autoDecisionBtn.disabled = true;
@@ -626,7 +635,7 @@ function openAiResponseDialog(context = {}) {
       if (!state.rateLimitTimer) {
         state.rateLimitTimer = setInterval(() => {
           if (state.destroyed) return;
-          if (getRateLimitSecondsLeft() <= 0) {
+          if (getRateLimitSecondsLeft(state.selectedModel) <= 0) {
             clearInterval(state.rateLimitTimer);
             state.rateLimitTimer = null;
             applyRateLimitState();
@@ -690,6 +699,7 @@ function openAiResponseDialog(context = {}) {
     if (!normalized) return;
     state.selectedModel = normalized;
     if (modelSelect) modelSelect.value = normalized;
+    applyRateLimitState();
   };
 
   const requestWithAutomaticModelFallback = async (prompt, extraContext, history) => {
@@ -1030,7 +1040,8 @@ function openAiResponseDialog(context = {}) {
       notify('warning', errorMessage);
       if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
         const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
-        state.rateLimitUntil = Date.now() + (waitSeconds * 1000);
+        const limitedModel = String(error && error.model || state.selectedModel || '').trim();
+        setModelRateLimit(limitedModel, waitSeconds);
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
@@ -1068,7 +1079,8 @@ function openAiResponseDialog(context = {}) {
       notify('warning', errorMessage);
       if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
         const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
-        state.rateLimitUntil = Date.now() + (waitSeconds * 1000);
+        const limitedModel = String(error && error.model || state.selectedModel || '').trim();
+        setModelRateLimit(limitedModel, waitSeconds);
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
@@ -1116,7 +1128,7 @@ function openAiResponseDialog(context = {}) {
       });
       modelSelect.value = state.selectedModel;
       modelSelect.addEventListener('change', () => {
-        state.selectedModel = String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL;
+        setSelectedModel(String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL);
       });
     }
   });
