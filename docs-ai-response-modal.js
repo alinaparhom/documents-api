@@ -1117,33 +1117,49 @@
     templatePanel.style.borderRadius = '0';
     templateModal.content.style.height = '100%';
     templateModal.content.style.minHeight = '0';
-    templateModal.content.style.padding = '10px';
+    templateModal.content.style.padding = '8px';
+    var templatePreviewModal = createOverlayModal('Предпросмотр шаблона');
+    templatePreviewModal.overlay.style.padding = '0';
+    templatePreviewModal.overlay.style.alignItems = 'stretch';
+    templatePreviewModal.overlay.style.justifyContent = 'stretch';
+    var templatePreviewPanel = templatePreviewModal.content.parentNode;
+    templatePreviewPanel.style.width = '100vw';
+    templatePreviewPanel.style.height = '100vh';
+    templatePreviewPanel.style.maxWidth = '100vw';
+    templatePreviewPanel.style.maxHeight = '100vh';
+    templatePreviewPanel.style.borderRadius = '0';
+    templatePreviewModal.content.style.height = '100%';
+    templatePreviewModal.content.style.minHeight = '0';
+    templatePreviewModal.content.style.padding = '0';
+    var templatePreviewFrameFull = document.createElement('iframe');
+    templatePreviewFrameFull.className = 'ai-chat-template-frame';
+    templatePreviewFrameFull.title = 'Полный предпросмотр DOCX шаблона';
+    templatePreviewFrameFull.style.height = '100%';
+    templatePreviewModal.content.appendChild(templatePreviewFrameFull);
 
     var templateViewer = createElement('div', 'ai-chat-template-viewer');
     var templateInfo = createElement('div', 'ai-chat-modal__empty', 'Загрузка шаблонов...');
     var templateTopActions = createElement('div', 'ai-chat-template-actions');
     var templateUploadButton = createElement('button', 'ai-chat-modal__send', 'Открыть мой шаблон DOCX');
     var insertAiTextButton = createElement('button', 'ai-chat-modal__export-btn', 'Вставить текст ИИ');
-    var copyMarkerButton = createElement('button', 'ai-chat-modal__export-btn', 'Копировать метку');
+    var fullPreviewButton = createElement('button', 'ai-chat-modal__export-btn', 'Полный предпросмотр');
     var templateMarkerInput = createElement('input', 'ai-chat-modal__input');
     var templateFileMeta = createElement('div', 'ai-chat-template-file-meta', 'Шаблон: по умолчанию');
     var templateFileInput = document.createElement('input');
     templateUploadButton.type = 'button';
     insertAiTextButton.type = 'button';
-    copyMarkerButton.type = 'button';
+    fullPreviewButton.type = 'button';
     templateMarkerInput.type = 'text';
-    templateMarkerInput.value = '{{AI_RESPONSE}}';
-    templateMarkerInput.placeholder = 'Метка в DOCX, например {{AI_RESPONSE}}';
-    templateMarkerInput.style.minWidth = '220px';
-    templateMarkerInput.style.flex = '1 1 220px';
+    templateMarkerInput.value = 'Текст';
+    templateMarkerInput.style.display = 'none';
     templateFileInput.type = 'file';
     templateFileInput.accept = '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     templateFileInput.style.display = 'none';
     templateTopActions.appendChild(templateUploadButton);
     templateTopActions.appendChild(insertAiTextButton);
-    templateTopActions.appendChild(copyMarkerButton);
-    templateTopActions.appendChild(templateMarkerInput);
+    templateTopActions.appendChild(fullPreviewButton);
     templateTopActions.appendChild(templateFileMeta);
+    templateTopActions.appendChild(templateMarkerInput);
     templateTopActions.appendChild(templateFileInput);
     var templateTabs = createElement('div', 'ai-chat-template-tabs');
     var templateDocxTab = createElement('button', 'ai-chat-modal__send', 'DOCX');
@@ -1152,6 +1168,7 @@
     templatePdfTab.type = 'button';
     templateTabs.appendChild(templateDocxTab);
     templateTabs.appendChild(templatePdfTab);
+    templateTabs.hidden = true;
     var templateEditor = createElement('div', 'ai-chat-template-editor');
     var templateEditorInstance = createRichEditor('Вставьте или напишите текст для шаблона...', { fullHeight: true });
     var templateActions = createElement('div', 'ai-chat-editor__toolbar');
@@ -1189,6 +1206,7 @@
     templateSurface.appendChild(templatePdfFrame);
     templateSurfaceWrap.appendChild(templateSurfaceSummary);
     templateSurfaceWrap.appendChild(templateSurface);
+    templateSurfaceWrap.hidden = true;
 
     var templatePreviewWrap = createElement('details', 'ai-chat-template-preview-wrap');
     var templatePreviewSummary = document.createElement('summary');
@@ -1196,6 +1214,7 @@
     var templatePreview = createElement('div', 'ai-chat-template-editor-preview', 'Текст для вставки появится здесь.');
     templatePreviewWrap.appendChild(templatePreviewSummary);
     templatePreviewWrap.appendChild(templatePreview);
+    templatePreviewWrap.hidden = true;
 
     templateViewer.appendChild(templateInfo);
     templateViewer.appendChild(templateTopActions);
@@ -1358,7 +1377,7 @@
       }
       var srcAbsolute = absoluteUrl(templateState.docxUrl);
       templateDocxFrame.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(srcAbsolute);
-      templateInfo.textContent = 'DOCX загружен: ' + templateState.docxUrl;
+      templateInfo.textContent = 'Шаблон загружен. Ответ ИИ будет вставлен в поле «Текст».';
       if (!templateState.customTemplateObjectUrl) {
         templateFileMeta.textContent = 'Шаблон: по умолчанию';
       }
@@ -1441,17 +1460,12 @@
     templateUploadButton.addEventListener('click', function () {
       templateFileInput.click();
     });
-    copyMarkerButton.addEventListener('click', function () {
-      var marker = String(templateMarkerInput.value || '{{AI_RESPONSE}}').trim() || '{{AI_RESPONSE}}';
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        navigator.clipboard.writeText(marker).then(function () {
-          templateInfo.textContent = 'Метка скопирована: ' + marker + '. Вставьте её в DOCX в нужное место.';
-        }).catch(function () {
-          templateInfo.textContent = 'Не удалось скопировать автоматически. Скопируйте метку вручную: ' + marker;
-        });
-      } else {
-        templateInfo.textContent = 'Скопируйте метку вручную: ' + marker;
+    fullPreviewButton.addEventListener('click', async function () {
+      await loadTemplateDocx();
+      if (templateDocxFrame && templateDocxFrame.src) {
+        templatePreviewFrameFull.src = templateDocxFrame.src;
       }
+      openOverlay(templatePreviewModal);
     });
     templateFileInput.addEventListener('change', function (event) {
       var selectedFile = event && event.target && event.target.files ? event.target.files[0] : null;
@@ -1469,7 +1483,7 @@
       templateFileMeta.textContent = 'Шаблон: ' + (selectedFile.name || 'template.docx');
       setTemplateTab('docx');
       loadTemplateDocx();
-      templateInfo.textContent = 'Шаблон открыт. Поставьте в DOCX метку ' + (templateMarkerInput.value || '{{AI_RESPONSE}}') + ' в нужном месте.';
+      templateInfo.textContent = 'Шаблон открыт. Ответ ИИ будет вставлен в поле «Текст».';
       templateFileInput.value = '';
     });
     insertAiTextButton.addEventListener('click', function () {
