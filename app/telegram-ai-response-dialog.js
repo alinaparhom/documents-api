@@ -203,10 +203,12 @@ function normalizeModelList(rawModels) {
       const available = !(entry && typeof entry === 'object' && entry.available === false);
       const reason = entry && typeof entry === 'object' ? String(entry.reason || '').trim() : '';
       const statusCode = entry && typeof entry === 'object' ? String(entry.statusCode || '').trim() : '';
+      const isDefault = Boolean(entry && typeof entry === 'object' && entry.isDefault === true);
       const statusLabel = available
         ? ''
         : ` — недоступна${reason ? ` (${reason})` : ''}`;
-      return { value, label: `${value}${statusLabel}`, available, reason, statusCode };
+      const defaultLabel = isDefault ? ' ★ активная (.env)' : '';
+      return { value, label: `${value}${defaultLabel}${statusLabel}`, available, reason, statusCode, isDefault };
     })
     .filter(Boolean);
 }
@@ -221,10 +223,15 @@ async function fetchAvailableModels() {
   try {
     const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok !== true) return MODEL_FALLBACK_OPTIONS.slice();
-    return normalizeModelList(payload.models);
+    if (!response.ok || !payload || payload.ok !== true) {
+      return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: DEFAULT_AI_MODEL };
+    }
+    return {
+      models: normalizeModelList(payload.models),
+      defaultModel: String(payload.defaultModel || '').trim(),
+    };
   } catch (_) {
-    return MODEL_FALLBACK_OPTIONS.slice();
+    return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: DEFAULT_AI_MODEL };
   }
 }
 
@@ -1053,9 +1060,15 @@ function openAiResponseDialog(context = {}) {
       state.responseStyle = String(responseStyleSelect.value || 'neutral');
     });
   }
-  fetchAvailableModels().then((models) => {
-    state.availableModels = normalizeModelList(models);
-    if (!state.availableModels.some((entry) => entry.value === state.selectedModel && entry.available !== false)) {
+  fetchAvailableModels().then((modelsPayload) => {
+    const models = modelsPayload && Array.isArray(modelsPayload.models)
+      ? modelsPayload.models
+      : normalizeModelList(modelsPayload);
+    const defaultModelFromEnv = String(modelsPayload && modelsPayload.defaultModel || '').trim();
+    state.availableModels = models;
+    if (defaultModelFromEnv && state.availableModels.some((entry) => entry.value === defaultModelFromEnv && entry.available !== false)) {
+      state.selectedModel = defaultModelFromEnv;
+    } else if (!state.availableModels.some((entry) => entry.value === state.selectedModel && entry.available !== false)) {
       state.selectedModel = pickFirstAvailableModel(state.availableModels);
     }
     if (modelSelect) {

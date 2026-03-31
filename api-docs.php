@@ -56,8 +56,18 @@ if ($method === 'GET') {
         if (!$models) {
             $models = [$defaultModel];
         }
+        if ($defaultModel !== '' && !in_array($defaultModel, $models, true)) {
+            array_unshift($models, $defaultModel);
+        }
         $models = array_values(array_unique($models));
         $statusRows = buildModelAvailabilityRows($models, $env);
+        foreach ($statusRows as $idx => $row) {
+            $value = trim((string)($row['value'] ?? ''));
+            if ($value !== '' && $value === $defaultModel) {
+                $statusRows[$idx]['isDefault'] = true;
+                break;
+            }
+        }
         jsonResponse(200, [
             'ok' => true,
             'models' => $statusRows,

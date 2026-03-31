@@ -610,8 +610,10 @@
         var available = !(entry && typeof entry === 'object' && entry.available === false);
         var reason = entry && typeof entry === 'object' ? String(entry.reason || '').trim() : '';
         var statusCode = entry && typeof entry === 'object' ? String(entry.statusCode || '').trim() : '';
+        var isDefault = Boolean(entry && typeof entry === 'object' && entry.isDefault === true);
         var statusLabel = available ? '' : (' — недоступна' + (reason ? ' (' + reason + ')' : ''));
-        return { value: value, label: value + statusLabel, available: available, reason: reason, statusCode: statusCode };
+        var defaultLabel = isDefault ? ' ★ активная (.env)' : '';
+        return { value: value, label: value + defaultLabel + statusLabel, available: available, reason: reason, statusCode: statusCode, isDefault: isDefault };
       })
       .filter(Boolean);
   }
@@ -637,10 +639,16 @@
         if (!payload || payload.ok !== true) {
           throw new Error('models_invalid');
         }
-        return normalizeModelList(payload.models);
+        return {
+          models: normalizeModelList(payload.models),
+          defaultModel: String(payload.defaultModel || '').trim()
+        };
       })
       .catch(function () {
-        return FALLBACK_MODEL_OPTIONS.slice();
+        return {
+          models: FALLBACK_MODEL_OPTIONS.slice(),
+          defaultModel: FALLBACK_MODEL_OPTIONS[0].value
+        };
       });
   }
 
@@ -2360,9 +2368,15 @@
     resanitizeFileContents();
     renderModelOptions();
 
-    fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (models) {
+    fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (modelsPayload) {
+      var models = modelsPayload && Array.isArray(modelsPayload.models)
+        ? modelsPayload.models
+        : normalizeModelList(modelsPayload);
+      var defaultModelFromEnv = String(modelsPayload && modelsPayload.defaultModel || '').trim();
       state.models = models;
-      if (!models.some(function (entry) { return entry.value === state.model && entry.available !== false; })) {
+      if (defaultModelFromEnv && models.some(function (entry) { return entry.value === defaultModelFromEnv && entry.available !== false; })) {
+        state.model = defaultModelFromEnv;
+      } else if (!models.some(function (entry) { return entry.value === state.model && entry.available !== false; })) {
         state.model = pickFirstAvailableModel(models, state.model);
       }
       renderModelOptions();
