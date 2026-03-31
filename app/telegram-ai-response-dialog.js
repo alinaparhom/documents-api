@@ -200,9 +200,21 @@ function normalizeModelList(rawModels) {
         ? entry.trim()
         : String(entry && entry.value ? entry.value : '').trim();
       if (!value) return null;
-      return { value, label: value };
+      const available = !(entry && typeof entry === 'object' && entry.available === false);
+      const reason = entry && typeof entry === 'object' ? String(entry.reason || '').trim() : '';
+      const statusCode = entry && typeof entry === 'object' ? String(entry.statusCode || '').trim() : '';
+      const statusLabel = available
+        ? ''
+        : ` — недоступна${reason ? ` (${reason})` : ''}`;
+      return { value, label: `${value}${statusLabel}`, available, reason, statusCode };
     })
     .filter(Boolean);
+}
+
+function pickFirstAvailableModel(models) {
+  if (!Array.isArray(models) || !models.length) return DEFAULT_AI_MODEL;
+  const firstAvailable = models.find((entry) => entry && entry.available !== false);
+  return String((firstAvailable || models[0] || {}).value || DEFAULT_AI_MODEL);
 }
 
 async function fetchAvailableModels() {
@@ -424,6 +436,9 @@ function sanitizeAssistantText(text) {
       return;
     }
     if (/\(подпись\)/i.test(normalized)) return;
+    if (/^(с уважением|подпись|иван\s+иванов|генеральный\s+директор|реквизит)/i.test(normalized)) return;
+    if (/^(тел|телефон|тел\.\/факс|e-?mail|унп|инн|кпп|огрн|бик|р\/с|расчетный счет)\b/i.test(normalized)) return;
+    if (/\b\S+@\S+\.\S+\b/.test(normalized)) return;
     if (deduped.length && deduped[deduped.length - 1].trim() === normalized) return;
     deduped.push(line);
   });
@@ -631,13 +646,14 @@ function openAiResponseDialog(context = {}) {
     if (!error || !Array.isArray(error.availableModels) || !error.availableModels.length) return false;
     const nextModels = normalizeModelList(error.availableModels);
     state.availableModels = nextModels;
-    const hasCurrent = nextModels.some((entry) => entry.value === state.selectedModel);
+    const hasCurrent = nextModels.some((entry) => entry.value === state.selectedModel && entry.available !== false);
     if (!hasCurrent) {
-      state.selectedModel = nextModels[0] ? nextModels[0].value : DEFAULT_AI_MODEL;
+      state.selectedModel = pickFirstAvailableModel(nextModels);
       appendBubble(`Текущая модель недоступна. Автоматически переключил на: ${state.selectedModel}.`, 'assistant');
       notify('warning', `Модель переключена на ${state.selectedModel}`);
     } else {
-      appendBubble(`Часть моделей временно недоступна. Доступные: ${nextModels.map((item) => item.value).join(', ')}.`, 'assistant');
+      const availableNames = nextModels.filter((item) => item.available !== false).map((item) => item.value);
+      appendBubble(`Часть моделей временно недоступна. Рабочие: ${availableNames.join(', ')}.`, 'assistant');
     }
     if (modelSelect) {
       modelSelect.textContent = '';
@@ -645,6 +661,7 @@ function openAiResponseDialog(context = {}) {
         const option = document.createElement('option');
         option.value = String(entry.value || '');
         option.textContent = String(entry.label || entry.value || '');
+        option.disabled = entry.available === false;
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.selectedModel;
@@ -1026,8 +1043,8 @@ function openAiResponseDialog(context = {}) {
   }
   fetchAvailableModels().then((models) => {
     state.availableModels = normalizeModelList(models);
-    if (!state.availableModels.some((entry) => entry.value === state.selectedModel)) {
-      state.selectedModel = state.availableModels[0] ? state.availableModels[0].value : DEFAULT_AI_MODEL;
+    if (!state.availableModels.some((entry) => entry.value === state.selectedModel && entry.available !== false)) {
+      state.selectedModel = pickFirstAvailableModel(state.availableModels);
     }
     if (modelSelect) {
       modelSelect.textContent = '';
@@ -1035,11 +1052,19 @@ function openAiResponseDialog(context = {}) {
         const option = document.createElement('option');
         option.value = String(entry.value || '');
         option.textContent = String(entry.label || entry.value || '');
+        option.disabled = entry.available === false;
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.selectedModel;
       modelSelect.addEventListener('change', () => {
         state.selectedModel = String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL;
+        const selected = state.availableModels.find((entry) => entry.value === state.selectedModel);
+        if (selected && selected.available === false) {
+          appendBubble(`Модель ${state.selectedModel} сейчас нерабочая${selected.reason ? `: ${selected.reason}` : ''}.`, 'assistant');
+          const fallbackModel = pickFirstAvailableModel(state.availableModels);
+          state.selectedModel = fallbackModel;
+          modelSelect.value = fallbackModel;
+        }
       });
     }
   });

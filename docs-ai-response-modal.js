@@ -607,9 +607,22 @@
         if (!value) {
           return null;
         }
-        return { value: value, label: value };
+        var available = !(entry && typeof entry === 'object' && entry.available === false);
+        var reason = entry && typeof entry === 'object' ? String(entry.reason || '').trim() : '';
+        var statusCode = entry && typeof entry === 'object' ? String(entry.statusCode || '').trim() : '';
+        var statusLabel = available ? '' : (' — недоступна' + (reason ? ' (' + reason + ')' : ''));
+        return { value: value, label: value + statusLabel, available: available, reason: reason, statusCode: statusCode };
       })
       .filter(Boolean);
+  }
+
+  function pickFirstAvailableModel(models, fallback) {
+    if (!Array.isArray(models) || !models.length) {
+      return String(fallback || FALLBACK_MODEL_OPTIONS[0].value || 'gpt-4o-mini');
+    }
+    var firstAvailable = models.find(function (entry) { return entry && entry.available !== false; });
+    var selected = firstAvailable || models[0];
+    return String(selected && selected.value ? selected.value : (fallback || FALLBACK_MODEL_OPTIONS[0].value || 'gpt-4o-mini'));
   }
 
   function fetchModels(apiUrl) {
@@ -652,6 +665,15 @@
         return true;
       }
       if (/\(подпись\)/i.test(trimmed)) {
+        return false;
+      }
+      if (/^(с уважением|подпись|иван\s+иванов|генеральный\s+директор|реквизит)/i.test(trimmed)) {
+        return false;
+      }
+      if (/^(тел|телефон|тел\.\/факс|e-?mail|унп|инн|кпп|огрн|бик|р\/с|расчетный счет)\b/i.test(trimmed)) {
+        return false;
+      }
+      if (/\b\S+@\S+\.\S+\b/.test(trimmed)) {
         return false;
       }
       if (/^(сформируй|подготовь)\s+официальный\s+ответ/i.test(trimmed)) {
@@ -1818,6 +1840,7 @@
         var option = document.createElement('option');
         option.value = opt.value;
         option.textContent = opt.label;
+        option.disabled = opt.available === false;
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.model;
@@ -2150,8 +2173,8 @@
         if (error && Array.isArray(error.availableModels) && error.availableModels.length) {
           state.models = normalizeModelList(error.availableModels);
           renderModelOptions();
-          if (!state.models.some(function (entry) { return entry.value === state.model; })) {
-            state.model = state.models[0] ? state.models[0].value : state.model;
+          if (!state.models.some(function (entry) { return entry.value === state.model && entry.available !== false; })) {
+            state.model = pickFirstAvailableModel(state.models, state.model);
             modelSelect.value = state.model;
             messages.appendChild(createMessage('assistant', 'Часть моделей недоступна. Автоматически переключил на: ' + state.model + '.', true));
           } else {
@@ -2169,6 +2192,12 @@
 
     modelSelect.addEventListener('change', function () {
       state.model = modelSelect.value;
+      var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
+      if (selectedModel && selectedModel.available === false) {
+        messages.appendChild(createMessage('assistant', 'Модель ' + state.model + ' сейчас нерабочая' + (selectedModel.reason ? ': ' + selectedModel.reason : '') + '.', true));
+        state.model = pickFirstAvailableModel(state.models, state.model);
+        modelSelect.value = state.model;
+      }
     });
 
     styleSelect.addEventListener('change', function () {
@@ -2317,8 +2346,8 @@
 
     fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (models) {
       state.models = models;
-      if (!models.some(function (entry) { return entry.value === state.model; })) {
-        state.model = models[0] ? models[0].value : state.model;
+      if (!models.some(function (entry) { return entry.value === state.model && entry.available !== false; })) {
+        state.model = pickFirstAvailableModel(models, state.model);
       }
       renderModelOptions();
     });
