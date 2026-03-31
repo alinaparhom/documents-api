@@ -11,7 +11,7 @@ const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
 const MAX_AI_BEHAVIOR_CHARS = 2400;
-const DEFAULT_AI_MODEL = 'llama-3.3-70b-versatile';
+const DEFAULT_AI_MODEL = 'gpt-4o-mini';
 const MODEL_FALLBACK_OPTIONS = [{ value: DEFAULT_AI_MODEL, label: DEFAULT_AI_MODEL }];
 const RESPONSE_STYLE_OPTIONS = [
   { value: 'positive', label: 'Положительный' },
@@ -599,6 +599,8 @@ function openAiResponseDialog(context = {}) {
     </div>`;
   document.body.appendChild(root);
   window.__aiDialogInstance = root;
+  const previousBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
 
   const messages = root.querySelector('[data-messages]');
   const input = root.querySelector('[data-input]');
@@ -946,6 +948,7 @@ function openAiResponseDialog(context = {}) {
     if (root && root.isConnected) {
       root.remove();
     }
+    document.body.style.overflow = previousBodyOverflow;
   };
 
   const onEscClose = (event) => {
