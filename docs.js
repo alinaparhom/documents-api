@@ -2070,10 +2070,14 @@
   function buildAiBriefSummaryText(payload) {
     var data = payload && typeof payload === 'object' ? payload : {};
     var analysis = data.analysis ? String(data.analysis).trim() : '';
+    var responseText = data.response ? String(data.response).trim() : '';
     var decision = data.decisionBlock && typeof data.decisionBlock === 'object' ? data.decisionBlock : {};
     var risks = Array.isArray(decision.risks) ? decision.risks : [];
     var actions = Array.isArray(decision.required_actions) ? decision.required_actions : [];
     var requirements = Array.isArray(decision.requirements) ? decision.requirements : [];
+    if (!responseText && decision && typeof decision.response === 'string') {
+      responseText = String(decision.response).trim();
+    }
     var participants = '';
     var cleanedActions = [];
     var cleanedRequirements = [];
@@ -2131,6 +2135,14 @@
         .slice(0, maxItems);
     }
 
+    function collectSentences(text, maxItems) {
+      return String(text || '')
+        .split(/[\n.;!?]+/g)
+        .map(normalizeSentence)
+        .filter(Boolean)
+        .slice(0, maxItems);
+    }
+
     risks.some(function(item) {
       var line = String(item || '').trim();
       if (!line) {
@@ -2142,27 +2154,38 @@
       }
       return false;
     });
-    analysis = normalizeSentence(analysis) || 'Не удалось определить суть документа.';
+    analysis = normalizeSentence(analysis) || normalizeSentence(responseText) || 'Не удалось определить суть документа.';
     cleanedActions = sanitizeList(actions, 4, 'actions');
+    if (!cleanedActions.length) {
+      cleanedActions = collectSentences(responseText, 4);
+    }
     var actionsMap = {};
     cleanedActions.forEach(function(item) {
       actionsMap[String(item).toLowerCase()] = true;
     });
     cleanedRequirements = sanitizeList(requirements, 4, 'requirements', actionsMap);
+    if (!cleanedRequirements.length) {
+      cleanedRequirements = collectSentences(responseText, 6).filter(function(item) {
+        return !actionsMap[String(item).toLowerCase()];
+      }).slice(0, 4);
+    }
 
     return [
-      '✨ Кратко по документу',
+      'Краткий вывод ИИ',
       '',
-      '📄 О чем файл',
+      'О чем файл',
       analysis,
       '',
-      '👤 Кто прислал / кому',
+      'Что решил ИИ',
+      normalizeSentence(responseText) || 'Ответ ИИ не содержит отдельного текстового вывода.',
+      '',
+      'Кто прислал / кому',
       participants || 'Не удалось точно определить отправителя и получателя.',
       '',
-      '🔎 Важные детали',
+      'Важные детали',
       cleanedActions.length ? cleanedActions.map(function(item) { return '• ' + item; }).join('\n') : '• Важные детали не найдены.',
       '',
-      '✅ Требования',
+      'Что сделать дальше',
       cleanedRequirements.length ? cleanedRequirements.map(function(item) { return '• ' + item; }).join('\n') : '• Явные требования не выделены.'
     ].join('\n');
   }
