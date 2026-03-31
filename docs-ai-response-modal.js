@@ -360,15 +360,20 @@
       '.ai-chat-modal__template-btn{min-width:130px;}' +
       '.ai-chat-template-viewer{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;}' +
       '.ai-chat-template-tabs{display:flex;gap:8px;flex-wrap:wrap;}' +
-      '.ai-chat-template-editor{display:flex;gap:8px;flex-wrap:wrap;}' +
-      '.ai-chat-template-input{width:100%;min-height:74px;max-height:160px;resize:vertical;border:1px solid rgba(148,163,184,.4);border-radius:10px;padding:10px;background:#fff;font-size:13px;line-height:1.4;}' +
+      '.ai-chat-template-editor{display:flex;flex-direction:column;gap:8px;}' +
+      '.ai-chat-editor{border:1px solid rgba(148,163,184,.35);border-radius:14px;background:rgba(255,255,255,.88);backdrop-filter:blur(6px);overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.7);}' +
+      '.ai-chat-editor__toolbar{display:flex;flex-wrap:wrap;gap:6px;padding:8px;border-bottom:1px solid rgba(226,232,240,.9);background:rgba(248,250,252,.85);}' +
+      '.ai-chat-editor__btn{border:none;border-radius:9px;min-height:34px;padding:6px 10px;font-size:12px;font-weight:600;background:#e2e8f0;color:#0f172a;cursor:pointer;}' +
+      '.ai-chat-editor__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;}' +
+      '.ai-chat-editor__surface{min-height:180px;max-height:42vh;overflow:auto;padding:12px;font-size:14px;line-height:1.55;color:#0f172a;outline:none;-webkit-user-select:text;user-select:text;}' +
+      '.ai-chat-editor__surface[contenteditable=true]:empty:before{content:attr(data-placeholder);color:#94a3b8;}' +
       '.ai-chat-template-surface{flex:1;min-height:0;height:100%;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#e2e8f0;overflow:hidden;}' +
       '.ai-chat-template-frame{width:100%;height:100%;border:none;background:#fff;}' +
       '.ai-chat-template-editor-preview{margin-top:8px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:#fff;padding:10px;min-height:96px;max-height:180px;overflow:auto;font-size:13px;line-height:1.5;white-space:pre-wrap;}' +
       '.ai-chat-modal__ocr-hint{margin-top:4px;padding:6px 8px;border-radius:8px;background:rgba(239,246,255,.8);border:1px solid rgba(147,197,253,.55);font-size:11px;color:#1e3a8a;line-height:1.35;}' +
       '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}.ai-chat-template-input{min-height:92px;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}.ai-chat-editor__toolbar{position:sticky;top:0;z-index:2;}.ai-chat-editor__surface{min-height:160px;max-height:38vh;font-size:16px;}}';
     document.head.appendChild(style);
   }
 
@@ -1078,10 +1083,7 @@
     var editInfo = createElement('div', 'ai-chat-modal__empty', '');
     editInfo.style.fontSize = '12px';
     editInfo.style.marginBottom = '6px';
-    var editArea = createElement('textarea', 'ai-chat-modal__textarea');
-    editArea.rows = 12;
-    editArea.style.maxHeight = '320px';
-    editArea.style.minHeight = '220px';
+    var editEditor = createRichEditor('Отредактируйте ответ перед экспортом...');
     var editActions = createElement('div', 'ai-chat-modal__export-buttons');
     var editApply = createElement('button', 'ai-chat-modal__send', 'Обновить');
     var editDocx = createElement('button', 'ai-chat-modal__export-btn', 'Скачать DOCX');
@@ -1089,7 +1091,7 @@
     var editCopy = createElement('button', 'ai-chat-modal__export-btn', 'Копировать в буфер');
     [editApply, editDocx, editPdf, editCopy].forEach(function (btn) { btn.type = 'button'; editActions.appendChild(btn); });
     editModal.content.appendChild(editInfo);
-    editModal.content.appendChild(editArea);
+    editModal.content.appendChild(editEditor.root);
     editModal.content.appendChild(editActions);
 
     var templateModal = createOverlayModal('Шаблон документа');
@@ -1116,15 +1118,14 @@
     templateTabs.appendChild(templateDocxTab);
     templateTabs.appendChild(templatePdfTab);
     var templateEditor = createElement('div', 'ai-chat-template-editor');
-    var templateInputText = createElement('textarea', 'ai-chat-template-input');
-    templateInputText.placeholder = 'Вставьте ваш текст. Он будет аккуратно подставлен в DOCX шаблон.';
-    var applyTemplateTextButton = createElement('button', 'ai-chat-modal__send', 'Вставить текст');
+    var templateEditorInstance = createRichEditor('Вставьте или напишите текст для шаблона...');
+    var applyTemplateTextButton = createElement('button', 'ai-chat-editor__btn ai-chat-editor__btn--primary', 'Применить в шаблон');
     var downloadDocxFromTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать DOCX');
     var downloadPdfFromTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать PDF');
     applyTemplateTextButton.type = 'button';
     downloadDocxFromTemplateButton.type = 'button';
     downloadPdfFromTemplateButton.type = 'button';
-    templateEditor.appendChild(templateInputText);
+    templateEditor.appendChild(templateEditorInstance.root);
     templateEditor.appendChild(applyTemplateTextButton);
     templateEditor.appendChild(downloadDocxFromTemplateButton);
     templateEditor.appendChild(downloadPdfFromTemplateButton);
@@ -1157,6 +1158,7 @@
       pdfUrl: '',
       editedText: ''
     };
+    window.templateEditorInstance = templateEditorInstance;
     var templateDocxCandidates = [
       config.templateDocxUrl,
       '/js/documents/app/templates/template.docx',
@@ -1174,6 +1176,62 @@
 
     function textToSimpleHtml(text) {
       return escapeHtml(String(text || '')).replace(/\n/g, '<br>');
+    }
+
+    function htmlToPlainText(value) {
+      var container = document.createElement('div');
+      container.innerHTML = String(value || '');
+      return String(container.textContent || container.innerText || '').trim();
+    }
+
+    function createRichEditor(placeholderText) {
+      var wrapper = createElement('div', 'ai-chat-editor');
+      var toolbar = createElement('div', 'ai-chat-editor__toolbar');
+      var surface = createElement('div', 'ai-chat-editor__surface');
+      surface.contentEditable = 'true';
+      surface.setAttribute('data-placeholder', String(placeholderText || 'Введите текст...'));
+
+      [
+        { cmd: 'bold', label: 'B' },
+        { cmd: 'italic', label: 'I' },
+        { cmd: 'underline', label: 'U' },
+        { cmd: 'insertUnorderedList', label: '• Список' },
+        { cmd: 'insertOrderedList', label: '1. Список' }
+      ].forEach(function (tool) {
+        var btn = createElement('button', 'ai-chat-editor__btn', tool.label);
+        btn.type = 'button';
+        btn.addEventListener('click', function () {
+          surface.focus();
+          document.execCommand(tool.cmd, false, null);
+        });
+        toolbar.appendChild(btn);
+      });
+
+      var clearBtn = createElement('button', 'ai-chat-editor__btn', 'Очистить');
+      clearBtn.type = 'button';
+      clearBtn.addEventListener('click', function () {
+        surface.innerHTML = '';
+      });
+      toolbar.appendChild(clearBtn);
+
+      wrapper.appendChild(toolbar);
+      wrapper.appendChild(surface);
+      return {
+        root: wrapper,
+        surface: surface,
+        getHTML: function () {
+          return String(surface.innerHTML || '').trim();
+        },
+        getText: function () {
+          return htmlToPlainText(surface.innerHTML || '');
+        },
+        setHTML: function (html) {
+          surface.innerHTML = String(html || '').trim();
+        },
+        setText: function (text) {
+          surface.innerHTML = textToSimpleHtml(text || '');
+        }
+      };
     }
 
     function absoluteUrl(rawUrl) {
@@ -1289,18 +1347,18 @@
     }
 
     applyTemplateTextButton.addEventListener('click', function () {
-      templateState.editedText = String(templateInputText.value || '').trim();
+      templateState.editedText = String(templateEditorInstance.getText() || '').trim();
       if (!templateState.editedText) {
         templatePreview.textContent = 'Текст для вставки появится здесь.';
         templateInfo.textContent = 'Введите текст для вставки.';
         return;
       }
-      templatePreview.innerHTML = textToSimpleHtml(templateState.editedText);
+      templatePreview.innerHTML = normalizeEditorHtml(templateEditorInstance.getHTML(), templateState.editedText);
       templateInfo.textContent = 'Текст обновлён. Можно скачать DOCX или PDF.';
     });
-    templateInputText.addEventListener('input', function () {
-      templateState.editedText = String(templateInputText.value || '');
-      templatePreview.innerHTML = textToSimpleHtml(templateState.editedText);
+    templateEditorInstance.surface.addEventListener('input', function () {
+      templateState.editedText = String(templateEditorInstance.getText() || '');
+      templatePreview.innerHTML = normalizeEditorHtml(templateEditorInstance.getHTML(), templateState.editedText);
     });
     downloadDocxFromTemplateButton.addEventListener('click', function () {
       exportEditedText('docx', downloadDocxFromTemplateButton);
@@ -1701,7 +1759,7 @@
     });
 
     editApply.addEventListener('click', function () {
-      var next = String(editArea.value || '').trim();
+      var next = String(editEditor.getText() || '').trim();
       if (!next) {
         alert('Введите текст для обновления.');
         return;
@@ -1716,15 +1774,15 @@
       editModal.close();
     });
     editDocx.addEventListener('click', function () {
-      var rawText = String(editArea.value || '').trim();
-      exportDocument('docx', readEditorHtml(window.editor, rawText), rawText);
+      var rawText = String(editEditor.getText() || '').trim();
+      exportDocument('docx', normalizeEditorHtml(editEditor.getHTML(), rawText), rawText);
     });
     editPdf.addEventListener('click', function () {
-      var rawText = String(editArea.value || '').trim();
-      exportDocument('pdf', readEditorHtml(window.editor, rawText), rawText);
+      var rawText = String(editEditor.getText() || '').trim();
+      exportDocument('pdf', normalizeEditorHtml(editEditor.getHTML(), rawText), rawText);
     });
     editCopy.addEventListener('click', function () {
-      var text = String(editArea.value || '').trim();
+      var text = String(editEditor.getText() || '').trim();
       if (!text) {
         return;
       }
