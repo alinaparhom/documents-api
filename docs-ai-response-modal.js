@@ -2,7 +2,8 @@
   var STYLE_ID = 'ai-chat-modal-style-v3';
   var ROOT_CLASS = 'ai-chat-modal';
   var FILE_INPUT_ID = 'ai-chat-hidden-file-input';
-  var FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
+  var EMPTY_AI_MODEL = '';
+  var FALLBACK_MODEL_OPTIONS = [{ value: EMPTY_AI_MODEL, label: 'Не задано в .env', available: false, reason: 'MODEL_NOT_CONFIGURED' }];
   var MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
   var MAX_EXTRACT_CHARS = 500000;
   var DEFAULT_CONTEXT_FILE_CHARS_DETAILED = 60000;
@@ -620,11 +621,11 @@
 
   function pickFirstAvailableModel(models, fallback) {
     if (!Array.isArray(models) || !models.length) {
-      return String(fallback || FALLBACK_MODEL_OPTIONS[0].value || 'gpt-4o-mini');
+      return String(fallback || FALLBACK_MODEL_OPTIONS[0].value || EMPTY_AI_MODEL);
     }
     var firstAvailable = models.find(function (entry) { return entry && entry.available !== false; });
     var selected = firstAvailable || models[0];
-    return String(selected && selected.value ? selected.value : (fallback || FALLBACK_MODEL_OPTIONS[0].value || 'gpt-4o-mini'));
+    return String(selected && selected.value ? selected.value : (fallback || FALLBACK_MODEL_OPTIONS[0].value || EMPTY_AI_MODEL));
   }
 
   function fetchModels(apiUrl) {
@@ -994,7 +995,9 @@
     formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', config.documentTitle || '');
     formData.append('prompt', userText);
-    formData.append('model', state.model);
+    if (state.model) {
+      formData.append('model', state.model);
+    }
     formData.append('responseStyle', state.responseStyle);
     var behaviorText = String(state.aiBehavior || '').trim();
     if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
@@ -1867,7 +1870,7 @@
         var option = document.createElement('option');
         option.value = opt.value;
         option.textContent = opt.label;
-        option.disabled = opt.available === false;
+        option.disabled = opt.available === false && String(opt.value || '').trim() !== '';
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.model;

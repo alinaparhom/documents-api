@@ -49,27 +49,9 @@ if ($method === 'GET') {
     $action = isset($_GET['action']) ? trim((string)$_GET['action']) : '';
     if ($action === 'ai_models') {
         $env = loadEnv(getEnvPaths());
-        $rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
-        $defaultModel = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
-        $models = [];
-        if ($rawModels !== '') {
-            $parts = preg_split('/[,\\n]+/u', $rawModels);
-            if (is_array($parts)) {
-                foreach ($parts as $part) {
-                    $value = trim((string)$part);
-                    if ($value !== '') {
-                        $models[] = $value;
-                    }
-                }
-            }
-        }
-        if (!$models) {
-            $models = [$defaultModel];
-        }
-        if ($defaultModel !== '' && !in_array($defaultModel, $models, true)) {
-            array_unshift($models, $defaultModel);
-        }
-        $models = array_values(array_unique($models));
+        $modelsConfig = resolveAiModelsConfig($env);
+        $models = $modelsConfig['models'];
+        $defaultModel = $modelsConfig['defaultModel'];
         $statusRows = buildModelAvailabilityRows($models, $env);
         foreach ($statusRows as $idx => $row) {
             $value = trim((string)($row['value'] ?? ''));
@@ -99,7 +81,8 @@ if ($method === 'GET') {
     if ($isDebug) {
         $debugEnv = loadEnv(getEnvPaths());
         $debugKey = trim((string)($debugEnv['AI_API_KEY'] ?? $debugEnv['OPENAI_API_KEY'] ?? ''));
-        $debugModel = trim((string)($debugEnv['AI_MODEL'] ?? $debugEnv['OPENAI_MODEL'] ?? ''));
+        $debugModelsConfig = resolveAiModelsConfig($debugEnv);
+        $debugModel = (string)$debugModelsConfig['defaultModel'];
         $debugBase = trim((string)($debugEnv['AI_BASE_URL'] ?? $debugEnv['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
         $payload['debug'] = [
             'key_present' => $debugKey !== '',
@@ -155,6 +138,46 @@ function getEnvPaths(): array
         __DIR__ . '/app/.env',
         __DIR__ . '/.env',
         __DIR__ . '/app/env.txt'
+    ];
+}
+
+function parseAiModelsFromEnv(array $env): array
+{
+    $rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
+    if ($rawModels === '') {
+        return [];
+    }
+
+    $models = [];
+    $parts = preg_split('/[,\n]+/u', $rawModels);
+    if (is_array($parts)) {
+        foreach ($parts as $part) {
+            $value = trim((string)$part);
+            if ($value !== '') {
+                $models[] = $value;
+            }
+        }
+    }
+
+    return array_values(array_unique($models));
+}
+
+function resolveAiModelsConfig(array $env): array
+{
+    $models = parseAiModelsFromEnv($env);
+    $defaultModel = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? ''));
+
+    if ($defaultModel !== '' && !in_array($defaultModel, $models, true)) {
+        array_unshift($models, $defaultModel);
+    }
+
+    if ($defaultModel === '' && $models) {
+        $defaultModel = (string)$models[0];
+    }
+
+    return [
+        'models' => array_values(array_unique($models)),
+        'defaultModel' => $defaultModel,
     ];
 }
 
@@ -2254,7 +2277,8 @@ if ($action === 'ocr_extract') {
 }
 
 $apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
-$model = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? 'gpt-4o-mini'));
+$modelsConfig = resolveAiModelsConfig($env);
+$model = (string)$modelsConfig['defaultModel'];
 $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
 $retryAfterSeconds = normalizeRetryAfterSeconds($env['AI_RETRY_AFTER_SECONDS'] ?? null);
 $isGroqKey = str_starts_with($apiKey, 'gsk_');
@@ -2354,23 +2378,14 @@ $behaviorInstruction = $effectiveBehavior !== ''
     : '';
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
-$availableModels = [];
-$rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
-if ($rawModels !== '') {
-    $parts = preg_split('/[,\\n]+/u', $rawModels);
-    if (is_array($parts)) {
-        foreach ($parts as $part) {
-            $normalized = trim((string)$part);
-            if ($normalized !== '') {
-                $availableModels[] = $normalized;
-            }
-        }
-    }
+$availableModels = (array)($modelsConfig['models'] ?? []);
+if ($effectiveModel === '') {
+    jsonResponse(500, [
+        'ok' => false,
+        'error' => 'AI_MODEL не найден в .env. Укажите AI_MODEL или добавьте список AI_MODELS.',
+        'code' => 'MODEL_NOT_CONFIGURED',
+    ]);
 }
-if (!$availableModels) {
-    $availableModels = [$model];
-}
-$availableModels = array_values(array_unique($availableModels));
 if (!in_array($effectiveModel, $availableModels, true)) {
     logApiDocs('warn', 'Requested model is not in local whitelist', [
         'requestedModel' => $effectiveModel,

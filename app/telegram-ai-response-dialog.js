@@ -11,8 +11,8 @@ const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
 const MAX_AI_BEHAVIOR_CHARS = 2400;
-const DEFAULT_AI_MODEL = 'gpt-4o-mini';
-const MODEL_FALLBACK_OPTIONS = [{ value: DEFAULT_AI_MODEL, label: DEFAULT_AI_MODEL }];
+const EMPTY_AI_MODEL = '';
+const MODEL_FALLBACK_OPTIONS = [{ value: EMPTY_AI_MODEL, label: 'Не задано в .env', available: false, reason: 'MODEL_NOT_CONFIGURED' }];
 const RESPONSE_STYLE_OPTIONS = [
   { value: 'positive', label: 'Положительный' },
   { value: 'negative', label: 'Отрицательный' },
@@ -187,7 +187,7 @@ function normalizeAiBehavior(value) {
 
 function resolveAiModel(context) {
   const modelFromContext = String(context && context.aiModel || '').trim();
-  return modelFromContext || DEFAULT_AI_MODEL;
+  return modelFromContext || EMPTY_AI_MODEL;
 }
 
 function normalizeModelList(rawModels) {
@@ -214,9 +214,9 @@ function normalizeModelList(rawModels) {
 }
 
 function pickFirstAvailableModel(models) {
-  if (!Array.isArray(models) || !models.length) return DEFAULT_AI_MODEL;
+  if (!Array.isArray(models) || !models.length) return EMPTY_AI_MODEL;
   const firstAvailable = models.find((entry) => entry && entry.available !== false);
-  return String((firstAvailable || models[0] || {}).value || DEFAULT_AI_MODEL);
+  return String((firstAvailable || models[0] || {}).value || EMPTY_AI_MODEL);
 }
 
 async function fetchAvailableModels() {
@@ -224,14 +224,14 @@ async function fetchAvailableModels() {
     const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || payload.ok !== true) {
-      return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: DEFAULT_AI_MODEL };
+      return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: EMPTY_AI_MODEL };
     }
     return {
       models: normalizeModelList(payload.models),
       defaultModel: String(payload.defaultModel || '').trim(),
     };
   } catch (_) {
-    return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: DEFAULT_AI_MODEL };
+    return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: EMPTY_AI_MODEL };
   }
 }
 
@@ -460,7 +460,10 @@ async function requestAssistantReply(userMessage, context, history) {
   form.append('action', 'ai_response_analyze');
   form.append('documentTitle', String(task.title || task.name || 'Задача'));
   form.append('prompt', `${prompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
-  form.append('model', resolveAiModel(context));
+  const resolvedModel = resolveAiModel(context);
+  if (resolvedModel) {
+    form.append('model', resolvedModel);
+  }
   const responseStyle = context && context.responseStyle ? String(context.responseStyle) : 'neutral';
   form.append('responseStyle', responseStyle);
   const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
@@ -485,7 +488,7 @@ async function requestAssistantReply(userMessage, context, history) {
     let message = (payload && payload.error) || `Ошибка сервера (${response.status})`;
     if (response.status === 429) {
       const retryAfterSeconds = Math.max(5, Number((payload && payload.retryAfterSeconds) || response.headers.get('Retry-After')) || 30);
-      const model = String((payload && payload.model) || resolveAiModel(context) || DEFAULT_AI_MODEL);
+      const model = String((payload && payload.model) || resolveAiModel(context) || 'не выбрана');
       message = `Слишком много запросов (429). Подождите ${retryAfterSeconds} сек и повторите. Модель: ${model}.`;
     }
     const error = new Error(message);
@@ -494,7 +497,7 @@ async function requestAssistantReply(userMessage, context, history) {
     if (response.status === 429) {
       error.code = error.code || 'RATE_LIMITED';
       error.retryAfterSeconds = Math.max(5, Number((payload && payload.retryAfterSeconds) || response.headers.get('Retry-After')) || 30);
-      error.model = String((payload && payload.model) || resolveAiModel(context) || DEFAULT_AI_MODEL);
+      error.model = String((payload && payload.model) || resolveAiModel(context) || 'не выбрана');
     } else if (response.status >= 500 || response.status === 408) {
       error.code = error.code || 'AI_TEMPORARY';
     }
@@ -660,8 +663,9 @@ function openAiResponseDialog(context = {}) {
     const hasCurrent = nextModels.some((entry) => entry.value === state.selectedModel && entry.available !== false);
     if (!hasCurrent) {
       state.selectedModel = pickFirstAvailableModel(nextModels);
-      appendErrorBubbleOnce(`Текущая модель недоступна. Автоматически переключил на: ${state.selectedModel}.`);
-      notify('warning', `Модель переключена на ${state.selectedModel}`);
+      const switchedTo = state.selectedModel || 'не задана в .env';
+      appendErrorBubbleOnce(`Текущая модель недоступна. Автоматически переключил на: ${switchedTo}.`);
+      notify('warning', `Модель переключена на ${switchedTo}`);
     } else {
       const availableNames = nextModels.filter((item) => item.available !== false).map((item) => item.value);
       appendErrorBubbleOnce(`Часть моделей временно недоступна. Рабочие: ${availableNames.join(', ')}.`);
@@ -672,7 +676,7 @@ function openAiResponseDialog(context = {}) {
         const option = document.createElement('option');
         option.value = String(entry.value || '');
         option.textContent = String(entry.label || entry.value || '');
-        option.disabled = entry.available === false;
+        option.disabled = entry.available === false && String(entry.value || '').trim() !== '';
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.selectedModel;
@@ -1080,15 +1084,15 @@ function openAiResponseDialog(context = {}) {
         const option = document.createElement('option');
         option.value = String(entry.value || '');
         option.textContent = String(entry.label || entry.value || '');
-        option.disabled = entry.available === false;
+        option.disabled = entry.available === false && String(entry.value || '').trim() !== '';
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.selectedModel;
       modelSelect.addEventListener('change', () => {
-        state.selectedModel = String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL;
+        state.selectedModel = String(modelSelect.value || EMPTY_AI_MODEL).trim() || EMPTY_AI_MODEL;
         const selected = state.availableModels.find((entry) => entry.value === state.selectedModel);
         if (selected && selected.available === false) {
-          appendErrorBubbleOnce(`Модель ${state.selectedModel} сейчас нерабочая${selected.reason ? `: ${selected.reason}` : ''}.`);
+          appendErrorBubbleOnce(`Модель ${state.selectedModel || 'не задана в .env'} сейчас нерабочая${selected.reason ? `: ${selected.reason}` : ''}.`);
           const fallbackModel = pickFirstAvailableModel(state.availableModels);
           state.selectedModel = fallbackModel;
           modelSelect.value = fallbackModel;
