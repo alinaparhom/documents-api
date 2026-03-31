@@ -607,9 +607,24 @@
         if (!value) {
           return null;
         }
-        return { value: value, label: value };
+        var available = !(entry && typeof entry === 'object' && entry.available === false);
+        var reason = entry && typeof entry === 'object' ? String(entry.reason || '').trim() : '';
+        var statusCode = entry && typeof entry === 'object' ? String(entry.statusCode || '').trim() : '';
+        var isDefault = Boolean(entry && typeof entry === 'object' && entry.isDefault === true);
+        var statusLabel = available ? '' : (' — недоступна' + (reason ? ' (' + reason + ')' : ''));
+        var defaultLabel = isDefault ? ' ★ активная (.env)' : '';
+        return { value: value, label: value + defaultLabel + statusLabel, available: available, reason: reason, statusCode: statusCode, isDefault: isDefault };
       })
       .filter(Boolean);
+  }
+
+  function pickFirstAvailableModel(models, fallback) {
+    if (!Array.isArray(models) || !models.length) {
+      return String(fallback || FALLBACK_MODEL_OPTIONS[0].value || 'gpt-4o-mini');
+    }
+    var firstAvailable = models.find(function (entry) { return entry && entry.available !== false; });
+    var selected = firstAvailable || models[0];
+    return String(selected && selected.value ? selected.value : (fallback || FALLBACK_MODEL_OPTIONS[0].value || 'gpt-4o-mini'));
   }
 
   function fetchModels(apiUrl) {
@@ -624,10 +639,16 @@
         if (!payload || payload.ok !== true) {
           throw new Error('models_invalid');
         }
-        return normalizeModelList(payload.models);
+        return {
+          models: normalizeModelList(payload.models),
+          defaultModel: String(payload.defaultModel || '').trim()
+        };
       })
       .catch(function () {
-        return FALLBACK_MODEL_OPTIONS.slice();
+        return {
+          models: FALLBACK_MODEL_OPTIONS.slice(),
+          defaultModel: FALLBACK_MODEL_OPTIONS[0].value
+        };
       });
   }
 
@@ -652,6 +673,15 @@
         return true;
       }
       if (/\(подпись\)/i.test(trimmed)) {
+        return false;
+      }
+      if (/^(с уважением|подпись|иван\s+иванов|генеральный\s+директор|реквизит)/i.test(trimmed)) {
+        return false;
+      }
+      if (/^(тел|телефон|тел\.\/факс|e-?mail|унп|инн|кпп|огрн|бик|р\/с|расчетный счет)\b/i.test(trimmed)) {
+        return false;
+      }
+      if (/\b\S+@\S+\.\S+\b/.test(trimmed)) {
         return false;
       }
       if (/^(сформируй|подготовь)\s+официальный\s+ответ/i.test(trimmed)) {
@@ -1028,7 +1058,9 @@
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: '',
-      templateFile: null
+      templateFile: null,
+      lastErrorFingerprint: '',
+      lastErrorTs: 0
     };
 
     var root = createElement('div', ROOT_CLASS);
@@ -1087,6 +1119,20 @@
     settingsButton.style.fontSize = '11px';
 
     var messages = createElement('div', 'ai-chat-modal__messages');
+    function appendAssistantErrorOnce(text) {
+      var normalized = String(text || '').trim();
+      if (!normalized) {
+        return;
+      }
+      var fingerprint = normalized.toLowerCase();
+      var now = Date.now();
+      if (state.lastErrorFingerprint === fingerprint && (now - state.lastErrorTs) < 15000) {
+        return;
+      }
+      state.lastErrorFingerprint = fingerprint;
+      state.lastErrorTs = now;
+      messages.appendChild(createMessage('assistant', normalized, true));
+    }
     messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
@@ -1818,6 +1864,7 @@
         var option = document.createElement('option');
         option.value = opt.value;
         option.textContent = opt.label;
+        option.disabled = opt.available === false;
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.model;
@@ -2150,16 +2197,16 @@
         if (error && Array.isArray(error.availableModels) && error.availableModels.length) {
           state.models = normalizeModelList(error.availableModels);
           renderModelOptions();
-          if (!state.models.some(function (entry) { return entry.value === state.model; })) {
-            state.model = state.models[0] ? state.models[0].value : state.model;
+          if (!state.models.some(function (entry) { return entry.value === state.model && entry.available !== false; })) {
+            state.model = pickFirstAvailableModel(state.models, state.model);
             modelSelect.value = state.model;
-            messages.appendChild(createMessage('assistant', 'Часть моделей недоступна. Автоматически переключил на: ' + state.model + '.', true));
+            appendAssistantErrorOnce('Часть моделей недоступна. Автоматически переключил на: ' + state.model + '.');
           } else {
             modelSelect.value = state.model;
-            messages.appendChild(createMessage('assistant', 'Часть моделей временно недоступна. Список обновлён автоматически.', true));
+            appendAssistantErrorOnce('Часть моделей временно недоступна. Список обновлён автоматически.');
           }
         } else {
-          messages.appendChild(createMessage('assistant', 'Ошибка: ' + humanizeAiError(error), true));
+          appendAssistantErrorOnce('Ошибка: ' + humanizeAiError(error));
         }
       } finally {
         setLoading(false);
@@ -2169,6 +2216,12 @@
 
     modelSelect.addEventListener('change', function () {
       state.model = modelSelect.value;
+      var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
+      if (selectedModel && selectedModel.available === false) {
+        appendAssistantErrorOnce('Модель ' + state.model + ' сейчас нерабочая' + (selectedModel.reason ? ': ' + selectedModel.reason : '') + '.');
+        state.model = pickFirstAvailableModel(state.models, state.model);
+        modelSelect.value = state.model;
+      }
     });
 
     styleSelect.addEventListener('change', function () {
@@ -2315,10 +2368,16 @@
     resanitizeFileContents();
     renderModelOptions();
 
-    fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (models) {
+    fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (modelsPayload) {
+      var models = modelsPayload && Array.isArray(modelsPayload.models)
+        ? modelsPayload.models
+        : normalizeModelList(modelsPayload);
+      var defaultModelFromEnv = String(modelsPayload && modelsPayload.defaultModel || '').trim();
       state.models = models;
-      if (!models.some(function (entry) { return entry.value === state.model; })) {
-        state.model = models[0] ? models[0].value : state.model;
+      if (defaultModelFromEnv && models.some(function (entry) { return entry.value === defaultModelFromEnv && entry.available !== false; })) {
+        state.model = defaultModelFromEnv;
+      } else if (!models.some(function (entry) { return entry.value === state.model && entry.available !== false; })) {
+        state.model = pickFirstAvailableModel(models, state.model);
       }
       renderModelOptions();
     });

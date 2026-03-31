@@ -200,19 +200,38 @@ function normalizeModelList(rawModels) {
         ? entry.trim()
         : String(entry && entry.value ? entry.value : '').trim();
       if (!value) return null;
-      return { value, label: value };
+      const available = !(entry && typeof entry === 'object' && entry.available === false);
+      const reason = entry && typeof entry === 'object' ? String(entry.reason || '').trim() : '';
+      const statusCode = entry && typeof entry === 'object' ? String(entry.statusCode || '').trim() : '';
+      const isDefault = Boolean(entry && typeof entry === 'object' && entry.isDefault === true);
+      const statusLabel = available
+        ? ''
+        : ` — недоступна${reason ? ` (${reason})` : ''}`;
+      const defaultLabel = isDefault ? ' ★ активная (.env)' : '';
+      return { value, label: `${value}${defaultLabel}${statusLabel}`, available, reason, statusCode, isDefault };
     })
     .filter(Boolean);
+}
+
+function pickFirstAvailableModel(models) {
+  if (!Array.isArray(models) || !models.length) return DEFAULT_AI_MODEL;
+  const firstAvailable = models.find((entry) => entry && entry.available !== false);
+  return String((firstAvailable || models[0] || {}).value || DEFAULT_AI_MODEL);
 }
 
 async function fetchAvailableModels() {
   try {
     const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok !== true) return MODEL_FALLBACK_OPTIONS.slice();
-    return normalizeModelList(payload.models);
+    if (!response.ok || !payload || payload.ok !== true) {
+      return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: DEFAULT_AI_MODEL };
+    }
+    return {
+      models: normalizeModelList(payload.models),
+      defaultModel: String(payload.defaultModel || '').trim(),
+    };
   } catch (_) {
-    return MODEL_FALLBACK_OPTIONS.slice();
+    return { models: MODEL_FALLBACK_OPTIONS.slice(), defaultModel: DEFAULT_AI_MODEL };
   }
 }
 
@@ -424,6 +443,9 @@ function sanitizeAssistantText(text) {
       return;
     }
     if (/\(подпись\)/i.test(normalized)) return;
+    if (/^(с уважением|подпись|иван\s+иванов|генеральный\s+директор|реквизит)/i.test(normalized)) return;
+    if (/^(тел|телефон|тел\.\/факс|e-?mail|унп|инн|кпп|огрн|бик|р\/с|расчетный счет)\b/i.test(normalized)) return;
+    if (/\b\S+@\S+\.\S+\b/.test(normalized)) return;
     if (deduped.length && deduped[deduped.length - 1].trim() === normalized) return;
     deduped.push(line);
   });
@@ -531,6 +553,8 @@ function openAiResponseDialog(context = {}) {
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
     rateLimitUntil: 0,
     rateLimitTimer: null,
+    lastErrorFingerprint: '',
+    lastErrorTs: 0,
   };
 
   const notify = (type, message) => {
@@ -631,13 +655,14 @@ function openAiResponseDialog(context = {}) {
     if (!error || !Array.isArray(error.availableModels) || !error.availableModels.length) return false;
     const nextModels = normalizeModelList(error.availableModels);
     state.availableModels = nextModels;
-    const hasCurrent = nextModels.some((entry) => entry.value === state.selectedModel);
+    const hasCurrent = nextModels.some((entry) => entry.value === state.selectedModel && entry.available !== false);
     if (!hasCurrent) {
-      state.selectedModel = nextModels[0] ? nextModels[0].value : DEFAULT_AI_MODEL;
-      appendBubble(`Текущая модель недоступна. Автоматически переключил на: ${state.selectedModel}.`, 'assistant');
+      state.selectedModel = pickFirstAvailableModel(nextModels);
+      appendErrorBubbleOnce(`Текущая модель недоступна. Автоматически переключил на: ${state.selectedModel}.`);
       notify('warning', `Модель переключена на ${state.selectedModel}`);
     } else {
-      appendBubble(`Часть моделей временно недоступна. Доступные: ${nextModels.map((item) => item.value).join(', ')}.`, 'assistant');
+      const availableNames = nextModels.filter((item) => item.available !== false).map((item) => item.value);
+      appendErrorBubbleOnce(`Часть моделей временно недоступна. Рабочие: ${availableNames.join(', ')}.`);
     }
     if (modelSelect) {
       modelSelect.textContent = '';
@@ -645,6 +670,7 @@ function openAiResponseDialog(context = {}) {
         const option = document.createElement('option');
         option.value = String(entry.value || '');
         option.textContent = String(entry.label || entry.value || '');
+        option.disabled = entry.available === false;
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.selectedModel;
@@ -669,6 +695,16 @@ function openAiResponseDialog(context = {}) {
     bubble.textContent = text;
     messages.appendChild(bubble);
     messages.scrollTop = messages.scrollHeight;
+  };
+  const appendErrorBubbleOnce = (text) => {
+    const normalized = String(text || '').trim();
+    if (!normalized) return;
+    const fingerprint = normalized.toLowerCase();
+    const now = Date.now();
+    if (state.lastErrorFingerprint === fingerprint && (now - state.lastErrorTs) < 15000) return;
+    state.lastErrorFingerprint = fingerprint;
+    state.lastErrorTs = now;
+    appendBubble(normalized, 'assistant');
   };
   const appendPendingBubble = (text = 'Готовим ответ...') => {
     const bubble = document.createElement('div');
@@ -949,7 +985,7 @@ function openAiResponseDialog(context = {}) {
       pending.remove();
       const errorMessage = buildReadableAiError(error);
       const modelsHandled = applyAvailableModelsFromError(error);
-      appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
+      appendErrorBubbleOnce(`Ошибка: ${errorMessage}`);
       notify('warning', errorMessage);
       if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
         const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
@@ -957,7 +993,7 @@ function openAiResponseDialog(context = {}) {
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendBubble('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.', 'assistant');
+        appendErrorBubbleOnce('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.');
       }
     } finally {
       state.isSending = false;
@@ -987,7 +1023,7 @@ function openAiResponseDialog(context = {}) {
       assistantReply = '';
       const errorMessage = buildReadableAiError(error);
       const modelsHandled = applyAvailableModelsFromError(error);
-      appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
+      appendErrorBubbleOnce(`Ошибка: ${errorMessage}`);
       notify('warning', errorMessage);
       if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
         const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
@@ -995,7 +1031,7 @@ function openAiResponseDialog(context = {}) {
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendBubble('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.', 'assistant');
+        appendErrorBubbleOnce('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.');
       }
     }
     if (assistantReply) {
@@ -1024,10 +1060,16 @@ function openAiResponseDialog(context = {}) {
       state.responseStyle = String(responseStyleSelect.value || 'neutral');
     });
   }
-  fetchAvailableModels().then((models) => {
-    state.availableModels = normalizeModelList(models);
-    if (!state.availableModels.some((entry) => entry.value === state.selectedModel)) {
-      state.selectedModel = state.availableModels[0] ? state.availableModels[0].value : DEFAULT_AI_MODEL;
+  fetchAvailableModels().then((modelsPayload) => {
+    const models = modelsPayload && Array.isArray(modelsPayload.models)
+      ? modelsPayload.models
+      : normalizeModelList(modelsPayload);
+    const defaultModelFromEnv = String(modelsPayload && modelsPayload.defaultModel || '').trim();
+    state.availableModels = models;
+    if (defaultModelFromEnv && state.availableModels.some((entry) => entry.value === defaultModelFromEnv && entry.available !== false)) {
+      state.selectedModel = defaultModelFromEnv;
+    } else if (!state.availableModels.some((entry) => entry.value === state.selectedModel && entry.available !== false)) {
+      state.selectedModel = pickFirstAvailableModel(state.availableModels);
     }
     if (modelSelect) {
       modelSelect.textContent = '';
@@ -1035,11 +1077,19 @@ function openAiResponseDialog(context = {}) {
         const option = document.createElement('option');
         option.value = String(entry.value || '');
         option.textContent = String(entry.label || entry.value || '');
+        option.disabled = entry.available === false;
         modelSelect.appendChild(option);
       });
       modelSelect.value = state.selectedModel;
       modelSelect.addEventListener('change', () => {
         state.selectedModel = String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL;
+        const selected = state.availableModels.find((entry) => entry.value === state.selectedModel);
+        if (selected && selected.available === false) {
+          appendErrorBubbleOnce(`Модель ${state.selectedModel} сейчас нерабочая${selected.reason ? `: ${selected.reason}` : ''}.`);
+          const fallbackModel = pickFirstAvailableModel(state.availableModels);
+          state.selectedModel = fallbackModel;
+          modelSelect.value = fallbackModel;
+        }
       });
     }
   });
