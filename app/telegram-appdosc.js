@@ -398,6 +398,8 @@ function renderTelegramBriefPreview(container, payload, sourceText) {
 
 function openTelegramBriefModal(task, statusHandler) {
   ensureTelegramBriefModalStyle();
+  const previousBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
   const modal = document.createElement('div');
   modal.className = 'appdosc-brief-ai';
   modal.innerHTML = `
@@ -437,9 +439,19 @@ function openTelegramBriefModal(task, statusHandler) {
   });
 
   const activate = (button) => Array.from(list.querySelectorAll('.appdosc-brief-ai__item')).forEach((el) => el.classList.toggle('is-active', el === button));
-  const close = () => modal.remove();
+  const onEscClose = (event) => {
+    if (event.key === 'Escape') {
+      close();
+    }
+  };
+  const close = () => {
+    document.removeEventListener('keydown', onEscClose);
+    document.body.style.overflow = previousBodyOverflow;
+    modal.remove();
+  };
   modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
   modal.querySelector('[data-close]').addEventListener('click', close);
+  document.addEventListener('keydown', onEscClose);
 
   sources.forEach((source) => {
     const button = document.createElement('button');

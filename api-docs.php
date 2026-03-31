@@ -7,7 +7,14 @@ header('Content-Type: application/json; charset=utf-8');
 function jsonResponse(int $status, array $payload): void
 {
     http_response_code($status);
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $json = json_encode(
+        $payload,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+    if ($json === false) {
+        $json = '{"ok":false,"error":"JSON_ENCODE_FAILED"}';
+    }
+    echo $json;
     exit;
 }
 
@@ -25,7 +32,10 @@ function logApiDocs(string $level, string $message, array $context = []): void
     ];
     @file_put_contents(
         $directory . '/api-docs.log',
-        json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL,
+        (json_encode(
+            $record,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+        ) ?: '{"time":"' . gmdate('c') . '","level":"error","message":"LOG_JSON_ENCODE_FAILED"}') . PHP_EOL,
         FILE_APPEND
     );
 }

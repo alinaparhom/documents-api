@@ -1039,6 +1039,9 @@
     ensureStyles();
 
     var config = options && typeof options === 'object' ? options : {};
+    var previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
     var state = {
       files: []
         .concat(normalizeFileObjects(config.pendingFiles || []))
@@ -2056,6 +2059,7 @@
         URL.revokeObjectURL(templateState.customTemplateObjectUrl);
         templateState.customTemplateObjectUrl = '';
       }
+      document.body.style.overflow = previousBodyOverflow;
       closeWithAnimation(root);
     }
 
