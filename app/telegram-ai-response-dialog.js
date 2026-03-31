@@ -470,6 +470,12 @@ async function requestAssistantReply(userMessage, context, history) {
   const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
   form.append('aiBehavior', behaviorText);
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
+  form.append('extractedTexts', JSON.stringify(extractedTexts));
+  const generationParams = context && context.generationParams ? context.generationParams : {};
+  form.append('temperature', String(Number(generationParams.temperature) || 0.7));
+  form.append('top_p', String(Number(generationParams.top_p) || 1));
+  form.append('frequency_penalty', String(Number(generationParams.frequency_penalty) || 0));
+  form.append('presence_penalty', String(Number(generationParams.presence_penalty) || 0));
   form.append('context', JSON.stringify({
     task: {
       id: task.id || null,

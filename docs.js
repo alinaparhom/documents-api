@@ -2219,6 +2219,12 @@
     formData.append('documentTitle', sourceLabel);
     formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
     formData.append('responseStyle', 'concise');
+    formData.append('aiBehavior', String(context.aiBehavior || ''));
+    formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
+    formData.append('temperature', '0.3');
+    formData.append('top_p', '1');
+    formData.append('frequency_penalty', '0');
+    formData.append('presence_penalty', '0');
     formData.append('briefMode', '1');
     formData.append('context', JSON.stringify(context));
     return fetch(endpoint, {
@@ -2230,7 +2236,9 @@
         if (!response.ok || !payload || payload.ok !== true) {
           var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
           var model = payload && payload.model ? String(payload.model) : 'неизвестно';
-          throw new Error('ИИ временно недоступен. Подождите ' + retryAfterSeconds + ' сек. Модель: ' + model + '.');
+          var suggestedModel = payload && payload.suggestedModel ? String(payload.suggestedModel) : '';
+          var fallbackHint = suggestedModel ? (' Попробуйте модель: ' + suggestedModel + '.') : '';
+          throw new Error('ИИ временно недоступен. Подождите ' + retryAfterSeconds + ' сек. Модель: ' + model + '.' + fallbackHint);
         }
         return payload;
       });
