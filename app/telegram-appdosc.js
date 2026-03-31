@@ -7,10 +7,43 @@ const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
-const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
+const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
+
+function getDocsAiEndpoints() {
+  const configured = String((window && window.DOCUMENTS_AI_API_URL) || '').trim();
+  const endpoints = configured ? [configured, ...DOCS_AI_FALLBACK_ENDPOINTS] : DOCS_AI_FALLBACK_ENDPOINTS.slice();
+  return Array.from(new Set(endpoints.filter(Boolean)));
+}
+
+async function postDocsAiWithFallback(createFormData, options = {}) {
+  const endpoints = getDocsAiEndpoints();
+  let lastResult = null;
+  for (let index = 0; index < endpoints.length; index += 1) {
+    const endpoint = endpoints[index];
+    let response = null;
+    let payload = null;
+    try {
+      response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+      payload = await response.json().catch(() => null);
+    } catch (error) {
+      lastResult = { endpoint, error, response, payload };
+      continue;
+    }
+    const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+    if (shouldTryNextEndpoint && index < endpoints.length - 1) {
+      lastResult = { endpoint, response, payload };
+      continue;
+    }
+    return { endpoint, response, payload };
+  }
+  if (lastResult) {
+    return lastResult;
+  }
+  throw new Error(options.fallbackErrorMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+}
 
 function loadExternalScript(src, marker) {
   return new Promise((resolve, reject) => {
@@ -207,12 +240,15 @@ function ensureTelegramBriefModalStyle() {
 }
 
 async function requestTelegramOcrByUrl(fileUrl) {
-  const formData = new FormData();
-  formData.append('action', 'ocr_extract');
-  formData.append('language', 'rus');
-  formData.append('file_url', fileUrl);
-  const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
-  const payload = await response.json().catch(() => null);
+  const request = await postDocsAiWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'ocr_extract');
+    formData.append('language', 'rus');
+    formData.append('file_url', fileUrl);
+    return formData;
+  }, { fallbackErrorMessage: 'OCR временно недоступен' });
+  const response = request && request.response;
+  const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
     throw new Error((payload && payload.error) || 'OCR временно недоступен');
   }
@@ -242,14 +278,17 @@ async function requestTelegramBriefAi(sourceLabel, text) {
     aiBehavior: fileOnlyPrompt,
     isolatedFileMode: true
   };
-  const formData = new FormData();
-  formData.append('action', 'ai_response_analyze');
-  formData.append('documentTitle', sourceLabel || 'Файл');
-  formData.append('prompt', 'Сделай краткий и точный вывод по тексту файла. Верни только JSON заданного формата, без markdown.');
-  formData.append('responseStyle', 'concise');
-  formData.append('context', JSON.stringify(context));
-  const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
-  const payload = await response.json().catch(() => null);
+  const request = await postDocsAiWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'ai_response_analyze');
+    formData.append('documentTitle', sourceLabel || 'Файл');
+    formData.append('prompt', 'Сделай краткий и точный вывод по тексту файла. Верни только JSON заданного формата, без markdown.');
+    formData.append('responseStyle', 'concise');
+    formData.append('context', JSON.stringify(context));
+    return formData;
+  }, { fallbackErrorMessage: 'ИИ временно недоступен' });
+  const response = request && request.response;
+  const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
     const retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
     const model = String((payload && payload.model) || 'неизвестно');
