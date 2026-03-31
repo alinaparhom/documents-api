@@ -1068,6 +1068,186 @@ function htmlToPlainText(string $html): string
     return trim((string)$text);
 }
 
+function normalizeHtmlColor(string $value): ?string
+{
+    $color = trim(mb_strtolower($value));
+    if ($color === '') {
+        return null;
+    }
+    if (preg_match('/^#[0-9a-f]{3}([0-9a-f]{3})?$/u', $color)) {
+        return $color;
+    }
+    if (preg_match('/^rgb\\((\\s*\\d+\\s*,){2}\\s*\\d+\\s*\\)$/u', $color)) {
+        return $color;
+    }
+    return null;
+}
+
+function normalizeAllowedInlineStyle(string $style): string
+{
+    $safe = [];
+    $allowed = [
+        'text-align',
+        'font-weight',
+        'font-style',
+        'text-decoration',
+        'color',
+        'background-color',
+        'font-size',
+    ];
+    $pairs = explode(';', $style);
+    foreach ($pairs as $pair) {
+        $parts = explode(':', $pair, 2);
+        if (count($parts) !== 2) {
+            continue;
+        }
+        $name = trim(mb_strtolower((string)$parts[0]));
+        $value = trim((string)$parts[1]);
+        if ($name === '' || $value === '' || !in_array($name, $allowed, true)) {
+            continue;
+        }
+        if ($name === 'font-size') {
+            if (!preg_match('/^\\d{1,2}(px|pt|em|rem|%)$/u', $value)) {
+                continue;
+            }
+        } elseif ($name === 'text-align') {
+            if (!in_array(mb_strtolower($value), ['left', 'center', 'right', 'justify'], true)) {
+                continue;
+            }
+        } elseif ($name === 'color' || $name === 'background-color') {
+            $normalizedColor = normalizeHtmlColor($value);
+            if ($normalizedColor === null) {
+                continue;
+            }
+            $value = $normalizedColor;
+        }
+        $safe[] = $name . ':' . $value;
+    }
+    return implode(';', $safe);
+}
+
+function sanitizeHtmlForExport(string $html): string
+{
+    $maxInputBytes = 2 * 1024 * 1024;
+    if (strlen($html) > $maxInputBytes) {
+        throw new RuntimeException('too large content: max 2MB HTML');
+    }
+    $dom = new DOMDocument();
+    $wrapped = '<!DOCTYPE html><html><body>' . $html . '</body></html>';
+    @$dom->loadHTML($wrapped, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD | LIBXML_NONET);
+    $body = $dom->getElementsByTagName('body')->item(0);
+    if (!$body instanceof DOMElement) {
+        throw new RuntimeException('invalid html content');
+    }
+    $allowedTags = [
+        'p', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'br',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'a',
+    ];
+    $nodes = [$body];
+    while ($nodes) {
+        $node = array_pop($nodes);
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+        for ($i = $node->childNodes->length - 1; $i >= 0; $i -= 1) {
+            $child = $node->childNodes->item($i);
+            if ($child instanceof DOMElement) {
+                $tag = mb_strtolower($child->tagName);
+                if (!in_array($tag, $allowedTags, true)) {
+                    while ($child->firstChild) {
+                        $node->insertBefore($child->firstChild, $child);
+                    }
+                    $node->removeChild($child);
+                    continue;
+                }
+                if ($child->hasAttributes()) {
+                    for ($a = $child->attributes->length - 1; $a >= 0; $a -= 1) {
+                        $attr = $child->attributes->item($a);
+                        if (!$attr) {
+                            continue;
+                        }
+                        $name = mb_strtolower($attr->name);
+                        $value = trim((string)$attr->value);
+                        if (str_starts_with($name, 'on')) {
+                            $child->removeAttribute($attr->name);
+                            continue;
+                        }
+                        if ($name === 'style') {
+                            $safeStyle = normalizeAllowedInlineStyle($value);
+                            if ($safeStyle === '') {
+                                $child->removeAttribute('style');
+                            } else {
+                                $child->setAttribute('style', $safeStyle);
+                            }
+                            continue;
+                        }
+                        if ($tag === 'a' && $name === 'href') {
+                            if (!preg_match('/^(https?:|mailto:|tel:|#)/iu', $value)) {
+                                $child->removeAttribute('href');
+                            }
+                            continue;
+                        }
+                        if ($tag === 'img' && $name === 'src') {
+                            $isDataImage = str_starts_with($value, 'data:image/');
+                            $isHttpImage = preg_match('/^https?:\\/\\//iu', $value) === 1;
+                            if (!$isDataImage && !$isHttpImage) {
+                                throw new RuntimeException('unsupported image type: allowed data:image/* or https URLs');
+                            }
+                            if ($isDataImage) {
+                                if (!preg_match('/^data:image\\/(png|jpeg|jpg|gif|webp);base64,/iu', $value)) {
+                                    throw new RuntimeException('unsupported image type: use png/jpeg/jpg/gif/webp');
+                                }
+                                if (strlen($value) > 4 * 1024 * 1024) {
+                                    throw new RuntimeException('too large content: image payload exceeds 4MB');
+                                }
+                            }
+                            continue;
+                        }
+                        if (!in_array($name, ['style', 'href', 'src', 'alt', 'title', 'colspan', 'rowspan'], true)) {
+                            $child->removeAttribute($attr->name);
+                        }
+                    }
+                }
+                $nodes[] = $child;
+            }
+        }
+    }
+
+    $clean = '';
+    foreach ($body->childNodes as $child) {
+        $clean .= $dom->saveHTML($child) ?: '';
+    }
+    $clean = trim($clean);
+    if ($clean === '') {
+        throw new RuntimeException('html is empty after sanitize');
+    }
+    if (strlen($clean) > $maxInputBytes) {
+        throw new RuntimeException('too large content after sanitize');
+    }
+    return $clean;
+}
+
+function buildDocxFromHtmlPipeline(string $outputPath, string $html, ?string $templatePath = null): bool
+{
+    $safeTemplate = is_string($templatePath) && $templatePath !== '' && is_file($templatePath) ? $templatePath : null;
+    if ($safeTemplate && replaceDocxPlaceholderWithHtml(
+        $safeTemplate,
+        $outputPath,
+        $html,
+        ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+    )) {
+        return true;
+    }
+    if (createDocxFromHtmlUsingPhpWord($outputPath, $html)) {
+        return true;
+    }
+    if ($safeTemplate && replaceDocxWithHtml($safeTemplate, $outputPath, $html)) {
+        return true;
+    }
+    return false;
+}
+
 function nodeToHtml(DOMNode $node, DOMXPath $xpath): string
 {
     $html = '';
@@ -1615,18 +1795,24 @@ if ($action === 'load_template_html') {
 
 if ($action === 'generate_document') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
+    $rawHtml = trim((string)($_POST['html'] ?? ''));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
     $uploadedTemplate = getUploadedTemplateFile('templateFile');
 
-    if ($answerText === '') {
-        jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
+    if ($rawHtml === '' && $answerText !== '') {
+        $rawHtml = '<div>' . nl2br(htmlspecialchars($answerText, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')) . '</div>';
     }
-    if (mb_strlen($answerText) > 40000) {
-        jsonResponse(400, ['ok' => false, 'error' => 'Ответ слишком большой для экспорта']);
+    if ($rawHtml === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'empty html: передайте html из редактора']);
     }
     if ($format !== 'docx' && $format !== 'pdf') {
-        jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
+        jsonResponse(400, ['ok' => false, 'error' => 'unsupported format: поддерживаются только docx и pdf']);
+    }
+    try {
+        $safeHtml = sanitizeHtmlForExport($rawHtml);
+    } catch (Throwable $e) {
+        jsonResponse(400, ['ok' => false, 'error' => 'invalid html: ' . $e->getMessage()]);
     }
 
     $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? $_POST['templatePath'] ?? ''));
@@ -1659,27 +1845,24 @@ if ($action === 'generate_document') {
             @unlink($tmpFile);
             jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/app/templates/, /js/documents/templates/ или укажите DOCUMENT_TEMPLATE_DIR']);
         }
-        if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
-            '[ОТВЕТ_ИИ]' => $answerText,
-            '[DOCUMENT_TITLE]' => $documentTitle,
-        ])) {
+        if (!buildDocxFromHtmlPipeline($tmpFile, $safeHtml, $templateDocxPath)) {
             @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX на основе шаблона']);
+            jsonResponse(500, ['ok' => false, 'error' => 'docx conversion failed: проверьте HTML или установку phpoffice/phpword']);
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
     } else {
-        if (is_file($templatePdfPath)) {
+        $tmpDocx = tempnam(sys_get_temp_dir(), 'answer_docx_');
+        $pdfCreated = false;
+        if ($tmpDocx !== false && buildDocxFromHtmlPipeline($tmpDocx, $safeHtml, $templateDocxPath)) {
+            $pdfCreated = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
+            @unlink($tmpDocx);
+        } elseif ($tmpDocx !== false) {
+            @unlink($tmpDocx);
+        }
+        if (!$pdfCreated) {
             @unlink($tmpFile);
-            $tmpFile = $templatePdfPath;
-        } else {
-            if (is_file(__DIR__ . '/vendor/autoload.php')) {
-                require_once __DIR__ . '/vendor/autoload.php';
-            }
-            if (!createPdfFromText($tmpFile, $documentTitle, $answerText)) {
-                @unlink($tmpFile);
-                jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или добавьте template.pdf в директорию шаблонов']);
-            }
+            jsonResponse(500, ['ok' => false, 'error' => 'pdf conversion failed: установите LibreOffice (soffice)']);
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="answer.pdf"');
@@ -1787,14 +1970,19 @@ if ($action === 'generate_from_html') {
 
 if ($action === 'generate_from_editor') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
-    $html = trim((string)($_POST['html'] ?? ''));
+    $rawHtml = trim((string)($_POST['html'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? 'Ответ'));
 
-    if ($html === '') {
-        jsonResponse(400, ['ok' => false, 'error' => 'HTML пустой']);
+    if ($rawHtml === '') {
+        jsonResponse(400, ['ok' => false, 'error' => 'empty html: редактор вернул пустое содержимое']);
     }
     if ($format !== 'docx' && $format !== 'pdf') {
-        jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
+        jsonResponse(400, ['ok' => false, 'error' => 'unsupported format: поддерживаются только docx и pdf']);
+    }
+    try {
+        $html = sanitizeHtmlForExport($rawHtml);
+    } catch (Throwable $e) {
+        jsonResponse(400, ['ok' => false, 'error' => 'invalid html: ' . $e->getMessage()]);
     }
 
     $tmpFile = tempnam(sys_get_temp_dir(), 'editor_');
@@ -1804,23 +1992,10 @@ if ($action === 'generate_from_editor') {
 
     if ($format === 'docx') {
         $templatePath = resolveTemplatePath('template.docx', []);
-        $ok = is_file($templatePath)
-            ? replaceDocxPlaceholderWithHtml(
-                $templatePath,
-                $tmpFile,
-                $html,
-                ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
-            )
-            : false;
-        if (!$ok && class_exists('\\PhpOffice\\PhpWord\\PhpWord')) {
-            $ok = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
-        }
-        if (!$ok && is_file($templatePath)) {
-            $ok = replaceDocxWithHtml($templatePath, $tmpFile, $html);
-        }
+        $ok = buildDocxFromHtmlPipeline($tmpFile, $html, $templatePath);
         if (!$ok) {
             @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось создать DOCX из HTML']);
+            jsonResponse(500, ['ok' => false, 'error' => 'docx conversion failed: проверьте таблицы/стили/изображения в HTML']);
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="edited.docx"');
@@ -1829,20 +2004,7 @@ if ($action === 'generate_from_editor') {
         $pdfCreated = false;
         if ($tmpDocx !== false) {
             $templatePath = resolveTemplatePath('template.docx', []);
-            $docxCreated = is_file($templatePath)
-                ? replaceDocxPlaceholderWithHtml(
-                    $templatePath,
-                    $tmpDocx,
-                    $html,
-                    ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
-                )
-                : false;
-            if (!$docxCreated) {
-                $docxCreated = createDocxFromHtmlUsingPhpWord($tmpDocx, $html);
-            }
-            if (!$docxCreated && is_file($templatePath)) {
-                $docxCreated = replaceDocxWithHtml($templatePath, $tmpDocx, $html);
-            }
+            $docxCreated = buildDocxFromHtmlPipeline($tmpDocx, $html, $templatePath);
             if ($docxCreated) {
                 $pdfCreated = convertDocxToPdfViaLibreOffice($tmpDocx, $tmpFile);
             }
@@ -1851,7 +2013,7 @@ if ($action === 'generate_from_editor') {
 
         if (!$pdfCreated) {
             @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт в режиме "как в шаблоне" недоступен: установите LibreOffice (soffice)']);
+            jsonResponse(500, ['ok' => false, 'error' => 'pdf conversion failed: установите LibreOffice (soffice)']);
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="edited.pdf"');

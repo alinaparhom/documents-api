@@ -950,8 +950,28 @@
     contextUsageHint.style.fontSize = '11px';
     contextUsageHint.style.textAlign = 'left';
 
-    function exportDocument(format, answerText) {
-      if (!answerText) {
+    function normalizeEditorHtml(rawHtml, fallbackText) {
+      var html = String(rawHtml || '').trim();
+      if (!html && fallbackText) {
+        html = '<div>' + escapeHtml(String(fallbackText || '')).replace(/\n/g, '<br>') + '</div>';
+      }
+      return html;
+    }
+
+    function readEditorHtml(editorLike, fallbackText) {
+      if (editorLike && typeof editorLike.getHTML === 'function') {
+        try {
+          return normalizeEditorHtml(editorLike.getHTML(), fallbackText);
+        } catch (error) {
+          return normalizeEditorHtml('', fallbackText);
+        }
+      }
+      return normalizeEditorHtml('', fallbackText);
+    }
+
+    function exportDocument(format, editorHtml, answerText) {
+      var preparedHtml = normalizeEditorHtml(editorHtml, answerText);
+      if (!preparedHtml) {
         alert('Нет текста для экспорта. Сначала получите ответ от ИИ.');
         return;
       }
@@ -959,7 +979,7 @@
       var formData = new FormData();
       formData.append('action', 'generate_document');
       formData.append('format', format);
-      formData.append('answer', answerText);
+      formData.append('html', preparedHtml);
       formData.append('documentTitle', config.documentTitle || '');
       if (state.templateFile && state.templateFile.fileObject) {
         formData.append('templateFile', state.templateFile.fileObject, state.templateFile.fileObject.name || 'template.docx');
@@ -1226,8 +1246,9 @@
     }
 
     async function exportEditedText(format, buttonEl) {
-      var text = String(templateState.editedText || '').trim();
-      if (!text) {
+      var fallbackText = String(templateState.editedText || '').trim();
+      var structuredHtml = readEditorHtml(window.templateEditorInstance || window.editor, fallbackText);
+      if (!structuredHtml) {
         templateInfo.textContent = 'Введите текст перед скачиванием.';
         return;
       }
@@ -1239,7 +1260,7 @@
         var params = new URLSearchParams();
         params.set('action', 'generate_from_editor');
         params.set('format', format);
-        params.set('html', '<div>' + textToSimpleHtml(text) + '</div>');
+        params.set('html', structuredHtml);
         params.set('documentTitle', config.documentTitle || 'template');
         var response = await fetch(apiUrl, {
           method: 'POST',
@@ -1695,10 +1716,12 @@
       editModal.close();
     });
     editDocx.addEventListener('click', function () {
-      exportDocument('docx', String(editArea.value || '').trim());
+      var rawText = String(editArea.value || '').trim();
+      exportDocument('docx', readEditorHtml(window.editor, rawText), rawText);
     });
     editPdf.addEventListener('click', function () {
-      exportDocument('pdf', String(editArea.value || '').trim());
+      var rawText = String(editArea.value || '').trim();
+      exportDocument('pdf', readEditorHtml(window.editor, rawText), rawText);
     });
     editCopy.addEventListener('click', function () {
       var text = String(editArea.value || '').trim();
