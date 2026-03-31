@@ -145,6 +145,7 @@ function ensureTelegramBriefModalStyle() {
     .appdosc-brief-ai{position:fixed;inset:0;z-index:2800;background:rgba(15,23,42,.32);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:8px}
     .appdosc-brief-ai__panel{width:min(920px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.94));border-radius:22px;border:1px solid rgba(255,255,255,.9);overflow:hidden;box-shadow:0 14px 38px rgba(15,23,42,.16)}
     .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(226,232,240,.95)}
+    .appdosc-brief-ai__close{border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.9);color:#0f172a;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:600;min-height:32px;flex:0 0 auto}
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
     .appdosc-brief-ai__mode{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 8px;border-radius:999px;background:rgba(219,234,254,.7);border:1px solid rgba(147,197,253,.8);font-size:11px;color:#1e3a8a;font-weight:600}
@@ -169,7 +170,7 @@ function ensureTelegramBriefModalStyle() {
     .appdosc-brief-ai__section p{margin:0;color:#0f172a;white-space:pre-wrap}
     .appdosc-brief-ai__section ul{margin:0;padding-left:18px;color:#0f172a}
     .appdosc-brief-ai__section li + li{margin-top:5px}
-    @media (max-width:768px){.appdosc-brief-ai{padding:0}.appdosc-brief-ai__panel{max-height:100dvh;border-radius:0}.appdosc-brief-ai__body{grid-template-columns:1fr}.appdosc-brief-ai__list{flex-direction:row;overflow:auto;padding-bottom:2px}.appdosc-brief-ai__item{min-width:180px}}
+    @media (max-width:768px){.appdosc-brief-ai{padding:0}.appdosc-brief-ai__panel{max-height:100dvh;border-radius:0}.appdosc-brief-ai__body{grid-template-columns:1fr}.appdosc-brief-ai__list{flex-direction:row;overflow:auto;padding-bottom:2px}.appdosc-brief-ai__item{min-width:180px}.appdosc-brief-ai__close{min-height:30px;padding:6px 9px}}
   `;
   document.head.appendChild(style);
 }
@@ -377,7 +378,7 @@ function openTelegramBriefModal(task, statusHandler) {
           <div class="appdosc-brief-ai__mode">Только текст выбранного файла</div>
           <div class="appdosc-brief-ai__hint">1) Выберите файл → 2) Дождитесь анализа → 3) Скопируйте нужные пункты.</div>
         </div>
-        <button type="button" class="appdosc-card__action" data-close>Закрыть</button>
+        <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
       </div>
       <p class="appdosc-brief-ai__status" data-status data-tone="idle">Выберите файл для анализа.</p>
       <div class="appdosc-brief-ai__body">
@@ -456,10 +457,6 @@ function openTelegramBriefModal(task, statusHandler) {
     list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
   }
   document.body.appendChild(modal);
-  const firstButton = list.querySelector('.appdosc-brief-ai__item');
-  if (firstButton instanceof HTMLButtonElement) {
-    firstButton.click();
-  }
 }
 
 const ALLOWED_LOG_EVENTS = new Set([
