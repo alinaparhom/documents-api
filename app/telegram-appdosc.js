@@ -71,6 +71,16 @@ function ensureAiDialogScriptLoaded() {
   }
 
   if (!aiDialogLoader) {
+    const dynamicImportCandidates = [];
+    try {
+      if (typeof import.meta !== 'undefined' && import.meta.url) {
+        dynamicImportCandidates.push(new URL('./telegram-ai-response-dialog.js', import.meta.url).toString());
+      }
+    } catch (_) {}
+    if (typeof location !== 'undefined' && location.origin) {
+      dynamicImportCandidates.push(new URL('/js/documents/app/telegram-ai-response-dialog.js', location.origin).toString());
+      dynamicImportCandidates.push(new URL('/app/telegram-ai-response-dialog.js', location.origin).toString());
+    }
     const runtimeVersion = String(window.__RUNTIME_ASSET_VERSION__ || '').trim();
     const assetVersion = String(window.__ASSET_VERSION__ || '').trim();
     const cacheVersion = runtimeVersion || (assetVersion ? `${assetVersion}-${Date.now().toString(36)}` : Date.now().toString(36));
@@ -79,6 +89,20 @@ function ensureAiDialogScriptLoaded() {
       `./telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
       `/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
     ];
+    const loadViaDynamicImport = async (index) => {
+      if (index >= dynamicImportCandidates.length) return;
+      const src = dynamicImportCandidates[index];
+      if (!src) return loadViaDynamicImport(index + 1);
+      try {
+        await import(src);
+      } catch (_) {
+        return loadViaDynamicImport(index + 1);
+      }
+      if (typeof window.openAiResponseDialog === 'function') {
+        return;
+      }
+      return loadViaDynamicImport(index + 1);
+    };
     const tryLoad = (index) => {
       if (index >= candidates.length) {
         return Promise.reject(new Error('Не удалось загрузить ИИ-скрипт ни по одному пути.'));
@@ -86,10 +110,17 @@ function ensureAiDialogScriptLoaded() {
       return loadExternalScript(candidates[index], `data-ai-dialog-script-${index}`).catch(() => tryLoad(index + 1));
     };
 
-    aiDialogLoader = tryLoad(0).catch((error) => {
-      aiDialogLoader = null;
-      throw error;
-    });
+    aiDialogLoader = loadViaDynamicImport(0)
+      .then(() => {
+        if (typeof window.openAiResponseDialog === 'function') {
+          return window.openAiResponseDialog;
+        }
+        return tryLoad(0);
+      })
+      .catch((error) => {
+        aiDialogLoader = null;
+        throw error;
+      });
   }
 
   return aiDialogLoader;
