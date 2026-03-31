@@ -11,25 +11,9 @@ const CHAT_HISTORY_LIMIT = 16;
 const MAX_AUTO_CONTEXT_FILES = 6;
 const MAX_AUTO_CONTEXT_TEXT_CHARS = 180000;
 const FALLBACK_MODEL_OPTIONS = [{ value: 'gpt-4o-mini', label: 'gpt-4o-mini' }];
-const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — СОТРУДНИК СТРОИТЕЛЬНОЙ КОМПАНИИ, КОТОРЫЙ ГОТОВИТ ОФИЦИАЛЬНЫЕ ОТВЕТЫ НА ВХОДЯЩИЕ ПИСЬМА.\n'
-  + '\n'
-  + 'ТВОЯ ЗАДАЧА — НЕ ПЕРЕСКАЗЫВАТЬ ТЕКСТ ПИСЬМА, А ДАВАТЬ РЕШЕНИЕ.\n'
-  + '- Если требуется согласование — пиши, что согласовано или не согласовано, и кратко почему.\n'
-  + '- Если требуется оформить документы — укажи, что будет оформлено и к какому сроку.\n'
-  + '- Если есть задержки — назови новую дату и краткую причину.\n'
-  + '- Если есть претензии — прими или отклони с обоснованием.\n'
-  + '\n'
-  + 'ПРАВИЛА\n'
-  + '1) Не пересказывай текст письма: он уже есть в документе.\n'
-  + '2) Не используй фразы-пустышки («мы рассмотрим», «мы гарантируем качество», «будет выполнено в срок») без конкретики.\n'
-  + '3) Не добавляй реквизиты компании, подписи, даты отправки и служебные шапки.\n'
-  + '4) Каждое предложение должно содержать новое решение или действие.\n'
-  + '5) Если данных недостаточно, запроси конкретные недостающие данные.\n'
-  + '\n'
-  + 'ФОРМАТ ОТВЕТА\n'
-  + '- Сплошной текст без шапки и подписи.\n'
-  + '- Только суть решений, действий и сроков в формате ДД.ММ.ГГГГ.\n'
-  + '- Начинай сразу с решения по существу.\n';
+const DEFAULT_SITE_AI_BEHAVIOR = 'Ты — сотрудник компании с 15-летним опытом в строительстве. '
+  + 'Твоя задача — давать максимально подробные, развёрнутые ответы на входящие документы. '
+  + 'Стиль ответа: деловой, структурированный, без воды.';
 
 const SCRIPT_CACHE = new Map();
 
@@ -892,6 +876,8 @@ function openAiResponseDialog(context = {}) {
     context.extractedTexts = extractedForContext.map((file) => ({ name: file.name, type: file.type || 'text/plain', text: file.text }));
     if (extractedForContext.length) {
       appendFileTextRevealMessage(extractedForContext);
+      appendBubble('Файлы готовы. Отправляем запрос в ИИ...', 'assistant');
+      runAutoDecision();
     } else {
       appendBubble('Не удалось добавить выбранные файлы в контекст.', 'assistant');
     }
@@ -1024,6 +1010,7 @@ function openAiResponseDialog(context = {}) {
     input.disabled = true;
     autoDecisionBtn.disabled = true;
     root.querySelector('[data-send]').disabled = true;
+    notify('info', 'Отправили запрос в ИИ, ждём ответ...');
     try {
       const assistantReply = await requestAssistantWithFallback(prompt, state.chatHistory);
       appendBubble(assistantReply, 'assistant');
@@ -1031,11 +1018,9 @@ function openAiResponseDialog(context = {}) {
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);
       notify('success', 'Решение сгенерировано.');
     } catch (error) {
-      const fallback = buildAssistantReply(prompt, context);
-      appendBubble(fallback, 'assistant');
-      state.chatHistory.push({ role: 'assistant', text: fallback, ts: Date.now() });
-      state.chatHistory = normalizeHistoryMessages(state.chatHistory);
-      notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
+      const errorText = error && error.message ? error.message : 'Ошибка ИИ. Попробуйте чуть позже.';
+      appendBubble(`Ошибка ИИ: ${errorText}`, 'assistant');
+      notify('warning', `Ошибка ИИ: ${errorText}`);
     } finally {
       state.isSending = false;
       input.disabled = false;
@@ -1061,8 +1046,13 @@ function openAiResponseDialog(context = {}) {
     try {
       assistantReply = await requestAssistantWithFallback(prompt, state.chatHistory);
     } catch (error) {
-      assistantReply = buildAssistantReply(prompt, context);
-      notify('warning', error && error.message ? `${error.message}. Показан черновик.` : 'Ошибка ИИ. Показан черновик.');
+      const errorText = error && error.message ? error.message : 'Ошибка ИИ. Попробуйте чуть позже.';
+      appendBubble(`Ошибка ИИ: ${errorText}`, 'assistant');
+      input.disabled = false;
+      state.isSending = false;
+      sendBtn.disabled = false;
+      notify('warning', `Ошибка ИИ: ${errorText}`);
+      return;
     }
     appendBubble(assistantReply, 'assistant');
     state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
