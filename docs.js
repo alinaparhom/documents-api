@@ -2219,6 +2219,7 @@
     formData.append('documentTitle', sourceLabel);
     formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
     formData.append('responseStyle', 'concise');
+    formData.append('briefMode', '1');
     formData.append('context', JSON.stringify(context));
     return fetch(endpoint, {
       method: 'POST',
