@@ -13,9 +13,19 @@
   var DEFAULT_LONG_ATTACHMENT_THRESHOLD = 7000;
   var AI_REQUEST_TIMEOUT_MS = 35000;
   var AI_REQUEST_TIMEOUT_MAX_MS = 70000;
-  var AI_TIMEOUT_CONTEXT_STEP_CHARS = 45000;
+  var AI_TIMEOUT_CONTEXT_STEP_TOKENS = 12000;
   var AI_TIMEOUT_STEP_MS = 8000;
   var AI_SOFT_RETRY_DELAY_MS = 1200;
+  var AI_BEHAVIOR_MAX_CHARS = 8000;
+  var DEFAULT_MODEL_TOKEN_LIMIT = 16000;
+  var MODEL_TOKEN_LIMITS = {
+    'gpt-4.1': 128000,
+    'gpt-4.1-mini': 128000,
+    'gpt-4o': 128000,
+    'gpt-4o-mini': 128000,
+    'o3': 200000,
+    'o4-mini': 200000
+  };
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
@@ -148,9 +158,51 @@
       .replace(/\bкоп\b\.?/gi, 'копеек');
   }
 
+  function estimateTokens(value) {
+    var text = String(value || '');
+    if (!text) {
+      return 0;
+    }
+    return Math.ceil(text.length / 4);
+  }
+
+  function getModelTokenLimit(modelName) {
+    var normalized = String(modelName || '').toLowerCase().trim();
+    if (!normalized) {
+      return DEFAULT_MODEL_TOKEN_LIMIT;
+    }
+    var exact = MODEL_TOKEN_LIMITS[normalized];
+    if (exact) {
+      return exact;
+    }
+    if (normalized.indexOf('mini') >= 0 || normalized.indexOf('gpt-4') >= 0 || normalized.indexOf('o') === 0) {
+      return 128000;
+    }
+    return DEFAULT_MODEL_TOKEN_LIMIT;
+  }
+
 
   function filterOcrArtifacts(text, mode, diagnostics) {
-    var normalized = String(text || '');
+    var normalized = String(text || '').replace(/\r\n/g, '\n');
+    normalized = normalized
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[^\S\n]{2,}/g, ' ');
+    if (mode !== 'raw') {
+      var lines = normalized.split('\n').map(function (line) { return line.trim(); });
+      normalized = lines.filter(function (line) {
+        if (!line) {
+          return false;
+        }
+        if (/^[\W_]{4,}$/.test(line)) {
+          return false;
+        }
+        if (/^[il1|\\\/\-\._]{5,}$/i.test(line)) {
+          return false;
+        }
+        return true;
+      }).join('\n');
+    }
     var stats = diagnostics && typeof diagnostics === 'object' ? diagnostics : null;
     if (stats) {
       stats.totalLines = normalized ? normalized.split(/\r\n|\r|\n/).length : 0;
@@ -193,15 +245,15 @@
   }
 
   function calculateAiTimeoutMs(prompt, state) {
-    var promptChars = String(prompt || '').length;
-    var filesChars = Array.isArray(state && state.files)
-      ? state.files.reduce(function (sum, file) { return sum + String(file && file.content || '').length; }, 0)
+    var promptTokens = estimateTokens(prompt);
+    var filesTokens = Array.isArray(state && state.files)
+      ? state.files.reduce(function (sum, file) { return sum + estimateTokens(file && file.content || ''); }, 0)
       : 0;
-    var historyChars = Array.isArray(state && state.history)
-      ? state.history.reduce(function (sum, item) { return sum + String(item && item.text || '').length; }, 0)
+    var historyTokens = Array.isArray(state && state.history)
+      ? state.history.reduce(function (sum, item) { return sum + estimateTokens(item && item.text || ''); }, 0)
       : 0;
-    var totalChars = promptChars + filesChars + historyChars;
-    var steps = Math.ceil(totalChars / AI_TIMEOUT_CONTEXT_STEP_CHARS);
+    var totalTokens = promptTokens + filesTokens + historyTokens;
+    var steps = Math.ceil(totalTokens / AI_TIMEOUT_CONTEXT_STEP_TOKENS);
     var timeout = AI_REQUEST_TIMEOUT_MS + (steps * AI_TIMEOUT_STEP_MS);
     return Math.max(AI_REQUEST_TIMEOUT_MS, Math.min(AI_REQUEST_TIMEOUT_MAX_MS, timeout));
   }
@@ -317,7 +369,7 @@
         if (!line) {
           continue;
         }
-        var normalized = line.toLowerCase();
+        var normalized = line.toLowerCase().replace(/\s+/g, ' ').trim();
         if (seen[normalized]) {
           continue;
         }
@@ -353,11 +405,14 @@
       .filter(function (line) { return line.length >= 12; })
       .slice(0, settings.maxSummaryQuotes)
       .map(function (line) { return '> ' + sliceByChars(line, settings.maxQuoteChars); });
+    var excerpt = sliceByChars(lines.slice(0, 8).join(' '), Math.max(200, settings.maxQuoteChars * 2));
     return [
       'Ключевые пункты:',
       keyPoints.slice(0, settings.maxSummaryPoints).map(function (line) { return '- ' + line; }).join('\n'),
       'Цитаты строк:',
-      quotes.join('\n')
+      quotes.join('\n'),
+      'Короткая выжимка:',
+      excerpt
     ].join('\n').trim();
   }
 
@@ -428,15 +483,38 @@
       ? [{ id: 'priority-block', name: 'Приоритетные данные', type: 'summary', text: priorityText }]
       : [];
     var entries = prioritizedEntries.concat(collected).filter(Boolean);
+    var modelTokenLimit = getModelTokenLimit(state && state.model);
+    var safeLimit = Math.max(2000, Math.floor(modelTokenLimit * 0.75));
+    var usedTokens = 0;
+    var tokenLimitedEntries = [];
+    entries.forEach(function (entry) {
+      var text = String(entry && entry.text || '');
+      if (!text) {
+        return;
+      }
+      if (usedTokens >= safeLimit) {
+        return;
+      }
+      var availableTokens = safeLimit - usedTokens;
+      var maxChars = availableTokens * 4;
+      var clippedText = text.length > maxChars ? sliceByChars(text, maxChars) : text;
+      if (!clippedText) {
+        return;
+      }
+      usedTokens += estimateTokens(clippedText);
+      tokenLimitedEntries.push(Object.assign({}, entry, { text: clippedText }));
+    });
     return {
-      extractedTexts: entries,
+      extractedTexts: tokenLimitedEntries,
       stats: {
         sourceChars: sourceChars,
-        preparedChars: entries.reduce(function (acc, item) { return acc + String(item.text || '').length; }, 0),
+        preparedChars: tokenLimitedEntries.reduce(function (acc, item) { return acc + String(item.text || '').length; }, 0),
         filesUsed: collected.length,
         truncatedFiles: truncatedFiles,
         mode: detailMode,
-        totalLimit: totalLimit
+        totalLimit: totalLimit,
+        approxTokens: usedTokens,
+        tokenLimit: safeLimit
       }
     };
   }
@@ -566,10 +644,22 @@
     if (!Array.isArray(files)) {
       return [];
     }
+    var seen = {};
     return files.map(function (entry, index) {
       if (!entry) {
         return null;
       }
+      var dedupKey = [
+        source,
+        String(entry.name || '').toLowerCase().trim(),
+        Number(entry.size || 0),
+        String(entry.url || '').trim(),
+        String(entry.content || '').slice(0, 120)
+      ].join('|');
+      if (seen[dedupKey]) {
+        return null;
+      }
+      seen[dedupKey] = true;
       return {
         id: source + '-' + index + '-' + Date.now(),
         name: entry.name ? String(entry.name) : 'Файл без названия',
@@ -722,6 +812,21 @@
       deduped.push(line);
     });
     return deduped.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  function hasDatesInResponse(responseText) {
+    return /\b\d{2}\.\d{2}\.\d{4}\b/.test(String(responseText || ''));
+  }
+
+  function logAiError(error, details) {
+    if (typeof console === 'undefined' || !console.error) {
+      return;
+    }
+    console.error('[AI_MODAL_ERROR]', {
+      message: error && error.message ? String(error.message) : 'unknown',
+      code: error && error.code ? String(error.code) : '',
+      details: details || {}
+    });
   }
 
   function closeWithAnimation(root) {
@@ -986,6 +1091,7 @@
     context.aiBehavior = state.aiBehavior;
     context.ocrMode = state.ocrMode;
     context.contextDetail = state.contextDetail;
+    context.generationParams = state.generationParams || { temperature: 0.7, top_p: 1, frequency_penalty: 0, presence_penalty: 0 };
     context.contextStats = preparedContext.stats;
     context.extractedTexts = extractedTexts;
     if (config.aiRuntime && typeof config.aiRuntime === 'object') {
@@ -1021,6 +1127,11 @@
     if (state.model) {
       formData.append('model', state.model);
     }
+    var generationParams = state.generationParams || { temperature: 0.7, top_p: 1, frequency_penalty: 0, presence_penalty: 0 };
+    formData.append('temperature', String(generationParams.temperature));
+    formData.append('top_p', String(generationParams.top_p));
+    formData.append('frequency_penalty', String(generationParams.frequency_penalty));
+    formData.append('presence_penalty', String(generationParams.presence_penalty));
     formData.append('responseStyle', state.responseStyle);
     var behaviorText = String(state.aiBehavior || '').trim();
     if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
@@ -1088,6 +1199,12 @@
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
         ? config.ocrMode
         : 'raw',
+      generationParams: {
+        temperature: 0.7,
+        top_p: 1,
+        frequency_penalty: 0,
+        presence_penalty: 0
+      },
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: '',
@@ -2140,6 +2257,12 @@
       var effectivePrompt = value || 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
 
       state.model = modelSelect.value;
+      var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
+      if (selectedModel && selectedModel.available === false) {
+        state.model = pickFirstAvailableModel(state.models, state.model);
+        modelSelect.value = state.model;
+        appendAssistantErrorOnce('Выбранная модель недоступна. Переключил на: ' + state.model + '.');
+      }
       state.responseStyle = styleSelect.value;
       state.aiBehavior = String(settingsInput.value || '').trim();
 
@@ -2198,11 +2321,15 @@
           .replace(/\n{3,}/g, '\n\n')
           .trim();
         finalResponse = sanitizeAssistantResponseText(finalResponse);
+        if (!hasDatesInResponse(finalResponse)) {
+          appendAssistantErrorOnce('В ответе нет даты в формате ДД.ММ.ГГГГ. Уточните срок в следующем сообщении.');
+        }
         messages.appendChild(createMessage('assistant', finalResponse));
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
         autoHeight(textarea);
       } catch (error) {
+        logAiError(error, { model: state.model, responseStyle: state.responseStyle });
         if (error && (error.code === 'AI_TIMEOUT' || error.code === 'NETWORK_ERROR' || error.code === 'AI_TEMPORARY')) {
           pending.innerHTML = '<span class="ai-chat-spinner"></span>Готовим ответ... повторная попытка';
           await new Promise(function (resolve) { setTimeout(resolve, AI_SOFT_RETRY_DELAY_MS); });
