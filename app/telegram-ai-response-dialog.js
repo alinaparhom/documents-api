@@ -209,23 +209,10 @@ async function fetchAvailableModels() {
   try {
     const response = await fetchWithTimeout(`${DOCS_API_ENDPOINT}?action=ai_models`, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok !== true) {
-      return {
-        models: MODEL_FALLBACK_OPTIONS.slice(),
-        defaultModel: DEFAULT_AI_MODEL,
-      };
-    }
-    const models = normalizeModelList(payload.models);
-    const defaultModel = String(payload.defaultModel || '').trim() || DEFAULT_AI_MODEL;
-    if (!models.some((item) => item.value === defaultModel)) {
-      models.unshift({ value: defaultModel, label: defaultModel });
-    }
-    return { models, defaultModel };
+    if (!response.ok || !payload || payload.ok !== true) return MODEL_FALLBACK_OPTIONS.slice();
+    return normalizeModelList(payload.models);
   } catch (_) {
-    return {
-      models: MODEL_FALLBACK_OPTIONS.slice(),
-      defaultModel: DEFAULT_AI_MODEL,
-    };
+    return MODEL_FALLBACK_OPTIONS.slice();
   }
 }
 
@@ -421,35 +408,9 @@ function parseAiPayload(payload) {
   return '';
 }
 
-function unwrapJsonLikeAssistantText(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  const candidates = [raw];
-  const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fencedMatch && fencedMatch[1]) {
-    candidates.unshift(String(fencedMatch[1]).trim());
-  }
-  for (let i = 0; i < candidates.length; i += 1) {
-    const item = String(candidates[i] || '').trim();
-    if (!item) continue;
-    try {
-      const parsed = JSON.parse(item);
-      if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
-        return parsed.response.trim();
-      }
-      if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) {
-        return parsed.text.trim();
-      }
-    } catch (_) {}
-  }
-  return raw;
-}
-
 function sanitizeAssistantText(text) {
-  let value = unwrapJsonLikeAssistantText(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  let value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!value) return '';
-  value = value.replace(/```(?:json|text|markdown)?/gi, '');
-  value = value.replace(/```/g, '');
   value = value.replace(/<think[\s\S]*?<\/think>/gi, '');
   value = value.replace(/<\/?think>/gi, '');
   const lines = value
@@ -568,7 +529,7 @@ function openAiResponseDialog(context = {}) {
     responseStyle: 'neutral',
     selectedModel: resolveAiModel(context),
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
-    rateLimits: {},
+    rateLimitUntil: 0,
     rateLimitTimer: null,
   };
 
@@ -624,23 +585,14 @@ function openAiResponseDialog(context = {}) {
   const rateLimitHint = root.querySelector('[data-rate-limit-hint]');
   const sendBtn = root.querySelector('[data-send]');
 
-  const getRateLimitSecondsLeft = (modelName = state.selectedModel) => {
-    const key = String(modelName || '').trim();
-    const until = Number(state.rateLimits[key] || 0);
-    return Math.max(0, Math.ceil((until - Date.now()) / 1000));
-  };
-  const setModelRateLimit = (modelName, waitSeconds) => {
-    const key = String(modelName || '').trim() || String(state.selectedModel || '').trim();
-    const seconds = Math.max(5, Number(waitSeconds) || 30);
-    state.rateLimits[key] = Date.now() + (seconds * 1000);
-  };
+  const getRateLimitSecondsLeft = () => Math.max(0, Math.ceil((state.rateLimitUntil - Date.now()) / 1000));
   const applyRateLimitState = () => {
-    const locked = getRateLimitSecondsLeft(state.selectedModel) > 0;
+    const locked = getRateLimitSecondsLeft() > 0;
     if (locked) {
-      const seconds = getRateLimitSecondsLeft(state.selectedModel);
+      const seconds = getRateLimitSecondsLeft();
       if (rateLimitHint) {
         rateLimitHint.hidden = false;
-        rateLimitHint.textContent = `Лимит у модели ${state.selectedModel}: подождите ${seconds} сек или переключите модель.`;
+        rateLimitHint.textContent = `Лимит запросов. Подождите ${seconds} сек, затем отправьте снова.`;
       }
       sendBtn.disabled = true;
       autoDecisionBtn.disabled = true;
@@ -648,7 +600,7 @@ function openAiResponseDialog(context = {}) {
       if (!state.rateLimitTimer) {
         state.rateLimitTimer = setInterval(() => {
           if (state.destroyed) return;
-          if (getRateLimitSecondsLeft(state.selectedModel) <= 0) {
+          if (getRateLimitSecondsLeft() <= 0) {
             clearInterval(state.rateLimitTimer);
             state.rateLimitTimer = null;
             applyRateLimitState();
@@ -698,58 +650,6 @@ function openAiResponseDialog(context = {}) {
       modelSelect.value = state.selectedModel;
     }
     return true;
-  };
-
-  const isModelFallbackError = (error) => {
-    const code = String(error && error.code || '').toUpperCase();
-    const message = String(error && error.message || '').toUpperCase();
-    if (code === 'RATE_LIMITED' || code === 'AI_TEMPORARY' || code === 'MODEL_NOT_ALLOWED') return true;
-    return message.includes('429') || message.includes('RATE LIMIT') || message.includes('TOO MANY REQUESTS');
-  };
-
-  const setSelectedModel = (nextModel) => {
-    const normalized = String(nextModel || '').trim();
-    if (!normalized) return;
-    state.selectedModel = normalized;
-    if (modelSelect) modelSelect.value = normalized;
-    applyRateLimitState();
-  };
-
-  const requestWithAutomaticModelFallback = async (prompt, extraContext, history) => {
-    const baseContext = {
-      ...extraContext,
-      responseStyle: state.responseStyle,
-      aiModel: state.selectedModel,
-      availableModels: state.availableModels.slice(),
-    };
-    try {
-      return await requestAssistantWithSmartRetry(prompt, baseContext, history);
-    } catch (primaryError) {
-      if (!isModelFallbackError(primaryError)) throw primaryError;
-      const fallbackModels = state.availableModels
-        .map((item) => String(item && item.value || '').trim())
-        .filter((value) => value && value !== state.selectedModel);
-      if (!fallbackModels.length) throw primaryError;
-      let lastError = primaryError;
-      for (let i = 0; i < fallbackModels.length; i += 1) {
-        const fallbackModel = fallbackModels[i];
-        appendBubble(`Текущая модель перегружена. Пробую резервную: ${fallbackModel}.`, 'assistant');
-        setSelectedModel(fallbackModel);
-        try {
-          const reply = await requestAssistantWithSmartRetry(prompt, {
-            ...extraContext,
-            responseStyle: state.responseStyle,
-            aiModel: fallbackModel,
-            availableModels: state.availableModels.slice(),
-          }, history);
-          notify('info', `Ответ получен с резервной модели ${fallbackModel}.`);
-          return reply;
-        } catch (fallbackError) {
-          lastError = fallbackError;
-        }
-      }
-      throw lastError;
-    }
   };
 
   const renderResponseStyleOptions = () => {
@@ -1039,7 +939,7 @@ function openAiResponseDialog(context = {}) {
     root.querySelector('[data-send]').disabled = true;
     const pending = appendPendingBubble('Готовим ответ...');
     try {
-      const assistantReply = await requestWithAutomaticModelFallback(prompt, context, state.chatHistory);
+      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
       pending.remove();
       appendBubble(assistantReply, 'assistant');
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
@@ -1053,8 +953,7 @@ function openAiResponseDialog(context = {}) {
       notify('warning', errorMessage);
       if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
         const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
-        const limitedModel = String(error && error.model || state.selectedModel || '').trim();
-        setModelRateLimit(limitedModel, waitSeconds);
+        state.rateLimitUntil = Date.now() + (waitSeconds * 1000);
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
@@ -1082,7 +981,7 @@ function openAiResponseDialog(context = {}) {
     const pending = appendPendingBubble('Готовим ответ...');
     let assistantReply = '';
     try {
-      assistantReply = await requestWithAutomaticModelFallback(prompt, context, state.chatHistory);
+      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
     } catch (error) {
       pending.remove();
       assistantReply = '';
@@ -1092,8 +991,7 @@ function openAiResponseDialog(context = {}) {
       notify('warning', errorMessage);
       if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
         const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
-        const limitedModel = String(error && error.model || state.selectedModel || '').trim();
-        setModelRateLimit(limitedModel, waitSeconds);
+        state.rateLimitUntil = Date.now() + (waitSeconds * 1000);
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
@@ -1126,16 +1024,10 @@ function openAiResponseDialog(context = {}) {
       state.responseStyle = String(responseStyleSelect.value || 'neutral');
     });
   }
-  fetchAvailableModels().then((modelPayload) => {
-    const nextModels = normalizeModelList(modelPayload && modelPayload.models);
-    const defaultModel = String(modelPayload && modelPayload.defaultModel || '').trim();
-    state.availableModels = nextModels;
-    const hasCurrent = state.availableModels.some((entry) => entry.value === state.selectedModel);
-    if (!hasCurrent) {
-      const modelFromServer = state.availableModels.find((entry) => entry.value === defaultModel);
-      state.selectedModel = modelFromServer
-        ? modelFromServer.value
-        : (state.availableModels[0] ? state.availableModels[0].value : DEFAULT_AI_MODEL);
+  fetchAvailableModels().then((models) => {
+    state.availableModels = normalizeModelList(models);
+    if (!state.availableModels.some((entry) => entry.value === state.selectedModel)) {
+      state.selectedModel = state.availableModels[0] ? state.availableModels[0].value : DEFAULT_AI_MODEL;
     }
     if (modelSelect) {
       modelSelect.textContent = '';
@@ -1147,7 +1039,7 @@ function openAiResponseDialog(context = {}) {
       });
       modelSelect.value = state.selectedModel;
       modelSelect.addEventListener('change', () => {
-        setSelectedModel(String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL);
+        state.selectedModel = String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL;
       });
     }
   });
