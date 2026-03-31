@@ -1286,8 +1286,137 @@
       }
       var toolbar = createElement('div', 'ai-chat-editor__toolbar');
       var surface = createElement('div', 'ai-chat-editor__surface');
+      var savedRange = null;
       surface.contentEditable = 'true';
       surface.setAttribute('data-placeholder', String(placeholderText || 'Введите текст...'));
+
+      function isRangeInsideSurface(range) {
+        return !!(range && range.commonAncestorContainer && surface.contains(range.commonAncestorContainer));
+      }
+
+      function saveCurrentRange() {
+        var selection = window.getSelection ? window.getSelection() : null;
+        if (!selection || !selection.rangeCount) {
+          return;
+        }
+        var range = selection.getRangeAt(0);
+        if (isRangeInsideSurface(range)) {
+          savedRange = range.cloneRange();
+        }
+      }
+
+      function restoreRange() {
+        var selection = window.getSelection ? window.getSelection() : null;
+        if (!selection) {
+          return null;
+        }
+        if (savedRange && isRangeInsideSurface(savedRange)) {
+          selection.removeAllRanges();
+          selection.addRange(savedRange);
+          return selection.getRangeAt(0);
+        }
+        var fallbackRange = document.createRange();
+        fallbackRange.selectNodeContents(surface);
+        fallbackRange.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(fallbackRange);
+        savedRange = fallbackRange.cloneRange();
+        return fallbackRange;
+      }
+
+      function placeCaretInside(node) {
+        var selection = window.getSelection ? window.getSelection() : null;
+        if (!selection) {
+          return;
+        }
+        var range = document.createRange();
+        range.selectNodeContents(node);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        savedRange = range.cloneRange();
+      }
+
+      function applyInlineFormat(tagName) {
+        var range = restoreRange();
+        if (!range) {
+          return;
+        }
+        var node = document.createElement(tagName);
+        if (range.collapsed) {
+          node.appendChild(document.createTextNode('​'));
+          range.insertNode(node);
+          placeCaretInside(node);
+          return;
+        }
+        var content = range.extractContents();
+        node.appendChild(content);
+        range.insertNode(node);
+        placeCaretInside(node);
+      }
+
+      function insertPlainText(text) {
+        var safeText = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        var range = restoreRange();
+        if (!range) {
+          return;
+        }
+        range.deleteContents();
+        var fragment = document.createDocumentFragment();
+        var lines = safeText.split('\n');
+        lines.forEach(function (line, index) {
+          if (index > 0) {
+            fragment.appendChild(document.createElement('br'));
+          }
+          if (line.length) {
+            fragment.appendChild(document.createTextNode(line));
+          }
+        });
+        if (!lines.length) {
+          fragment.appendChild(document.createTextNode(''));
+        }
+        range.insertNode(fragment);
+        range.collapse(false);
+        var selection = window.getSelection ? window.getSelection() : null;
+        if (selection) {
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        savedRange = range.cloneRange();
+      }
+
+      function applyListFormat(listTag) {
+        var range = restoreRange();
+        if (!range) {
+          return;
+        }
+        var list = document.createElement(listTag);
+        var selectedText = String(range.toString() || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+        var lines = selectedText ? selectedText.split('\n').map(function (line) { return line.trim(); }).filter(Boolean) : [];
+        if (!lines.length) {
+          lines = [''];
+        }
+        lines.forEach(function (line) {
+          var li = document.createElement('li');
+          li.textContent = line;
+          list.appendChild(li);
+        });
+        range.deleteContents();
+        range.insertNode(list);
+        placeCaretInside(list.lastChild || list);
+      }
+
+      ['mouseup', 'keyup', 'touchend', 'input', 'focus'].forEach(function (eventName) {
+        surface.addEventListener(eventName, saveCurrentRange);
+      });
+
+      surface.addEventListener('paste', function (event) {
+        event.preventDefault();
+        var clipboard = event.clipboardData || window.clipboardData;
+        var text = clipboard && clipboard.getData ? clipboard.getData('text/plain') : '';
+        insertPlainText(text);
+      });
+
       var commandSelect = createElement('select', 'ai-chat-editor__select');
       [
         { value: '', label: 'Форматирование…' },
@@ -1307,7 +1436,17 @@
           return;
         }
         surface.focus();
-        document.execCommand(commandSelect.value, false, null);
+        if (commandSelect.value === 'bold') {
+          applyInlineFormat('strong');
+        } else if (commandSelect.value === 'italic') {
+          applyInlineFormat('em');
+        } else if (commandSelect.value === 'underline') {
+          applyInlineFormat('u');
+        } else if (commandSelect.value === 'insertUnorderedList') {
+          applyListFormat('ul');
+        } else if (commandSelect.value === 'insertOrderedList') {
+          applyListFormat('ol');
+        }
         commandSelect.value = '';
       });
       toolbar.appendChild(commandSelect);
