@@ -500,9 +500,7 @@ function openAiResponseDialog(context = {}) {
         <div style="display:flex;gap:6px;align-items:center">
           <div style="flex:1;min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Стиль</label>
-            <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:36px;max-height:36px;padding:4px 8px">
-              ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${item.value}">${item.label}</option>`).join('')}
-            </select>
+            <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:36px;max-height:36px;padding:4px 8px"></select>
           </div>
           <div style="flex:1;min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-model-select">Модель</label>
@@ -589,10 +587,27 @@ function openAiResponseDialog(context = {}) {
       appendBubble(`Часть моделей временно недоступна. Доступные: ${nextModels.map((item) => item.value).join(', ')}.`, 'assistant');
     }
     if (modelSelect) {
-      modelSelect.innerHTML = nextModels.map((entry) => `<option value="${entry.value}">${entry.label}</option>`).join('');
+      modelSelect.textContent = '';
+      nextModels.forEach((entry) => {
+        const option = document.createElement('option');
+        option.value = String(entry.value || '');
+        option.textContent = String(entry.label || entry.value || '');
+        modelSelect.appendChild(option);
+      });
       modelSelect.value = state.selectedModel;
     }
     return true;
+  };
+
+  const renderResponseStyleOptions = () => {
+    if (!responseStyleSelect) return;
+    responseStyleSelect.textContent = '';
+    RESPONSE_STYLE_OPTIONS.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = String(item.value || '');
+      option.textContent = String(item.label || item.value || '');
+      responseStyleSelect.appendChild(option);
+    });
   };
 
   const appendBubble = (text, role) => {
@@ -707,7 +722,7 @@ function openAiResponseDialog(context = {}) {
 
   const renderAttachments = () => {
     if (!attachmentsNode) return;
-    attachmentsNode.innerHTML = '';
+    attachmentsNode.textContent = '';
     if (!state.attachedFiles.length) {
       attachmentsNode.hidden = true;
       return;
@@ -719,18 +734,36 @@ function openAiResponseDialog(context = {}) {
     const progress = Math.min(100, Math.round((contextChars / MAX_AUTO_CONTEXT_TEXT_CHARS) * 100));
     const header = document.createElement('div');
     header.className = 'appdosc-ai-dialog__attachments-header';
-    const allSelected = selectedCount > 0 && selectedCount === state.attachedFiles.length;
-    header.innerHTML = `
-      <div class="appdosc-ai-dialog__attachments-headline">
-        <div>
-          <div class="appdosc-ai-dialog__attachments-title">Файлы: выбрано ${selectedCount} из ${state.attachedFiles.length}</div>
-          <div class="appdosc-ai-dialog__attachments-hint">Нажмите на файл, чтобы выбрать один или несколько.</div>
-        </div>
-        <label class="appdosc-ai-dialog__attachments-select-all">Выбрано: ${selectedCount}</label>
-      </div>
-      <div class="appdosc-ai-dialog__context-stats">В контексте: ${readyCount} файла(ов) (~${Math.round(contextChars / 1000)}K символов)</div>
-      <div class="appdosc-ai-dialog__context-progress"><span style="width:${progress}%"></span></div>
-    `;
+    const headline = document.createElement('div');
+    headline.className = 'appdosc-ai-dialog__attachments-headline';
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'appdosc-ai-dialog__attachments-title';
+    title.textContent = `Файлы: выбрано ${selectedCount} из ${state.attachedFiles.length}`;
+    const hint = document.createElement('div');
+    hint.className = 'appdosc-ai-dialog__attachments-hint';
+    hint.textContent = 'Нажмите на файл, чтобы выбрать один или несколько.';
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(hint);
+    const selectedLabel = document.createElement('label');
+    selectedLabel.className = 'appdosc-ai-dialog__attachments-select-all';
+    selectedLabel.textContent = `Выбрано: ${selectedCount}`;
+    headline.appendChild(titleWrap);
+    headline.appendChild(selectedLabel);
+
+    const stats = document.createElement('div');
+    stats.className = 'appdosc-ai-dialog__context-stats';
+    stats.textContent = `В контексте: ${readyCount} файла(ов) (~${Math.round(contextChars / 1000)}K символов)`;
+
+    const progressWrap = document.createElement('div');
+    progressWrap.className = 'appdosc-ai-dialog__context-progress';
+    const progressBar = document.createElement('span');
+    progressBar.style.width = `${progress}%`;
+    progressWrap.appendChild(progressBar);
+
+    header.appendChild(headline);
+    header.appendChild(stats);
+    header.appendChild(progressWrap);
     attachmentsNode.appendChild(header);
     const grid = document.createElement('div');
     grid.className = 'appdosc-ai-dialog__attachments-grid';
@@ -910,6 +943,7 @@ function openAiResponseDialog(context = {}) {
   });
 
   autoDecisionBtn.addEventListener('click', runAutoDecision);
+  renderResponseStyleOptions();
   if (responseStyleSelect) {
     responseStyleSelect.value = state.responseStyle;
     responseStyleSelect.addEventListener('change', () => {
@@ -922,9 +956,13 @@ function openAiResponseDialog(context = {}) {
       state.selectedModel = state.availableModels[0] ? state.availableModels[0].value : DEFAULT_AI_MODEL;
     }
     if (modelSelect) {
-      modelSelect.innerHTML = state.availableModels
-        .map((entry) => `<option value="${entry.value}">${entry.label}</option>`)
-        .join('');
+      modelSelect.textContent = '';
+      state.availableModels.forEach((entry) => {
+        const option = document.createElement('option');
+        option.value = String(entry.value || '');
+        option.textContent = String(entry.label || entry.value || '');
+        modelSelect.appendChild(option);
+      });
       modelSelect.value = state.selectedModel;
       modelSelect.addEventListener('change', () => {
         state.selectedModel = String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL;
