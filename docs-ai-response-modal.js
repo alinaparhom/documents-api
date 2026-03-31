@@ -66,6 +66,59 @@
       .replace(/'/g, '&#39;');
   }
 
+  function sanitizeHtml(inputHtml) {
+    var allowedTags = { p: true, br: true, strong: true, em: true, ul: true, ol: true, li: true };
+    var template = document.createElement('template');
+    template.innerHTML = String(inputHtml || '');
+
+    function sanitizeNode(node, doc) {
+      if (!node) {
+        return null;
+      }
+      if (node.nodeType === Node.TEXT_NODE) {
+        return doc.createTextNode(node.nodeValue || '');
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return null;
+      }
+      var tagName = String(node.tagName || '').toLowerCase();
+      if (tagName === 'script' || tagName === 'iframe') {
+        return null;
+      }
+
+      var fragment = doc.createDocumentFragment();
+      var childNodes = Array.from(node.childNodes || []);
+      if (!allowedTags[tagName]) {
+        childNodes.forEach(function (child) {
+          var cleanChild = sanitizeNode(child, doc);
+          if (cleanChild) {
+            fragment.appendChild(cleanChild);
+          }
+        });
+        return fragment;
+      }
+
+      var cleanElement = doc.createElement(tagName);
+      childNodes.forEach(function (child) {
+        var cleanChild = sanitizeNode(child, doc);
+        if (cleanChild) {
+          cleanElement.appendChild(cleanChild);
+        }
+      });
+      return cleanElement;
+    }
+
+    var cleanRoot = document.createElement('div');
+    Array.from(template.content.childNodes || []).forEach(function (node) {
+      var cleanNode = sanitizeNode(node, document);
+      if (cleanNode) {
+        cleanRoot.appendChild(cleanNode);
+      }
+    });
+
+    return String(cleanRoot.innerHTML || '').replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, '');
+  }
+
   function cleanNumericArtifacts(text) {
     return String(text || '')
       .replace(/(\d)\s*[\(\)ОOо]\s*(\d)/g, '$1$2')
@@ -522,7 +575,7 @@
 
   function createMessage(role, text, isError) {
     var msg = createElement('div', 'ai-chat-msg ai-chat-msg--' + role + (isError ? ' ai-chat-msg--error' : ''));
-    msg.innerHTML = escapeHtml(text || '');
+    msg.textContent = String(text || '');
     return msg;
   }
 
@@ -988,9 +1041,9 @@
     function normalizeEditorHtml(rawHtml, fallbackText) {
       var html = String(rawHtml || '').trim();
       if (!html && fallbackText) {
-        html = '<div>' + escapeHtml(String(fallbackText || '')).replace(/\n/g, '<br>') + '</div>';
+        html = '<p>' + escapeHtml(String(fallbackText || '')).replace(/\n/g, '<br>') + '</p>';
       }
-      return html;
+      return sanitizeHtml(html);
     }
 
     function readEditorHtml(editorLike, fallbackText) {
@@ -1274,7 +1327,7 @@
 
     function htmlToPlainText(value) {
       var container = document.createElement('div');
-      container.innerHTML = String(value || '');
+      container.innerHTML = sanitizeHtml(value || '');
       return String(container.textContent || container.innerText || '').trim();
     }
 
@@ -1339,10 +1392,10 @@
           return htmlToPlainText(surface.innerHTML || '');
         },
         setHTML: function (html) {
-          surface.innerHTML = String(html || '').trim();
+          surface.innerHTML = sanitizeHtml(String(html || '').trim());
         },
         setText: function (text) {
-          surface.innerHTML = textToSimpleHtml(text || '');
+          surface.innerHTML = sanitizeHtml(textToSimpleHtml(text || ''));
         }
       };
     }
@@ -1558,7 +1611,7 @@
     }
 
     function renderModelOptions() {
-      modelSelect.innerHTML = '';
+      modelSelect.textContent = '';
       state.models.forEach(function (opt) {
         var option = document.createElement('option');
         option.value = opt.value;
@@ -1569,7 +1622,7 @@
     }
 
     function renderFiles() {
-      filesWrap.innerHTML = '';
+      filesWrap.textContent = '';
       if (!state.files.length) {
         filesWrap.appendChild(createElement('div', 'ai-chat-modal__empty', 'Нет прикреплённых файлов'));
         updateContextUsageHint();
@@ -1580,11 +1633,14 @@
         var ocrStatus = file.extracting
           ? '⏳ Текст'
           : (file.extracted ? '✅ Текст' : (file.extractError ? '⚠️ Текст' : '⭕ Текст'));
-        chip.innerHTML = ''
-          + '<span>' + detectIcon(file) + '</span>'
-          + '<span>' + escapeHtml(file.name) + '</span>'
-          + '<span class="ai-chat-chip__meta">' + escapeHtml(formatSize(file.size)) + '</span>'
-          + '<span class="ai-chat-chip__meta">' + escapeHtml(ocrStatus) + '</span>';
+        var icon = createElement('span', '', detectIcon(file));
+        var name = createElement('span', '', String(file.name || 'Файл'));
+        var size = createElement('span', 'ai-chat-chip__meta', formatSize(file.size));
+        var status = createElement('span', 'ai-chat-chip__meta', ocrStatus);
+        chip.appendChild(icon);
+        chip.appendChild(name);
+        chip.appendChild(size);
+        chip.appendChild(status);
 
         var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ Текст' : '📄 Текст');
         ocr.type = 'button';
@@ -1777,10 +1833,10 @@
         remaining -= 1;
         if (remaining <= 0) {
           clearRetryCountdown();
-          countdownMessage.innerHTML = escapeHtml('Можно отправить повторно.');
+          countdownMessage.textContent = 'Можно отправить повторно.';
           return;
         }
-        countdownMessage.innerHTML = escapeHtml('До бесплатной попытки осталось: ' + remaining + ' сек.');
+        countdownMessage.textContent = 'До бесплатной попытки осталось: ' + remaining + ' сек.';
       }, 1000);
     }
 
@@ -1943,7 +1999,7 @@
       state.lastAssistantMessage = next;
       var assistantMessages = Array.from(messages.querySelectorAll('.ai-chat-msg--assistant:not(.ai-chat-msg--error)'));
       if (assistantMessages.length > 0) {
-        assistantMessages[assistantMessages.length - 1].innerHTML = escapeHtml(next);
+        assistantMessages[assistantMessages.length - 1].textContent = next;
       } else {
         messages.appendChild(createMessage('assistant', next));
       }
