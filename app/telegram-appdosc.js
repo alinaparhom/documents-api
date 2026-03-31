@@ -512,12 +512,6 @@ function openTelegramBriefModal(task, statusHandler) {
         if (!normalizeTelegramOcrText(sourceText)) {
           throw new Error('Файл прочитан, но текст пустой. Проверьте качество файла.');
         }
-        if (normalizeTelegramOcrText(sourceText).length < 80) {
-          renderTelegramBriefPreview(preview, null, sourceText);
-          setStatus('Текста мало, показан упрощённый вывод без запроса к ИИ.', 'success');
-          if (typeof statusHandler === 'function') statusHandler('info', 'Текста мало: показан краткий вывод без запроса к ИИ.');
-          return;
-        }
         setStatus(`Анализ ИИ: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
         const aiPayload = await requestTelegramBriefAi(source.label, sourceText);

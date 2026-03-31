@@ -2329,12 +2329,6 @@
         setPreviewLoading(true, source.label);
         resolveSourceText(source)
           .then(function(sourceText) {
-            if (String(sourceText || '').trim().length < 80) {
-              preview.classList.remove('is-loading');
-              preview.textContent = buildBriefSummaryText(sourceText);
-              showStatusMessage('info', 'Текста мало: показан краткий вывод без ИИ.');
-              return;
-            }
             var aiStartedAt = Date.now();
             var estimatedSeconds = 35;
             var timerId = null;
