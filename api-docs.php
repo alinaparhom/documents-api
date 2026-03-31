@@ -1467,6 +1467,31 @@ function replaceDocxPlaceholderWithHtml(string $templatePath, string $outputPath
     return $zip->close();
 }
 
+function resolveDocxPlaceholdersFromRequest(): array
+{
+    $defaults = ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]'];
+    $raw = trim((string)($_POST['placeholders'] ?? ''));
+    if ($raw === '') {
+        return $defaults;
+    }
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        $single = trim($raw);
+        return $single !== '' ? array_values(array_unique(array_merge([$single], $defaults))) : $defaults;
+    }
+    $result = [];
+    foreach ($decoded as $item) {
+        $marker = trim((string)$item);
+        if ($marker !== '') {
+            $result[] = $marker;
+        }
+    }
+    if (!$result) {
+        return $defaults;
+    }
+    return array_values(array_unique(array_merge($result, $defaults)));
+}
+
 function createDocxFromHtmlUsingPhpWord(string $outputPath, string $html): bool
 {
     if (!class_exists('\\PhpOffice\\PhpWord\\PhpWord') || !class_exists('\\PhpOffice\\PhpWord\\Shared\\Html')) {
@@ -1910,11 +1935,12 @@ if ($action === 'generate_from_html') {
     }
 
     if ($format === 'docx') {
+        $placeholders = resolveDocxPlaceholdersFromRequest();
         $generated = replaceDocxPlaceholderWithHtml(
             $templateDocxPath,
             $tmpFile,
             $html,
-            ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+            $placeholders
         );
         if (!$generated) {
             $generated = createDocxFromHtmlUsingPhpWord($tmpFile, $html);
@@ -1937,11 +1963,12 @@ if ($action === 'generate_from_html') {
     $tmpDocx = tempnam(sys_get_temp_dir(), 'html_pdf_docx_');
     $pdfCreated = false;
     if ($tmpDocx !== false) {
+        $placeholders = resolveDocxPlaceholdersFromRequest();
         $docxReady = replaceDocxPlaceholderWithHtml(
             $templateDocxPath,
             $tmpDocx,
             $html,
-            ['{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']
+            $placeholders
         );
         if (!$docxReady) {
             $docxReady = createDocxFromHtmlUsingPhpWord($tmpDocx, $html);
