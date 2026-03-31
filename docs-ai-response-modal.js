@@ -360,15 +360,29 @@
       '.ai-chat-modal__template-btn{min-width:130px;}' +
       '.ai-chat-template-viewer{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;}' +
       '.ai-chat-template-tabs{display:flex;gap:8px;flex-wrap:wrap;}' +
-      '.ai-chat-template-editor{display:flex;gap:8px;flex-wrap:wrap;}' +
-      '.ai-chat-template-input{width:100%;min-height:74px;max-height:160px;resize:vertical;border:1px solid rgba(148,163,184,.4);border-radius:10px;padding:10px;background:#fff;font-size:13px;line-height:1.4;}' +
+      '.ai-chat-template-editor{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;}' +
+      '.ai-chat-editor{border:1px solid rgba(148,163,184,.35);border-radius:14px;background:rgba(255,255,255,.88);backdrop-filter:blur(6px);overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.7);display:flex;flex-direction:column;min-height:0;}' +
+      '.ai-chat-editor--full{flex:1;min-height:0;}' +
+      '.ai-chat-editor__toolbar{display:flex;flex-wrap:wrap;gap:6px;padding:8px;border-bottom:1px solid rgba(226,232,240,.9);background:rgba(248,250,252,.85);align-items:center;}' +
+      '.ai-chat-editor__btn{border:none;border-radius:9px;min-height:34px;padding:6px 10px;font-size:12px;font-weight:600;background:#e2e8f0;color:#0f172a;cursor:pointer;}' +
+      '.ai-chat-editor__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;}' +
+      '.ai-chat-editor__select{border:1px solid rgba(148,163,184,.45);border-radius:10px;padding:7px 10px;background:#fff;font-size:12px;color:#0f172a;min-height:34px;}' +
+      '.ai-chat-editor__menu{margin-left:auto;position:relative;}' +
+      '.ai-chat-editor__menu summary{list-style:none;cursor:pointer;border:none;border-radius:9px;min-height:34px;padding:6px 10px;font-size:12px;font-weight:700;background:#e2e8f0;color:#0f172a;display:flex;align-items:center;}' +
+      '.ai-chat-editor__menu summary::-webkit-details-marker{display:none;}' +
+      '.ai-chat-editor__menu-panel{position:absolute;right:0;top:40px;z-index:4;display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:12px;background:#fff;border:1px solid rgba(203,213,225,.9);box-shadow:0 12px 28px rgba(15,23,42,.16);min-width:160px;}' +
+      '.ai-chat-editor__surface{min-height:180px;overflow:auto;padding:12px;font-size:14px;line-height:1.55;color:#0f172a;outline:none;-webkit-user-select:text;user-select:text;flex:1;}' +
+      '.ai-chat-editor__surface[contenteditable=true]:empty:before{content:attr(data-placeholder);color:#94a3b8;}' +
       '.ai-chat-template-surface{flex:1;min-height:0;height:100%;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#e2e8f0;overflow:hidden;}' +
       '.ai-chat-template-frame{width:100%;height:100%;border:none;background:#fff;}' +
-      '.ai-chat-template-editor-preview{margin-top:8px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:#fff;padding:10px;min-height:96px;max-height:180px;overflow:auto;font-size:13px;line-height:1.5;white-space:pre-wrap;}' +
+      '.ai-chat-template-preview-wrap{border:1px solid rgba(203,213,225,.9);border-radius:12px;background:rgba(255,255,255,.75);padding:0 8px 8px;}' +
+      '.ai-chat-template-preview-wrap summary{cursor:pointer;list-style:none;font-size:12px;font-weight:700;color:#334155;padding:8px 0;}' +
+      '.ai-chat-template-preview-wrap summary::-webkit-details-marker{display:none;}' +
+      '.ai-chat-template-editor-preview{margin-top:2px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:#fff;padding:10px;min-height:96px;max-height:160px;overflow:auto;font-size:13px;line-height:1.5;white-space:pre-wrap;}' +
       '.ai-chat-modal__ocr-hint{margin-top:4px;padding:6px 8px;border-radius:8px;background:rgba(239,246,255,.8);border:1px solid rgba(147,197,253,.55);font-size:11px;color:#1e3a8a;line-height:1.35;}' +
       '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
-      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}.ai-chat-template-input{min-height:92px;}}';
+      '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}.ai-chat-editor__toolbar{position:sticky;top:0;z-index:2;}.ai-chat-editor__select{flex:1;}.ai-chat-editor__surface{min-height:220px;font-size:16px;}.ai-chat-template-surface{min-height:220px;}}';
     document.head.appendChild(style);
   }
 
@@ -950,8 +964,28 @@
     contextUsageHint.style.fontSize = '11px';
     contextUsageHint.style.textAlign = 'left';
 
-    function exportDocument(format, answerText) {
-      if (!answerText) {
+    function normalizeEditorHtml(rawHtml, fallbackText) {
+      var html = String(rawHtml || '').trim();
+      if (!html && fallbackText) {
+        html = '<div>' + escapeHtml(String(fallbackText || '')).replace(/\n/g, '<br>') + '</div>';
+      }
+      return html;
+    }
+
+    function readEditorHtml(editorLike, fallbackText) {
+      if (editorLike && typeof editorLike.getHTML === 'function') {
+        try {
+          return normalizeEditorHtml(editorLike.getHTML(), fallbackText);
+        } catch (error) {
+          return normalizeEditorHtml('', fallbackText);
+        }
+      }
+      return normalizeEditorHtml('', fallbackText);
+    }
+
+    function exportDocument(format, editorHtml, answerText) {
+      var preparedHtml = normalizeEditorHtml(editorHtml, answerText);
+      if (!preparedHtml) {
         alert('Нет текста для экспорта. Сначала получите ответ от ИИ.');
         return;
       }
@@ -959,7 +993,7 @@
       var formData = new FormData();
       formData.append('action', 'generate_document');
       formData.append('format', format);
-      formData.append('answer', answerText);
+      formData.append('html', preparedHtml);
       formData.append('documentTitle', config.documentTitle || '');
       if (state.templateFile && state.templateFile.fileObject) {
         formData.append('templateFile', state.templateFile.fileObject, state.templateFile.fileObject.name || 'template.docx');
@@ -1058,10 +1092,7 @@
     var editInfo = createElement('div', 'ai-chat-modal__empty', '');
     editInfo.style.fontSize = '12px';
     editInfo.style.marginBottom = '6px';
-    var editArea = createElement('textarea', 'ai-chat-modal__textarea');
-    editArea.rows = 12;
-    editArea.style.maxHeight = '320px';
-    editArea.style.minHeight = '220px';
+    var editEditor = createRichEditor('Отредактируйте ответ перед экспортом...');
     var editActions = createElement('div', 'ai-chat-modal__export-buttons');
     var editApply = createElement('button', 'ai-chat-modal__send', 'Обновить');
     var editDocx = createElement('button', 'ai-chat-modal__export-btn', 'Скачать DOCX');
@@ -1069,7 +1100,7 @@
     var editCopy = createElement('button', 'ai-chat-modal__export-btn', 'Копировать в буфер');
     [editApply, editDocx, editPdf, editCopy].forEach(function (btn) { btn.type = 'button'; editActions.appendChild(btn); });
     editModal.content.appendChild(editInfo);
-    editModal.content.appendChild(editArea);
+    editModal.content.appendChild(editEditor.root);
     editModal.content.appendChild(editActions);
 
     var templateModal = createOverlayModal('Шаблон документа');
@@ -1096,19 +1127,30 @@
     templateTabs.appendChild(templateDocxTab);
     templateTabs.appendChild(templatePdfTab);
     var templateEditor = createElement('div', 'ai-chat-template-editor');
-    var templateInputText = createElement('textarea', 'ai-chat-template-input');
-    templateInputText.placeholder = 'Вставьте ваш текст. Он будет аккуратно подставлен в DOCX шаблон.';
-    var applyTemplateTextButton = createElement('button', 'ai-chat-modal__send', 'Вставить текст');
+    var templateEditorInstance = createRichEditor('Вставьте или напишите текст для шаблона...', { fullHeight: true });
+    var templateActions = createElement('div', 'ai-chat-editor__toolbar');
+    var applyTemplateTextButton = createElement('button', 'ai-chat-editor__btn ai-chat-editor__btn--primary', 'Применить');
+    var exportMenu = createElement('details', 'ai-chat-editor__menu');
+    var exportSummary = document.createElement('summary');
+    exportSummary.textContent = 'Экспорт';
+    var exportPanel = createElement('div', 'ai-chat-editor__menu-panel');
     var downloadDocxFromTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать DOCX');
     var downloadPdfFromTemplateButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать PDF');
     applyTemplateTextButton.type = 'button';
     downloadDocxFromTemplateButton.type = 'button';
     downloadPdfFromTemplateButton.type = 'button';
-    templateEditor.appendChild(templateInputText);
-    templateEditor.appendChild(applyTemplateTextButton);
-    templateEditor.appendChild(downloadDocxFromTemplateButton);
-    templateEditor.appendChild(downloadPdfFromTemplateButton);
+    exportPanel.appendChild(downloadDocxFromTemplateButton);
+    exportPanel.appendChild(downloadPdfFromTemplateButton);
+    exportMenu.appendChild(exportSummary);
+    exportMenu.appendChild(exportPanel);
+    templateActions.appendChild(applyTemplateTextButton);
+    templateActions.appendChild(exportMenu);
+    templateEditor.appendChild(templateActions);
+    templateEditor.appendChild(templateEditorInstance.root);
 
+    var templateSurfaceWrap = createElement('details', 'ai-chat-template-preview-wrap');
+    var templateSurfaceSummary = document.createElement('summary');
+    templateSurfaceSummary.textContent = 'Просмотр шаблона';
     var templateSurface = createElement('div', 'ai-chat-template-surface');
     var templateDocxFrame = document.createElement('iframe');
     templateDocxFrame.className = 'ai-chat-template-frame';
@@ -1119,14 +1161,21 @@
     templatePdfFrame.hidden = true;
     templateSurface.appendChild(templateDocxFrame);
     templateSurface.appendChild(templatePdfFrame);
+    templateSurfaceWrap.appendChild(templateSurfaceSummary);
+    templateSurfaceWrap.appendChild(templateSurface);
 
+    var templatePreviewWrap = createElement('details', 'ai-chat-template-preview-wrap');
+    var templatePreviewSummary = document.createElement('summary');
+    templatePreviewSummary.textContent = 'Предпросмотр текста';
     var templatePreview = createElement('div', 'ai-chat-template-editor-preview', 'Текст для вставки появится здесь.');
+    templatePreviewWrap.appendChild(templatePreviewSummary);
+    templatePreviewWrap.appendChild(templatePreview);
 
     templateViewer.appendChild(templateInfo);
     templateViewer.appendChild(templateTabs);
     templateViewer.appendChild(templateEditor);
-    templateViewer.appendChild(templateSurface);
-    templateViewer.appendChild(templatePreview);
+    templateViewer.appendChild(templateSurfaceWrap);
+    templateViewer.appendChild(templatePreviewWrap);
     templateModal.content.appendChild(templateViewer);
 
     var templateState = {
@@ -1137,6 +1186,7 @@
       pdfUrl: '',
       editedText: ''
     };
+    window.templateEditorInstance = templateEditorInstance;
     var templateDocxCandidates = [
       config.templateDocxUrl,
       '/js/documents/app/templates/template.docx',
@@ -1154,6 +1204,81 @@
 
     function textToSimpleHtml(text) {
       return escapeHtml(String(text || '')).replace(/\n/g, '<br>');
+    }
+
+    function htmlToPlainText(value) {
+      var container = document.createElement('div');
+      container.innerHTML = String(value || '');
+      return String(container.textContent || container.innerText || '').trim();
+    }
+
+    function createRichEditor(placeholderText, options) {
+      var settings = options && typeof options === 'object' ? options : {};
+      var wrapper = createElement('div', 'ai-chat-editor');
+      if (settings.fullHeight) {
+        wrapper.className += ' ai-chat-editor--full';
+      }
+      var toolbar = createElement('div', 'ai-chat-editor__toolbar');
+      var surface = createElement('div', 'ai-chat-editor__surface');
+      surface.contentEditable = 'true';
+      surface.setAttribute('data-placeholder', String(placeholderText || 'Введите текст...'));
+      var commandSelect = createElement('select', 'ai-chat-editor__select');
+      [
+        { value: '', label: 'Форматирование…' },
+        { value: 'bold', label: 'Жирный' },
+        { value: 'italic', label: 'Курсив' },
+        { value: 'underline', label: 'Подчеркнутый' },
+        { value: 'insertUnorderedList', label: 'Маркированный список' },
+        { value: 'insertOrderedList', label: 'Нумерованный список' }
+      ].forEach(function (opt) {
+        var option = document.createElement('option');
+        option.value = opt.value;
+        option.textContent = opt.label;
+        commandSelect.appendChild(option);
+      });
+      commandSelect.addEventListener('change', function () {
+        if (!commandSelect.value) {
+          return;
+        }
+        surface.focus();
+        document.execCommand(commandSelect.value, false, null);
+        commandSelect.value = '';
+      });
+      toolbar.appendChild(commandSelect);
+
+      var menu = createElement('details', 'ai-chat-editor__menu');
+      var summary = document.createElement('summary');
+      summary.textContent = 'Меню';
+      var menuPanel = createElement('div', 'ai-chat-editor__menu-panel');
+      var clearBtn = createElement('button', 'ai-chat-editor__btn', 'Очистить');
+      clearBtn.type = 'button';
+      clearBtn.addEventListener('click', function () {
+        surface.innerHTML = '';
+        menu.removeAttribute('open');
+      });
+      menuPanel.appendChild(clearBtn);
+      menu.appendChild(summary);
+      menu.appendChild(menuPanel);
+      toolbar.appendChild(menu);
+
+      wrapper.appendChild(toolbar);
+      wrapper.appendChild(surface);
+      return {
+        root: wrapper,
+        surface: surface,
+        getHTML: function () {
+          return String(surface.innerHTML || '').trim();
+        },
+        getText: function () {
+          return htmlToPlainText(surface.innerHTML || '');
+        },
+        setHTML: function (html) {
+          surface.innerHTML = String(html || '').trim();
+        },
+        setText: function (text) {
+          surface.innerHTML = textToSimpleHtml(text || '');
+        }
+      };
     }
 
     function absoluteUrl(rawUrl) {
@@ -1226,8 +1351,9 @@
     }
 
     async function exportEditedText(format, buttonEl) {
-      var text = String(templateState.editedText || '').trim();
-      if (!text) {
+      var fallbackText = String(templateState.editedText || '').trim();
+      var structuredHtml = readEditorHtml(window.templateEditorInstance || window.editor, fallbackText);
+      if (!structuredHtml) {
         templateInfo.textContent = 'Введите текст перед скачиванием.';
         return;
       }
@@ -1239,7 +1365,7 @@
         var params = new URLSearchParams();
         params.set('action', 'generate_from_editor');
         params.set('format', format);
-        params.set('html', '<div>' + textToSimpleHtml(text) + '</div>');
+        params.set('html', structuredHtml);
         params.set('documentTitle', config.documentTitle || 'template');
         var response = await fetch(apiUrl, {
           method: 'POST',
@@ -1268,18 +1394,18 @@
     }
 
     applyTemplateTextButton.addEventListener('click', function () {
-      templateState.editedText = String(templateInputText.value || '').trim();
+      templateState.editedText = String(templateEditorInstance.getText() || '').trim();
       if (!templateState.editedText) {
         templatePreview.textContent = 'Текст для вставки появится здесь.';
         templateInfo.textContent = 'Введите текст для вставки.';
         return;
       }
-      templatePreview.innerHTML = textToSimpleHtml(templateState.editedText);
+      templatePreview.innerHTML = normalizeEditorHtml(templateEditorInstance.getHTML(), templateState.editedText);
       templateInfo.textContent = 'Текст обновлён. Можно скачать DOCX или PDF.';
     });
-    templateInputText.addEventListener('input', function () {
-      templateState.editedText = String(templateInputText.value || '');
-      templatePreview.innerHTML = textToSimpleHtml(templateState.editedText);
+    templateEditorInstance.surface.addEventListener('input', function () {
+      templateState.editedText = String(templateEditorInstance.getText() || '');
+      templatePreview.innerHTML = normalizeEditorHtml(templateEditorInstance.getHTML(), templateState.editedText);
     });
     downloadDocxFromTemplateButton.addEventListener('click', function () {
       exportEditedText('docx', downloadDocxFromTemplateButton);
@@ -1680,7 +1806,7 @@
     });
 
     editApply.addEventListener('click', function () {
-      var next = String(editArea.value || '').trim();
+      var next = String(editEditor.getText() || '').trim();
       if (!next) {
         alert('Введите текст для обновления.');
         return;
@@ -1695,13 +1821,15 @@
       editModal.close();
     });
     editDocx.addEventListener('click', function () {
-      exportDocument('docx', String(editArea.value || '').trim());
+      var rawText = String(editEditor.getText() || '').trim();
+      exportDocument('docx', normalizeEditorHtml(editEditor.getHTML(), rawText), rawText);
     });
     editPdf.addEventListener('click', function () {
-      exportDocument('pdf', String(editArea.value || '').trim());
+      var rawText = String(editEditor.getText() || '').trim();
+      exportDocument('pdf', normalizeEditorHtml(editEditor.getHTML(), rawText), rawText);
     });
     editCopy.addEventListener('click', function () {
-      var text = String(editArea.value || '').trim();
+      var text = String(editEditor.getText() || '').trim();
       if (!text) {
         return;
       }
