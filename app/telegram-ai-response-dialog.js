@@ -546,6 +546,8 @@ function openAiResponseDialog(context = {}) {
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
     rateLimitUntil: 0,
     rateLimitTimer: null,
+    lastErrorFingerprint: '',
+    lastErrorTs: 0,
   };
 
   const notify = (type, message) => {
@@ -649,11 +651,11 @@ function openAiResponseDialog(context = {}) {
     const hasCurrent = nextModels.some((entry) => entry.value === state.selectedModel && entry.available !== false);
     if (!hasCurrent) {
       state.selectedModel = pickFirstAvailableModel(nextModels);
-      appendBubble(`Текущая модель недоступна. Автоматически переключил на: ${state.selectedModel}.`, 'assistant');
+      appendErrorBubbleOnce(`Текущая модель недоступна. Автоматически переключил на: ${state.selectedModel}.`);
       notify('warning', `Модель переключена на ${state.selectedModel}`);
     } else {
       const availableNames = nextModels.filter((item) => item.available !== false).map((item) => item.value);
-      appendBubble(`Часть моделей временно недоступна. Рабочие: ${availableNames.join(', ')}.`, 'assistant');
+      appendErrorBubbleOnce(`Часть моделей временно недоступна. Рабочие: ${availableNames.join(', ')}.`);
     }
     if (modelSelect) {
       modelSelect.textContent = '';
@@ -686,6 +688,16 @@ function openAiResponseDialog(context = {}) {
     bubble.textContent = text;
     messages.appendChild(bubble);
     messages.scrollTop = messages.scrollHeight;
+  };
+  const appendErrorBubbleOnce = (text) => {
+    const normalized = String(text || '').trim();
+    if (!normalized) return;
+    const fingerprint = normalized.toLowerCase();
+    const now = Date.now();
+    if (state.lastErrorFingerprint === fingerprint && (now - state.lastErrorTs) < 15000) return;
+    state.lastErrorFingerprint = fingerprint;
+    state.lastErrorTs = now;
+    appendBubble(normalized, 'assistant');
   };
   const appendPendingBubble = (text = 'Готовим ответ...') => {
     const bubble = document.createElement('div');
@@ -966,7 +978,7 @@ function openAiResponseDialog(context = {}) {
       pending.remove();
       const errorMessage = buildReadableAiError(error);
       const modelsHandled = applyAvailableModelsFromError(error);
-      appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
+      appendErrorBubbleOnce(`Ошибка: ${errorMessage}`);
       notify('warning', errorMessage);
       if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
         const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
@@ -974,7 +986,7 @@ function openAiResponseDialog(context = {}) {
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendBubble('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.', 'assistant');
+        appendErrorBubbleOnce('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.');
       }
     } finally {
       state.isSending = false;
@@ -1004,7 +1016,7 @@ function openAiResponseDialog(context = {}) {
       assistantReply = '';
       const errorMessage = buildReadableAiError(error);
       const modelsHandled = applyAvailableModelsFromError(error);
-      appendBubble(`Ошибка: ${errorMessage}`, 'assistant');
+      appendErrorBubbleOnce(`Ошибка: ${errorMessage}`);
       notify('warning', errorMessage);
       if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
         const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
@@ -1012,7 +1024,7 @@ function openAiResponseDialog(context = {}) {
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendBubble('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.', 'assistant');
+        appendErrorBubbleOnce('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.');
       }
     }
     if (assistantReply) {
@@ -1060,7 +1072,7 @@ function openAiResponseDialog(context = {}) {
         state.selectedModel = String(modelSelect.value || DEFAULT_AI_MODEL).trim() || DEFAULT_AI_MODEL;
         const selected = state.availableModels.find((entry) => entry.value === state.selectedModel);
         if (selected && selected.available === false) {
-          appendBubble(`Модель ${state.selectedModel} сейчас нерабочая${selected.reason ? `: ${selected.reason}` : ''}.`, 'assistant');
+          appendErrorBubbleOnce(`Модель ${state.selectedModel} сейчас нерабочая${selected.reason ? `: ${selected.reason}` : ''}.`);
           const fallbackModel = pickFirstAvailableModel(state.availableModels);
           state.selectedModel = fallbackModel;
           modelSelect.value = fallbackModel;

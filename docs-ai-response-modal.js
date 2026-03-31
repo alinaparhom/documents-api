@@ -1050,7 +1050,9 @@
       isLoading: false,
       lastAssistantMessage: '',
       templateDraft: '',
-      templateFile: null
+      templateFile: null,
+      lastErrorFingerprint: '',
+      lastErrorTs: 0
     };
 
     var root = createElement('div', ROOT_CLASS);
@@ -1109,6 +1111,20 @@
     settingsButton.style.fontSize = '11px';
 
     var messages = createElement('div', 'ai-chat-modal__messages');
+    function appendAssistantErrorOnce(text) {
+      var normalized = String(text || '').trim();
+      if (!normalized) {
+        return;
+      }
+      var fingerprint = normalized.toLowerCase();
+      var now = Date.now();
+      if (state.lastErrorFingerprint === fingerprint && (now - state.lastErrorTs) < 15000) {
+        return;
+      }
+      state.lastErrorFingerprint = fingerprint;
+      state.lastErrorTs = now;
+      messages.appendChild(createMessage('assistant', normalized, true));
+    }
     messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
@@ -2176,13 +2192,13 @@
           if (!state.models.some(function (entry) { return entry.value === state.model && entry.available !== false; })) {
             state.model = pickFirstAvailableModel(state.models, state.model);
             modelSelect.value = state.model;
-            messages.appendChild(createMessage('assistant', 'Часть моделей недоступна. Автоматически переключил на: ' + state.model + '.', true));
+            appendAssistantErrorOnce('Часть моделей недоступна. Автоматически переключил на: ' + state.model + '.');
           } else {
             modelSelect.value = state.model;
-            messages.appendChild(createMessage('assistant', 'Часть моделей временно недоступна. Список обновлён автоматически.', true));
+            appendAssistantErrorOnce('Часть моделей временно недоступна. Список обновлён автоматически.');
           }
         } else {
-          messages.appendChild(createMessage('assistant', 'Ошибка: ' + humanizeAiError(error), true));
+          appendAssistantErrorOnce('Ошибка: ' + humanizeAiError(error));
         }
       } finally {
         setLoading(false);
@@ -2194,7 +2210,7 @@
       state.model = modelSelect.value;
       var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
       if (selectedModel && selectedModel.available === false) {
-        messages.appendChild(createMessage('assistant', 'Модель ' + state.model + ' сейчас нерабочая' + (selectedModel.reason ? ': ' + selectedModel.reason : '') + '.', true));
+        appendAssistantErrorOnce('Модель ' + state.model + ' сейчас нерабочая' + (selectedModel.reason ? ': ' + selectedModel.reason : '') + '.');
         state.model = pickFirstAvailableModel(state.models, state.model);
         modelSelect.value = state.model;
       }
