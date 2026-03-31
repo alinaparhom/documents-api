@@ -284,6 +284,7 @@ async function requestTelegramBriefAi(sourceLabel, text) {
     formData.append('documentTitle', sourceLabel || 'Файл');
     formData.append('prompt', 'Сделай краткий и точный вывод по тексту файла. Верни только JSON заданного формата, без markdown.');
     formData.append('responseStyle', 'concise');
+    formData.append('briefMode', '1');
     formData.append('context', JSON.stringify(context));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });

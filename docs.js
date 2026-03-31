@@ -2225,6 +2225,7 @@
     formData.append('top_p', '1');
     formData.append('frequency_penalty', '0');
     formData.append('presence_penalty', '0');
+    formData.append('briefMode', '1');
     formData.append('context', JSON.stringify(context));
     return fetch(endpoint, {
       method: 'POST',
