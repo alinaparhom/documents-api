@@ -408,9 +408,35 @@ function parseAiPayload(payload) {
   return '';
 }
 
+function unwrapJsonLikeAssistantText(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const candidates = [raw];
+  const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch && fencedMatch[1]) {
+    candidates.unshift(String(fencedMatch[1]).trim());
+  }
+  for (let i = 0; i < candidates.length; i += 1) {
+    const item = String(candidates[i] || '').trim();
+    if (!item) continue;
+    try {
+      const parsed = JSON.parse(item);
+      if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+        return parsed.response.trim();
+      }
+      if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) {
+        return parsed.text.trim();
+      }
+    } catch (_) {}
+  }
+  return raw;
+}
+
 function sanitizeAssistantText(text) {
-  let value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  let value = unwrapJsonLikeAssistantText(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!value) return '';
+  value = value.replace(/```(?:json|text|markdown)?/gi, '');
+  value = value.replace(/```/g, '');
   value = value.replace(/<think[\s\S]*?<\/think>/gi, '');
   value = value.replace(/<\/?think>/gi, '');
   const lines = value
@@ -650,6 +676,57 @@ function openAiResponseDialog(context = {}) {
       modelSelect.value = state.selectedModel;
     }
     return true;
+  };
+
+  const isModelFallbackError = (error) => {
+    const code = String(error && error.code || '').toUpperCase();
+    const message = String(error && error.message || '').toUpperCase();
+    if (code === 'RATE_LIMITED' || code === 'AI_TEMPORARY' || code === 'MODEL_NOT_ALLOWED') return true;
+    return message.includes('429') || message.includes('RATE LIMIT') || message.includes('TOO MANY REQUESTS');
+  };
+
+  const setSelectedModel = (nextModel) => {
+    const normalized = String(nextModel || '').trim();
+    if (!normalized) return;
+    state.selectedModel = normalized;
+    if (modelSelect) modelSelect.value = normalized;
+  };
+
+  const requestWithAutomaticModelFallback = async (prompt, extraContext, history) => {
+    const baseContext = {
+      ...extraContext,
+      responseStyle: state.responseStyle,
+      aiModel: state.selectedModel,
+      availableModels: state.availableModels.slice(),
+    };
+    try {
+      return await requestAssistantWithSmartRetry(prompt, baseContext, history);
+    } catch (primaryError) {
+      if (!isModelFallbackError(primaryError)) throw primaryError;
+      const fallbackModels = state.availableModels
+        .map((item) => String(item && item.value || '').trim())
+        .filter((value) => value && value !== state.selectedModel);
+      if (!fallbackModels.length) throw primaryError;
+      let lastError = primaryError;
+      for (let i = 0; i < fallbackModels.length; i += 1) {
+        const fallbackModel = fallbackModels[i];
+        appendBubble(`Текущая модель перегружена. Пробую резервную: ${fallbackModel}.`, 'assistant');
+        setSelectedModel(fallbackModel);
+        try {
+          const reply = await requestAssistantWithSmartRetry(prompt, {
+            ...extraContext,
+            responseStyle: state.responseStyle,
+            aiModel: fallbackModel,
+            availableModels: state.availableModels.slice(),
+          }, history);
+          notify('info', `Ответ получен с резервной модели ${fallbackModel}.`);
+          return reply;
+        } catch (fallbackError) {
+          lastError = fallbackError;
+        }
+      }
+      throw lastError;
+    }
   };
 
   const renderResponseStyleOptions = () => {
@@ -939,7 +1016,7 @@ function openAiResponseDialog(context = {}) {
     root.querySelector('[data-send]').disabled = true;
     const pending = appendPendingBubble('Готовим ответ...');
     try {
-      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
+      const assistantReply = await requestWithAutomaticModelFallback(prompt, context, state.chatHistory);
       pending.remove();
       appendBubble(assistantReply, 'assistant');
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
@@ -981,7 +1058,7 @@ function openAiResponseDialog(context = {}) {
     const pending = appendPendingBubble('Готовим ответ...');
     let assistantReply = '';
     try {
-      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
+      assistantReply = await requestWithAutomaticModelFallback(prompt, context, state.chatHistory);
     } catch (error) {
       pending.remove();
       assistantReply = '';
