@@ -292,6 +292,7 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   ].join(' ');
   const context = {
     extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: normalizedText.slice(0, 12000) }],
+    requestNonce: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
     aiBehavior: fileOnlyPrompt,
     isolatedFileMode: true
   };
@@ -303,6 +304,8 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+    formData.append('temperature', '0.6');
+    formData.append('top_p', '1');
     formData.append('context', JSON.stringify(context));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });
@@ -319,6 +322,9 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
       throw new Error(`${serverError || 'ИИ-сервис перегружен или временно недоступен.'} Повторите через ${retryAfterSeconds} сек.`);
     }
     throw new Error(serverError || `Ошибка ИИ (${statusCode}).`);
+  }
+  if (!hasMeaningfulTelegramBriefPayload(payload)) {
+    throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
   }
   return payload;
 }
@@ -390,6 +396,7 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     formData.append('attachments[]', preparedFile, preparedFile.name || fileName);
     const context = {
       isolatedFileMode: true,
+      requestNonce: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
       attachedFiles: [{ name: fileName, url: fileUrl, type: normalizeValue(preparedFile && preparedFile.type) }],
       extractedTexts: extractedText ? [{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
       aiBehavior: 'VIP-кратко: используй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}.'
@@ -397,6 +404,8 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     if (context.extractedTexts.length) {
       formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
     }
+    formData.append('temperature', '0.5');
+    formData.append('top_p', '1');
     formData.append('context', JSON.stringify(context));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });
@@ -404,6 +413,9 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
     throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
+  }
+  if (!hasMeaningfulTelegramBriefPayload(payload)) {
+    throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
   }
   return payload;
 }
@@ -459,6 +471,16 @@ function sanitizeTelegramAiList(items, limit) {
     .slice(0, limit);
 }
 
+function hasMeaningfulTelegramBriefPayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const analysis = normalizeValue(payload.analysis);
+  const responseText = normalizeValue(payload.response);
+  const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
+  const hasActions = Array.isArray(block.required_actions) && block.required_actions.some((item) => normalizeValue(item).length >= 4);
+  const hasRequirements = Array.isArray(block.requirements) && block.requirements.some((item) => normalizeValue(item).length >= 4);
+  return Boolean(analysis || responseText || hasActions || hasRequirements);
+}
+
 function pickTelegramFactsFromText(sourceText, limit) {
   const sentencePool = getTelegramSentencePool(sourceText);
   if (!sentencePool.length) return [];
@@ -499,27 +521,24 @@ function extractPartyByLabel(text, labelVariants) {
   return match && match[1] ? String(match[1]).trim() : '';
 }
 
-function buildTelegramBriefSections(payload, sourceText) {
+function buildTelegramBriefSections(payload) {
   const analysis = payload && payload.analysis ? cleanTelegramSentence(payload.analysis) : '';
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
   const aiActions = sanitizeTelegramAiList(block.required_actions, 5);
   const aiRequirements = sanitizeTelegramAiList(block.requirements, 4);
-  const actions = aiActions.length ? aiActions : pickTelegramFactsFromText(sourceText, 5);
-  const requirements = aiRequirements.length ? aiRequirements : buildTelegramStepsFallback(sourceText, 4);
-  const sender = extractPartyByLabel(sourceText, ['отправитель', 'sender', 'from']);
-  const recipient = extractPartyByLabel(sourceText, ['получатель', 'адресат', 'recipient', 'to']);
-  const participants = `Отправитель: ${sender || 'не указано в файле'}; Получатель: ${recipient || 'не указано в файле'}`;
+  const risks = Array.isArray(block.risks) ? block.risks : [];
+  const participantsRaw = risks.find((item) => /^отправитель\s*:/i.test(normalizeValue(item)));
+  const participants = participantsRaw || 'Отправитель/получатель: не указано в ответе ИИ';
   return {
-    analysis: !isWeakTelegramAnalysis(analysis) ? analysis : buildTelegramAnalysisFallback(sourceText),
+    analysis: !isWeakTelegramAnalysis(analysis) ? analysis : (cleanTelegramSentence(payload && payload.response) || 'ИИ не вернул блок «О чем файл».'),
     participants,
-    actions,
-    requirements,
+    actions: aiActions,
+    requirements: aiRequirements,
   };
 }
 
 function renderTelegramBriefPreview(container, payload, sourceText) {
-  const sections = buildTelegramBriefSections(payload, sourceText);
-  const apiResponse = normalizeValue((payload && payload.response) || (payload && payload.analysis) || '');
+  const sections = buildTelegramBriefSections(payload);
   const detailsHtml = sections.actions.length
     ? `<ul>${sections.actions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
     : '<p>Ключевые детали не указаны в файле.</p>';
@@ -528,10 +547,6 @@ function renderTelegramBriefPreview(container, payload, sourceText) {
     : '<p>Следующие шаги не указаны в файле.</p>';
 
   container.innerHTML = `
-    <section class="appdosc-brief-ai__section">
-      <h4>Ответ через API</h4>
-      <p>${escapeHtml(apiResponse || 'ИИ не вернул отдельный текст response.')}</p>
-    </section>
     <section class="appdosc-brief-ai__section">
       <h4>О чем файл</h4>
       <p>${escapeHtml(sections.analysis)}</p>
@@ -632,7 +647,7 @@ function openTelegramBriefModal(task, statusHandler) {
           preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла напрямую в VIP ИИ...</p>';
           aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
         } else {
-          sourceText = source.text || await requestTelegramOcrByUrl(source.url);
+          sourceText = await requestTelegramOcrByUrl(source.url);
           if (requestId !== activeRequestId) return;
           source.text = sourceText;
           if (!normalizeTelegramOcrText(sourceText)) {
