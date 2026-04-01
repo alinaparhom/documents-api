@@ -1059,7 +1059,7 @@ function sanitizeGeneratedResponse(string $value, array $sanitizePrefixes = []):
         return '';
     }
 
-    $defaultPrefixes = ['сформируй официальный ответ', 'подготовь официальный ответ', 'решение ии:', 'причина:', 'действия:'];
+    $defaultPrefixes = ['сформируй официальный ответ', 'подготовь официальный ответ', 'решение ии:'];
     $prefixes = normalizeTextList($sanitizePrefixes);
     if (!$prefixes) {
         $prefixes = $defaultPrefixes;
@@ -1076,14 +1076,16 @@ function sanitizeGeneratedResponse(string $value, array $sanitizePrefixes = []):
     foreach ($lines as $line) {
         $trimmed = trim($line);
         if ($trimmed === '') {
-            $cleaned[] = '';
+            if ($cleaned !== [] && end($cleaned) !== '') {
+                $cleaned[] = '';
+            }
             continue;
         }
         if ($signatureStarted) {
             continue;
         }
         $lower = mb_strtolower($trimmed);
-        if (preg_match('/^(с уважением|подпись|signature|реквизит|иван\s+иванов|генеральный\s+директор)/ui', $trimmed)) {
+        if (preg_match('/^(с уважением|подпись|signature)$/ui', $trimmed)) {
             $signatureStarted = true;
             continue;
         }
@@ -1106,7 +1108,51 @@ function sanitizeGeneratedResponse(string $value, array $sanitizePrefixes = []):
         $cleaned[] = $line;
     }
 
-    return trim(preg_replace('/\n{3,}/u', "\n\n", implode("\n", $cleaned)) ?? '');
+    return trim(preg_replace('/\n{2,}/u', "\n\n", implode("\n", $cleaned)) ?? '');
+}
+
+function assessResponseQuality(string $response, array $extractedTexts): array
+{
+    $issues = [];
+    $responseTrimmed = trim($response);
+    if ($responseTrimmed === '') {
+        $issues[] = 'Пустой текст ответа';
+    }
+
+    $hasDate = preg_match('/\b\d{2}\.\d{2}\.\d{4}\b/u', $responseTrimmed) === 1;
+    if (!$hasDate) {
+        $issues[] = 'Нет явной даты в формате ДД.ММ.ГГГГ';
+    }
+
+    $sourceHints = [];
+    foreach ($extractedTexts as $entry) {
+        $text = mb_strtolower(trim((string)($entry['text'] ?? '')));
+        if ($text === '') {
+            continue;
+        }
+        if (preg_match('/\b(договор|контракт|письм|акт|смет|срок)\b/u', $text, $m)) {
+            $sourceHints[] = $m[1];
+        }
+        if (count($sourceHints) >= 3) {
+            break;
+        }
+    }
+    $sourceHints = array_values(array_unique($sourceHints));
+    if ($sourceHints) {
+        $responseLower = mb_strtolower($responseTrimmed);
+        $hasOverlap = false;
+        foreach ($sourceHints as $hint) {
+            if (str_contains($responseLower, $hint)) {
+                $hasOverlap = true;
+                break;
+            }
+        }
+        if (!$hasOverlap) {
+            $issues[] = 'Слабая связь текста ответа с фактами из документов';
+        }
+    }
+
+    return ['ok' => $issues === [], 'issues' => $issues];
 }
 
 
@@ -2096,8 +2142,8 @@ function applyInputBudget(array $entries, int $maxChars): array
     $usedFiles = [];
     $selectedFingerprints = [];
     $fileFirstChunkUsed = [];
-    $minDistinctFiles = min(2, count($chunks));
-    $minCharsPerFile = max(700, min(3000, (int)floor($maxChars / max(1, $minDistinctFiles))));
+    $minDistinctFiles = min(3, count($chunks));
+    $minCharsPerFile = max(2000, min(12000, (int)floor($maxChars / max(1, $minDistinctFiles))));
 
     foreach ($chunks as $chunk) {
         if (count($fileFirstChunkUsed) >= $minDistinctFiles || $usedChars >= $maxChars) {
@@ -2118,7 +2164,13 @@ function applyInputBudget(array $entries, int $maxChars): array
         $text = $chunk['text'];
         $length = mb_strlen($text);
         if ($length > $budgetForChunk) {
-            $text = mb_substr($text, 0, $budgetForChunk) . '…';
+            $headSize = (int)floor($budgetForChunk * 0.7);
+            $tailSize = max(0, $budgetForChunk - $headSize - 40);
+            $head = trim(mb_substr($text, 0, max(0, $headSize)));
+            $tail = $tailSize > 0 ? trim(mb_substr($text, -$tailSize)) : '';
+            $text = $tail !== ''
+                ? $head . "\n...\n[сокращено]\n...\n" . $tail
+                : $head . '…';
             $length = mb_strlen($text);
         }
         if ($length <= 0) {
@@ -2872,20 +2924,14 @@ if (!in_array($effectiveModel, $availableModels, true)) {
     ]);
 }
 
-$defaultSystemMessage = "Ты — ИИ, выполняющий роль сотрудника строительной организации с опытом 15 лет. "
-  . "Верни JSON-объект, где главное поле — response (готовый текст официального письма), остальные поля — вспомогательные. "
-  . "Ответ должен быть подробным и структурным: ориентир 10–15 предложений в поле response, с фактами, датами и конкретными действиями без воды. "
-  . "Запрещено повторять одну и ту же мысль более одного раза. Каждое предложение должно нести новую информацию. Используй лаконичные формулировки. Объём формируй за счёт деталей, а не за счёт повторов. "
-  . "Всегда указывай дату и номер письма, на которое даётся ответ (если есть во входных данных), номер контракта/договора (если указан), а также роль нашей организации в проекте (подрядчик/субподрядчик/генподрядчик). "
-  . "Не добавляй в ответ шапку, подпись, реквизиты, телефоны, e-mail и ФИО подписанта. "
-  . "Всегда указывай чёткие сроки в формате ДД.ММ.ГГГГ и конкретизируй, какие документы, кому и до какой даты передаются. "
-  . "Не смешивай скептический и соглашательский тон в одном письме: выбирай единую линию. "
-  . "Если работы приостановлены, не утверждай, что они выполняются по графику. Избегай противоречий с фактами из входного документа. "
-  . "Если во входных данных нет даты, номера письма, номера договора или ФИО — не выдумывай, вместо этого используй нейтральную формулировку без фиктивных реквизитов. "
-  . "Используй структуру response: 1) вводная часть по письму, 2) фактическое состояние работ, 3) анализ причин и зависимостей, 4) позиция подрядчика, 5) встречные требования к координации, 6) предупреждение о фиксации препятствий. "
-  . "Опирайся на данные из user payload, особенно files[*].preview и extractedTexts[*].text. Если контента недостаточно — кратко укажи это в analysis. "
-  . "Для каждого действия указывай реалистичный срок в формате ДД.ММ.ГГГГ. "
-  . "Используй формулировки делового строительного документооборота, включая обороты: «носят односторонний характер», «обусловлено технологической необходимостью», «не могут быть выполнены ввиду отсутствия координации», «зависят от комплексной готовности объекта». "
+$defaultSystemMessage = "Ты — помощник по официальным ответам на документы. "
+  . "Верни JSON-объект, где главное поле — response (готовый текст ответа), остальные поля — вспомогательные. "
+  . "Опирайся только на user payload, особенно files[*].preview и extractedTexts[*].text; не выдумывай факты или реквизиты. "
+  . "Если данных не хватает, кратко укажи это в analysis и в response запроси недостающие сведения деловым языком. "
+  . "response должен быть понятным, последовательным и без повторов: вводная часть, факты, выводы, действия и сроки. "
+  . "Если дата/номер письма/договора есть во входных данных — укажи их, если нет — используй нейтральную формулировку без фиктивных значений. "
+  . "Не добавляй подпись, контакты, банковские реквизиты, e-mail и ФИО подписанта. "
+  . "Терминологию выбирай по домену исходных документов (строительство, юриспруденция, бухгалтерия, ИТ и т.д.). "
   . $styleInstruction . ' '
   . $styleExampleInstruction . ' '
   . 'Поле response — только готовый текст письма без служебных заголовков.';
@@ -2898,7 +2944,7 @@ $defaultSystemMessage = $aiMode === 'paid' ? $paidSystemMessage : $defaultSystem
 $systemMessage = $effectiveBehavior !== '' ? $effectiveBehavior : $defaultSystemMessage;
 
 $userPayload = [
-    'instruction' => 'Сформируй официальный ответ в деловом стиле: 10-15 предложений, без повторов, с датой/номером письма, сроками и без подписи/реквизитов.',
+    'instruction' => 'Сформируй официальный ответ в деловом стиле без повторов, с фактами из документов, конкретными действиями и сроками (если возможно).',
     'documentTitle' => $documentTitle,
     'prompt' => $prompt,
     'context' => $context,
@@ -2922,7 +2968,11 @@ $body = [
         ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
     ],
 ];
-if (!$isGroq && !$isGoogleOpenAiCompat) {
+if (
+    !$isGroq
+    && !$isGoogleOpenAiCompat
+    && normalizeBoolSetting($env['AI_FORCE_JSON_RESPONSE_FORMAT'] ?? false)
+) {
     $body['response_format'] = ['type' => 'json_object'];
 }
 
@@ -3209,6 +3259,11 @@ if (mb_strlen($analysis) > 1200) {
 }
 if (mb_strlen($response) > 20000) {
     $response = mb_substr($response, 0, 20000) . '…';
+}
+$qualityCheck = assessResponseQuality($response, $extractedTexts);
+if (!$qualityCheck['ok']) {
+    $qualitySummary = implode('; ', $qualityCheck['issues']);
+    $analysis = trim($analysis . ($analysis !== '' ? "\n\n" : '') . 'Проверка качества: ' . $qualitySummary);
 }
 
 $successPayload = [
