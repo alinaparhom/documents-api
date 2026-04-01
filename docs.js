@@ -1933,6 +1933,8 @@
       '.documents-brief-title{font-size:18px;font-weight:700;color:#0f172a;}' +
       '.documents-brief-subtitle{font-size:12px;color:#64748b;margin-top:2px;}' +
       '.documents-brief-mode{display:inline-flex;align-items:center;margin-top:6px;padding:4px 8px;border-radius:999px;border:1px solid rgba(147,197,253,0.85);background:rgba(219,234,254,0.75);color:#1e3a8a;font-size:11px;font-weight:600;}' +
+      '.documents-brief-toggle{display:inline-flex;align-items:center;gap:8px;margin-top:8px;padding:7px 10px;border:1px solid rgba(148,163,184,0.35);border-radius:12px;background:rgba(255,255,255,0.75);font-size:12px;color:#334155;font-weight:600;backdrop-filter:blur(8px);}' +
+      '.documents-brief-toggle input{accent-color:#2563eb;width:16px;height:16px;}' +
       '.documents-brief-body{display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);gap:14px;padding:14px;min-height:0;flex:1;background:linear-gradient(180deg, rgba(248,250,252,0.55), rgba(255,255,255,0.78));}' +
       '.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;padding:2px 6px 2px 0;scrollbar-width:thin;}' +
       '.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.96);border-radius:14px;padding:11px 12px;text-align:left;color:#0f172a;font-size:13px;cursor:pointer;transition:all .2s ease;box-shadow:0 8px 20px rgba(15,23,42,0.05);display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:56px;}' +
@@ -2227,6 +2229,25 @@
     return Boolean(analysis || responseText || hasActions || hasRequirements);
   }
 
+  function extractPlainAiBriefText(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return '';
+    }
+    var candidates = [
+      payload.response,
+      payload.analysis,
+      payload.text,
+      payload.answer
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = String(candidates[i] || '').trim();
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
 
   function getDirectAiAnalyzeUrl(apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
@@ -2470,6 +2491,13 @@
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для OCR и краткого анализа ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Только текст выбранного файла'));
+    var newDecisionToggleWrap = createElement('label', 'documents-brief-toggle');
+    var newDecisionToggle = document.createElement('input');
+    newDecisionToggle.type = 'checkbox';
+    newDecisionToggle.setAttribute('data-new-decision', '1');
+    newDecisionToggleWrap.appendChild(newDecisionToggle);
+    newDecisionToggleWrap.appendChild(document.createTextNode('Новое решение (VIP файл)'));
+    titleWrap.appendChild(newDecisionToggleWrap);
     var vipChatButton = createElement('button', 'documents-button documents-button--secondary', 'VIP ИИ чат');
     vipChatButton.style.marginTop = '8px';
     titleWrap.appendChild(vipChatButton);
@@ -2543,18 +2571,31 @@
       button.addEventListener('click', function() {
         makeActive(button);
         button.disabled = true;
+        var useNewDecision = Boolean(newDecisionToggle && newDecisionToggle.checked);
         setPreviewLoading(true, source.label);
-        var requestPromise = resolveSourceText(source, true).then(function(sourceText) {
-          preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
-          return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
-        });
+        var requestPromise;
+        if (useNewDecision) {
+          preview.textContent = '⏳ Новое решение: отправляю файл в платный ИИ...';
+          requestPromise = requestAiBriefSummaryForFileDirect(source, options.apiUrl);
+        } else {
+          requestPromise = resolveSourceText(source, true).then(function(sourceText) {
+            preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
+            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
+          });
+        }
         requestPromise
           .then(function(sourceText) {
             var aiPayload = sourceText;
             preview.classList.remove('is-loading');
-            preview.textContent = buildAiBriefSummaryText(aiPayload, source && source.text ? source.text : '');
+            if (useNewDecision) {
+              var plainText = extractPlainAiBriefText(aiPayload);
+              preview.textContent = plainText || 'ИИ не вернул чистый текст ответа. Попробуйте ещё раз.';
+            } else {
+              preview.textContent = buildAiBriefSummaryText(aiPayload, source && source.text ? source.text : '');
+            }
             var elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
-            metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек';
+            metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек'
+              + (useNewDecision ? ' • Режим: Новое решение' : '');
           })
           .catch(function(error) {
             preview.classList.remove('is-loading');

@@ -245,6 +245,8 @@ function ensureTelegramBriefModalStyle() {
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
     .appdosc-brief-ai__mode{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 8px;border-radius:999px;background:rgba(219,234,254,.7);border:1px solid rgba(147,197,253,.8);font-size:11px;color:#1e3a8a;font-weight:600}
+    .appdosc-brief-ai__toggle{display:inline-flex;align-items:center;gap:8px;margin-top:7px;padding:6px 9px;border-radius:11px;border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.88);font-size:12px;color:#334155;font-weight:600}
+    .appdosc-brief-ai__toggle input{accent-color:#2563eb;width:16px;height:16px}
     .appdosc-brief-ai__hint{margin-top:6px;font-size:11px;color:#475569}
     .appdosc-brief-ai__status{margin:0;padding:6px 10px;border-bottom:1px solid rgba(226,232,240,.85);font-size:12px;color:#334155;background:rgba(248,250,252,.88)}
     .appdosc-brief-ai__status[data-tone="loading"]{color:#1d4ed8}
@@ -494,6 +496,16 @@ function hasMeaningfulTelegramBriefPayload(payload) {
   return Boolean(analysis || responseText || hasActions || hasRequirements);
 }
 
+function extractTelegramPlainAiText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidates = [payload.response, payload.analysis, payload.text, payload.answer];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = normalizeValue(candidates[i]);
+    if (candidate) return candidate;
+  }
+  return '';
+}
+
 function pickTelegramFactsFromText(sourceText, limit) {
   const sentencePool = getTelegramSentencePool(sourceText);
   if (!sentencePool.length) return [];
@@ -602,6 +614,7 @@ function openTelegramBriefModal(task, statusHandler) {
           <div class="appdosc-brief-ai__title">Кратко ИИ</div>
           <div class="appdosc-brief-ai__sub">Краткий вывод по документу</div>
           <div class="appdosc-brief-ai__mode">Только текст выбранного файла</div>
+          <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-new-decision>Новое решение</label>
           <div style="margin-top:6px"><select data-ai-mode style="min-height:30px;border:1px solid rgba(203,213,225,.95);border-radius:9px;padding:4px 8px;background:#fff"><option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option></select></div>
           <div class="appdosc-brief-ai__hint">1) Выберите файл → 2) Дождитесь анализа → 3) Скопируйте нужные пункты.</div>
         </div>
@@ -621,6 +634,7 @@ function openTelegramBriefModal(task, statusHandler) {
   const statusNode = modal.querySelector('[data-status]');
   const metaNode = modal.querySelector('[data-meta]');
   const modeSelect = modal.querySelector('[data-ai-mode]');
+  const newDecisionCheckbox = modal.querySelector('[data-new-decision]');
   const sources = [];
   let activeRequestId = 0;
 
@@ -648,6 +662,16 @@ function openTelegramBriefModal(task, statusHandler) {
   };
   modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
   modal.querySelector('[data-close]').addEventListener('click', close);
+  if (newDecisionCheckbox) {
+    newDecisionCheckbox.addEventListener('change', () => {
+      if (modeSelect) {
+        modeSelect.disabled = newDecisionCheckbox.checked;
+      }
+      if (newDecisionCheckbox.checked) {
+        setStatus('Режим "Новое решение": файл пойдёт напрямую в платный ИИ.', 'idle');
+      }
+    });
+  }
   document.addEventListener('keydown', onEscClose);
 
   sources.forEach((source) => {
@@ -663,11 +687,12 @@ function openTelegramBriefModal(task, statusHandler) {
         button.disabled = true;
         setStatus(`Подготовка файла: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
+        const useNewDecision = Boolean(newDecisionCheckbox && newDecisionCheckbox.checked);
         const selectedMode = modeSelect && modeSelect.value === 'paid' ? 'paid' : 'free';
         let aiPayload = null;
-        if (selectedMode === 'paid') {
+        if (useNewDecision || selectedMode === 'paid') {
           setStatus(`VIP анализ файла: ${source.label}`, 'loading');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла напрямую в VIP ИИ...</p>';
+          preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">⏳ ${useNewDecision ? 'Новое решение' : 'VIP режим'}: отправка файла напрямую в платный ИИ...</p>`;
           aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
         } else {
           sourceText = await requestTelegramOcrByUrl(source.url);
@@ -687,11 +712,16 @@ function openTelegramBriefModal(task, statusHandler) {
           }
         }
         if (requestId !== activeRequestId) return;
-        renderTelegramBriefPreview(preview, aiPayload, sourceText);
+        if (useNewDecision) {
+          const plainText = extractTelegramPlainAiText(aiPayload);
+          preview.textContent = plainText || 'ИИ не вернул чистый текст ответа. Попробуйте ещё раз.';
+        } else {
+          renderTelegramBriefPreview(preview, aiPayload, sourceText);
+        }
         setStatus('Готово. Разбор сформирован только по выбранному файлу.', 'success');
         if (metaNode) {
           const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
-          metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек`;
+          metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек${useNewDecision ? ' • Режим: Новое решение' : ''}`;
         }
       } catch (error) {
         if (requestId !== activeRequestId) return;
