@@ -58,39 +58,82 @@ if ($method !== 'POST') {
     jsonResponse(405, ['ok' => false, 'error' => 'Method Not Allowed']);
 }
 
-if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
+function normalizeUploadedFiles(string $field): array
+{
+    if (!isset($_FILES[$field]) || !is_array($_FILES[$field])) {
+        return [];
+    }
+    $raw = $_FILES[$field];
+    if (!isset($raw['name'])) {
+        return [];
+    }
+    $items = [];
+    if (is_array($raw['name'])) {
+        $count = count($raw['name']);
+        for ($i = 0; $i < $count; $i += 1) {
+            if ((int)($raw['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                continue;
+            }
+            $tmpName = (string)($raw['tmp_name'][$i] ?? '');
+            if ($tmpName === '' || !is_uploaded_file($tmpName)) {
+                continue;
+            }
+            $items[] = [
+                'name' => (string)($raw['name'][$i] ?? 'file.bin'),
+                'type' => (string)($raw['type'][$i] ?? 'application/octet-stream'),
+                'size' => (int)($raw['size'][$i] ?? 0),
+                'tmp_name' => $tmpName,
+            ];
+        }
+        return $items;
+    }
+    if ((int)($raw['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+        $tmpName = (string)($raw['tmp_name'] ?? '');
+        if ($tmpName !== '' && is_uploaded_file($tmpName)) {
+            $items[] = [
+                'name' => (string)($raw['name'] ?? 'file.bin'),
+                'type' => (string)($raw['type'] ?? 'application/octet-stream'),
+                'size' => (int)($raw['size'] ?? 0),
+                'tmp_name' => $tmpName,
+            ];
+        }
+    }
+    return $items;
+}
+
+$files = normalizeUploadedFiles('files');
+if (!$files) {
+    $files = normalizeUploadedFiles('file');
+}
+if (!$files) {
     jsonResponse(422, ['ok' => false, 'error' => 'Не передан файл']);
 }
 
-$file = $_FILES['file'];
-if ((int)($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-    jsonResponse(422, ['ok' => false, 'error' => 'Ошибка загрузки файла']);
-}
-
-$tmpName = (string)($file['tmp_name'] ?? '');
-if ($tmpName === '' || !is_uploaded_file($tmpName)) {
-    jsonResponse(422, ['ok' => false, 'error' => 'Файл невалидный']);
-}
-
-$fileName = (string)($file['name'] ?? 'file.bin');
-$fileType = (string)($file['type'] ?? 'application/octet-stream');
-$fileSize = (int)($file['size'] ?? 0);
-$raw = @file_get_contents($tmpName);
-if ($raw === false) {
-    jsonResponse(500, ['ok' => false, 'error' => 'Не удалось прочитать файл']);
-}
-
 $maxBytes = 2 * 1024 * 1024;
-if (strlen($raw) > $maxBytes) {
-    $raw = substr($raw, 0, $maxBytes);
+$fileBlocks = [];
+foreach ($files as $file) {
+    $raw = @file_get_contents((string)$file['tmp_name']);
+    if ($raw === false) {
+        continue;
+    }
+    if (strlen($raw) > $maxBytes) {
+        $raw = substr($raw, 0, $maxBytes);
+    }
+    $fileType = (string)($file['type'] ?? 'application/octet-stream');
+    $textPreview = '';
+    if (str_starts_with(strtolower($fileType), 'text/')) {
+        $textPreview = trim((string)$raw);
+    } else {
+        $textPreview = base64_encode($raw);
+        $textPreview = 'BASE64 (первые ' . strlen($raw) . ' байт): ' . substr($textPreview, 0, 1800);
+    }
+    $fileBlocks[] = "fileName: " . (string)$file['name']
+        . "\nfileType: " . $fileType
+        . "\nfileSize: " . (string)((int)$file['size'])
+        . "\nСодержимое файла (или фрагмент):\n" . $textPreview;
 }
-
-$textPreview = '';
-if (str_starts_with(strtolower($fileType), 'text/')) {
-    $textPreview = trim((string)$raw);
-} else {
-    $textPreview = base64_encode($raw);
-    $textPreview = 'BASE64 (первые ' . strlen($raw) . ' байт): ' . substr($textPreview, 0, 1800);
+if (!$fileBlocks) {
+    jsonResponse(422, ['ok' => false, 'error' => 'Не удалось прочитать загруженные файлы']);
 }
 
 $userPrompt = trim((string)($_POST['prompt'] ?? ''));
@@ -116,8 +159,7 @@ $messages = [
     [
         'role' => 'user',
         'content' => ($userPrompt !== '' ? $userPrompt : "Сформируй ответ по приложенному файлу.")
-            . "\nfileName: {$fileName}\nfileType: {$fileType}\nfileSize: {$fileSize}\n"
-            . "Содержимое файла (или фрагмент):\n{$textPreview}",
+            . "\n\n" . implode("\n\n--------------------\n\n", $fileBlocks),
     ],
 ];
 
