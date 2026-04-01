@@ -11,10 +11,11 @@ header('Content-Type: application/json; charset=utf-8');
 
 const MAX_TOTAL_UPLOAD_BYTES = 0; // 0 = без ограничения
 const MAX_TEXT_CHARS = 0; // 0 = без обрезки
+const MAX_TEXT_CHARS_PER_CHUNK = 12000;
+const MAX_TEXT_CHUNKS_TOTAL = 30;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT = 'deepseek-r1-distill-llama-70b';
-const MODEL_VISION = 'meta-llama/llama-4-maverick-17b-128e-instruct';
 
 function respond(int $status, array $payload): void
 {
@@ -221,7 +222,10 @@ function cleanExtractedText(string $text): string
     if ($text === '') {
         return '';
     }
-    return trim(mb_substr($text, 0, MAX_TEXT_CHARS));
+    if (MAX_TEXT_CHARS > 0) {
+        return trim(mb_substr($text, 0, MAX_TEXT_CHARS));
+    }
+    return $text;
 }
 
 function splitTextIntoChunks(string $text, int $maxChunkChars = MAX_TEXT_CHARS_PER_CHUNK): array
@@ -385,11 +389,9 @@ if ($userPrompt === '') {
 
 $textChunks = [];
 $metaChunks = [];
-$visionImages = [];
-$hasVisionInput = false;
 $hasReadableContent = false;
 
-$allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp'];
+$allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
 
 foreach ($files as $file) {
     $name = (string)$file['name'];
@@ -410,25 +412,14 @@ foreach ($files as $file) {
                 $textChunks[] = "[Файл: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
             }
             $metaChunks[] = "[Текст: {$name}, чанков: " . count($chunks) . ']';
-        $normalized = MAX_TEXT_CHARS > 0 ? trim(mb_substr($raw, 0, MAX_TEXT_CHARS)) : trim($raw);
-        $textChunks[] = "[Файл: {$name}]\n" . ($normalized !== '' ? $normalized : '[пустой текст]');
-        if ($normalized !== '') {
             $hasReadableContent = true;
-        } else {
-            $textChunks[] = "[Файл: {$name}]\n[пустой текст]";
         }
         continue;
     }
 
     if ($isImage) {
-        $raw = (string)@file_get_contents($tmp);
-        if ($raw !== '') {
-            $visionImages[] = makeDataUriFromBinary($raw, $mime);
-            $hasVisionInput = true;
-            $hasReadableContent = true;
-            $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}]";
-            continue;
-        }
+        $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}]";
+        continue;
     }
 
     if ($isPdf) {
@@ -436,24 +427,21 @@ foreach ($files as $file) {
         $pdfText = trim((string)($pdfExtract['text'] ?? ''));
         $pdfSource = (string)($pdfExtract['source'] ?? '');
         if ($pdfText !== '') {
-            $normalizedPdfText = MAX_TEXT_CHARS > 0 ? trim(mb_substr($pdfText, 0, MAX_TEXT_CHARS)) : $pdfText;
-            $textChunks[] = "[PDF: {$name}]\n" . $normalizedPdfText;
+            $chunks = splitTextIntoChunks($pdfText);
+            if ($chunks) {
+                foreach ($chunks as $index => $chunk) {
+                    $textChunks[] = "[PDF: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
+                }
+                $metaChunks[] = $pdfSource === 'ocr'
+                    ? "[PDF: {$name}, {$size} байт, OCR, чанков: " . count($chunks) . ']'
+                    : "[PDF: {$name}, {$size} байт, текстовый слой, чанков: " . count($chunks) . ']';
+            } else {
+                $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
+            }
             $hasReadableContent = true;
-            $metaChunks[] = $pdfSource === 'ocr'
-                ? "[PDF: {$name}, {$size} байт, OCR, чанков: " . count($chunks) . ']'
-                : "[PDF: {$name}, {$size} байт, текстовый слой, чанков: " . count($chunks) . ']';
             continue;
         }
-
-        $jpegDataUri = convertPdfFirstPageToJpegDataUri($tmp);
-        if ($jpegDataUri !== null) {
-            $visionImages[] = $jpegDataUri;
-            $hasVisionInput = true;
-            $hasReadableContent = true;
-            $metaChunks[] = "[PDF: {$name}, {$size} байт, OCR не дал текст, первая страница преобразована в JPEG]";
-            continue;
-        }
-        $metaChunks[] = "[PDF: {$name}, {$size} байт, ошибка OCR и конвертации]";
+        $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
         continue;
     }
 
@@ -464,50 +452,33 @@ foreach ($files as $file) {
 if (!$hasReadableContent) {
     respond(422, [
         'ok' => false,
-        'error' => 'Не удалось прочитать содержимое файлов. Проверьте файл/скан или добавьте текст в хорошем качестве.',
+        'error' => 'Недостаточно данных для решения. Нужны документы с распознанным текстом (TXT/PDF с текстовым слоем) или более качественный скан.',
     ]);
 }
 
-$model = $hasVisionInput ? MODEL_VISION : MODEL_TEXT;
-$systemPrompt = 'Ты помощник по документам. Анализируй только фактическое содержимое файлов (текст/OCR/изображения), а не названия файлов. Если данных недостаточно, прямо напиши, что нужно улучшить качество скана или предоставить более читаемый документ. Дай понятный подробный ответ на русском языке: краткий вывод, ключевые факты из документов и практические рекомендации.';
+$model = MODEL_TEXT;
+$systemPrompt = 'Твоя роль: анализировать документы и давать четкие, обоснованные решения без колебаний.
+Правила:
+- Отвечай как действующий сотрудник, а не как ассистент
+- Принимай конкретные решения, а не предлагай варианты
+- Используй деловой, уверенный тон
+- Не используй фразы "я думаю", "возможно", "рекомендую" — заменяй на "решение", "утверждаю", "отклоняю"
+- Не добавляй шапки, подписи, приветствия и прощания
+- Давай только чистый ответ: решение + краткое обоснование
+- Если данных недостаточно для решения, прямо укажи, что нужно для принятия решения.';
 
-if ($hasVisionInput) {
-    $visionText = $userPrompt;
-    if ($textChunks) {
-        $visionText .= "\n\nТекстовые файлы:\n" . implode("\n\n", $textChunks);
-    }
-    if ($metaChunks) {
-        $visionText .= "\n\nСводка файлов:\n" . implode("\n", $metaChunks);
-    }
-
-    $content = [
-        ['type' => 'text', 'text' => $visionText],
-    ];
-    foreach ($visionImages as $dataUri) {
-        $content[] = [
-            'type' => 'image_url',
-            'image_url' => ['url' => $dataUri],
-        ];
-    }
-
-    $messages = [
-        ['role' => 'system', 'content' => $systemPrompt],
-        ['role' => 'user', 'content' => $content],
-    ];
-} else {
-    $textPayload = $userPrompt;
-    if ($textChunks) {
-        $textPayload .= "\n\nТекстовые файлы:\n" . implode("\n\n", $textChunks);
-    }
-    if ($metaChunks) {
-        $textPayload .= "\n\nСводка файлов:\n" . implode("\n", $metaChunks);
-    }
-
-    $messages = [
-        ['role' => 'system', 'content' => $systemPrompt],
-        ['role' => 'user', 'content' => $textPayload],
-    ];
+$textPayload = $userPrompt;
+if ($textChunks) {
+    $textPayload .= "\n\nТекстовые файлы:\n" . implode("\n\n", $textChunks);
 }
+if ($metaChunks) {
+    $textPayload .= "\n\nСводка файлов:\n" . implode("\n", $metaChunks);
+}
+
+$messages = [
+    ['role' => 'system', 'content' => $systemPrompt],
+    ['role' => 'user', 'content' => $textPayload],
+];
 
 $requestPayload = [
     'model' => $model,
