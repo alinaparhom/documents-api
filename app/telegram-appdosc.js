@@ -13664,10 +13664,29 @@ function createResponseUploadControls(task, entry, setStatus) {
       .tg-ai-mode__btn{width:100%;border:1px solid rgba(203,213,225,.95);border-radius:13px;padding:11px 12px;background:#fff;text-align:left;font-size:14px;color:#0f172a}
       .tg-ai-mode__btn + .tg-ai-mode__btn{margin-top:8px}
       .tg-ai-mode__btn--vip{background:linear-gradient(135deg,rgba(224,242,254,.95),rgba(240,253,250,.95))}
-      .tg-vip-ai{position:fixed;inset:0;z-index:3600;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,23,42,.4);backdrop-filter:blur(8px)}
-      .tg-vip-ai__card{width:min(860px,100%);max-height:100dvh;overflow:auto;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(241,245,249,.9));border-radius:22px 22px 0 0;padding:14px}
-      .tg-vip-ai__meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
-      .tg-vip-ai__chip{padding:5px 9px;border:1px solid rgba(203,213,225,.95);border-radius:999px;font-size:12px;color:#334155;background:rgba(255,255,255,.9)}
+      .tg-paid-chat{position:fixed;inset:0;z-index:3600;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,23,42,.4);backdrop-filter:blur(8px)}
+      .tg-paid-chat__card{width:min(900px,100%);height:min(100dvh,920px);display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(241,245,249,.9));border-radius:22px 22px 0 0;overflow:hidden}
+      .tg-paid-chat__head{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:12px;border-bottom:1px solid rgba(203,213,225,.7)}
+      .tg-paid-chat__title{font-size:16px;font-weight:800;color:#0f172a}
+      .tg-paid-chat__sub{font-size:12px;color:#64748b}
+      .tg-paid-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
+      .tg-paid-chat__bubble{max-width:92%;padding:9px 11px;border-radius:12px;font-size:13px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+      .tg-paid-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
+      .tg-paid-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
+      .tg-paid-chat__status{padding:7px 12px;font-size:12px;color:#334155;border-top:1px solid rgba(203,213,225,.6);background:rgba(255,255,255,.78)}
+      .tg-paid-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;align-items:flex-end;background:rgba(255,255,255,.9)}
+      .tg-paid-chat__input{flex:1;min-height:42px;max-height:120px;border:1px solid rgba(148,163,184,.32);border-radius:12px;padding:9px;font-size:13px;resize:none;background:rgba(255,255,255,.95)}
+      .tg-paid-chat__send{border:none;min-height:42px;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#14b8a6);color:#fff;font-weight:700}
+      .tg-paid-chat__send:disabled{opacity:.55}
+      .tg-paid-chat__files-toggle{border:none;min-height:42px;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
+      .tg-paid-chat__files-sheet{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.98);padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+      .tg-paid-chat__files-sheet[hidden]{display:none}
+      .tg-paid-chat__files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:220px;overflow:auto}
+      .tg-paid-chat__file{display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#fff;font-size:12px;color:#334155}
+      .tg-paid-chat__file input{margin-top:2px;accent-color:#2563eb}
+      .tg-paid-chat__meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
+      .tg-paid-chat__chip{padding:5px 9px;border:1px solid rgba(203,213,225,.95);border-radius:999px;font-size:12px;color:#334155;background:rgba(255,255,255,.9)}
+      @media (max-width:560px){.tg-paid-chat__card{height:100dvh;border-radius:0}.tg-paid-chat__composer{flex-wrap:wrap}.tg-paid-chat__send,.tg-paid-chat__files-toggle{flex:1}.tg-paid-chat__files-grid{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   };
@@ -13675,59 +13694,136 @@ function createResponseUploadControls(task, entry, setStatus) {
   const openVipTelegramModal = async () => {
     ensureAiChoiceStyles();
     const overlay = document.createElement('div');
-    overlay.className = 'tg-vip-ai';
+    overlay.className = 'tg-paid-chat';
     overlay.innerHTML = `
-      <div class="tg-vip-ai__card">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-          <div><div style="font-size:17px;font-weight:800;color:#0f172a">VIP AI ассистент</div><div style="font-size:12px;color:#64748b">Усиленный анализ приложений и решение по документу</div></div>
+      <div class="tg-paid-chat__card">
+        <div class="tg-paid-chat__head">
+          <div>
+            <div class="tg-paid-chat__title">💎 Платный ИИ</div>
+            <div class="tg-paid-chat__sub">Чат с выбором файлов из текущей задачи</div>
+          </div>
           <button type="button" data-close style="border:none;background:#fff;border-radius:10px;padding:6px 10px">✕</button>
         </div>
-        <div style="margin-top:10px;font-size:13px;color:#334155" data-status>Готов к отправке.</div>
-        <div style="margin-top:10px;padding:10px;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:rgba(255,255,255,.86);font-size:13px;white-space:pre-wrap;color:#0f172a" data-answer>—</div>
-        <div class="tg-vip-ai__meta" data-meta></div>
-        <button type="button" data-send style="margin-top:10px;width:100%;border:none;border-radius:12px;padding:11px 14px;color:#fff;font-weight:700;background:linear-gradient(135deg,#38bdf8,#14b8a6)">Получить ответ</button>
+        <div class="tg-paid-chat__messages" data-messages>
+          <div class="tg-paid-chat__bubble tg-paid-chat__bubble--assistant">Привет! Выберите файлы из задачи и задайте вопрос — дам ответ по выбранным документам.</div>
+        </div>
+        <div class="tg-paid-chat__status" data-status>Готов к работе.</div>
+        <div class="tg-paid-chat__composer">
+          <button type="button" class="tg-paid-chat__files-toggle" data-files-toggle>📎 Файлы</button>
+          <textarea class="tg-paid-chat__input" data-input placeholder="Например: сделай краткое решение по этим файлам"></textarea>
+          <button type="button" class="tg-paid-chat__send" data-send>Отправить</button>
+        </div>
+        <div class="tg-paid-chat__files-sheet" data-files-sheet hidden>
+          <div style="font-size:12px;color:#475569;margin-bottom:8px">Выберите один или несколько файлов из задачи:</div>
+          <div class="tg-paid-chat__files-grid" data-files-grid></div>
+          <div class="tg-paid-chat__meta" data-meta></div>
+        </div>
       </div>
     `;
     document.body.appendChild(overlay);
+
+    const files = Array.isArray(task && task.files) ? task.files : [];
+    const selectedKeys = new Set();
+    const filesGrid = overlay.querySelector('[data-files-grid]');
+    const filesSheet = overlay.querySelector('[data-files-sheet]');
+    const filesToggle = overlay.querySelector('[data-files-toggle]');
+    const statusNode = overlay.querySelector('[data-status]');
+    const metaNode = overlay.querySelector('[data-meta]');
+    const messagesNode = overlay.querySelector('[data-messages]');
+    const inputNode = overlay.querySelector('[data-input]');
+
+    const appendBubble = (text, role = 'assistant') => {
+      const bubble = document.createElement('div');
+      bubble.className = `tg-paid-chat__bubble tg-paid-chat__bubble--${role === 'user' ? 'user' : 'assistant'}`;
+      bubble.textContent = normalizeValue(text) || 'Пустой ответ.';
+      messagesNode.appendChild(bubble);
+      messagesNode.scrollTop = messagesNode.scrollHeight;
+    };
+
+    const renderMeta = (payload = null, elapsed = null) => {
+      if (!metaNode) return;
+      if (!payload) {
+        metaNode.innerHTML = '';
+        return;
+      }
+      metaNode.innerHTML = `
+        <span class="tg-paid-chat__chip">Модель: ${normalizeValue(payload.model) || '—'}</span>
+        <span class="tg-paid-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
+        <span class="tg-paid-chat__chip">Токены: ${Number(payload.tokensUsed) || '—'}</span>
+      `;
+    };
+
+    if (filesGrid) {
+      filesGrid.innerHTML = files.length
+        ? files.map((file, index) => {
+          const fileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
+          const fileName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
+          const fileKey = String(index);
+          const disabledAttr = fileUrl ? '' : 'disabled';
+          return `<label class="tg-paid-chat__file"><input type="checkbox" data-file-key="${fileKey}" ${disabledAttr}><span>${escapeHtml(fileName)}</span></label>`;
+        }).join('')
+        : '<div style="font-size:12px;color:#64748b">В задаче нет файлов для анализа.</div>';
+    }
+
     const close = () => overlay.remove();
     overlay.querySelector('[data-close]')?.addEventListener('click', close);
     overlay.addEventListener('click', (event) => {
       if (event.target === overlay) close();
     });
 
+    filesToggle?.addEventListener('click', () => {
+      filesSheet.hidden = !filesSheet.hidden;
+    });
+
+    filesGrid?.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+      const key = normalizeValue(target.dataset.fileKey);
+      if (!key) return;
+      if (target.checked) selectedKeys.add(key);
+      else selectedKeys.delete(key);
+      statusNode.textContent = selectedKeys.size
+        ? `Выбрано файлов: ${selectedKeys.size}.`
+        : 'Файлы не выбраны. Можно отправить без файлов.';
+    });
+
     overlay.querySelector('[data-send]')?.addEventListener('click', async (event) => {
       const sendBtn = event.currentTarget;
-      const statusNode = overlay.querySelector('[data-status]');
-      const answerNode = overlay.querySelector('[data-answer]');
-      const metaNode = overlay.querySelector('[data-meta]');
+      const prompt = String((inputNode && inputNode.value) || '').trim();
       sendBtn.disabled = true;
-      statusNode.textContent = 'Отправляем запрос...';
-      answerNode.textContent = 'Ожидайте...';
-      metaNode.innerHTML = '';
+      statusNode.textContent = 'Собираем запрос...';
+      renderMeta(null);
       const startedAt = Date.now();
       try {
-        const files = Array.isArray(task && task.files) ? task.files : [];
-        const selectedFile = files[0] || null;
-        const selectedFileUrl = normalizeValue(selectedFile && (selectedFile.resolvedUrl || selectedFile.url || selectedFile.previewUrl));
-        if (!selectedFileUrl) {
-          throw new Error('В задаче нет файла для отправки в Платный ИИ.');
+        const filesToSend = [];
+        for (const key of selectedKeys) {
+          const file = files[Number(key)];
+          const selectedFileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
+          if (!selectedFileUrl) continue;
+          statusNode.textContent = `Скачиваем файл ${filesToSend.length + 1}...`;
+          // eslint-disable-next-line no-await-in-loop
+          const fileResponse = await fetch(selectedFileUrl, { credentials: 'include' });
+          if (!fileResponse.ok) continue;
+          // eslint-disable-next-line no-await-in-loop
+          const fileBlob = await fileResponse.blob();
+          const fallbackName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `task-file-${filesToSend.length + 1}.bin`;
+          filesToSend.push(new File([fileBlob], fallbackName, { type: fileBlob.type || 'application/octet-stream' }));
         }
-        statusNode.textContent = 'Скачиваем файл...';
-        const fileResponse = await fetch(selectedFileUrl, { credentials: 'include' });
-        if (!fileResponse.ok) {
-          throw new Error(`Не удалось скачать файл (${fileResponse.status}).`);
+        if (!filesToSend.length && files.length) {
+          throw new Error('Выберите хотя бы один файл внизу (кнопка "📎 Файлы").');
         }
-        const fileBlob = await fileResponse.blob();
-        const fallbackName = normalizeValue(selectedFile && (selectedFile.originalName || selectedFile.name || selectedFile.storedName)) || 'task-file.bin';
-        const fileToSend = new File([fileBlob], fallbackName, { type: fileBlob.type || 'application/octet-stream' });
-
-        statusNode.textContent = 'Отправляем файл в Платный ИИ...';
+        const finalPrompt = prompt || 'Сделай краткий вывод и решение по выбранным файлам.';
+        appendBubble(finalPrompt, 'user');
+        statusNode.textContent = 'Отправляем запрос в Платный ИИ...';
         const result = await postGroqPaidWithFallback(() => {
           const formData = new FormData();
           formData.append('taskId', normalizeValue(task && task.id));
           formData.append('taskTitle', normalizeValue(task && task.title) || 'Задача');
           formData.append('taskDescription', normalizeValue(task && task.description));
-          formData.append('file', fileToSend, fileToSend.name);
+          formData.append('prompt', finalPrompt);
+          filesToSend.forEach((fileToSend) => {
+            formData.append('files[]', fileToSend, fileToSend.name);
+          });
           return formData;
         });
         const payload = result && result.payload ? result.payload : null;
@@ -13735,12 +13831,13 @@ function createResponseUploadControls(task, entry, setStatus) {
           throw new Error((payload && payload.error) || 'VIP ИИ временно недоступен.');
         }
         statusNode.textContent = 'Ответ готов.';
-        answerNode.textContent = normalizeValue(payload.response) || 'Пустой ответ.';
+        appendBubble(normalizeValue(payload.response) || 'Пустой ответ.', 'assistant');
         const elapsed = Date.now() - startedAt;
-        metaNode.innerHTML = `<span class="tg-vip-ai__chip">Модель: ${normalizeValue(payload.model) || '—'}</span><span class="tg-vip-ai__chip">Время: ${elapsed} мс</span><span class="tg-vip-ai__chip">Токены: ${Number(payload.tokensUsed) || '—'}</span>`;
+        renderMeta(payload, elapsed);
+        if (inputNode) inputNode.value = '';
       } catch (error) {
         statusNode.textContent = 'Ошибка';
-        answerNode.textContent = error?.message || 'Не удалось получить ответ.';
+        appendBubble(error?.message || 'Не удалось получить ответ.', 'assistant');
       } finally {
         sendBtn.disabled = false;
       }
