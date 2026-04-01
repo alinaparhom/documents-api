@@ -292,6 +292,7 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   ].join(' ');
   const context = {
     extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: normalizedText.slice(0, 12000) }],
+    requestNonce: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
     aiBehavior: fileOnlyPrompt,
     isolatedFileMode: true
   };
@@ -303,6 +304,8 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+    formData.append('temperature', '0.6');
+    formData.append('top_p', '1');
     formData.append('context', JSON.stringify(context));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });
@@ -393,6 +396,7 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     formData.append('attachments[]', preparedFile, preparedFile.name || fileName);
     const context = {
       isolatedFileMode: true,
+      requestNonce: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
       attachedFiles: [{ name: fileName, url: fileUrl, type: normalizeValue(preparedFile && preparedFile.type) }],
       extractedTexts: extractedText ? [{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
       aiBehavior: 'VIP-кратко: используй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}.'
@@ -400,6 +404,8 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     if (context.extractedTexts.length) {
       formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
     }
+    formData.append('temperature', '0.5');
+    formData.append('top_p', '1');
     formData.append('context', JSON.stringify(context));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });

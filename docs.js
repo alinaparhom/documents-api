@@ -2237,6 +2237,7 @@
           text: briefText
         }
       ],
+      requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
       aiBehavior: 'Режим "Кратко ИИ". Используй только extractedTexts. Верни только JSON без markdown. Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. analysis: 2-3 коротких предложения. required_actions: 3-5 конкретных фактов из файла. requirements: 3-5 шагов, что делать дальше. Если нет данных — пиши "не указано в файле".'
     };
     var formData = new FormData();
@@ -2246,7 +2247,7 @@
     formData.append('responseStyle', 'concise');
     formData.append('aiBehavior', String(context.aiBehavior || ''));
     formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
-    formData.append('temperature', '0.3');
+    formData.append('temperature', '0.6');
     formData.append('top_p', '1');
     formData.append('frequency_penalty', '0');
     formData.append('presence_penalty', '0');
@@ -2355,6 +2356,7 @@
         }
       ],
       isolatedFileMode: true,
+      requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
       extractedTexts: extractedText ? [{ name: sourceLabel, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
       aiBehavior: 'VIP-кратко: анализируй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}. Без приветствий, без канцелярии, только факты из файла.'
     };
@@ -2365,6 +2367,8 @@
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', 'paid');
+    formData.append('temperature', '0.5');
+    formData.append('top_p', '1');
     if (context.extractedTexts && context.extractedTexts.length) {
       formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
     }
