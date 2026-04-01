@@ -2329,6 +2329,12 @@
   async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+    var extractedText = '';
+    try {
+      extractedText = await requestOcrTextForSource(source, apiUrl);
+    } catch (_) {
+      extractedText = '';
+    }
     var context = {
       attachedFiles: [
         {
@@ -2339,15 +2345,19 @@
         }
       ],
       isolatedFileMode: true,
-      aiBehavior: 'VIP-кратко: анализируй только приложенный файл и верни короткий структурированный итог без markdown.'
+      extractedTexts: extractedText ? [{ name: sourceLabel, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
+      aiBehavior: 'VIP-кратко: анализируй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}. Без приветствий, без канцелярии, только факты из файла.'
     };
     var formData = new FormData();
     formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', sourceLabel);
-    formData.append('prompt', 'Сделай краткий вывод строго по приложенному файлу. Верни JSON формата brief.');
+    formData.append('prompt', 'Сделай краткий вывод строго по файлу. Верни только JSON формата brief, без письма и воды.');
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', 'paid');
+    if (context.extractedTexts && context.extractedTexts.length) {
+      formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
+    }
     formData.append('context', JSON.stringify(context));
     if (source && source.fileObject instanceof File) {
       var preparedLocal = await convertPdfToImageFileForBrief(source.fileObject, source.fileObject.name || sourceLabel);

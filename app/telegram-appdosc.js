@@ -356,16 +356,31 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   };
   const rawFile = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
   const preparedFile = await convertPdfFileToImage(rawFile);
+  let extractedText = '';
+  try {
+    extractedText = await requestTelegramOcrByUrl(fileUrl);
+  } catch (_) {
+    extractedText = '';
+  }
   const request = await postDocsAiWithFallback(() => {
     const formData = new FormData();
     formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', fileName);
-    formData.append('prompt', 'Сделай краткий вывод по прикрепленному файлу. Верни JSON без markdown.');
+    formData.append('prompt', 'Сделай краткий вывод по прикрепленному файлу. Верни только JSON без markdown, без письма и воды.');
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', 'paid');
     formData.append('attachments[]', preparedFile, preparedFile.name || fileName);
-    formData.append('context', JSON.stringify({ isolatedFileMode: true }));
+    const context = {
+      isolatedFileMode: true,
+      attachedFiles: [{ name: fileName, url: fileUrl, type: normalizeValue(preparedFile && preparedFile.type) }],
+      extractedTexts: extractedText ? [{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
+      aiBehavior: 'VIP-кратко: используй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}.'
+    };
+    if (context.extractedTexts.length) {
+      formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
+    }
+    formData.append('context', JSON.stringify(context));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });
   const response = request && request.response;
