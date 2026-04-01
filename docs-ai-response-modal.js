@@ -1261,14 +1261,26 @@
   async function hydrateFileContents(state) {
     var aiMode = normalizeAiApiKeyMode(state && state.aiApiKeyMode);
     if (aiMode === 'paid') {
-      state.files.forEach(function (file) {
-        if (!file) return;
-        file.extracted = true;
-        file.extractError = null;
-        if (!file.content) {
-          file.content = '';
+      for (var p = 0; p < state.files.length; p += 1) {
+        var vipFile = state.files[p];
+        if (!vipFile) continue;
+        if (vipFile.content && String(vipFile.content).trim() !== '') {
+          vipFile.extracted = true;
+          vipFile.extractError = null;
+          continue;
         }
-      });
+        try {
+          if (vipFile.fileObject) {
+            // eslint-disable-next-line no-await-in-loop
+            vipFile.content = await fileToText(vipFile.fileObject);
+          } else if (vipFile.url && (isTextLike(vipFile) || isPdfLike(vipFile))) {
+            // eslint-disable-next-line no-await-in-loop
+            vipFile.content = await fetchExternalFileContent(vipFile);
+          }
+        } catch (_) {}
+        vipFile.extracted = Boolean(vipFile.content && String(vipFile.content).trim() !== '');
+        vipFile.extractError = vipFile.extracted ? null : vipFile.extractError;
+      }
       return;
     }
     for (var i = 0; i < state.files.length; i += 1) {
@@ -1330,6 +1342,7 @@
     header.appendChild(closeBtn);
 
     var filesWrap = createElement('div', 'ai-chat-modal__files');
+    filesWrap.style.marginTop = '8px';
     var controls = createElement('div', 'ai-chat-modal__actions');
     controls.style.display = 'flex';
     controls.style.gap = '8px';
@@ -1343,6 +1356,15 @@
     input.style.minHeight = '84px';
     var messages = createElement('div', 'ai-chat-modal__messages');
     messages.appendChild(createMessage('assistant', 'VIP готов. Загружайте файлы и отправляйте запрос.'));
+    var settingsMeta = createElement('div', 'ai-chat-modal__empty');
+    settingsMeta.style.margin = '0';
+    settingsMeta.style.padding = '8px 10px';
+    settingsMeta.style.borderRadius = '12px';
+    settingsMeta.style.background = 'rgba(219,234,254,.55)';
+    settingsMeta.style.border = '1px solid rgba(59,130,246,.2)';
+    settingsMeta.textContent = 'Режим: VIP paid • Модель: авто • temp 0.35 • top_p 0.9';
+    var modelSelect = createElement('select', 'ai-chat-modal__select');
+    modelSelect.style.maxWidth = '100%';
 
     var hiddenInput = document.createElement('input');
     hiddenInput.type = 'file';
@@ -1376,6 +1398,7 @@
         var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
         pending.innerHTML = '<span class="ai-chat-spinner"></span>Анализируем документы...';
         messages.appendChild(pending);
+        state.model = String(modelSelect.value || state.model || '');
         var body = await buildRequestBlueprint(prompt, state, Object.assign({}, config, { aiApiKeyMode: 'paid' }));
         var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
         var response = await fetchWithTimeout(apiUrl + '?action=ai_response_analyze', { method: 'POST', credentials: 'same-origin', body: body }, calculateAiTimeoutMs(prompt, state));
@@ -1414,8 +1437,10 @@
     });
 
     controls.appendChild(attachBtn);
+    controls.appendChild(modelSelect);
     controls.appendChild(sendBtn);
     panel.appendChild(header);
+    panel.appendChild(settingsMeta);
     panel.appendChild(filesWrap);
     panel.appendChild(input);
     panel.appendChild(controls);
@@ -1424,6 +1449,23 @@
     root.appendChild(panel);
     document.body.appendChild(root);
     renderFilesCompact();
+    fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (modelsPayload) {
+      var models = modelsPayload && Array.isArray(modelsPayload.models)
+        ? modelsPayload.models
+        : normalizeModelList(modelsPayload);
+      state.models = models;
+      state.model = pickFirstAvailableModel(models, state.model);
+      modelSelect.textContent = '';
+      models.forEach(function (entry) {
+        var option = document.createElement('option');
+        option.value = String(entry.value || '');
+        option.textContent = String(entry.label || entry.value || '');
+        option.disabled = entry.available === false && String(entry.value || '').trim() !== '';
+        modelSelect.appendChild(option);
+      });
+      modelSelect.value = state.model;
+      settingsMeta.textContent = 'Режим: VIP paid • Модель: ' + (state.model || 'auto') + ' • temp 0.35 • top_p 0.9';
+    }).catch(function () {});
   }
 
   function openDocumentsAiResponseModal(options) {

@@ -2840,7 +2840,18 @@ if ($isPaidMode) {
     }
     $documentText = trim($documentText);
     if ($documentText === '') {
-        $documentText = 'Текст из документов не извлечён. Сформируй ответ по доступным данным и укажи, какие данные нужно добавить.';
+        $fileNames = [];
+        foreach ($filesSummary as $fileSummaryEntry) {
+            if (!is_array($fileSummaryEntry)) {
+                continue;
+            }
+            $name = trim((string)($fileSummaryEntry['name'] ?? ''));
+            if ($name !== '') {
+                $fileNames[] = $name;
+            }
+        }
+        $filesLine = $fileNames ? ('Переданы файлы: ' . implode(', ', array_slice($fileNames, 0, 10)) . '.') : 'Файлы переданы вложениями.';
+        $documentText = $filesLine . ' Извлечённого текста недостаточно. Сформируй предварительный официальный ответ и укажи, какие данные нужно уточнить для финализации.';
     }
     $userContent = "Проанализируй следующий документ и сформируй официальный ответ (без шапки и подписи):\n\n" . $documentText;
 }
