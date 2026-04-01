@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
+const LOCAL_OCR_MAX_PAGES = 5;
 
 function jsonResponse(int $status, array $payload): void
 {
@@ -678,6 +679,103 @@ function extractTextWithoutOcr(array $file): string
         return trim((string)$raw);
     }
 
+    return '';
+}
+
+function localCommandExists(string $command): bool
+{
+    $output = [];
+    $exitCode = 1;
+    @exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $output, $exitCode);
+    return $exitCode === 0 && !empty($output);
+}
+
+function extractPdfTextWithPdftotextLocal(string $pdfPath): string
+{
+    if (!localCommandExists('pdftotext')) {
+        return '';
+    }
+    $tmpTextPath = tempnam(sys_get_temp_dir(), 'pdftext_local_');
+    if ($tmpTextPath === false) {
+        return '';
+    }
+    try {
+        $cmd = 'pdftotext -enc UTF-8 -f 1 -l ' . LOCAL_OCR_MAX_PAGES . ' '
+            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath);
+        @exec($cmd, $out, $code);
+        if ($code !== 0 || !is_file($tmpTextPath)) {
+            return '';
+        }
+        return trim((string)@file_get_contents($tmpTextPath));
+    } finally {
+        @unlink($tmpTextPath);
+    }
+}
+
+function extractPdfTextWithTesseractLocal(string $pdfPath): string
+{
+    if (!localCommandExists('pdftoppm') || !localCommandExists('tesseract')) {
+        return '';
+    }
+    $tmpBase = tempnam(sys_get_temp_dir(), 'pdfocr_local_');
+    if ($tmpBase === false) {
+        return '';
+    }
+    @unlink($tmpBase);
+    $parts = [];
+    try {
+        for ($page = 1; $page <= LOCAL_OCR_MAX_PAGES; $page += 1) {
+            $jpgPath = $tmpBase . '-p' . $page . '.jpg';
+            $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4));
+            @exec($cmdRender, $renderOut, $renderCode);
+            if ($renderCode !== 0 || !is_file($jpgPath)) {
+                if ($page === 1) {
+                    break;
+                }
+                continue;
+            }
+            $ocr = shell_exec('tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null');
+            $text = trim((string)$ocr);
+            if ($text !== '') {
+                $parts[] = $text;
+            }
+            @unlink($jpgPath);
+        }
+    } finally {
+        for ($page = 1; $page <= LOCAL_OCR_MAX_PAGES; $page += 1) {
+            @unlink($tmpBase . '-p' . $page . '.jpg');
+        }
+    }
+    return trim(implode("\n\n", $parts));
+}
+
+function extractImageTextWithTesseractLocal(string $imagePath): string
+{
+    if (!localCommandExists('tesseract') || !is_file($imagePath)) {
+        return '';
+    }
+    $ocr = shell_exec('tesseract ' . escapeshellarg($imagePath) . ' stdout -l rus+eng 2>/dev/null');
+    return trim((string)$ocr);
+}
+
+function extractTextWithLocalOcrFallback(array $file): string
+{
+    $tmpFile = (string)($file['tmp_name'] ?? '');
+    if ($tmpFile === '' || !is_file($tmpFile)) {
+        return '';
+    }
+    $extension = detectFileExtension($file);
+    if ($extension === 'pdf') {
+        $text = extractPdfTextWithPdftotextLocal($tmpFile);
+        if ($text !== '') {
+            return $text;
+        }
+        return extractPdfTextWithTesseractLocal($tmpFile);
+    }
+    if (in_array($extension, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff'], true)) {
+        return extractImageTextWithTesseractLocal($tmpFile);
+    }
     return '';
 }
 
@@ -1968,6 +2066,13 @@ function extractTextsFromUploadedFiles(array $files, array $env): array
         $directText = extractTextWithoutOcr($file);
         if ($directText !== '') {
             $entries[] = ['name' => $name, 'type' => $type, 'text' => mb_substr($directText, 0, 12000)];
+            $diagnostics['readFiles'] += 1;
+            continue;
+        }
+
+        $localOcrText = extractTextWithLocalOcrFallback($file);
+        if ($localOcrText !== '') {
+            $entries[] = ['name' => $name, 'type' => $type, 'text' => mb_substr($localOcrText, 0, 12000)];
             $diagnostics['readFiles'] += 1;
             continue;
         }
