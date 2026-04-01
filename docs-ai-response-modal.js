@@ -430,7 +430,7 @@
   function humanizeAiError(error) {
     if (!error) return 'Ошибка ИИ. Попробуйте ещё раз.';
     if (isContextOverflowError(error)) {
-      return 'Контекст слишком большой для модели. Уберите часть файлов или переключите режим на «Кратко».';
+      return 'Запрос получился слишком длинным. Я уже сократил контекст, повторите отправку.';
     }
     if (String(error.code || '').toUpperCase() === 'AI_TIMEOUT') {
       return 'Таймаут ответа ИИ. Попробуйте повторить запрос.';

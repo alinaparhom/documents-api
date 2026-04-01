@@ -2455,11 +2455,9 @@
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для OCR и краткого анализа ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Только текст выбранного файла'));
-    var modeSelect = document.createElement('select');
-    modeSelect.className = 'documents-select';
-    modeSelect.style.marginTop = '8px';
-    modeSelect.innerHTML = '<option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option>';
-    titleWrap.appendChild(modeSelect);
+    var vipChatButton = createElement('button', 'documents-button documents-button--secondary', 'VIP ИИ чат');
+    vipChatButton.style.marginTop = '8px';
+    titleWrap.appendChild(vipChatButton);
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
@@ -2528,16 +2526,13 @@
       button.title = source.label;
       button.type = 'button';
       button.addEventListener('click', function() {
-        var selectedMode = modeSelect.value === 'paid' ? 'paid' : 'free';
         makeActive(button);
         button.disabled = true;
         setPreviewLoading(true, source.label);
-        var requestPromise = selectedMode === 'paid'
-          ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
-          : resolveSourceText(source, true).then(function(sourceText) {
-            preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
-            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
-          });
+        var requestPromise = resolveSourceText(source, true).then(function(sourceText) {
+          preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
+          return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
+        });
         requestPromise
           .then(function(sourceText) {
             var aiPayload = sourceText;
@@ -2568,6 +2563,11 @@
     function closeBriefModal() {
       closeModal(modal);
     }
+    vipChatButton.type = 'button';
+    vipChatButton.addEventListener('click', function() {
+      closeBriefModal();
+      openAiModeSelector();
+    });
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', closeBriefModal);
@@ -13535,13 +13535,27 @@
       var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
       var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
       var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
-      var fileNames = linked.map(function(item) { return item.name; }).concat(pending.map(function(item) { return item.name; }));
-      if (!fileNames.length) {
+      var linkedEntries = linked.map(function(item, index) { return { key: 'linked_' + index, file: item, source: 'linked' }; });
+      var pendingEntries = pending.map(function(item, index) { return { key: 'pending_' + index, file: item, source: 'pending' }; });
+      var fileEntries = linkedEntries.concat(pendingEntries);
+      var selectedFiles = {};
+      fileEntries.forEach(function(entry) {
+        selectedFiles[entry.key] = true;
+      });
+      if (!fileEntries.length) {
         filesNode.innerHTML = '<em>Нет вложений</em>';
       } else {
-        filesNode.innerHTML = fileNames.slice(0, 12).map(function(name) {
-          return '<div>📎 ' + escapeHtmlText(name || 'Файл') + '</div>';
+        filesNode.innerHTML = fileEntries.slice(0, 20).map(function(entry) {
+          var name = entry && entry.file && entry.file.name ? entry.file.name : 'Файл';
+          return '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-file-key="' + escapeHtmlText(entry.key) + '" checked> <span>📎 ' + escapeHtmlText(name) + '</span></label>';
         }).join('');
+        Array.from(filesNode.querySelectorAll('input[type="checkbox"][data-file-key]')).forEach(function(checkbox) {
+          checkbox.addEventListener('change', function() {
+            var key = checkbox.getAttribute('data-file-key');
+            if (!key) return;
+            selectedFiles[key] = checkbox.checked;
+          });
+        });
       }
       closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
       overlay.addEventListener('click', function(event) {
@@ -13629,8 +13643,10 @@
         Object.keys(sourceContext).forEach(function(key) {
           requestContext[key] = sourceContext[key];
         });
+        var selectedLinked = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
+        var selectedPending = pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
         requestContext.attachedFiles = []
-          .concat((payload.linkedFiles || []).map(function(file) {
+          .concat(selectedLinked.map(function(file) {
             return {
               name: file && file.name ? file.name : '',
               url: resolveLinkedFileUrl(file),
@@ -13638,16 +13654,16 @@
               type: file && file.type ? file.type : ''
             };
           }))
-          .concat(pending.map(function(file) {
+          .concat(selectedPending.map(function(file) {
             return { name: file.name || '', size: file.size || 0, type: file.type || '' };
           }));
         chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
         requestContext.chatHistory = chatHistory.slice(-8);
         formData.append('context', JSON.stringify(requestContext));
-        appendSourceFilesToFormData(formData, linked, pending)
+        appendSourceFilesToFormData(formData, selectedLinked, selectedPending)
           .then(function(appendedCount) {
             if (!appendedCount) {
-              throw new Error('Не удалось прикрепить файлы из текущей задачи. Откройте задачу с вложениями и попробуйте снова.');
+              throw new Error('Выберите хотя бы один файл для VIP чата.');
             }
             return fetch(payload.apiUrl, { method: 'POST', body: formData, credentials: 'same-origin' });
           })
