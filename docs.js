@@ -2270,7 +2270,7 @@
     });
   }
 
-  function requestAiBriefSummaryForFileDirect(source, apiUrl) {
+  async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
     var context = {
@@ -2293,21 +2293,26 @@
     formData.append('briefMode', '1');
     formData.append('mode', 'paid');
     formData.append('context', JSON.stringify(context));
-    if (source && source.fileObject) {
+    if (source && source.fileObject instanceof File) {
       formData.append('attachments[]', source.fileObject, source.fileObject.name || sourceLabel);
+    } else if (source && source.url) {
+      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
+      if (fetched.ok) {
+        var blob = await fetched.blob();
+        var fileName = sourceLabel || 'brief-file';
+        formData.append('attachments[]', new File([blob], fileName, { type: blob.type || 'application/octet-stream' }), fileName);
+      }
     }
-    return fetch(endpoint, {
+    var response = await fetch(endpoint, {
       method: 'POST',
       credentials: 'same-origin',
       body: formData
-    }).then(function(response) {
-      return response.json().catch(function() { return null; }).then(function(payload) {
-        if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
-        }
-        return payload;
-      });
     });
+    var payload = await response.json().catch(function() { return null; });
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
+    }
+    return payload;
   }
 
   function openAiBriefSummaryModal(config) {
@@ -2402,24 +2407,10 @@
         button.disabled = true;
         setPreviewLoading(true, source.label);
         var requestPromise = selectedMode === 'paid'
-          ? (source && source.fileObject
-            ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
-            : resolveSourceText(source).then(function(sourceText) {
-              return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'paid');
-            }))
+          ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
           : resolveSourceText(source).then(function(sourceText) {
-            var aiStartedAt = Date.now();
-            var estimatedSeconds = 35;
-            var timerId = null;
-            function updateAiProgress() {
-              var elapsed = Math.floor((Date.now() - aiStartedAt) / 1000);
-              var remain = Math.max(0, estimatedSeconds - elapsed);
-              preview.textContent = '⏳ OCR завершён. ИИ анализирует документ...\nОсталось примерно: ' + remain + ' сек.';
-            }
-            updateAiProgress();
-            timerId = window.setInterval(updateAiProgress, 1000);
-            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, selectedMode)
-              .finally(function() { if (timerId) window.clearInterval(timerId); });
+            preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
+            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
           });
         requestPromise
           .then(function(sourceText) {

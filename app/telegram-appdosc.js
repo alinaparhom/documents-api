@@ -306,19 +306,27 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   return payload;
 }
 
-async function requestTelegramBriefAiDirect(source, aiMode = 'paid') {
+async function requestTelegramBriefAiDirectWithAttachment(source) {
+  const fileUrl = normalizeValue(source && source.url);
+  if (!fileUrl) {
+    throw new Error('Не найден URL файла для VIP режима.');
+  }
+  const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+  if (!fetched.ok) {
+    throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+  }
+  const blob = await fetched.blob();
+  const fileName = normalizeValue(source && source.label) || 'brief-file';
   const request = await postDocsAiWithFallback(() => {
     const formData = new FormData();
     formData.append('action', 'ai_response_analyze');
-    formData.append('documentTitle', normalizeValue(source && source.label) || 'Файл');
-    formData.append('prompt', 'Сделай краткий вывод строго по приложенному файлу. Верни JSON без markdown.');
+    formData.append('documentTitle', fileName);
+    formData.append('prompt', 'Сделай краткий вывод по прикрепленному файлу. Верни JSON без markdown.');
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
-    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
-    formData.append('context', JSON.stringify({
-      attachedFiles: [{ name: normalizeValue(source && source.label), url: normalizeValue(source && source.url), type: 'file/url' }],
-      isolatedFileMode: true
-    }));
+    formData.append('mode', 'paid');
+    formData.append('attachments[]', new File([blob], fileName, { type: blob.type || 'application/octet-stream' }), fileName);
+    formData.append('context', JSON.stringify({ isolatedFileMode: true }));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });
   const response = request && request.response;
@@ -551,14 +559,7 @@ function openTelegramBriefModal(task, statusHandler) {
         if (selectedMode === 'paid') {
           setStatus(`VIP анализ файла: ${source.label}`, 'loading');
           preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла напрямую в VIP ИИ...</p>';
-          aiPayload = await requestTelegramBriefAiDirect(source, 'paid');
-          const hasActions = Array.isArray(aiPayload && aiPayload.decisionBlock && aiPayload.decisionBlock.required_actions)
-            && aiPayload.decisionBlock.required_actions.length > 0;
-          const hasText = normalizeValue(aiPayload && (aiPayload.response || aiPayload.analysis));
-          if (!hasActions && !hasText) {
-            sourceText = source.text || await requestTelegramOcrByUrl(source.url);
-            aiPayload = await requestTelegramBriefAi(source.label, sourceText, 'paid');
-          }
+          aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
         } else {
           sourceText = source.text || await requestTelegramOcrByUrl(source.url);
           if (requestId !== activeRequestId) return;
