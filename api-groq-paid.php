@@ -10,7 +10,9 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 
 const MAX_TOTAL_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
-const MAX_TEXT_CHARS = 10000;
+const MAX_TEXT_CHARS = 50000;
+const MAX_TEXT_CHARS_PER_CHUNK = 3500;
+const MAX_TEXT_CHUNKS_TOTAL = 12;
 const OCR_MAX_PAGES = 5;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT = 'llama-3.3-70b-versatile';
@@ -210,6 +212,77 @@ function extractPdfText(string $pdfPath): array
     return ['text' => '', 'source' => ''];
 }
 
+function cleanExtractedText(string $text): string
+{
+    $text = str_replace(["\r\n", "\r"], "\n", $text);
+    $text = preg_replace('/[ \t]+/u', ' ', $text) ?? $text;
+    $text = preg_replace("/\n{3,}/u", "\n\n", $text) ?? $text;
+    $text = trim($text);
+    if ($text === '') {
+        return '';
+    }
+    return trim(mb_substr($text, 0, MAX_TEXT_CHARS));
+}
+
+function splitTextIntoChunks(string $text, int $maxChunkChars = MAX_TEXT_CHARS_PER_CHUNK): array
+{
+    $text = cleanExtractedText($text);
+    if ($text === '') {
+        return [];
+    }
+
+    if (mb_strlen($text) <= $maxChunkChars) {
+        return [$text];
+    }
+
+    $paragraphs = preg_split("/\n{2,}/u", $text) ?: [$text];
+    $chunks = [];
+    $current = '';
+
+    foreach ($paragraphs as $paragraph) {
+        $paragraph = trim((string)$paragraph);
+        if ($paragraph === '') {
+            continue;
+        }
+        $candidate = $current === '' ? $paragraph : ($current . "\n\n" . $paragraph);
+        if (mb_strlen($candidate) <= $maxChunkChars) {
+            $current = $candidate;
+            continue;
+        }
+        if ($current !== '') {
+            $chunks[] = $current;
+            $current = '';
+            if (count($chunks) >= MAX_TEXT_CHUNKS_TOTAL) {
+                return $chunks;
+            }
+        }
+        if (mb_strlen($paragraph) <= $maxChunkChars) {
+            $current = $paragraph;
+            continue;
+        }
+
+        $offset = 0;
+        $paragraphLen = mb_strlen($paragraph);
+        while ($offset < $paragraphLen) {
+            $part = mb_substr($paragraph, $offset, $maxChunkChars);
+            $part = trim((string)$part);
+            if ($part !== '') {
+                $chunks[] = $part;
+                if (count($chunks) >= MAX_TEXT_CHUNKS_TOTAL) {
+                    return $chunks;
+                }
+            }
+            $offset += $maxChunkChars;
+        }
+    }
+
+    if ($current !== '' && count($chunks) < MAX_TEXT_CHUNKS_TOTAL) {
+        $chunks[] = $current;
+    }
+
+    return array_slice($chunks, 0, MAX_TEXT_CHUNKS_TOTAL);
+}
+
 /**
  * PDF -> JPEG (первая страница).
  * Порядок: Imagick -> pdftoppm -> gs
@@ -331,10 +404,15 @@ foreach ($files as $file) {
 
     if ($isText) {
         $raw = (string)@file_get_contents($tmp);
-        $normalized = trim(mb_substr($raw, 0, MAX_TEXT_CHARS));
-        $textChunks[] = "[Файл: {$name}]\n" . ($normalized !== '' ? $normalized : '[пустой текст]');
-        if ($normalized !== '') {
+        $chunks = splitTextIntoChunks($raw);
+        if ($chunks) {
+            foreach ($chunks as $index => $chunk) {
+                $textChunks[] = "[Файл: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
+            }
+            $metaChunks[] = "[Текст: {$name}, чанков: " . count($chunks) . ']';
             $hasReadableContent = true;
+        } else {
+            $textChunks[] = "[Файл: {$name}]\n[пустой текст]";
         }
         continue;
     }
@@ -355,12 +433,16 @@ foreach ($files as $file) {
         $pdfText = trim((string)($pdfExtract['text'] ?? ''));
         $pdfSource = (string)($pdfExtract['source'] ?? '');
         if ($pdfText !== '') {
-            $normalizedPdfText = trim(mb_substr($pdfText, 0, MAX_TEXT_CHARS));
-            $textChunks[] = "[PDF: {$name}]\n" . $normalizedPdfText;
-            $hasReadableContent = true;
+            $chunks = splitTextIntoChunks($pdfText);
+            foreach ($chunks as $index => $chunk) {
+                $textChunks[] = "[PDF: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
+            }
+            if ($chunks) {
+                $hasReadableContent = true;
+            }
             $metaChunks[] = $pdfSource === 'ocr'
-                ? "[PDF: {$name}, {$size} байт, распознан через OCR]"
-                : "[PDF: {$name}, {$size} байт, извлечен текстом]";
+                ? "[PDF: {$name}, {$size} байт, OCR, чанков: " . count($chunks) . ']'
+                : "[PDF: {$name}, {$size} байт, текстовый слой, чанков: " . count($chunks) . ']';
             continue;
         }
 

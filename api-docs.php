@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
+const LOCAL_OCR_MAX_PAGES = 5;
 
 function jsonResponse(int $status, array $payload): void
 {
@@ -241,6 +242,87 @@ function normalizeUploadedFiles(string $field): array
     }
 
     return $files;
+}
+
+function collectAttachmentUrlsFromContext(array $context): array
+{
+    $urls = [];
+    $rows = isset($context['attachedFiles']) && is_array($context['attachedFiles']) ? $context['attachedFiles'] : [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $url = trim((string)($row['url'] ?? ''));
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            continue;
+        }
+        $urls[] = $url;
+    }
+    return array_values(array_unique($urls));
+}
+
+function downloadAttachmentToTempFile(string $url, int $maxBytes = 20_971_520): ?array
+{
+    $tmp = tempnam(sys_get_temp_dir(), 'att_url_');
+    if ($tmp === false) {
+        return null;
+    }
+    $fp = @fopen($tmp, 'wb');
+    if (!is_resource($fp)) {
+        @unlink($tmp);
+        return null;
+    }
+    $written = 0;
+    $ch = curl_init($url);
+    if ($ch === false) {
+        fclose($fp);
+        @unlink($tmp);
+        return null;
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_FILE => $fp,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_TIMEOUT => 45,
+        CURLOPT_FAILONERROR => false,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'documents-api/1.0',
+        CURLOPT_HEADERFUNCTION => static function ($ch, string $header) use (&$written, $maxBytes): int {
+            return strlen($header);
+        },
+        CURLOPT_WRITEFUNCTION => static function ($ch, string $chunk) use ($fp, &$written, $maxBytes): int {
+            $len = strlen($chunk);
+            $written += $len;
+            if ($written > $maxBytes) {
+                return 0;
+            }
+            return fwrite($fp, $chunk);
+        },
+    ]);
+    $ok = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $contentType = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+    fclose($fp);
+
+    if ($ok === false || $status >= 400 || !is_file($tmp) || (int)@filesize($tmp) <= 0) {
+        @unlink($tmp);
+        return null;
+    }
+
+    $pathPart = (string)parse_url($url, PHP_URL_PATH);
+    $name = basename($pathPart);
+    if ($name === '' || $name === '/' || $name === '.') {
+        $name = 'attachment-' . substr(md5($url), 0, 8) . '.bin';
+    }
+
+    return [
+        'name' => $name,
+        'tmp_name' => $tmp,
+        'type' => trim($contentType) !== '' ? trim($contentType) : 'application/octet-stream',
+        'size' => (int)@filesize($tmp),
+    ];
 }
 
 function safeJsonDecode(?string $value): array
@@ -678,6 +760,103 @@ function extractTextWithoutOcr(array $file): string
         return trim((string)$raw);
     }
 
+    return '';
+}
+
+function localCommandExists(string $command): bool
+{
+    $output = [];
+    $exitCode = 1;
+    @exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $output, $exitCode);
+    return $exitCode === 0 && !empty($output);
+}
+
+function extractPdfTextWithPdftotextLocal(string $pdfPath): string
+{
+    if (!localCommandExists('pdftotext')) {
+        return '';
+    }
+    $tmpTextPath = tempnam(sys_get_temp_dir(), 'pdftext_local_');
+    if ($tmpTextPath === false) {
+        return '';
+    }
+    try {
+        $cmd = 'pdftotext -enc UTF-8 -f 1 -l ' . LOCAL_OCR_MAX_PAGES . ' '
+            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath);
+        @exec($cmd, $out, $code);
+        if ($code !== 0 || !is_file($tmpTextPath)) {
+            return '';
+        }
+        return trim((string)@file_get_contents($tmpTextPath));
+    } finally {
+        @unlink($tmpTextPath);
+    }
+}
+
+function extractPdfTextWithTesseractLocal(string $pdfPath): string
+{
+    if (!localCommandExists('pdftoppm') || !localCommandExists('tesseract')) {
+        return '';
+    }
+    $tmpBase = tempnam(sys_get_temp_dir(), 'pdfocr_local_');
+    if ($tmpBase === false) {
+        return '';
+    }
+    @unlink($tmpBase);
+    $parts = [];
+    try {
+        for ($page = 1; $page <= LOCAL_OCR_MAX_PAGES; $page += 1) {
+            $jpgPath = $tmpBase . '-p' . $page . '.jpg';
+            $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4));
+            @exec($cmdRender, $renderOut, $renderCode);
+            if ($renderCode !== 0 || !is_file($jpgPath)) {
+                if ($page === 1) {
+                    break;
+                }
+                continue;
+            }
+            $ocr = shell_exec('tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null');
+            $text = trim((string)$ocr);
+            if ($text !== '') {
+                $parts[] = $text;
+            }
+            @unlink($jpgPath);
+        }
+    } finally {
+        for ($page = 1; $page <= LOCAL_OCR_MAX_PAGES; $page += 1) {
+            @unlink($tmpBase . '-p' . $page . '.jpg');
+        }
+    }
+    return trim(implode("\n\n", $parts));
+}
+
+function extractImageTextWithTesseractLocal(string $imagePath): string
+{
+    if (!localCommandExists('tesseract') || !is_file($imagePath)) {
+        return '';
+    }
+    $ocr = shell_exec('tesseract ' . escapeshellarg($imagePath) . ' stdout -l rus+eng 2>/dev/null');
+    return trim((string)$ocr);
+}
+
+function extractTextWithLocalOcrFallback(array $file): string
+{
+    $tmpFile = (string)($file['tmp_name'] ?? '');
+    if ($tmpFile === '' || !is_file($tmpFile)) {
+        return '';
+    }
+    $extension = detectFileExtension($file);
+    if ($extension === 'pdf') {
+        $text = extractPdfTextWithPdftotextLocal($tmpFile);
+        if ($text !== '') {
+            return $text;
+        }
+        return extractPdfTextWithTesseractLocal($tmpFile);
+    }
+    if (in_array($extension, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff'], true)) {
+        return extractImageTextWithTesseractLocal($tmpFile);
+    }
     return '';
 }
 
@@ -1972,6 +2151,13 @@ function extractTextsFromUploadedFiles(array $files, array $env): array
             continue;
         }
 
+        $localOcrText = extractTextWithLocalOcrFallback($file);
+        if ($localOcrText !== '') {
+            $entries[] = ['name' => $name, 'type' => $type, 'text' => mb_substr($localOcrText, 0, 12000)];
+            $diagnostics['readFiles'] += 1;
+            continue;
+        }
+
         if (!in_array($extension, $supportedOcrExtensions, true)) {
             $diagnostics['skippedFiles'] += 1;
             $diagnostics['skipped'][] = ['name' => $name, 'reason' => 'unsupported_format'];
@@ -2527,6 +2713,25 @@ $attachments = normalizeUploadedFiles('attachments');
 $singleAttachment = normalizeUploadedFiles('attachment');
 $ocrFile = normalizeUploadedFiles('file');
 $files = array_merge($attachments, $singleAttachment, $ocrFile);
+$downloadedUrlFiles = [];
+$attachmentUrls = collectAttachmentUrlsFromContext($context);
+foreach ($attachmentUrls as $attachmentUrl) {
+    $downloaded = downloadAttachmentToTempFile($attachmentUrl);
+    if (is_array($downloaded)) {
+        $downloadedUrlFiles[] = $downloaded;
+    }
+}
+if ($downloadedUrlFiles) {
+    $files = array_merge($files, $downloadedUrlFiles);
+    register_shutdown_function(static function () use ($downloadedUrlFiles): void {
+        foreach ($downloadedUrlFiles as $entry) {
+            $tmp = (string)($entry['tmp_name'] ?? '');
+            if ($tmp !== '' && is_file($tmp)) {
+                @unlink($tmp);
+            }
+        }
+    });
+}
 $serverExtractedTexts = [];
 $extractedTextsDiagnostics = [
     'totalFiles' => count($files),
@@ -2802,6 +3007,34 @@ foreach ($legacyAttachedFiles as $legacyFile) {
 }
 $extractedTexts = array_merge($extractedTexts, $serverExtractedTexts);
 $extractedTexts = deduplicateExtractedTextsByNameAndHash($extractedTexts);
+$attachedFilesFromContext = isset($context['attachedFiles']) && is_array($context['attachedFiles'])
+    ? $context['attachedFiles']
+    : [];
+$attachedFilesCount = 0;
+foreach ($attachedFilesFromContext as $attachedFileEntry) {
+    if (!is_array($attachedFileEntry)) {
+        continue;
+    }
+    $name = trim((string)($attachedFileEntry['name'] ?? ''));
+    $url = trim((string)($attachedFileEntry['url'] ?? ''));
+    if ($name !== '' || $url !== '') {
+        $attachedFilesCount += 1;
+    }
+}
+if ($action === 'ai_response_analyze'
+    && $aiMode === 'free'
+    && $attachedFilesCount > 0
+    && !$extractedTexts
+    && (int)($extractedTextsDiagnostics['readFiles'] ?? 0) === 0
+) {
+    jsonResponse(422, [
+        'ok' => false,
+        'error' => 'Файлы прикреплены, но текст из них не был извлечён. Проверьте доступ к файлам, формат и качество скана, затем повторите.',
+        'code' => 'FILES_WITHOUT_EXTRACTED_TEXT',
+        'attachedFiles' => $attachedFilesCount,
+        'extractedTextsDiagnostics' => $extractedTextsDiagnostics,
+    ]);
+}
 $maxInputChars = (int)($env['AI_MAX_INPUT_CHARS'] ?? 60000);
 if ($maxInputChars < 2000) {
     $maxInputChars = 2000;
@@ -3180,11 +3413,22 @@ if ($analysis === '' && $response === '' && $neutral === '' && $positive === '' 
 }
 
 if ((looksLikeJsonText($response) || $response === '') && !$briefMode) {
-    logApiDocs('error', 'AI returned empty or JSON-like response text', [
-        'documentTitle' => $documentTitle,
-        'contentPreview' => mb_substr($content, 0, 220),
-    ]);
-    jsonResponse(502, array_merge(['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
+    if ($aiMode === 'paid') {
+        $fallbackResponse = sanitizeGeneratedResponse($content, $runtimeConfig['sanitizePrefixes'] ?? []);
+        if ($fallbackResponse === '' || looksLikeJsonText($fallbackResponse)) {
+            $fallbackResponse = 'Не удалось получить структурированный ответ. Попробуйте более чёткий запрос или документ лучшего качества.';
+        }
+        if ($analysis === '') {
+            $analysis = 'VIP fallback: использован прямой ответ модели из-за пустого структурированного блока.';
+        }
+        $response = $fallbackResponse;
+    } else {
+        logApiDocs('error', 'AI returned empty or JSON-like response text', [
+            'documentTitle' => $documentTitle,
+            'contentPreview' => mb_substr($content, 0, 220),
+        ]);
+        jsonResponse(502, array_merge(['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
+    }
 }
 if ($briefMode && (looksLikeJsonText($response) || $response === '')) {
     if ($analysis !== '') {
