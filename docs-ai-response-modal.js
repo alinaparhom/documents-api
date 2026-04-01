@@ -256,6 +256,28 @@
       : ((state && state.aiMode) === 'paid' ? 'paid' : 'free');
   }
 
+  async function resolvePaidSourceFiles(state) {
+    function resolveFileUrl(file) {
+      if (!file || typeof file !== 'object') {
+        return '';
+      }
+      var candidates = [
+        file.url,
+        file.fileUrl,
+        file.downloadUrl,
+        file.resolvedUrl,
+        file.previewUrl,
+        file.previewPdfUrl,
+        file.pdfUrl,
+        file.pdf
+      ];
+      for (var idx = 0; idx < candidates.length; idx += 1) {
+        var value = typeof candidates[idx] === 'string' ? candidates[idx].trim() : '';
+        if (value) {
+          return value;
+        }
+      }
+      return '';
   async function resolvePaidSourceFiles(state, config) {
     function shouldConvertPdfForModel(modelName) {
       var normalized = String(modelName || '').trim().toLowerCase();
@@ -319,9 +341,10 @@
         preparedFiles.push({ name: localName, blob: file.fileObject });
         continue;
       }
-      if (file && file.url) {
+      var remoteUrl = resolveFileUrl(file);
+      if (remoteUrl) {
         // eslint-disable-next-line no-await-in-loop
-        var fileResponse = await fetch(file.url, { credentials: 'same-origin' });
+        var fileResponse = await fetch(remoteUrl, { credentials: 'same-origin' });
         if (!fileResponse.ok) {
           continue;
         }
@@ -781,16 +804,39 @@
     if (!Array.isArray(files)) {
       return [];
     }
+    function resolveEntryUrl(entry) {
+      if (!entry || typeof entry !== 'object') {
+        return '';
+      }
+      var candidates = [
+        entry.url,
+        entry.fileUrl,
+        entry.downloadUrl,
+        entry.resolvedUrl,
+        entry.previewUrl,
+        entry.previewPdfUrl,
+        entry.pdfUrl,
+        entry.pdf
+      ];
+      for (var i = 0; i < candidates.length; i += 1) {
+        var candidate = typeof candidates[i] === 'string' ? candidates[i].trim() : '';
+        if (candidate) {
+          return candidate;
+        }
+      }
+      return '';
+    }
     var seen = {};
     return files.map(function (entry, index) {
       if (!entry) {
         return null;
       }
+      var resolvedUrl = resolveEntryUrl(entry);
       var dedupKey = [
         source,
         String(entry.name || '').toLowerCase().trim(),
         Number(entry.size || 0),
-        String(entry.url || '').trim(),
+        resolvedUrl,
         String(entry.content || '').slice(0, 120)
       ].join('|');
       if (seen[dedupKey]) {
@@ -807,7 +853,7 @@
         extracted: Boolean(entry.extracted || (typeof entry.content === 'string' && entry.content.trim() !== '')),
         extracting: false,
         extractError: null,
-        url: typeof entry.url === 'string' ? entry.url : '',
+        url: resolvedUrl,
         fileObject: null
       };
     }).filter(Boolean);
