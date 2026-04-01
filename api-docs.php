@@ -2922,6 +2922,7 @@ foreach ($attachedFilesFromContext as $attachedFileEntry) {
     }
 }
 if ($action === 'ai_response_analyze'
+    && $aiMode === 'free'
     && $attachedFilesCount > 0
     && !$extractedTexts
     && (int)($extractedTextsDiagnostics['readFiles'] ?? 0) === 0
