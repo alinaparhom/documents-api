@@ -2270,56 +2270,71 @@
       return Promise.reject(new Error('Текст для анализа пустой.'));
     }
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var context = {
-      extractedTexts: [
-        {
-          name: sourceLabel,
-          type: 'text/plain',
-          text: briefText
-        }
-      ],
-      requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
-      aiBehavior: 'Режим "Кратко ИИ". Используй только extractedTexts. Верни только JSON без markdown. Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. analysis: 2-3 коротких предложения. required_actions: 3-5 конкретных фактов из файла. requirements: 3-5 шагов, что делать дальше. Если нет данных — пиши "не указано в файле".',
-      isolatedFileMode: true
-    };
-    var formData = new FormData();
-    formData.append('documentTitle', sourceLabel);
-    formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
-    formData.append('responseStyle', 'concise');
-    formData.append('aiBehavior', String(context.aiBehavior || ''));
-    formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
-    formData.append('temperature', '0.6');
-    formData.append('top_p', '1');
-    formData.append('frequency_penalty', '0');
-    formData.append('presence_penalty', '0');
-    formData.append('briefMode', '1');
-    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
-    formData.append('context', JSON.stringify(context));
-    return fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    }).then(function(response) {
-      return response.json().catch(function() { return null; }).then(function(payload) {
-        if (!response.ok || !payload || payload.ok !== true) {
-          var statusCode = response && typeof response.status === 'number' ? response.status : 0;
-          var serverError = payload && payload.error ? String(payload.error).trim() : '';
-          var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
-          var retryHint = ' Повторите через ' + retryAfterSeconds + ' сек.';
-          if (statusCode === 429) {
-            throw new Error((serverError || 'Слишком много запросов к ИИ.') + retryHint);
+    var textLimits = [12000, 7000, 3500, 1800];
+    function requestWithLimit(limitIndex) {
+      var safeIndex = Math.max(0, Math.min(limitIndex, textLimits.length - 1));
+      var textLimit = textLimits[safeIndex];
+      var clippedText = briefText.slice(0, textLimit);
+      var context = {
+        extractedTexts: [
+          {
+            name: sourceLabel,
+            type: 'text/plain',
+            text: clippedText
           }
-          if (statusCode >= 500) {
-            throw new Error((serverError || 'ИИ-сервис перегружен или временно недоступен.') + retryHint);
+        ],
+        requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
+        aiBehavior: 'Кратко по файлу. Верни JSON: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}.',
+        isolatedFileMode: true
+      };
+      var formData = new FormData();
+      formData.append('documentTitle', sourceLabel);
+      formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
+      formData.append('responseStyle', 'concise');
+      formData.append('aiBehavior', String(context.aiBehavior || ''));
+      formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
+      formData.append('temperature', '0.6');
+      formData.append('top_p', '1');
+      formData.append('frequency_penalty', '0');
+      formData.append('presence_penalty', '0');
+      formData.append('briefMode', '1');
+      formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+      formData.append('context', JSON.stringify(context));
+      return fetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      }).then(function(response) {
+        return response.json().catch(function() { return null; }).then(function(payload) {
+          if (!response.ok || !payload || payload.ok !== true) {
+            var statusCode = response && typeof response.status === 'number' ? response.status : 0;
+            var serverError = payload && payload.error ? String(payload.error).trim() : '';
+            var isContextOverflow = statusCode === 413
+              || /контекст.+слишком большой|too many tokens|max context|payload too large/i.test(serverError);
+            if (isContextOverflow && safeIndex < textLimits.length - 1) {
+              return requestWithLimit(safeIndex + 1);
+            }
+            var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
+            var retryHint = ' Повторите через ' + retryAfterSeconds + ' сек.';
+            if (statusCode === 429) {
+              throw new Error((serverError || 'Слишком много запросов к ИИ.') + retryHint);
+            }
+            if (statusCode >= 500) {
+              throw new Error((serverError || 'ИИ-сервис перегружен или временно недоступен.') + retryHint);
+            }
+            if (isContextOverflow) {
+              throw new Error('Не удалось уместить контекст даже после сжатия. Откройте файл и запустите «Кратко ИИ» ещё раз.');
+            }
+            throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ').'));
           }
-          throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ').'));
-        }
-        if (!isMeaningfulAiBriefPayload(payload)) {
-          throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
-        }
-        return payload;
+          if (!isMeaningfulAiBriefPayload(payload)) {
+            throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
+          }
+          return payload;
+        });
       });
-    });
+    }
+    return requestWithLimit(0);
   }
 
   var briefPdfJsLoader = null;
