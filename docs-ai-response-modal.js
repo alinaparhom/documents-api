@@ -2184,9 +2184,11 @@
       }
       state.files.forEach(function (file) {
         var chip = createElement('div', 'ai-chat-chip');
-        var ocrStatus = file.extracting
-          ? '⏳ Текст'
-          : (file.extracted ? '✅ Текст' : (file.extractError ? '⚠️ Текст' : '⭕ Текст'));
+        var ocrStatus = isVipMode
+          ? (file.extracted ? '✅ Готов к AI' : '⭕ Файл')
+          : (file.extracting
+            ? '⏳ Текст'
+            : (file.extracted ? '✅ Текст' : (file.extractError ? '⚠️ Текст' : '⭕ Текст')));
         var icon = createElement('span', '', detectIcon(file));
         var name = createElement('span', '', String(file.name || 'Файл'));
         var size = createElement('span', 'ai-chat-chip__meta', formatSize(file.size));
@@ -2196,13 +2198,15 @@
         chip.appendChild(size);
         chip.appendChild(status);
 
-        var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ Текст' : '📄 Текст');
-        ocr.type = 'button';
-        ocr.disabled = !!file.extracting;
-        ocr.addEventListener('click', function () {
-          extractSingleFile(file);
-        });
-        chip.appendChild(ocr);
+        if (!isVipMode) {
+          var ocr = createElement('button', 'ai-chat-chip__remove', file.extracted ? '↻ Текст' : '📄 Текст');
+          ocr.type = 'button';
+          ocr.disabled = !!file.extracting;
+          ocr.addEventListener('click', function () {
+            extractSingleFile(file);
+          });
+          chip.appendChild(ocr);
+        }
 
         var remove = createElement('button', 'ai-chat-chip__remove', '×');
         remove.type = 'button';
@@ -2665,6 +2669,9 @@
     extractAllButton.addEventListener('click', function () {
       autoExtractFiles(state.files);
     });
+    if (isVipMode) {
+      extractAllButton.style.display = 'none';
+    }
 
     hiddenInput.addEventListener('change', function () {
       var selected = hiddenInput.files ? Array.from(hiddenInput.files) : [];

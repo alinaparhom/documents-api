@@ -1167,7 +1167,9 @@ function openAiResponseDialog(context = {}) {
     readBtn.type = 'button';
     readBtn.className = 'appdosc-ai-dialog__attachment-btn';
     readBtn.disabled = !selectedCount;
-    readBtn.textContent = `Прочитать выбранные (${selectedCount})`;
+    readBtn.textContent = state.aiApiKeyMode === 'paid'
+      ? `Подготовить для AI (${selectedCount})`
+      : `Прочитать выбранные (${selectedCount})`;
     readBtn.addEventListener('click', handleBatchAdd);
     footer.appendChild(readBtn);
     attachmentsNode.appendChild(footer);

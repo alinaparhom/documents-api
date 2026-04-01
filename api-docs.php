@@ -2789,18 +2789,19 @@ $defaultSystemMessage = "Ты — ИИ, выполняющий роль сотр
   . $styleInstruction . ' '
   . $styleExampleInstruction . ' '
   . 'Поле response — только готовый текст письма без служебных заголовков.';
-$paidSystemMessage = "Ты — VIP ИИ-консультант для подготовки официальных ответов в строительном документообороте. "
-  . "Твоя цель: дать качественное и практичное решение, а не мрачный пересказ проблемы. "
-  . "Верни JSON с полями: response, analysis, decisionBlock. "
-  . "response: четкий деловой текст 8-12 предложений, с конкретными шагами и сроками в формате ДД.ММ.ГГГГ. "
-  . "analysis: краткий разбор ситуации без воды (2-4 предложения). "
-  . "decisionBlock: decision, decision_reason, risks[], required_actions[], requirements[]. "
-  . "Тон: конструктивный, уверенный, профессиональный; без пессимистичных и расплывчатых формулировок. "
-  . "Если данных мало — не драматизируй, а укажи какие конкретно данные нужны для финального решения. "
-  . "Запрещено добавлять подписи, реквизиты и служебные шапки. "
-  . $styleInstruction . ' '
-  . $styleExampleInstruction . ' '
-  . "Обязательно сформируй решение и план действий.";
+$paidSystemMessage = "Ты — сотрудник строительной компании, отвечающий за официальную переписку.\n\n"
+  . "Твоя задача: на основе предоставленных документов сформулировать ответ в деловом стиле.\n\n"
+  . "Правила:\n"
+  . "- Не добавляй шапку (кому, от кого), не добавляй подпись.\n"
+  . "- Не пересказывай документ дословно.\n"
+  . "- Выдели суть: что требуется, какие факты, какие решения.\n"
+  . "- Дай чёткий ответ: согласие/отказ/уточнение, сроки, действия.\n"
+  . "- Если есть претензии — либо прими с обоснованием, либо отклони с аргументацией.\n"
+  . "- Используй деловой язык, без воды, без эмодзи.\n"
+  . "- Если недостаточно информации — укажи, какие данные нужны.\n"
+  . "- Ответ должен быть готов к вставке в документ как основное содержание.\n\n"
+  . $styleInstruction . "\n"
+  . $styleExampleInstruction;
 $systemMessage = $effectiveBehavior !== ''
     ? $effectiveBehavior
     : ($isPaidMode ? $paidSystemMessage : $defaultSystemMessage);
@@ -2826,6 +2827,23 @@ if ($isPaidMode) {
 }
 $userPayloadJson = json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 $userContent = is_string($userPayloadJson) && $userPayloadJson !== '' ? $userPayloadJson : '{}';
+if ($isPaidMode) {
+    $documentText = '';
+    foreach ($extractedTexts as $textItem) {
+        if (!is_array($textItem)) {
+            continue;
+        }
+        $textChunk = trim((string)($textItem['text'] ?? ''));
+        if ($textChunk !== '') {
+            $documentText .= $textChunk . "\n\n";
+        }
+    }
+    $documentText = trim($documentText);
+    if ($documentText === '') {
+        $documentText = 'Текст из документов не извлечён. Сформируй ответ по доступным данным и укажи, какие данные нужно добавить.';
+    }
+    $userContent = "Проанализируй следующий документ и сформируй официальный ответ (без шапки и подписи):\n\n" . $documentText;
+}
 $multimodalUserContent = null;
 if ($resolvedAiApiKeyMode === 'paid' && $files) {
     $imageParts = [];
