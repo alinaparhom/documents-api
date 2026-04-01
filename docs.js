@@ -2067,7 +2067,7 @@
     ].join('\n');
   }
 
-  function buildAiBriefSummaryText(payload) {
+  function buildAiBriefSummaryText(payload, sourceText) {
     var data = payload && typeof payload === 'object' ? payload : {};
     var analysis = data.analysis ? String(data.analysis).trim() : '';
     var responseText = data.response ? String(data.response).trim() : '';
@@ -2146,24 +2146,52 @@
       }
       return false;
     });
-    analysis = normalizeSentence(analysis) || 'ИИ не вернул понятный блок «О чем файл».';
+    function extractPartyByLabel(text, labelVariants) {
+      var safeText = String(text || '');
+      if (!safeText) return '';
+      var escaped = (Array.isArray(labelVariants) ? labelVariants : [])
+        .map(function(label) { return String(label || '').trim(); })
+        .filter(Boolean)
+        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+      if (!escaped.length) return '';
+      var pattern = new RegExp('(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r;]+)', 'i');
+      var match = safeText.match(pattern);
+      return match && match[1] ? String(match[1]).trim() : '';
+    }
+    var normalizedAnalysis = normalizeSentence(analysis);
+    var normalizedResponse = normalizeSentence(responseText);
+    var sourceSummary = normalizeSentence(collectBriefSentences(sourceText, 3).join('. '));
+    analysis = normalizedAnalysis || normalizedResponse || sourceSummary || 'ИИ не вернул понятный блок «О чем файл».';
     cleanedActions = sanitizeList(actions, 4, 'actions');
     var actionsMap = {};
     cleanedActions.forEach(function(item) {
       actionsMap[String(item).toLowerCase()] = true;
     });
     cleanedRequirements = sanitizeList(requirements, 4, 'requirements', actionsMap);
-    var normalizedResponse = normalizeSentence(responseText);
-    var responseLooksDuplicated = normalizedResponse && analysis
-      && normalizedResponse.toLowerCase() === analysis.toLowerCase();
-    var resolvedAnalysis = responseLooksDuplicated
-      ? analysis
-      : (analysis || normalizedResponse || 'ИИ не вернул понятный анализ по файлу.');
+    if (!cleanedActions.length) {
+      cleanedActions = collectBriefSentences(sourceText, 6)
+        .map(normalizeSentence)
+        .filter(Boolean)
+        .slice(0, 4);
+    }
+    if (!cleanedRequirements.length) {
+      cleanedRequirements = collectBriefSentences(sourceText, 8)
+        .map(normalizeSentence)
+        .filter(Boolean)
+        .slice(1, 4);
+    }
+    if (!participants) {
+      var sender = extractPartyByLabel(sourceText, ['отправитель', 'от кого', 'исполнитель']);
+      var recipient = extractPartyByLabel(sourceText, ['получатель', 'кому', 'заказчик']);
+      if (sender || recipient) {
+        participants = 'Отправитель: ' + (sender || 'не найден') + '; Получатель: ' + (recipient || 'не найден');
+      }
+    }
     return [
       'Краткий вывод ИИ',
       '',
       'О чем файл',
-      resolvedAnalysis,
+      analysis,
       '',
       'Кто прислал / кому',
       participants || 'Не удалось точно определить отправителя и получателя.',
@@ -2242,56 +2270,71 @@
       return Promise.reject(new Error('Текст для анализа пустой.'));
     }
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var context = {
-      extractedTexts: [
-        {
-          name: sourceLabel,
-          type: 'text/plain',
-          text: briefText
-        }
-      ],
-      requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
-      aiBehavior: 'Режим "Кратко ИИ". Используй только extractedTexts. Верни только JSON без markdown. Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. analysis: 2-3 коротких предложения. required_actions: 3-5 конкретных фактов из файла. requirements: 3-5 шагов, что делать дальше. Если нет данных — пиши "не указано в файле".',
-      isolatedFileMode: true
-    };
-    var formData = new FormData();
-    formData.append('documentTitle', sourceLabel);
-    formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
-    formData.append('responseStyle', 'concise');
-    formData.append('aiBehavior', String(context.aiBehavior || ''));
-    formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
-    formData.append('temperature', '0.6');
-    formData.append('top_p', '1');
-    formData.append('frequency_penalty', '0');
-    formData.append('presence_penalty', '0');
-    formData.append('briefMode', '1');
-    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
-    formData.append('context', JSON.stringify(context));
-    return fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    }).then(function(response) {
-      return response.json().catch(function() { return null; }).then(function(payload) {
-        if (!response.ok || !payload || payload.ok !== true) {
-          var statusCode = response && typeof response.status === 'number' ? response.status : 0;
-          var serverError = payload && payload.error ? String(payload.error).trim() : '';
-          var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
-          var retryHint = ' Повторите через ' + retryAfterSeconds + ' сек.';
-          if (statusCode === 429) {
-            throw new Error((serverError || 'Слишком много запросов к ИИ.') + retryHint);
+    var textLimits = [12000, 7000, 3500, 1800];
+    function requestWithLimit(limitIndex) {
+      var safeIndex = Math.max(0, Math.min(limitIndex, textLimits.length - 1));
+      var textLimit = textLimits[safeIndex];
+      var clippedText = briefText.slice(0, textLimit);
+      var context = {
+        extractedTexts: [
+          {
+            name: sourceLabel,
+            type: 'text/plain',
+            text: clippedText
           }
-          if (statusCode >= 500) {
-            throw new Error((serverError || 'ИИ-сервис перегружен или временно недоступен.') + retryHint);
+        ],
+        requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
+        aiBehavior: 'Кратко по файлу. Верни JSON: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}.',
+        isolatedFileMode: true
+      };
+      var formData = new FormData();
+      formData.append('documentTitle', sourceLabel);
+      formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
+      formData.append('responseStyle', 'concise');
+      formData.append('aiBehavior', String(context.aiBehavior || ''));
+      formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
+      formData.append('temperature', '0.6');
+      formData.append('top_p', '1');
+      formData.append('frequency_penalty', '0');
+      formData.append('presence_penalty', '0');
+      formData.append('briefMode', '1');
+      formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+      formData.append('context', JSON.stringify(context));
+      return fetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      }).then(function(response) {
+        return response.json().catch(function() { return null; }).then(function(payload) {
+          if (!response.ok || !payload || payload.ok !== true) {
+            var statusCode = response && typeof response.status === 'number' ? response.status : 0;
+            var serverError = payload && payload.error ? String(payload.error).trim() : '';
+            var isContextOverflow = statusCode === 413
+              || /контекст.+слишком большой|too many tokens|max context|payload too large/i.test(serverError);
+            if (isContextOverflow && safeIndex < textLimits.length - 1) {
+              return requestWithLimit(safeIndex + 1);
+            }
+            var retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
+            var retryHint = ' Повторите через ' + retryAfterSeconds + ' сек.';
+            if (statusCode === 429) {
+              throw new Error((serverError || 'Слишком много запросов к ИИ.') + retryHint);
+            }
+            if (statusCode >= 500) {
+              throw new Error((serverError || 'ИИ-сервис перегружен или временно недоступен.') + retryHint);
+            }
+            if (isContextOverflow) {
+              throw new Error('Не удалось уместить контекст даже после сжатия. Откройте файл и запустите «Кратко ИИ» ещё раз.');
+            }
+            throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ').'));
           }
-          throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ').'));
-        }
-        if (!isMeaningfulAiBriefPayload(payload)) {
-          throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
-        }
-        return payload;
+          if (!isMeaningfulAiBriefPayload(payload)) {
+            throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
+          }
+          return payload;
+        });
       });
-    });
+    }
+    return requestWithLimit(0);
   }
 
   var briefPdfJsLoader = null;
@@ -2427,11 +2470,9 @@
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для OCR и краткого анализа ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Только текст выбранного файла'));
-    var modeSelect = document.createElement('select');
-    modeSelect.className = 'documents-select';
-    modeSelect.style.marginTop = '8px';
-    modeSelect.innerHTML = '<option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option>';
-    titleWrap.appendChild(modeSelect);
+    var vipChatButton = createElement('button', 'documents-button documents-button--secondary', 'VIP ИИ чат');
+    vipChatButton.style.marginTop = '8px';
+    titleWrap.appendChild(vipChatButton);
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
@@ -2500,21 +2541,18 @@
       button.title = source.label;
       button.type = 'button';
       button.addEventListener('click', function() {
-        var selectedMode = modeSelect.value === 'paid' ? 'paid' : 'free';
         makeActive(button);
         button.disabled = true;
         setPreviewLoading(true, source.label);
-        var requestPromise = selectedMode === 'paid'
-          ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
-          : resolveSourceText(source, true).then(function(sourceText) {
-            preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
-            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
-          });
+        var requestPromise = resolveSourceText(source, true).then(function(sourceText) {
+          preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
+          return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
+        });
         requestPromise
           .then(function(sourceText) {
             var aiPayload = sourceText;
             preview.classList.remove('is-loading');
-            preview.textContent = buildAiBriefSummaryText(aiPayload);
+            preview.textContent = buildAiBriefSummaryText(aiPayload, source && source.text ? source.text : '');
             var elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
             metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек';
           })
@@ -2540,6 +2578,11 @@
     function closeBriefModal() {
       closeModal(modal);
     }
+    vipChatButton.type = 'button';
+    vipChatButton.addEventListener('click', function() {
+      closeBriefModal();
+      openAiModeSelector();
+    });
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', closeBriefModal);
@@ -13507,13 +13550,27 @@
       var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
       var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
       var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
-      var fileNames = linked.map(function(item) { return item.name; }).concat(pending.map(function(item) { return item.name; }));
-      if (!fileNames.length) {
+      var linkedEntries = linked.map(function(item, index) { return { key: 'linked_' + index, file: item, source: 'linked' }; });
+      var pendingEntries = pending.map(function(item, index) { return { key: 'pending_' + index, file: item, source: 'pending' }; });
+      var fileEntries = linkedEntries.concat(pendingEntries);
+      var selectedFiles = {};
+      fileEntries.forEach(function(entry) {
+        selectedFiles[entry.key] = true;
+      });
+      if (!fileEntries.length) {
         filesNode.innerHTML = '<em>Нет вложений</em>';
       } else {
-        filesNode.innerHTML = fileNames.slice(0, 12).map(function(name) {
-          return '<div>📎 ' + escapeHtmlText(name || 'Файл') + '</div>';
+        filesNode.innerHTML = fileEntries.slice(0, 20).map(function(entry) {
+          var name = entry && entry.file && entry.file.name ? entry.file.name : 'Файл';
+          return '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-file-key="' + escapeHtmlText(entry.key) + '" checked> <span>📎 ' + escapeHtmlText(name) + '</span></label>';
         }).join('');
+        Array.from(filesNode.querySelectorAll('input[type="checkbox"][data-file-key]')).forEach(function(checkbox) {
+          checkbox.addEventListener('change', function() {
+            var key = checkbox.getAttribute('data-file-key');
+            if (!key) return;
+            selectedFiles[key] = checkbox.checked;
+          });
+        });
       }
       closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
       overlay.addEventListener('click', function(event) {
@@ -13601,8 +13658,10 @@
         Object.keys(sourceContext).forEach(function(key) {
           requestContext[key] = sourceContext[key];
         });
+        var selectedLinked = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
+        var selectedPending = pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
         requestContext.attachedFiles = []
-          .concat((payload.linkedFiles || []).map(function(file) {
+          .concat(selectedLinked.map(function(file) {
             return {
               name: file && file.name ? file.name : '',
               url: resolveLinkedFileUrl(file),
@@ -13610,16 +13669,16 @@
               type: file && file.type ? file.type : ''
             };
           }))
-          .concat(pending.map(function(file) {
+          .concat(selectedPending.map(function(file) {
             return { name: file.name || '', size: file.size || 0, type: file.type || '' };
           }));
         chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
         requestContext.chatHistory = chatHistory.slice(-8);
         formData.append('context', JSON.stringify(requestContext));
-        appendSourceFilesToFormData(formData, linked, pending)
+        appendSourceFilesToFormData(formData, selectedLinked, selectedPending)
           .then(function(appendedCount) {
             if (!appendedCount) {
-              throw new Error('Не удалось прикрепить файлы из текущей задачи. Откройте задачу с вложениями и попробуйте снова.');
+              throw new Error('Выберите хотя бы один файл для VIP чата.');
             }
             return fetch(payload.apiUrl, { method: 'POST', body: formData, credentials: 'same-origin' });
           })

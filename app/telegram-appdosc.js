@@ -534,24 +534,34 @@ function extractPartyByLabel(text, labelVariants) {
   return match && match[1] ? String(match[1]).trim() : '';
 }
 
-function buildTelegramBriefSections(payload) {
+function buildTelegramBriefSections(payload, sourceText) {
   const analysis = payload && payload.analysis ? cleanTelegramSentence(payload.analysis) : '';
+  const responseText = cleanTelegramSentence(payload && payload.response);
+  const sourceFallback = buildTelegramAnalysisFallback(sourceText);
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
   const aiActions = sanitizeTelegramAiList(block.required_actions, 5);
   const aiRequirements = sanitizeTelegramAiList(block.requirements, 4);
+  const fallbackSteps = buildTelegramStepsFallback(sourceText, 4);
   const risks = Array.isArray(block.risks) ? block.risks : [];
   const participantsRaw = risks.find((item) => /^отправитель\s*:/i.test(normalizeValue(item)));
-  const participants = participantsRaw || 'Отправитель/получатель: не указано в ответе ИИ';
+  const sender = extractPartyByLabel(sourceText, ['отправитель', 'от кого', 'исполнитель']);
+  const recipient = extractPartyByLabel(sourceText, ['получатель', 'кому', 'заказчик']);
+  const sourceParticipants = (sender || recipient)
+    ? `Отправитель: ${sender || 'не найден'}. Получатель: ${recipient || 'не найден'}.`
+    : '';
+  const participants = participantsRaw || sourceParticipants || 'Отправитель/получатель: не указано в ответе ИИ';
   return {
-    analysis: !isWeakTelegramAnalysis(analysis) ? analysis : (cleanTelegramSentence(payload && payload.response) || 'ИИ не вернул блок «О чем файл».'),
+    analysis: !isWeakTelegramAnalysis(analysis)
+      ? analysis
+      : (!isWeakTelegramAnalysis(responseText) ? responseText : sourceFallback),
     participants,
-    actions: aiActions,
-    requirements: aiRequirements,
+    actions: aiActions.length ? aiActions : fallbackSteps,
+    requirements: aiRequirements.length ? aiRequirements : fallbackSteps.slice(0, 3),
   };
 }
 
 function renderTelegramBriefPreview(container, payload, sourceText) {
-  const sections = buildTelegramBriefSections(payload);
+  const sections = buildTelegramBriefSections(payload, sourceText);
   const detailsHtml = sections.actions.length
     ? `<ul>${sections.actions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
     : '<p>Ключевые детали не указаны в файле.</p>';
