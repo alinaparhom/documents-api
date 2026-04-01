@@ -2157,9 +2157,15 @@
     var responseLooksDuplicated = normalizedResponse && analysis
       && normalizedResponse.toLowerCase() === analysis.toLowerCase();
 
+    var apiResponseSection = normalizedResponse
+      ? ['Ответ через API', normalizedResponse, '']
+      : ['Ответ через API', 'ИИ не прислал отдельный текст response.', ''];
     return [
       'Краткий вывод ИИ',
       '',
+      apiResponseSection[0],
+      apiResponseSection[1],
+      apiResponseSection[2],
       'О чем файл',
       analysis,
       '',
@@ -2396,7 +2402,11 @@
         button.disabled = true;
         setPreviewLoading(true, source.label);
         var requestPromise = selectedMode === 'paid'
-          ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
+          ? (source && source.fileObject
+            ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
+            : resolveSourceText(source).then(function(sourceText) {
+              return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'paid');
+            }))
           : resolveSourceText(source).then(function(sourceText) {
             var aiStartedAt = Date.now();
             var estimatedSeconds = 35;

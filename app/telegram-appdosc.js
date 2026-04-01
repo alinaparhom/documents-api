@@ -440,6 +440,7 @@ function buildTelegramBriefSections(payload, sourceText) {
 
 function renderTelegramBriefPreview(container, payload, sourceText) {
   const sections = buildTelegramBriefSections(payload, sourceText);
+  const apiResponse = normalizeValue((payload && payload.response) || (payload && payload.analysis) || '');
   const detailsHtml = sections.actions.length
     ? `<ul>${sections.actions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
     : '<p>Ключевые детали не указаны в файле.</p>';
@@ -448,6 +449,10 @@ function renderTelegramBriefPreview(container, payload, sourceText) {
     : '<p>Следующие шаги не указаны в файле.</p>';
 
   container.innerHTML = `
+    <section class="appdosc-brief-ai__section">
+      <h4>Ответ через API</h4>
+      <p>${escapeHtml(apiResponse || 'ИИ не вернул отдельный текст response.')}</p>
+    </section>
     <section class="appdosc-brief-ai__section">
       <h4>О чем файл</h4>
       <p>${escapeHtml(sections.analysis)}</p>
@@ -547,6 +552,13 @@ function openTelegramBriefModal(task, statusHandler) {
           setStatus(`VIP анализ файла: ${source.label}`, 'loading');
           preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла напрямую в VIP ИИ...</p>';
           aiPayload = await requestTelegramBriefAiDirect(source, 'paid');
+          const hasActions = Array.isArray(aiPayload && aiPayload.decisionBlock && aiPayload.decisionBlock.required_actions)
+            && aiPayload.decisionBlock.required_actions.length > 0;
+          const hasText = normalizeValue(aiPayload && (aiPayload.response || aiPayload.analysis));
+          if (!hasActions && !hasText) {
+            sourceText = source.text || await requestTelegramOcrByUrl(source.url);
+            aiPayload = await requestTelegramBriefAi(source.label, sourceText, 'paid');
+          }
         } else {
           sourceText = source.text || await requestTelegramOcrByUrl(source.url);
           if (requestId !== activeRequestId) return;
