@@ -2180,8 +2180,15 @@
     if (!payload || typeof payload !== 'object') {
       return false;
     }
-    var analysis = normalizeSentence(payload.analysis || '');
-    var responseText = normalizeSentence(payload.response || '');
+    var normalizeBriefText = function(text) {
+      return String(text || '')
+        .replace(/-\s*\n\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .replace(/[.:;,\s]+$/g, '')
+        .trim();
+    };
+    var analysis = normalizeBriefText(payload.analysis || '');
+    var responseText = normalizeBriefText(payload.response || '');
     var block = payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
     var hasActions = Array.isArray(block.required_actions) && block.required_actions.some(function(item) {
       return String(item || '').trim().length >= 4;
