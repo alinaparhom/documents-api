@@ -1,6 +1,8 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v8';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+const GROQ_PDF_UNSUPPORTED_MODELS = new Set(['llama-3.1-8b-instant']);
 const REQUEST_TIMEOUT_MS = 35000;
 const REQUEST_TIMEOUT_MAX_MS = 70000;
 const TIMEOUT_CONTEXT_STEP_CHARS = 45000;
@@ -53,16 +55,16 @@ function ensureAiDialogStyles() {
   style.id = DIALOG_STYLE_ID;
   style.textContent = `
     .appdosc-ai-dialog{position:fixed;inset:0;z-index:2500;display:flex;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}
-    .appdosc-ai-dialog__panel{width:min(760px,100%);height:100dvh;margin:auto;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(255,255,255,.88));border:1px solid rgba(255,255,255,.82);box-shadow:0 20px 45px rgba(15,23,42,.15);overflow:hidden;border-radius:20px 20px 0 0}
-    .appdosc-ai-dialog__header{padding:9px 10px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(148,163,184,.2)}
+    .appdosc-ai-dialog__panel{width:min(680px,100%);height:100dvh;margin:auto;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(255,255,255,.9));border:1px solid rgba(255,255,255,.82);box-shadow:0 18px 40px rgba(15,23,42,.15);overflow:hidden;border-radius:18px 18px 0 0}
+    .appdosc-ai-dialog__header{padding:8px 10px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(148,163,184,.16)}
     .appdosc-ai-dialog__title{font-size:15px;font-weight:700;color:#0f172a}
     .appdosc-ai-dialog__subtitle{font-size:11px;color:#64748b;margin-top:2px}
-    .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,#f8fafc,#f1f5f9)}
+    .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:7px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,#f8fafc,#f1f5f9)}
     .appdosc-ai-dialog__bubble{max-width:94%;padding:7px 9px;border-radius:12px;line-height:1.4;font-size:12px;white-space:pre-wrap;word-break:break-word;color:#0f172a}
     .appdosc-ai-dialog__bubble--assistant{align-self:flex-start;background:#ffffff;border:1px solid rgba(148,163,184,.3)}
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
-    .appdosc-ai-dialog__composer{padding:8px calc(10px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px)}
-    .appdosc-ai-dialog__input{min-height:52px;max-height:124px;resize:none;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;outline:none}
+    .appdosc-ai-dialog__composer{padding:7px calc(10px + env(safe-area-inset-right,0px)) calc(9px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.93);backdrop-filter:blur(10px)}
+    .appdosc-ai-dialog__input{min-height:44px;max-height:108px;resize:none;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:7px 9px;font-size:13px;outline:none}
     .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:14px;border:1px solid rgba(148,163,184,.24);background:rgba(255,255,255,.74)}
     .appdosc-ai-dialog__attachments-header{display:flex;flex-direction:column;gap:8px}
     .appdosc-ai-dialog__attachments-headline{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
@@ -96,13 +98,14 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__advanced > summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:8px 10px;font-size:12px;color:#334155;font-weight:600}
     .appdosc-ai-dialog__advanced > summary::-webkit-details-marker{display:none}
     .appdosc-ai-dialog__advanced-body{padding:0 8px 8px;display:flex;flex-direction:column;gap:6px}
+    .appdosc-ai-dialog__controls{display:grid;grid-template-columns:1fr 1fr;gap:6px}
     .appdosc-ai-dialog__buttons{display:flex;gap:6px}
     .appdosc-ai-dialog__btn{border:none;min-height:36px;padding:8px 11px;border-radius:11px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
     .appdosc-ai-dialog__btn--ghost{background:rgba(148,163,184,.15);color:#0f172a}
     .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed}
     .appdosc-ai-dialog__file-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
     .appdosc-ai-dialog__file-reveal{border:1px solid rgba(37,99,235,.28);background:rgba(239,246,255,.9);color:#1e3a8a;border-radius:10px;padding:6px 8px;font-size:11px;line-height:1.2}
-    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__btn{flex:1;min-height:42px;font-size:14px}.appdosc-ai-dialog__attachments-grid{display:flex;overflow:auto;max-height:none;padding-bottom:2px}.appdosc-ai-dialog__attachment{min-width:255px;flex:0 0 auto}}
+    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__controls{grid-template-columns:1fr 1fr}.appdosc-ai-dialog__btn{flex:1;min-height:40px;font-size:14px}.appdosc-ai-dialog__attachments-grid{display:flex;overflow:auto;max-height:none;padding-bottom:2px}.appdosc-ai-dialog__attachment{min-width:255px;flex:0 0 auto}}
   `;
   document.head.appendChild(style);
 }
@@ -176,6 +179,72 @@ async function postDocsAiWithFallback(createFormData, options = {}) {
     throw withEndpointError(fallbackError, lastResult.endpoint, options.fallbackErrorMessage);
   }
   throw new Error(options.fallbackErrorMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+}
+
+async function postGroqPaidWithFallback(createFormData, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : REQUEST_TIMEOUT_MS;
+  let lastError = null;
+  for (let index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
+    const endpoint = GROQ_PAID_ENDPOINTS[index];
+    try {
+      const response = await fetchWithTimeout(endpoint, {
+        method: 'POST',
+        body: createFormData(),
+        credentials: 'same-origin',
+      }, timeoutMs);
+      if (response.status === 404 || response.status === 405) {
+        continue;
+      }
+      const payload = await response.json().catch(() => null);
+      return { endpoint, response, payload };
+    } catch (error) {
+      lastError = withEndpointError(error, endpoint, options.fallbackErrorMessage || 'Платный ИИ временно недоступен');
+    }
+  }
+  throw lastError || new Error(options.fallbackErrorMessage || 'Платный ИИ временно недоступен');
+}
+
+async function ensurePaidPdfJsLoaded() {
+  if (typeof window !== 'undefined' && window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function') {
+    return window.pdfjsLib;
+  }
+  const pdfjs = await ensureScript('/pdf/pdf.min.js', 'pdfjsLib');
+  if (pdfjs && pdfjs.GlobalWorkerOptions) {
+    pdfjs.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+  }
+  return pdfjs;
+}
+
+function isPdfUnsupportedForModel(modelName) {
+  return GROQ_PDF_UNSUPPORTED_MODELS.has(String(modelName || '').trim().toLowerCase());
+}
+
+async function convertPdfBlobToJpegsForPaid(blob, baseName) {
+  const pdfjs = await ensurePaidPdfJsLoaded();
+  if (!pdfjs || typeof pdfjs.getDocument !== 'function') {
+    throw new Error('pdfjs не загружен');
+  }
+  const bytes = await blob.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const maxPages = Math.min(3, Math.max(1, Number(pdf && pdf.numPages) || 1));
+  const files = [];
+  for (let pageIndex = 1; pageIndex <= maxPages; pageIndex += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const page = await pdf.getPage(pageIndex);
+    const viewport = page.getViewport({ scale: 1.7 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) break;
+    // eslint-disable-next-line no-await-in-loop
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    // eslint-disable-next-line no-await-in-loop
+    const jpegBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!jpegBlob) continue;
+    files.push(new File([jpegBlob], `${baseName}-p${pageIndex}.jpg`, { type: 'image/jpeg' }));
+  }
+  return files;
 }
 
 function getContextChars(context) {
@@ -378,6 +447,64 @@ function isPdfLikeMeta(fileMeta) {
   return type.includes('pdf') || name.endsWith('.pdf');
 }
 
+function isPdfLikeByNameType(name, type) {
+  const normalizedName = String(name || '').toLowerCase();
+  const normalizedType = String(type || '').toLowerCase();
+  return normalizedType.includes('pdf') || normalizedName.endsWith('.pdf');
+}
+
+async function collectPaidAiFiles(extractedTexts = [], attachedFiles = [], modelName = '') {
+  const sourceMap = new Map();
+  (Array.isArray(attachedFiles) ? attachedFiles : []).forEach((file) => {
+    const key = String(file && file.name || '').trim().toLowerCase();
+    if (!key) return;
+    if (!sourceMap.has(key)) {
+      sourceMap.set(key, file);
+    }
+  });
+
+  const selected = [];
+  (Array.isArray(extractedTexts) ? extractedTexts : []).forEach((entry) => {
+    const name = String(entry && entry.name || '').trim();
+    const key = name.toLowerCase();
+    const linked = sourceMap.get(key) || {};
+    const url = String((entry && entry.url) || linked.url || '').trim();
+    const type = String((entry && entry.type) || linked.type || '').trim();
+    if (!url) return;
+    selected.push({ name: name || 'document', type, url });
+  });
+
+  const paidFiles = [];
+  for (let index = 0; index < selected.length; index += 1) {
+    const item = selected[index];
+    try {
+      const response = await fetchWithTimeout(item.url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
+      if (!response.ok) continue;
+      const blob = await response.blob();
+      const name = String(item.name || `document-${index + 1}`).trim();
+      const type = String(blob.type || item.type || 'application/octet-stream').trim();
+      const isPdf = isPdfLikeByNameType(name, type);
+      if (isPdf && isPdfUnsupportedForModel(modelName)) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const converted = await convertPdfBlobToJpegsForPaid(blob, name.replace(/\.pdf$/i, '') || `document-${index + 1}`);
+          if (converted.length) {
+            paidFiles.push(...converted);
+            continue;
+          }
+        } catch (_) {
+          continue;
+        }
+      }
+      paidFiles.push(new File([blob], name, { type }));
+    } catch (_) {
+      // fallback на текстовый контекст
+    }
+  }
+
+  return paidFiles;
+}
+
 function isTextLikeMeta(fileMeta) {
   const type = detectFileType(fileMeta);
   const name = String(fileMeta && fileMeta.name || '').toLowerCase();
@@ -523,6 +650,7 @@ async function requestAssistantReply(userMessage, context, history) {
   const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
   const generationParams = context && context.generationParams ? context.generationParams : {};
+  const attachedFiles = Array.isArray(context && context.attachedFiles) ? context.attachedFiles : [];
   const serializedContext = JSON.stringify({
     task: {
       id: task.id || null,
@@ -530,11 +658,48 @@ async function requestAssistantReply(userMessage, context, history) {
       description: task.description || task.text || '',
     },
     chatHistory: buildChatHistoryContext(history),
-    attachedFiles: Array.isArray(context && context.attachedFiles) ? context.attachedFiles : [],
+    attachedFiles,
     extractedTexts,
     source: 'telegram_mini_app_dialog',
   });
   const timeoutMs = calculateAiTimeoutMs(context, history, userMessage);
+  const hasPdfInContext = extractedTexts.some((entry) => isPdfLikeByNameType(entry && entry.name, entry && entry.type));
+  if (aiMode === 'paid' && hasPdfInContext) {
+    const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
+    if (filesForPaid.length) {
+      const paidPrompt = [
+        prompt,
+        '',
+        'Учитывай chatHistory и extractedTexts из контекста.',
+        'Если пользователь просит переделать/исправить — обнови предыдущий ответ.',
+      ].join('\n');
+      const paidRequest = await postGroqPaidWithFallback(() => {
+        const formData = new FormData();
+        formData.append('prompt', paidPrompt);
+        filesForPaid.forEach((file) => {
+          formData.append('files[]', file, file.name || 'document.pdf');
+        });
+        return formData;
+      }, { timeoutMs: Math.max(timeoutMs, 45000) });
+      const paidResponse = paidRequest && paidRequest.response;
+      const paidPayload = paidRequest && paidRequest.payload;
+      if (paidResponse && paidResponse.ok && paidPayload && paidPayload.ok === true) {
+        const paidText = sanitizeAssistantText(parseAiPayload(paidPayload));
+        if (paidText) {
+          if (context && typeof context === 'object') {
+            context.__lastAiMeta = {
+              mode: 'paid',
+              model: String((paidPayload && paidPayload.model) || ''),
+              tokensUsed: Number(paidPayload && paidPayload.tokensUsed) || 0,
+              timeMs: Number(paidPayload && paidPayload.timeMs) || 0,
+            };
+          }
+          return paidText;
+        }
+      }
+    }
+  }
+
   const request = await postDocsAiWithFallback(() => {
     const retryForm = new FormData();
     retryForm.append('action', 'ai_response_analyze');
@@ -667,21 +832,17 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__messages" data-messages></div>
       <div class="appdosc-ai-dialog__composer">
         <textarea class="appdosc-ai-dialog__input" data-input placeholder="Коротко напишите задачу для ответа"></textarea>
-        <div style="display:flex;gap:6px;align-items:center">
-          <div style="flex:1;min-width:0">
+        <div class="appdosc-ai-dialog__controls">
+          <div style="min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-ai-mode-select">Режим</label>
             <select class="appdosc-ai-dialog__input" id="appdosc-ai-mode-select" data-mode style="min-height:36px;max-height:36px;padding:4px 8px">
               <option value="free">Бесплатный ИИ</option>
               <option value="paid">VIP ИИ</option>
             </select>
           </div>
-          <div style="flex:1;min-width:0">
+          <div style="min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Стиль</label>
             <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:36px;max-height:36px;padding:4px 8px"></select>
-          </div>
-          <div style="flex:1;min-width:0">
-            <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-model-select">Модель</label>
-            <select class="appdosc-ai-dialog__input" id="appdosc-model-select" data-model style="min-height:36px;max-height:36px;padding:4px 8px"></select>
           </div>
         </div>
         <div class="appdosc-ai-dialog__attachments-hint" data-rate-limit-hint hidden></div>
@@ -706,7 +867,6 @@ function openAiResponseDialog(context = {}) {
   const input = root.querySelector('[data-input]');
   const modeSelect = root.querySelector('[data-mode]');
   const responseStyleSelect = root.querySelector('[data-response-style]');
-  const modelSelect = root.querySelector('[data-model]');
   const autoDecisionBtn = root.querySelector('[data-auto-decision]');
   const attachmentsNode = root.querySelector('[data-attachments]');
   const rateLimitHint = root.querySelector('[data-rate-limit-hint]');
@@ -773,17 +933,6 @@ function openAiResponseDialog(context = {}) {
     } else {
       const availableNames = nextModels.filter((item) => item.available !== false).map((item) => item.value);
       appendErrorBubbleOnce(`Часть моделей временно недоступна. Рабочие: ${availableNames.join(', ')}.`);
-    }
-    if (modelSelect) {
-      modelSelect.textContent = '';
-      nextModels.forEach((entry) => {
-        const option = document.createElement('option');
-        option.value = String(entry.value || '');
-        option.textContent = String(entry.label || entry.value || '');
-        option.disabled = entry.available === false && String(entry.value || '').trim() !== '';
-        modelSelect.appendChild(option);
-      });
-      modelSelect.value = state.selectedModel;
     }
     return true;
   };
@@ -925,7 +1074,12 @@ function openAiResponseDialog(context = {}) {
         file.extracted = false;
       }
     }
-    context.extractedTexts = extractedForContext.map((file) => ({ name: file.name, type: file.type || 'text/plain', text: file.text }));
+    context.extractedTexts = extractedForContext.map((file) => ({
+      name: file.name,
+      type: file.type || 'text/plain',
+      text: file.text,
+      url: file.url || '',
+    }));
     if (extractedForContext.length) {
       appendFileTextRevealMessage(extractedForContext);
     } else {
@@ -1113,7 +1267,7 @@ function openAiResponseDialog(context = {}) {
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendErrorBubbleOnce('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.');
+        appendErrorBubbleOnce('Модель из .env временно недоступна на сервере.');
       }
     } finally {
       state.isSending = false;
@@ -1153,7 +1307,7 @@ function openAiResponseDialog(context = {}) {
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendErrorBubbleOnce('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.');
+        appendErrorBubbleOnce('Модель из .env временно недоступна на сервере.');
       }
     }
     if (assistantReply) {
@@ -1192,27 +1346,6 @@ function openAiResponseDialog(context = {}) {
       state.selectedModel = defaultModelFromEnv;
     } else if (!state.availableModels.some((entry) => entry.value === state.selectedModel && entry.available !== false)) {
       state.selectedModel = pickFirstAvailableModel(state.availableModels);
-    }
-    if (modelSelect) {
-      modelSelect.textContent = '';
-      state.availableModels.forEach((entry) => {
-        const option = document.createElement('option');
-        option.value = String(entry.value || '');
-        option.textContent = String(entry.label || entry.value || '');
-        option.disabled = entry.available === false && String(entry.value || '').trim() !== '';
-        modelSelect.appendChild(option);
-      });
-      modelSelect.value = state.selectedModel;
-      modelSelect.addEventListener('change', () => {
-        state.selectedModel = String(modelSelect.value || EMPTY_AI_MODEL).trim() || EMPTY_AI_MODEL;
-        const selected = state.availableModels.find((entry) => entry.value === state.selectedModel);
-        if (selected && selected.available === false) {
-          appendErrorBubbleOnce(`Модель ${state.selectedModel || 'не задана в .env'} сейчас нерабочая${selected.reason ? `: ${selected.reason}` : ''}.`);
-          const fallbackModel = pickFirstAvailableModel(state.availableModels);
-          state.selectedModel = fallbackModel;
-          modelSelect.value = fallbackModel;
-        }
-      });
     }
   });
   window.addEventListener('keydown', onEscClose);
