@@ -1,6 +1,7 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v8';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
 const REQUEST_TIMEOUT_MS = 35000;
 const REQUEST_TIMEOUT_MAX_MS = 70000;
 const TIMEOUT_CONTEXT_STEP_CHARS = 45000;
@@ -176,6 +177,29 @@ async function postDocsAiWithFallback(createFormData, options = {}) {
     throw withEndpointError(fallbackError, lastResult.endpoint, options.fallbackErrorMessage);
   }
   throw new Error(options.fallbackErrorMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+}
+
+async function postGroqPaidWithFallback(createFormData, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : REQUEST_TIMEOUT_MS;
+  let lastError = null;
+  for (let index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
+    const endpoint = GROQ_PAID_ENDPOINTS[index];
+    try {
+      const response = await fetchWithTimeout(endpoint, {
+        method: 'POST',
+        body: createFormData(),
+        credentials: 'same-origin',
+      }, timeoutMs);
+      if (response.status === 404 || response.status === 405) {
+        continue;
+      }
+      const payload = await response.json().catch(() => null);
+      return { endpoint, response, payload };
+    } catch (error) {
+      lastError = withEndpointError(error, endpoint, options.fallbackErrorMessage || 'Платный ИИ временно недоступен');
+    }
+  }
+  throw lastError || new Error(options.fallbackErrorMessage || 'Платный ИИ временно недоступен');
 }
 
 function getContextChars(context) {
@@ -378,6 +402,51 @@ function isPdfLikeMeta(fileMeta) {
   return type.includes('pdf') || name.endsWith('.pdf');
 }
 
+function isPdfLikeByNameType(name, type) {
+  const normalizedName = String(name || '').toLowerCase();
+  const normalizedType = String(type || '').toLowerCase();
+  return normalizedType.includes('pdf') || normalizedName.endsWith('.pdf');
+}
+
+async function collectPaidAiFiles(extractedTexts = [], attachedFiles = []) {
+  const sourceMap = new Map();
+  (Array.isArray(attachedFiles) ? attachedFiles : []).forEach((file) => {
+    const key = String(file && file.name || '').trim().toLowerCase();
+    if (!key) return;
+    if (!sourceMap.has(key)) {
+      sourceMap.set(key, file);
+    }
+  });
+
+  const selected = [];
+  (Array.isArray(extractedTexts) ? extractedTexts : []).forEach((entry) => {
+    const name = String(entry && entry.name || '').trim();
+    const key = name.toLowerCase();
+    const linked = sourceMap.get(key) || {};
+    const url = String((entry && entry.url) || linked.url || '').trim();
+    const type = String((entry && entry.type) || linked.type || '').trim();
+    if (!url) return;
+    selected.push({ name: name || 'document', type, url });
+  });
+
+  const paidFiles = [];
+  for (let index = 0; index < selected.length; index += 1) {
+    const item = selected[index];
+    try {
+      const response = await fetchWithTimeout(item.url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
+      if (!response.ok) continue;
+      const blob = await response.blob();
+      const name = String(item.name || `document-${index + 1}`).trim();
+      const type = String(blob.type || item.type || 'application/octet-stream').trim();
+      paidFiles.push(new File([blob], name, { type }));
+    } catch (_) {
+      // fallback на текстовый контекст
+    }
+  }
+
+  return paidFiles;
+}
+
 function isTextLikeMeta(fileMeta) {
   const type = detectFileType(fileMeta);
   const name = String(fileMeta && fileMeta.name || '').toLowerCase();
@@ -523,6 +592,7 @@ async function requestAssistantReply(userMessage, context, history) {
   const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
   const generationParams = context && context.generationParams ? context.generationParams : {};
+  const attachedFiles = Array.isArray(context && context.attachedFiles) ? context.attachedFiles : [];
   const serializedContext = JSON.stringify({
     task: {
       id: task.id || null,
@@ -530,11 +600,48 @@ async function requestAssistantReply(userMessage, context, history) {
       description: task.description || task.text || '',
     },
     chatHistory: buildChatHistoryContext(history),
-    attachedFiles: Array.isArray(context && context.attachedFiles) ? context.attachedFiles : [],
+    attachedFiles,
     extractedTexts,
     source: 'telegram_mini_app_dialog',
   });
   const timeoutMs = calculateAiTimeoutMs(context, history, userMessage);
+  const hasPdfInContext = extractedTexts.some((entry) => isPdfLikeByNameType(entry && entry.name, entry && entry.type));
+  if (aiMode === 'paid' && hasPdfInContext) {
+    const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles);
+    if (filesForPaid.length) {
+      const paidPrompt = [
+        prompt,
+        '',
+        'Учитывай chatHistory и extractedTexts из контекста.',
+        'Если пользователь просит переделать/исправить — обнови предыдущий ответ.',
+      ].join('\n');
+      const paidRequest = await postGroqPaidWithFallback(() => {
+        const formData = new FormData();
+        formData.append('prompt', paidPrompt);
+        filesForPaid.forEach((file) => {
+          formData.append('files[]', file, file.name || 'document.pdf');
+        });
+        return formData;
+      }, { timeoutMs: Math.max(timeoutMs, 45000) });
+      const paidResponse = paidRequest && paidRequest.response;
+      const paidPayload = paidRequest && paidRequest.payload;
+      if (paidResponse && paidResponse.ok && paidPayload && paidPayload.ok === true) {
+        const paidText = sanitizeAssistantText(parseAiPayload(paidPayload));
+        if (paidText) {
+          if (context && typeof context === 'object') {
+            context.__lastAiMeta = {
+              mode: 'paid',
+              model: String((paidPayload && paidPayload.model) || ''),
+              tokensUsed: Number(paidPayload && paidPayload.tokensUsed) || 0,
+              timeMs: Number(paidPayload && paidPayload.timeMs) || 0,
+            };
+          }
+          return paidText;
+        }
+      }
+    }
+  }
+
   const request = await postDocsAiWithFallback(() => {
     const retryForm = new FormData();
     retryForm.append('action', 'ai_response_analyze');
@@ -925,7 +1032,12 @@ function openAiResponseDialog(context = {}) {
         file.extracted = false;
       }
     }
-    context.extractedTexts = extractedForContext.map((file) => ({ name: file.name, type: file.type || 'text/plain', text: file.text }));
+    context.extractedTexts = extractedForContext.map((file) => ({
+      name: file.name,
+      type: file.type || 'text/plain',
+      text: file.text,
+      url: file.url || '',
+    }));
     if (extractedForContext.length) {
       appendFileTextRevealMessage(extractedForContext);
     } else {
