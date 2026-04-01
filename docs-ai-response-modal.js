@@ -1331,6 +1331,7 @@
     var requestMode = resolveRequestMode(state);
     context.aiMode = requestMode;
     formData.append('mode', requestMode);
+    formData.append('briefMode', state.contextDetail === 'brief' ? '1' : '0');
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
@@ -2484,7 +2485,7 @@
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
         var requestMode = resolveRequestMode(state);
         var response = null;
-        if (requestMode === 'paid') {
+        if (requestMode === 'paid' && state.contextDetail !== 'brief') {
           response = await postGroqPaidWithFallback(effectivePrompt, state, config, timeoutMs);
         } else {
           var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
@@ -2552,7 +2553,7 @@
           try {
             var secondMode = resolveRequestMode(state);
             var secondResponse = null;
-            if (secondMode === 'paid') {
+            if (secondMode === 'paid' && state.contextDetail !== 'brief') {
               secondResponse = await postGroqPaidWithFallback(effectivePrompt, state, config, calculateAiTimeoutMs(effectivePrompt, state));
             } else {
               secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
