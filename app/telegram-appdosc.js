@@ -389,6 +389,7 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   const request = await postGroqPaidWithFallback(() => {
     const formData = new FormData();
     const promptParts = [
+      'System настройка: дай краткое описание файла простым деловым языком.',
       'Сформируй чистый ответ по приложенному файлу.',
       'Минимум 5 предложений.',
       'Только решение и краткое обоснование по фактам документа.',

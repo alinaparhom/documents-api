@@ -2492,7 +2492,8 @@
     }
     var request = await postGroqPaidForBrief(function() {
       var formData = new FormData();
-      formData.append('prompt', 'Сформируй чистый ответ по файлу: минимум 5 предложений, только решение и обоснование, без markdown и списков.');
+      formData.append('prompt', 'System настройка: дай краткое описание файла простым деловым языком. Без приветствий и markdown. '
+        + 'Сформируй чистый ответ по файлу: минимум 5 предложений, только решение и обоснование, без списков.');
       formData.append('files', fileForVip, fileForVip.name || sourceLabel);
       if (String(extractedText || '').trim()) {
         var ocrFileName = (fileForVip.name || sourceLabel || 'document').replace(/\.[^.]+$/, '') + '-ocr.txt';
