@@ -257,7 +257,7 @@ async function requestTelegramOcrByUrl(fileUrl) {
   return text;
 }
 
-async function requestTelegramBriefAi(sourceLabel, text) {
+async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   const normalizedText = String(text || '').trim();
   const fileOnlyPrompt = [
     'Режим: изолированный анализ только текста файла.',
@@ -285,6 +285,7 @@ async function requestTelegramBriefAi(sourceLabel, text) {
     formData.append('prompt', 'Сделай краткий и точный вывод по тексту файла. Верни только JSON заданного формата, без markdown.');
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
+    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
     formData.append('context', JSON.stringify(context));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });
@@ -456,11 +457,13 @@ function openTelegramBriefModal(task, statusHandler) {
           <div class="appdosc-brief-ai__title">Кратко ИИ</div>
           <div class="appdosc-brief-ai__sub">Краткий вывод по документу</div>
           <div class="appdosc-brief-ai__mode">Только текст выбранного файла</div>
+          <div style="margin-top:6px"><select data-ai-mode style="min-height:30px;border:1px solid rgba(203,213,225,.95);border-radius:9px;padding:4px 8px;background:#fff"><option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option></select></div>
           <div class="appdosc-brief-ai__hint">1) Выберите файл → 2) Дождитесь анализа → 3) Скопируйте нужные пункты.</div>
         </div>
         <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
       </div>
       <p class="appdosc-brief-ai__status" data-status data-tone="idle">Выберите файл для анализа.</p>
+      <p class="appdosc-brief-ai__status" data-meta data-tone="idle"> </p>
       <div class="appdosc-brief-ai__body">
         <div class="appdosc-brief-ai__list" data-list></div>
         <div class="appdosc-brief-ai__preview" data-preview>
@@ -471,6 +474,8 @@ function openTelegramBriefModal(task, statusHandler) {
   const list = modal.querySelector('[data-list]');
   const preview = modal.querySelector('[data-preview]');
   const statusNode = modal.querySelector('[data-status]');
+  const metaNode = modal.querySelector('[data-meta]');
+  const modeSelect = modal.querySelector('[data-ai-mode]');
   const sources = [];
   let activeRequestId = 0;
 
@@ -521,15 +526,21 @@ function openTelegramBriefModal(task, statusHandler) {
         }
         setStatus(`Анализ ИИ: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
-        const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
+        const aiStartedAt = Date.now();
+        const aiPayload = await requestTelegramBriefAi(source.label, sourceText, modeSelect && modeSelect.value === 'paid' ? 'paid' : 'free');
         if (requestId !== activeRequestId) return;
         renderTelegramBriefPreview(preview, aiPayload, sourceText);
         setStatus('Готово. Разбор сформирован только по выбранному файлу.', 'success');
+        if (metaNode) {
+          const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - aiStartedAt)) / 1000).toFixed(1);
+          metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек`;
+        }
       } catch (error) {
         if (requestId !== activeRequestId) return;
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
         preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.\n${escapeHtml(message)}</p>`;
         setStatus(`Ошибка: ${message}`, 'error');
+        if (metaNode) metaNode.textContent = '';
         if (typeof statusHandler === 'function') statusHandler('warning', message);
       } finally {
         button.disabled = false;

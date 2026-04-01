@@ -2209,7 +2209,7 @@
     });
   }
 
-  function requestAiBriefSummaryForText(source, sourceText, apiUrl) {
+  function requestAiBriefSummaryForText(source, sourceText, apiUrl, aiMode) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var briefText = String(sourceText || '').trim();
     if (!briefText) {
@@ -2238,6 +2238,7 @@
     formData.append('frequency_penalty', '0');
     formData.append('presence_penalty', '0');
     formData.append('briefMode', '1');
+    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
     formData.append('context', JSON.stringify(context));
     return fetch(endpoint, {
       method: 'POST',
@@ -2277,10 +2278,18 @@
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для OCR и краткого анализа ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Только текст выбранного файла'));
+    var modeSelect = document.createElement('select');
+    modeSelect.className = 'documents-select';
+    modeSelect.style.marginTop = '8px';
+    modeSelect.innerHTML = '<option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option>';
+    titleWrap.appendChild(modeSelect);
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
     var preview = createElement('pre', 'documents-brief-preview', 'Нажмите на источник слева, чтобы получить краткое резюме.');
+    var metaCompact = createElement('div', 'documents-brief-item-meta', '');
+    metaCompact.style.padding = '0 14px 8px';
+    metaCompact.style.fontSize = '12px';
 
     var sources = [];
 
@@ -2357,13 +2366,15 @@
             }
             updateAiProgress();
             timerId = window.setInterval(updateAiProgress, 1000);
-            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl)
+            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, modeSelect.value)
               .then(function(aiPayload) {
                 if (timerId) {
                   window.clearInterval(timerId);
                 }
                 preview.classList.remove('is-loading');
                 preview.textContent = buildAiBriefSummaryText(aiPayload);
+                var elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - aiStartedAt)) / 1000).toFixed(1);
+                metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек';
               })
               .catch(function(error) {
                 if (timerId) {
@@ -2371,6 +2382,7 @@
                 }
                 preview.classList.remove('is-loading');
                 preview.textContent = 'Ошибка анализа.\n' + (error && error.message ? error.message : 'неизвестная ошибка');
+                metaCompact.textContent = '';
                 showStatusMessage('warning', error && error.message ? error.message : 'ИИ временно недоступен. Попробуйте позже.');
               })
               .finally(function() {
@@ -2380,6 +2392,7 @@
           .catch(function(error) {
             preview.classList.remove('is-loading');
             preview.textContent = 'Не удалось получить summary: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+            metaCompact.textContent = '';
             showStatusMessage('warning', 'Не удалось обработать "' + source.label + '".');
             button.disabled = false;
           });
@@ -2407,6 +2420,7 @@
 
     header.appendChild(titleWrap);
     header.appendChild(closeButton);
+    panel.appendChild(metaCompact);
     body.appendChild(list);
     body.appendChild(preview);
     panel.appendChild(header);
