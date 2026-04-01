@@ -314,6 +314,7 @@ $textChunks = [];
 $metaChunks = [];
 $visionImages = [];
 $hasVisionInput = false;
+$hasReadableContent = false;
 
 $allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp'];
 
@@ -332,6 +333,9 @@ foreach ($files as $file) {
         $raw = (string)@file_get_contents($tmp);
         $normalized = trim(mb_substr($raw, 0, MAX_TEXT_CHARS));
         $textChunks[] = "[Файл: {$name}]\n" . ($normalized !== '' ? $normalized : '[пустой текст]');
+        if ($normalized !== '') {
+            $hasReadableContent = true;
+        }
         continue;
     }
 
@@ -340,6 +344,7 @@ foreach ($files as $file) {
         if ($raw !== '') {
             $visionImages[] = makeDataUriFromBinary($raw, $mime);
             $hasVisionInput = true;
+            $hasReadableContent = true;
             $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}]";
             continue;
         }
@@ -352,6 +357,7 @@ foreach ($files as $file) {
         if ($pdfText !== '') {
             $normalizedPdfText = trim(mb_substr($pdfText, 0, MAX_TEXT_CHARS));
             $textChunks[] = "[PDF: {$name}]\n" . $normalizedPdfText;
+            $hasReadableContent = true;
             $metaChunks[] = $pdfSource === 'ocr'
                 ? "[PDF: {$name}, {$size} байт, распознан через OCR]"
                 : "[PDF: {$name}, {$size} байт, извлечен текстом]";
@@ -362,6 +368,7 @@ foreach ($files as $file) {
         if ($jpegDataUri !== null) {
             $visionImages[] = $jpegDataUri;
             $hasVisionInput = true;
+            $hasReadableContent = true;
             $metaChunks[] = "[PDF: {$name}, {$size} байт, OCR не дал текст, первая страница преобразована в JPEG]";
             continue;
         }
@@ -373,8 +380,15 @@ foreach ($files as $file) {
     $metaChunks[] = "[Неподдерживаемый формат: {$name}, {$size} байт, MIME={$mime}]";
 }
 
+if (!$hasReadableContent) {
+    respond(422, [
+        'ok' => false,
+        'error' => 'Не удалось прочитать содержимое файлов. Проверьте файл/скан или добавьте текст в хорошем качестве.',
+    ]);
+}
+
 $model = $hasVisionInput ? MODEL_VISION : MODEL_TEXT;
-$systemPrompt = 'Ты помощник по документам. Проанализируй файлы и дай понятный подробный ответ на русском языке: краткий вывод, ключевые факты из документов и практические рекомендации.';
+$systemPrompt = 'Ты помощник по документам. Анализируй только фактическое содержимое файлов (текст/OCR/изображения), а не названия файлов. Если данных недостаточно, прямо напиши, что нужно улучшить качество скана или предоставить более читаемый документ. Дай понятный подробный ответ на русском языке: краткий вывод, ключевые факты из документов и практические рекомендации.';
 
 if ($hasVisionInput) {
     $visionText = $userPrompt;
