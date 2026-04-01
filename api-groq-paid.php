@@ -93,9 +93,7 @@ if (str_starts_with(strtolower($fileType), 'text/')) {
     $textPreview = 'BASE64 (первые ' . strlen($raw) . ' байт): ' . substr($textPreview, 0, 1800);
 }
 
-$taskTitle = trim((string)($_POST['taskTitle'] ?? 'Задача'));
-$taskDescription = trim((string)($_POST['taskDescription'] ?? ''));
-$taskId = trim((string)($_POST['taskId'] ?? ''));
+$userPrompt = trim((string)($_POST['prompt'] ?? ''));
 
 $env = loadEnv([
     __DIR__ . '/app/.env',
@@ -103,13 +101,12 @@ $env = loadEnv([
     __DIR__ . '/app/env.txt',
 ]);
 
-$apiKey = trim((string)($env['GROQ_API_KEY'] ?? $env['AI_API_KEY'] ?? ''));
+$apiKey = trim((string)($env['AI_API_KEY_PAID'] ?? ''));
 if ($apiKey === '') {
-    jsonResponse(500, ['ok' => false, 'error' => 'Не задан GROQ_API_KEY (или AI_API_KEY)']);
+    jsonResponse(500, ['ok' => false, 'error' => 'Не задан AI_API_KEY_PAID']);
 }
 
-$model = trim((string)($_POST['model'] ?? $env['GROQ_MODEL'] ?? $env['AI_MODEL'] ?? 'llama-3.3-70b-versatile'));
-$customPrompt = trim((string)($_POST['prompt'] ?? ''));
+$model = trim((string)($env['GROQ_MODEL'] ?? $env['AI_MODEL'] ?? 'llama-3.3-70b-versatile'));
 
 $messages = [
     [
@@ -118,11 +115,8 @@ $messages = [
     ],
     [
         'role' => 'user',
-        'content' => ($customPrompt !== '' ? ($customPrompt . "\n") : "Сформируй итоговый ответ по задаче и файлу.\n")
-            . "taskId: {$taskId}\n"
-            . "taskTitle: {$taskTitle}\n"
-            . "taskDescription: {$taskDescription}\n"
-            . "fileName: {$fileName}\nfileType: {$fileType}\nfileSize: {$fileSize}\n"
+        'content' => ($userPrompt !== '' ? $userPrompt : "Сформируй ответ по приложенному файлу.")
+            . "\nfileName: {$fileName}\nfileType: {$fileType}\nfileSize: {$fileSize}\n"
             . "Содержимое файла (или фрагмент):\n{$textPreview}",
     ],
 ];

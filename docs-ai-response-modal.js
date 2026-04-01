@@ -256,11 +256,50 @@
   }
 
   async function resolvePaidSourceFile(state) {
+    function isPdfFile(name, type) {
+      var fileName = String(name || '').toLowerCase();
+      var fileType = String(type || '').toLowerCase();
+      return fileType.indexOf('application/pdf') === 0 || /\.pdf$/i.test(fileName);
+    }
+
+    async function convertPdfBlobToJpegBlob(pdfBlob) {
+      var pdfjsLib = await ensurePdfJsLoaded();
+      var buffer = await pdfBlob.arrayBuffer();
+      var loadingTask = pdfjsLib.getDocument({ data: buffer });
+      var pdf = await loadingTask.promise;
+      if (!pdf || !pdf.numPages) {
+        throw new Error('Не удалось прочитать PDF для конвертации.');
+      }
+      var page = await pdf.getPage(1);
+      var viewport = page.getViewport({ scale: 2 });
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      var ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Canvas недоступен для конвертации PDF.');
+      }
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      var jpegBlob = await new Promise(function (resolve) {
+        canvas.toBlob(resolve, 'image/jpeg', 0.9);
+      });
+      if (!jpegBlob) {
+        throw new Error('Не удалось получить JPEG из PDF.');
+      }
+      return jpegBlob;
+    }
+
     var candidates = Array.isArray(state && state.files) ? state.files : [];
     for (var i = 0; i < candidates.length; i += 1) {
       var file = candidates[i];
       if (file && file.fileObject) {
-        return { name: file.name || 'document.bin', blob: file.fileObject };
+        var localName = file.name || 'document.bin';
+        if (isPdfFile(localName, file.fileObject.type)) {
+          // eslint-disable-next-line no-await-in-loop
+          var localJpeg = await convertPdfBlobToJpegBlob(file.fileObject);
+          return { name: localName.replace(/\.pdf$/i, '') + '.jpg', blob: localJpeg };
+        }
+        return { name: localName, blob: file.fileObject };
       }
       if (file && file.url) {
         // eslint-disable-next-line no-await-in-loop
@@ -270,7 +309,13 @@
         }
         // eslint-disable-next-line no-await-in-loop
         var fileBlob = await fileResponse.blob();
-        return { name: file.name || 'document.bin', blob: fileBlob };
+        var remoteName = file.name || 'document.bin';
+        if (isPdfFile(remoteName, fileBlob.type)) {
+          // eslint-disable-next-line no-await-in-loop
+          var remoteJpeg = await convertPdfBlobToJpegBlob(fileBlob);
+          return { name: remoteName.replace(/\.pdf$/i, '') + '.jpg', blob: remoteJpeg };
+        }
+        return { name: remoteName, blob: fileBlob };
       }
     }
     return null;
@@ -282,13 +327,7 @@
       throw new Error('Для платного ИИ прикрепите файл или выберите задачу с файлом.');
     }
     var formData = new FormData();
-    formData.append('taskId', String(config && config.taskId || config && config.documentId || ''));
-    formData.append('taskTitle', String(config && config.documentTitle || 'Документ'));
-    formData.append('taskDescription', String(config && config.description || ''));
     formData.append('prompt', String(prompt || 'Сформируй ответ по приложенному файлу.'));
-    if (state && state.model) {
-      formData.append('model', state.model);
-    }
     formData.append('file', paidFile.blob, paidFile.name || 'document.bin');
     return formData;
   }
