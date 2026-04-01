@@ -76,6 +76,10 @@
     { value: 'detailed', label: 'Подробно' },
     { value: 'brief', label: 'Кратко' }
   ];
+  var AI_MODE_OPTIONS = [
+    { value: 'free', label: 'Бесплатный ИИ' },
+    { value: 'paid', label: 'VIP ИИ (платный)' }
+  ];
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -1145,6 +1149,9 @@
       behaviorText = behaviorText.slice(0, 10000);
     }
     formData.append('aiBehavior', behaviorText);
+    var requestMode = state.contextDetail === 'brief' ? 'paid' : (state.aiMode === 'paid' ? 'paid' : 'free');
+    context.aiMode = requestMode;
+    formData.append('mode', requestMode);
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
@@ -1190,6 +1197,7 @@
         .concat(normalizeExternalFiles(config.linkedFiles || [], 'linked')),
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
+      aiMode: 'free',
       responseStyle: STYLE_OPTIONS[0].value,
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
@@ -1251,6 +1259,19 @@
     var modelField = createElement('label', 'ai-chat-modal__field');
     modelField.appendChild(createElement('span', '', 'Модель'));
     var modelSelect = createElement('select', 'ai-chat-modal__select');
+    var modeField = createElement('label', 'ai-chat-modal__field');
+    modeField.appendChild(createElement('span', '', 'Режим ИИ'));
+    var modeSelect = createElement('select', 'ai-chat-modal__select');
+    AI_MODE_OPTIONS.forEach(function (opt) {
+      var option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      modeSelect.appendChild(option);
+    });
+    if (state.contextDetail === 'brief') {
+      state.aiMode = 'paid';
+    }
+    modeSelect.value = state.aiMode;
 
     var styleField = createElement('label', 'ai-chat-modal__field');
     styleField.appendChild(createElement('span', '', 'Стиль'));
@@ -2272,6 +2293,7 @@
       messages.appendChild(pending);
       messages.scrollTop = messages.scrollHeight;
       setLoading(true);
+      var requestStartedAt = Date.now();
 
       try {
         await hydrateFileContents(state);
@@ -2325,6 +2347,10 @@
           appendAssistantErrorOnce('В ответе нет даты в формате ДД.ММ.ГГГГ. Уточните срок в следующем сообщении.');
         }
         messages.appendChild(createMessage('assistant', finalResponse));
+        var responseMode = String(payload && payload.mode ? payload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
+        var responseTime = Number(payload && payload.timeMs) > 0 ? Number(payload.timeMs) : (Date.now() - requestStartedAt);
+        var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload.tokensUsed) : 0;
+        messages.appendChild(createMessage('assistant', 'ℹ️ Режим: ' + (responseMode === 'paid' ? 'VIP' : 'Free') + ' • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—')));
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
         autoHeight(textarea);
@@ -2346,6 +2372,10 @@
             pending.remove();
             var retryText = sanitizeAssistantResponseText(cleanNumericArtifacts(String(secondPayload.response || secondPayload.analysis || '')).trim());
             messages.appendChild(createMessage('assistant', retryText || 'Пустой ответ от API.'));
+            var retryMode = String(secondPayload && secondPayload.mode ? secondPayload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
+            var retryTime = Number(secondPayload && secondPayload.timeMs) > 0 ? Number(secondPayload.timeMs) : (Date.now() - requestStartedAt);
+            var retryTokens = Number(secondPayload && secondPayload.tokensUsed) > 0 ? Number(secondPayload.tokensUsed) : 0;
+            messages.appendChild(createMessage('assistant', 'ℹ️ Режим: ' + (retryMode === 'paid' ? 'VIP' : 'Free') + ' • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—')));
             state.lastAssistantMessage = String(retryText || '');
             textarea.value = '';
             autoHeight(textarea);
@@ -2391,8 +2421,18 @@
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
     });
+    modeSelect.addEventListener('change', function () {
+      state.aiMode = modeSelect.value === 'paid' ? 'paid' : 'free';
+      if (state.contextDetail === 'brief' && state.aiMode !== 'paid') {
+        appendAssistantErrorOnce('Режим «Кратко» работает через VIP модель.');
+      }
+    });
     contextDetailSelect.addEventListener('change', function () {
       state.contextDetail = contextDetailSelect.value === 'brief' ? 'brief' : 'detailed';
+      if (state.contextDetail === 'brief') {
+        state.aiMode = 'paid';
+        modeSelect.value = 'paid';
+      }
       updateContextUsageHint();
     });
 
@@ -2505,8 +2545,10 @@
     filesBox.appendChild(extractAllButton);
 
     modelField.appendChild(modelSelect);
+    modeField.appendChild(modeSelect);
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
+    topBar.appendChild(modeField);
     topBar.appendChild(modelField);
     topBar.appendChild(styleField);
     topBar.appendChild(settingsButton);

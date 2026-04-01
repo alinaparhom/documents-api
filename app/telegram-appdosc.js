@@ -13460,12 +13460,120 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  aiButton.addEventListener('click', () => {
-    openAiDialogSafely({
-      task,
-      entry,
-      onStatus: setStatus,
+  const ensureAiChoiceStyles = () => {
+    if (document.getElementById('tg-ai-mode-style-v1')) return;
+    const style = document.createElement('style');
+    style.id = 'tg-ai-mode-style-v1';
+    style.textContent = `
+      .tg-ai-mode{position:fixed;inset:0;z-index:3500;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.36);backdrop-filter:blur(8px);padding:10px}
+      .tg-ai-mode__panel{width:min(420px,100%);border-radius:20px;border:1px solid rgba(255,255,255,.9);background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(241,245,249,.92));padding:14px;box-shadow:0 22px 50px rgba(15,23,42,.2)}
+      .tg-ai-mode__btn{width:100%;border:1px solid rgba(203,213,225,.95);border-radius:13px;padding:11px 12px;background:#fff;text-align:left;font-size:14px;color:#0f172a}
+      .tg-ai-mode__btn + .tg-ai-mode__btn{margin-top:8px}
+      .tg-ai-mode__btn--vip{background:linear-gradient(135deg,rgba(224,242,254,.95),rgba(240,253,250,.95))}
+      .tg-vip-ai{position:fixed;inset:0;z-index:3600;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,23,42,.4);backdrop-filter:blur(8px)}
+      .tg-vip-ai__card{width:min(860px,100%);max-height:100dvh;overflow:auto;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(241,245,249,.9));border-radius:22px 22px 0 0;padding:14px}
+      .tg-vip-ai__meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+      .tg-vip-ai__chip{padding:5px 9px;border:1px solid rgba(203,213,225,.95);border-radius:999px;font-size:12px;color:#334155;background:rgba(255,255,255,.9)}
+    `;
+    document.head.appendChild(style);
+  };
+
+  const openVipTelegramModal = async () => {
+    ensureAiChoiceStyles();
+    const overlay = document.createElement('div');
+    overlay.className = 'tg-vip-ai';
+    overlay.innerHTML = `
+      <div class="tg-vip-ai__card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div><div style="font-size:17px;font-weight:800;color:#0f172a">VIP AI ассистент</div><div style="font-size:12px;color:#64748b">Усиленный анализ приложений и решение по документу</div></div>
+          <button type="button" data-close style="border:none;background:#fff;border-radius:10px;padding:6px 10px">✕</button>
+        </div>
+        <div style="margin-top:10px;font-size:13px;color:#334155" data-status>Готов к отправке.</div>
+        <div style="margin-top:10px;padding:10px;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:rgba(255,255,255,.86);font-size:13px;white-space:pre-wrap;color:#0f172a" data-answer>—</div>
+        <div class="tg-vip-ai__meta" data-meta></div>
+        <button type="button" data-send style="margin-top:10px;width:100%;border:none;border-radius:12px;padding:11px 14px;color:#fff;font-weight:700;background:linear-gradient(135deg,#38bdf8,#14b8a6)">Отправить в VIP ИИ</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('[data-close]')?.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
     });
+
+    overlay.querySelector('[data-send]')?.addEventListener('click', async (event) => {
+      const sendBtn = event.currentTarget;
+      const statusNode = overlay.querySelector('[data-status]');
+      const answerNode = overlay.querySelector('[data-answer]');
+      const metaNode = overlay.querySelector('[data-meta]');
+      sendBtn.disabled = true;
+      statusNode.textContent = 'Отправляем запрос...';
+      answerNode.textContent = 'Ожидайте...';
+      metaNode.innerHTML = '';
+      const startedAt = Date.now();
+      try {
+        const result = await postDocsAiWithFallback(() => {
+          const formData = new FormData();
+          formData.append('action', 'ai_response_analyze');
+          formData.append('mode', 'paid');
+          formData.append('prompt', 'Сформируй итоговый деловой ответ по задаче и прикреплённым файлам.');
+          formData.append('documentTitle', normalizeValue(task && task.title) || 'Задача');
+          formData.append('responseStyle', 'neutral');
+          formData.append('context', JSON.stringify({
+            taskId: normalizeValue(task && task.id),
+            description: normalizeValue(task && task.description),
+            files: Array.isArray(task && task.files) ? task.files : [],
+          }));
+          return formData;
+        });
+        const payload = result && result.payload ? result.payload : null;
+        if (!payload || payload.ok !== true) {
+          throw new Error((payload && payload.error) || 'VIP ИИ временно недоступен.');
+        }
+        statusNode.textContent = 'Ответ готов.';
+        answerNode.textContent = normalizeValue(payload.response) || 'Пустой ответ.';
+        const elapsed = Date.now() - startedAt;
+        metaNode.innerHTML = `<span class="tg-vip-ai__chip">Модель: ${normalizeValue(payload.model) || '—'}</span><span class="tg-vip-ai__chip">Время: ${elapsed} мс</span><span class="tg-vip-ai__chip">Токены: ${Number(payload.tokensUsed) || '—'}</span>`;
+      } catch (error) {
+        statusNode.textContent = 'Ошибка';
+        answerNode.textContent = error?.message || 'Не удалось получить ответ.';
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  };
+
+  const openAiModeSelectorTelegram = () => {
+    ensureAiChoiceStyles();
+    const overlay = document.createElement('div');
+    overlay.className = 'tg-ai-mode';
+    overlay.innerHTML = `
+      <div class="tg-ai-mode__panel">
+        <div style="font-size:17px;font-weight:700;color:#0f172a">Режим ИИ</div>
+        <div style="font-size:12px;color:#64748b;margin:4px 0 10px">Выберите нужный формат ответа.</div>
+        <button type="button" class="tg-ai-mode__btn" data-free>🤍 Бесплатный ИИ</button>
+        <button type="button" class="tg-ai-mode__btn tg-ai-mode__btn--vip" data-paid>💎 VIP ИИ</button>
+        <button type="button" class="tg-ai-mode__btn" data-cancel>Отмена</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('[data-free]')?.addEventListener('click', () => {
+      close();
+      openAiDialogSafely({ task, entry, onStatus: setStatus });
+    });
+    overlay.querySelector('[data-paid]')?.addEventListener('click', () => {
+      close();
+      openVipTelegramModal();
+    });
+    overlay.querySelector('[data-cancel]')?.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+  };
+
+  aiButton.addEventListener('click', () => {
+    openAiModeSelectorTelegram();
   });
 
   textInput.addEventListener('input', () => {
