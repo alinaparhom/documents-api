@@ -2451,18 +2451,22 @@
   async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
     var fileForVip = null;
+    var extractedText = '';
     if (source && source.fileObject instanceof File) {
-      var preparedLocal = await convertPdfToImageFileForBrief(source.fileObject, source.fileObject.name || sourceLabel);
-      fileForVip = preparedLocal;
+      fileForVip = source.fileObject;
     } else if (source && source.url) {
       var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
       if (fetched.ok) {
         var blob = await fetched.blob();
         var fileName = sourceLabel || 'brief-file';
         var downloaded = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-        var preparedDownloaded = await convertPdfToImageFileForBrief(downloaded, fileName);
-        fileForVip = preparedDownloaded;
+        fileForVip = downloaded;
       }
+    }
+    try {
+      extractedText = await requestOcrTextForSource(source, apiUrl);
+    } catch (_) {
+      extractedText = '';
     }
     if (!(fileForVip instanceof File)) {
       throw new Error('Не удалось подготовить файл для платного ИИ.');
@@ -2471,6 +2475,11 @@
       var formData = new FormData();
       formData.append('prompt', 'Сформируй чистый ответ по файлу: минимум 5 предложений, только решение и обоснование, без markdown и списков.');
       formData.append('files', fileForVip, fileForVip.name || sourceLabel);
+      if (String(extractedText || '').trim()) {
+        var ocrFileName = (fileForVip.name || sourceLabel || 'document').replace(/\.[^.]+$/, '') + '-ocr.txt';
+        var ocrTextFile = new File([String(extractedText).slice(0, 16000)], ocrFileName, { type: 'text/plain' });
+        formData.append('files', ocrTextFile, ocrTextFile.name);
+      }
       return formData;
     });
     var response = request && request.response;
