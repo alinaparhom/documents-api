@@ -358,38 +358,6 @@ function withRetryPayload(int $retryAfterSeconds): array
     ];
 }
 
-function getAiCachePath(string $name): string
-{
-    $directory = __DIR__ . '/app/cache';
-    if (!is_dir($directory)) {
-        @mkdir($directory, 0775, true);
-    }
-    return $directory . '/' . $name . '.json';
-}
-
-function readJsonCache(string $name): array
-{
-    $path = getAiCachePath($name);
-    if (!is_file($path)) {
-        return [];
-    }
-    $raw = @file_get_contents($path);
-    if (!is_string($raw) || $raw === '') {
-        return [];
-    }
-    $decoded = json_decode($raw, true);
-    return is_array($decoded) ? $decoded : [];
-}
-
-function writeJsonCache(string $name, array $payload): void
-{
-    $path = getAiCachePath($name);
-    @file_put_contents(
-        $path,
-        json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE)
-    );
-}
-
 function findSuggestedModel(array $availableModels, string $currentModel): ?string
 {
     foreach ($availableModels as $candidate) {
@@ -425,25 +393,9 @@ function buildModelAvailabilityRows(array $models, array $env): array
     }
 
     $endpoint = rtrim($baseUrl, '/') . '/chat/completions';
-    $cacheTtl = normalizeIntSetting($env['AI_MODELS_CACHE_TTL'] ?? 600, 600, 60, 3600);
-    $cacheKey = hash('sha256', implode('|', [
-        $endpoint,
-        implode(',', $normalizedModels),
-        substr(hash('sha256', $apiKey), 0, 12),
-    ]));
-    $cache = readJsonCache('ai-model-health');
-    $cachedRows = [];
-    $cachedAt = (int)($cache[$cacheKey]['timestamp'] ?? 0);
-    if ($cachedAt > 0 && (time() - $cachedAt) <= $cacheTtl) {
-        $cachedRows = $cache[$cacheKey]['rows'] ?? [];
-    }
 
     $result = [];
     foreach ($normalizedModels as $modelName) {
-        if (isset($cachedRows[$modelName]) && is_array($cachedRows[$modelName])) {
-            $result[] = $cachedRows[$modelName];
-            continue;
-        }
         $probeBody = [
             'model' => $modelName,
             'max_tokens' => 1,
@@ -507,13 +459,7 @@ function buildModelAvailabilityRows(array $models, array $env): array
             $entry['statusCode'] = $code;
         }
         $result[] = $entry;
-        $cachedRows[$modelName] = $entry;
     }
-    $cache[$cacheKey] = [
-        'timestamp' => time(),
-        'rows' => $cachedRows,
-    ];
-    writeJsonCache('ai-model-health', $cache);
     return $result;
 }
 
