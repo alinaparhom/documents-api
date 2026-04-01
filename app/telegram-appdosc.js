@@ -13453,78 +13453,6 @@ function createResponseUploadControls(task, entry, setStatus) {
   input.style.opacity = '0';
   input.style.pointerEvents = 'none';
 
-  const chooseAiModeBeforeOpen = () => new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.style.position = 'fixed';
-    overlay.style.inset = '0';
-    overlay.style.zIndex = '3200';
-    overlay.style.display = 'flex';
-    overlay.style.alignItems = 'center';
-    overlay.style.justifyContent = 'center';
-    overlay.style.padding = '12px';
-    overlay.style.background = 'rgba(15,23,42,.38)';
-    overlay.style.backdropFilter = 'blur(10px)';
-
-    const panel = document.createElement('div');
-    panel.style.width = 'min(520px,100%)';
-    panel.style.borderRadius = '18px';
-    panel.style.padding = '14px';
-    panel.style.background = 'linear-gradient(160deg,rgba(255,255,255,.95),rgba(255,255,255,.86))';
-    panel.style.border = '1px solid rgba(226,232,240,.9)';
-    panel.style.boxShadow = '0 18px 44px rgba(15,23,42,.16)';
-    panel.style.display = 'flex';
-    panel.style.flexDirection = 'column';
-    panel.style.gap = '10px';
-
-    const title = document.createElement('div');
-    title.textContent = 'Выберите режим ИИ';
-    title.style.fontWeight = '700';
-    title.style.fontSize = '16px';
-    const hint = document.createElement('div');
-    hint.textContent = 'Бесплатный — текущая логика. Платный (VIP) — отдельный режим с прямой отправкой файлов.';
-    hint.style.fontSize = '12px';
-    hint.style.color = '#475569';
-
-    const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.gap = '8px';
-    row.style.flexWrap = 'wrap';
-    const freeBtn = document.createElement('button');
-    freeBtn.type = 'button';
-    freeBtn.className = 'appdosc-card__action appdosc-card__action--response';
-    freeBtn.style.flex = '1 1 180px';
-    freeBtn.textContent = 'Бесплатный ИИ';
-    const paidBtn = document.createElement('button');
-    paidBtn.type = 'button';
-    paidBtn.className = 'appdosc-card__action appdosc-card__action--response appdosc-card__action--response-ai';
-    paidBtn.style.flex = '1 1 180px';
-    paidBtn.textContent = 'Платный ИИ (VIP)';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'appdosc-card__action appdosc-card__action--response';
-    cancelBtn.textContent = 'Отмена';
-
-    const finish = (mode) => {
-      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      resolve(mode || null);
-    };
-    freeBtn.addEventListener('click', () => finish('free'));
-    paidBtn.addEventListener('click', () => finish('paid'));
-    cancelBtn.addEventListener('click', () => finish(null));
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) finish(null);
-    });
-
-    row.appendChild(freeBtn);
-    row.appendChild(paidBtn);
-    panel.appendChild(title);
-    panel.appendChild(hint);
-    panel.appendChild(row);
-    panel.appendChild(cancelBtn);
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
-  });
-
   button.addEventListener('click', () => {
     if (button.disabled) {
       return;
@@ -13532,16 +13460,10 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  aiButton.addEventListener('click', async () => {
-    const aiMode = await chooseAiModeBeforeOpen();
-    if (!aiMode) return;
+  aiButton.addEventListener('click', () => {
     openAiDialogSafely({
       task,
       entry,
-      aiApiKeyMode: aiMode,
-      aiBehavior: aiMode === 'paid'
-        ? 'VIP режим. Пиши уверенно, конструктивно и без мрачных формулировок. Дай чёткий план действий и сроки в формате ДД.ММ.ГГГГ.'
-        : '',
       onStatus: setStatus,
     });
   });

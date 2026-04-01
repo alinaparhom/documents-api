@@ -13241,74 +13241,8 @@
       });
     });
 
-    function chooseAiModeAtStart() {
-      return new Promise(function(resolve) {
-        var overlay = createElement('div', 'documents-modal');
-        overlay.style.zIndex = '2500';
-        overlay.style.padding = '12px';
-        var panel = createElement('div', 'documents-modal__panel');
-        panel.style.maxWidth = '520px';
-        panel.style.width = '100%';
-        panel.style.borderRadius = '20px';
-        panel.style.background = 'linear-gradient(155deg, rgba(255,255,255,0.95), rgba(255,255,255,0.82))';
-        panel.style.backdropFilter = 'blur(12px)';
-        panel.style.border = '1px solid rgba(226,232,240,0.92)';
-        panel.style.boxShadow = '0 18px 44px rgba(15,23,42,0.16)';
-        panel.style.padding = '14px';
-        panel.style.display = 'flex';
-        panel.style.flexDirection = 'column';
-        panel.style.gap = '10px';
-
-        var title = createElement('div', 'documents-responses-title', 'Выберите режим ИИ');
-        var hint = createElement('div', 'documents-responses-hint', 'Бесплатный: текущая логика как раньше. Платный (VIP): отдельный режим с прямой отправкой файлов.');
-        var actions = createElement('div', 'documents-responses-actions');
-        actions.style.width = '100%';
-
-        var freeBtn = createElement('button', 'documents-button', 'Бесплатный ИИ');
-        freeBtn.type = 'button';
-        freeBtn.style.flex = '1 1 0';
-        freeBtn.style.minHeight = '42px';
-
-        var paidBtn = createElement('button', 'documents-button documents-button--ai', 'Платный ИИ (VIP)');
-        paidBtn.type = 'button';
-        paidBtn.style.flex = '1 1 0';
-        paidBtn.style.minHeight = '42px';
-
-        var cancelBtn = createElement('button', 'documents-button documents-button--secondary', 'Отмена');
-        cancelBtn.type = 'button';
-        cancelBtn.style.width = '100%';
-
-        function finish(mode) {
-          if (overlay && overlay.parentNode) {
-            overlay.parentNode.removeChild(overlay);
-          }
-          resolve(mode || null);
-        }
-
-        freeBtn.addEventListener('click', function() { finish('free'); });
-        paidBtn.addEventListener('click', function() { finish('paid'); });
-        cancelBtn.addEventListener('click', function() { finish(null); });
-        overlay.addEventListener('click', function(event) {
-          if (event.target === overlay) finish(null);
-        });
-
-        actions.appendChild(freeBtn);
-        actions.appendChild(paidBtn);
-        panel.appendChild(title);
-        panel.appendChild(hint);
-        panel.appendChild(actions);
-        panel.appendChild(cancelBtn);
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-      });
-    }
-
     aiButton.type = 'button';
-    aiButton.addEventListener('click', async function() {
-      var chosenAiMode = await chooseAiModeAtStart();
-      if (!chosenAiMode) {
-        return;
-      }
+    aiButton.addEventListener('click', function() {
       var uploadedResponses = currentDoc && Array.isArray(currentDoc.responses)
         ? currentDoc.responses.map(function(file) {
           return {
@@ -13335,7 +13269,6 @@
       }
       openAiResponseModal({
         apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
-        aiApiKeyMode: chosenAiMode,
         showMessage: showMessage,
         documentData: currentDoc || doc || {},
         documentTitle: currentDoc && currentDoc.title ? String(currentDoc.title) : '',
@@ -13350,10 +13283,7 @@
           pendingFilesCount: pendingFiles.length,
           uploadedResponsesCount: uploadedResponses.length,
           uploadedResponses: uploadedResponses
-        },
-        aiBehavior: chosenAiMode === 'paid'
-          ? 'VIP режим. Тон уверенный и конструктивный, без мрачных формулировок. Дай решение по делу, с чётким планом и сроками в формате ДД.ММ.ГГГГ.'
-          : ''
+        }
       });
     });
     aiBriefButton.type = 'button';

@@ -90,6 +90,64 @@
     return 'auto';
   }
 
+  function chooseAiModeOverlay() {
+    return new Promise(function (resolve) {
+      var overlay = createElement('div', ROOT_CLASS + ' ai-chat-modal--visible');
+      var panel = createElement('div', 'ai-chat-modal__panel');
+      panel.style.maxWidth = '520px';
+      panel.style.width = '100%';
+      panel.style.margin = 'auto';
+      panel.style.height = 'auto';
+      panel.style.maxHeight = 'none';
+      panel.style.padding = '14px';
+      panel.style.display = 'flex';
+      panel.style.flexDirection = 'column';
+      panel.style.gap = '10px';
+      panel.style.borderRadius = '20px';
+      panel.style.background = 'linear-gradient(155deg, rgba(255,255,255,0.95), rgba(255,255,255,0.85))';
+      panel.style.backdropFilter = 'blur(12px)';
+
+      var title = createElement('div', 'ai-chat-modal__title', 'Выберите режим ИИ');
+      var hint = createElement('div', 'ai-chat-modal__subtitle', 'Бесплатный: текущая логика. Платный VIP: отдельный режим, прямые файлы и более сильный анализ решений.');
+      var buttons = createElement('div', 'ai-chat-modal__actions');
+      buttons.style.display = 'grid';
+      buttons.style.gridTemplateColumns = '1fr 1fr';
+      buttons.style.gap = '8px';
+
+      var freeBtn = createElement('button', 'ai-chat-modal__send', 'Бесплатный ИИ');
+      freeBtn.type = 'button';
+      var paidBtn = createElement('button', 'ai-chat-modal__send', 'Платный ИИ (VIP)');
+      paidBtn.type = 'button';
+      var cancelBtn = createElement('button', 'ai-chat-modal__close', 'Отмена');
+      cancelBtn.type = 'button';
+      cancelBtn.style.position = 'static';
+      cancelBtn.style.alignSelf = 'stretch';
+
+      function finish(mode) {
+        if (overlay.parentNode) {
+          overlay.parentNode.removeChild(overlay);
+        }
+        resolve(mode || null);
+      }
+
+      freeBtn.addEventListener('click', function () { finish('free'); });
+      paidBtn.addEventListener('click', function () { finish('paid'); });
+      cancelBtn.addEventListener('click', function () { finish(null); });
+      overlay.addEventListener('click', function (event) {
+        if (event.target === overlay) finish(null);
+      });
+
+      buttons.appendChild(freeBtn);
+      buttons.appendChild(paidBtn);
+      panel.appendChild(title);
+      panel.appendChild(hint);
+      panel.appendChild(buttons);
+      panel.appendChild(cancelBtn);
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+    });
+  }
+
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
     if (className) {
@@ -1235,6 +1293,21 @@
     ensureStyles();
 
     var config = options && typeof options === 'object' ? options : {};
+    if (!config._aiModeSelected && !String(config.aiApiKeyMode || '').trim()) {
+      chooseAiModeOverlay().then(function (mode) {
+        if (!mode) {
+          return;
+        }
+        openDocumentsAiResponseModal(Object.assign({}, config, {
+          _aiModeSelected: true,
+          aiApiKeyMode: mode,
+          aiBehavior: mode === 'paid'
+            ? 'VIP режим. Тон уверенный, конструктивный и немрачный. Всегда формируй решение, риск-блок и конкретный план действий с датами ДД.ММ.ГГГГ.'
+            : config.aiBehavior
+        }));
+      });
+      return;
+    }
     var previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 

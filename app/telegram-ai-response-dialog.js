@@ -49,6 +49,8 @@ const DEFAULT_SITE_AI_BEHAVIOR = 'ТЫ — СОТРУДНИК СТРОИТЕЛЬ
   + '- Сплошной текст без шапки и подписи.\n'
   + '- Только суть решений, действий и сроков в формате ДД.ММ.ГГГГ.\n'
   + '- Начинай сразу с решения по существу.\n';
+const VIP_AI_BEHAVIOR = 'VIP режим. Пиши уверенно, конструктивно и без мрачных формулировок. '
+  + 'Всегда выдай чёткое решение, короткий анализ рисков и план действий с датами в формате ДД.ММ.ГГГГ.';
 
 const SCRIPT_CACHE = new Map();
 
@@ -250,6 +252,37 @@ function resolveAiApiKeyMode(context) {
   const raw = String(context && context.aiApiKeyMode || '').trim().toLowerCase();
   if (raw === 'paid' || raw === 'free') return raw;
   return 'auto';
+}
+
+function chooseAiModeDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'appdosc-ai-dialog';
+    overlay.innerHTML = `
+      <div class="appdosc-ai-dialog__panel" style="max-width:520px;height:auto;max-height:none;border-radius:20px;margin:auto;padding:14px;gap:10px">
+        <div class="appdosc-ai-dialog__title">Выберите режим ИИ</div>
+        <div class="appdosc-ai-dialog__subtitle">Бесплатный: как раньше. Платный VIP: отдельный режим с прямыми файлами и усиленным принятием решения.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <button type="button" class="appdosc-ai-dialog__btn" data-mode="free">Бесплатный ИИ</button>
+          <button type="button" class="appdosc-ai-dialog__btn" data-mode="paid">Платный ИИ (VIP)</button>
+        </div>
+        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-cancel>Отмена</button>
+      </div>`;
+    const finish = (mode) => {
+      if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      resolve(mode || null);
+    };
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) finish(null);
+    });
+    const freeBtn = overlay.querySelector('[data-mode="free"]');
+    const paidBtn = overlay.querySelector('[data-mode="paid"]');
+    const cancelBtn = overlay.querySelector('[data-cancel]');
+    if (freeBtn) freeBtn.addEventListener('click', () => finish('free'));
+    if (paidBtn) paidBtn.addEventListener('click', () => finish('paid'));
+    if (cancelBtn) cancelBtn.addEventListener('click', () => finish(null));
+    document.body.appendChild(overlay);
+  });
 }
 
 function normalizeModelList(rawModels) {
@@ -559,11 +592,12 @@ async function requestAssistantReply(userMessage, context, history) {
   const task = context && context.task ? context.task : {};
   const resolvedModel = resolveAiModel(context);
   const responseStyle = context && context.responseStyle ? String(context.responseStyle) : 'neutral';
+  const aiApiKeyMode = resolveAiApiKeyMode(context);
   const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
-  const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
+  const behaviorBase = behaviorFromContext || (aiApiKeyMode === 'paid' ? VIP_AI_BEHAVIOR : DEFAULT_SITE_AI_BEHAVIOR);
+  const behaviorText = normalizeAiBehavior(behaviorBase);
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
   const generationParams = context && context.generationParams ? context.generationParams : {};
-  const aiApiKeyMode = resolveAiApiKeyMode(context);
   const selectedAttachments = Array.isArray(context && context.selectedAttachments) ? context.selectedAttachments : [];
   const shouldSendDirectFiles = aiApiKeyMode === 'paid';
   const directFileUploads = [];
@@ -682,6 +716,17 @@ async function requestAssistantWithSmartRetry(userMessage, context, history) {
 
 function openAiResponseDialog(context = {}) {
   ensureAiDialogStyles();
+  if (!resolveAiApiKeyMode(context) || resolveAiApiKeyMode(context) === 'auto') {
+    chooseAiModeDialog().then((mode) => {
+      if (!mode) return;
+      openAiResponseDialog({
+        ...context,
+        aiApiKeyMode: mode,
+        aiBehavior: mode === 'paid' ? VIP_AI_BEHAVIOR : (context.aiBehavior || ''),
+      });
+    });
+    return;
+  }
   const existingRef = window.__aiDialogInstance;
   if (existingRef && existingRef.isConnected) return;
   if (existingRef && !existingRef.isConnected) {
