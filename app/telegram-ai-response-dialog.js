@@ -666,38 +666,42 @@ async function requestAssistantReply(userMessage, context, history) {
   const hasPdfInContext = extractedTexts.some((entry) => isPdfLikeByNameType(entry && entry.name, entry && entry.type));
   if (aiMode === 'paid' && hasPdfInContext) {
     const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
-    if (filesForPaid.length) {
-      const paidPrompt = [
-        prompt,
-        '',
-        'Учитывай chatHistory и extractedTexts из контекста.',
-        'Если пользователь просит переделать/исправить — обнови предыдущий ответ.',
-      ].join('\n');
-      const paidRequest = await postGroqPaidWithFallback(() => {
-        const formData = new FormData();
-        formData.append('prompt', paidPrompt);
-        filesForPaid.forEach((file) => {
-          formData.append('files[]', file, file.name || 'document.pdf');
-        });
-        return formData;
-      }, { timeoutMs: Math.max(timeoutMs, 45000) });
-      const paidResponse = paidRequest && paidRequest.response;
-      const paidPayload = paidRequest && paidRequest.payload;
-      if (paidResponse && paidResponse.ok && paidPayload && paidPayload.ok === true) {
-        const paidText = sanitizeAssistantText(parseAiPayload(paidPayload));
-        if (paidText) {
-          if (context && typeof context === 'object') {
-            context.__lastAiMeta = {
-              mode: 'paid',
-              model: String((paidPayload && paidPayload.model) || ''),
-              tokensUsed: Number(paidPayload && paidPayload.tokensUsed) || 0,
-              timeMs: Number(paidPayload && paidPayload.timeMs) || 0,
-            };
-          }
-          return paidText;
-        }
-      }
+    if (!filesForPaid.length) {
+      throw new Error('Для VIP режима не удалось подготовить файлы. Добавьте PDF и повторите.');
     }
+    const paidPrompt = [
+      prompt,
+      '',
+      'Учитывай chatHistory и extractedTexts из контекста.',
+      'Если пользователь просит переделать/исправить — обнови предыдущий ответ.',
+    ].join('\n');
+    const paidRequest = await postGroqPaidWithFallback(() => {
+      const formData = new FormData();
+      formData.append('prompt', paidPrompt);
+      filesForPaid.forEach((file) => {
+        formData.append('files', file, file.name || 'document.pdf');
+      });
+      return formData;
+    }, { timeoutMs: Math.max(timeoutMs, 45000) });
+    const paidResponse = paidRequest && paidRequest.response;
+    const paidPayload = paidRequest && paidRequest.payload;
+    if (!paidResponse || !paidResponse.ok || !paidPayload || paidPayload.ok !== true) {
+      const errorMessage = (paidPayload && paidPayload.error) || `Ошибка VIP ИИ (${paidResponse ? paidResponse.status : 'network'})`;
+      throw new Error(errorMessage);
+    }
+    const paidText = sanitizeAssistantText(parseAiPayload(paidPayload));
+    if (!paidText) {
+      throw new Error('VIP ИИ вернул пустой ответ');
+    }
+    if (context && typeof context === 'object') {
+      context.__lastAiMeta = {
+        mode: 'paid',
+        model: String((paidPayload && paidPayload.model) || ''),
+        tokensUsed: Number(paidPayload && paidPayload.tokensUsed) || 0,
+        timeMs: Number(paidPayload && paidPayload.timeMs) || 0,
+      };
+    }
+    return paidText;
   }
 
   const request = await postDocsAiWithFallback(() => {

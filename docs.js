@@ -2199,6 +2199,12 @@
     return Boolean(analysis || responseText || hasActions || hasRequirements);
   }
 
+
+  function getDirectAiAnalyzeUrl(apiUrl) {
+    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    return String(endpoint).replace(/[?&]action=ai_response_analyze$/i, '') + '?action=ai_response_analyze';
+  }
+
   function requestOcrTextForSource(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var formData = new FormData();
@@ -2230,7 +2236,7 @@
   }
 
   function requestAiBriefSummaryForText(source, sourceText, apiUrl, aiMode) {
-    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var endpoint = getDirectAiAnalyzeUrl(apiUrl);
     var briefText = String(sourceText || '').trim();
     if (!briefText) {
       return Promise.reject(new Error('Текст для анализа пустой.'));
@@ -2245,10 +2251,10 @@
         }
       ],
       requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
-      aiBehavior: 'Режим "Кратко ИИ". Используй только extractedTexts. Верни только JSON без markdown. Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. analysis: 2-3 коротких предложения. required_actions: 3-5 конкретных фактов из файла. requirements: 3-5 шагов, что делать дальше. Если нет данных — пиши "не указано в файле".'
+      aiBehavior: 'Режим "Кратко ИИ". Используй только extractedTexts. Верни только JSON без markdown. Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. analysis: 2-3 коротких предложения. required_actions: 3-5 конкретных фактов из файла. requirements: 3-5 шагов, что делать дальше. Если нет данных — пиши "не указано в файле".',
+      isolatedFileMode: true
     };
     var formData = new FormData();
-    formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', sourceLabel);
     formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
     formData.append('responseStyle', 'concise');
@@ -2345,7 +2351,7 @@
   }
 
   async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
-    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var endpoint = getDirectAiAnalyzeUrl(apiUrl);
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
     var extractedText = '';
     try {
@@ -2368,7 +2374,6 @@
       aiBehavior: 'VIP-кратко: анализируй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}. Без приветствий, без канцелярии, только факты из файла.'
     };
     var formData = new FormData();
-    formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', sourceLabel);
     formData.append('prompt', 'Сделай краткий вывод строго по файлу. Верни только JSON формата brief, без письма и воды.');
     formData.append('responseStyle', 'concise');

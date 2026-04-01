@@ -13,6 +13,21 @@ const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
 
+
+function getDirectDocsAiEndpoint() {
+  const configured = String((window && window.DOCUMENTS_AI_API_URL) || '').trim();
+  return configured || '/js/documents/api-docs.php';
+}
+
+async function postDocsAiAnalyzeDirect(createFormData) {
+  const endpoint = getDirectDocsAiEndpoint();
+  const url = `${endpoint}?action=ai_response_analyze`;
+  const response = await fetch(url, { method: 'POST', credentials: 'include', body: createFormData() });
+  const payload = await response.json().catch(() => null);
+  return { endpoint: url, response, payload };
+}
+
+
 function getDocsAiEndpoints() {
   const configured = String((window && window.DOCUMENTS_AI_API_URL) || '').trim();
   const endpoints = configured ? [configured, ...DOCS_AI_FALLBACK_ENDPOINTS] : DOCS_AI_FALLBACK_ENDPOINTS.slice();
@@ -296,9 +311,8 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
     aiBehavior: fileOnlyPrompt,
     isolatedFileMode: true
   };
-  const request = await postDocsAiWithFallback(() => {
+  const request = await postDocsAiAnalyzeDirect(() => {
     const formData = new FormData();
-    formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', sourceLabel || 'Файл');
     formData.append('prompt', 'Сделай краткий и точный вывод по тексту файла. Верни только JSON заданного формата, без markdown.');
     formData.append('responseStyle', 'concise');
@@ -308,7 +322,7 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
     formData.append('top_p', '1');
     formData.append('context', JSON.stringify(context));
     return formData;
-  }, { fallbackErrorMessage: 'ИИ временно недоступен' });
+  });
   const response = request && request.response;
   const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
@@ -385,9 +399,8 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   } catch (_) {
     extractedText = '';
   }
-  const request = await postDocsAiWithFallback(() => {
+  const request = await postDocsAiAnalyzeDirect(() => {
     const formData = new FormData();
-    formData.append('action', 'ai_response_analyze');
     formData.append('documentTitle', fileName);
     formData.append('prompt', 'Сделай краткий вывод по прикрепленному файлу. Верни только JSON без markdown, без письма и воды.');
     formData.append('responseStyle', 'concise');
@@ -408,7 +421,7 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     formData.append('top_p', '1');
     formData.append('context', JSON.stringify(context));
     return formData;
-  }, { fallbackErrorMessage: 'ИИ временно недоступен' });
+  });
   const response = request && request.response;
   const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
