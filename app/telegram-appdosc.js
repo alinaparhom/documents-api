@@ -302,7 +302,7 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
     'Нужен только структурированный результат по содержимому файла.',
     'Ответ строго в JSON без markdown и без пояснений.',
     'Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}.',
-    'analysis: 2-3 коротких предложения о сути документа.',
+    'analysis: минимум 5 полных предложений о сути документа.',
     'required_actions: 3-5 конкретных фактов из текста (суммы, даты, адреса, этапы, работы).',
     'requirements: 3-5 понятных шагов, что сделать дальше по документу.',
     'Каждый пункт 6-140 символов, без обрывков строк и частей слов.'
@@ -316,7 +316,7 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   const request = await postDocsAiAnalyzeDirect(() => {
     const formData = new FormData();
     formData.append('documentTitle', sourceLabel || 'Файл');
-    formData.append('prompt', 'Сделай краткий и точный вывод по тексту файла. Верни только JSON заданного формата, без markdown.');
+    formData.append('prompt', 'Сделай точный вывод по тексту файла. Верни только JSON заданного формата, без markdown. В поле analysis минимум 5 предложений.');
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
@@ -401,27 +401,19 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   } catch (_) {
     extractedText = '';
   }
-  const request = await postDocsAiAnalyzeDirect(() => {
+  const request = await postGroqPaidWithFallback(() => {
     const formData = new FormData();
-    formData.append('documentTitle', fileName);
-    formData.append('prompt', 'Сделай краткий вывод по прикрепленному файлу. Верни только JSON без markdown, без письма и воды.');
-    formData.append('responseStyle', 'concise');
-    formData.append('briefMode', '1');
-    formData.append('mode', 'paid');
-    formData.append('attachments[]', preparedFile, preparedFile.name || fileName);
-    const context = {
-      isolatedFileMode: true,
-      requestNonce: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      attachedFiles: [{ name: fileName, url: fileUrl, type: normalizeValue(preparedFile && preparedFile.type) }],
-      extractedTexts: extractedText ? [{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
-      aiBehavior: 'VIP-кратко: используй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}.'
-    };
-    if (context.extractedTexts.length) {
-      formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
+    const promptParts = [
+      'Сформируй чистый ответ по приложенному файлу.',
+      'Минимум 5 предложений.',
+      'Только решение и краткое обоснование по фактам документа.',
+      'Без markdown, без списков, без служебных заголовков.'
+    ];
+    if (extractedText) {
+      promptParts.push(`Дополнительный OCR-текст для точности:\n${String(extractedText).slice(0, 6000)}`);
     }
-    formData.append('temperature', '0.5');
-    formData.append('top_p', '1');
-    formData.append('context', JSON.stringify(context));
+    formData.append('prompt', promptParts.join(' '));
+    formData.append('files', preparedFile, preparedFile.name || fileName);
     return formData;
   });
   const response = request && request.response;

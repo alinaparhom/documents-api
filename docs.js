@@ -2305,12 +2305,12 @@
           }
         ],
         requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
-        aiBehavior: 'Кратко по файлу. Верни JSON: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}.',
+        aiBehavior: 'Кратко по файлу. Верни JSON: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. Поле analysis обязательно: минимум 5 полных предложений по существу.',
         isolatedFileMode: true
       };
       var formData = new FormData();
       formData.append('documentTitle', sourceLabel);
-      formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
+      formData.append('prompt', 'Сделай вывод по тексту файла. Верни только JSON указанного формата. В analysis минимум 5 предложений.');
       formData.append('responseStyle', 'concise');
       formData.append('aiBehavior', String(context.aiBehavior || ''));
       formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
@@ -2414,44 +2414,36 @@
     }
   }
 
+  function postGroqPaidForBrief(createFormData) {
+    var endpoints = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+    var lastError = null;
+    return endpoints.reduce(function(chain, endpoint) {
+      return chain.catch(function() {
+        return fetch(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: createFormData()
+        }).then(function(response) {
+          if (response.status === 404 || response.status === 405) {
+            throw new Error('ENDPOINT_UNAVAILABLE');
+          }
+          return response.json().catch(function() { return null; }).then(function(payload) {
+            return { response: response, payload: payload };
+          });
+        });
+      });
+    }, Promise.reject(new Error('INIT'))).catch(function(error) {
+      lastError = error;
+      throw lastError;
+    });
+  }
+
   async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
-    var endpoint = getDirectAiAnalyzeUrl(apiUrl);
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var extractedText = '';
-    try {
-      extractedText = await requestOcrTextForSource(source, apiUrl);
-    } catch (_) {
-      extractedText = '';
-    }
-    var context = {
-      attachedFiles: [
-        {
-          name: sourceLabel,
-          url: source && source.url ? String(source.url) : '',
-          type: source && source.fileObject && source.fileObject.type ? String(source.fileObject.type) : '',
-          size: source && source.fileObject && source.fileObject.size ? Number(source.fileObject.size) : 0
-        }
-      ],
-      isolatedFileMode: true,
-      requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
-      extractedTexts: extractedText ? [{ name: sourceLabel, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
-      aiBehavior: 'VIP-кратко: анализируй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}. Без приветствий, без канцелярии, только факты из файла.'
-    };
-    var formData = new FormData();
-    formData.append('documentTitle', sourceLabel);
-    formData.append('prompt', 'Сделай краткий вывод строго по файлу. Верни только JSON формата brief, без письма и воды.');
-    formData.append('responseStyle', 'concise');
-    formData.append('briefMode', '1');
-    formData.append('mode', 'paid');
-    formData.append('temperature', '0.5');
-    formData.append('top_p', '1');
-    if (context.extractedTexts && context.extractedTexts.length) {
-      formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
-    }
-    formData.append('context', JSON.stringify(context));
+    var fileForVip = null;
     if (source && source.fileObject instanceof File) {
       var preparedLocal = await convertPdfToImageFileForBrief(source.fileObject, source.fileObject.name || sourceLabel);
-      formData.append('attachments[]', preparedLocal, preparedLocal.name || sourceLabel);
+      fileForVip = preparedLocal;
     } else if (source && source.url) {
       var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
       if (fetched.ok) {
@@ -2459,15 +2451,20 @@
         var fileName = sourceLabel || 'brief-file';
         var downloaded = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
         var preparedDownloaded = await convertPdfToImageFileForBrief(downloaded, fileName);
-        formData.append('attachments[]', preparedDownloaded, preparedDownloaded.name || fileName);
+        fileForVip = preparedDownloaded;
       }
     }
-    var response = await fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
+    if (!(fileForVip instanceof File)) {
+      throw new Error('Не удалось подготовить файл для платного ИИ.');
+    }
+    var request = await postGroqPaidForBrief(function() {
+      var formData = new FormData();
+      formData.append('prompt', 'Сформируй чистый ответ по файлу: минимум 5 предложений, только решение и обоснование, без markdown и списков.');
+      formData.append('files', fileForVip, fileForVip.name || sourceLabel);
+      return formData;
     });
-    var payload = await response.json().catch(function() { return null; });
+    var response = request && request.response;
+    var payload = request && request.payload;
     if (!response.ok || !payload || payload.ok !== true) {
       throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
     }
