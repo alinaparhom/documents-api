@@ -8,6 +8,7 @@ const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
@@ -43,6 +44,22 @@ async function postDocsAiWithFallback(createFormData, options = {}) {
     return lastResult;
   }
   throw new Error(options.fallbackErrorMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+}
+
+async function postGroqPaidWithFallback(createFormData) {
+  let lastError = null;
+  for (let index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
+    const endpoint = GROQ_PAID_ENDPOINTS[index];
+    try {
+      const response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+      if (response.status === 404 || response.status === 405) continue;
+      const payload = await response.json().catch(() => null);
+      return { endpoint, response, payload };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
 }
 
 function loadExternalScript(src, marker) {
@@ -13605,7 +13622,7 @@ function createResponseUploadControls(task, entry, setStatus) {
         <div style="margin-top:10px;font-size:13px;color:#334155" data-status>Готов к отправке.</div>
         <div style="margin-top:10px;padding:10px;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:rgba(255,255,255,.86);font-size:13px;white-space:pre-wrap;color:#0f172a" data-answer>—</div>
         <div class="tg-vip-ai__meta" data-meta></div>
-        <button type="button" data-send style="margin-top:10px;width:100%;border:none;border-radius:12px;padding:11px 14px;color:#fff;font-weight:700;background:linear-gradient(135deg,#38bdf8,#14b8a6)">Отправить в VIP ИИ</button>
+        <button type="button" data-send style="margin-top:10px;width:100%;border:none;border-radius:12px;padding:11px 14px;color:#fff;font-weight:700;background:linear-gradient(135deg,#38bdf8,#14b8a6)">Получить ответ</button>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -13626,18 +13643,28 @@ function createResponseUploadControls(task, entry, setStatus) {
       metaNode.innerHTML = '';
       const startedAt = Date.now();
       try {
-        const result = await postDocsAiWithFallback(() => {
+        const files = Array.isArray(task && task.files) ? task.files : [];
+        const selectedFile = files[0] || null;
+        const selectedFileUrl = normalizeValue(selectedFile && (selectedFile.resolvedUrl || selectedFile.url || selectedFile.previewUrl));
+        if (!selectedFileUrl) {
+          throw new Error('В задаче нет файла для отправки в Платный ИИ.');
+        }
+        statusNode.textContent = 'Скачиваем файл...';
+        const fileResponse = await fetch(selectedFileUrl, { credentials: 'include' });
+        if (!fileResponse.ok) {
+          throw new Error(`Не удалось скачать файл (${fileResponse.status}).`);
+        }
+        const fileBlob = await fileResponse.blob();
+        const fallbackName = normalizeValue(selectedFile && (selectedFile.originalName || selectedFile.name || selectedFile.storedName)) || 'task-file.bin';
+        const fileToSend = new File([fileBlob], fallbackName, { type: fileBlob.type || 'application/octet-stream' });
+
+        statusNode.textContent = 'Отправляем файл в Платный ИИ...';
+        const result = await postGroqPaidWithFallback(() => {
           const formData = new FormData();
-          formData.append('action', 'ai_response_analyze');
-          formData.append('mode', 'paid');
-          formData.append('prompt', 'Сформируй итоговый деловой ответ по задаче и прикреплённым файлам.');
-          formData.append('documentTitle', normalizeValue(task && task.title) || 'Задача');
-          formData.append('responseStyle', 'neutral');
-          formData.append('context', JSON.stringify({
-            taskId: normalizeValue(task && task.id),
-            description: normalizeValue(task && task.description),
-            files: Array.isArray(task && task.files) ? task.files : [],
-          }));
+          formData.append('taskId', normalizeValue(task && task.id));
+          formData.append('taskTitle', normalizeValue(task && task.title) || 'Задача');
+          formData.append('taskDescription', normalizeValue(task && task.description));
+          formData.append('file', fileToSend, fileToSend.name);
           return formData;
         });
         const payload = result && result.payload ? result.payload : null;
