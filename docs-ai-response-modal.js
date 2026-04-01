@@ -1289,6 +1289,143 @@
     }
   }
 
+  function openVipDocumentsAiResponseModal(options) {
+    ensureStyles();
+    var config = options && typeof options === 'object' ? options : {};
+    var previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    var state = {
+      files: []
+        .concat(normalizeFileObjects(config.pendingFiles || []))
+        .concat(normalizeExternalFiles(config.files || [], 'external'))
+        .concat(normalizeExternalFiles(config.linkedFiles || [], 'linked')),
+      model: FALLBACK_MODEL_OPTIONS[0].value,
+      models: FALLBACK_MODEL_OPTIONS.slice(),
+      responseStyle: 'neutral',
+      aiApiKeyMode: 'paid',
+      aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
+        ? config.aiBehavior.trim()
+        : 'VIP режим. Сформируй итоговое решение по всем файлам: решение, риски, план действий с датами.',
+      contextDetail: 'detailed',
+      contextSettings: buildContextSettings(config),
+      ocrMode: 'raw',
+      generationParams: { temperature: 0.35, top_p: 0.9, frequency_penalty: 0.05, presence_penalty: 0.05 },
+      isLoading: false
+    };
+
+    var root = createElement('div', ROOT_CLASS + ' ai-chat-vip-modal ai-chat-modal--visible');
+    var panel = createElement('div', 'ai-chat-modal__panel');
+    panel.style.maxWidth = '720px';
+    panel.style.width = '100%';
+    panel.style.borderRadius = '22px';
+    panel.style.background = 'linear-gradient(160deg, rgba(255,255,255,.97), rgba(239,246,255,.93))';
+    panel.style.border = '1px solid rgba(59,130,246,.25)';
+    panel.style.boxShadow = '0 22px 55px rgba(37,99,235,.16)';
+    var header = createElement('div', 'ai-chat-modal__header');
+    header.appendChild(createElement('div', 'ai-chat-modal__title', 'VIP ИИ — итоговое решение'));
+    header.appendChild(createElement('div', 'ai-chat-modal__subtitle', 'Анализируем все приложенные файлы вместе и формируем готовую смысловую часть ответа.'));
+    var closeBtn = createElement('button', 'ai-chat-modal__close', '×');
+    closeBtn.type = 'button';
+    header.appendChild(closeBtn);
+
+    var filesWrap = createElement('div', 'ai-chat-modal__files');
+    var controls = createElement('div', 'ai-chat-modal__actions');
+    controls.style.display = 'flex';
+    controls.style.gap = '8px';
+    controls.style.flexWrap = 'wrap';
+    var attachBtn = createElement('button', 'ai-chat-modal__attach', '+ Файл');
+    attachBtn.type = 'button';
+    var sendBtn = createElement('button', 'ai-chat-modal__send', 'Сформировать решение');
+    sendBtn.type = 'button';
+    var input = createElement('textarea', 'ai-chat-modal__textarea');
+    input.placeholder = 'Коротко уточните позицию (необязательно).';
+    input.style.minHeight = '84px';
+    var messages = createElement('div', 'ai-chat-modal__messages');
+    messages.appendChild(createMessage('assistant', 'VIP готов. Загружайте файлы и отправляйте запрос.'));
+
+    var hiddenInput = document.createElement('input');
+    hiddenInput.type = 'file';
+    hiddenInput.multiple = true;
+    hiddenInput.style.display = 'none';
+
+    function renderFilesCompact() {
+      filesWrap.textContent = '';
+      if (!state.files.length) {
+        filesWrap.appendChild(createElement('div', 'ai-chat-modal__empty', 'Файлы не добавлены.'));
+        return;
+      }
+      state.files.forEach(function (file) {
+        var chip = createElement('div', 'ai-chat-chip');
+        chip.appendChild(createElement('span', '', detectIcon(file)));
+        chip.appendChild(createElement('span', '', String(file.name || 'Файл')));
+        chip.appendChild(createElement('span', 'ai-chat-chip__meta', '✅ AI'));
+        filesWrap.appendChild(chip);
+      });
+    }
+
+    async function sendVip() {
+      if (state.isLoading) return;
+      state.isLoading = true;
+      sendBtn.disabled = true;
+      try {
+        await hydrateFileContents(state);
+        var prompt = String(input.value || '').trim()
+          || 'Проанализируй все приложенные файлы вместе и сформируй итоговое деловое решение без шапки и подписи.';
+        messages.appendChild(createMessage('user', prompt));
+        var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
+        pending.innerHTML = '<span class="ai-chat-spinner"></span>Анализируем документы...';
+        messages.appendChild(pending);
+        var body = await buildRequestBlueprint(prompt, state, Object.assign({}, config, { aiApiKeyMode: 'paid' }));
+        var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+        var response = await fetchWithTimeout(apiUrl + '?action=ai_response_analyze', { method: 'POST', credentials: 'same-origin', body: body }, calculateAiTimeoutMs(prompt, state));
+        var payload = await response.json().catch(function () { return null; });
+        pending.remove();
+        if (!response.ok || !payload || payload.ok !== true) {
+          messages.appendChild(createMessage('assistant', 'Ошибка: ' + ((payload && payload.error) || ('API ' + response.status)), true));
+          return;
+        }
+        var text = sanitizeAssistantResponseText(String(payload.response || payload.analysis || '').trim());
+        messages.appendChild(createMessage('assistant', text || 'Пустой ответ.'));
+      } finally {
+        state.isLoading = false;
+        sendBtn.disabled = false;
+      }
+    }
+
+    attachBtn.addEventListener('click', function () { hiddenInput.click(); });
+    hiddenInput.addEventListener('change', function () {
+      var selected = hiddenInput.files ? Array.from(hiddenInput.files) : [];
+      if (!selected.length) return;
+      state.files = state.files.concat(normalizeFileObjects(selected));
+      hiddenInput.value = '';
+      renderFilesCompact();
+    });
+    sendBtn.addEventListener('click', sendVip);
+    closeBtn.addEventListener('click', function () {
+      document.body.style.overflow = previousBodyOverflow;
+      closeWithAnimation(root);
+    });
+    root.addEventListener('click', function (event) {
+      if (event.target === root) {
+        document.body.style.overflow = previousBodyOverflow;
+        closeWithAnimation(root);
+      }
+    });
+
+    controls.appendChild(attachBtn);
+    controls.appendChild(sendBtn);
+    panel.appendChild(header);
+    panel.appendChild(filesWrap);
+    panel.appendChild(input);
+    panel.appendChild(controls);
+    panel.appendChild(messages);
+    panel.appendChild(hiddenInput);
+    root.appendChild(panel);
+    document.body.appendChild(root);
+    renderFilesCompact();
+  }
+
   function openDocumentsAiResponseModal(options) {
     ensureStyles();
 
@@ -1306,6 +1443,10 @@
             : config.aiBehavior
         }));
       });
+      return;
+    }
+    if (normalizeAiApiKeyMode(config.aiApiKeyMode) === 'paid') {
+      openVipDocumentsAiResponseModal(Object.assign({}, config, { aiApiKeyMode: 'paid', _aiModeSelected: true }));
       return;
     }
     var previousBodyOverflow = document.body.style.overflow;
