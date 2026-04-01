@@ -358,6 +358,70 @@ function withRetryPayload(int $retryAfterSeconds): array
     ];
 }
 
+function toBoolFlag(mixed $value): bool
+{
+    if (is_bool($value)) {
+        return $value;
+    }
+    if (is_numeric($value)) {
+        return (int)$value === 1;
+    }
+    if (is_string($value)) {
+        $normalized = mb_strtolower(trim($value));
+        return in_array($normalized, ['1', 'true', 'yes', 'on'], true);
+    }
+    return false;
+}
+
+function resolveAiMode(string $modeRaw, mixed $briefModeRaw, array $context): array
+{
+    $mode = mb_strtolower(trim($modeRaw));
+    if (!in_array($mode, ['free', 'paid'], true)) {
+        $mode = 'free';
+    }
+
+    $briefMode = toBoolFlag($briefModeRaw);
+    if (!$briefMode && array_key_exists('isolatedFileMode', $context)) {
+        $briefMode = toBoolFlag($context['isolatedFileMode']);
+    }
+
+    if ($briefMode) {
+        $mode = 'paid';
+    }
+
+    return [
+        'mode' => $mode,
+        'briefMode' => $briefMode,
+    ];
+}
+
+function resolveAiProviderConfig(array $env, string $mode, array $modelsConfig): array
+{
+    $freeApiKey = trim((string)($env['AI_API_KEY'] ?? $env['AI_API_KEY_FREE'] ?? ''));
+    $paidApiKey = trim((string)($env['AI_API_KEY_PAID'] ?? $env['OPENAI_API_KEY'] ?? ''));
+    $apiKey = $mode === 'paid' ? $paidApiKey : $freeApiKey;
+
+    $model = (string)($modelsConfig['defaultModel'] ?? '');
+    $freeModel = trim((string)($env['AI_MODEL_FREE'] ?? ''));
+    $paidModel = trim((string)($env['AI_MODEL_PAID'] ?? ''));
+    if ($mode === 'paid' && $paidModel !== '') {
+        $model = $paidModel;
+    } elseif ($mode === 'free' && $freeModel !== '') {
+        $model = $freeModel;
+    }
+
+    $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+    if ($baseUrl === 'https://api.openai.com/v1' && str_starts_with($apiKey, 'gsk_')) {
+        $baseUrl = 'https://api.groq.com/openai/v1';
+    }
+
+    return [
+        'apiKey' => $apiKey,
+        'model' => $model,
+        'baseUrl' => $baseUrl,
+    ];
+}
+
 function getAiCachePath(string $name): string
 {
     $directory = __DIR__ . '/app/cache';
@@ -2227,10 +2291,6 @@ if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxConte
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $modeRaw = trim((string)($_POST['mode'] ?? 'free'));
-$aiMode = mb_strtolower($modeRaw);
-if (!in_array($aiMode, ['free', 'paid'], true)) {
-    $aiMode = 'free';
-}
 $requestedModel = trim((string)($_POST['model'] ?? ''));
 $briefModeRaw = $_POST['briefMode'] ?? '';
 $action = trim((string)($_POST['action'] ?? ''));
@@ -2243,29 +2303,9 @@ if ($extractedTextsRaw !== '' && mb_strlen($extractedTextsRaw) > $maxExtractedTe
     ]);
 }
 
-$briefMode = false;
-if (is_bool($briefModeRaw)) {
-    $briefMode = $briefModeRaw;
-} elseif (is_numeric($briefModeRaw)) {
-    $briefMode = (int)$briefModeRaw === 1;
-} elseif (is_string($briefModeRaw)) {
-    $normalizedBriefMode = mb_strtolower(trim($briefModeRaw));
-    $briefMode = in_array($normalizedBriefMode, ['1', 'true', 'yes', 'on'], true);
-}
-if (!$briefMode && isset($context['isolatedFileMode'])) {
-    $isolatedModeRaw = $context['isolatedFileMode'];
-    if (is_bool($isolatedModeRaw)) {
-        $briefMode = $isolatedModeRaw;
-    } elseif (is_numeric($isolatedModeRaw)) {
-        $briefMode = (int)$isolatedModeRaw === 1;
-    } elseif (is_string($isolatedModeRaw)) {
-        $normalizedIsolatedMode = mb_strtolower(trim($isolatedModeRaw));
-        $briefMode = in_array($normalizedIsolatedMode, ['1', 'true', 'yes', 'on'], true);
-    }
-}
-if ($briefMode) {
-    $aiMode = 'paid';
-}
+$modeConfig = resolveAiMode($modeRaw, $briefModeRaw, $context);
+$aiMode = (string)$modeConfig['mode'];
+$briefMode = (bool)$modeConfig['briefMode'];
 
 if (
     $action !== ''
@@ -2724,25 +2764,12 @@ if ($action === 'ocr_extract') {
     ]);
 }
 
-$freeApiKey = trim((string)($env['AI_API_KEY'] ?? $env['AI_API_KEY_FREE'] ?? ''));
-$paidApiKey = trim((string)($env['AI_API_KEY_PAID'] ?? $env['OPENAI_API_KEY'] ?? ''));
-$apiKey = $aiMode === 'paid' ? $paidApiKey : $freeApiKey;
 $modelsConfig = resolveAiModelsConfig($env);
-$model = (string)$modelsConfig['defaultModel'];
-$freeModel = trim((string)($env['AI_MODEL_FREE'] ?? ''));
-$paidModel = trim((string)($env['AI_MODEL_PAID'] ?? ''));
-if ($aiMode === 'paid' && $paidModel !== '') {
-    $model = $paidModel;
-}
-if ($aiMode === 'free' && $freeModel !== '') {
-    $model = $freeModel;
-}
-$baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+$providerConfig = resolveAiProviderConfig($env, $aiMode, $modelsConfig);
+$apiKey = (string)$providerConfig['apiKey'];
+$model = (string)$providerConfig['model'];
+$baseUrl = (string)$providerConfig['baseUrl'];
 $retryAfterSeconds = normalizeRetryAfterSeconds($env['AI_RETRY_AFTER_SECONDS'] ?? null);
-$isGroqKey = str_starts_with($apiKey, 'gsk_');
-if ($baseUrl === 'https://api.openai.com/v1' && $isGroqKey) {
-    $baseUrl = 'https://api.groq.com/openai/v1';
-}
 $isGroq = stripos($baseUrl, 'groq.com') !== false;
 $isGoogleOpenAiCompat = stripos($baseUrl, 'generativelanguage.googleapis.com') !== false;
 

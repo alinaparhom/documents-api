@@ -13664,7 +13664,7 @@ function createResponseUploadControls(task, entry, setStatus) {
           formData.append('taskId', normalizeValue(task && task.id));
           formData.append('taskTitle', normalizeValue(task && task.title) || 'Задача');
           formData.append('taskDescription', normalizeValue(task && task.description));
-          formData.append('file', fileToSend, fileToSend.name);
+          formData.append('files', fileToSend, fileToSend.name);
           return formData;
         });
         const payload = result && result.payload ? result.payload : null;
@@ -13701,7 +13701,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     const close = () => overlay.remove();
     overlay.querySelector('[data-free]')?.addEventListener('click', () => {
       close();
-      openAiDialogSafely({ task, entry, onStatus: setStatus });
+      openAiDialogSafely({ task, entry, onStatus: setStatus, modeScope: 'free' });
     });
     overlay.querySelector('[data-paid]')?.addEventListener('click', () => {
       close();

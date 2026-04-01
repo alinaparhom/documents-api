@@ -241,6 +241,15 @@ function resolveAiModel(context) {
   return modelFromContext || EMPTY_AI_MODEL;
 }
 
+function resolveModeConfig(source = {}) {
+  const scope = String(source && source.modeScope || '').trim().toLowerCase();
+  const freeOnly = scope === 'free' || scope === 'free-only' || Boolean(source && source.forceFreeMode);
+  const aiMode = freeOnly
+    ? 'free'
+    : (source && source.aiMode === 'paid' ? 'paid' : 'free');
+  return { aiMode, freeOnly };
+}
+
 function normalizeModelList(rawModels) {
   if (!Array.isArray(rawModels) || !rawModels.length) {
     return MODEL_FALLBACK_OPTIONS.slice();
@@ -633,6 +642,7 @@ function openAiResponseDialog(context = {}) {
     return;
   }
 
+  const modeConfig = resolveModeConfig(context);
   const state = {
     destroyed: false,
     isSending: false,
@@ -641,7 +651,7 @@ function openAiResponseDialog(context = {}) {
     attachedFiles: [],
     selectedAttachmentIds: new Set(),
     responseStyle: 'neutral',
-    aiMode: 'free',
+    aiMode: modeConfig.aiMode,
     selectedModel: resolveAiModel(context),
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
     rateLimitUntil: 0,
@@ -712,6 +722,16 @@ function openAiResponseDialog(context = {}) {
   const rateLimitHint = root.querySelector('[data-rate-limit-hint]');
   const sendBtn = root.querySelector('[data-send]');
   if (modeSelect) {
+    if (modeConfig.freeOnly) {
+      const paidOption = modeSelect.querySelector('option[value="paid"]');
+      if (paidOption) {
+        paidOption.remove();
+      }
+      modeSelect.disabled = true;
+      modeSelect.setAttribute('aria-disabled', 'true');
+      modeSelect.title = 'В этом окне доступен только бесплатный ИИ.';
+      state.aiMode = 'free';
+    }
     modeSelect.value = state.aiMode;
     modeSelect.addEventListener('change', () => {
       state.aiMode = String(modeSelect.value || 'free') === 'paid' ? 'paid' : 'free';

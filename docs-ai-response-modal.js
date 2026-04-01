@@ -255,6 +255,14 @@
       : ((state && state.aiMode) === 'paid' ? 'paid' : 'free');
   }
 
+  function resolveModalModeConfig(config) {
+    var source = config && typeof config === 'object' ? config : {};
+    var scope = String(source.modeScope || '').trim().toLowerCase();
+    var freeOnly = scope === 'free' || scope === 'free-only' || Boolean(source.forceFreeMode);
+    var aiMode = freeOnly ? 'free' : (source.aiMode === 'paid' ? 'paid' : 'free');
+    return { aiMode: aiMode, freeOnly: freeOnly };
+  }
+
   async function resolvePaidSourceFiles(state) {
     function isPdfFile(name, type) {
       var fileName = String(name || '').toLowerCase();
@@ -1208,6 +1216,52 @@
     }
   }
 
+  function normalizeGenerationParameters(rawParams) {
+    var source = rawParams && typeof rawParams === 'object' ? rawParams : {};
+    var normalized = {
+      temperature: Number(source.temperature),
+      top_p: Number(source.top_p),
+      frequency_penalty: Number(source.frequency_penalty),
+      presence_penalty: Number(source.presence_penalty)
+    };
+    if (!Number.isFinite(normalized.temperature)) normalized.temperature = 0.7;
+    if (!Number.isFinite(normalized.top_p)) normalized.top_p = 1;
+    if (!Number.isFinite(normalized.frequency_penalty)) normalized.frequency_penalty = 0;
+    if (!Number.isFinite(normalized.presence_penalty)) normalized.presence_penalty = 0;
+    return normalized;
+  }
+
+  function normalizeAiBehaviorText(value) {
+    var behaviorText = String(value || '').trim();
+    if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
+      return '';
+    }
+    if (behaviorText.length > AI_BEHAVIOR_MAX_CHARS) {
+      return behaviorText.slice(0, AI_BEHAVIOR_MAX_CHARS);
+    }
+    return behaviorText;
+  }
+
+  function appendBaseRequestFields(formData, payload) {
+    var data = payload && typeof payload === 'object' ? payload : {};
+    var generation = data.generationParameters && typeof data.generationParameters === 'object'
+      ? data.generationParameters
+      : normalizeGenerationParameters({});
+
+    formData.append('action', 'ai_response_analyze');
+    formData.append('documentTitle', String(data.documentTitle || ''));
+    formData.append('prompt', String(data.prompt || ''));
+    if (data.model) {
+      formData.append('model', String(data.model));
+    }
+    formData.append('temperature', String(generation.temperature));
+    formData.append('top_p', String(generation.top_p));
+    formData.append('frequency_penalty', String(generation.frequency_penalty));
+    formData.append('presence_penalty', String(generation.presence_penalty));
+    formData.append('responseStyle', String(data.responseStyle || 'neutral'));
+    formData.append('aiBehavior', String(data.behavior || ''));
+  }
+
   function buildRequestBlueprint(userText, state, config) {
     var context = {};
     if (config.context && typeof config.context === 'object') {
@@ -1245,39 +1299,18 @@
       };
     });
 
-    var generationParams = state.generationParams || {};
-    var generationParameters = {
-      temperature: Number(generationParams.temperature),
-      top_p: Number(generationParams.top_p),
-      frequency_penalty: Number(generationParams.frequency_penalty),
-      presence_penalty: Number(generationParams.presence_penalty)
-    };
-    if (!Number.isFinite(generationParameters.temperature)) generationParameters.temperature = 0.7;
-    if (!Number.isFinite(generationParameters.top_p)) generationParameters.top_p = 1;
-    if (!Number.isFinite(generationParameters.frequency_penalty)) generationParameters.frequency_penalty = 0;
-    if (!Number.isFinite(generationParameters.presence_penalty)) generationParameters.presence_penalty = 0;
+    var generationParameters = normalizeGenerationParameters(state && state.generationParams);
     context.parameters = generationParameters;
 
     var formData = new FormData();
-    formData.append('action', 'ai_response_analyze');
-    formData.append('documentTitle', config.documentTitle || '');
-    formData.append('prompt', userText);
-    if (state.model) {
-      formData.append('model', state.model);
-    }
-    formData.append('temperature', String(generationParameters.temperature));
-    formData.append('top_p', String(generationParameters.top_p));
-    formData.append('frequency_penalty', String(generationParameters.frequency_penalty));
-    formData.append('presence_penalty', String(generationParameters.presence_penalty));
-    formData.append('responseStyle', state.responseStyle);
-    var behaviorText = String(state.aiBehavior || '').trim();
-    if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
-      behaviorText = '';
-    }
-    if (behaviorText.length > 10000) {
-      behaviorText = behaviorText.slice(0, 10000);
-    }
-    formData.append('aiBehavior', behaviorText);
+    appendBaseRequestFields(formData, {
+      documentTitle: config.documentTitle || '',
+      prompt: userText,
+      model: state.model,
+      responseStyle: state.responseStyle,
+      behavior: normalizeAiBehaviorText(state.aiBehavior),
+      generationParameters: generationParameters
+    });
     var requestMode = resolveRequestMode(state);
     context.aiMode = requestMode;
     formData.append('mode', requestMode);
@@ -1316,6 +1349,7 @@
     ensureStyles();
 
     var config = options && typeof options === 'object' ? options : {};
+    var modeConfig = resolveModalModeConfig(config);
     var previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
@@ -1326,7 +1360,7 @@
         .concat(normalizeExternalFiles(config.linkedFiles || [], 'linked')),
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
-      aiMode: 'free',
+      aiMode: modeConfig.aiMode,
       responseStyle: STYLE_OPTIONS[0].value,
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
@@ -1349,6 +1383,13 @@
       lastErrorFingerprint: '',
       lastErrorTs: 0
     };
+    var forceFreeMode = modeConfig.freeOnly;
+    if (forceFreeMode) {
+      state.aiMode = 'free';
+      if (state.contextDetail === 'brief') {
+        state.contextDetail = 'detailed';
+      }
+    }
 
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'ai-chat-modal__panel');
@@ -1397,8 +1438,17 @@
       option.textContent = opt.label;
       modeSelect.appendChild(option);
     });
-    if (state.contextDetail === 'brief') {
+    if (!forceFreeMode && state.contextDetail === 'brief') {
       state.aiMode = 'paid';
+    }
+    if (forceFreeMode) {
+      var paidModeOption = modeSelect.querySelector('option[value="paid"]');
+      if (paidModeOption) {
+        paidModeOption.remove();
+      }
+      modeSelect.disabled = true;
+      modeSelect.setAttribute('aria-disabled', 'true');
+      modeSelect.title = 'В этом окне доступен только бесплатный ИИ.';
     }
     modeSelect.value = state.aiMode;
 
@@ -2576,9 +2626,13 @@
     });
     contextDetailSelect.addEventListener('change', function () {
       state.contextDetail = contextDetailSelect.value === 'brief' ? 'brief' : 'detailed';
-      if (state.contextDetail === 'brief') {
+      if (!forceFreeMode && state.contextDetail === 'brief') {
         state.aiMode = 'paid';
         modeSelect.value = 'paid';
+      } else if (forceFreeMode && state.contextDetail === 'brief') {
+        state.contextDetail = 'detailed';
+        contextDetailSelect.value = 'detailed';
+        appendAssistantErrorOnce('Краткий режим требует VIP ИИ. Оставил детальный режим для бесплатного ИИ.');
       }
       updateContextUsageHint();
       refreshSendButtonLabel();

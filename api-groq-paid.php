@@ -11,9 +11,6 @@ header('Content-Type: application/json; charset=utf-8');
 
 const MAX_TOTAL_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
 const MAX_TEXT_CHARS = 10000;
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL_TEXT = 'llama-3.3-70b-versatile';
-const MODEL_VISION = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 function respond(int $status, array $payload): void
 {
@@ -126,6 +123,66 @@ function makeDataUriFromBinary(string $binary, string $mime): string
     return 'data:' . $mime . ';base64,' . base64_encode($binary);
 }
 
+function normalizeFloatEnv(mixed $value, float $default, float $min, float $max): float
+{
+    if (is_string($value)) {
+        $value = trim($value);
+    }
+    if ($value === '' || $value === null || !is_numeric($value)) {
+        return $default;
+    }
+    $number = (float)$value;
+    if ($number < $min) {
+        return $min;
+    }
+    if ($number > $max) {
+        return $max;
+    }
+    return $number;
+}
+
+function normalizeIntEnv(mixed $value, int $default, int $min, int $max): int
+{
+    if (is_string($value)) {
+        $value = trim($value);
+    }
+    if ($value === '' || $value === null || !is_numeric($value)) {
+        return $default;
+    }
+    $number = (int)$value;
+    if ($number < $min) {
+        return $min;
+    }
+    if ($number > $max) {
+        return $max;
+    }
+    return $number;
+}
+
+function resolveGroqPaidConfig(array $env): array
+{
+    $apiUrl = trim((string)($env['AI_PAID_API_URL'] ?? $env['GROQ_API_URL'] ?? 'https://api.groq.com/openai/v1/chat/completions'));
+    if ($apiUrl === '') {
+        $apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
+    }
+
+    $textModel = trim((string)($env['AI_MODEL_PAID_TEXT'] ?? $env['GROQ_MODEL_TEXT'] ?? $env['AI_MODEL_PAID'] ?? 'llama-3.3-70b-versatile'));
+    $visionModel = trim((string)($env['AI_MODEL_PAID_VISION'] ?? $env['GROQ_MODEL_VISION'] ?? $env['AI_MODEL_PAID'] ?? 'meta-llama/llama-4-scout-17b-16e-instruct'));
+    $systemPrompt = trim((string)($env['AI_PAID_SYSTEM_PROMPT'] ?? ''));
+    if ($systemPrompt === '') {
+        $systemPrompt = 'Ты помощник по деловым документам. Проанализируй приложенные файлы. Прими итоговое решение. Ответь только решением, без пояснений, шапки и подписей.';
+    }
+
+    return [
+        'apiUrl' => $apiUrl,
+        'textModel' => $textModel,
+        'visionModel' => $visionModel,
+        'temperature' => normalizeFloatEnv($env['AI_PAID_TEMPERATURE'] ?? 0.2, 0.2, 0.0, 2.0),
+        'maxTokens' => normalizeIntEnv($env['AI_PAID_MAX_TOKENS'] ?? 900, 900, 128, 8192),
+        'systemPrompt' => $systemPrompt,
+    ];
+}
+
 /**
  * PDF -> JPEG (первая страница).
  * Порядок: Imagick -> pdftoppm -> gs
@@ -216,6 +273,7 @@ $env = array_merge(
     loadEnvFromFile(__DIR__ . '/.env'),
     loadEnvFromFile(__DIR__ . '/app/.env')
 );
+$paidConfig = resolveGroqPaidConfig($env);
 $apiKey = trim((string)(getenv('GROQ_API_KEY') ?: ($env['GROQ_API_KEY'] ?? '')));
 if ($apiKey === '') {
     respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
@@ -277,8 +335,8 @@ foreach ($files as $file) {
     $metaChunks[] = "[Неподдерживаемый формат: {$name}, {$size} байт, MIME={$mime}]";
 }
 
-$model = $hasVisionInput ? MODEL_VISION : MODEL_TEXT;
-$systemPrompt = 'Ты помощник по деловым документам. Проанализируй приложенные файлы. Прими итоговое решение. Ответь только решением, без пояснений, шапки и подписей.';
+$model = $hasVisionInput ? (string)$paidConfig['visionModel'] : (string)$paidConfig['textModel'];
+$systemPrompt = (string)$paidConfig['systemPrompt'];
 
 if ($hasVisionInput) {
     $visionText = $userPrompt;
@@ -320,12 +378,12 @@ if ($hasVisionInput) {
 
 $requestPayload = [
     'model' => $model,
-    'temperature' => 0.2,
-    'max_tokens' => 900,
+    'temperature' => (float)$paidConfig['temperature'],
+    'max_tokens' => (int)$paidConfig['maxTokens'],
     'messages' => $messages,
 ];
 
-$ch = curl_init(GROQ_API_URL);
+$ch = curl_init((string)$paidConfig['apiUrl']);
 if ($ch === false) {
     respond(500, ['ok' => false, 'error' => 'Не удалось инициализировать cURL']);
 }
