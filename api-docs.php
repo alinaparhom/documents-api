@@ -2802,6 +2802,33 @@ foreach ($legacyAttachedFiles as $legacyFile) {
 }
 $extractedTexts = array_merge($extractedTexts, $serverExtractedTexts);
 $extractedTexts = deduplicateExtractedTextsByNameAndHash($extractedTexts);
+$attachedFilesFromContext = isset($context['attachedFiles']) && is_array($context['attachedFiles'])
+    ? $context['attachedFiles']
+    : [];
+$attachedFilesCount = 0;
+foreach ($attachedFilesFromContext as $attachedFileEntry) {
+    if (!is_array($attachedFileEntry)) {
+        continue;
+    }
+    $name = trim((string)($attachedFileEntry['name'] ?? ''));
+    $url = trim((string)($attachedFileEntry['url'] ?? ''));
+    if ($name !== '' || $url !== '') {
+        $attachedFilesCount += 1;
+    }
+}
+if ($action === 'ai_response_analyze'
+    && $attachedFilesCount > 0
+    && !$extractedTexts
+    && (int)($extractedTextsDiagnostics['readFiles'] ?? 0) === 0
+) {
+    jsonResponse(422, [
+        'ok' => false,
+        'error' => 'Файлы прикреплены, но текст из них не был извлечён. Проверьте доступ к файлам, формат и качество скана, затем повторите.',
+        'code' => 'FILES_WITHOUT_EXTRACTED_TEXT',
+        'attachedFiles' => $attachedFilesCount,
+        'extractedTextsDiagnostics' => $extractedTextsDiagnostics,
+    ]);
+}
 $maxInputChars = (int)($env['AI_MAX_INPUT_CHARS'] ?? 60000);
 if ($maxInputChars < 2000) {
     $maxInputChars = 2000;
