@@ -3313,11 +3313,22 @@ if ($analysis === '' && $response === '' && $neutral === '' && $positive === '' 
 }
 
 if ((looksLikeJsonText($response) || $response === '') && !$briefMode) {
-    logApiDocs('error', 'AI returned empty or JSON-like response text', [
-        'documentTitle' => $documentTitle,
-        'contentPreview' => mb_substr($content, 0, 220),
-    ]);
-    jsonResponse(502, array_merge(['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
+    if ($aiMode === 'paid') {
+        $fallbackResponse = sanitizeGeneratedResponse($content, $runtimeConfig['sanitizePrefixes'] ?? []);
+        if ($fallbackResponse === '' || looksLikeJsonText($fallbackResponse)) {
+            $fallbackResponse = 'Не удалось получить структурированный ответ. Попробуйте более чёткий запрос или документ лучшего качества.';
+        }
+        if ($analysis === '') {
+            $analysis = 'VIP fallback: использован прямой ответ модели из-за пустого структурированного блока.';
+        }
+        $response = $fallbackResponse;
+    } else {
+        logApiDocs('error', 'AI returned empty or JSON-like response text', [
+            'documentTitle' => $documentTitle,
+            'contentPreview' => mb_substr($content, 0, 220),
+        ]);
+        jsonResponse(502, array_merge(['ok' => false, 'error' => 'ИИ вернул пустой/некорректный текст ответа. Повторите запрос.', 'model' => $effectiveModel], withRetryPayload($retryAfterSeconds)));
+    }
 }
 if ($briefMode && (looksLikeJsonText($response) || $response === '')) {
     if ($analysis !== '') {
