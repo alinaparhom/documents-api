@@ -462,9 +462,6 @@ function getTelegramSentencePool(text) {
 function isWeakTelegramAnalysis(text) {
   const normalized = normalizeValue(text).toLowerCase();
   if (!normalized) return true;
-  if (normalized.length >= 48 && !normalized.includes('не указано в файле')) {
-    return false;
-  }
   return normalized.includes('не указано в файле')
     || normalized.includes('не удалось определить')
     || normalized.includes('нет данных');
@@ -544,16 +541,22 @@ function buildTelegramBriefSections(payload, sourceText) {
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
   const aiActions = sanitizeTelegramAiList(block.required_actions, 5);
   const aiRequirements = sanitizeTelegramAiList(block.requirements, 4);
+  const fallbackSteps = buildTelegramStepsFallback(sourceText, 4);
   const risks = Array.isArray(block.risks) ? block.risks : [];
   const participantsRaw = risks.find((item) => /^отправитель\s*:/i.test(normalizeValue(item)));
-  const participants = participantsRaw || 'Отправитель/получатель: не указано в ответе ИИ';
+  const sender = extractPartyByLabel(sourceText, ['отправитель', 'от кого', 'исполнитель']);
+  const recipient = extractPartyByLabel(sourceText, ['получатель', 'кому', 'заказчик']);
+  const sourceParticipants = (sender || recipient)
+    ? `Отправитель: ${sender || 'не найден'}. Получатель: ${recipient || 'не найден'}.`
+    : '';
+  const participants = participantsRaw || sourceParticipants || 'Отправитель/получатель: не указано в ответе ИИ';
   return {
     analysis: !isWeakTelegramAnalysis(analysis)
       ? analysis
       : (!isWeakTelegramAnalysis(responseText) ? responseText : sourceFallback),
     participants,
-    actions: aiActions,
-    requirements: aiRequirements,
+    actions: aiActions.length ? aiActions : fallbackSteps,
+    requirements: aiRequirements.length ? aiRequirements : fallbackSteps.slice(0, 3),
   };
 }
 
