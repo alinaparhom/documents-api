@@ -76,6 +76,19 @@
     { value: 'detailed', label: 'Подробно' },
     { value: 'brief', label: 'Кратко' }
   ];
+  var AI_API_KEY_MODE_OPTIONS = [
+    { value: 'auto', label: 'Авто (рекомендуется)' },
+    { value: 'paid', label: 'Платный ИИ' },
+    { value: 'free', label: 'Бесплатный ИИ' }
+  ];
+
+  function normalizeAiApiKeyMode(raw) {
+    var value = String(raw || '').toLowerCase().trim();
+    if (value === 'paid' || value === 'free') {
+      return value;
+    }
+    return 'auto';
+  }
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -1075,7 +1088,22 @@
     }
   }
 
-  function buildRequestBlueprint(userText, state, config) {
+  async function fetchExternalFileBlob(file) {
+    if (!file || !file.url) {
+      return null;
+    }
+    try {
+      var response = await fetch(file.url, { credentials: 'same-origin' });
+      if (!response.ok) {
+        return null;
+      }
+      return await response.blob();
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async function buildRequestBlueprint(userText, state, config) {
     var context = {};
     if (config.context && typeof config.context === 'object') {
       Object.keys(config.context).forEach(function (key) {
@@ -1137,6 +1165,7 @@
     formData.append('frequency_penalty', String(generationParameters.frequency_penalty));
     formData.append('presence_penalty', String(generationParameters.presence_penalty));
     formData.append('responseStyle', state.responseStyle);
+    formData.append('aiApiKeyMode', normalizeAiApiKeyMode(state.aiApiKeyMode));
     var behaviorText = String(state.aiBehavior || '').trim();
     if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
       behaviorText = '';
@@ -1145,6 +1174,7 @@
       behaviorText = behaviorText.slice(0, 10000);
     }
     formData.append('aiBehavior', behaviorText);
+    context.aiApiKeyMode = normalizeAiApiKeyMode(state.aiApiKeyMode);
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
@@ -1153,11 +1183,36 @@
         formData.append('attachments[]', file.fileObject, file.name);
       }
     });
+    if (normalizeAiApiKeyMode(state.aiApiKeyMode) === 'paid') {
+      for (var i = 0; i < state.files.length; i += 1) {
+        var externalFile = state.files[i];
+        if (!externalFile || externalFile.fileObject || !externalFile.url) {
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        var blob = await fetchExternalFileBlob(externalFile);
+        if (blob) {
+          formData.append('attachments[]', blob, String(externalFile.name || ('file_' + (i + 1))));
+        }
+      }
+    }
 
     return formData;
   }
 
   async function hydrateFileContents(state) {
+    var aiMode = normalizeAiApiKeyMode(state && state.aiApiKeyMode);
+    if (aiMode === 'paid') {
+      state.files.forEach(function (file) {
+        if (!file) return;
+        file.extracted = true;
+        file.extractError = null;
+        if (!file.content) {
+          file.content = '';
+        }
+      });
+      return;
+    }
     for (var i = 0; i < state.files.length; i += 1) {
       if (state.files[i].content) {
         state.files[i].extracted = true;
@@ -1191,6 +1246,7 @@
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
       responseStyle: STYLE_OPTIONS[0].value,
+      aiApiKeyMode: normalizeAiApiKeyMode(config.aiApiKeyMode),
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
         : DEFAULT_AI_BEHAVIOR,
@@ -1260,6 +1316,15 @@
       option.value = opt.value;
       option.textContent = opt.label;
       styleSelect.appendChild(option);
+    });
+    var aiModeField = createElement('label', 'ai-chat-modal__field');
+    aiModeField.appendChild(createElement('span', '', 'Режим ИИ'));
+    var aiModeSelect = createElement('select', 'ai-chat-modal__select');
+    AI_API_KEY_MODE_OPTIONS.forEach(function (opt) {
+      var modeOption = document.createElement('option');
+      modeOption.value = opt.value;
+      modeOption.textContent = opt.label;
+      aiModeSelect.appendChild(modeOption);
     });
     var settingsButton = createElement('button', 'ai-chat-modal__send', '⚙️ Настройки ИИ');
     settingsButton.type = 'button';
@@ -2103,6 +2168,16 @@
       updateFileStatusInUI();
 
       try {
+        if (normalizeAiApiKeyMode(state.aiApiKeyMode) === 'paid') {
+          fileEntry.rawContent = '';
+          fileEntry.content = '';
+          fileEntry.extracted = true;
+          fileEntry.extractError = null;
+          if (!opts.silent) {
+            messages.appendChild(createMessage('assistant', 'Платный режим: файл "' + fileLabel + '" отправим напрямую в ИИ без OCR.'));
+          }
+          return true;
+        }
         var extractedText = '';
         if (fileEntry.fileObject) {
           extractedText = await fileToText(fileEntry.fileObject);
@@ -2277,10 +2352,11 @@
         await hydrateFileContents(state);
         var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
+        var requestBody = await buildRequestBlueprint(effectivePrompt, state, config);
         var response = await fetchWithTimeout(apiUrl + '?action=ai_response_analyze', {
           method: 'POST',
           credentials: 'same-origin',
-          body: buildRequestBlueprint(effectivePrompt, state, config)
+          body: requestBody
         }, timeoutMs);
 
         var payload = await response.json();
@@ -2334,10 +2410,11 @@
           pending.innerHTML = '<span class="ai-chat-spinner"></span>Готовим ответ... повторная попытка';
           await new Promise(function (resolve) { setTimeout(resolve, AI_SOFT_RETRY_DELAY_MS); });
           try {
+            var retryBody = await buildRequestBlueprint(effectivePrompt, state, config);
             var secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
               method: 'POST',
               credentials: 'same-origin',
-              body: buildRequestBlueprint(effectivePrompt, state, config)
+              body: retryBody
             }, calculateAiTimeoutMs(effectivePrompt, state));
             var secondPayload = await secondResponse.json();
             if (!secondResponse.ok || !secondPayload || secondPayload.ok !== true) {
@@ -2390,6 +2467,18 @@
 
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
+    });
+    aiModeSelect.addEventListener('change', function () {
+      state.aiApiKeyMode = normalizeAiApiKeyMode(aiModeSelect.value);
+      if (state.aiApiKeyMode === 'paid') {
+        state.files.forEach(function (file) {
+          if (!file) return;
+          file.extractError = null;
+          file.extracted = true;
+        });
+      }
+      renderFiles();
+      updateContextUsageHint();
     });
     contextDetailSelect.addEventListener('change', function () {
       state.contextDetail = contextDetailSelect.value === 'brief' ? 'brief' : 'detailed';
@@ -2506,9 +2595,11 @@
 
     modelField.appendChild(modelSelect);
     styleField.appendChild(styleSelect);
+    aiModeField.appendChild(aiModeSelect);
     topBar.appendChild(filesBox);
     topBar.appendChild(modelField);
     topBar.appendChild(styleField);
+    topBar.appendChild(aiModeField);
     topBar.appendChild(settingsButton);
 
     composer.appendChild(textarea);
@@ -2531,6 +2622,7 @@
     renderFiles();
     resanitizeFileContents();
     renderModelOptions();
+    aiModeSelect.value = state.aiApiKeyMode;
 
     fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (modelsPayload) {
       var models = modelsPayload && Array.isArray(modelsPayload.models)

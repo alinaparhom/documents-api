@@ -84,13 +84,16 @@ if ($method === 'GET') {
     ];
     if ($isDebug) {
         $debugEnv = loadEnv(getEnvPaths());
-        $debugKey = trim((string)($debugEnv['AI_API_KEY'] ?? $debugEnv['OPENAI_API_KEY'] ?? ''));
+        $debugPaidKey = trim((string)($debugEnv['AI_API_KEY'] ?? $debugEnv['OPENAI_API_KEY'] ?? ''));
+        $debugFreeKey = trim((string)($debugEnv['AI_API_KEY_FREE'] ?? $debugEnv['OPENAI_API_KEY_FREE'] ?? ''));
         $debugModelsConfig = resolveAiModelsConfig($debugEnv);
         $debugModel = (string)$debugModelsConfig['defaultModel'];
         $debugBase = trim((string)($debugEnv['AI_BASE_URL'] ?? $debugEnv['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
         $payload['debug'] = [
-            'key_present' => $debugKey !== '',
-            'key_prefix' => $debugKey !== '' ? substr($debugKey, 0, 4) : '',
+            'key_present' => $debugPaidKey !== '' || $debugFreeKey !== '',
+            'paid_key_present' => $debugPaidKey !== '',
+            'free_key_present' => $debugFreeKey !== '',
+            'key_prefix' => $debugPaidKey !== '' ? substr($debugPaidKey, 0, 4) : ($debugFreeKey !== '' ? substr($debugFreeKey, 0, 4) : ''),
             'model' => $debugModel,
             'base_url' => $debugBase
         ];
@@ -200,6 +203,51 @@ function resolveAiModelsConfig(array $env): array
         'defaultModel' => $defaultModel,
         'provider' => $provider,
         'configError' => $configError,
+    ];
+}
+
+function normalizeAiApiKeyMode(mixed $rawMode): string
+{
+    if (!is_string($rawMode) && !is_numeric($rawMode)) {
+        return 'auto';
+    }
+    $mode = mb_strtolower(trim((string)$rawMode));
+    if (in_array($mode, ['paid', 'pro', 'primary'], true)) {
+        return 'paid';
+    }
+    if (in_array($mode, ['free', 'basic', 'fallback'], true)) {
+        return 'free';
+    }
+    return 'auto';
+}
+
+function resolveAiCredentials(array $env, string $requestedMode = 'auto'): array
+{
+    $mode = normalizeAiApiKeyMode($requestedMode);
+    $paidKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
+    $freeKey = trim((string)($env['AI_API_KEY_FREE'] ?? $env['OPENAI_API_KEY_FREE'] ?? ''));
+    $apiKey = '';
+    $resolvedMode = $mode;
+
+    if ($mode === 'paid') {
+        $apiKey = $paidKey;
+    } elseif ($mode === 'free') {
+        $apiKey = $freeKey;
+    } else {
+        if ($paidKey !== '') {
+            $apiKey = $paidKey;
+            $resolvedMode = 'paid';
+        } elseif ($freeKey !== '') {
+            $apiKey = $freeKey;
+            $resolvedMode = 'free';
+        }
+    }
+
+    return [
+        'requestedMode' => $mode,
+        'resolvedMode' => $resolvedMode,
+        'apiKey' => $apiKey,
+        'baseUrl' => trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1')),
     ];
 }
 
@@ -415,8 +463,9 @@ function buildModelAvailabilityRows(array $models, array $env): array
         return [];
     }
 
-    $apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
-    $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+    $credentials = resolveAiCredentials($env, 'auto');
+    $apiKey = trim((string)($credentials['apiKey'] ?? ''));
+    $baseUrl = trim((string)($credentials['baseUrl'] ?? 'https://api.openai.com/v1'));
     $shouldCheck = trim((string)($env['AI_MODELS_HEALTHCHECK'] ?? '1')) !== '0';
     if ($apiKey === '' || !$shouldCheck) {
         return array_map(static function (string $name): array {
@@ -2099,6 +2148,7 @@ if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxConte
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
+$requestedAiApiKeyMode = normalizeAiApiKeyMode($_POST['aiApiKeyMode'] ?? ($context['aiApiKeyMode'] ?? 'auto'));
 $briefModeRaw = $_POST['briefMode'] ?? '';
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
@@ -2572,10 +2622,12 @@ if ($action === 'ocr_extract') {
     ]);
 }
 
-$apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
+$aiCredentials = resolveAiCredentials($env, $requestedAiApiKeyMode);
+$apiKey = trim((string)($aiCredentials['apiKey'] ?? ''));
+$resolvedAiApiKeyMode = (string)($aiCredentials['resolvedMode'] ?? 'auto');
 $modelsConfig = resolveAiModelsConfig($env);
 $model = (string)$modelsConfig['defaultModel'];
-$baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+$baseUrl = trim((string)($aiCredentials['baseUrl'] ?? 'https://api.openai.com/v1'));
 $retryAfterSeconds = normalizeRetryAfterSeconds($env['AI_RETRY_AFTER_SECONDS'] ?? null);
 $isGroqKey = str_starts_with($apiKey, 'gsk_');
 if ($baseUrl === 'https://api.openai.com/v1' && $isGroqKey) {
@@ -2585,7 +2637,12 @@ $isGroq = stripos($baseUrl, 'groq.com') !== false;
 $isGoogleOpenAiCompat = stripos($baseUrl, 'generativelanguage.googleapis.com') !== false;
 
 if ($apiKey === '') {
-    jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env']);
+    $modeHint = $requestedAiApiKeyMode === 'free'
+        ? 'Проверьте AI_API_KEY_FREE в .env.'
+        : ($requestedAiApiKeyMode === 'paid'
+            ? 'Проверьте AI_API_KEY в .env.'
+            : 'Проверьте AI_API_KEY и/или AI_API_KEY_FREE в .env.');
+    jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env. ' . $modeHint]);
 }
 
 $filesSummary = buildFilesSummary($files);
@@ -2629,6 +2686,24 @@ foreach ($legacyAttachedFiles as $legacyFile) {
     ];
 }
 $extractedTexts = deduplicateAndNormalizeExtractedTexts($extractedTexts);
+
+if ($resolvedAiApiKeyMode === 'paid' && $files) {
+    foreach ($files as $uploadedFile) {
+        if (!is_array($uploadedFile)) {
+            continue;
+        }
+        $plainText = trim(extractTextWithoutOcr($uploadedFile));
+        if ($plainText === '') {
+            continue;
+        }
+        $extractedTexts[] = [
+            'name' => trim((string)($uploadedFile['name'] ?? 'Файл')),
+            'type' => trim((string)($uploadedFile['type'] ?? '')),
+            'text' => mb_substr($plainText, 0, 12000),
+        ];
+    }
+    $extractedTexts = deduplicateAndNormalizeExtractedTexts($extractedTexts);
+}
 $maxInputChars = (int)($env['AI_MAX_INPUT_CHARS'] ?? 60000);
 if ($maxInputChars < 2000) {
     $maxInputChars = 2000;
@@ -2727,6 +2802,38 @@ $userPayload = [
 ];
 
 $generationSettings = resolveAiGenerationSettings($env, $_POST);
+$userPayloadJson = json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+$userContent = is_string($userPayloadJson) && $userPayloadJson !== '' ? $userPayloadJson : '{}';
+$multimodalUserContent = null;
+if ($resolvedAiApiKeyMode === 'paid' && $files) {
+    $imageParts = [];
+    $maxDirectImages = normalizeIntSetting($env['AI_MAX_DIRECT_IMAGE_ATTACHMENTS'] ?? 3, 3, 1, 8);
+    foreach ($files as $file) {
+        if (count($imageParts) >= $maxDirectImages) {
+            break;
+        }
+        $tmpName = trim((string)($file['tmp_name'] ?? ''));
+        $mimeType = trim((string)($file['type'] ?? ''));
+        if ($tmpName === '' || !is_file($tmpName) || !str_starts_with(mb_strtolower($mimeType), 'image/')) {
+            continue;
+        }
+        $binary = @file_get_contents($tmpName);
+        if (!is_string($binary) || $binary === '') {
+            continue;
+        }
+        $base64 = base64_encode($binary);
+        if (!is_string($base64) || $base64 === '') {
+            continue;
+        }
+        $imageParts[] = [
+            'type' => 'image_url',
+            'image_url' => ['url' => 'data:' . $mimeType . ';base64,' . $base64],
+        ];
+    }
+    if ($imageParts) {
+        $multimodalUserContent = array_merge([['type' => 'text', 'text' => $userContent]], $imageParts);
+    }
+}
 
 $body = [
     'model' => $effectiveModel,
@@ -2737,7 +2844,7 @@ $body = [
     'max_tokens' => $generationSettings['max_tokens'],
     'messages' => [
         ['role' => 'system', 'content' => $systemMessage],
-        ['role' => 'user', 'content' => json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
+        ['role' => 'user', 'content' => $multimodalUserContent ?: $userContent],
     ],
 ];
 if (!$isGroq && !$isGoogleOpenAiCompat) {
@@ -3031,6 +3138,8 @@ if (mb_strlen($response) > 20000) {
 $successPayload = [
     'ok' => true,
     'model' => $effectiveModel,
+    'aiApiKeyModeRequested' => $requestedAiApiKeyMode,
+    'aiApiKeyModeUsed' => $resolvedAiApiKeyMode,
     ...withRetryPayload($retryAfterSeconds),
     'analysis' => $analysis,
     'response' => $response,

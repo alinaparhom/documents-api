@@ -18,6 +18,11 @@ const RESPONSE_STYLE_OPTIONS = [
   { value: 'negative', label: 'Отрицательный' },
   { value: 'neutral', label: 'Нейтральный' },
 ];
+const AI_API_KEY_MODE_OPTIONS = [
+  { value: 'auto', label: 'Авто (рекомендуется)' },
+  { value: 'paid', label: 'Платный ИИ' },
+  { value: 'free', label: 'Бесплатный ИИ' },
+];
 const CONTEXT_OVERFLOW_CODES = new Set([
   'CONTEXT_TOO_LARGE',
   'PAYLOAD_TOO_LARGE',
@@ -241,6 +246,12 @@ function resolveAiModel(context) {
   return modelFromContext || EMPTY_AI_MODEL;
 }
 
+function resolveAiApiKeyMode(context) {
+  const raw = String(context && context.aiApiKeyMode || '').trim().toLowerCase();
+  if (raw === 'paid' || raw === 'free') return raw;
+  return 'auto';
+}
+
 function normalizeModelList(rawModels) {
   if (!Array.isArray(rawModels) || !rawModels.length) {
     return MODEL_FALLBACK_OPTIONS.slice();
@@ -389,6 +400,36 @@ function isTextLikeMeta(fileMeta) {
     || name.endsWith('.md');
 }
 
+function isImageLikeMeta(fileMeta) {
+  const type = detectFileType(fileMeta);
+  const name = String(fileMeta && fileMeta.name || '').toLowerCase();
+  return type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic)$/i.test(name);
+}
+
+async function fetchExternalFileBlob(fileMeta) {
+  const candidates = Array.isArray(fileMeta && fileMeta.urls) && fileMeta.urls.length
+    ? fileMeta.urls
+    : [fileMeta && fileMeta.url].filter(Boolean);
+  if (!candidates.length) {
+    throw new Error('У файла нет доступной ссылки');
+  }
+  let lastError = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const url = String(candidates[i] || '').trim();
+    if (!url) continue;
+    try {
+      const response = await fetchWithTimeout(url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 6000);
+      if (!response.ok) throw new Error(`Файл недоступен (${response.status})`);
+      const blob = await response.blob();
+      fileMeta.url = url;
+      return blob;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('Файл недоступен');
+}
+
 async function fetchExternalFileContent(fileMeta) {
   const candidates = Array.isArray(fileMeta && fileMeta.urls) && fileMeta.urls.length
     ? fileMeta.urls
@@ -522,6 +563,22 @@ async function requestAssistantReply(userMessage, context, history) {
   const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
   const generationParams = context && context.generationParams ? context.generationParams : {};
+  const aiApiKeyMode = resolveAiApiKeyMode(context);
+  const selectedAttachments = Array.isArray(context && context.selectedAttachments) ? context.selectedAttachments : [];
+  const shouldSendDirectFiles = aiApiKeyMode === 'paid';
+  const directFileUploads = [];
+  if (shouldSendDirectFiles && selectedAttachments.length) {
+    for (let i = 0; i < selectedAttachments.length; i += 1) {
+      const fileMeta = selectedAttachments[i];
+      try {
+        const blob = await fetchExternalFileBlob(fileMeta);
+        const safeName = String(fileMeta && fileMeta.name || `attachment_${i + 1}`);
+        directFileUploads.push({ name: safeName, blob, type: blob.type || fileMeta.type || 'application/octet-stream' });
+      } catch (error) {
+        // пропускаем отдельный файл, чтобы не ломать весь запрос
+      }
+    }
+  }
   const serializedContext = JSON.stringify({
     task: {
       id: task.id || null,
@@ -532,6 +589,13 @@ async function requestAssistantReply(userMessage, context, history) {
     attachedFiles: Array.isArray(context && context.attachedFiles) ? context.attachedFiles : [],
     extractedTexts,
     source: 'telegram_mini_app_dialog',
+    aiApiKeyMode,
+    selectedAttachments: selectedAttachments.map((file) => ({
+      name: String(file && file.name || ''),
+      type: String(file && file.type || ''),
+      url: String(file && file.url || ''),
+      size: Number(file && file.size) || 0,
+    })),
   });
   const timeoutMs = calculateAiTimeoutMs(context, history, userMessage);
   const request = await postDocsAiWithFallback(() => {
@@ -543,6 +607,7 @@ async function requestAssistantReply(userMessage, context, history) {
       retryForm.append('model', resolvedModel);
     }
     retryForm.append('responseStyle', responseStyle);
+    retryForm.append('aiApiKeyMode', aiApiKeyMode);
     retryForm.append('aiBehavior', behaviorText);
     retryForm.append('extractedTexts', JSON.stringify(extractedTexts));
     retryForm.append('temperature', String(Number(generationParams.temperature) || 0.7));
@@ -550,6 +615,11 @@ async function requestAssistantReply(userMessage, context, history) {
     retryForm.append('frequency_penalty', String(Number(generationParams.frequency_penalty) || 0));
     retryForm.append('presence_penalty', String(Number(generationParams.presence_penalty) || 0));
     retryForm.append('context', serializedContext);
+    if (shouldSendDirectFiles && directFileUploads.length) {
+      directFileUploads.forEach((item) => {
+        retryForm.append('attachments[]', item.blob, item.name);
+      });
+    }
     return retryForm;
   }, { timeoutMs });
   const response = request && request.response;
@@ -632,6 +702,7 @@ function openAiResponseDialog(context = {}) {
     selectedAttachmentIds: new Set(),
     responseStyle: 'neutral',
     selectedModel: resolveAiModel(context),
+    aiApiKeyMode: resolveAiApiKeyMode(context),
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
     rateLimitUntil: 0,
     rateLimitTimer: null,
@@ -656,7 +727,7 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__messages" data-messages></div>
       <div class="appdosc-ai-dialog__composer">
         <textarea class="appdosc-ai-dialog__input" data-input placeholder="Коротко напишите задачу для ответа"></textarea>
-        <div style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <div style="flex:1;min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Стиль</label>
             <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:36px;max-height:36px;padding:4px 8px"></select>
@@ -664,6 +735,10 @@ function openAiResponseDialog(context = {}) {
           <div style="flex:1;min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-model-select">Модель</label>
             <select class="appdosc-ai-dialog__input" id="appdosc-model-select" data-model style="min-height:36px;max-height:36px;padding:4px 8px"></select>
+          </div>
+          <div style="flex:1;min-width:0">
+            <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-ai-mode-select">Режим ИИ</label>
+            <select class="appdosc-ai-dialog__input" id="appdosc-ai-mode-select" data-ai-mode style="min-height:36px;max-height:36px;padding:4px 8px"></select>
           </div>
         </div>
         <div class="appdosc-ai-dialog__attachments-hint" data-rate-limit-hint hidden></div>
@@ -688,6 +763,7 @@ function openAiResponseDialog(context = {}) {
   const input = root.querySelector('[data-input]');
   const responseStyleSelect = root.querySelector('[data-response-style]');
   const modelSelect = root.querySelector('[data-model]');
+  const aiModeSelect = root.querySelector('[data-ai-mode]');
   const autoDecisionBtn = root.querySelector('[data-auto-decision]');
   const attachmentsNode = root.querySelector('[data-attachments]');
   const rateLimitHint = root.querySelector('[data-rate-limit-hint]');
@@ -771,6 +847,17 @@ function openAiResponseDialog(context = {}) {
       option.value = String(item.value || '');
       option.textContent = String(item.label || item.value || '');
       responseStyleSelect.appendChild(option);
+    });
+  };
+
+  const renderAiModeOptions = () => {
+    if (!aiModeSelect) return;
+    aiModeSelect.textContent = '';
+    AI_API_KEY_MODE_OPTIONS.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = String(item.value || 'auto');
+      option.textContent = String(item.label || item.value || 'auto');
+      aiModeSelect.appendChild(option);
     });
   };
 
@@ -872,6 +959,17 @@ function openAiResponseDialog(context = {}) {
   const handleBatchAdd = async () => {
     const selected = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
     if (!selected.length) return;
+    if (state.aiApiKeyMode === 'paid') {
+      context.extractedTexts = [];
+      selected.forEach((file) => {
+        file.extractError = '';
+        file.extracted = true;
+        file.preview = 'Файл будет отправлен напрямую в платный ИИ без OCR.';
+      });
+      appendBubble(`Выбрано файлов для прямой отправки в платный ИИ: ${selected.length}. OCR пропущен.`, 'assistant');
+      renderAttachments();
+      return;
+    }
     let totalChars = 0;
     const extractedForContext = [];
     for (let i = 0; i < selected.length; i += 1) {
@@ -1044,7 +1142,7 @@ function openAiResponseDialog(context = {}) {
     if (applyRateLimitState()) return;
     const hasSelectedFiles = state.selectedAttachmentIds instanceof Set && state.selectedAttachmentIds.size > 0;
     const hasFiles = Array.isArray(context.extractedTexts) && context.extractedTexts.length > 0;
-    if (hasSelectedFiles && !hasFiles) {
+    if (hasSelectedFiles && !hasFiles && state.aiApiKeyMode !== 'paid') {
       appendBubble('Ошибка: выбранные файлы ещё не прочитаны. Нажмите «Прочитать выбранные» и повторите.', 'assistant');
       notify('warning', 'Контекст из файлов не готов.');
       return;
@@ -1061,7 +1159,8 @@ function openAiResponseDialog(context = {}) {
     root.querySelector('[data-send]').disabled = true;
     const pending = appendPendingBubble('Готовим ответ...');
     try {
-      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
+      const selectedAttachments = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiApiKeyMode: state.aiApiKeyMode, selectedAttachments }, state.chatHistory);
       pending.remove();
       appendBubble(assistantReply, 'assistant');
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
@@ -1103,7 +1202,8 @@ function openAiResponseDialog(context = {}) {
     const pending = appendPendingBubble('Готовим ответ...');
     let assistantReply = '';
     try {
-      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
+      const selectedAttachments = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiApiKeyMode: state.aiApiKeyMode, selectedAttachments }, state.chatHistory);
     } catch (error) {
       pending.remove();
       assistantReply = '';
@@ -1140,10 +1240,21 @@ function openAiResponseDialog(context = {}) {
 
   autoDecisionBtn.addEventListener('click', runAutoDecision);
   renderResponseStyleOptions();
+  renderAiModeOptions();
   if (responseStyleSelect) {
     responseStyleSelect.value = state.responseStyle;
     responseStyleSelect.addEventListener('change', () => {
       state.responseStyle = String(responseStyleSelect.value || 'neutral');
+    });
+  }
+  if (aiModeSelect) {
+    aiModeSelect.value = state.aiApiKeyMode;
+    aiModeSelect.addEventListener('change', () => {
+      state.aiApiKeyMode = String(aiModeSelect.value || 'auto');
+      if (state.aiApiKeyMode === 'paid') {
+        context.extractedTexts = [];
+      }
+      renderAttachments();
     });
   }
   fetchAvailableModels().then((modelsPayload) => {
