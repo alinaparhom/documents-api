@@ -2067,7 +2067,7 @@
     ].join('\n');
   }
 
-  function buildAiBriefSummaryText(payload) {
+  function buildAiBriefSummaryText(payload, sourceText) {
     var data = payload && typeof payload === 'object' ? payload : {};
     var analysis = data.analysis ? String(data.analysis).trim() : '';
     var responseText = data.response ? String(data.response).trim() : '';
@@ -2146,24 +2146,52 @@
       }
       return false;
     });
-    analysis = normalizeSentence(analysis) || 'ИИ не вернул понятный блок «О чем файл».';
+    function extractPartyByLabel(text, labelVariants) {
+      var safeText = String(text || '');
+      if (!safeText) return '';
+      var escaped = (Array.isArray(labelVariants) ? labelVariants : [])
+        .map(function(label) { return String(label || '').trim(); })
+        .filter(Boolean)
+        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+      if (!escaped.length) return '';
+      var pattern = new RegExp('(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r;]+)', 'i');
+      var match = safeText.match(pattern);
+      return match && match[1] ? String(match[1]).trim() : '';
+    }
+    var normalizedAnalysis = normalizeSentence(analysis);
+    var normalizedResponse = normalizeSentence(responseText);
+    var sourceSummary = normalizeSentence(collectBriefSentences(sourceText, 3).join('. '));
+    analysis = normalizedAnalysis || normalizedResponse || sourceSummary || 'ИИ не вернул понятный блок «О чем файл».';
     cleanedActions = sanitizeList(actions, 4, 'actions');
     var actionsMap = {};
     cleanedActions.forEach(function(item) {
       actionsMap[String(item).toLowerCase()] = true;
     });
     cleanedRequirements = sanitizeList(requirements, 4, 'requirements', actionsMap);
-    var normalizedResponse = normalizeSentence(responseText);
-    var responseLooksDuplicated = normalizedResponse && analysis
-      && normalizedResponse.toLowerCase() === analysis.toLowerCase();
-    var resolvedAnalysis = responseLooksDuplicated
-      ? analysis
-      : (analysis || normalizedResponse || 'ИИ не вернул понятный анализ по файлу.');
+    if (!cleanedActions.length) {
+      cleanedActions = collectBriefSentences(sourceText, 6)
+        .map(normalizeSentence)
+        .filter(Boolean)
+        .slice(0, 4);
+    }
+    if (!cleanedRequirements.length) {
+      cleanedRequirements = collectBriefSentences(sourceText, 8)
+        .map(normalizeSentence)
+        .filter(Boolean)
+        .slice(1, 4);
+    }
+    if (!participants) {
+      var sender = extractPartyByLabel(sourceText, ['отправитель', 'от кого', 'исполнитель']);
+      var recipient = extractPartyByLabel(sourceText, ['получатель', 'кому', 'заказчик']);
+      if (sender || recipient) {
+        participants = 'Отправитель: ' + (sender || 'не найден') + '; Получатель: ' + (recipient || 'не найден');
+      }
+    }
     return [
       'Краткий вывод ИИ',
       '',
       'О чем файл',
-      resolvedAnalysis,
+      analysis,
       '',
       'Кто прислал / кому',
       participants || 'Не удалось точно определить отправителя и получателя.',
@@ -2514,7 +2542,7 @@
           .then(function(sourceText) {
             var aiPayload = sourceText;
             preview.classList.remove('is-loading');
-            preview.textContent = buildAiBriefSummaryText(aiPayload);
+            preview.textContent = buildAiBriefSummaryText(aiPayload, source && source.text ? source.text : '');
             var elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
             metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек';
           })
