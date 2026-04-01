@@ -61,10 +61,10 @@ function sanitizeFileName(string $name): string
 
 function normalizeUploadedFiles(string $field): array
 {
-    if (!isset($_FILES[$field]) || !is_array($_FILES[$field])) {
+    $raw = $_FILES[$field] ?? $_FILES[$field . '[]'] ?? null;
+    if (!is_array($raw)) {
         return [];
     }
-    $raw = $_FILES[$field];
     if (!isset($raw['name'])) {
         return [];
     }

@@ -205,12 +205,11 @@ function resolveAiModelsConfig(array $env): array
 
 function normalizeUploadedFiles(string $field): array
 {
-    if (!isset($_FILES[$field])) {
+    $raw = $_FILES[$field] ?? $_FILES[$field . '[]'] ?? null;
+    if (!is_array($raw)) {
         return [];
     }
-
-    $raw = $_FILES[$field];
-    if (!is_array($raw) || !isset($raw['name'])) {
+    if (!isset($raw['name'])) {
         return [];
     }
 

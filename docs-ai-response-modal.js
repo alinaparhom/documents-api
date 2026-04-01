@@ -356,7 +356,7 @@
     formData.append('prompt', String(prompt || 'Сформируй ответ по приложенному файлу.'));
     paidFiles.forEach(function (entry) {
       if (!entry || !entry.blob) return;
-      formData.append('files[]', entry.blob, entry.name || 'document.bin');
+      formData.append('files', entry.blob, entry.name || 'document.bin');
     });
     return formData;
   }
@@ -1319,7 +1319,7 @@
 
     state.files.forEach(function (file) {
       if (file.fileObject) {
-        formData.append('attachments[]', file.fileObject, file.name);
+        formData.append('attachments', file.fileObject, file.name);
       }
     });
 
