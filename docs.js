@@ -2264,6 +2264,46 @@
     });
   }
 
+  function requestAiBriefSummaryForFileDirect(source, apiUrl) {
+    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+    var context = {
+      attachedFiles: [
+        {
+          name: sourceLabel,
+          url: source && source.url ? String(source.url) : '',
+          type: source && source.fileObject && source.fileObject.type ? String(source.fileObject.type) : '',
+          size: source && source.fileObject && source.fileObject.size ? Number(source.fileObject.size) : 0
+        }
+      ],
+      isolatedFileMode: true,
+      aiBehavior: 'VIP-кратко: анализируй только приложенный файл и верни короткий структурированный итог без markdown.'
+    };
+    var formData = new FormData();
+    formData.append('action', 'ai_response_analyze');
+    formData.append('documentTitle', sourceLabel);
+    formData.append('prompt', 'Сделай краткий вывод строго по приложенному файлу. Верни JSON формата brief.');
+    formData.append('responseStyle', 'concise');
+    formData.append('briefMode', '1');
+    formData.append('mode', 'paid');
+    formData.append('context', JSON.stringify(context));
+    if (source && source.fileObject) {
+      formData.append('attachments[]', source.fileObject, source.fileObject.name || sourceLabel);
+    }
+    return fetch(endpoint, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    }).then(function(response) {
+      return response.json().catch(function() { return null; }).then(function(payload) {
+        if (!response.ok || !payload || payload.ok !== true) {
+          throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
+        }
+        return payload;
+      });
+    });
+  }
+
   function openAiBriefSummaryModal(config) {
     ensureResponsesStyle();
     var options = config && typeof config === 'object' ? config : {};
@@ -2351,11 +2391,13 @@
       button.title = source.label;
       button.type = 'button';
       button.addEventListener('click', function() {
+        var selectedMode = modeSelect.value === 'paid' ? 'paid' : 'free';
         makeActive(button);
         button.disabled = true;
         setPreviewLoading(true, source.label);
-        resolveSourceText(source)
-          .then(function(sourceText) {
+        var requestPromise = selectedMode === 'paid'
+          ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
+          : resolveSourceText(source).then(function(sourceText) {
             var aiStartedAt = Date.now();
             var estimatedSeconds = 35;
             var timerId = null;
@@ -2366,34 +2408,24 @@
             }
             updateAiProgress();
             timerId = window.setInterval(updateAiProgress, 1000);
-            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, modeSelect.value)
-              .then(function(aiPayload) {
-                if (timerId) {
-                  window.clearInterval(timerId);
-                }
-                preview.classList.remove('is-loading');
-                preview.textContent = buildAiBriefSummaryText(aiPayload);
-                var elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - aiStartedAt)) / 1000).toFixed(1);
-                metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек';
-              })
-              .catch(function(error) {
-                if (timerId) {
-                  window.clearInterval(timerId);
-                }
-                preview.classList.remove('is-loading');
-                preview.textContent = 'Ошибка анализа.\n' + (error && error.message ? error.message : 'неизвестная ошибка');
-                metaCompact.textContent = '';
-                showStatusMessage('warning', error && error.message ? error.message : 'ИИ временно недоступен. Попробуйте позже.');
-              })
-              .finally(function() {
-                button.disabled = false;
-              });
+            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, selectedMode)
+              .finally(function() { if (timerId) window.clearInterval(timerId); });
+          });
+        requestPromise
+          .then(function(sourceText) {
+            var aiPayload = sourceText;
+            preview.classList.remove('is-loading');
+            preview.textContent = buildAiBriefSummaryText(aiPayload);
+            var elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
+            metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек';
           })
           .catch(function(error) {
             preview.classList.remove('is-loading');
             preview.textContent = 'Не удалось получить summary: ' + (error && error.message ? error.message : 'неизвестная ошибка');
             metaCompact.textContent = '';
             showStatusMessage('warning', 'Не удалось обработать "' + source.label + '".');
+          })
+          .finally(function() {
             button.disabled = false;
           });
       });

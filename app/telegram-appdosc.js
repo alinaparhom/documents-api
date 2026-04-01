@@ -306,6 +306,29 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   return payload;
 }
 
+async function requestTelegramBriefAiDirect(source, aiMode = 'paid') {
+  const request = await postDocsAiWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'ai_response_analyze');
+    formData.append('documentTitle', normalizeValue(source && source.label) || 'Файл');
+    formData.append('prompt', 'Сделай краткий вывод строго по приложенному файлу. Верни JSON без markdown.');
+    formData.append('responseStyle', 'concise');
+    formData.append('briefMode', '1');
+    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+    formData.append('context', JSON.stringify({
+      attachedFiles: [{ name: normalizeValue(source && source.label), url: normalizeValue(source && source.url), type: 'file/url' }],
+      isolatedFileMode: true
+    }));
+    return formData;
+  }, { fallbackErrorMessage: 'ИИ временно недоступен' });
+  const response = request && request.response;
+  const payload = request && request.payload;
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
+  }
+  return payload;
+}
+
 function normalizeTelegramOcrText(text) {
   return String(text || '')
     .replace(/-\s*\n\s*/g, '')
@@ -518,21 +541,34 @@ function openTelegramBriefModal(task, statusHandler) {
         button.disabled = true;
         setStatus(`Подготовка файла: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
-        sourceText = source.text || await requestTelegramOcrByUrl(source.url);
-        if (requestId !== activeRequestId) return;
-        source.text = sourceText;
-        if (!normalizeTelegramOcrText(sourceText)) {
-          throw new Error('Файл прочитан, но текст пустой. Проверьте качество файла.');
+        const selectedMode = modeSelect && modeSelect.value === 'paid' ? 'paid' : 'free';
+        let aiPayload = null;
+        if (selectedMode === 'paid') {
+          setStatus(`VIP анализ файла: ${source.label}`, 'loading');
+          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла напрямую в VIP ИИ...</p>';
+          aiPayload = await requestTelegramBriefAiDirect(source, 'paid');
+        } else {
+          sourceText = source.text || await requestTelegramOcrByUrl(source.url);
+          if (requestId !== activeRequestId) return;
+          source.text = sourceText;
+          if (!normalizeTelegramOcrText(sourceText)) {
+            throw new Error('Файл прочитан, но текст пустой. Проверьте качество файла.');
+          }
+          setStatus(`Анализ ИИ: ${source.label}`, 'loading');
+          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
+          const aiStartedAt = Date.now();
+          aiPayload = await requestTelegramBriefAi(source.label, sourceText, selectedMode);
+          if (requestId !== activeRequestId) return;
+          if (metaNode) {
+            const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - aiStartedAt)) / 1000).toFixed(1);
+            metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек`;
+          }
         }
-        setStatus(`Анализ ИИ: ${source.label}`, 'loading');
-        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
-        const aiStartedAt = Date.now();
-        const aiPayload = await requestTelegramBriefAi(source.label, sourceText, modeSelect && modeSelect.value === 'paid' ? 'paid' : 'free');
         if (requestId !== activeRequestId) return;
         renderTelegramBriefPreview(preview, aiPayload, sourceText);
         setStatus('Готово. Разбор сформирован только по выбранному файлу.', 'success');
         if (metaNode) {
-          const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - aiStartedAt)) / 1000).toFixed(1);
+          const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
           metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек`;
         }
       } catch (error) {
