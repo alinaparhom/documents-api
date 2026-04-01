@@ -8,7 +8,7 @@ const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
-const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+const GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
@@ -22,6 +22,7 @@ function getDirectDocsAiEndpoint() {
 async function postDocsAiAnalyzeDirect(createFormData) {
   const endpoint = getDirectDocsAiEndpoint();
   const url = `${endpoint}?action=ai_response_analyze`;
+  console.log('[AI][docs-direct] Отправка запроса', { url, ts: new Date().toISOString() });
   const response = await fetch(url, { method: 'POST', credentials: 'include', body: createFormData() });
   const payload = await response.json().catch(() => null);
   return { endpoint: url, response, payload };
@@ -42,6 +43,7 @@ async function postDocsAiWithFallback(createFormData, options = {}) {
     let response = null;
     let payload = null;
     try {
+      console.log('[AI][docs-fallback] Отправка запроса', { endpoint, ts: new Date().toISOString() });
       response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
       payload = await response.json().catch(() => null);
     } catch (error) {
@@ -62,13 +64,33 @@ async function postDocsAiWithFallback(createFormData, options = {}) {
 }
 
 async function postGroqPaidWithFallback(createFormData) {
+  const fetchWithTimeout = async (url, options = {}, timeoutMs = 65000) => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      return await fetch(url, { ...options, signal: controller ? controller.signal : undefined });
+    } catch (error) {
+      if (error && error.name === 'AbortError') {
+        throw new Error('Таймаут платного ИИ. Попробуйте снова.');
+      }
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
   let lastError = null;
   for (let index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
     const endpoint = GROQ_PAID_ENDPOINTS[index];
     try {
-      const response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+      console.log('[AI][groq-paid] Отправка запроса', { endpoint, ts: new Date().toISOString() });
+      const response = await fetchWithTimeout(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
       if (response.status === 404 || response.status === 405) continue;
       const payload = await response.json().catch(() => null);
+      const serverError = String(payload && payload.error ? payload.error : '');
+      const shouldTryNextEndpoint = response.status >= 500 || /E208|internal processing error/i.test(serverError);
+      if (shouldTryNextEndpoint && index < GROQ_PAID_ENDPOINTS.length - 1) {
+        continue;
+      }
       return { endpoint, response, payload };
     } catch (error) {
       lastError = error;
@@ -245,6 +267,8 @@ function ensureTelegramBriefModalStyle() {
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
     .appdosc-brief-ai__mode{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 8px;border-radius:999px;background:rgba(219,234,254,.7);border:1px solid rgba(147,197,253,.8);font-size:11px;color:#1e3a8a;font-weight:600}
+    .appdosc-brief-ai__toggle{display:inline-flex;align-items:center;gap:8px;margin-top:7px;padding:6px 9px;border-radius:11px;border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.88);font-size:12px;color:#334155;font-weight:600}
+    .appdosc-brief-ai__toggle input{accent-color:#2563eb;width:16px;height:16px}
     .appdosc-brief-ai__hint{margin-top:6px;font-size:11px;color:#475569}
     .appdosc-brief-ai__status{margin:0;padding:6px 10px;border-bottom:1px solid rgba(226,232,240,.85);font-size:12px;color:#334155;background:rgba(248,250,252,.88)}
     .appdosc-brief-ai__status[data-tone="loading"]{color:#1d4ed8}
@@ -300,7 +324,7 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
     'Нужен только структурированный результат по содержимому файла.',
     'Ответ строго в JSON без markdown и без пояснений.',
     'Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}.',
-    'analysis: 2-3 коротких предложения о сути документа.',
+    'analysis: минимум 5 полных предложений о сути документа.',
     'required_actions: 3-5 конкретных фактов из текста (суммы, даты, адреса, этапы, работы).',
     'requirements: 3-5 понятных шагов, что сделать дальше по документу.',
     'Каждый пункт 6-140 символов, без обрывков строк и частей слов.'
@@ -314,7 +338,7 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   const request = await postDocsAiAnalyzeDirect(() => {
     const formData = new FormData();
     formData.append('documentTitle', sourceLabel || 'Файл');
-    formData.append('prompt', 'Сделай краткий и точный вывод по тексту файла. Верни только JSON заданного формата, без markdown.');
+    formData.append('prompt', 'Сделай точный вывод по тексту файла. Верни только JSON заданного формата, без markdown. В поле analysis минимум 5 предложений.');
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
@@ -354,72 +378,32 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   }
   const blob = await fetched.blob();
   const fileName = normalizeValue(source && source.label) || 'brief-file';
-  const ensurePdfJsLoaded = async () => {
-    if (typeof window !== 'undefined' && window.pdfjsLib) return window.pdfjsLib;
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '/pdf/pdf.min.js';
-      script.onload = resolve;
-      script.onerror = () => reject(new Error('Не удалось загрузить PDF библиотеку'));
-      document.head.appendChild(script);
-    });
-    if (!window.pdfjsLib) throw new Error('pdfjsLib не найден');
-    return window.pdfjsLib;
-  };
-  const convertPdfFileToImage = async (file) => {
-    const isPdf = file && ((String(file.type || '').toLowerCase() === 'application/pdf') || /\.pdf$/i.test(String(file.name || '')));
-    if (!isPdf) return file;
-    try {
-      const pdfjs = await ensurePdfJsLoaded();
-      if (pdfjs && pdfjs.GlobalWorkerOptions) {
-        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
-      }
-      const bytes = await file.arrayBuffer();
-      const pdf = await pdfjs.getDocument({ data: bytes }).promise;
-      const page = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 2 });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.floor(viewport.width));
-      canvas.height = Math.max(1, Math.floor(viewport.height));
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return file;
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      const imageBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
-      if (!imageBlob) return file;
-      return new File([imageBlob], String(file.name || 'brief-file').replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
-    } catch (_) {
-      return file;
-    }
-  };
   const rawFile = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-  const preparedFile = await convertPdfFileToImage(rawFile);
+  const preparedFile = rawFile;
   let extractedText = '';
   try {
     extractedText = await requestTelegramOcrByUrl(fileUrl);
   } catch (_) {
     extractedText = '';
   }
-  const request = await postDocsAiAnalyzeDirect(() => {
+  const request = await postGroqPaidWithFallback(() => {
     const formData = new FormData();
-    formData.append('documentTitle', fileName);
-    formData.append('prompt', 'Сделай краткий вывод по прикрепленному файлу. Верни только JSON без markdown, без письма и воды.');
-    formData.append('responseStyle', 'concise');
-    formData.append('briefMode', '1');
-    formData.append('mode', 'paid');
-    formData.append('attachments[]', preparedFile, preparedFile.name || fileName);
-    const context = {
-      isolatedFileMode: true,
-      requestNonce: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      attachedFiles: [{ name: fileName, url: fileUrl, type: normalizeValue(preparedFile && preparedFile.type) }],
-      extractedTexts: extractedText ? [{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
-      aiBehavior: 'VIP-кратко: используй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}.'
-    };
-    if (context.extractedTexts.length) {
-      formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
+    const promptParts = [
+      'Сформируй чистый ответ по приложенному файлу.',
+      'Минимум 5 предложений.',
+      'Только решение и краткое обоснование по фактам документа.',
+      'Без markdown, без списков, без служебных заголовков.'
+    ];
+    if (extractedText) {
+      promptParts.push(`Дополнительный OCR-текст для точности:\n${String(extractedText).slice(0, 6000)}`);
     }
-    formData.append('temperature', '0.5');
-    formData.append('top_p', '1');
-    formData.append('context', JSON.stringify(context));
+    formData.append('prompt', promptParts.join(' '));
+    formData.append('files', preparedFile, preparedFile.name || fileName);
+    if (String(extractedText || '').trim()) {
+      const ocrFileName = String(preparedFile.name || fileName || 'document').replace(/\.[^.]+$/, '') + '-ocr.txt';
+      const ocrTextFile = new File([String(extractedText).slice(0, 16000)], ocrFileName, { type: 'text/plain' });
+      formData.append('files', ocrTextFile, ocrTextFile.name);
+    }
     return formData;
   });
   const response = request && request.response;
@@ -492,6 +476,16 @@ function hasMeaningfulTelegramBriefPayload(payload) {
   const hasActions = Array.isArray(block.required_actions) && block.required_actions.some((item) => normalizeValue(item).length >= 4);
   const hasRequirements = Array.isArray(block.requirements) && block.requirements.some((item) => normalizeValue(item).length >= 4);
   return Boolean(analysis || responseText || hasActions || hasRequirements);
+}
+
+function extractTelegramPlainAiText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidates = [payload.response, payload.analysis, payload.text, payload.answer];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = normalizeValue(candidates[i]);
+    if (candidate) return candidate;
+  }
+  return '';
 }
 
 function pickTelegramFactsFromText(sourceText, limit) {
@@ -602,6 +596,7 @@ function openTelegramBriefModal(task, statusHandler) {
           <div class="appdosc-brief-ai__title">Кратко ИИ</div>
           <div class="appdosc-brief-ai__sub">Краткий вывод по документу</div>
           <div class="appdosc-brief-ai__mode">Только текст выбранного файла</div>
+          <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-new-decision>Новое решение</label>
           <div style="margin-top:6px"><select data-ai-mode style="min-height:30px;border:1px solid rgba(203,213,225,.95);border-radius:9px;padding:4px 8px;background:#fff"><option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option></select></div>
           <div class="appdosc-brief-ai__hint">1) Выберите файл → 2) Дождитесь анализа → 3) Скопируйте нужные пункты.</div>
         </div>
@@ -621,6 +616,7 @@ function openTelegramBriefModal(task, statusHandler) {
   const statusNode = modal.querySelector('[data-status]');
   const metaNode = modal.querySelector('[data-meta]');
   const modeSelect = modal.querySelector('[data-ai-mode]');
+  const newDecisionCheckbox = modal.querySelector('[data-new-decision]');
   const sources = [];
   let activeRequestId = 0;
 
@@ -648,6 +644,16 @@ function openTelegramBriefModal(task, statusHandler) {
   };
   modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
   modal.querySelector('[data-close]').addEventListener('click', close);
+  if (newDecisionCheckbox) {
+    newDecisionCheckbox.addEventListener('change', () => {
+      if (modeSelect) {
+        modeSelect.disabled = newDecisionCheckbox.checked;
+      }
+      if (newDecisionCheckbox.checked) {
+        setStatus('Режим "Новое решение": файл пойдёт напрямую в платный ИИ.', 'idle');
+      }
+    });
+  }
   document.addEventListener('keydown', onEscClose);
 
   sources.forEach((source) => {
@@ -663,11 +669,12 @@ function openTelegramBriefModal(task, statusHandler) {
         button.disabled = true;
         setStatus(`Подготовка файла: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
+        const useNewDecision = Boolean(newDecisionCheckbox && newDecisionCheckbox.checked);
         const selectedMode = modeSelect && modeSelect.value === 'paid' ? 'paid' : 'free';
         let aiPayload = null;
-        if (selectedMode === 'paid') {
+        if (useNewDecision || selectedMode === 'paid') {
           setStatus(`VIP анализ файла: ${source.label}`, 'loading');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла напрямую в VIP ИИ...</p>';
+          preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">⏳ ${useNewDecision ? 'Новое решение' : 'VIP режим'}: отправка файла напрямую в платный ИИ...</p>`;
           aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
         } else {
           sourceText = await requestTelegramOcrByUrl(source.url);
@@ -687,11 +694,16 @@ function openTelegramBriefModal(task, statusHandler) {
           }
         }
         if (requestId !== activeRequestId) return;
-        renderTelegramBriefPreview(preview, aiPayload, sourceText);
+        if (useNewDecision) {
+          const plainText = extractTelegramPlainAiText(aiPayload);
+          preview.textContent = plainText || 'ИИ не вернул чистый текст ответа. Попробуйте ещё раз.';
+        } else {
+          renderTelegramBriefPreview(preview, aiPayload, sourceText);
+        }
         setStatus('Готово. Разбор сформирован только по выбранному файлу.', 'success');
         if (metaNode) {
           const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
-          metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек`;
+          metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек${useNewDecision ? ' • Режим: Новое решение' : ''}`;
         }
       } catch (error) {
         if (requestId !== activeRequestId) return;
