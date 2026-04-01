@@ -619,6 +619,15 @@ function parseAiPayload(payload) {
 function sanitizeAssistantText(text) {
   let value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!value) return '';
+  const compact = value.trim();
+  if (compact && compact.charAt(0) === '{' && /"response"\s*:/i.test(compact)) {
+    try {
+      const parsed = JSON.parse(compact);
+      if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+        value = parsed.response.trim();
+      }
+    } catch (_) {}
+  }
   value = value.replace(/<think[\s\S]*?<\/think>/gi, '');
   value = value.replace(/<\/?think>/gi, '');
   const lines = value

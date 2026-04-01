@@ -428,7 +428,17 @@ function normalizeTelegramOcrText(text) {
 }
 
 function cleanTelegramSentence(text) {
-  return String(text || '')
+  const raw = String(text || '').trim();
+  let normalized = raw;
+  if (raw && raw.charAt(0) === '{' && /"response"\s*:/i.test(raw)) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+        normalized = parsed.response.trim();
+      }
+    } catch (_) {}
+  }
+  return String(normalized || '')
     .replace(/\s+/g, ' ')
     .replace(/^[•\-–—\d.)\s]+/u, '')
     .replace(/[;,:-]+$/g, '')
