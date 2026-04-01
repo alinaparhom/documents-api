@@ -80,7 +80,7 @@
     { value: 'free', label: 'Бесплатный ИИ' },
     { value: 'paid', label: 'VIP ИИ (платный)' }
   ];
-  var GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+  var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
 
   function createElement(tag, className, text) {
@@ -444,6 +444,14 @@
           body: body
         }, timeoutMs);
         if (response.status === 404 || response.status === 405) {
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        var payload = await response.clone().json().catch(function () { return null; });
+        var serverError = String(payload && payload.error ? payload.error : '');
+        var shouldTryNext = (response.status >= 500 || /E208|internal processing error/i.test(serverError))
+          && i < GROQ_PAID_ENDPOINTS.length - 1;
+        if (shouldTryNext) {
           continue;
         }
         return response;
