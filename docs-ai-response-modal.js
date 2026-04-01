@@ -256,7 +256,7 @@
       : ((state && state.aiMode) === 'paid' ? 'paid' : 'free');
   }
 
-  async function resolvePaidSourceFiles(state) {
+  async function resolvePaidSourceFiles(state, config) {
     function resolveFileUrl(file) {
       if (!file || typeof file !== 'object') {
         return '';
@@ -278,7 +278,8 @@
         }
       }
       return '';
-  async function resolvePaidSourceFiles(state, config) {
+    }
+
     function shouldConvertPdfForModel(modelName) {
       var normalized = String(modelName || '').trim().toLowerCase();
       return GROQ_PDF_UNSUPPORTED_MODELS.indexOf(normalized) !== -1;
@@ -327,40 +328,44 @@
     var preparedFiles = [];
     for (var i = 0; i < candidates.length; i += 1) {
       var file = candidates[i];
-      if (file && file.fileObject) {
-        var localName = file.name || 'document.bin';
-        if (isPdfFile(localName, file.fileObject.type) && convertPdfForModel) {
-          // eslint-disable-next-line no-await-in-loop
-          var localJpegs = await convertPdfBlobToJpegBlobs(file.fileObject, localName.replace(/\.pdf$/i, '') || 'document');
-          if (localJpegs.length) {
-            preparedFiles = preparedFiles.concat(localJpegs);
-            continue;
+      try {
+        if (file && file.fileObject) {
+          var localName = file.name || 'document.bin';
+          if (isPdfFile(localName, file.fileObject.type) && convertPdfForModel) {
+            // eslint-disable-next-line no-await-in-loop
+            var localJpegs = await convertPdfBlobToJpegBlobs(file.fileObject, localName.replace(/\.pdf$/i, '') || 'document');
+            if (localJpegs.length) {
+              preparedFiles = preparedFiles.concat(localJpegs);
+              continue;
+            }
           }
-        }
-        if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
-        preparedFiles.push({ name: localName, blob: file.fileObject });
-        continue;
-      }
-      var remoteUrl = resolveFileUrl(file);
-      if (remoteUrl) {
-        // eslint-disable-next-line no-await-in-loop
-        var fileResponse = await fetch(remoteUrl, { credentials: 'same-origin' });
-        if (!fileResponse.ok) {
+          if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
+          preparedFiles.push({ name: localName, blob: file.fileObject });
           continue;
         }
-        // eslint-disable-next-line no-await-in-loop
-        var fileBlob = await fileResponse.blob();
-        var remoteName = file.name || 'document.bin';
-        if (isPdfFile(remoteName, fileBlob.type) && convertPdfForModel) {
+        var remoteUrl = resolveFileUrl(file);
+        if (remoteUrl) {
           // eslint-disable-next-line no-await-in-loop
-          var remoteJpegs = await convertPdfBlobToJpegBlobs(fileBlob, remoteName.replace(/\.pdf$/i, '') || 'document');
-          if (remoteJpegs.length) {
-            preparedFiles = preparedFiles.concat(remoteJpegs);
+          var fileResponse = await fetch(remoteUrl, { credentials: 'same-origin' });
+          if (!fileResponse.ok) {
             continue;
           }
+          // eslint-disable-next-line no-await-in-loop
+          var fileBlob = await fileResponse.blob();
+          var remoteName = file.name || 'document.bin';
+          if (isPdfFile(remoteName, fileBlob.type) && convertPdfForModel) {
+            // eslint-disable-next-line no-await-in-loop
+            var remoteJpegs = await convertPdfBlobToJpegBlobs(fileBlob, remoteName.replace(/\.pdf$/i, '') || 'document');
+            if (remoteJpegs.length) {
+              preparedFiles = preparedFiles.concat(remoteJpegs);
+              continue;
+            }
+          }
+          if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
+          preparedFiles.push({ name: remoteName, blob: fileBlob });
         }
-        if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
-        preparedFiles.push({ name: remoteName, blob: fileBlob });
+      } catch (_) {
+        continue;
       }
     }
     return preparedFiles;
