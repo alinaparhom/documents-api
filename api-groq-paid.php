@@ -9,12 +9,12 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
-const MAX_TOTAL_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
-const MAX_TEXT_CHARS = 10000;
-const OCR_MAX_PAGES = 5;
+const MAX_TOTAL_UPLOAD_BYTES = 0; // 0 = без ограничения
+const MAX_TEXT_CHARS = 0; // 0 = без обрезки
+const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL_TEXT = 'llama-3.3-70b-versatile';
-const MODEL_VISION = 'meta-llama/llama-4-scout-17b-16e-instruct';
+const MODEL_TEXT = 'deepseek-r1-distill-llama-70b';
+const MODEL_VISION = 'meta-llama/llama-4-maverick-17b-128e-instruct';
 
 function respond(int $status, array $payload): void
 {
@@ -145,7 +145,8 @@ function extractPdfTextWithPdftotext(string $pdfPath): string
         return '';
     }
     try {
-        $cmd = 'pdftotext -enc UTF-8 -f 1 -l ' . OCR_MAX_PAGES . ' '
+        $cmd = 'pdftotext -enc UTF-8 -f 1 '
+            . (OCR_MAX_PAGES > 0 ? ('-l ' . OCR_MAX_PAGES . ' ') : '')
             . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath);
         @exec($cmd, $out, $code);
         if ($code !== 0 || !is_file($tmpTextPath)) {
@@ -169,7 +170,8 @@ function extractPdfTextWithOcr(string $pdfPath): string
     @unlink($tmpBase);
     $textParts = [];
     try {
-        for ($page = 1; $page <= OCR_MAX_PAGES; $page += 1) {
+        $maxPages = OCR_MAX_PAGES > 0 ? OCR_MAX_PAGES : 500;
+        for ($page = 1; $page <= $maxPages; $page += 1) {
             $jpgPath = $tmpBase . '-p' . $page . '.jpg';
             $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
                 . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4));
@@ -189,7 +191,7 @@ function extractPdfTextWithOcr(string $pdfPath): string
             @unlink($jpgPath);
         }
     } finally {
-        for ($page = 1; $page <= OCR_MAX_PAGES; $page += 1) {
+        for ($page = 1; $page <= $maxPages; $page += 1) {
             @unlink($tmpBase . '-p' . $page . '.jpg');
         }
     }
@@ -292,7 +294,7 @@ $totalBytes = array_reduce($files, static function (int $sum, array $f): int {
 if ($totalBytes <= 0) {
     respond(422, ['ok' => false, 'error' => 'Пустая загрузка файлов.']);
 }
-if ($totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
+if (MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
     respond(413, ['ok' => false, 'error' => 'Общий размер файлов превышает 20 МБ.']);
 }
 
@@ -331,7 +333,7 @@ foreach ($files as $file) {
 
     if ($isText) {
         $raw = (string)@file_get_contents($tmp);
-        $normalized = trim(mb_substr($raw, 0, MAX_TEXT_CHARS));
+        $normalized = MAX_TEXT_CHARS > 0 ? trim(mb_substr($raw, 0, MAX_TEXT_CHARS)) : trim($raw);
         $textChunks[] = "[Файл: {$name}]\n" . ($normalized !== '' ? $normalized : '[пустой текст]');
         if ($normalized !== '') {
             $hasReadableContent = true;
@@ -355,7 +357,7 @@ foreach ($files as $file) {
         $pdfText = trim((string)($pdfExtract['text'] ?? ''));
         $pdfSource = (string)($pdfExtract['source'] ?? '');
         if ($pdfText !== '') {
-            $normalizedPdfText = trim(mb_substr($pdfText, 0, MAX_TEXT_CHARS));
+            $normalizedPdfText = MAX_TEXT_CHARS > 0 ? trim(mb_substr($pdfText, 0, MAX_TEXT_CHARS)) : $pdfText;
             $textChunks[] = "[PDF: {$name}]\n" . $normalizedPdfText;
             $hasReadableContent = true;
             $metaChunks[] = $pdfSource === 'ocr'
