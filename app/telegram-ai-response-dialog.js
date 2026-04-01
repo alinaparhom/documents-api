@@ -677,7 +677,7 @@ async function requestAssistantReply(userMessage, context, history) {
         const formData = new FormData();
         formData.append('prompt', paidPrompt);
         filesForPaid.forEach((file) => {
-          formData.append('files[]', file, file.name || 'document.pdf');
+          formData.append('files', file, file.name || 'document.pdf');
         });
         return formData;
       }, { timeoutMs: Math.max(timeoutMs, 45000) });
