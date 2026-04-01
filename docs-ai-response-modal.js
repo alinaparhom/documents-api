@@ -1341,13 +1341,16 @@
       lastErrorFingerprint: '',
       lastErrorTs: 0
     };
+    var isVipMode = normalizeAiApiKeyMode(state.aiApiKeyMode) === 'paid';
 
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'ai-chat-modal__panel');
     var header = createElement('div', 'ai-chat-modal__header');
     var titleWrap = createElement('div');
     titleWrap.appendChild(createElement('div', 'ai-chat-modal__title', 'Ответ с помощью ИИ'));
-    titleWrap.appendChild(createElement('div', 'ai-chat-modal__subtitle', config.documentTitle ? ('Документ: ' + config.documentTitle) : 'Документ не указан'));
+    titleWrap.appendChild(createElement('div', 'ai-chat-modal__subtitle', isVipMode
+      ? 'VIP режим: ИИ анализирует все выбранные файлы вместе и выдаёт итоговое решение.'
+      : (config.documentTitle ? ('Документ: ' + config.documentTitle) : 'Документ не указан')));
 
     var closeButton = createElement('button', 'ai-chat-modal__close', '×');
     closeButton.type = 'button';
@@ -1431,11 +1434,15 @@
       if (!modelName && !requestMs && !totalTokens) return '';
       return 'ℹ️ ' + (modelName || 'model') + ' • ' + requestMs + 'мс • токены: ' + totalTokens;
     }
-    messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
+    messages.appendChild(createMessage('assistant', isVipMode
+      ? 'VIP готов. Прикрепите файлы, отправьте запрос — верну одно итоговое решение по всем материалам.'
+      : 'Привет! Напишите запрос — я подготовлю ответ.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
-    textarea.placeholder = 'Введите запрос (можно пусто — отправим текст вложений)';
+    textarea.placeholder = isVipMode
+      ? 'Коротко: какую итоговую позицию и решение нужно сформировать по всем файлам'
+      : 'Введите запрос (можно пусто — отправим текст вложений)';
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
     sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
@@ -2412,7 +2419,9 @@
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      var effectivePrompt = value || 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
+      var effectivePrompt = value || (isVipMode
+        ? 'Проанализируй все приложенные файлы вместе, прими итоговое решение и дай компактный деловой ответ: решение, риски, план действий с датами.'
+        : 'Подготовь официальный ответ по тексту вложений в деловом стиле.');
 
       state.model = modelSelect.value;
       var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
@@ -2700,6 +2709,15 @@
     content.appendChild(topBar);
     content.appendChild(messages);
     content.appendChild(composer);
+    if (isVipMode) {
+      root.classList.add('ai-chat-modal--vip');
+      panel.style.background = 'linear-gradient(160deg,rgba(255,255,255,.96),rgba(240,249,255,.92))';
+      panel.style.border = '1px solid rgba(59,130,246,.28)';
+      panel.style.boxShadow = '0 18px 44px rgba(37,99,235,.14)';
+      topBar.style.gridTemplateColumns = '1fr';
+      modelField.style.display = 'none';
+      styleField.style.display = 'none';
+    }
 
     panel.appendChild(header);
     panel.appendChild(content);

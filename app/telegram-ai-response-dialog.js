@@ -762,6 +762,7 @@ function openAiResponseDialog(context = {}) {
   const notify = (type, message) => {
     if (typeof context.onStatus === 'function') context.onStatus(type, message);
   };
+  const isVipMode = state.aiApiKeyMode === 'paid';
 
   const root = document.createElement('div');
   root.className = 'appdosc-ai-dialog';
@@ -770,12 +771,12 @@ function openAiResponseDialog(context = {}) {
   root.innerHTML = `
     <div class="appdosc-ai-dialog__panel">
       <div class="appdosc-ai-dialog__header">
-        <div><div class="appdosc-ai-dialog__title">Ответ с помощью ИИ</div><div class="appdosc-ai-dialog__subtitle">Компактный режим: только главное</div></div>
+        <div><div class="appdosc-ai-dialog__title">${isVipMode ? 'VIP Ответ с помощью ИИ' : 'Ответ с помощью ИИ'}</div><div class="appdosc-ai-dialog__subtitle">${isVipMode ? 'Анализ всех файлов и итоговое решение' : 'Компактный режим: только главное'}</div></div>
         <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-close>Закрыть</button>
       </div>
       <div class="appdosc-ai-dialog__messages" data-messages></div>
       <div class="appdosc-ai-dialog__composer">
-        <textarea class="appdosc-ai-dialog__input" data-input placeholder="Коротко напишите задачу для ответа"></textarea>
+        <textarea class="appdosc-ai-dialog__input" data-input placeholder="${isVipMode ? 'Коротко: какое итоговое решение нужно по всем файлам' : 'Коротко напишите задачу для ответа'}"></textarea>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <div style="flex:1;min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Стиль</label>
@@ -917,6 +918,11 @@ function openAiResponseDialog(context = {}) {
     messages.appendChild(bubble);
     messages.scrollTop = messages.scrollHeight;
   };
+  if (isVipMode) {
+    appendBubble('VIP режим активен: ИИ анализирует все выбранные файлы вместе и выдаёт итоговое принятое решение.', 'assistant');
+    const topRow = root.querySelector('.appdosc-ai-dialog__composer > div');
+    if (topRow) topRow.style.display = 'none';
+  }
   const appendErrorBubbleOnce = (text) => {
     const normalized = String(text || '').trim();
     if (!normalized) return;
