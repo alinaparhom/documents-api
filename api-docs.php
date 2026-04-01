@@ -244,6 +244,87 @@ function normalizeUploadedFiles(string $field): array
     return $files;
 }
 
+function collectAttachmentUrlsFromContext(array $context): array
+{
+    $urls = [];
+    $rows = isset($context['attachedFiles']) && is_array($context['attachedFiles']) ? $context['attachedFiles'] : [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $url = trim((string)($row['url'] ?? ''));
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            continue;
+        }
+        $urls[] = $url;
+    }
+    return array_values(array_unique($urls));
+}
+
+function downloadAttachmentToTempFile(string $url, int $maxBytes = 20_971_520): ?array
+{
+    $tmp = tempnam(sys_get_temp_dir(), 'att_url_');
+    if ($tmp === false) {
+        return null;
+    }
+    $fp = @fopen($tmp, 'wb');
+    if (!is_resource($fp)) {
+        @unlink($tmp);
+        return null;
+    }
+    $written = 0;
+    $ch = curl_init($url);
+    if ($ch === false) {
+        fclose($fp);
+        @unlink($tmp);
+        return null;
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_FILE => $fp,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_TIMEOUT => 45,
+        CURLOPT_FAILONERROR => false,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'documents-api/1.0',
+        CURLOPT_HEADERFUNCTION => static function ($ch, string $header) use (&$written, $maxBytes): int {
+            return strlen($header);
+        },
+        CURLOPT_WRITEFUNCTION => static function ($ch, string $chunk) use ($fp, &$written, $maxBytes): int {
+            $len = strlen($chunk);
+            $written += $len;
+            if ($written > $maxBytes) {
+                return 0;
+            }
+            return fwrite($fp, $chunk);
+        },
+    ]);
+    $ok = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $contentType = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+    fclose($fp);
+
+    if ($ok === false || $status >= 400 || !is_file($tmp) || (int)@filesize($tmp) <= 0) {
+        @unlink($tmp);
+        return null;
+    }
+
+    $pathPart = (string)parse_url($url, PHP_URL_PATH);
+    $name = basename($pathPart);
+    if ($name === '' || $name === '/' || $name === '.') {
+        $name = 'attachment-' . substr(md5($url), 0, 8) . '.bin';
+    }
+
+    return [
+        'name' => $name,
+        'tmp_name' => $tmp,
+        'type' => trim($contentType) !== '' ? trim($contentType) : 'application/octet-stream',
+        'size' => (int)@filesize($tmp),
+    ];
+}
+
 function safeJsonDecode(?string $value): array
 {
     if (!is_string($value) || trim($value) === '') {
@@ -2632,6 +2713,25 @@ $attachments = normalizeUploadedFiles('attachments');
 $singleAttachment = normalizeUploadedFiles('attachment');
 $ocrFile = normalizeUploadedFiles('file');
 $files = array_merge($attachments, $singleAttachment, $ocrFile);
+$downloadedUrlFiles = [];
+$attachmentUrls = collectAttachmentUrlsFromContext($context);
+foreach ($attachmentUrls as $attachmentUrl) {
+    $downloaded = downloadAttachmentToTempFile($attachmentUrl);
+    if (is_array($downloaded)) {
+        $downloadedUrlFiles[] = $downloaded;
+    }
+}
+if ($downloadedUrlFiles) {
+    $files = array_merge($files, $downloadedUrlFiles);
+    register_shutdown_function(static function () use ($downloadedUrlFiles): void {
+        foreach ($downloadedUrlFiles as $entry) {
+            $tmp = (string)($entry['tmp_name'] ?? '');
+            if ($tmp !== '' && is_file($tmp)) {
+                @unlink($tmp);
+            }
+        }
+    });
+}
 $serverExtractedTexts = [];
 $extractedTextsDiagnostics = [
     'totalFiles' => count($files),
