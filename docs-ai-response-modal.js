@@ -2483,6 +2483,11 @@
         await hydrateFileContents(state);
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
         var requestMode = resolveRequestMode(state);
+        if (!Array.isArray(state.files) || state.files.length === 0) {
+          throw new Error(requestMode === 'paid'
+            ? 'Для платного ИИ нужен минимум один файл: файлы → ИИ → ответ.'
+            : 'Для бесплатного ИИ нужен минимум один файл: файлы → OCR → ИИ → ответ.');
+        }
         var response = null;
         if (requestMode === 'paid') {
           response = await postGroqPaidWithFallback(effectivePrompt, state, config, timeoutMs);

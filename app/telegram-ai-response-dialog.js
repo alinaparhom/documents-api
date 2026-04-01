@@ -1091,9 +1091,19 @@ function openAiResponseDialog(context = {}) {
     appendBubble(`ℹ️ Режим: ${mode} • Модель: ${model} • Время: ${timeMs || '—'} мс • Токены: ${tokens || '—'}`, 'assistant');
   };
 
+  const hasFileContextForCurrentMode = () => {
+    const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
+    return extractedTexts.length > 0;
+  };
+
   const runAutoDecision = async () => {
     if (state.isSending) return;
     if (applyRateLimitState()) return;
+    if (!hasFileContextForCurrentMode()) {
+      appendErrorBubbleOnce('Для бесплатного ИИ нужен файл: файлы → OCR → ИИ → ответ.');
+      notify('warning', 'Добавьте и прочитайте файл перед запросом.');
+      return;
+    }
     const hasSelectedFiles = state.selectedAttachmentIds instanceof Set && state.selectedAttachmentIds.size > 0;
     const hasFiles = Array.isArray(context.extractedTexts) && context.extractedTexts.length > 0;
     if (hasSelectedFiles && !hasFiles) {
@@ -1145,6 +1155,11 @@ function openAiResponseDialog(context = {}) {
   root.querySelector('[data-send]').addEventListener('click', async () => {
     if (state.isSending) return;
     if (applyRateLimitState()) return;
+    if (!hasFileContextForCurrentMode()) {
+      appendErrorBubbleOnce('Для бесплатного ИИ нужен файл: файлы → OCR → ИИ → ответ.');
+      notify('warning', 'Добавьте и прочитайте файл перед запросом.');
+      return;
+    }
     const prompt = String(input.value || '').trim();
     if (!prompt) return;
     appendBubble(prompt, 'user');

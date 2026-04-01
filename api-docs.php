@@ -2575,13 +2575,29 @@ $extractedTextsDiagnostics = [
     'skipped' => [],
 ];
 if ($action === 'ai_response_analyze') {
-    $serverExtraction = extractTextsFromUploadedFiles($files, $env);
-    $serverExtractedTexts = isset($serverExtraction['entries']) && is_array($serverExtraction['entries'])
-        ? $serverExtraction['entries']
-        : [];
-    $extractedTextsDiagnostics = isset($serverExtraction['diagnostics']) && is_array($serverExtraction['diagnostics'])
-        ? $serverExtraction['diagnostics']
-        : $extractedTextsDiagnostics;
+    if (!$files) {
+        $message = $aiMode === 'paid'
+            ? 'Для платного ИИ нужен минимум 1 файл. Логика: файлы → ИИ → ответ.'
+            : 'Для бесплатного ИИ нужен минимум 1 файл. Логика: файлы → OCR → ИИ → ответ.';
+        jsonResponse(422, ['ok' => false, 'error' => $message, 'mode' => $aiMode]);
+    }
+    if ($aiMode === 'free') {
+        $serverExtraction = extractTextsFromUploadedFiles($files, $env);
+        $serverExtractedTexts = isset($serverExtraction['entries']) && is_array($serverExtraction['entries'])
+            ? $serverExtraction['entries']
+            : [];
+        $extractedTextsDiagnostics = isset($serverExtraction['diagnostics']) && is_array($serverExtraction['diagnostics'])
+            ? $serverExtraction['diagnostics']
+            : $extractedTextsDiagnostics;
+        if (!$serverExtractedTexts) {
+            jsonResponse(422, [
+                'ok' => false,
+                'error' => 'OCR не извлёк текст из файлов. Логика бесплатного режима: файлы → OCR → ИИ → ответ.',
+                'mode' => $aiMode,
+                'diagnostics' => $extractedTextsDiagnostics,
+            ]);
+        }
+    }
 }
 
 if ($action === 'ocr_extract') {
@@ -2827,7 +2843,9 @@ foreach ($legacyAttachedFiles as $legacyFile) {
         'text' => mb_substr($legacyText, 0, 12000),
     ];
 }
-$extractedTexts = array_merge($extractedTexts, $serverExtractedTexts);
+$extractedTexts = $aiMode === 'free'
+    ? $serverExtractedTexts
+    : array_merge($extractedTexts, $serverExtractedTexts);
 $extractedTexts = deduplicateExtractedTextsByNameAndHash($extractedTexts);
 $maxInputChars = (int)($env['AI_MAX_INPUT_CHARS'] ?? 60000);
 if ($maxInputChars < 2000) {
