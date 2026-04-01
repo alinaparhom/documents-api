@@ -11,6 +11,7 @@ header('Content-Type: application/json; charset=utf-8');
 
 const MAX_TOTAL_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
 const MAX_TEXT_CHARS = 10000;
+const OCR_MAX_PAGES = 5;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT = 'llama-3.3-70b-versatile';
 const MODEL_VISION = 'meta-llama/llama-4-scout-17b-16e-instruct';
@@ -124,6 +125,89 @@ function detectMime(string $path, string $fallback = ''): string
 function makeDataUriFromBinary(string $binary, string $mime): string
 {
     return 'data:' . $mime . ';base64,' . base64_encode($binary);
+}
+
+function commandExists(string $command): bool
+{
+    $output = [];
+    $exitCode = 1;
+    @exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $output, $exitCode);
+    return $exitCode === 0 && !empty($output);
+}
+
+function extractPdfTextWithPdftotext(string $pdfPath): string
+{
+    if (!commandExists('pdftotext')) {
+        return '';
+    }
+    $tmpTextPath = tempnam(sys_get_temp_dir(), 'pdftext_');
+    if ($tmpTextPath === false) {
+        return '';
+    }
+    try {
+        $cmd = 'pdftotext -enc UTF-8 -f 1 -l ' . OCR_MAX_PAGES . ' '
+            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath);
+        @exec($cmd, $out, $code);
+        if ($code !== 0 || !is_file($tmpTextPath)) {
+            return '';
+        }
+        return trim((string)@file_get_contents($tmpTextPath));
+    } finally {
+        @unlink($tmpTextPath);
+    }
+}
+
+function extractPdfTextWithOcr(string $pdfPath): string
+{
+    if (!commandExists('pdftoppm') || !commandExists('tesseract')) {
+        return '';
+    }
+    $tmpBase = tempnam(sys_get_temp_dir(), 'pdfocr_');
+    if ($tmpBase === false) {
+        return '';
+    }
+    @unlink($tmpBase);
+    $textParts = [];
+    try {
+        for ($page = 1; $page <= OCR_MAX_PAGES; $page += 1) {
+            $jpgPath = $tmpBase . '-p' . $page . '.jpg';
+            $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4));
+            @exec($cmdRender, $renderOut, $renderCode);
+            if ($renderCode !== 0 || !is_file($jpgPath)) {
+                if ($page === 1) {
+                    break;
+                }
+                continue;
+            }
+            $cmdOcr = 'tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null';
+            $ocr = shell_exec($cmdOcr);
+            $ocrText = trim((string)$ocr);
+            if ($ocrText !== '') {
+                $textParts[] = $ocrText;
+            }
+            @unlink($jpgPath);
+        }
+    } finally {
+        for ($page = 1; $page <= OCR_MAX_PAGES; $page += 1) {
+            @unlink($tmpBase . '-p' . $page . '.jpg');
+        }
+    }
+
+    return trim(implode("\n\n", $textParts));
+}
+
+function extractPdfText(string $pdfPath): array
+{
+    $text = extractPdfTextWithPdftotext($pdfPath);
+    if ($text !== '') {
+        return ['text' => $text, 'source' => 'pdftotext'];
+    }
+    $ocrText = extractPdfTextWithOcr($pdfPath);
+    if ($ocrText !== '') {
+        return ['text' => $ocrText, 'source' => 'ocr'];
+    }
+    return ['text' => '', 'source' => ''];
 }
 
 /**
@@ -262,14 +346,26 @@ foreach ($files as $file) {
     }
 
     if ($isPdf) {
+        $pdfExtract = extractPdfText($tmp);
+        $pdfText = trim((string)($pdfExtract['text'] ?? ''));
+        $pdfSource = (string)($pdfExtract['source'] ?? '');
+        if ($pdfText !== '') {
+            $normalizedPdfText = trim(mb_substr($pdfText, 0, MAX_TEXT_CHARS));
+            $textChunks[] = "[PDF: {$name}]\n" . $normalizedPdfText;
+            $metaChunks[] = $pdfSource === 'ocr'
+                ? "[PDF: {$name}, {$size} байт, распознан через OCR]"
+                : "[PDF: {$name}, {$size} байт, извлечен текстом]";
+            continue;
+        }
+
         $jpegDataUri = convertPdfFirstPageToJpegDataUri($tmp);
         if ($jpegDataUri !== null) {
             $visionImages[] = $jpegDataUri;
             $hasVisionInput = true;
-            $metaChunks[] = "[PDF: {$name}, {$size} байт, первая страница преобразована в JPEG]";
+            $metaChunks[] = "[PDF: {$name}, {$size} байт, OCR не дал текст, первая страница преобразована в JPEG]";
             continue;
         }
-        $metaChunks[] = "[PDF: {$name}, {$size} байт, ошибка конвертации]";
+        $metaChunks[] = "[PDF: {$name}, {$size} байт, ошибка OCR и конвертации]";
         continue;
     }
 
@@ -278,7 +374,7 @@ foreach ($files as $file) {
 }
 
 $model = $hasVisionInput ? MODEL_VISION : MODEL_TEXT;
-$systemPrompt = 'Ты помощник по деловым документам. Проанализируй приложенные файлы. Прими итоговое решение. Ответь только решением, без пояснений, шапки и подписей.';
+$systemPrompt = 'Ты помощник по документам. Проанализируй файлы и дай понятный подробный ответ на русском языке: краткий вывод, ключевые факты из документов и практические рекомендации.';
 
 if ($hasVisionInput) {
     $visionText = $userPrompt;
@@ -321,7 +417,7 @@ if ($hasVisionInput) {
 $requestPayload = [
     'model' => $model,
     'temperature' => 0.2,
-    'max_tokens' => 900,
+    'max_tokens' => 1800,
     'messages' => $messages,
 ];
 
