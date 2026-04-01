@@ -2744,6 +2744,7 @@ $effectiveBehavior = $aiBehavior !== ''
 if ($effectiveBehavior !== '' && mb_strlen($effectiveBehavior) > 10000) {
     $effectiveBehavior = mb_substr($effectiveBehavior, 0, 10000);
 }
+$isPaidMode = $resolvedAiApiKeyMode === 'paid';
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
 $availableModels = (array)($modelsConfig['models'] ?? []);
@@ -2788,7 +2789,21 @@ $defaultSystemMessage = "Ты — ИИ, выполняющий роль сотр
   . $styleInstruction . ' '
   . $styleExampleInstruction . ' '
   . 'Поле response — только готовый текст письма без служебных заголовков.';
-$systemMessage = $effectiveBehavior !== '' ? $effectiveBehavior : $defaultSystemMessage;
+$paidSystemMessage = "Ты — VIP ИИ-консультант для подготовки официальных ответов в строительном документообороте. "
+  . "Твоя цель: дать качественное и практичное решение, а не мрачный пересказ проблемы. "
+  . "Верни JSON с полями: response, analysis, decisionBlock. "
+  . "response: четкий деловой текст 8-12 предложений, с конкретными шагами и сроками в формате ДД.ММ.ГГГГ. "
+  . "analysis: краткий разбор ситуации без воды (2-4 предложения). "
+  . "decisionBlock: decision, decision_reason, risks[], required_actions[], requirements[]. "
+  . "Тон: конструктивный, уверенный, профессиональный; без пессимистичных и расплывчатых формулировок. "
+  . "Если данных мало — не драматизируй, а укажи какие конкретно данные нужны для финального решения. "
+  . "Запрещено добавлять подписи, реквизиты и служебные шапки. "
+  . $styleInstruction . ' '
+  . $styleExampleInstruction . ' '
+  . "Обязательно сформируй решение и план действий.";
+$systemMessage = $effectiveBehavior !== ''
+    ? $effectiveBehavior
+    : ($isPaidMode ? $paidSystemMessage : $defaultSystemMessage);
 
 $userPayload = [
     'instruction' => 'Сформируй официальный ответ в деловом стиле: 10-15 предложений, без повторов, с датой/номером письма, сроками и без подписи/реквизитов.',
@@ -2802,6 +2817,13 @@ $userPayload = [
 ];
 
 $generationSettings = resolveAiGenerationSettings($env, $_POST);
+if ($isPaidMode) {
+    $generationSettings['temperature'] = max(0.1, min(0.45, (float)($generationSettings['temperature'] ?? 0.45)));
+    $generationSettings['top_p'] = max(0.6, min(0.95, (float)($generationSettings['top_p'] ?? 0.9)));
+    $generationSettings['presence_penalty'] = max(0.0, min(0.25, (float)($generationSettings['presence_penalty'] ?? 0.05)));
+    $generationSettings['frequency_penalty'] = max(0.0, min(0.2, (float)($generationSettings['frequency_penalty'] ?? 0.05)));
+    $generationSettings['max_tokens'] = max(1800, min(4200, (int)($generationSettings['max_tokens'] ?? 2400)));
+}
 $userPayloadJson = json_encode($userPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 $userContent = is_string($userPayloadJson) && $userPayloadJson !== '' ? $userPayloadJson : '{}';
 $multimodalUserContent = null;
@@ -2853,6 +2875,7 @@ if (!$isGroq && !$isGoogleOpenAiCompat) {
 
 $responseCacheTtl = normalizeIntSetting($env['AI_RESPONSE_CACHE_TTL'] ?? 3600, 3600, 60, 86400);
 $cachePayload = [
+    'mode' => $resolvedAiApiKeyMode,
     'model' => $effectiveModel,
     'system' => $systemMessage,
     'userPayload' => $userPayload,
