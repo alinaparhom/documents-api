@@ -2270,6 +2270,62 @@
     });
   }
 
+  var briefPdfJsLoader = null;
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib) {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) {
+      return briefPdfJsLoader;
+    }
+    briefPdfJsLoader = new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      script.src = '/pdf/pdf.min.js';
+      script.onload = function() {
+        if (window.pdfjsLib) {
+          resolve(window.pdfjsLib);
+        } else {
+          reject(new Error('pdfjsLib не найден'));
+        }
+      };
+      script.onerror = function() { reject(new Error('Не удалось загрузить PDF библиотеку')); };
+      document.head.appendChild(script);
+    });
+    return briefPdfJsLoader;
+  }
+
+  async function convertPdfToImageFileForBrief(file, fallbackName) {
+    var fileName = String(fallbackName || (file && file.name) || 'brief-file');
+    var isPdf = file && ((file.type && String(file.type).toLowerCase() === 'application/pdf') || /\.pdf$/i.test(fileName));
+    if (!isPdf || !file) {
+      return file;
+    }
+    try {
+      var pdfjsLib = await ensureBriefPdfJsLoaded();
+      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+      }
+      var bytes = await file.arrayBuffer();
+      var loadingTask = pdfjsLib.getDocument({ data: bytes });
+      var pdf = await loadingTask.promise;
+      var page = await pdf.getPage(1);
+      var viewport = page.getViewport({ scale: 2 });
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      var ctx = canvas.getContext('2d');
+      if (!ctx) return file;
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      var blob = await new Promise(function(resolve) {
+        canvas.toBlob(function(nextBlob) { resolve(nextBlob); }, 'image/jpeg', 0.9);
+      });
+      if (!blob) return file;
+      return new File([blob], fileName.replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
+    } catch (_) {
+      return file;
+    }
+  }
+
   async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
@@ -2294,13 +2350,16 @@
     formData.append('mode', 'paid');
     formData.append('context', JSON.stringify(context));
     if (source && source.fileObject instanceof File) {
-      formData.append('attachments[]', source.fileObject, source.fileObject.name || sourceLabel);
+      var preparedLocal = await convertPdfToImageFileForBrief(source.fileObject, source.fileObject.name || sourceLabel);
+      formData.append('attachments[]', preparedLocal, preparedLocal.name || sourceLabel);
     } else if (source && source.url) {
       var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
       if (fetched.ok) {
         var blob = await fetched.blob();
         var fileName = sourceLabel || 'brief-file';
-        formData.append('attachments[]', new File([blob], fileName, { type: blob.type || 'application/octet-stream' }), fileName);
+        var downloaded = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        var preparedDownloaded = await convertPdfToImageFileForBrief(downloaded, fileName);
+        formData.append('attachments[]', preparedDownloaded, preparedDownloaded.name || fileName);
       }
     }
     var response = await fetch(endpoint, {

@@ -317,6 +317,45 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   }
   const blob = await fetched.blob();
   const fileName = normalizeValue(source && source.label) || 'brief-file';
+  const ensurePdfJsLoaded = async () => {
+    if (typeof window !== 'undefined' && window.pdfjsLib) return window.pdfjsLib;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/pdf/pdf.min.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('Не удалось загрузить PDF библиотеку'));
+      document.head.appendChild(script);
+    });
+    if (!window.pdfjsLib) throw new Error('pdfjsLib не найден');
+    return window.pdfjsLib;
+  };
+  const convertPdfFileToImage = async (file) => {
+    const isPdf = file && ((String(file.type || '').toLowerCase() === 'application/pdf') || /\.pdf$/i.test(String(file.name || '')));
+    if (!isPdf) return file;
+    try {
+      const pdfjs = await ensurePdfJsLoaded();
+      if (pdfjs && pdfjs.GlobalWorkerOptions) {
+        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+      }
+      const bytes = await file.arrayBuffer();
+      const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return file;
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const imageBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+      if (!imageBlob) return file;
+      return new File([imageBlob], String(file.name || 'brief-file').replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
+    } catch (_) {
+      return file;
+    }
+  };
+  const rawFile = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+  const preparedFile = await convertPdfFileToImage(rawFile);
   const request = await postDocsAiWithFallback(() => {
     const formData = new FormData();
     formData.append('action', 'ai_response_analyze');
@@ -325,7 +364,7 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', 'paid');
-    formData.append('attachments[]', new File([blob], fileName, { type: blob.type || 'application/octet-stream' }), fileName);
+    formData.append('attachments[]', preparedFile, preparedFile.name || fileName);
     formData.append('context', JSON.stringify({ isolatedFileMode: true }));
     return formData;
   }, { fallbackErrorMessage: 'ИИ временно недоступен' });
