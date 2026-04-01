@@ -954,6 +954,15 @@
 
   function sanitizeAssistantResponseText(text) {
     var value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    var compact = value.trim();
+    if (compact && compact.charAt(0) === '{' && /"response"\s*:/i.test(compact)) {
+      try {
+        var parsed = JSON.parse(compact);
+        if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+          value = String(parsed.response || '');
+        }
+      } catch (_) {}
+    }
     value = value.replace(/<think[\s\S]*?<\/think>/gi, '');
     value = value.replace(/<\/?think>/gi, '');
     var lines = value.split('\n').filter(function (line) {
