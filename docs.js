@@ -1940,6 +1940,8 @@
       '.documents-brief-item-meta{display:block;width:100%;font-size:11px;color:#64748b;white-space:normal;word-break:break-word;overflow-wrap:anywhere;}' +
       '.documents-brief-item:hover,.documents-brief-item:focus-visible{border-color:rgba(37,99,235,0.48);box-shadow:0 0 0 3px rgba(37,99,235,0.12);outline:none;}' +
       '.documents-brief-item.is-active{background:linear-gradient(135deg, rgba(239,246,255,0.96), rgba(255,255,255,0.98));border-color:rgba(37,99,235,0.52);}' +
+      '.documents-brief-toggle{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:#334155;}' +
+      '.documents-brief-toggle input{width:16px;height:16px;accent-color:#2563eb;}' +
       '.documents-brief-preview{border:1px solid rgba(203,213,225,0.9);border-radius:18px;background:rgba(255,255,255,0.98);padding:16px;font-size:13px;line-height:1.58;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto;min-height:0;box-shadow:inset 0 1px 0 rgba(255,255,255,0.75), 0 12px 26px rgba(15,23,42,0.06);}' +
       '.documents-brief-preview.is-loading{color:#2563eb;}' +
       '@media (max-width: 768px){' +
@@ -2413,6 +2415,56 @@
     return payload;
   }
 
+  async function requestAiBriefSummaryByNewDecision(source) {
+    var endpointCandidates = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+    var fileToSend = null;
+    if (source && source.fileObject instanceof File) {
+      fileToSend = source.fileObject;
+    } else if (source && source.url) {
+      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
+      if (!fetched.ok) {
+        throw new Error('Не удалось скачать файл для нового решения (' + fetched.status + ').');
+      }
+      var blob = await fetched.blob();
+      fileToSend = new File([blob], sourceLabel, { type: blob.type || 'application/octet-stream' });
+    }
+    if (!fileToSend) {
+      throw new Error('Файл для нового решения не найден.');
+    }
+    var lastError = null;
+    for (var i = 0; i < endpointCandidates.length; i += 1) {
+      var endpoint = endpointCandidates[i];
+      try {
+        var formData = new FormData();
+        formData.append('taskTitle', sourceLabel);
+        formData.append('taskDescription', 'Краткий разбор документа: новое решение');
+        formData.append('file', fileToSend, fileToSend.name || sourceLabel);
+        var response = await fetch(endpoint, { method: 'POST', credentials: 'same-origin', body: formData });
+        if (response.status === 404 || response.status === 405) {
+          continue;
+        }
+        var payload = await response.json().catch(function() { return null; });
+        if (!response.ok || !payload || payload.ok !== true) {
+          throw new Error(payload && payload.error ? payload.error : ('Ошибка Платного ИИ (' + response.status + ')'));
+        }
+        return {
+          ok: true,
+          response: payload.response || '',
+          model: payload.model || '',
+          timeMs: payload.timeMs || 0,
+          decisionBlock: {
+            required_actions: [],
+            requirements: []
+          }
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Не удалось получить ответ по новому решению.');
+  }
+
   function openAiBriefSummaryModal(config) {
     ensureResponsesStyle();
     var options = config && typeof config === 'object' ? config : {};
@@ -2432,6 +2484,16 @@
     modeSelect.style.marginTop = '8px';
     modeSelect.innerHTML = '<option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option>';
     titleWrap.appendChild(modeSelect);
+    var newDecisionToggle = createElement('label', 'documents-brief-toggle');
+    var newDecisionCheckbox = document.createElement('input');
+    newDecisionCheckbox.type = 'checkbox';
+    newDecisionCheckbox.setAttribute('data-brief-new-decision', '1');
+    newDecisionToggle.appendChild(newDecisionCheckbox);
+    newDecisionToggle.appendChild(document.createTextNode('Новое решение (файл в Платный ИИ)'));
+    titleWrap.appendChild(newDecisionToggle);
+    newDecisionCheckbox.addEventListener('change', function() {
+      modeSelect.disabled = newDecisionCheckbox.checked === true;
+    });
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
@@ -2501,15 +2563,18 @@
       button.type = 'button';
       button.addEventListener('click', function() {
         var selectedMode = modeSelect.value === 'paid' ? 'paid' : 'free';
+        var useNewDecision = newDecisionCheckbox.checked === true;
         makeActive(button);
         button.disabled = true;
         setPreviewLoading(true, source.label);
-        var requestPromise = selectedMode === 'paid'
+        var requestPromise = useNewDecision
+          ? requestAiBriefSummaryByNewDecision(source)
+          : (selectedMode === 'paid'
           ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
           : resolveSourceText(source, true).then(function(sourceText) {
             preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
             return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
-          });
+          }));
         requestPromise
           .then(function(sourceText) {
             var aiPayload = sourceText;

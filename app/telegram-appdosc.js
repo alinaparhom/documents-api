@@ -245,6 +245,8 @@ function ensureTelegramBriefModalStyle() {
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
     .appdosc-brief-ai__mode{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 8px;border-radius:999px;background:rgba(219,234,254,.7);border:1px solid rgba(147,197,253,.8);font-size:11px;color:#1e3a8a;font-weight:600}
+    .appdosc-brief-ai__toggle{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:#334155}
+    .appdosc-brief-ai__toggle input{width:16px;height:16px;accent-color:#2563eb}
     .appdosc-brief-ai__hint{margin-top:6px;font-size:11px;color:#475569}
     .appdosc-brief-ai__status{margin:0;padding:6px 10px;border-bottom:1px solid rgba(226,232,240,.85);font-size:12px;color:#334155;background:rgba(248,250,252,.88)}
     .appdosc-brief-ai__status[data-tone="loading"]{color:#1d4ed8}
@@ -433,6 +435,38 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   return payload;
 }
 
+async function requestTelegramBriefAiNewDecision(source) {
+  const fileUrl = normalizeValue(source && source.url);
+  if (!fileUrl) {
+    throw new Error('Не найден URL файла для нового решения.');
+  }
+  const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+  if (!fetched.ok) {
+    throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+  }
+  const blob = await fetched.blob();
+  const fileName = normalizeValue(source && source.label) || 'brief-file';
+  const fileToSend = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+  const result = await postGroqPaidWithFallback(() => {
+    const formData = new FormData();
+    formData.append('taskTitle', fileName);
+    formData.append('taskDescription', 'Кратко ИИ: новое решение');
+    formData.append('file', fileToSend, fileToSend.name || fileName);
+    return formData;
+  });
+  const payload = result && result.payload ? result.payload : null;
+  if (!payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || 'Платный ИИ временно недоступен.');
+  }
+  return {
+    ok: true,
+    response: normalizeValue(payload.response),
+    model: normalizeValue(payload.model),
+    timeMs: Number(payload.timeMs) || 0,
+    decisionBlock: { required_actions: [], requirements: [] }
+  };
+}
+
 function normalizeTelegramOcrText(text) {
   return String(text || '')
     .replace(/-\s*\n\s*/g, '')
@@ -593,6 +627,7 @@ function openTelegramBriefModal(task, statusHandler) {
           <div class="appdosc-brief-ai__sub">Краткий вывод по документу</div>
           <div class="appdosc-brief-ai__mode">Только текст выбранного файла</div>
           <div style="margin-top:6px"><select data-ai-mode style="min-height:30px;border:1px solid rgba(203,213,225,.95);border-radius:9px;padding:4px 8px;background:#fff"><option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option></select></div>
+          <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-new-decision /> Новое решение (файл в Платный ИИ)</label>
           <div class="appdosc-brief-ai__hint">1) Выберите файл → 2) Дождитесь анализа → 3) Скопируйте нужные пункты.</div>
         </div>
         <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
@@ -611,6 +646,12 @@ function openTelegramBriefModal(task, statusHandler) {
   const statusNode = modal.querySelector('[data-status]');
   const metaNode = modal.querySelector('[data-meta]');
   const modeSelect = modal.querySelector('[data-ai-mode]');
+  const newDecisionToggle = modal.querySelector('[data-new-decision]');
+  if (newDecisionToggle && modeSelect) {
+    newDecisionToggle.addEventListener('change', () => {
+      modeSelect.disabled = newDecisionToggle.checked === true;
+    });
+  }
   const sources = [];
   let activeRequestId = 0;
 
@@ -654,8 +695,13 @@ function openTelegramBriefModal(task, statusHandler) {
         setStatus(`Подготовка файла: ${source.label}`, 'loading');
         preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
         const selectedMode = modeSelect && modeSelect.value === 'paid' ? 'paid' : 'free';
+        const useNewDecision = newDecisionToggle && newDecisionToggle.checked === true;
         let aiPayload = null;
-        if (selectedMode === 'paid') {
+        if (useNewDecision) {
+          setStatus(`Новое решение: ${source.label}`, 'loading');
+          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла в Платный ИИ...</p>';
+          aiPayload = await requestTelegramBriefAiNewDecision(source);
+        } else if (selectedMode === 'paid') {
           setStatus(`VIP анализ файла: ${source.label}`, 'loading');
           preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла напрямую в VIP ИИ...</p>';
           aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
