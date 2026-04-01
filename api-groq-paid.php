@@ -13,7 +13,7 @@ const MAX_TOTAL_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
 const MAX_TEXT_CHARS = 10000;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT = 'llama-3.3-70b-versatile';
-const MODEL_VISION = 'llama-3.2-90b-vision-preview';
+const MODEL_VISION = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 function respond(int $status, array $payload): void
 {
