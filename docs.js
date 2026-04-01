@@ -13499,6 +13499,58 @@
         chatNode.scrollTop = chatNode.scrollHeight;
       }
       pushChat('assistant', 'Готов. Я учту все приложенные файлы (включая сканы) и подготовлю решение.');
+      function resolveLinkedFileUrl(file) {
+        if (!file || typeof file !== 'object') {
+          return '';
+        }
+        var candidates = [
+          file.url,
+          file.fileUrl,
+          file.downloadUrl,
+          file.resolvedUrl,
+          file.previewUrl,
+          file.previewPdfUrl,
+          file.pdfUrl,
+          file.pdf
+        ];
+        for (var i = 0; i < candidates.length; i += 1) {
+          var value = typeof candidates[i] === 'string' ? candidates[i].trim() : '';
+          if (value) {
+            return value;
+          }
+        }
+        return '';
+      }
+
+      async function appendSourceFilesToFormData(formData, linkedFiles, pendingFiles) {
+        var appendedCount = 0;
+        pendingFiles.forEach(function(file) {
+          if (!file) return;
+          formData.append('files[]', file);
+          appendedCount += 1;
+        });
+        for (var i = 0; i < linkedFiles.length; i += 1) {
+          var linkedFile = linkedFiles[i];
+          var fileUrl = resolveLinkedFileUrl(linkedFile);
+          if (!fileUrl) {
+            continue;
+          }
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            var fileResponse = await fetch(fileUrl, { credentials: 'same-origin' });
+            if (!fileResponse.ok) {
+              continue;
+            }
+            // eslint-disable-next-line no-await-in-loop
+            var fileBlob = await fileResponse.blob();
+            var fileName = linkedFile && linkedFile.name ? String(linkedFile.name) : ('file-' + (i + 1));
+            formData.append('files[]', fileBlob, fileName);
+            appendedCount += 1;
+          } catch (_) {}
+        }
+        return appendedCount;
+      }
+
       sendButton.addEventListener('click', function() {
         var promptText = String(inputNode.value || '').trim();
         if (!promptText) {
@@ -13522,7 +13574,12 @@
         });
         requestContext.attachedFiles = []
           .concat((payload.linkedFiles || []).map(function(file) {
-            return { name: file.name || '', url: file.url || '', size: file.size || 0, type: file.type || '' };
+            return {
+              name: file && file.name ? file.name : '',
+              url: resolveLinkedFileUrl(file),
+              size: file && file.size ? file.size : 0,
+              type: file && file.type ? file.type : ''
+            };
           }))
           .concat(pending.map(function(file) {
             return { name: file.name || '', size: file.size || 0, type: file.type || '' };
@@ -13530,10 +13587,13 @@
         chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
         requestContext.chatHistory = chatHistory.slice(-8);
         formData.append('context', JSON.stringify(requestContext));
-        pending.forEach(function(file) {
-          formData.append('files[]', file);
-        });
-        fetch(payload.apiUrl, { method: 'POST', body: formData, credentials: 'same-origin' })
+        appendSourceFilesToFormData(formData, linked, pending)
+          .then(function(appendedCount) {
+            if (!appendedCount) {
+              throw new Error('Не удалось прикрепить файлы из текущей задачи. Откройте задачу с вложениями и попробуйте снова.');
+            }
+            return fetch(payload.apiUrl, { method: 'POST', body: formData, credentials: 'same-origin' });
+          })
           .then(handleResponse)
           .then(function(data) {
             var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
