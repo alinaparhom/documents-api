@@ -2931,6 +2931,7 @@ function performAiRequestWithRetry(string $endpoint, string $apiKey, array $body
 $requestAttempts = normalizeIntSetting($env['AI_REQUEST_RETRY_ATTEMPTS'] ?? 2, 2, 1, 5);
 $requestTimeout = normalizeIntSetting($env['AI_REQUEST_TIMEOUT'] ?? 120, 120, 20, 300);
 $connectTimeout = normalizeIntSetting($env['AI_CONNECT_TIMEOUT'] ?? 12, 12, 3, 60);
+$aiRequestStartedAt = microtime(true);
 $requestResult = performAiRequestWithRetry($endpoint, $apiKey, $body, [
     'attempts' => $requestAttempts,
     'timeout' => $requestTimeout,
@@ -3134,6 +3135,13 @@ if (mb_strlen($analysis) > 1200) {
 if (mb_strlen($response) > 20000) {
     $response = mb_substr($response, 0, 20000) . '…';
 }
+$usageRaw = is_array($responseJson['usage'] ?? null) ? $responseJson['usage'] : [];
+$metaUsage = [
+    'promptTokens' => (int)($usageRaw['prompt_tokens'] ?? $usageRaw['input_tokens'] ?? 0),
+    'completionTokens' => (int)($usageRaw['completion_tokens'] ?? $usageRaw['output_tokens'] ?? 0),
+    'totalTokens' => (int)($usageRaw['total_tokens'] ?? 0),
+];
+$requestMs = max(0, (int)round((microtime(true) - $aiRequestStartedAt) * 1000));
 
 $successPayload = [
     'ok' => true,
@@ -3146,6 +3154,11 @@ $successPayload = [
     'neutral' => $neutral,
     'positive' => $positive,
     'negative' => $negative,
+    'meta' => [
+        'model' => $effectiveModel,
+        'requestMs' => $requestMs,
+        'usage' => $metaUsage,
+    ],
     'promptStats' => $promptStats,
     'decisionBlock' => [
         'decision' => (string)($decisionBlock['decision'] ?? ''),

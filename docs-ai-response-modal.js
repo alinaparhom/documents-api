@@ -1421,6 +1421,16 @@
       state.lastErrorTs = now;
       messages.appendChild(createMessage('assistant', normalized, true));
     }
+    function buildMetaLine(payload) {
+      var meta = payload && payload.meta && typeof payload.meta === 'object' ? payload.meta : null;
+      if (!meta) return '';
+      var usage = meta.usage && typeof meta.usage === 'object' ? meta.usage : {};
+      var modelName = String(meta.model || state.model || '').trim();
+      var requestMs = Number(meta.requestMs) || 0;
+      var totalTokens = Number(usage.totalTokens || usage.total_tokens || 0) || 0;
+      if (!modelName && !requestMs && !totalTokens) return '';
+      return 'ℹ️ ' + (modelName || 'model') + ' • ' + requestMs + 'мс • токены: ' + totalTokens;
+    }
     messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
@@ -2474,6 +2484,10 @@
           appendAssistantErrorOnce('В ответе нет даты в формате ДД.ММ.ГГГГ. Уточните срок в следующем сообщении.');
         }
         messages.appendChild(createMessage('assistant', finalResponse));
+        var metaLine = buildMetaLine(payload);
+        if (metaLine) {
+          messages.appendChild(createMessage('assistant', metaLine));
+        }
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
         autoHeight(textarea);
@@ -2496,6 +2510,10 @@
             pending.remove();
             var retryText = sanitizeAssistantResponseText(cleanNumericArtifacts(String(secondPayload.response || secondPayload.analysis || '')).trim());
             messages.appendChild(createMessage('assistant', retryText || 'Пустой ответ от API.'));
+            var retryMetaLine = buildMetaLine(secondPayload);
+            if (retryMetaLine) {
+              messages.appendChild(createMessage('assistant', retryMetaLine));
+            }
             state.lastAssistantMessage = String(retryText || '');
             textarea.value = '';
             autoHeight(textarea);

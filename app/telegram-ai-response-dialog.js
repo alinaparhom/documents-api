@@ -690,7 +690,10 @@ async function requestAssistantReply(userMessage, context, history) {
   if (!assistantText) {
     throw new Error('ИИ вернул пустой ответ');
   }
-  return assistantText;
+  return {
+    text: assistantText,
+    meta: payload && payload.meta ? payload.meta : null,
+  };
 }
 
 async function requestAssistantWithSmartRetry(userMessage, context, history) {
@@ -1205,9 +1208,14 @@ function openAiResponseDialog(context = {}) {
     const pending = appendPendingBubble('Готовим ответ...');
     try {
       const selectedAttachments = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
-      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiApiKeyMode: state.aiApiKeyMode, selectedAttachments }, state.chatHistory);
+      const assistantResult = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiApiKeyMode: state.aiApiKeyMode, selectedAttachments }, state.chatHistory);
+      const assistantReply = String(assistantResult && assistantResult.text || '').trim();
       pending.remove();
       appendBubble(assistantReply, 'assistant');
+      if (assistantResult && assistantResult.meta) {
+        const usage = assistantResult.meta.usage || {};
+        appendBubble(`ℹ️ ${assistantResult.meta.model || state.selectedModel || 'model'} • ${Number(assistantResult.meta.requestMs) || 0}мс • токены: ${Number(usage.totalTokens) || 0}`, 'assistant');
+      }
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);
       notify('success', 'Решение сгенерировано.');
@@ -1246,9 +1254,15 @@ function openAiResponseDialog(context = {}) {
     notify('info', 'Генерируем ответ ИИ...');
     const pending = appendPendingBubble('Готовим ответ...');
     let assistantReply = '';
+    let assistantMetaLine = '';
     try {
       const selectedAttachments = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
-      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiApiKeyMode: state.aiApiKeyMode, selectedAttachments }, state.chatHistory);
+      const assistantResult = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiApiKeyMode: state.aiApiKeyMode, selectedAttachments }, state.chatHistory);
+      assistantReply = String(assistantResult && assistantResult.text || '').trim();
+      if (assistantResult && assistantResult.meta) {
+        const usage = assistantResult.meta.usage || {};
+        assistantMetaLine = `ℹ️ ${assistantResult.meta.model || state.selectedModel || 'model'} • ${Number(assistantResult.meta.requestMs) || 0}мс • токены: ${Number(usage.totalTokens) || 0}`;
+      }
     } catch (error) {
       pending.remove();
       assistantReply = '';
@@ -1268,6 +1282,7 @@ function openAiResponseDialog(context = {}) {
     if (assistantReply) {
       pending.remove();
       appendBubble(assistantReply, 'assistant');
+      if (assistantMetaLine) appendBubble(assistantMetaLine, 'assistant');
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);
     }
