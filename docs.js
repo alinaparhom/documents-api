@@ -2156,23 +2156,14 @@
     var normalizedResponse = normalizeSentence(responseText);
     var responseLooksDuplicated = normalizedResponse && analysis
       && normalizedResponse.toLowerCase() === analysis.toLowerCase();
-
-    var apiResponseSection = normalizedResponse
-      ? ['Ответ через API', normalizedResponse, '']
-      : ['Ответ через API', 'ИИ не прислал отдельный текст response.', ''];
+    var resolvedAnalysis = responseLooksDuplicated
+      ? analysis
+      : (analysis || normalizedResponse || 'ИИ не вернул понятный анализ по файлу.');
     return [
       'Краткий вывод ИИ',
       '',
-      apiResponseSection[0],
-      apiResponseSection[1],
-      apiResponseSection[2],
       'О чем файл',
-      analysis,
-      '',
-      'Что решил ИИ',
-      responseLooksDuplicated
-        ? 'ИИ вернул тот же текст, что и в блоке «О чем файл». Отдельное решение не сформировано.'
-        : (normalizedResponse || 'ИИ не вернул отдельный блок решения.'),
+      resolvedAnalysis,
       '',
       'Кто прислал / кому',
       participants || 'Не удалось точно определить отправителя и получателя.',
@@ -2183,6 +2174,29 @@
       'Что сделать дальше',
       cleanedRequirements.length ? cleanedRequirements.map(function(item) { return '• ' + item; }).join('\n') : '• ИИ не вернул шаги по документу.'
     ].join('\n');
+  }
+
+  function isMeaningfulAiBriefPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return false;
+    }
+    var normalizeBriefText = function(text) {
+      return String(text || '')
+        .replace(/-\s*\n\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .replace(/[.:;,\s]+$/g, '')
+        .trim();
+    };
+    var analysis = normalizeBriefText(payload.analysis || '');
+    var responseText = normalizeBriefText(payload.response || '');
+    var block = payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
+    var hasActions = Array.isArray(block.required_actions) && block.required_actions.some(function(item) {
+      return String(item || '').trim().length >= 4;
+    });
+    var hasRequirements = Array.isArray(block.requirements) && block.requirements.some(function(item) {
+      return String(item || '').trim().length >= 4;
+    });
+    return Boolean(analysis || responseText || hasActions || hasRequirements);
   }
 
   function requestOcrTextForSource(source, apiUrl) {
@@ -2230,6 +2244,7 @@
           text: briefText
         }
       ],
+      requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
       aiBehavior: 'Режим "Кратко ИИ". Используй только extractedTexts. Верни только JSON без markdown. Формат: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. analysis: 2-3 коротких предложения. required_actions: 3-5 конкретных фактов из файла. requirements: 3-5 шагов, что делать дальше. Если нет данных — пиши "не указано в файле".'
     };
     var formData = new FormData();
@@ -2239,7 +2254,7 @@
     formData.append('responseStyle', 'concise');
     formData.append('aiBehavior', String(context.aiBehavior || ''));
     formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
-    formData.append('temperature', '0.3');
+    formData.append('temperature', '0.6');
     formData.append('top_p', '1');
     formData.append('frequency_penalty', '0');
     formData.append('presence_penalty', '0');
@@ -2264,6 +2279,9 @@
             throw new Error((serverError || 'ИИ-сервис перегружен или временно недоступен.') + retryHint);
           }
           throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ').'));
+        }
+        if (!isMeaningfulAiBriefPayload(payload)) {
+          throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
         }
         return payload;
       });
@@ -2345,6 +2363,7 @@
         }
       ],
       isolatedFileMode: true,
+      requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
       extractedTexts: extractedText ? [{ name: sourceLabel, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
       aiBehavior: 'VIP-кратко: анализируй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}. Без приветствий, без канцелярии, только факты из файла.'
     };
@@ -2355,6 +2374,8 @@
     formData.append('responseStyle', 'concise');
     formData.append('briefMode', '1');
     formData.append('mode', 'paid');
+    formData.append('temperature', '0.5');
+    formData.append('top_p', '1');
     if (context.extractedTexts && context.extractedTexts.length) {
       formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
     }
@@ -2380,6 +2401,9 @@
     var payload = await response.json().catch(function() { return null; });
     if (!response.ok || !payload || payload.ok !== true) {
       throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
+    }
+    if (!isMeaningfulAiBriefPayload(payload)) {
+      throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
     }
     return payload;
   }
@@ -2447,8 +2471,8 @@
       button.classList.add('is-active');
     }
 
-    function resolveSourceText(source) {
-      if (source.text && String(source.text).trim()) {
+    function resolveSourceText(source, forceRefresh) {
+      if (!forceRefresh && source.text && String(source.text).trim()) {
         return Promise.resolve(String(source.text).trim());
       }
       if (!source || (!source.fileObject && !source.url)) {
@@ -2477,7 +2501,7 @@
         setPreviewLoading(true, source.label);
         var requestPromise = selectedMode === 'paid'
           ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
-          : resolveSourceText(source).then(function(sourceText) {
+          : resolveSourceText(source, true).then(function(sourceText) {
             preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
             return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
           });
