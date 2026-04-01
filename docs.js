@@ -2157,9 +2157,15 @@
     var responseLooksDuplicated = normalizedResponse && analysis
       && normalizedResponse.toLowerCase() === analysis.toLowerCase();
 
+    var apiResponseSection = normalizedResponse
+      ? ['Ответ через API', normalizedResponse, '']
+      : ['Ответ через API', 'ИИ не прислал отдельный текст response.', ''];
     return [
       'Краткий вывод ИИ',
       '',
+      apiResponseSection[0],
+      apiResponseSection[1],
+      apiResponseSection[2],
       'О чем файл',
       analysis,
       '',
@@ -2209,7 +2215,7 @@
     });
   }
 
-  function requestAiBriefSummaryForText(source, sourceText, apiUrl) {
+  function requestAiBriefSummaryForText(source, sourceText, apiUrl, aiMode) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var briefText = String(sourceText || '').trim();
     if (!briefText) {
@@ -2238,6 +2244,7 @@
     formData.append('frequency_penalty', '0');
     formData.append('presence_penalty', '0');
     formData.append('briefMode', '1');
+    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
     formData.append('context', JSON.stringify(context));
     return fetch(endpoint, {
       method: 'POST',
@@ -2263,6 +2270,120 @@
     });
   }
 
+  var briefPdfJsLoader = null;
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib) {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) {
+      return briefPdfJsLoader;
+    }
+    briefPdfJsLoader = new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      script.src = '/pdf/pdf.min.js';
+      script.onload = function() {
+        if (window.pdfjsLib) {
+          resolve(window.pdfjsLib);
+        } else {
+          reject(new Error('pdfjsLib не найден'));
+        }
+      };
+      script.onerror = function() { reject(new Error('Не удалось загрузить PDF библиотеку')); };
+      document.head.appendChild(script);
+    });
+    return briefPdfJsLoader;
+  }
+
+  async function convertPdfToImageFileForBrief(file, fallbackName) {
+    var fileName = String(fallbackName || (file && file.name) || 'brief-file');
+    var isPdf = file && ((file.type && String(file.type).toLowerCase() === 'application/pdf') || /\.pdf$/i.test(fileName));
+    if (!isPdf || !file) {
+      return file;
+    }
+    try {
+      var pdfjsLib = await ensureBriefPdfJsLoaded();
+      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+      }
+      var bytes = await file.arrayBuffer();
+      var loadingTask = pdfjsLib.getDocument({ data: bytes });
+      var pdf = await loadingTask.promise;
+      var page = await pdf.getPage(1);
+      var viewport = page.getViewport({ scale: 2 });
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      var ctx = canvas.getContext('2d');
+      if (!ctx) return file;
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      var blob = await new Promise(function(resolve) {
+        canvas.toBlob(function(nextBlob) { resolve(nextBlob); }, 'image/jpeg', 0.9);
+      });
+      if (!blob) return file;
+      return new File([blob], fileName.replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
+    } catch (_) {
+      return file;
+    }
+  }
+
+  async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
+    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+    var extractedText = '';
+    try {
+      extractedText = await requestOcrTextForSource(source, apiUrl);
+    } catch (_) {
+      extractedText = '';
+    }
+    var context = {
+      attachedFiles: [
+        {
+          name: sourceLabel,
+          url: source && source.url ? String(source.url) : '',
+          type: source && source.fileObject && source.fileObject.type ? String(source.fileObject.type) : '',
+          size: source && source.fileObject && source.fileObject.size ? Number(source.fileObject.size) : 0
+        }
+      ],
+      isolatedFileMode: true,
+      extractedTexts: extractedText ? [{ name: sourceLabel, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
+      aiBehavior: 'VIP-кратко: анализируй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}. Без приветствий, без канцелярии, только факты из файла.'
+    };
+    var formData = new FormData();
+    formData.append('action', 'ai_response_analyze');
+    formData.append('documentTitle', sourceLabel);
+    formData.append('prompt', 'Сделай краткий вывод строго по файлу. Верни только JSON формата brief, без письма и воды.');
+    formData.append('responseStyle', 'concise');
+    formData.append('briefMode', '1');
+    formData.append('mode', 'paid');
+    if (context.extractedTexts && context.extractedTexts.length) {
+      formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
+    }
+    formData.append('context', JSON.stringify(context));
+    if (source && source.fileObject instanceof File) {
+      var preparedLocal = await convertPdfToImageFileForBrief(source.fileObject, source.fileObject.name || sourceLabel);
+      formData.append('attachments[]', preparedLocal, preparedLocal.name || sourceLabel);
+    } else if (source && source.url) {
+      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
+      if (fetched.ok) {
+        var blob = await fetched.blob();
+        var fileName = sourceLabel || 'brief-file';
+        var downloaded = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        var preparedDownloaded = await convertPdfToImageFileForBrief(downloaded, fileName);
+        formData.append('attachments[]', preparedDownloaded, preparedDownloaded.name || fileName);
+      }
+    }
+    var response = await fetch(endpoint, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    });
+    var payload = await response.json().catch(function() { return null; });
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
+    }
+    return payload;
+  }
+
   function openAiBriefSummaryModal(config) {
     ensureResponsesStyle();
     var options = config && typeof config === 'object' ? config : {};
@@ -2277,10 +2398,18 @@
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для OCR и краткого анализа ИИ'));
     titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Только текст выбранного файла'));
+    var modeSelect = document.createElement('select');
+    modeSelect.className = 'documents-select';
+    modeSelect.style.marginTop = '8px';
+    modeSelect.innerHTML = '<option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option>';
+    titleWrap.appendChild(modeSelect);
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
     var preview = createElement('pre', 'documents-brief-preview', 'Нажмите на источник слева, чтобы получить краткое резюме.');
+    var metaCompact = createElement('div', 'documents-brief-item-meta', '');
+    metaCompact.style.padding = '0 14px 8px';
+    metaCompact.style.fontSize = '12px';
 
     var sources = [];
 
@@ -2342,45 +2471,31 @@
       button.title = source.label;
       button.type = 'button';
       button.addEventListener('click', function() {
+        var selectedMode = modeSelect.value === 'paid' ? 'paid' : 'free';
         makeActive(button);
         button.disabled = true;
         setPreviewLoading(true, source.label);
-        resolveSourceText(source)
+        var requestPromise = selectedMode === 'paid'
+          ? requestAiBriefSummaryForFileDirect(source, options.apiUrl)
+          : resolveSourceText(source).then(function(sourceText) {
+            preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
+            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
+          });
+        requestPromise
           .then(function(sourceText) {
-            var aiStartedAt = Date.now();
-            var estimatedSeconds = 35;
-            var timerId = null;
-            function updateAiProgress() {
-              var elapsed = Math.floor((Date.now() - aiStartedAt) / 1000);
-              var remain = Math.max(0, estimatedSeconds - elapsed);
-              preview.textContent = '⏳ OCR завершён. ИИ анализирует документ...\nОсталось примерно: ' + remain + ' сек.';
-            }
-            updateAiProgress();
-            timerId = window.setInterval(updateAiProgress, 1000);
-            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl)
-              .then(function(aiPayload) {
-                if (timerId) {
-                  window.clearInterval(timerId);
-                }
-                preview.classList.remove('is-loading');
-                preview.textContent = buildAiBriefSummaryText(aiPayload);
-              })
-              .catch(function(error) {
-                if (timerId) {
-                  window.clearInterval(timerId);
-                }
-                preview.classList.remove('is-loading');
-                preview.textContent = 'Ошибка анализа.\n' + (error && error.message ? error.message : 'неизвестная ошибка');
-                showStatusMessage('warning', error && error.message ? error.message : 'ИИ временно недоступен. Попробуйте позже.');
-              })
-              .finally(function() {
-                button.disabled = false;
-              });
+            var aiPayload = sourceText;
+            preview.classList.remove('is-loading');
+            preview.textContent = buildAiBriefSummaryText(aiPayload);
+            var elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
+            metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек';
           })
           .catch(function(error) {
             preview.classList.remove('is-loading');
             preview.textContent = 'Не удалось получить summary: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+            metaCompact.textContent = '';
             showStatusMessage('warning', 'Не удалось обработать "' + source.label + '".');
+          })
+          .finally(function() {
             button.disabled = false;
           });
       });
@@ -2407,6 +2522,7 @@
 
     header.appendChild(titleWrap);
     header.appendChild(closeButton);
+    panel.appendChild(metaCompact);
     body.appendChild(list);
     body.appendChild(preview);
     panel.appendChild(header);
@@ -13080,6 +13196,14 @@
       var length = messageInput.value ? messageInput.value.length : 0;
       messageCounter.textContent = length + ' / 12000';
     }
+    function escapeHtmlText(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     function uploadPendingFiles() {
       var responseMessage = normalizeTextInputValue(messageInput.value);
@@ -13241,8 +13365,27 @@
       });
     });
 
-    aiButton.type = 'button';
-    aiButton.addEventListener('click', function() {
+    function ensureAiModeSelectorStyles() {
+      if (document.getElementById('documents-ai-mode-selector-style')) {
+        return;
+      }
+      var style = document.createElement('style');
+      style.id = 'documents-ai-mode-selector-style';
+      style.textContent = '.documents-ai-mode-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.45);backdrop-filter:blur(8px);z-index:4000;padding:12px}.documents-ai-mode-panel{width:min(420px,100%);background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 44px rgba(15,23,42,.2);backdrop-filter:blur(16px);border-radius:22px;padding:18px}.documents-ai-mode-title{font-size:18px;font-weight:700;color:#0f172a}.documents-ai-mode-sub{margin-top:4px;font-size:13px;color:#475569}.documents-ai-mode-actions{margin-top:14px;display:grid;gap:10px}.documents-ai-mode-btn{border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.92);color:#0f172a;padding:12px 14px;border-radius:14px;font-size:14px;font-weight:600;text-align:left;cursor:pointer}.documents-ai-mode-btn--vip{background:linear-gradient(135deg,rgba(236,253,245,.94),rgba(219,234,254,.94));border-color:rgba(125,211,252,.7)}.documents-ai-mode-close{margin-top:10px;width:100%;border:none;background:transparent;color:#64748b;font-size:13px;padding:8px;cursor:pointer}';
+      document.head.appendChild(style);
+    }
+
+    function ensureVipAiModalStyles() {
+      if (document.getElementById('documents-vip-ai-modal-style')) {
+        return;
+      }
+      var style = document.createElement('style');
+      style.id = 'documents-vip-ai-modal-style';
+      style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(8px);z-index:4100;display:flex;align-items:center;justify-content:center;padding:10px}.documents-vip-ai__panel{width:min(860px,100%);max-height:calc(100dvh - 20px);overflow:auto;border-radius:24px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(241,245,249,.9));border:1px solid rgba(255,255,255,.95);box-shadow:0 24px 56px rgba(15,23,42,.24)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9)}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:110px;overflow:auto}.documents-vip-ai__chat{height:min(44dvh,360px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__input{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;max-height:110px;padding:9px;font-size:13px}.documents-vip-ai__send{border:none;background:linear-gradient(135deg,#38bdf8,#14b8a6);color:#fff;padding:12px 14px;border-radius:12px;font-size:14px;font-weight:700}.documents-vip-ai__send:disabled{opacity:.6}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{max-height:100dvh;border-radius:0}.documents-vip-ai__composer{flex-direction:column}}';
+      document.head.appendChild(style);
+    }
+
+    function buildAiDialogPayload() {
       var uploadedResponses = currentDoc && Array.isArray(currentDoc.responses)
         ? currentDoc.responses.map(function(file) {
           return {
@@ -13267,7 +13410,7 @@
           return Boolean(file && file.url);
         });
       }
-      openAiResponseModal({
+      return {
         apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
         showMessage: showMessage,
         documentData: currentDoc || doc || {},
@@ -13284,7 +13427,135 @@
           uploadedResponsesCount: uploadedResponses.length,
           uploadedResponses: uploadedResponses
         }
+      };
+    }
+
+    function openAiModeSelector() {
+      ensureAiModeSelectorStyles();
+      var overlay = createElement('div', 'documents-ai-mode-overlay');
+      var panel = createElement('div', 'documents-ai-mode-panel');
+      panel.innerHTML = '<div class="documents-ai-mode-title">Выберите режим ИИ</div><div class="documents-ai-mode-sub">Бесплатный режим останется без изменений.</div>';
+      var actions = createElement('div', 'documents-ai-mode-actions');
+      var freeBtn = createElement('button', 'documents-ai-mode-btn', '🤍 Бесплатный ИИ');
+      var vipBtn = createElement('button', 'documents-ai-mode-btn documents-ai-mode-btn--vip', '💎 VIP ИИ (платный)');
+      var cancelBtn = createElement('button', 'documents-ai-mode-close', 'Отмена');
+      [freeBtn, vipBtn, cancelBtn].forEach(function(btn) { btn.type = 'button'; });
+      freeBtn.addEventListener('click', function() {
+        closeModal(overlay);
+        openAiResponseModal(buildAiDialogPayload());
       });
+      vipBtn.addEventListener('click', function() {
+        closeModal(overlay);
+        openVipAiModal();
+      });
+      cancelBtn.addEventListener('click', function() { closeModal(overlay); });
+      overlay.addEventListener('click', function(event) {
+        if (event.target === overlay) {
+          closeModal(overlay);
+        }
+      });
+      actions.appendChild(freeBtn);
+      actions.appendChild(vipBtn);
+      panel.appendChild(actions);
+      panel.appendChild(cancelBtn);
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+    }
+
+    function openVipAiModal() {
+      ensureVipAiModalStyles();
+      var payload = buildAiDialogPayload();
+      var overlay = createElement('div', 'documents-vip-ai');
+      var panel = createElement('div', 'documents-vip-ai__panel');
+      panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><textarea class="documents-vip-ai__input" placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button">Отправить</button></div></div>';
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+      var filesNode = panel.querySelector('.documents-vip-ai__files');
+      var chatNode = panel.querySelector('.documents-vip-ai__chat');
+      var metaNode = panel.querySelector('.documents-vip-ai__meta');
+      var inputNode = panel.querySelector('.documents-vip-ai__input');
+      var sendButton = panel.querySelector('.documents-vip-ai__send');
+      var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
+      var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
+      var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
+      var fileNames = linked.map(function(item) { return item.name; }).concat(pending.map(function(item) { return item.name; }));
+      if (!fileNames.length) {
+        filesNode.innerHTML = '<em>Нет вложений</em>';
+      } else {
+        filesNode.innerHTML = fileNames.slice(0, 12).map(function(name) {
+          return '<div>📎 ' + escapeHtmlText(name || 'Файл') + '</div>';
+        }).join('');
+      }
+      closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
+      overlay.addEventListener('click', function(event) {
+        if (event.target === overlay) {
+          closeModal(overlay);
+        }
+      });
+      var chatHistory = [];
+      function pushChat(role, text) {
+        var message = createElement('div', 'documents-vip-ai__msg documents-vip-ai__msg--' + role, String(text || ''));
+        chatNode.appendChild(message);
+        chatNode.scrollTop = chatNode.scrollHeight;
+      }
+      pushChat('assistant', 'Готов. Я учту все приложенные файлы (включая сканы) и подготовлю решение.');
+      sendButton.addEventListener('click', function() {
+        var promptText = String(inputNode.value || '').trim();
+        if (!promptText) {
+          return;
+        }
+        sendButton.disabled = true;
+        pushChat('user', promptText);
+        pushChat('assistant', '⏳ Обрабатываю запрос...');
+        metaNode.innerHTML = '';
+        var startedAt = Date.now();
+        var formData = new FormData();
+        formData.append('action', 'ai_response_analyze');
+        formData.append('mode', 'paid');
+        formData.append('prompt', promptText);
+        formData.append('documentTitle', payload.documentTitle || 'Документ');
+        formData.append('responseStyle', 'neutral');
+        var requestContext = {};
+        var sourceContext = payload.context || {};
+        Object.keys(sourceContext).forEach(function(key) {
+          requestContext[key] = sourceContext[key];
+        });
+        requestContext.attachedFiles = []
+          .concat((payload.linkedFiles || []).map(function(file) {
+            return { name: file.name || '', url: file.url || '', size: file.size || 0, type: file.type || '' };
+          }))
+          .concat(pending.map(function(file) {
+            return { name: file.name || '', size: file.size || 0, type: file.type || '' };
+          }));
+        chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
+        requestContext.chatHistory = chatHistory.slice(-8);
+        formData.append('context', JSON.stringify(requestContext));
+        pending.forEach(function(file) {
+          formData.append('files[]', file);
+        });
+        fetch(payload.apiUrl, { method: 'POST', body: formData, credentials: 'same-origin' })
+          .then(handleResponse)
+          .then(function(data) {
+            var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
+            pushChat('assistant', aiText);
+            chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
+            var elapsed = Date.now() - startedAt;
+            var tokens = data && data.tokensUsed ? data.tokensUsed : '—';
+            metaNode.innerHTML = '<span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>';
+            inputNode.value = '';
+          })
+          .catch(function(error) {
+            pushChat('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Неизвестная ошибка'));
+          })
+          .finally(function() {
+            sendButton.disabled = false;
+          });
+      });
+    }
+
+    aiButton.type = 'button';
+    aiButton.addEventListener('click', function() {
+      openAiModeSelector();
     });
     aiBriefButton.type = 'button';
     aiBriefButton.addEventListener('click', function() {

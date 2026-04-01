@@ -2098,6 +2098,11 @@ if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxConte
 }
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
+$modeRaw = trim((string)($_POST['mode'] ?? 'free'));
+$aiMode = mb_strtolower($modeRaw);
+if (!in_array($aiMode, ['free', 'paid'], true)) {
+    $aiMode = 'free';
+}
 $requestedModel = trim((string)($_POST['model'] ?? ''));
 $briefModeRaw = $_POST['briefMode'] ?? '';
 $action = trim((string)($_POST['action'] ?? ''));
@@ -2129,6 +2134,9 @@ if (!$briefMode && isset($context['isolatedFileMode'])) {
         $normalizedIsolatedMode = mb_strtolower(trim($isolatedModeRaw));
         $briefMode = in_array($normalizedIsolatedMode, ['1', 'true', 'yes', 'on'], true);
     }
+}
+if ($briefMode) {
+    $aiMode = 'paid';
 }
 
 if (
@@ -2572,9 +2580,19 @@ if ($action === 'ocr_extract') {
     ]);
 }
 
-$apiKey = trim((string)($env['AI_API_KEY'] ?? $env['OPENAI_API_KEY'] ?? ''));
+$freeApiKey = trim((string)($env['AI_API_KEY'] ?? $env['AI_API_KEY_FREE'] ?? ''));
+$paidApiKey = trim((string)($env['AI_API_KEY_PAID'] ?? $env['OPENAI_API_KEY'] ?? ''));
+$apiKey = $aiMode === 'paid' ? $paidApiKey : $freeApiKey;
 $modelsConfig = resolveAiModelsConfig($env);
 $model = (string)$modelsConfig['defaultModel'];
+$freeModel = trim((string)($env['AI_MODEL_FREE'] ?? ''));
+$paidModel = trim((string)($env['AI_MODEL_PAID'] ?? ''));
+if ($aiMode === 'paid' && $paidModel !== '') {
+    $model = $paidModel;
+}
+if ($aiMode === 'free' && $freeModel !== '') {
+    $model = $freeModel;
+}
 $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
 $retryAfterSeconds = normalizeRetryAfterSeconds($env['AI_RETRY_AFTER_SECONDS'] ?? null);
 $isGroqKey = str_starts_with($apiKey, 'gsk_');
@@ -2585,7 +2603,7 @@ $isGroq = stripos($baseUrl, 'groq.com') !== false;
 $isGoogleOpenAiCompat = stripos($baseUrl, 'generativelanguage.googleapis.com') !== false;
 
 if ($apiKey === '') {
-    jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env']);
+    jsonResponse(500, ['ok' => false, 'error' => 'AI API key не найден в .env для режима ' . $aiMode]);
 }
 
 $filesSummary = buildFilesSummary($files);
@@ -2672,6 +2690,9 @@ if ($effectiveBehavior !== '' && mb_strlen($effectiveBehavior) > 10000) {
 
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
 $availableModels = (array)($modelsConfig['models'] ?? []);
+if ($model !== '' && !in_array($model, $availableModels, true)) {
+    array_unshift($availableModels, $model);
+}
 if ($effectiveModel === '') {
     $configError = trim((string)($modelsConfig['configError'] ?? ''));
     jsonResponse(500, [
@@ -2713,6 +2734,12 @@ $defaultSystemMessage = "Ты — ИИ, выполняющий роль сотр
   . $styleInstruction . ' '
   . $styleExampleInstruction . ' '
   . 'Поле response — только готовый текст письма без служебных заголовков.';
+$paidSystemMessage = "Ты — VIP ИИ-ассистент для официальной переписки строительной компании. "
+  . "Работай только по приложенным файлам и extractedTexts, принимай обоснованное решение и возвращай JSON-объект с полем response. "
+  . "Не добавляй шапку и подпись. Нужны: краткий анализ фактов, решение (согласие/отказ/уточнение), сроки и чёткие действия. "
+  . "Если данных мало — прямо перечисли, каких данных не хватает для финального ответа. "
+  . "Используй деловой язык без воды. Опирайся на факты из файлов и не выдумывай реквизиты.";
+$defaultSystemMessage = $aiMode === 'paid' ? $paidSystemMessage : $defaultSystemMessage;
 $systemMessage = $effectiveBehavior !== '' ? $effectiveBehavior : $defaultSystemMessage;
 
 $userPayload = [
@@ -2824,6 +2851,7 @@ function performAiRequestWithRetry(string $endpoint, string $apiKey, array $body
 $requestAttempts = normalizeIntSetting($env['AI_REQUEST_RETRY_ATTEMPTS'] ?? 2, 2, 1, 5);
 $requestTimeout = normalizeIntSetting($env['AI_REQUEST_TIMEOUT'] ?? 120, 120, 20, 300);
 $connectTimeout = normalizeIntSetting($env['AI_CONNECT_TIMEOUT'] ?? 12, 12, 3, 60);
+$requestStartedAt = microtime(true);
 $requestResult = performAiRequestWithRetry($endpoint, $apiKey, $body, [
     'attempts' => $requestAttempts,
     'timeout' => $requestTimeout,
@@ -3030,6 +3058,7 @@ if (mb_strlen($response) > 20000) {
 
 $successPayload = [
     'ok' => true,
+    'mode' => $aiMode,
     'model' => $effectiveModel,
     ...withRetryPayload($retryAfterSeconds),
     'analysis' => $analysis,
@@ -3045,6 +3074,8 @@ $successPayload = [
         'required_actions' => normalizeStringList($decisionBlock['required_actions'] ?? []),
         'requirements' => normalizeStringList($decisionBlock['requirements'] ?? $requirements, 8, 300),
     ],
+    'tokensUsed' => (int)($responseJson['usage']['total_tokens'] ?? 0),
+    'timeMs' => max(1, (int)round((microtime(true) - $requestStartedAt) * 1000)),
 ];
 $aiResponseCache[$responseCacheKey] = [
     'timestamp' => time(),

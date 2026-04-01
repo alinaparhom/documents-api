@@ -518,6 +518,7 @@ async function requestAssistantReply(userMessage, context, history) {
   const task = context && context.task ? context.task : {};
   const resolvedModel = resolveAiModel(context);
   const responseStyle = context && context.responseStyle ? String(context.responseStyle) : 'neutral';
+  const aiMode = context && context.aiMode === 'paid' ? 'paid' : 'free';
   const behaviorFromContext = context && typeof context.aiBehavior === 'string' ? context.aiBehavior.trim() : '';
   const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
   const extractedTexts = Array.isArray(context && context.extractedTexts) ? context.extractedTexts : [];
@@ -543,6 +544,7 @@ async function requestAssistantReply(userMessage, context, history) {
       retryForm.append('model', resolvedModel);
     }
     retryForm.append('responseStyle', responseStyle);
+    retryForm.append('mode', aiMode);
     retryForm.append('aiBehavior', behaviorText);
     retryForm.append('extractedTexts', JSON.stringify(extractedTexts));
     retryForm.append('temperature', String(Number(generationParams.temperature) || 0.7));
@@ -585,6 +587,14 @@ async function requestAssistantReply(userMessage, context, history) {
   }
   if (!assistantText) {
     throw new Error('ИИ вернул пустой ответ');
+  }
+  if (context && typeof context === 'object') {
+    context.__lastAiMeta = {
+      mode: String((payload && payload.mode) || aiMode),
+      model: String((payload && payload.model) || resolvedModel || ''),
+      tokensUsed: Number(payload && payload.tokensUsed) || 0,
+      timeMs: Number(payload && payload.timeMs) || 0,
+    };
   }
   return assistantText;
 }
@@ -631,6 +641,7 @@ function openAiResponseDialog(context = {}) {
     attachedFiles: [],
     selectedAttachmentIds: new Set(),
     responseStyle: 'neutral',
+    aiMode: 'free',
     selectedModel: resolveAiModel(context),
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
     rateLimitUntil: 0,
@@ -657,6 +668,13 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__composer">
         <textarea class="appdosc-ai-dialog__input" data-input placeholder="Коротко напишите задачу для ответа"></textarea>
         <div style="display:flex;gap:6px;align-items:center">
+          <div style="flex:1;min-width:0">
+            <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-ai-mode-select">Режим</label>
+            <select class="appdosc-ai-dialog__input" id="appdosc-ai-mode-select" data-mode style="min-height:36px;max-height:36px;padding:4px 8px">
+              <option value="free">Бесплатный ИИ</option>
+              <option value="paid">VIP ИИ</option>
+            </select>
+          </div>
           <div style="flex:1;min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Стиль</label>
             <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:36px;max-height:36px;padding:4px 8px"></select>
@@ -686,12 +704,19 @@ function openAiResponseDialog(context = {}) {
 
   const messages = root.querySelector('[data-messages]');
   const input = root.querySelector('[data-input]');
+  const modeSelect = root.querySelector('[data-mode]');
   const responseStyleSelect = root.querySelector('[data-response-style]');
   const modelSelect = root.querySelector('[data-model]');
   const autoDecisionBtn = root.querySelector('[data-auto-decision]');
   const attachmentsNode = root.querySelector('[data-attachments]');
   const rateLimitHint = root.querySelector('[data-rate-limit-hint]');
   const sendBtn = root.querySelector('[data-send]');
+  if (modeSelect) {
+    modeSelect.value = state.aiMode;
+    modeSelect.addEventListener('change', () => {
+      state.aiMode = String(modeSelect.value || 'free') === 'paid' ? 'paid' : 'free';
+    });
+  }
 
   const getRateLimitSecondsLeft = () => Math.max(0, Math.ceil((state.rateLimitUntil - Date.now()) / 1000));
   const applyRateLimitState = () => {
@@ -1038,6 +1063,13 @@ function openAiResponseDialog(context = {}) {
     if (event.key !== 'Escape') return;
     cleanup();
   };
+  const appendResponseMeta = (meta) => {
+    const mode = String(meta && meta.mode || state.aiMode) === 'paid' ? 'VIP' : 'Free';
+    const model = String(meta && meta.model || state.selectedModel || '—') || '—';
+    const timeMs = Number(meta && meta.timeMs) || 0;
+    const tokens = Number(meta && meta.tokensUsed) || 0;
+    appendBubble(`ℹ️ Режим: ${mode} • Модель: ${model} • Время: ${timeMs || '—'} мс • Токены: ${tokens || '—'}`, 'assistant');
+  };
 
   const runAutoDecision = async () => {
     if (state.isSending) return;
@@ -1061,9 +1093,11 @@ function openAiResponseDialog(context = {}) {
     root.querySelector('[data-send]').disabled = true;
     const pending = appendPendingBubble('Готовим ответ...');
     try {
-      const assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
+      const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
+      const assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
       pending.remove();
       appendBubble(assistantReply, 'assistant');
+      appendResponseMeta(requestContext.__lastAiMeta || null);
       state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
       state.chatHistory = normalizeHistoryMessages(state.chatHistory);
       notify('success', 'Решение сгенерировано.');
@@ -1103,7 +1137,9 @@ function openAiResponseDialog(context = {}) {
     const pending = appendPendingBubble('Готовим ответ...');
     let assistantReply = '';
     try {
-      assistantReply = await requestAssistantWithSmartRetry(prompt, { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel }, state.chatHistory);
+      const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
+      assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
+      appendResponseMeta(requestContext.__lastAiMeta || null);
     } catch (error) {
       pending.remove();
       assistantReply = '';
