@@ -2229,6 +2229,25 @@
     return Boolean(analysis || responseText || hasActions || hasRequirements);
   }
 
+  function extractPlainAiBriefText(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return '';
+    }
+    var candidates = [
+      payload.response,
+      payload.analysis,
+      payload.text,
+      payload.answer
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = String(candidates[i] || '').trim();
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
 
   function getDirectAiAnalyzeUrl(apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
@@ -2286,12 +2305,12 @@
           }
         ],
         requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
-        aiBehavior: 'Кратко по файлу. Верни JSON: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}.',
+        aiBehavior: 'Кратко по файлу. Верни JSON: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."],"risks":["Отправитель: ...; Получатель: ..."]}}. Поле analysis обязательно: минимум 5 полных предложений по существу.',
         isolatedFileMode: true
       };
       var formData = new FormData();
       formData.append('documentTitle', sourceLabel);
-      formData.append('prompt', 'Сделай краткий вывод по тексту файла. Верни только JSON указанного формата.');
+      formData.append('prompt', 'Сделай вывод по тексту файла. Верни только JSON указанного формата. В analysis минимум 5 предложений.');
       formData.append('responseStyle', 'concise');
       formData.append('aiBehavior', String(context.aiBehavior || ''));
       formData.append('extractedTexts', JSON.stringify(context.extractedTexts || []));
@@ -2302,6 +2321,12 @@
       formData.append('briefMode', '1');
       formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
       formData.append('context', JSON.stringify(context));
+      console.log('[AI][docs-brief-text] Отправка запроса', {
+        endpoint: endpoint,
+        mode: aiMode === 'paid' ? 'paid' : 'free',
+        source: sourceLabel,
+        ts: new Date().toISOString()
+      });
       return fetch(endpoint, {
         method: 'POST',
         credentials: 'same-origin',
@@ -2395,60 +2420,70 @@
     }
   }
 
+  function postGroqPaidForBrief(createFormData) {
+    var endpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+    var lastError = null;
+    return endpoints.reduce(function(chain, endpoint) {
+      return chain.catch(function() {
+        console.log('[AI][groq-paid-brief] Отправка запроса', {
+          endpoint: endpoint,
+          ts: new Date().toISOString()
+        });
+        return fetch(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: createFormData()
+        }).then(function(response) {
+          if (response.status === 404 || response.status === 405) {
+            throw new Error('ENDPOINT_UNAVAILABLE');
+          }
+          return response.json().catch(function() { return null; }).then(function(payload) {
+            return { response: response, payload: payload };
+          });
+        });
+      });
+    }, Promise.reject(new Error('INIT'))).catch(function(error) {
+      lastError = error;
+      throw lastError;
+    });
+  }
+
   async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
-    var endpoint = getDirectAiAnalyzeUrl(apiUrl);
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+    var fileForVip = null;
     var extractedText = '';
-    try {
-      extractedText = await requestOcrTextForSource(source, apiUrl);
-    } catch (_) {
-      extractedText = '';
-    }
-    var context = {
-      attachedFiles: [
-        {
-          name: sourceLabel,
-          url: source && source.url ? String(source.url) : '',
-          type: source && source.fileObject && source.fileObject.type ? String(source.fileObject.type) : '',
-          size: source && source.fileObject && source.fileObject.size ? Number(source.fileObject.size) : 0
-        }
-      ],
-      isolatedFileMode: true,
-      requestNonce: String(Date.now()) + '_' + String(Math.random()).slice(2),
-      extractedTexts: extractedText ? [{ name: sourceLabel, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
-      aiBehavior: 'VIP-кратко: анализируй приложенный файл и extractedTexts. Ответ строго в JSON без markdown: {"analysis":"...","decisionBlock":{"required_actions":["..."],"requirements":["..."]}}. Без приветствий, без канцелярии, только факты из файла.'
-    };
-    var formData = new FormData();
-    formData.append('documentTitle', sourceLabel);
-    formData.append('prompt', 'Сделай краткий вывод строго по файлу. Верни только JSON формата brief, без письма и воды.');
-    formData.append('responseStyle', 'concise');
-    formData.append('briefMode', '1');
-    formData.append('mode', 'paid');
-    formData.append('temperature', '0.5');
-    formData.append('top_p', '1');
-    if (context.extractedTexts && context.extractedTexts.length) {
-      formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
-    }
-    formData.append('context', JSON.stringify(context));
     if (source && source.fileObject instanceof File) {
-      var preparedLocal = await convertPdfToImageFileForBrief(source.fileObject, source.fileObject.name || sourceLabel);
-      formData.append('attachments[]', preparedLocal, preparedLocal.name || sourceLabel);
+      fileForVip = source.fileObject;
     } else if (source && source.url) {
       var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
       if (fetched.ok) {
         var blob = await fetched.blob();
         var fileName = sourceLabel || 'brief-file';
         var downloaded = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-        var preparedDownloaded = await convertPdfToImageFileForBrief(downloaded, fileName);
-        formData.append('attachments[]', preparedDownloaded, preparedDownloaded.name || fileName);
+        fileForVip = downloaded;
       }
     }
-    var response = await fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
+    try {
+      extractedText = await requestOcrTextForSource(source, apiUrl);
+    } catch (_) {
+      extractedText = '';
+    }
+    if (!(fileForVip instanceof File)) {
+      throw new Error('Не удалось подготовить файл для платного ИИ.');
+    }
+    var request = await postGroqPaidForBrief(function() {
+      var formData = new FormData();
+      formData.append('prompt', 'Сформируй чистый ответ по файлу: минимум 5 предложений, только решение и обоснование, без markdown и списков.');
+      formData.append('files', fileForVip, fileForVip.name || sourceLabel);
+      if (String(extractedText || '').trim()) {
+        var ocrFileName = (fileForVip.name || sourceLabel || 'document').replace(/\.[^.]+$/, '') + '-ocr.txt';
+        var ocrTextFile = new File([String(extractedText).slice(0, 16000)], ocrFileName, { type: 'text/plain' });
+        formData.append('files', ocrTextFile, ocrTextFile.name);
+      }
+      return formData;
     });
-    var payload = await response.json().catch(function() { return null; });
+    var response = request && request.response;
+    var payload = request && request.payload;
     if (!response.ok || !payload || payload.ok !== true) {
       throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
     }
@@ -2568,7 +2603,12 @@
           .then(function(sourceText) {
             var aiPayload = sourceText;
             preview.classList.remove('is-loading');
-            preview.textContent = buildAiBriefSummaryText(aiPayload, source && source.text ? source.text : '');
+            if (useNewDecision) {
+              var plainText = extractPlainAiBriefText(aiPayload);
+              preview.textContent = plainText || 'ИИ не вернул чистый текст ответа. Попробуйте ещё раз.';
+            } else {
+              preview.textContent = buildAiBriefSummaryText(aiPayload, source && source.text ? source.text : '');
+            }
             var elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
             metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек'
               + (useNewDecision ? ' • Режим: Новое решение' : '');
