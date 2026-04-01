@@ -1902,6 +1902,134 @@ function deduplicateAndNormalizeExtractedTexts(array $entries): array
     return $result;
 }
 
+function deduplicateExtractedTextsByNameAndHash(array $entries): array
+{
+    $result = [];
+    $seen = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $text = normalizeInputText((string)($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        $name = trim((string)($entry['name'] ?? 'Файл'));
+        $type = trim((string)($entry['type'] ?? ''));
+        $fingerprint = md5(mb_strtolower(($name !== '' ? $name : 'Файл') . '|' . $text));
+        if (isset($seen[$fingerprint])) {
+            continue;
+        }
+        $seen[$fingerprint] = true;
+        $result[] = [
+            'name' => $name !== '' ? $name : 'Файл',
+            'type' => $type,
+            'text' => $text,
+        ];
+    }
+    return $result;
+}
+
+function extractTextsFromUploadedFiles(array $files, array $env): array
+{
+    $supportedOcrExtensions = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff'];
+    $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
+    $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
+    $ocrLanguage = trim((string)($env['OCR_DEFAULT_LANGUAGE'] ?? 'rus'));
+    $ocrPreprocessEnabled = !in_array(mb_strtolower(trim((string)($env['OCR_PREPROCESS'] ?? '1'))), ['0', 'false', 'off', 'no'], true);
+    $ocrExtraFields = [
+        'OCREngine' => trim((string)($env['OCR_ENGINE'] ?? '2')) ?: '2',
+        'scale' => trim((string)($env['OCR_SCALE'] ?? 'true')) ?: 'true',
+        'detectOrientation' => trim((string)($env['OCR_DETECT_ORIENTATION'] ?? 'true')) ?: 'true',
+    ];
+
+    $entries = [];
+    $diagnostics = [
+        'totalFiles' => count($files),
+        'readFiles' => 0,
+        'skippedFiles' => 0,
+        'skipped' => [],
+    ];
+
+    foreach ($files as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        $name = trim((string)($file['name'] ?? 'Файл'));
+        $tmpName = (string)($file['tmp_name'] ?? '');
+        $type = trim((string)($file['type'] ?? ''));
+        $extension = detectFileExtension($file);
+        if ($tmpName === '' || !is_file($tmpName)) {
+            $diagnostics['skippedFiles'] += 1;
+            $diagnostics['skipped'][] = ['name' => $name, 'reason' => 'file_not_found'];
+            continue;
+        }
+
+        $directText = extractTextWithoutOcr($file);
+        if ($directText !== '') {
+            $entries[] = ['name' => $name, 'type' => $type, 'text' => mb_substr($directText, 0, 12000)];
+            $diagnostics['readFiles'] += 1;
+            continue;
+        }
+
+        if (!in_array($extension, $supportedOcrExtensions, true)) {
+            $diagnostics['skippedFiles'] += 1;
+            $diagnostics['skipped'][] = ['name' => $name, 'reason' => 'unsupported_format'];
+            continue;
+        }
+        if ($ocrApiKey === '') {
+            $diagnostics['skippedFiles'] += 1;
+            $diagnostics['skipped'][] = ['name' => $name, 'reason' => 'ocr_not_configured'];
+            continue;
+        }
+
+        $tempDir = ensureOcrTempDir();
+        $prepared = buildPreparedOcrFiles($file, $ocrPreprocessEnabled, $tempDir);
+        $preparedFiles = isset($prepared['files']) && is_array($prepared['files']) ? $prepared['files'] : [];
+        $texts = [];
+        $failed = false;
+        foreach ($preparedFiles as $preparedFile) {
+            if (!is_array($preparedFile)) {
+                continue;
+            }
+            $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $preparedFile, $ocrLanguage, null, $ocrExtraFields);
+            $body = $ocrResult['body'];
+            if ($body === false) {
+                $failed = true;
+                continue;
+            }
+            $ocrJson = json_decode((string)$body, true);
+            if (!is_array($ocrJson) || (($ocrJson['IsErroredOnProcessing'] ?? false) === true)) {
+                $failed = true;
+                continue;
+            }
+            $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
+            foreach ($parsedResults as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $piece = trim((string)($row['ParsedText'] ?? ''));
+                if ($piece !== '') {
+                    $texts[] = $piece;
+                }
+            }
+        }
+        cleanupDirectory($tempDir);
+
+        $ocrText = trim(implode("\n\n", $texts));
+        if ($ocrText !== '') {
+            $entries[] = ['name' => $name, 'type' => $type, 'text' => mb_substr($ocrText, 0, 12000)];
+            $diagnostics['readFiles'] += 1;
+            continue;
+        }
+
+        $diagnostics['skippedFiles'] += 1;
+        $diagnostics['skipped'][] = ['name' => $name, 'reason' => $failed ? 'ocr_failed' : 'empty_text'];
+    }
+
+    return ['entries' => $entries, 'diagnostics' => $diagnostics];
+}
+
 function chunkPriorityScore(string $text, int $maxPage): int
 {
     $lower = mb_strtolower($text);
@@ -2399,6 +2527,22 @@ $attachments = normalizeUploadedFiles('attachments');
 $singleAttachment = normalizeUploadedFiles('attachment');
 $ocrFile = normalizeUploadedFiles('file');
 $files = array_merge($attachments, $singleAttachment, $ocrFile);
+$serverExtractedTexts = [];
+$extractedTextsDiagnostics = [
+    'totalFiles' => count($files),
+    'readFiles' => 0,
+    'skippedFiles' => 0,
+    'skipped' => [],
+];
+if ($action === 'ai_response_analyze') {
+    $serverExtraction = extractTextsFromUploadedFiles($files, $env);
+    $serverExtractedTexts = isset($serverExtraction['entries']) && is_array($serverExtraction['entries'])
+        ? $serverExtraction['entries']
+        : [];
+    $extractedTextsDiagnostics = isset($serverExtraction['diagnostics']) && is_array($serverExtraction['diagnostics'])
+        ? $serverExtraction['diagnostics']
+        : $extractedTextsDiagnostics;
+}
 
 if ($action === 'ocr_extract') {
     $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
@@ -2607,6 +2751,16 @@ if ($apiKey === '') {
 }
 
 $filesSummary = buildFilesSummary($files);
+foreach ($filesSummary as $index => $summaryItem) {
+    if (!is_array($summaryItem)) {
+        continue;
+    }
+    $filesSummary[$index] = [
+        'name' => (string)($summaryItem['name'] ?? ''),
+        'type' => (string)($summaryItem['type'] ?? ''),
+        'size' => (int)($summaryItem['size'] ?? 0),
+    ];
+}
 
 $extractedTexts = [];
 $decodedExtractedTexts = safeJsonDecode($extractedTextsRaw);
@@ -2646,7 +2800,8 @@ foreach ($legacyAttachedFiles as $legacyFile) {
         'text' => mb_substr($legacyText, 0, 12000),
     ];
 }
-$extractedTexts = deduplicateAndNormalizeExtractedTexts($extractedTexts);
+$extractedTexts = array_merge($extractedTexts, $serverExtractedTexts);
+$extractedTexts = deduplicateExtractedTextsByNameAndHash($extractedTexts);
 $maxInputChars = (int)($env['AI_MAX_INPUT_CHARS'] ?? 60000);
 if ($maxInputChars < 2000) {
     $maxInputChars = 2000;
@@ -3067,6 +3222,7 @@ $successPayload = [
     'positive' => $positive,
     'negative' => $negative,
     'promptStats' => $promptStats,
+    'extractedTextsDiagnostics' => $extractedTextsDiagnostics,
     'decisionBlock' => [
         'decision' => (string)($decisionBlock['decision'] ?? ''),
         'decision_reason' => (string)($decisionBlock['decision_reason'] ?? ''),
