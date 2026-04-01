@@ -54,16 +54,16 @@ function ensureAiDialogStyles() {
   style.id = DIALOG_STYLE_ID;
   style.textContent = `
     .appdosc-ai-dialog{position:fixed;inset:0;z-index:2500;display:flex;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}
-    .appdosc-ai-dialog__panel{width:min(760px,100%);height:100dvh;margin:auto;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(255,255,255,.88));border:1px solid rgba(255,255,255,.82);box-shadow:0 20px 45px rgba(15,23,42,.15);overflow:hidden;border-radius:20px 20px 0 0}
-    .appdosc-ai-dialog__header{padding:9px 10px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(148,163,184,.2)}
+    .appdosc-ai-dialog__panel{width:min(680px,100%);height:100dvh;margin:auto;display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(255,255,255,.9));border:1px solid rgba(255,255,255,.82);box-shadow:0 18px 40px rgba(15,23,42,.15);overflow:hidden;border-radius:18px 18px 0 0}
+    .appdosc-ai-dialog__header{padding:8px 10px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(148,163,184,.16)}
     .appdosc-ai-dialog__title{font-size:15px;font-weight:700;color:#0f172a}
     .appdosc-ai-dialog__subtitle{font-size:11px;color:#64748b;margin-top:2px}
-    .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,#f8fafc,#f1f5f9)}
+    .appdosc-ai-dialog__messages{flex:1;min-height:0;overflow:auto;padding:7px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,#f8fafc,#f1f5f9)}
     .appdosc-ai-dialog__bubble{max-width:94%;padding:7px 9px;border-radius:12px;line-height:1.4;font-size:12px;white-space:pre-wrap;word-break:break-word;color:#0f172a}
     .appdosc-ai-dialog__bubble--assistant{align-self:flex-start;background:#ffffff;border:1px solid rgba(148,163,184,.3)}
     .appdosc-ai-dialog__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
-    .appdosc-ai-dialog__composer{padding:8px calc(10px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px)}
-    .appdosc-ai-dialog__input{min-height:52px;max-height:124px;resize:none;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:8px 10px;font-size:13px;outline:none}
+    .appdosc-ai-dialog__composer{padding:7px calc(10px + env(safe-area-inset-right,0px)) calc(9px + env(safe-area-inset-bottom,0px)) calc(10px + env(safe-area-inset-left,0px));border-top:1px solid rgba(148,163,184,.2);display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.93);backdrop-filter:blur(10px)}
+    .appdosc-ai-dialog__input{min-height:44px;max-height:108px;resize:none;border:1px solid rgba(148,163,184,.32);border-radius:11px;padding:7px 9px;font-size:13px;outline:none}
     .appdosc-ai-dialog__attachments{display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:14px;border:1px solid rgba(148,163,184,.24);background:rgba(255,255,255,.74)}
     .appdosc-ai-dialog__attachments-header{display:flex;flex-direction:column;gap:8px}
     .appdosc-ai-dialog__attachments-headline{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
@@ -97,13 +97,14 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__advanced > summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:8px 10px;font-size:12px;color:#334155;font-weight:600}
     .appdosc-ai-dialog__advanced > summary::-webkit-details-marker{display:none}
     .appdosc-ai-dialog__advanced-body{padding:0 8px 8px;display:flex;flex-direction:column;gap:6px}
+    .appdosc-ai-dialog__controls{display:grid;grid-template-columns:1fr 1fr;gap:6px}
     .appdosc-ai-dialog__buttons{display:flex;gap:6px}
     .appdosc-ai-dialog__btn{border:none;min-height:36px;padding:8px 11px;border-radius:11px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-weight:600;cursor:pointer}
     .appdosc-ai-dialog__btn--ghost{background:rgba(148,163,184,.15);color:#0f172a}
     .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed}
     .appdosc-ai-dialog__file-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
     .appdosc-ai-dialog__file-reveal{border:1px solid rgba(37,99,235,.28);background:rgba(239,246,255,.9);color:#1e3a8a;border-radius:10px;padding:6px 8px;font-size:11px;line-height:1.2}
-    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__btn{flex:1;min-height:42px;font-size:14px}.appdosc-ai-dialog__attachments-grid{display:flex;overflow:auto;max-height:none;padding-bottom:2px}.appdosc-ai-dialog__attachment{min-width:255px;flex:0 0 auto}}
+    @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0}.appdosc-ai-dialog__controls{grid-template-columns:1fr 1fr}.appdosc-ai-dialog__btn{flex:1;min-height:40px;font-size:14px}.appdosc-ai-dialog__attachments-grid{display:flex;overflow:auto;max-height:none;padding-bottom:2px}.appdosc-ai-dialog__attachment{min-width:255px;flex:0 0 auto}}
   `;
   document.head.appendChild(style);
 }
@@ -774,21 +775,17 @@ function openAiResponseDialog(context = {}) {
       <div class="appdosc-ai-dialog__messages" data-messages></div>
       <div class="appdosc-ai-dialog__composer">
         <textarea class="appdosc-ai-dialog__input" data-input placeholder="Коротко напишите задачу для ответа"></textarea>
-        <div style="display:flex;gap:6px;align-items:center">
-          <div style="flex:1;min-width:0">
+        <div class="appdosc-ai-dialog__controls">
+          <div style="min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-ai-mode-select">Режим</label>
             <select class="appdosc-ai-dialog__input" id="appdosc-ai-mode-select" data-mode style="min-height:36px;max-height:36px;padding:4px 8px">
               <option value="free">Бесплатный ИИ</option>
               <option value="paid">VIP ИИ</option>
             </select>
           </div>
-          <div style="flex:1;min-width:0">
+          <div style="min-width:0">
             <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-response-style-select">Стиль</label>
             <select class="appdosc-ai-dialog__input" id="appdosc-response-style-select" data-response-style style="min-height:36px;max-height:36px;padding:4px 8px"></select>
-          </div>
-          <div style="flex:1;min-width:0">
-            <label class="appdosc-ai-dialog__attachments-hint" for="appdosc-model-select">Модель</label>
-            <select class="appdosc-ai-dialog__input" id="appdosc-model-select" data-model style="min-height:36px;max-height:36px;padding:4px 8px"></select>
           </div>
         </div>
         <div class="appdosc-ai-dialog__attachments-hint" data-rate-limit-hint hidden></div>
@@ -813,7 +810,6 @@ function openAiResponseDialog(context = {}) {
   const input = root.querySelector('[data-input]');
   const modeSelect = root.querySelector('[data-mode]');
   const responseStyleSelect = root.querySelector('[data-response-style]');
-  const modelSelect = root.querySelector('[data-model]');
   const autoDecisionBtn = root.querySelector('[data-auto-decision]');
   const attachmentsNode = root.querySelector('[data-attachments]');
   const rateLimitHint = root.querySelector('[data-rate-limit-hint]');
@@ -880,17 +876,6 @@ function openAiResponseDialog(context = {}) {
     } else {
       const availableNames = nextModels.filter((item) => item.available !== false).map((item) => item.value);
       appendErrorBubbleOnce(`Часть моделей временно недоступна. Рабочие: ${availableNames.join(', ')}.`);
-    }
-    if (modelSelect) {
-      modelSelect.textContent = '';
-      nextModels.forEach((entry) => {
-        const option = document.createElement('option');
-        option.value = String(entry.value || '');
-        option.textContent = String(entry.label || entry.value || '');
-        option.disabled = entry.available === false && String(entry.value || '').trim() !== '';
-        modelSelect.appendChild(option);
-      });
-      modelSelect.value = state.selectedModel;
     }
     return true;
   };
@@ -1225,7 +1210,7 @@ function openAiResponseDialog(context = {}) {
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendErrorBubbleOnce('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.');
+        appendErrorBubbleOnce('Модель из .env временно недоступна на сервере.');
       }
     } finally {
       state.isSending = false;
@@ -1265,7 +1250,7 @@ function openAiResponseDialog(context = {}) {
         applyRateLimitState();
       }
       if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendErrorBubbleOnce('Выбрана модель, недоступная на сервере. Попробуйте другую из списка.');
+        appendErrorBubbleOnce('Модель из .env временно недоступна на сервере.');
       }
     }
     if (assistantReply) {
@@ -1304,27 +1289,6 @@ function openAiResponseDialog(context = {}) {
       state.selectedModel = defaultModelFromEnv;
     } else if (!state.availableModels.some((entry) => entry.value === state.selectedModel && entry.available !== false)) {
       state.selectedModel = pickFirstAvailableModel(state.availableModels);
-    }
-    if (modelSelect) {
-      modelSelect.textContent = '';
-      state.availableModels.forEach((entry) => {
-        const option = document.createElement('option');
-        option.value = String(entry.value || '');
-        option.textContent = String(entry.label || entry.value || '');
-        option.disabled = entry.available === false && String(entry.value || '').trim() !== '';
-        modelSelect.appendChild(option);
-      });
-      modelSelect.value = state.selectedModel;
-      modelSelect.addEventListener('change', () => {
-        state.selectedModel = String(modelSelect.value || EMPTY_AI_MODEL).trim() || EMPTY_AI_MODEL;
-        const selected = state.availableModels.find((entry) => entry.value === state.selectedModel);
-        if (selected && selected.available === false) {
-          appendErrorBubbleOnce(`Модель ${state.selectedModel || 'не задана в .env'} сейчас нерабочая${selected.reason ? `: ${selected.reason}` : ''}.`);
-          const fallbackModel = pickFirstAvailableModel(state.availableModels);
-          state.selectedModel = fallbackModel;
-          modelSelect.value = fallbackModel;
-        }
-      });
     }
   });
   window.addEventListener('keydown', onEscClose);
