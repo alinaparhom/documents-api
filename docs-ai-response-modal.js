@@ -76,6 +76,77 @@
     { value: 'detailed', label: 'Подробно' },
     { value: 'brief', label: 'Кратко' }
   ];
+  var AI_API_KEY_MODE_OPTIONS = [
+    { value: 'auto', label: 'Авто (рекомендуется)' },
+    { value: 'paid', label: 'Платный ИИ' },
+    { value: 'free', label: 'Бесплатный ИИ' }
+  ];
+
+  function normalizeAiApiKeyMode(raw) {
+    var value = String(raw || '').toLowerCase().trim();
+    if (value === 'paid' || value === 'free') {
+      return value;
+    }
+    return 'auto';
+  }
+
+  function chooseAiModeOverlay() {
+    return new Promise(function (resolve) {
+      var overlay = createElement('div', ROOT_CLASS + ' ai-chat-modal--visible');
+      var panel = createElement('div', 'ai-chat-modal__panel');
+      panel.style.maxWidth = '520px';
+      panel.style.width = '100%';
+      panel.style.margin = 'auto';
+      panel.style.height = 'auto';
+      panel.style.maxHeight = 'none';
+      panel.style.padding = '14px';
+      panel.style.display = 'flex';
+      panel.style.flexDirection = 'column';
+      panel.style.gap = '10px';
+      panel.style.borderRadius = '20px';
+      panel.style.background = 'linear-gradient(155deg, rgba(255,255,255,0.95), rgba(255,255,255,0.85))';
+      panel.style.backdropFilter = 'blur(12px)';
+
+      var title = createElement('div', 'ai-chat-modal__title', 'Выберите режим ИИ');
+      var hint = createElement('div', 'ai-chat-modal__subtitle', 'Бесплатный: текущая логика. Платный VIP: отдельный режим, прямые файлы и более сильный анализ решений.');
+      var buttons = createElement('div', 'ai-chat-modal__actions');
+      buttons.style.display = 'grid';
+      buttons.style.gridTemplateColumns = '1fr 1fr';
+      buttons.style.gap = '8px';
+
+      var freeBtn = createElement('button', 'ai-chat-modal__send', 'Бесплатный ИИ');
+      freeBtn.type = 'button';
+      var paidBtn = createElement('button', 'ai-chat-modal__send', 'Платный ИИ (VIP)');
+      paidBtn.type = 'button';
+      var cancelBtn = createElement('button', 'ai-chat-modal__close', 'Отмена');
+      cancelBtn.type = 'button';
+      cancelBtn.style.position = 'static';
+      cancelBtn.style.alignSelf = 'stretch';
+
+      function finish(mode) {
+        if (overlay.parentNode) {
+          overlay.parentNode.removeChild(overlay);
+        }
+        resolve(mode || null);
+      }
+
+      freeBtn.addEventListener('click', function () { finish('free'); });
+      paidBtn.addEventListener('click', function () { finish('paid'); });
+      cancelBtn.addEventListener('click', function () { finish(null); });
+      overlay.addEventListener('click', function (event) {
+        if (event.target === overlay) finish(null);
+      });
+
+      buttons.appendChild(freeBtn);
+      buttons.appendChild(paidBtn);
+      panel.appendChild(title);
+      panel.appendChild(hint);
+      panel.appendChild(buttons);
+      panel.appendChild(cancelBtn);
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+    });
+  }
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -1075,7 +1146,22 @@
     }
   }
 
-  function buildRequestBlueprint(userText, state, config) {
+  async function fetchExternalFileBlob(file) {
+    if (!file || !file.url) {
+      return null;
+    }
+    try {
+      var response = await fetch(file.url, { credentials: 'same-origin' });
+      if (!response.ok) {
+        return null;
+      }
+      return await response.blob();
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async function buildRequestBlueprint(userText, state, config) {
     var context = {};
     if (config.context && typeof config.context === 'object') {
       Object.keys(config.context).forEach(function (key) {
@@ -1137,6 +1223,7 @@
     formData.append('frequency_penalty', String(generationParameters.frequency_penalty));
     formData.append('presence_penalty', String(generationParameters.presence_penalty));
     formData.append('responseStyle', state.responseStyle);
+    formData.append('aiApiKeyMode', normalizeAiApiKeyMode(state.aiApiKeyMode));
     var behaviorText = String(state.aiBehavior || '').trim();
     if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
       behaviorText = '';
@@ -1145,6 +1232,7 @@
       behaviorText = behaviorText.slice(0, 10000);
     }
     formData.append('aiBehavior', behaviorText);
+    context.aiApiKeyMode = normalizeAiApiKeyMode(state.aiApiKeyMode);
     formData.append('context', JSON.stringify(context));
     formData.append('extractedTexts', JSON.stringify(extractedTexts));
 
@@ -1153,11 +1241,36 @@
         formData.append('attachments[]', file.fileObject, file.name);
       }
     });
+    if (normalizeAiApiKeyMode(state.aiApiKeyMode) === 'paid') {
+      for (var i = 0; i < state.files.length; i += 1) {
+        var externalFile = state.files[i];
+        if (!externalFile || externalFile.fileObject || !externalFile.url) {
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        var blob = await fetchExternalFileBlob(externalFile);
+        if (blob) {
+          formData.append('attachments[]', blob, String(externalFile.name || ('file_' + (i + 1))));
+        }
+      }
+    }
 
     return formData;
   }
 
   async function hydrateFileContents(state) {
+    var aiMode = normalizeAiApiKeyMode(state && state.aiApiKeyMode);
+    if (aiMode === 'paid') {
+      state.files.forEach(function (file) {
+        if (!file) return;
+        file.extracted = true;
+        file.extractError = null;
+        if (!file.content) {
+          file.content = '';
+        }
+      });
+      return;
+    }
     for (var i = 0; i < state.files.length; i += 1) {
       if (state.files[i].content) {
         state.files[i].extracted = true;
@@ -1180,6 +1293,21 @@
     ensureStyles();
 
     var config = options && typeof options === 'object' ? options : {};
+    if (!config._aiModeSelected && !String(config.aiApiKeyMode || '').trim()) {
+      chooseAiModeOverlay().then(function (mode) {
+        if (!mode) {
+          return;
+        }
+        openDocumentsAiResponseModal(Object.assign({}, config, {
+          _aiModeSelected: true,
+          aiApiKeyMode: mode,
+          aiBehavior: mode === 'paid'
+            ? 'VIP режим. Действуй как сильный консультант по деловой переписке в строительстве. Формируй: решение по сути, риски, план действий с датами ДД.ММ.ГГГГ. Без мрачных и расплывчатых формулировок.'
+            : config.aiBehavior
+        }));
+      });
+      return;
+    }
     var previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
@@ -1191,6 +1319,7 @@
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
       responseStyle: STYLE_OPTIONS[0].value,
+      aiApiKeyMode: normalizeAiApiKeyMode(config.aiApiKeyMode),
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
         : DEFAULT_AI_BEHAVIOR,
@@ -1212,13 +1341,16 @@
       lastErrorFingerprint: '',
       lastErrorTs: 0
     };
+    var isVipMode = normalizeAiApiKeyMode(state.aiApiKeyMode) === 'paid';
 
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'ai-chat-modal__panel');
     var header = createElement('div', 'ai-chat-modal__header');
     var titleWrap = createElement('div');
     titleWrap.appendChild(createElement('div', 'ai-chat-modal__title', 'Ответ с помощью ИИ'));
-    titleWrap.appendChild(createElement('div', 'ai-chat-modal__subtitle', config.documentTitle ? ('Документ: ' + config.documentTitle) : 'Документ не указан'));
+    titleWrap.appendChild(createElement('div', 'ai-chat-modal__subtitle', isVipMode
+      ? 'VIP режим: ИИ анализирует все выбранные файлы вместе и выдаёт итоговое решение.'
+      : (config.documentTitle ? ('Документ: ' + config.documentTitle) : 'Документ не указан')));
 
     var closeButton = createElement('button', 'ai-chat-modal__close', '×');
     closeButton.type = 'button';
@@ -1261,6 +1393,15 @@
       option.textContent = opt.label;
       styleSelect.appendChild(option);
     });
+    var aiModeField = createElement('label', 'ai-chat-modal__field');
+    aiModeField.appendChild(createElement('span', '', 'Режим ИИ'));
+    var aiModeSelect = createElement('select', 'ai-chat-modal__select');
+    AI_API_KEY_MODE_OPTIONS.forEach(function (opt) {
+      var modeOption = document.createElement('option');
+      modeOption.value = opt.value;
+      modeOption.textContent = opt.label;
+      aiModeSelect.appendChild(modeOption);
+    });
     var settingsButton = createElement('button', 'ai-chat-modal__send', '⚙️ Настройки ИИ');
     settingsButton.type = 'button';
     settingsButton.style.minHeight = '36px';
@@ -1283,11 +1424,25 @@
       state.lastErrorTs = now;
       messages.appendChild(createMessage('assistant', normalized, true));
     }
-    messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
+    function buildMetaLine(payload) {
+      var meta = payload && payload.meta && typeof payload.meta === 'object' ? payload.meta : null;
+      if (!meta) return '';
+      var usage = meta.usage && typeof meta.usage === 'object' ? meta.usage : {};
+      var modelName = String(meta.model || state.model || '').trim();
+      var requestMs = Number(meta.requestMs) || 0;
+      var totalTokens = Number(usage.totalTokens || usage.total_tokens || 0) || 0;
+      if (!modelName && !requestMs && !totalTokens) return '';
+      return 'ℹ️ ' + (modelName || 'model') + ' • ' + requestMs + 'мс • токены: ' + totalTokens;
+    }
+    messages.appendChild(createMessage('assistant', isVipMode
+      ? 'VIP готов. Прикрепите файлы, отправьте запрос — верну одно итоговое решение по всем материалам.'
+      : 'Привет! Напишите запрос — я подготовлю ответ.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
     var textarea = createElement('textarea', 'ai-chat-modal__textarea');
-    textarea.placeholder = 'Введите запрос (можно пусто — отправим текст вложений)';
+    textarea.placeholder = isVipMode
+      ? 'Коротко: какую итоговую позицию и решение нужно сформировать по всем файлам'
+      : 'Введите запрос (можно пусто — отправим текст вложений)';
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
     sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
@@ -2103,6 +2258,16 @@
       updateFileStatusInUI();
 
       try {
+        if (normalizeAiApiKeyMode(state.aiApiKeyMode) === 'paid') {
+          fileEntry.rawContent = '';
+          fileEntry.content = '';
+          fileEntry.extracted = true;
+          fileEntry.extractError = null;
+          if (!opts.silent) {
+            messages.appendChild(createMessage('assistant', 'Платный режим: файл "' + fileLabel + '" отправим напрямую в ИИ без OCR.'));
+          }
+          return true;
+        }
         var extractedText = '';
         if (fileEntry.fileObject) {
           extractedText = await fileToText(fileEntry.fileObject);
@@ -2254,7 +2419,9 @@
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      var effectivePrompt = value || 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
+      var effectivePrompt = value || (isVipMode
+        ? 'Проанализируй все приложенные файлы вместе, прими итоговое решение и дай компактный деловой ответ: решение, риски, план действий с датами.'
+        : 'Подготовь официальный ответ по тексту вложений в деловом стиле.');
 
       state.model = modelSelect.value;
       var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
@@ -2277,10 +2444,11 @@
         await hydrateFileContents(state);
         var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
+        var requestBody = await buildRequestBlueprint(effectivePrompt, state, config);
         var response = await fetchWithTimeout(apiUrl + '?action=ai_response_analyze', {
           method: 'POST',
           credentials: 'same-origin',
-          body: buildRequestBlueprint(effectivePrompt, state, config)
+          body: requestBody
         }, timeoutMs);
 
         var payload = await response.json();
@@ -2325,6 +2493,10 @@
           appendAssistantErrorOnce('В ответе нет даты в формате ДД.ММ.ГГГГ. Уточните срок в следующем сообщении.');
         }
         messages.appendChild(createMessage('assistant', finalResponse));
+        var metaLine = buildMetaLine(payload);
+        if (metaLine) {
+          messages.appendChild(createMessage('assistant', metaLine));
+        }
         state.lastAssistantMessage = String(finalResponse || '');
         textarea.value = '';
         autoHeight(textarea);
@@ -2334,10 +2506,11 @@
           pending.innerHTML = '<span class="ai-chat-spinner"></span>Готовим ответ... повторная попытка';
           await new Promise(function (resolve) { setTimeout(resolve, AI_SOFT_RETRY_DELAY_MS); });
           try {
+            var retryBody = await buildRequestBlueprint(effectivePrompt, state, config);
             var secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
               method: 'POST',
               credentials: 'same-origin',
-              body: buildRequestBlueprint(effectivePrompt, state, config)
+              body: retryBody
             }, calculateAiTimeoutMs(effectivePrompt, state));
             var secondPayload = await secondResponse.json();
             if (!secondResponse.ok || !secondPayload || secondPayload.ok !== true) {
@@ -2346,6 +2519,10 @@
             pending.remove();
             var retryText = sanitizeAssistantResponseText(cleanNumericArtifacts(String(secondPayload.response || secondPayload.analysis || '')).trim());
             messages.appendChild(createMessage('assistant', retryText || 'Пустой ответ от API.'));
+            var retryMetaLine = buildMetaLine(secondPayload);
+            if (retryMetaLine) {
+              messages.appendChild(createMessage('assistant', retryMetaLine));
+            }
             state.lastAssistantMessage = String(retryText || '');
             textarea.value = '';
             autoHeight(textarea);
@@ -2390,6 +2567,18 @@
 
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
+    });
+    aiModeSelect.addEventListener('change', function () {
+      state.aiApiKeyMode = normalizeAiApiKeyMode(aiModeSelect.value);
+      if (state.aiApiKeyMode === 'paid') {
+        state.files.forEach(function (file) {
+          if (!file) return;
+          file.extractError = null;
+          file.extracted = true;
+        });
+      }
+      renderFiles();
+      updateContextUsageHint();
     });
     contextDetailSelect.addEventListener('change', function () {
       state.contextDetail = contextDetailSelect.value === 'brief' ? 'brief' : 'detailed';
@@ -2506,9 +2695,11 @@
 
     modelField.appendChild(modelSelect);
     styleField.appendChild(styleSelect);
+    aiModeField.appendChild(aiModeSelect);
     topBar.appendChild(filesBox);
     topBar.appendChild(modelField);
     topBar.appendChild(styleField);
+    topBar.appendChild(aiModeField);
     topBar.appendChild(settingsButton);
 
     composer.appendChild(textarea);
@@ -2518,6 +2709,15 @@
     content.appendChild(topBar);
     content.appendChild(messages);
     content.appendChild(composer);
+    if (isVipMode) {
+      root.classList.add('ai-chat-modal--vip');
+      panel.style.background = 'linear-gradient(160deg,rgba(255,255,255,.96),rgba(240,249,255,.92))';
+      panel.style.border = '1px solid rgba(59,130,246,.28)';
+      panel.style.boxShadow = '0 18px 44px rgba(37,99,235,.14)';
+      topBar.style.gridTemplateColumns = '1fr';
+      modelField.style.display = 'none';
+      styleField.style.display = 'none';
+    }
 
     panel.appendChild(header);
     panel.appendChild(content);
@@ -2531,6 +2731,7 @@
     renderFiles();
     resanitizeFileContents();
     renderModelOptions();
+    aiModeSelect.value = state.aiApiKeyMode;
 
     fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (modelsPayload) {
       var models = modelsPayload && Array.isArray(modelsPayload.models)
