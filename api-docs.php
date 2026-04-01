@@ -52,6 +52,10 @@ if ($method === 'GET') {
         $modelsConfig = resolveAiModelsConfig($env);
         $models = $modelsConfig['models'];
         $defaultModel = $modelsConfig['defaultModel'];
+        $configError = trim((string)($modelsConfig['configError'] ?? ''));
+        if ($configError !== '') {
+            jsonResponse(500, ['ok' => false, 'error' => $configError, 'code' => 'MODEL_NOT_CONFIGURED']);
+        }
         $statusRows = buildModelAvailabilityRows($models, $env);
         foreach ($statusRows as $idx => $row) {
             $value = trim((string)($row['value'] ?? ''));
@@ -166,8 +170,15 @@ function resolveAiModelsConfig(array $env): array
 {
     $models = parseAiModelsFromEnv($env);
     $defaultModel = trim((string)($env['AI_MODEL'] ?? $env['OPENAI_MODEL'] ?? ''));
-    if ($defaultModel === '') {
-        $defaultModel = 'gpt-4o-mini';
+    $baseUrl = trim((string)($env['AI_BASE_URL'] ?? $env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1'));
+
+    $provider = mb_strtolower(trim((string)($env['AI_PROVIDER'] ?? '')));
+    if ($provider === '') {
+        if (stripos($baseUrl, 'groq.com') !== false) {
+            $provider = 'groq';
+        } elseif (stripos($baseUrl, 'openai.com') !== false) {
+            $provider = 'openai';
+        }
     }
 
     if ($defaultModel !== '' && !in_array($defaultModel, $models, true)) {
@@ -178,9 +189,17 @@ function resolveAiModelsConfig(array $env): array
         $defaultModel = (string)$models[0];
     }
 
+    $models = array_values(array_unique($models));
+    $configError = '';
+    if ($defaultModel === '' && !$models) {
+        $configError = 'Не настроены AI_MODEL и AI_MODELS в .env. Укажите AI_MODEL или заполните AI_MODELS (например: AI_MODELS=model-1,model-2).';
+    }
+
     return [
-        'models' => array_values(array_unique($models)),
+        'models' => $models,
         'defaultModel' => $defaultModel,
+        'provider' => $provider,
+        'configError' => $configError,
     ];
 }
 
@@ -2654,9 +2673,12 @@ if ($effectiveBehavior !== '' && mb_strlen($effectiveBehavior) > 10000) {
 $effectiveModel = $requestedModel !== '' ? $requestedModel : $model;
 $availableModels = (array)($modelsConfig['models'] ?? []);
 if ($effectiveModel === '') {
+    $configError = trim((string)($modelsConfig['configError'] ?? ''));
     jsonResponse(500, [
         'ok' => false,
-        'error' => 'AI_MODEL не найден в .env. Укажите AI_MODEL или добавьте список AI_MODELS.',
+        'error' => $configError !== ''
+            ? $configError
+            : 'Не настроены AI_MODEL и AI_MODELS в .env. Укажите AI_MODEL или заполните AI_MODELS.',
         'code' => 'MODEL_NOT_CONFIGURED',
     ]);
 }
