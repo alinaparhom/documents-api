@@ -80,6 +80,7 @@
     { value: 'free', label: 'Бесплатный ИИ' },
     { value: 'paid', label: 'VIP ИИ (платный)' }
   ];
+  var GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -246,6 +247,74 @@
         throw error;
       })
       .finally(function () { clearTimeout(timer); });
+  }
+
+  function resolveRequestMode(state) {
+    return state && state.contextDetail === 'brief'
+      ? 'paid'
+      : ((state && state.aiMode) === 'paid' ? 'paid' : 'free');
+  }
+
+  async function resolvePaidSourceFile(state) {
+    var candidates = Array.isArray(state && state.files) ? state.files : [];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var file = candidates[i];
+      if (file && file.fileObject) {
+        return { name: file.name || 'document.bin', blob: file.fileObject };
+      }
+      if (file && file.url) {
+        // eslint-disable-next-line no-await-in-loop
+        var fileResponse = await fetch(file.url, { credentials: 'same-origin' });
+        if (!fileResponse.ok) {
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        var fileBlob = await fileResponse.blob();
+        return { name: file.name || 'document.bin', blob: fileBlob };
+      }
+    }
+    return null;
+  }
+
+  async function buildPaidRequestFormData(prompt, state, config) {
+    var paidFile = await resolvePaidSourceFile(state);
+    if (!paidFile || !paidFile.blob) {
+      throw new Error('Для платного ИИ прикрепите файл или выберите задачу с файлом.');
+    }
+    var formData = new FormData();
+    formData.append('taskId', String(config && config.taskId || config && config.documentId || ''));
+    formData.append('taskTitle', String(config && config.documentTitle || 'Документ'));
+    formData.append('taskDescription', String(config && config.description || ''));
+    formData.append('prompt', String(prompt || 'Сформируй ответ по приложенному файлу.'));
+    if (state && state.model) {
+      formData.append('model', state.model);
+    }
+    formData.append('file', paidFile.blob, paidFile.name || 'document.bin');
+    return formData;
+  }
+
+  async function postGroqPaidWithFallback(prompt, state, config, timeoutMs) {
+    var lastError = null;
+    for (var i = 0; i < GROQ_PAID_ENDPOINTS.length; i += 1) {
+      var endpoint = GROQ_PAID_ENDPOINTS[i];
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        var body = await buildPaidRequestFormData(prompt, state, config);
+        // eslint-disable-next-line no-await-in-loop
+        var response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: body
+        }, timeoutMs);
+        if (response.status === 404 || response.status === 405) {
+          continue;
+        }
+        return response;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
   }
 
   function calculateAiTimeoutMs(prompt, state) {
@@ -1149,7 +1218,7 @@
       behaviorText = behaviorText.slice(0, 10000);
     }
     formData.append('aiBehavior', behaviorText);
-    var requestMode = state.contextDetail === 'brief' ? 'paid' : (state.aiMode === 'paid' ? 'paid' : 'free');
+    var requestMode = resolveRequestMode(state);
     context.aiMode = requestMode;
     formData.append('mode', requestMode);
     formData.append('context', JSON.stringify(context));
@@ -2101,6 +2170,11 @@
       renderFiles();
     }
 
+    function refreshSendButtonLabel() {
+      var requestMode = resolveRequestMode(state);
+      sendButton.textContent = requestMode === 'paid' ? 'Получить ответ' : 'Отправить в ИИ';
+    }
+
     function setLoading(loading) {
       state.isLoading = loading;
       textarea.disabled = loading;
@@ -2109,7 +2183,7 @@
       if (loading) {
         sendButton.innerHTML = '<span class="ai-chat-spinner"></span>Отправка';
       } else {
-        sendButton.textContent = 'Отправить';
+        refreshSendButtonLabel();
       }
     }
 
@@ -2297,13 +2371,19 @@
 
       try {
         await hydrateFileContents(state);
-        var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
-        var response = await fetchWithTimeout(apiUrl + '?action=ai_response_analyze', {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: buildRequestBlueprint(effectivePrompt, state, config)
-        }, timeoutMs);
+        var requestMode = resolveRequestMode(state);
+        var response = null;
+        if (requestMode === 'paid') {
+          response = await postGroqPaidWithFallback(effectivePrompt, state, config, timeoutMs);
+        } else {
+          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+          response = await fetchWithTimeout(apiUrl + '?action=ai_response_analyze', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: buildRequestBlueprint(effectivePrompt, state, config)
+          }, timeoutMs);
+        }
 
         var payload = await response.json();
         if (!response.ok || !payload || payload.ok !== true) {
@@ -2360,11 +2440,17 @@
           pending.innerHTML = '<span class="ai-chat-spinner"></span>Готовим ответ... повторная попытка';
           await new Promise(function (resolve) { setTimeout(resolve, AI_SOFT_RETRY_DELAY_MS); });
           try {
-            var secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
-              method: 'POST',
-              credentials: 'same-origin',
-              body: buildRequestBlueprint(effectivePrompt, state, config)
-            }, calculateAiTimeoutMs(effectivePrompt, state));
+            var secondMode = resolveRequestMode(state);
+            var secondResponse = null;
+            if (secondMode === 'paid') {
+              secondResponse = await postGroqPaidWithFallback(effectivePrompt, state, config, calculateAiTimeoutMs(effectivePrompt, state));
+            } else {
+              secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
+                method: 'POST',
+                credentials: 'same-origin',
+                body: buildRequestBlueprint(effectivePrompt, state, config)
+              }, calculateAiTimeoutMs(effectivePrompt, state));
+            }
             var secondPayload = await secondResponse.json();
             if (!secondResponse.ok || !secondPayload || secondPayload.ok !== true) {
               throw error;
@@ -2426,6 +2512,7 @@
       if (state.contextDetail === 'brief' && state.aiMode !== 'paid') {
         appendAssistantErrorOnce('Режим «Кратко» работает через VIP модель.');
       }
+      refreshSendButtonLabel();
     });
     contextDetailSelect.addEventListener('change', function () {
       state.contextDetail = contextDetailSelect.value === 'brief' ? 'brief' : 'detailed';
@@ -2434,6 +2521,7 @@
         modeSelect.value = 'paid';
       }
       updateContextUsageHint();
+      refreshSendButtonLabel();
     });
 
     textarea.addEventListener('input', function () {
@@ -2573,6 +2661,7 @@
     renderFiles();
     resanitizeFileContents();
     renderModelOptions();
+    refreshSendButtonLabel();
 
     fetchModels(config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php').then(function (modelsPayload) {
       var models = modelsPayload && Array.isArray(modelsPayload.models)
