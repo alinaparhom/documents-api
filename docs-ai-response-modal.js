@@ -81,6 +81,7 @@
     { value: 'paid', label: 'VIP ИИ (платный)' }
   ];
   var GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+  var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -277,6 +278,10 @@
         }
       }
       return '';
+  async function resolvePaidSourceFiles(state, config) {
+    function shouldConvertPdfForModel(modelName) {
+      var normalized = String(modelName || '').trim().toLowerCase();
+      return GROQ_PDF_UNSUPPORTED_MODELS.indexOf(normalized) !== -1;
     }
 
     function isPdfFile(name, type) {
@@ -290,11 +295,9 @@
       var buffer = await pdfBlob.arrayBuffer();
       var loadingTask = pdfjsLib.getDocument({ data: buffer });
       var pdf = await loadingTask.promise;
-      if (!pdf || !pdf.numPages) {
-        throw new Error('Не удалось прочитать PDF для конвертации.');
-      }
+      var maxPages = Math.min(3, Math.max(Number(pdf && pdf.numPages) || 1, 1));
       var images = [];
-      for (var pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
+      for (var pageIndex = 1; pageIndex <= maxPages; pageIndex += 1) {
         // eslint-disable-next-line no-await-in-loop
         var page = await pdf.getPage(pageIndex);
         var viewport = page.getViewport({ scale: 1.8 });
@@ -302,18 +305,14 @@
         canvas.width = Math.max(1, Math.floor(viewport.width));
         canvas.height = Math.max(1, Math.floor(viewport.height));
         var ctx = canvas.getContext('2d');
-        if (!ctx) {
-          throw new Error('Canvas недоступен для конвертации PDF.');
-        }
+        if (!ctx) break;
         // eslint-disable-next-line no-await-in-loop
         await page.render({ canvasContext: ctx, viewport: viewport }).promise;
         // eslint-disable-next-line no-await-in-loop
         var jpegBlob = await new Promise(function (resolve) {
           canvas.toBlob(resolve, 'image/jpeg', 0.9);
         });
-        if (!jpegBlob) {
-          throw new Error('Не удалось получить JPEG из PDF.');
-        }
+        if (!jpegBlob) continue;
         images.push({
           name: baseName + '-page-' + pageIndex + '.jpg',
           blob: jpegBlob
@@ -322,20 +321,23 @@
       return images;
     }
 
+    var activeModel = String((state && state.model) || (config && config.defaultModel) || '').trim();
+    var convertPdfForModel = shouldConvertPdfForModel(activeModel);
     var candidates = Array.isArray(state && state.files) ? state.files : [];
     var preparedFiles = [];
     for (var i = 0; i < candidates.length; i += 1) {
       var file = candidates[i];
       if (file && file.fileObject) {
         var localName = file.name || 'document.bin';
-        if (isPdfFile(localName, file.fileObject.type)) {
+        if (isPdfFile(localName, file.fileObject.type) && convertPdfForModel) {
           // eslint-disable-next-line no-await-in-loop
-          var localPdfBase = localName.replace(/\.pdf$/i, '') || 'document';
-          // eslint-disable-next-line no-await-in-loop
-          var localJpegs = await convertPdfBlobToJpegBlobs(file.fileObject, localPdfBase);
-          preparedFiles = preparedFiles.concat(localJpegs);
-          continue;
+          var localJpegs = await convertPdfBlobToJpegBlobs(file.fileObject, localName.replace(/\.pdf$/i, '') || 'document');
+          if (localJpegs.length) {
+            preparedFiles = preparedFiles.concat(localJpegs);
+            continue;
+          }
         }
+        if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
         preparedFiles.push({ name: localName, blob: file.fileObject });
         continue;
       }
@@ -349,14 +351,15 @@
         // eslint-disable-next-line no-await-in-loop
         var fileBlob = await fileResponse.blob();
         var remoteName = file.name || 'document.bin';
-        if (isPdfFile(remoteName, fileBlob.type)) {
+        if (isPdfFile(remoteName, fileBlob.type) && convertPdfForModel) {
           // eslint-disable-next-line no-await-in-loop
-          var remotePdfBase = remoteName.replace(/\.pdf$/i, '') || 'document';
-          // eslint-disable-next-line no-await-in-loop
-          var remoteJpegs = await convertPdfBlobToJpegBlobs(fileBlob, remotePdfBase);
-          preparedFiles = preparedFiles.concat(remoteJpegs);
-          continue;
+          var remoteJpegs = await convertPdfBlobToJpegBlobs(fileBlob, remoteName.replace(/\.pdf$/i, '') || 'document');
+          if (remoteJpegs.length) {
+            preparedFiles = preparedFiles.concat(remoteJpegs);
+            continue;
+          }
         }
+        if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
         preparedFiles.push({ name: remoteName, blob: fileBlob });
       }
     }
@@ -364,7 +367,7 @@
   }
 
   async function buildPaidRequestFormData(prompt, state, config) {
-    var paidFiles = await resolvePaidSourceFiles(state);
+    var paidFiles = await resolvePaidSourceFiles(state, config);
     if (!Array.isArray(paidFiles) || !paidFiles.length) {
       throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
