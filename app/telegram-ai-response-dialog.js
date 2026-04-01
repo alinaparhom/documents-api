@@ -2,6 +2,7 @@ const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v8';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+const GROQ_PDF_UNSUPPORTED_MODELS = new Set(['llama-3.1-8b-instant']);
 const REQUEST_TIMEOUT_MS = 35000;
 const REQUEST_TIMEOUT_MAX_MS = 70000;
 const TIMEOUT_CONTEXT_STEP_CHARS = 45000;
@@ -201,6 +202,49 @@ async function postGroqPaidWithFallback(createFormData, options = {}) {
     }
   }
   throw lastError || new Error(options.fallbackErrorMessage || 'Платный ИИ временно недоступен');
+}
+
+async function ensurePaidPdfJsLoaded() {
+  if (typeof window !== 'undefined' && window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function') {
+    return window.pdfjsLib;
+  }
+  const pdfjs = await ensureScript('/pdf/pdf.min.js', 'pdfjsLib');
+  if (pdfjs && pdfjs.GlobalWorkerOptions) {
+    pdfjs.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+  }
+  return pdfjs;
+}
+
+function isPdfUnsupportedForModel(modelName) {
+  return GROQ_PDF_UNSUPPORTED_MODELS.has(String(modelName || '').trim().toLowerCase());
+}
+
+async function convertPdfBlobToJpegsForPaid(blob, baseName) {
+  const pdfjs = await ensurePaidPdfJsLoaded();
+  if (!pdfjs || typeof pdfjs.getDocument !== 'function') {
+    throw new Error('pdfjs не загружен');
+  }
+  const bytes = await blob.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const maxPages = Math.min(3, Math.max(1, Number(pdf && pdf.numPages) || 1));
+  const files = [];
+  for (let pageIndex = 1; pageIndex <= maxPages; pageIndex += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const page = await pdf.getPage(pageIndex);
+    const viewport = page.getViewport({ scale: 1.7 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) break;
+    // eslint-disable-next-line no-await-in-loop
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    // eslint-disable-next-line no-await-in-loop
+    const jpegBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!jpegBlob) continue;
+    files.push(new File([jpegBlob], `${baseName}-p${pageIndex}.jpg`, { type: 'image/jpeg' }));
+  }
+  return files;
 }
 
 function getContextChars(context) {
@@ -409,7 +453,7 @@ function isPdfLikeByNameType(name, type) {
   return normalizedType.includes('pdf') || normalizedName.endsWith('.pdf');
 }
 
-async function collectPaidAiFiles(extractedTexts = [], attachedFiles = []) {
+async function collectPaidAiFiles(extractedTexts = [], attachedFiles = [], modelName = '') {
   const sourceMap = new Map();
   (Array.isArray(attachedFiles) ? attachedFiles : []).forEach((file) => {
     const key = String(file && file.name || '').trim().toLowerCase();
@@ -439,6 +483,19 @@ async function collectPaidAiFiles(extractedTexts = [], attachedFiles = []) {
       const blob = await response.blob();
       const name = String(item.name || `document-${index + 1}`).trim();
       const type = String(blob.type || item.type || 'application/octet-stream').trim();
+      const isPdf = isPdfLikeByNameType(name, type);
+      if (isPdf && isPdfUnsupportedForModel(modelName)) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const converted = await convertPdfBlobToJpegsForPaid(blob, name.replace(/\.pdf$/i, '') || `document-${index + 1}`);
+          if (converted.length) {
+            paidFiles.push(...converted);
+            continue;
+          }
+        } catch (_) {
+          continue;
+        }
+      }
       paidFiles.push(new File([blob], name, { type }));
     } catch (_) {
       // fallback на текстовый контекст
@@ -608,7 +665,7 @@ async function requestAssistantReply(userMessage, context, history) {
   const timeoutMs = calculateAiTimeoutMs(context, history, userMessage);
   const hasPdfInContext = extractedTexts.some((entry) => isPdfLikeByNameType(entry && entry.name, entry && entry.type));
   if (aiMode === 'paid' && hasPdfInContext) {
-    const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles);
+    const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
     if (filesForPaid.length) {
       const paidPrompt = [
         prompt,
