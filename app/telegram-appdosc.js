@@ -9,6 +9,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
+let briefPdfJsLoader = null;
 
 
 function getDirectDocsAiEndpoint() {
@@ -64,6 +65,61 @@ async function postGroqPaidWithFallback(createFormData) {
     }
   }
   throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
+}
+
+function ensureBriefPdfJsLoaded() {
+  if (typeof window !== 'undefined' && window.pdfjsLib) {
+    return Promise.resolve(window.pdfjsLib);
+  }
+  if (briefPdfJsLoader) {
+    return briefPdfJsLoader;
+  }
+  briefPdfJsLoader = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '/pdf/pdf.min.js';
+    script.onload = () => {
+      if (window.pdfjsLib) {
+        resolve(window.pdfjsLib);
+      } else {
+        reject(new Error('pdfjsLib не найден'));
+      }
+    };
+    script.onerror = () => reject(new Error('Не удалось загрузить PDF библиотеку'));
+    document.head.appendChild(script);
+  });
+  return briefPdfJsLoader;
+}
+
+async function convertPdfToImageFileForBrief(file, fallbackName) {
+  const fileName = String(fallbackName || (file && file.name) || 'brief-file');
+  const isPdf = file && ((file.type && String(file.type).toLowerCase() === 'application/pdf') || /\.pdf$/i.test(fileName));
+  if (!isPdf || !file) {
+    return file;
+  }
+  try {
+    const pdfjsLib = await ensureBriefPdfJsLoaded();
+    if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+    }
+    const bytes = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: bytes });
+    const pdf = await loadingTask.promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.9);
+    });
+    if (!blob) return file;
+    return new File([blob], fileName.replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
+  } catch (_) {
+    return file;
+  }
 }
 
 function loadExternalScript(src, marker) {
@@ -353,28 +409,34 @@ async function requestTelegramBriefAiByAttachment(source, aiMode = 'free') {
 }
 
 async function requestTelegramBriefAiDirectWithAttachment(source) {
-  const fileUrl = normalizeValue(source && source.url);
-  if (!fileUrl) {
-    throw new Error('Не найден URL файла для VIP режима.');
-  }
-  const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
-  if (!fetched.ok) {
-    throw new Error(`Не удалось загрузить файл (${fetched.status})`);
-  }
-  const blob = await fetched.blob();
   const fileName = normalizeValue(source && source.label) || 'brief-file';
-  const fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+  let fileForVip = null;
+  if (source && source.fileObject instanceof File) {
+    fileForVip = source.fileObject;
+  } else {
+    const fileUrl = normalizeValue(source && source.url);
+    if (!fileUrl) {
+      throw new Error('Не найден URL файла для VIP режима.');
+    }
+    const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+    if (!fetched.ok) {
+      throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+    }
+    const blob = await fetched.blob();
+    fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+  }
   const extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
   if (!String(extractedText || '').trim()) {
     throw new Error('OCR не вернул текст для выбранного файла.');
   }
+  fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
   const request = await postGroqPaidWithFallback(() => {
     const formData = new FormData();
     formData.append('action', 'generate_summary');
     formData.append('mode', 'paid');
     formData.append('files', fileForVip, fileForVip.name || fileName);
     if (extractedText) {
-      formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }]));
+      formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 16000) }]));
     }
     return formData;
   });
