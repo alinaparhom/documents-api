@@ -433,12 +433,36 @@
     if (!Array.isArray(paidFiles) || !paidFiles.length) {
       throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
+
+    var mergedContextParts = [];
+    for (var i = 0; i < paidFiles.length; i += 1) {
+      var paidEntry = paidFiles[i];
+      if (!paidEntry || !paidEntry.blob) {
+        continue;
+      }
+      var paidName = String(paidEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
+      // eslint-disable-next-line no-await-in-loop
+      var paidText = await tryExtractOcrTextForPaid(paidEntry.blob, paidName, '');
+      paidText = normalizeContextText(paidText);
+      if (!paidText) {
+        continue;
+      }
+      mergedContextParts.push('[Файл: ' + paidName + ']\n' + paidText);
+    }
+
+    var mergedContext = normalizeContextText(mergedContextParts.join('\n\n')).slice(0, MAX_EXTRACT_CHARS);
+    var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
+    if (mergedContext) {
+      promptWithContext += '\n\nКонтекст всех вложений (OCR):\n' + mergedContext;
+    }
+
     var formData = new FormData();
-    formData.append('prompt', String(prompt || 'Сформируй ответ по приложенному файлу.'));
-    paidFiles.forEach(function (entry) {
-      if (!entry || !entry.blob) return;
-      formData.append('files', entry.blob, entry.name || 'document.bin');
-    });
+    formData.append('prompt', promptWithContext);
+    formData.append(
+      'files[]',
+      new Blob([mergedContext || 'OCR не вернул текст. Используйте исходный запрос пользователя.'], { type: 'text/plain' }),
+      'attachments-context.txt'
+    );
     return formData;
   }
 
