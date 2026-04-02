@@ -1262,8 +1262,51 @@ function openAiChatDialog(context = {}) {
 
     const finalPrompt = `${String(rawPrompt || '').trim()}\n\nКонтекст OCR файлов:\n${mergedOcrText}`;
     const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: 'paid' };
-    if (pending) pending.update('Отправляем запрос в платный ИИ...');
-    const assistantReply = await requestAssistantWithSmartRetry(finalPrompt, requestContext, state.chatHistory);
+    const task = requestContext && requestContext.task ? requestContext.task : {};
+    const generationParams = requestContext && requestContext.generationParams ? requestContext.generationParams : {};
+    const behaviorFromContext = requestContext && typeof requestContext.aiBehavior === 'string' ? requestContext.aiBehavior.trim() : '';
+    const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
+    const serializedContext = JSON.stringify({
+      task: {
+        id: task.id || null,
+        title: task.title || task.name || '',
+        description: task.description || task.text || '',
+      },
+      chatHistory: buildChatHistoryContext(state.chatHistory),
+      attachedFiles: requestContext.attachedFiles || [],
+      extractedTexts: requestContext.extractedTexts || [],
+      source: 'telegram_mini_app_vip_ocr_sequential',
+    });
+    if (pending) pending.update('Отправляем запрос в api-docs.php...');
+    const request = await postDocsAiWithFallback(() => {
+      const formData = new FormData();
+      formData.append('action', 'ai_response_analyze');
+      formData.append('documentTitle', String(task.title || task.name || 'Задача'));
+      formData.append('prompt', `${finalPrompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
+      formData.append('responseStyle', state.responseStyle);
+      formData.append('mode', 'paid');
+      formData.append('aiBehavior', behaviorText);
+      formData.append('extractedTexts', JSON.stringify(requestContext.extractedTexts || []));
+      formData.append('temperature', String(Number(generationParams.temperature) || 0.7));
+      formData.append('top_p', String(Number(generationParams.top_p) || 1));
+      formData.append('frequency_penalty', String(Number(generationParams.frequency_penalty) || 0));
+      formData.append('presence_penalty', String(Number(generationParams.presence_penalty) || 0));
+      if (state.selectedModel) formData.append('model', state.selectedModel);
+      formData.append('context', serializedContext);
+      return formData;
+    }, { timeoutMs: calculateAiTimeoutMs(requestContext, state.chatHistory, finalPrompt) });
+    const response = request && request.response;
+    const payload = request && request.payload;
+    if (!response || !response.ok || !payload) {
+      throw new Error((payload && payload.error) || `Ошибка сервера (${response ? response.status : 'network'})`);
+    }
+    const assistantReply = sanitizeAssistantText(parseAiPayload(payload));
+    requestContext.__lastAiMeta = {
+      mode: String((payload && payload.mode) || 'paid'),
+      model: String((payload && payload.model) || state.selectedModel || ''),
+      tokensUsed: Number(payload && payload.tokensUsed) || 0,
+      timeMs: Number(payload && payload.timeMs) || 0,
+    };
     return { assistantReply, requestContext };
   };
 
