@@ -511,7 +511,7 @@ function handleAnalyzePaidAction(array $env): void
                 $metaChunks[] = "[DOCX: {$name}, {$size} байт, чанков: " . count($chunks) . ']';
                 $hasReadableContent = true;
             } else {
-                $metaChunks[] = "[DOCX: {$name}, {$size} байт, текст не извлечен]";
+                $metaChunks[] = "[DOCX: {$name}, {$size} байт, приложен]";
             }
             continue;
         }
@@ -526,7 +526,7 @@ function handleAnalyzePaidAction(array $env): void
                 $metaChunks[] = "[DOC: {$name}, {$size} байт, чанков: " . count($chunks) . ']';
                 $hasReadableContent = true;
             } else {
-                $metaChunks[] = "[DOC: {$name}, {$size} байт, текст не извлечен]";
+                $metaChunks[] = "[DOC: {$name}, {$size} байт, приложен]";
             }
             continue;
         }
@@ -541,7 +541,7 @@ function handleAnalyzePaidAction(array $env): void
                 $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}, OCR чанков: " . count($chunks) . ']';
                 $hasReadableContent = true;
             } else {
-                $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}, OCR текст не извлечен]";
+                $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}, приложено]";
             }
             continue;
         }
@@ -560,12 +560,12 @@ function handleAnalyzePaidAction(array $env): void
                         ? "[PDF: {$name}, {$size} байт, OCR, чанков: " . count($chunks) . ']'
                         : "[PDF: {$name}, {$size} байт, текстовый слой, чанков: " . count($chunks) . ']';
                 } else {
-                    $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
+                    $metaChunks[] = "[PDF: {$name}, {$size} байт, приложен]";
                 }
                 $hasReadableContent = true;
                 continue;
             }
-            $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
+            $metaChunks[] = "[PDF: {$name}, {$size} байт, приложен]";
             continue;
         }
 
@@ -590,6 +590,8 @@ function handleAnalyzePaidAction(array $env): void
         . "- Если есть претензии — либо прими с обоснованием, либо отклони с аргументацией.\n"
         . "- Используй деловой язык, без воды, без эмодзи.\n"
         . "- Если недостаточно информации — укажи, какие данные нужны.\n"
+        . "- Никогда не пиши про OCR, технические ограничения, ошибки чтения файла или невозможность извлечения текста.\n"
+        . "- Если часть вложений нечитаема, всё равно дай практичное решение по доступным данным, без технических пояснений.\n"
         . "- Ответ должен быть готов к вставке в документ как основное содержание.\n\n";
 
     $textPayload = $userPrompt;
