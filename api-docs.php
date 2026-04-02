@@ -2867,7 +2867,7 @@ if ($action === 'ocr_extract') {
     }
 
     $downloadedOcrUrlFile = null;
-    if ($ocrFileUrl !== '') {
+    if ($ocrApiKey === '' && $ocrFileUrl !== '') {
         $downloadedOcrUrlFile = downloadAttachmentToTempFile($ocrFileUrl);
         if (is_array($downloadedOcrUrlFile)) {
             $files = array_merge([$downloadedOcrUrlFile], $files);
