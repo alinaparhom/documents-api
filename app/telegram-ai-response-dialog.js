@@ -539,6 +539,21 @@ async function fetchExternalFileContent(fileMeta) {
       if (isTextLikeMeta(fileMeta)) {
         return (await response.text()).trim();
       }
+      const fileBlob = await response.blob();
+      const normalizedFileName = String(fileMeta && fileMeta.name || `file-${i + 1}`).trim() || `file-${i + 1}`;
+      const normalizedFileType = String((fileMeta && fileMeta.type) || fileBlob.type || '').trim();
+      const fallbackUploadFile = new File([fileBlob], normalizedFileName, {
+        type: normalizedFileType || 'application/octet-stream',
+      });
+      const parseOcrPayload = (ocrRequest) => {
+        const ocrResponse = ocrRequest && ocrRequest.response;
+        const payload = ocrRequest && ocrRequest.payload;
+        const endpoint = ocrRequest && ocrRequest.endpoint;
+        if (!ocrResponse || !ocrResponse.ok || !payload || payload.ok !== true) {
+          throw new Error(`${(payload && payload.error) || 'OCR временно недоступен'}. Endpoint: ${endpoint || 'неизвестно'}`);
+        }
+        return String(payload.text || '').trim();
+      };
       const ocrRequest = await postDocsAiWithFallback(() => {
         const form = new FormData();
         form.append('action', 'ocr_extract');
@@ -546,13 +561,23 @@ async function fetchExternalFileContent(fileMeta) {
         form.append('file_url', url);
         return form;
       }, { timeoutMs: REQUEST_TIMEOUT_MS + 12000, fallbackErrorMessage: 'OCR временно недоступен' });
-      const ocrResponse = ocrRequest && ocrRequest.response;
-      const payload = ocrRequest && ocrRequest.payload;
-      const endpoint = ocrRequest && ocrRequest.endpoint;
-      if (!ocrResponse.ok || !payload || payload.ok !== true) {
-        throw new Error(`${(payload && payload.error) || 'OCR временно недоступен'}. Endpoint: ${endpoint || 'неизвестно'}`);
+      try {
+        return parseOcrPayload(ocrRequest);
+      } catch (ocrUrlError) {
+        const ocrUrlMessage = String(ocrUrlError && ocrUrlError.message || '');
+        const shouldRetryWithUpload = /E301|Input file corrupted|не смог обработать файл|OCR failed/i.test(ocrUrlMessage);
+        if (!shouldRetryWithUpload) {
+          throw ocrUrlError;
+        }
+        const uploadOcrRequest = await postDocsAiWithFallback(() => {
+          const form = new FormData();
+          form.append('action', 'ocr_extract');
+          form.append('language', 'rus');
+          form.append('file', fallbackUploadFile, fallbackUploadFile.name || 'document');
+          return form;
+        }, { timeoutMs: REQUEST_TIMEOUT_MS + 12000, fallbackErrorMessage: 'OCR временно недоступен' });
+        return parseOcrPayload(uploadOcrRequest);
       }
-      return String(payload.text || '').trim();
     } catch (error) {
       lastError = error;
     }
@@ -700,7 +725,7 @@ async function requestAssistantReply(userMessage, context, history) {
       const formData = new FormData();
       formData.append('prompt', paidPrompt);
       filesForPaid.forEach((file) => {
-        formData.append('files', file, file.name || 'document.pdf');
+        formData.append('files[]', file, file.name || 'document.pdf');
       });
       if (fileUrlsForPaid.length) {
         formData.append('file_urls', JSON.stringify(fileUrlsForPaid));
@@ -1162,7 +1187,7 @@ function openAiResponseDialog(context = {}) {
       appendBubble(`В контекст добавлены выбранные файлы (${extractedForContext.length}), текст не извлечён. VIP ИИ учтёт вложения как файлы.`, 'assistant');
     }
 
-    context.attachedFiles = state.attachedFiles.map((file) => ({
+    context.attachedFiles = extractedForContext.map((file) => ({
       name: file.name,
       type: file.type || '',
       size: Number(file.size) || 0,

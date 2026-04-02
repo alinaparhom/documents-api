@@ -2417,7 +2417,7 @@ if (!in_array($aiMode, ['free', 'paid'], true)) {
 }
 $requestedModel = trim((string)($_POST['model'] ?? ''));
 $briefModeRaw = $_POST['briefMode'] ?? '';
-$action = trim((string)($_POST['action'] ?? ''));
+$action = trim((string)($_POST['action'] ?? ($_GET['action'] ?? '')));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 $maxExtractedTextsChars = normalizeIntSetting($env['AI_MAX_EXTRACTED_TEXTS_CHARS'] ?? 200000, 200000, 20000, 1500000);
 if ($extractedTextsRaw !== '' && mb_strlen($extractedTextsRaw) > $maxExtractedTextsChars) {

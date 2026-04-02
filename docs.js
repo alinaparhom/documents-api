@@ -2263,30 +2263,67 @@
 
   function requestOcrTextForSource(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    var formData = new FormData();
-    formData.append('action', 'ocr_extract');
-    formData.append('language', 'rus');
-    if (source && source.fileObject) {
-      formData.append('file', source.fileObject);
-    } else if (source && source.url) {
-      formData.append('file_url', source.url);
-    } else {
+    if (!source || (!source.fileObject && !source.url)) {
       return Promise.reject(new Error('Источник для OCR не найден.'));
     }
-    return fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    }).then(function(response) {
-      return response.json().catch(function() { return null; }).then(function(payload) {
-        if (!response.ok || !payload || payload.ok !== true) {
-          throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+
+    function runOcrRequest(buildFormData) {
+      return fetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: buildFormData()
+      }).then(function(response) {
+        return response.json().catch(function() { return null; }).then(function(payload) {
+          if (!response.ok || !payload || payload.ok !== true) {
+            throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));
+          }
+          var extractedText = payload && payload.text ? String(payload.text).trim() : '';
+          if (!extractedText) {
+            throw new Error('OCR не вернул текст.');
+          }
+          return extractedText;
+        });
+      });
+    }
+
+    if (source.fileObject) {
+      return runOcrRequest(function() {
+        var formData = new FormData();
+        formData.append('action', 'ocr_extract');
+        formData.append('language', 'rus');
+        formData.append('file', source.fileObject);
+        return formData;
+      });
+    }
+
+    return runOcrRequest(function() {
+      var formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      formData.append('file_url', source.url);
+      return formData;
+    }).catch(function(error) {
+      var message = String(error && error.message ? error.message : '');
+      var shouldRetryUpload = /E301|Input file corrupted|OCR failed|не смог обработать файл/i.test(message);
+      if (!shouldRetryUpload) {
+        throw error;
+      }
+      return fetch(String(source.url), { credentials: 'same-origin' }).then(function(fileResponse) {
+        if (!fileResponse.ok) {
+          throw error;
         }
-        var extractedText = payload && payload.text ? String(payload.text).trim() : '';
-        if (!extractedText) {
-          throw new Error('OCR не вернул текст.');
-        }
-        return extractedText;
+        return fileResponse.blob();
+      }).then(function(blob) {
+        var fallbackName = source && source.label ? String(source.label) : 'ocr-file';
+        var fallbackFile = new File([blob], fallbackName, { type: blob.type || 'application/octet-stream' });
+        source.fileObject = fallbackFile;
+        return runOcrRequest(function() {
+          var uploadForm = new FormData();
+          uploadForm.append('action', 'ocr_extract');
+          uploadForm.append('language', 'rus');
+          uploadForm.append('file', fallbackFile);
+          return uploadForm;
+        });
       });
     });
   }

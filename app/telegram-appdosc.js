@@ -385,10 +385,33 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   if (!response.ok || !payload || payload.ok !== true) {
     throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
   }
-  if (!hasMeaningfulTelegramBriefPayload(payload)) {
-    throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
+  const rawResponseText = extractTelegramAiResponseText(payload);
+  if (!rawResponseText) {
+    throw new Error('VIP ИИ вернул пустой ответ.');
   }
   return payload;
+}
+
+function extractTelegramAiResponseText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const direct = normalizeValue(payload.response);
+  if (direct) return direct;
+  const rawContent = normalizeValue(payload && payload.raw && payload.raw.content);
+  if (!rawContent) return '';
+  if (rawContent.charAt(0) === '{' && /"response"\s*:/i.test(rawContent)) {
+    try {
+      const parsed = JSON.parse(rawContent);
+      if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+        return parsed.response.trim();
+      }
+    } catch (_) {}
+  }
+  return rawContent;
+}
+
+function renderTelegramRawResponse(container, payload) {
+  const responseText = extractTelegramAiResponseText(payload);
+  container.innerHTML = `<section class="appdosc-brief-ai__section"><h4>Ответ ИИ (как есть)</h4><p>${escapeHtml(responseText || 'Пустой ответ')}</p></section>`;
 }
 
 function normalizeTelegramOcrText(text) {
@@ -671,8 +694,13 @@ function openTelegramBriefModal(task, statusHandler) {
           }
         }
         if (requestId !== activeRequestId) return;
-        renderTelegramBriefPreview(preview, aiPayload, sourceText);
-        setStatus('Готово. Разбор сформирован только по выбранному файлу.', 'success');
+        if (useNewDecision) {
+          renderTelegramRawResponse(preview, aiPayload);
+          setStatus('Готово. Показан оригинальный ответ ИИ без преобразований.', 'success');
+        } else {
+          renderTelegramBriefPreview(preview, aiPayload, sourceText);
+          setStatus('Готово. Разбор сформирован только по выбранному файлу.', 'success');
+        }
         if (metaNode) {
           const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
           metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек${useNewDecision ? ' • Режим: Новое решение' : ''}`;

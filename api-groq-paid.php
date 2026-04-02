@@ -568,6 +568,9 @@ function handleAnalyzePaidAction(array $env): void
 {
     $files = normalizeUploadedFiles('files');
     if (!$files) {
+        $files = normalizeUploadedFiles('files[]');
+    }
+    if (!$files) {
         $remoteFiles = normalizeRemoteFilesFromPost();
         if ($remoteFiles) {
             $files = downloadRemoteFiles($remoteFiles);
