@@ -14,6 +14,7 @@ const MAX_TOTAL_UPLOAD_BYTES = 0; // 0 = без ограничения
 const MAX_TEXT_CHARS = 0; // 0 = без обрезки
 const MAX_TEXT_CHARS_PER_CHUNK = 12000;
 const MAX_TEXT_CHUNKS_TOTAL = 30;
+const MAX_TEXT_PAYLOAD_CHARS = 90000;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
@@ -303,6 +304,40 @@ function splitTextIntoChunks(string $text, int $maxChunkChars = MAX_TEXT_CHARS_P
     return array_slice($chunks, 0, MAX_TEXT_CHUNKS_TOTAL);
 }
 
+function takeChunksByCharBudget(array $chunks, int $maxChars): array
+{
+    if ($maxChars <= 0) {
+        return ['items' => [], 'omitted' => count($chunks), 'usedChars' => 0];
+    }
+
+    $selected = [];
+    $usedChars = 0;
+
+    foreach ($chunks as $chunk) {
+        $text = trim((string)$chunk);
+        if ($text === '') {
+            continue;
+        }
+        $chunkLen = mb_strlen($text);
+        if ($usedChars > 0 && ($usedChars + 2 + $chunkLen) > $maxChars) {
+            break;
+        }
+        if ($usedChars === 0 && $chunkLen > $maxChars) {
+            $selected[] = mb_substr($text, 0, $maxChars);
+            $usedChars = mb_strlen((string)$selected[0]);
+            break;
+        }
+        $selected[] = $text;
+        $usedChars += ($usedChars > 0 ? 2 : 0) + $chunkLen;
+    }
+
+    return [
+        'items' => $selected,
+        'omitted' => max(0, count($chunks) - count($selected)),
+        'usedChars' => $usedChars,
+    ];
+}
+
 function extractDocxText(string $path): string
 {
     if (!class_exists('ZipArchive')) {
@@ -476,7 +511,7 @@ function handleAnalyzePaidAction(array $env): void
                 $metaChunks[] = "[DOCX: {$name}, {$size} байт, чанков: " . count($chunks) . ']';
                 $hasReadableContent = true;
             } else {
-                $metaChunks[] = "[DOCX: {$name}, {$size} байт, текст не извлечен]";
+                $metaChunks[] = "[DOCX: {$name}, {$size} байт, приложен]";
             }
             continue;
         }
@@ -491,7 +526,7 @@ function handleAnalyzePaidAction(array $env): void
                 $metaChunks[] = "[DOC: {$name}, {$size} байт, чанков: " . count($chunks) . ']';
                 $hasReadableContent = true;
             } else {
-                $metaChunks[] = "[DOC: {$name}, {$size} байт, текст не извлечен]";
+                $metaChunks[] = "[DOC: {$name}, {$size} байт, приложен]";
             }
             continue;
         }
@@ -506,7 +541,7 @@ function handleAnalyzePaidAction(array $env): void
                 $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}, OCR чанков: " . count($chunks) . ']';
                 $hasReadableContent = true;
             } else {
-                $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}, OCR текст не извлечен]";
+                $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}, приложено]";
             }
             continue;
         }
@@ -525,12 +560,12 @@ function handleAnalyzePaidAction(array $env): void
                         ? "[PDF: {$name}, {$size} байт, OCR, чанков: " . count($chunks) . ']'
                         : "[PDF: {$name}, {$size} байт, текстовый слой, чанков: " . count($chunks) . ']';
                 } else {
-                    $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
+                    $metaChunks[] = "[PDF: {$name}, {$size} байт, приложен]";
                 }
                 $hasReadableContent = true;
                 continue;
             }
-            $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
+            $metaChunks[] = "[PDF: {$name}, {$size} байт, приложен]";
             continue;
         }
 
@@ -555,17 +590,37 @@ function handleAnalyzePaidAction(array $env): void
         . "- Если есть претензии — либо прими с обоснованием, либо отклони с аргументацией.\n"
         . "- Используй деловой язык, без воды, без эмодзи.\n"
         . "- Если недостаточно информации — укажи, какие данные нужны.\n"
+        . "- Никогда не пиши про OCR, технические ограничения, ошибки чтения файла или невозможность извлечения текста.\n"
+        . "- Если часть вложений нечитаема, всё равно дай практичное решение по доступным данным, без технических пояснений.\n"
         . "- Ответ должен быть готов к вставке в документ как основное содержание.\n\n";
 
     $textPayload = $userPrompt;
     if ($limitedContextNotice !== '') {
         $textPayload .= "\n\n" . $limitedContextNotice;
     }
+
+    $reservedForMeta = $metaChunks ? 12000 : 0;
+    $payloadBaseLen = mb_strlen($textPayload);
+    $textBudget = max(0, MAX_TEXT_PAYLOAD_CHARS - $payloadBaseLen - $reservedForMeta);
     if ($textChunks) {
-        $textPayload .= "\n\nТекстовые файлы:\n" . implode("\n\n", $textChunks);
+        $limitedChunks = takeChunksByCharBudget($textChunks, $textBudget);
+        $selectedTextChunks = $limitedChunks['items'];
+        if ($selectedTextChunks) {
+            $textPayload .= "\n\nТекстовые файлы:\n" . implode("\n\n", $selectedTextChunks);
+        }
+        if (($limitedChunks['omitted'] ?? 0) > 0) {
+            $textPayload .= "\n\n[Контекст ограничен: пропущено частей текста: " . (int)$limitedChunks['omitted'] . ']';
+        }
     }
     if ($metaChunks) {
-        $textPayload .= "\n\nСводка файлов:\n" . implode("\n", $metaChunks);
+        $metaText = "Сводка файлов:\n" . implode("\n", $metaChunks);
+        $metaBudget = max(0, MAX_TEXT_PAYLOAD_CHARS - mb_strlen($textPayload) - 2);
+        if ($metaBudget > 0) {
+            if (mb_strlen($metaText) > $metaBudget) {
+                $metaText = mb_substr($metaText, 0, $metaBudget);
+            }
+            $textPayload .= "\n\n" . $metaText;
+        }
     }
 
     $requestPayload = [
