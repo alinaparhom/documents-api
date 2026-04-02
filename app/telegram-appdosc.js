@@ -13803,22 +13803,33 @@ function createResponseUploadControls(task, entry, setStatus) {
       renderMeta(null);
       const startedAt = Date.now();
       try {
+        const selectedFiles = Array.from(selectedKeys)
+          .map((key) => files[Number(key)])
+          .filter((file) => file && normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl)));
+
+        if (!selectedFiles.length && files.length) {
+          throw new Error('Выберите хотя бы один файл внизу (кнопка "📎 Файлы").');
+        }
+
         const filesToSend = [];
-        for (const key of selectedKeys) {
-          const file = files[Number(key)];
+        const failedFiles = [];
+        for (const file of selectedFiles) {
           const selectedFileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
-          if (!selectedFileUrl) continue;
           statusNode.textContent = `Скачиваем файл ${filesToSend.length + 1}...`;
           // eslint-disable-next-line no-await-in-loop
           const fileResponse = await fetch(selectedFileUrl, { credentials: 'include' });
-          if (!fileResponse.ok) continue;
+          if (!fileResponse.ok) {
+            failedFiles.push(normalizeValue(file && (file.originalName || file.name || file.storedName)) || 'Без названия');
+            continue;
+          }
           // eslint-disable-next-line no-await-in-loop
           const fileBlob = await fileResponse.blob();
           const fallbackName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `task-file-${filesToSend.length + 1}.bin`;
           filesToSend.push(new File([fileBlob], fallbackName, { type: fileBlob.type || 'application/octet-stream' }));
         }
-        if (!filesToSend.length && files.length) {
-          throw new Error('Выберите хотя бы один файл внизу (кнопка "📎 Файлы").');
+        if (!filesToSend.length && selectedFiles.length) {
+          const failedLabel = failedFiles.length ? ` (${failedFiles.slice(0, 2).join(', ')})` : '';
+          throw new Error(`Не удалось скачать выбранные файлы${failedLabel}. Попробуйте снова.`);
         }
         const finalPrompt = prompt || 'Сделай краткий вывод и решение по выбранным файлам.';
         appendBubble(finalPrompt, 'user');
