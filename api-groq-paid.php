@@ -811,6 +811,7 @@ function handleGenerateSummaryAction(array $env): void
     }
 
     $summaryParts = [];
+    $summaryChunks = [];
     foreach ($decodedExtractedTexts as $entry) {
         if (!is_array($entry)) {
             continue;
@@ -820,11 +821,23 @@ function handleGenerateSummaryAction(array $env): void
             continue;
         }
         $name = trim((string)($entry['name'] ?? 'Документ'));
-        $summaryParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $text;
+        $safeName = $name !== '' ? $name : 'Документ';
+        $summaryParts[] = '[' . $safeName . "]\n" . $text;
+        $chunks = splitTextIntoChunks($text);
+        foreach ($chunks as $chunkText) {
+            $chunkText = trim((string)$chunkText);
+            if ($chunkText === '') {
+                continue;
+            }
+            $summaryChunks[] = '[' . $safeName . "]\n" . $chunkText;
+        }
     }
     $fullText = trim(implode("\n\n", $summaryParts));
     if ($fullText === '') {
         respond(422, ['ok' => false, 'error' => 'Текст документов пустой, summary сформировать невозможно.']);
+    }
+    if (!$summaryChunks) {
+        $summaryChunks = splitTextIntoChunks($fullText);
     }
 
     $model = resolveModel($env);
@@ -841,19 +854,56 @@ function handleGenerateSummaryAction(array $env): void
         . "- Если информации недостаточно — укажи, какие данные отсутствуют.\n\n"
         . "Формат ответа: только текст summary, без лишних слов.";
 
-    $requestPayload = [
+    $startedAt = microtime(true);
+    $summarySegments = [];
+    $chunkBudget = max(5000, (int)(MAX_TEXT_PAYLOAD_CHARS * 0.6));
+    $limitedChunks = takeChunksByCharBudget($summaryChunks, $chunkBudget);
+    $chunksToProcess = $limitedChunks['items'] ?? [];
+    if (!$chunksToProcess) {
+        $chunksToProcess = [mb_substr($fullText, 0, 6000)];
+    }
+    foreach ($chunksToProcess as $chunkIndex => $chunkText) {
+        $requestPayload = [
+            'model' => $model,
+            'temperature' => 0.2,
+            'max_tokens' => 420,
+            'top_p' => 0.85,
+            'messages' => [
+                ['role' => 'system', 'content' => $summarySystemMessage],
+                ['role' => 'user', 'content' => "Сделай краткое содержание части документа №" . ($chunkIndex + 1) . ":\n\n" . $chunkText],
+            ],
+        ];
+        $groqResult = callGroqChat($requestPayload, $apiKey);
+        if (($groqResult['ok'] ?? false) !== true) {
+            respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+        }
+        $decodedChunk = (array)($groqResult['raw'] ?? []);
+        $chunkSummary = trim((string)($decodedChunk['choices'][0]['message']['content'] ?? ''));
+        if ($chunkSummary !== '') {
+            $summarySegments[] = $chunkSummary;
+        }
+    }
+
+    if (!$summarySegments) {
+        respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
+    }
+
+    $mergedSegments = implode("\n\n", $summarySegments);
+    $finalInput = "Собери единое итоговое краткое содержание из промежуточных резюме:\n\n" . $mergedSegments;
+    if (($limitedChunks['omitted'] ?? 0) > 0) {
+        $finalInput .= "\n\n[Контекст ограничен: пропущено частей: " . (int)$limitedChunks['omitted'] . ']';
+    }
+    $finalPayload = [
         'model' => $model,
-        'temperature' => 0.3,
+        'temperature' => 0.2,
         'max_tokens' => 800,
         'top_p' => 0.85,
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],
-            ['role' => 'user', 'content' => "Сделай краткое содержание документа:\n\n" . $fullText],
+            ['role' => 'user', 'content' => $finalInput],
         ],
     ];
-
-    $startedAt = microtime(true);
-    $groqResult = callGroqChat($requestPayload, $apiKey);
+    $groqResult = callGroqChat($finalPayload, $apiKey);
     if (($groqResult['ok'] ?? false) !== true) {
         respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
     }
