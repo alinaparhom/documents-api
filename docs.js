@@ -2261,17 +2261,62 @@
     return String(endpoint).replace(/[?&]action=generate_summary$/i, '') + '?action=generate_summary';
   }
 
+  function detectFileExtensionFromSourceName(name) {
+    var value = String(name || '').trim().toLowerCase();
+    var match = value.match(/\.([a-z0-9]{2,8})(?:[?#].*)?$/i);
+    return match && match[1] ? match[1] : '';
+  }
+
+  function extensionFromMimeType(mimeType) {
+    var mime = String(mimeType || '').toLowerCase();
+    if (!mime) return '';
+    if (mime.indexOf('pdf') !== -1) return 'pdf';
+    if (mime.indexOf('jpeg') !== -1 || mime.indexOf('jpg') !== -1) return 'jpg';
+    if (mime.indexOf('png') !== -1) return 'png';
+    if (mime.indexOf('webp') !== -1) return 'webp';
+    if (mime.indexOf('gif') !== -1) return 'gif';
+    if (mime.indexOf('bmp') !== -1) return 'bmp';
+    if (mime.indexOf('tiff') !== -1 || mime.indexOf('tif') !== -1) return 'tif';
+    if (mime.indexOf('wordprocessingml.document') !== -1) return 'docx';
+    if (mime.indexOf('msword') !== -1) return 'doc';
+    return '';
+  }
+
+  function ensureSourceFileName(name, mimeType, sourceUrl) {
+    var safeName = String(name || '').trim() || 'document';
+    if (detectFileExtensionFromSourceName(safeName)) {
+      return safeName;
+    }
+    var byMime = extensionFromMimeType(mimeType);
+    if (byMime) {
+      return safeName + '.' + byMime;
+    }
+    var byUrl = detectFileExtensionFromSourceName(sourceUrl);
+    if (byUrl) {
+      return safeName + '.' + byUrl;
+    }
+    return safeName + '.bin';
+  }
+
   function requestOcrTextForSource(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var formData = new FormData();
     formData.append('action', 'ocr_extract');
     formData.append('language', 'rus');
+    var sourceFileType = '';
     if (source && source.fileObject) {
       formData.append('file', source.fileObject);
+      sourceFileType = detectFileExtensionFromSourceName(source.fileObject && source.fileObject.name)
+        || extensionFromMimeType(source.fileObject && source.fileObject.type);
     } else if (source && source.url) {
       formData.append('file_url', source.url);
+      sourceFileType = detectFileExtensionFromSourceName(source && source.label)
+        || detectFileExtensionFromSourceName(source.url);
     } else {
       return Promise.reject(new Error('Источник для OCR не найден.'));
+    }
+    if (sourceFileType) {
+      formData.append('file_type', sourceFileType);
     }
     return fetch(endpoint, {
       method: 'POST',
@@ -2450,7 +2495,7 @@
       var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
       if (fetched.ok) {
         var blob = await fetched.blob();
-        var fileName = sourceLabel || 'brief-file';
+        var fileName = ensureSourceFileName(sourceLabel || 'brief-file', blob.type, source && source.url ? String(source.url) : '');
         fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
       }
     }
@@ -2497,7 +2542,7 @@
       var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
       if (fetched.ok) {
         var blob = await fetched.blob();
-        var fileName = sourceLabel || 'brief-file';
+        var fileName = ensureSourceFileName(sourceLabel || 'brief-file', blob.type, source && source.url ? String(source.url) : '');
         fileForSummary = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
       }
     }

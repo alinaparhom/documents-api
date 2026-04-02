@@ -278,12 +278,16 @@ function ensureTelegramBriefModalStyle() {
   document.head.appendChild(style);
 }
 
-async function requestTelegramOcrByUrl(fileUrl) {
+async function requestTelegramOcrByUrl(fileUrl, sourceName = '') {
   const request = await postDocsAiWithFallback(() => {
     const formData = new FormData();
     formData.append('action', 'ocr_extract');
     formData.append('language', 'rus');
     formData.append('file_url', fileUrl);
+    const ext = detectTelegramFileExt(sourceName) || detectTelegramFileExt(fileUrl);
+    if (ext) {
+      formData.append('file_type', ext);
+    }
     return formData;
   }, { fallbackErrorMessage: 'OCR временно недоступен' });
   const response = request && request.response;
@@ -294,6 +298,38 @@ async function requestTelegramOcrByUrl(fileUrl) {
   const text = payload && payload.text ? String(payload.text).trim() : '';
   if (!text) throw new Error('OCR не вернул текст');
   return text;
+}
+
+function detectTelegramFileExt(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const match = raw.match(/\.([a-z0-9]{2,8})(?:[?#].*)?$/i);
+  return match && match[1] ? match[1] : '';
+}
+
+function extFromTelegramMime(mimeType) {
+  const mime = String(mimeType || '').toLowerCase();
+  if (!mime) return '';
+  if (mime.includes('pdf')) return 'pdf';
+  if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('gif')) return 'gif';
+  if (mime.includes('bmp')) return 'bmp';
+  if (mime.includes('tiff') || mime.includes('tif')) return 'tif';
+  if (mime.includes('wordprocessingml.document')) return 'docx';
+  if (mime.includes('msword')) return 'doc';
+  return '';
+}
+
+function ensureTelegramFileName(name, mimeType, url) {
+  const safeName = normalizeValue(name) || 'document';
+  const byName = detectTelegramFileExt(safeName);
+  if (byName) return safeName;
+  const byMime = extFromTelegramMime(mimeType);
+  if (byMime) return `${safeName}.${byMime}`;
+  const byUrl = detectTelegramFileExt(url);
+  if (byUrl) return `${safeName}.${byUrl}`;
+  return `${safeName}.bin`;
 }
 
 async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
@@ -334,7 +370,7 @@ async function requestTelegramBriefAiByAttachment(source, aiMode = 'free') {
     throw new Error(`Не удалось загрузить файл (${fetched.status})`);
   }
   const blob = await fetched.blob();
-  const fileName = normalizeValue(source && source.label) || 'brief-file';
+  const fileName = ensureTelegramFileName(normalizeValue(source && source.label) || 'brief-file', blob.type, fileUrl);
   const request = await postDocsAiSummaryDirect(() => {
     const formData = new FormData();
     formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
@@ -362,11 +398,11 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     throw new Error(`Не удалось загрузить файл (${fetched.status})`);
   }
   const blob = await fetched.blob();
-  const fileName = normalizeValue(source && source.label) || 'brief-file';
+  const fileName = ensureTelegramFileName(normalizeValue(source && source.label) || 'brief-file', blob.type, fileUrl);
   const fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
   let extractedText = '';
   try {
-    extractedText = await requestTelegramOcrByUrl(fileUrl);
+    extractedText = await requestTelegramOcrByUrl(fileUrl, fileName);
   } catch (_) {
     extractedText = '';
   }
