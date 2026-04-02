@@ -9,6 +9,7 @@ const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v1';
+const AI_MODE_PICKER_STYLE_ID = 'appdosc-ai-mode-picker-style-v1';
 
 let aiDialogLoader = null;
 
@@ -93,6 +94,57 @@ async function openAiDialogSafely(context = {}) {
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function ensureAiModePickerStyles() {
+  if (document.getElementById(AI_MODE_PICKER_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = AI_MODE_PICKER_STYLE_ID;
+  style.textContent = `
+    .appdosc-ai-mode-picker{position:fixed;inset:0;z-index:2900;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.35);backdrop-filter:blur(10px)}
+    .appdosc-ai-mode-picker__panel{width:min(520px,100%);background:linear-gradient(165deg,rgba(255,255,255,.97),rgba(248,250,252,.93));border:1px solid rgba(255,255,255,.9);border-radius:20px;padding:14px;box-shadow:0 20px 42px rgba(15,23,42,.18);display:flex;flex-direction:column;gap:10px}
+    .appdosc-ai-mode-picker__title{font-size:16px;font-weight:700;color:#0f172a}
+    .appdosc-ai-mode-picker__hint{font-size:12px;color:#64748b}
+    .appdosc-ai-mode-picker__actions{display:grid;grid-template-columns:1fr;gap:8px}
+    .appdosc-ai-mode-picker__btn{border:1px solid rgba(148,163,184,.3);background:rgba(255,255,255,.92);border-radius:14px;padding:11px 12px;text-align:left;color:#0f172a}
+    .appdosc-ai-mode-picker__btn strong{display:block;font-size:14px}
+    .appdosc-ai-mode-picker__btn small{display:block;margin-top:3px;font-size:11px;color:#64748b}
+    .appdosc-ai-mode-picker__btn--paid{border-color:rgba(37,99,235,.42);background:rgba(239,246,255,.95)}
+    .appdosc-ai-mode-picker__cancel{align-self:flex-end;border:none;background:transparent;color:#475569;font-size:13px;padding:6px 4px}
+    @media (max-width:560px){.appdosc-ai-mode-picker{padding:0}.appdosc-ai-mode-picker__panel{width:100%;border-radius:18px 18px 0 0;padding:12px}}
+  `;
+  document.head.appendChild(style);
+}
+
+function showAiModePicker() {
+  ensureAiModePickerStyles();
+  return new Promise((resolve) => {
+    const root = document.createElement('div');
+    root.className = 'appdosc-ai-mode-picker';
+    root.innerHTML = `
+      <div class="appdosc-ai-mode-picker__panel" role="dialog" aria-modal="true" aria-label="Выбор режима ИИ">
+        <div class="appdosc-ai-mode-picker__title">Выберите режим ИИ</div>
+        <div class="appdosc-ai-mode-picker__hint">Бесплатный — быстрый ответ. Платный — откроет чат с выбором файлов для обработки.</div>
+        <div class="appdosc-ai-mode-picker__actions">
+          <button type="button" class="appdosc-ai-mode-picker__btn" data-mode="free"><strong>Бесплатный ИИ</strong><small>Стандартный режим</small></button>
+          <button type="button" class="appdosc-ai-mode-picker__btn appdosc-ai-mode-picker__btn--paid" data-mode="paid"><strong>Платный ИИ</strong><small>С выбором файлов для обработки</small></button>
+        </div>
+        <button type="button" class="appdosc-ai-mode-picker__cancel" data-cancel>Отмена</button>
+      </div>
+    `;
+    const cleanup = (value) => {
+      if (root.isConnected) root.remove();
+      resolve(value);
+    };
+    root.addEventListener('click', (event) => {
+      if (event.target === root) cleanup('');
+    });
+    root.querySelector('[data-cancel]').addEventListener('click', () => cleanup(''));
+    root.querySelectorAll('[data-mode]').forEach((button) => {
+      button.addEventListener('click', () => cleanup(button.getAttribute('data-mode') || ''));
+    });
+    document.body.appendChild(root);
+  });
 }
 
 function ensureTelegramBriefModalStyle() {
@@ -13189,10 +13241,13 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  aiButton.addEventListener('click', () => {
+  aiButton.addEventListener('click', async () => {
+    const mode = await showAiModePicker();
+    if (!mode) return;
     openAiDialogSafely({
       task,
       entry,
+      initialAiMode: mode === 'paid' ? 'paid' : 'free',
       onStatus: setStatus,
     });
   });

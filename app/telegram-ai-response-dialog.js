@@ -813,6 +813,7 @@ function openAiResponseDialog(context = {}) {
     return;
   }
 
+  const initialAiMode = String((context && (context.initialAiMode || context.aiMode)) || 'free') === 'paid' ? 'paid' : 'free';
   const state = {
     destroyed: false,
     isSending: false,
@@ -821,7 +822,7 @@ function openAiResponseDialog(context = {}) {
     attachedFiles: [],
     selectedAttachmentIds: new Set(),
     responseStyle: 'neutral',
-    aiMode: 'free',
+    aiMode: initialAiMode,
     selectedModel: resolveAiModel(context),
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
     rateLimitUntil: 0,
@@ -892,6 +893,10 @@ function openAiResponseDialog(context = {}) {
     modeSelect.value = state.aiMode;
     modeSelect.addEventListener('change', () => {
       state.aiMode = String(modeSelect.value || 'free') === 'paid' ? 'paid' : 'free';
+      if (state.aiMode === 'paid') {
+        appendBubble('VIP режим включён. Выберите файлы для обработки и нажмите «Прочитать выбранные».', 'assistant');
+        if (attachmentsDetails) attachmentsDetails.open = true;
+      }
     });
   }
 
@@ -1029,7 +1034,12 @@ function openAiResponseDialog(context = {}) {
     appendBubbleNode(wrap, 'assistant');
   };
 
-  appendBubble('Опишите задачу коротко. При необходимости добавьте файлы ниже.', 'assistant');
+  appendBubble(
+    state.aiMode === 'paid'
+      ? 'Выбран VIP ИИ. Сначала выберите файлы для обработки и нажмите «Прочитать выбранные».'
+      : 'Опишите задачу коротко. При необходимости добавьте файлы ниже.',
+    'assistant',
+  );
 
   const getFileTypeLabel = (file) => {
     const name = String(file.name || '').toLowerCase();
@@ -1390,6 +1400,9 @@ function openAiResponseDialog(context = {}) {
       .filter((file) => file.extracted && file.text)
       .map((file) => ({ name: file.name, type: file.type || 'text/plain', text: file.text }));
     renderAttachments();
+    if (state.aiMode === 'paid' && attachmentsDetails) {
+      attachmentsDetails.open = true;
+    }
   }).catch((error) => {
     appendBubble(`Не удалось подключить вложения: ${error && error.message ? error.message : 'неизвестная ошибка'}`, 'assistant');
   });
