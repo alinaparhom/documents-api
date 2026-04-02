@@ -2422,31 +2422,14 @@
 
   function postGroqPaidForBrief(createFormData) {
     var endpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
-    var fetchWithTimeout = function(endpoint, options, timeoutMs) {
-      var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      var timer = controller ? setTimeout(function() { controller.abort(); }, Math.max(1000, Number(timeoutMs || 65000))) : null;
-      var nextOptions = Object.assign({}, options || {});
-      if (controller) {
-        nextOptions.signal = controller.signal;
-      }
-      return fetch(endpoint, nextOptions)
-        .catch(function(error) {
-          if (error && error.name === 'AbortError') {
-            throw new Error('Таймаут платного ИИ. Попробуйте снова.');
-          }
-          throw error;
-        })
-        .finally(function() {
-          if (timer) clearTimeout(timer);
-        });
-    };
+    var lastError = null;
     return endpoints.reduce(function(chain, endpoint) {
       return chain.catch(function() {
         console.log('[AI][groq-paid-brief] Отправка запроса', {
           endpoint: endpoint,
           ts: new Date().toISOString()
         });
-        return fetchWithTimeout(endpoint, {
+        return fetch(endpoint, {
           method: 'POST',
           credentials: 'same-origin',
           body: createFormData()
@@ -2455,16 +2438,14 @@
             throw new Error('ENDPOINT_UNAVAILABLE');
           }
           return response.json().catch(function() { return null; }).then(function(payload) {
-            var serverError = String(payload && payload.error ? payload.error : '');
-            var shouldTryNext = response.status >= 500 || /E208|internal processing error/i.test(serverError);
-            if (shouldTryNext) {
-              throw new Error('PAID_ENDPOINT_RETRY');
-            }
             return { response: response, payload: payload };
           });
         });
       });
-    }, Promise.reject(new Error('INIT')));
+    }, Promise.reject(new Error('INIT'))).catch(function(error) {
+      lastError = error;
+      throw lastError;
+    });
   }
 
   async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
@@ -2492,8 +2473,7 @@
     }
     var request = await postGroqPaidForBrief(function() {
       var formData = new FormData();
-      formData.append('prompt', 'System настройка: дай краткое описание файла простым деловым языком. Без приветствий и markdown. '
-        + 'Сформируй чистый ответ по файлу: минимум 5 предложений, только решение и обоснование, без списков.');
+      formData.append('prompt', 'Сформируй чистый ответ по файлу: минимум 5 предложений, только решение и обоснование, без markdown и списков.');
       formData.append('files', fileForVip, fileForVip.name || sourceLabel);
       if (String(extractedText || '').trim()) {
         var ocrFileName = (fileForVip.name || sourceLabel || 'document').replace(/\.[^.]+$/, '') + '-ocr.txt';
