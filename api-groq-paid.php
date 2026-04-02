@@ -110,6 +110,99 @@ function normalizeUploadedFiles(string $field): array
     return $out;
 }
 
+function normalizeSelectedFilesFromPost(string $field): array
+{
+    $raw = trim((string)($_POST[$field] ?? ''));
+    if ($raw === '') {
+        return [];
+    }
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return [];
+    }
+    $result = [];
+    foreach ($decoded as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $url = trim((string)($item['url'] ?? ''));
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            continue;
+        }
+        $result[] = [
+            'name' => sanitizeFileName((string)($item['name'] ?? 'file')),
+            'url' => $url,
+            'client_type' => trim((string)($item['type'] ?? '')),
+            'size' => (int)($item['size'] ?? 0),
+        ];
+    }
+    return $result;
+}
+
+function downloadSelectedFileToTemp(array $selected, string $cookieHeader = ''): ?array
+{
+    $url = (string)($selected['url'] ?? '');
+    if ($url === '') {
+        return null;
+    }
+    $tmpPath = tempnam(sys_get_temp_dir(), 'paid_ai_');
+    if ($tmpPath === false) {
+        return null;
+    }
+
+    $fp = @fopen($tmpPath, 'wb');
+    if ($fp === false) {
+        @unlink($tmpPath);
+        return null;
+    }
+
+    $ch = curl_init($url);
+    if ($ch === false) {
+        fclose($fp);
+        @unlink($tmpPath);
+        return null;
+    }
+
+    $headers = [];
+    if ($cookieHeader !== '') {
+        $headers[] = 'Cookie: ' . $cookieHeader;
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_FILE => $fp,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_TIMEOUT => 40,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_USERAGENT => 'documents-paid-ai/1.0',
+        CURLOPT_HTTPHEADER => $headers,
+    ]);
+    $ok = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $ctype = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+    fclose($fp);
+
+    if ($ok === false || $status < 200 || $status >= 300 || !is_file($tmpPath)) {
+        @unlink($tmpPath);
+        return null;
+    }
+
+    $size = (int)@filesize($tmpPath);
+    if ($size <= 0) {
+        @unlink($tmpPath);
+        return null;
+    }
+
+    return [
+        'name' => sanitizeFileName((string)($selected['name'] ?? 'file')),
+        'tmp_name' => $tmpPath,
+        'size' => $size,
+        'client_type' => $ctype !== '' ? $ctype : (string)($selected['client_type'] ?? ''),
+    ];
+}
+
 function detectMime(string $path, string $fallback = ''): string
 {
     $mime = '';
@@ -359,8 +452,28 @@ if ($method !== 'POST') {
 }
 
 $files = normalizeUploadedFiles('files');
+$tempFilesToDelete = [];
+register_shutdown_function(static function () use (&$tempFilesToDelete): void {
+    foreach ($tempFilesToDelete as $tmpFile) {
+        if (is_string($tmpFile) && $tmpFile !== '') {
+            @unlink($tmpFile);
+        }
+    }
+});
 if (!$files) {
-    respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
+    $selectedFiles = normalizeSelectedFilesFromPost('selectedFiles');
+    $cookieHeader = trim((string)($_SERVER['HTTP_COOKIE'] ?? ''));
+    foreach ($selectedFiles as $selectedFile) {
+        $downloaded = downloadSelectedFileToTemp($selectedFile, $cookieHeader);
+        if (!$downloaded) {
+            continue;
+        }
+        $files[] = $downloaded;
+        $tempFilesToDelete[] = (string)$downloaded['tmp_name'];
+    }
+}
+if (!$files) {
+    respond(422, ['ok' => false, 'error' => 'Файлы не переданы. Выберите файлы и попробуйте снова.']);
 }
 
 $totalBytes = array_reduce($files, static function (int $sum, array $f): int {

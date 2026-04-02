@@ -13803,21 +13803,21 @@ function createResponseUploadControls(task, entry, setStatus) {
       renderMeta(null);
       const startedAt = Date.now();
       try {
-        const filesToSend = [];
-        for (const key of selectedKeys) {
-          const file = files[Number(key)];
-          const selectedFileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
-          if (!selectedFileUrl) continue;
-          statusNode.textContent = `Скачиваем файл ${filesToSend.length + 1}...`;
-          // eslint-disable-next-line no-await-in-loop
-          const fileResponse = await fetch(selectedFileUrl, { credentials: 'include' });
-          if (!fileResponse.ok) continue;
-          // eslint-disable-next-line no-await-in-loop
-          const fileBlob = await fileResponse.blob();
-          const fallbackName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `task-file-${filesToSend.length + 1}.bin`;
-          filesToSend.push(new File([fileBlob], fallbackName, { type: fileBlob.type || 'application/octet-stream' }));
-        }
-        if (!filesToSend.length && files.length) {
+        const selectedFiles = Array.from(selectedKeys)
+          .map((key) => files[Number(key)])
+          .map((file) => {
+            const fileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
+            if (!fileUrl) return null;
+            return {
+              name: normalizeValue(file && (file.originalName || file.name || file.storedName)) || 'task-file',
+              url: fileUrl,
+              type: normalizeValue(file && file.type) || '',
+              size: Number(file && file.size) || 0,
+            };
+          })
+          .filter(Boolean);
+
+        if (!selectedFiles.length && files.length) {
           throw new Error('Выберите хотя бы один файл внизу (кнопка "📎 Файлы").');
         }
         const finalPrompt = prompt || 'Сделай краткий вывод и решение по выбранным файлам.';
@@ -13829,9 +13829,7 @@ function createResponseUploadControls(task, entry, setStatus) {
           formData.append('taskTitle', normalizeValue(task && task.title) || 'Задача');
           formData.append('taskDescription', normalizeValue(task && task.description));
           formData.append('prompt', finalPrompt);
-          filesToSend.forEach((fileToSend) => {
-            formData.append('files[]', fileToSend, fileToSend.name);
-          });
+          formData.append('selectedFiles', JSON.stringify(selectedFiles));
           return formData;
         });
         const payload = result && result.payload ? result.payload : null;
