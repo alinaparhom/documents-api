@@ -589,33 +589,19 @@ function buildTelegramBriefSections(payload, sourceText) {
   };
 }
 
-function renderTelegramBriefPreview(container, payload, sourceText) {
-  const sections = buildTelegramBriefSections(payload, sourceText);
-  const detailsHtml = sections.actions.length
-    ? `<ul>${sections.actions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-    : '<p>Ключевые детали не указаны в файле.</p>';
-  const stepsHtml = sections.requirements.length
-    ? `<ul>${sections.requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-    : '<p>Следующие шаги не указаны в файле.</p>';
+function extractTelegramPlainAiBriefText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidates = [payload.summary, payload.response, payload.analysis, payload.text, payload.answer];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = normalizeValue(candidates[index]);
+    if (candidate) return candidate;
+  }
+  return '';
+}
 
-  container.innerHTML = `
-    <section class="appdosc-brief-ai__section">
-      <h4>О чем файл</h4>
-      <p>${escapeHtml(sections.analysis)}</p>
-    </section>
-    <section class="appdosc-brief-ai__section">
-      <h4>Отправитель и получатель</h4>
-      <p>${escapeHtml(sections.participants)}</p>
-    </section>
-    <section class="appdosc-brief-ai__section">
-      <h4>Важные детали из файла</h4>
-      ${detailsHtml}
-    </section>
-    <section class="appdosc-brief-ai__section">
-      <h4>Что сделать дальше</h4>
-      ${stepsHtml}
-    </section>
-  `;
+function renderTelegramBriefPreview(container, payload) {
+  const summaryText = normalizeValue(payload && payload.summary) || extractTelegramPlainAiBriefText(payload);
+  container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
 }
 
 function openTelegramBriefModal(task, statusHandler) {
@@ -707,7 +693,7 @@ function openTelegramBriefModal(task, statusHandler) {
         const startedAt = Date.now();
         const aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
         if (requestId !== activeRequestId) return;
-        renderTelegramBriefPreview(preview, aiPayload, '');
+        renderTelegramBriefPreview(preview, aiPayload);
         setStatus('Готово. Краткий вывод получен через Платный ИИ.', 'success');
         if (metaNode) {
           const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - startedAt)) / 1000).toFixed(1);
