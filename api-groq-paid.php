@@ -516,6 +516,54 @@ function callGroqChat(array $requestPayload, string $apiKey): array
     return ['ok' => true, 'status' => 200, 'raw' => $decoded];
 }
 
+function buildExtractedTextsFromFiles(array $files): array
+{
+    $entries = [];
+    $allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+    $supportedDocMimes = [
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword',
+        'application/vnd.ms-word',
+        'application/zip',
+    ];
+
+    foreach ($files as $file) {
+        $name = (string)($file['name'] ?? 'Файл');
+        $tmp = (string)($file['tmp_name'] ?? '');
+        if ($tmp === '' || !is_file($tmp)) {
+            continue;
+        }
+        $mime = detectMime($tmp, (string)($file['client_type'] ?? ''));
+        $ext = detectFileExtension($name);
+        $text = '';
+
+        if (str_starts_with($mime, 'text/')) {
+            $text = (string)@file_get_contents($tmp);
+        } elseif (in_array($mime, $supportedDocMimes, true) && $ext === 'docx') {
+            $text = extractDocxText($tmp);
+        } elseif (in_array($mime, $supportedDocMimes, true) && $ext === 'doc') {
+            $text = extractDocText($tmp);
+        } elseif (in_array($mime, $allowedImageMimes, true)) {
+            $text = extractImageTextWithOcr($tmp);
+        } elseif ($mime === 'application/pdf') {
+            $pdfExtract = extractPdfText($tmp);
+            $text = (string)($pdfExtract['text'] ?? '');
+        }
+
+        $text = cleanExtractedText($text);
+        if ($text === '') {
+            continue;
+        }
+        $entries[] = [
+            'name' => $name !== '' ? $name : 'Документ',
+            'type' => $mime,
+            'text' => mb_substr($text, 0, 24000),
+        ];
+    }
+
+    return $entries;
+}
+
 function handleAnalyzePaidAction(array $env): void
 {
     $files = normalizeUploadedFiles('files');
@@ -738,6 +786,93 @@ function handleAnalyzePaidAction(array $env): void
     ]);
 }
 
+function handleGenerateSummaryAction(array $env): void
+{
+    $apiKey = getGroqKey($env);
+    if ($apiKey === '') {
+        respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
+    }
+
+    $rawExtractedTexts = (string)($_POST['extractedTexts'] ?? '');
+    $decodedExtractedTexts = json_decode($rawExtractedTexts, true);
+    if (!is_array($decodedExtractedTexts)) {
+        $decodedExtractedTexts = [];
+    }
+    $uploadedFiles = array_merge(
+        normalizeUploadedFiles('files'),
+        normalizeUploadedFiles('file'),
+        normalizeUploadedFiles('attachments')
+    );
+    if (!$decodedExtractedTexts && $uploadedFiles) {
+        $decodedExtractedTexts = buildExtractedTextsFromFiles($uploadedFiles);
+    }
+    if (!is_array($decodedExtractedTexts) || !$decodedExtractedTexts) {
+        respond(422, ['ok' => false, 'error' => 'Передайте extractedTexts или файлы (files[]) для формирования summary.']);
+    }
+
+    $summaryParts = [];
+    foreach ($decodedExtractedTexts as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $text = trim((string)($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        $name = trim((string)($entry['name'] ?? 'Документ'));
+        $summaryParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $text;
+    }
+    $fullText = trim(implode("\n\n", $summaryParts));
+    if ($fullText === '') {
+        respond(422, ['ok' => false, 'error' => 'Текст документов пустой, summary сформировать невозможно.']);
+    }
+
+    $model = resolveModel($env);
+    $summarySystemMessage = "Ты — ассистент, который делает краткое и точное изложение документов.\n\n"
+        . "Твоя задача: на основе предоставленного текста составить summary (резюме, краткое содержание).\n\n"
+        . "Правила:\n"
+        . "- Не добавляй шапку (кому, от кого), не добавляй подпись, не используй обращения.\n"
+        . "- Не пересказывай документ дословно и не цитируй большие куски.\n"
+        . "- Выдели самое главное: суть документа, ключевые факты, даты, суммы, требования, решения.\n"
+        . "- Структурируй summary в виде коротких пунктов или абзацев (2-5 предложений).\n"
+        . "- Используй деловой, нейтральный язык, без эмоций и без эмодзи.\n"
+        . "- Не добавляй оценку документу («хорошо», «плохо», «важно») — только факты.\n"
+        . "- Если документ содержит несколько частей (требования, просьбы, сроки) — отрази каждую.\n"
+        . "- Если информации недостаточно — укажи, какие данные отсутствуют.\n\n"
+        . "Формат ответа: только текст summary, без лишних слов.";
+
+    $requestPayload = [
+        'model' => $model,
+        'temperature' => 0.3,
+        'max_tokens' => 800,
+        'top_p' => 0.85,
+        'messages' => [
+            ['role' => 'system', 'content' => $summarySystemMessage],
+            ['role' => 'user', 'content' => "Сделай краткое содержание документа:\n\n" . $fullText],
+        ],
+    ];
+
+    $startedAt = microtime(true);
+    $groqResult = callGroqChat($requestPayload, $apiKey);
+    if (($groqResult['ok'] ?? false) !== true) {
+        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+    }
+
+    $decoded = (array)($groqResult['raw'] ?? []);
+    $summary = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    if ($summary === '') {
+        respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
+    }
+
+    respond(200, [
+        'ok' => true,
+        'summary' => $summary,
+        'model' => (string)($decoded['model'] ?? $model),
+        'durationMs' => max(1, (int)round((microtime(true) - $startedAt) * 1000)),
+        'tokensUsed' => (int)($decoded['usage']['total_tokens'] ?? 0),
+    ]);
+}
+
 function handleGetRequest(array $env): void
 {
     $action = trim((string)($_GET['action'] ?? ''));
@@ -747,7 +882,7 @@ function handleGetRequest(array $env): void
             'message' => 'pong',
             'apiKeyConfigured' => getGroqKey($env) !== '',
             'model' => resolveModel($env),
-            'actions' => ['analyze_paid'],
+            'actions' => ['analyze_paid', 'generate_summary'],
         ]);
     }
 
@@ -756,6 +891,7 @@ function handleGetRequest(array $env): void
         'message' => 'API доступен. Для обработки документов используйте POST action=analyze_paid и files[].',
         'method' => 'POST',
         'defaultAction' => 'analyze_paid',
+        'availablePostActions' => ['analyze_paid', 'generate_summary'],
         'availableGetActions' => ['health', 'ping'],
     ]);
 }
@@ -770,6 +906,9 @@ function handlePostRequest(array $env): void
     $handlers = [
         'analyze_paid' => static function (array $currentEnv): void {
             handleAnalyzePaidAction($currentEnv);
+        },
+        'generate_summary' => static function (array $currentEnv): void {
+            handleGenerateSummaryAction($currentEnv);
         },
     ];
 

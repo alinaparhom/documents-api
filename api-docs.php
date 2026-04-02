@@ -2454,6 +2454,7 @@ if ($briefMode) {
 if (
     $action !== ''
     && $action !== 'ai_response_analyze'
+    && $action !== 'generate_summary'
     && $action !== 'ocr_extract'
     && $action !== 'generate_document'
     && $action !== 'generate_from_html'
@@ -2737,7 +2738,7 @@ $extractedTextsDiagnostics = [
     'skippedFiles' => 0,
     'skipped' => [],
 ];
-if ($action === 'ai_response_analyze') {
+if ($action === 'ai_response_analyze' || $action === 'generate_summary') {
     $serverExtraction = extractTextsFromUploadedFiles($files, $env);
     $serverExtractedTexts = isset($serverExtraction['entries']) && is_array($serverExtraction['entries'])
         ? $serverExtraction['entries']
@@ -3235,6 +3236,87 @@ function performAiRequestWithRetry(string $endpoint, string $apiKey, array $body
 $requestAttempts = normalizeIntSetting($env['AI_REQUEST_RETRY_ATTEMPTS'] ?? 2, 2, 1, 5);
 $requestTimeout = normalizeIntSetting($env['AI_REQUEST_TIMEOUT'] ?? 120, 120, 20, 300);
 $connectTimeout = normalizeIntSetting($env['AI_CONNECT_TIMEOUT'] ?? 12, 12, 3, 60);
+if ($action === 'generate_summary') {
+    if (!$extractedTexts) {
+        jsonResponse(422, ['ok' => false, 'error' => 'Нет extractedTexts для формирования summary.']);
+    }
+
+    $summaryBlocks = [];
+    foreach ($extractedTexts as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $textPart = trim((string)($entry['text'] ?? ''));
+        if ($textPart === '') {
+            continue;
+        }
+        $namePart = trim((string)($entry['name'] ?? 'Документ'));
+        $summaryBlocks[] = '[' . ($namePart !== '' ? $namePart : 'Документ') . "]\n" . $textPart;
+    }
+    $fullText = trim(implode("\n\n", $summaryBlocks));
+    if ($fullText === '') {
+        jsonResponse(422, ['ok' => false, 'error' => 'Текст документов пустой, summary сформировать невозможно.']);
+    }
+
+    $summarySystemMessage = "Ты — ассистент, который делает краткое и точное изложение документов.\n\n"
+        . "Твоя задача: на основе предоставленного текста составить summary (резюме, краткое содержание).\n\n"
+        . "Правила:\n"
+        . "- Не добавляй шапку (кому, от кого), не добавляй подпись, не используй обращения.\n"
+        . "- Не пересказывай документ дословно и не цитируй большие куски.\n"
+        . "- Выдели самое главное: суть документа, ключевые факты, даты, суммы, требования, решения.\n"
+        . "- Структурируй summary в виде коротких пунктов или абзацев (2-5 предложений).\n"
+        . "- Используй деловой, нейтральный язык, без эмоций и без эмодзи.\n"
+        . "- Не добавляй оценку документу («хорошо», «плохо», «важно») — только факты.\n"
+        . "- Если документ содержит несколько частей (требования, просьбы, сроки) — отрази каждую.\n"
+        . "- Если информации недостаточно — укажи, какие данные отсутствуют.\n\n"
+        . "Формат ответа: только текст summary, без лишних слов.";
+    $summaryBody = [
+        'model' => $effectiveModel,
+        'temperature' => 0.3,
+        'max_tokens' => 800,
+        'top_p' => 0.85,
+        'messages' => [
+            ['role' => 'system', 'content' => $summarySystemMessage],
+            ['role' => 'user', 'content' => "Сделай краткое содержание документа:\n\n" . $fullText],
+        ],
+    ];
+    $summaryStartedAt = microtime(true);
+    $summaryResult = performAiRequestWithRetry($endpoint, $apiKey, $summaryBody, [
+        'attempts' => $requestAttempts,
+        'timeout' => $requestTimeout,
+        'connect_timeout' => $connectTimeout,
+        'base_delay_ms' => 500,
+    ]);
+    $summaryResponseBody = $summaryResult['body'];
+    $summaryCurlError = (string)($summaryResult['curl_error'] ?? '');
+    $summaryStatusCode = (int)($summaryResult['status'] ?? 0);
+    if ($summaryResponseBody === false) {
+        jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к AI API: ' . $summaryCurlError]);
+    }
+    $summaryJson = json_decode((string)$summaryResponseBody, true);
+    if (!is_array($summaryJson)) {
+        jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ AI API при generate_summary']);
+    }
+    if ($summaryStatusCode >= 400) {
+        $summaryMessage = textFromMixed($summaryJson['error']['message'] ?? '');
+        jsonResponse(502, [
+            'ok' => false,
+            'error' => $summaryMessage !== '' ? $summaryMessage : 'AI API error при generate_summary',
+            'status' => $summaryStatusCode,
+        ]);
+    }
+    $summary = trim((string)($summaryJson['choices'][0]['message']['content'] ?? ''));
+    if ($summary === '') {
+        jsonResponse(502, ['ok' => false, 'error' => 'Пустой summary от AI']);
+    }
+    jsonResponse(200, [
+        'ok' => true,
+        'summary' => $summary,
+        'model' => (string)($summaryJson['model'] ?? $effectiveModel),
+        'durationMs' => max(1, (int)round((microtime(true) - $summaryStartedAt) * 1000)),
+        'tokensUsed' => (int)($summaryJson['usage']['total_tokens'] ?? 0),
+    ]);
+}
 $requestStartedAt = microtime(true);
 $requestResult = performAiRequestWithRetry($endpoint, $apiKey, $body, [
     'attempts' => $requestAttempts,
