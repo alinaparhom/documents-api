@@ -408,12 +408,8 @@
 
   async function buildPaidRequestFormData(prompt, state, config) {
     var paidFiles = await resolvePaidSourceFiles(state, config);
-    if (!Array.isArray(paidFiles) || !paidFiles.length) {
-      throw new Error('Для платного ИИ прикрепите минимум один файл.');
-    }
-
-    var mergedContextParts = [];
     var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
+    var extractedTexts = [];
     for (var i = 0; i < sourceFiles.length; i += 1) {
       var sourceEntry = sourceFiles[i];
       if (!sourceEntry) {
@@ -424,26 +420,29 @@
       if (!sourceText) {
         continue;
       }
-      mergedContextParts.push('[Файл: ' + sourceName + ']\n' + sourceText);
+      extractedTexts.push({
+        name: sourceName,
+        type: 'text/plain',
+        text: sourceText.slice(0, 24000)
+      });
     }
 
-    var mergedContext = normalizeContextText(mergedContextParts.join('\n\n')).slice(0, MAX_EXTRACT_CHARS);
-    var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
-    if (mergedContext) {
-      promptWithContext += '\n\nКонтекст всех вложений (OCR):\n' + mergedContext;
+    if ((!Array.isArray(paidFiles) || !paidFiles.length) && !extractedTexts.length) {
+      throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
+
+    var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
 
     var formData = new FormData();
+    formData.append('action', 'generate_response');
     formData.append('prompt', promptWithContext);
+    if (extractedTexts.length) {
+      formData.append('extractedTexts', JSON.stringify(extractedTexts));
+    }
     paidFiles.forEach(function (entry) {
       if (!entry || !entry.blob) return;
       formData.append('files[]', entry.blob, entry.name || 'document.bin');
     });
-    formData.append(
-      'files[]',
-      new Blob([mergedContext || 'OCR не вернул текст. Используйте исходный запрос пользователя.'], { type: 'text/plain' }),
-      'attachments-context.txt'
-    );
     return formData;
   }
 

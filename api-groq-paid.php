@@ -873,6 +873,94 @@ function handleGenerateSummaryAction(array $env): void
     ]);
 }
 
+function handleGenerateResponseAction(array $env): void
+{
+    $apiKey = getGroqKey($env);
+    if ($apiKey === '') {
+        respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
+    }
+
+    $rawExtractedTexts = (string)($_POST['extractedTexts'] ?? '');
+    $decodedExtractedTexts = json_decode($rawExtractedTexts, true);
+    if (!is_array($decodedExtractedTexts)) {
+        $decodedExtractedTexts = [];
+    }
+    $uploadedFiles = array_merge(
+        normalizeUploadedFiles('files'),
+        normalizeUploadedFiles('file'),
+        normalizeUploadedFiles('attachments')
+    );
+    if (!$decodedExtractedTexts && $uploadedFiles) {
+        $decodedExtractedTexts = buildExtractedTextsFromFiles($uploadedFiles);
+    }
+    if (!is_array($decodedExtractedTexts) || !$decodedExtractedTexts) {
+        respond(422, ['ok' => false, 'error' => 'Передайте extractedTexts или файлы (files[]) для формирования ответа.']);
+    }
+
+    $responseParts = [];
+    foreach ($decodedExtractedTexts as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $text = trim((string)($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        $name = trim((string)($entry['name'] ?? 'Документ'));
+        $responseParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n" . mb_substr($text, 0, 24000);
+    }
+    $fullText = trim(implode("\n\n", $responseParts));
+    if ($fullText === '') {
+        respond(422, ['ok' => false, 'error' => 'Текст документов пустой, ответ сформировать невозможно.']);
+    }
+
+    $userPrompt = trim((string)($_POST['prompt'] ?? ''));
+    if ($userPrompt === '') {
+        $userPrompt = 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
+    }
+
+    $model = resolveModel($env);
+    $systemMessage = "Ты — сотрудник строительной компании, отвечающий за официальную переписку.\n\n"
+        . "Твоя задача: на основе текста документов подготовить готовый официальный ответ.\n\n"
+        . "Правила:\n"
+        . "- Не добавляй шапку письма, подпись, должность и служебные реквизиты.\n"
+        . "- Не пересказывай документ дословно, сразу давай решение по сути.\n"
+        . "- Формулируй ответ в деловом и уверенном стиле, без воды.\n"
+        . "- Если есть сроки, указывай даты в формате ДД.ММ.ГГГГ.\n"
+        . "- Если данных не хватает, запроси конкретные недостающие сведения.\n"
+        . "- Не пиши про OCR, ограничения чтения файла или технические детали.\n";
+
+    $requestPayload = [
+        'model' => $model,
+        'temperature' => 0.2,
+        'max_tokens' => 1800,
+        'messages' => [
+            ['role' => 'system', 'content' => $systemMessage],
+            ['role' => 'user', 'content' => $userPrompt . "\n\nТекст документов:\n\n" . $fullText],
+        ],
+    ];
+
+    $startedAt = microtime(true);
+    $groqResult = callGroqChat($requestPayload, $apiKey);
+    if (($groqResult['ok'] ?? false) !== true) {
+        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+    }
+
+    $decoded = (array)($groqResult['raw'] ?? []);
+    $responseText = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    if ($responseText === '') {
+        respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq']);
+    }
+
+    respond(200, [
+        'ok' => true,
+        'response' => $responseText,
+        'model' => (string)($decoded['model'] ?? $model),
+        'durationMs' => max(1, (int)round((microtime(true) - $startedAt) * 1000)),
+        'tokensUsed' => (int)($decoded['usage']['total_tokens'] ?? 0),
+    ]);
+}
+
 function handleGetRequest(array $env): void
 {
     $action = trim((string)($_GET['action'] ?? ''));
@@ -882,7 +970,7 @@ function handleGetRequest(array $env): void
             'message' => 'pong',
             'apiKeyConfigured' => getGroqKey($env) !== '',
             'model' => resolveModel($env),
-            'actions' => ['analyze_paid', 'generate_summary'],
+            'actions' => ['analyze_paid', 'generate_summary', 'generate_response'],
         ]);
     }
 
@@ -891,7 +979,7 @@ function handleGetRequest(array $env): void
         'message' => 'API доступен. Для обработки документов используйте POST action=analyze_paid и files[].',
         'method' => 'POST',
         'defaultAction' => 'analyze_paid',
-        'availablePostActions' => ['analyze_paid', 'generate_summary'],
+        'availablePostActions' => ['analyze_paid', 'generate_summary', 'generate_response'],
         'availableGetActions' => ['health', 'ping'],
     ]);
 }
@@ -909,6 +997,9 @@ function handlePostRequest(array $env): void
         },
         'generate_summary' => static function (array $currentEnv): void {
             handleGenerateSummaryAction($currentEnv);
+        },
+        'generate_response' => static function (array $currentEnv): void {
+            handleGenerateResponseAction($currentEnv);
         },
     ];
 
