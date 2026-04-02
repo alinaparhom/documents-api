@@ -435,19 +435,18 @@
     }
 
     var mergedContextParts = [];
-    for (var i = 0; i < paidFiles.length; i += 1) {
-      var paidEntry = paidFiles[i];
-      if (!paidEntry || !paidEntry.blob) {
+    var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
+    for (var i = 0; i < sourceFiles.length; i += 1) {
+      var sourceEntry = sourceFiles[i];
+      if (!sourceEntry) {
         continue;
       }
-      var paidName = String(paidEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
-      // eslint-disable-next-line no-await-in-loop
-      var paidText = await tryExtractOcrTextForPaid(paidEntry.blob, paidName, '');
-      paidText = normalizeContextText(paidText);
-      if (!paidText) {
+      var sourceName = String(sourceEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
+      var sourceText = normalizeContextText(sourceEntry.content || '');
+      if (!sourceText) {
         continue;
       }
-      mergedContextParts.push('[Файл: ' + paidName + ']\n' + paidText);
+      mergedContextParts.push('[Файл: ' + sourceName + ']\n' + sourceText);
     }
 
     var mergedContext = normalizeContextText(mergedContextParts.join('\n\n')).slice(0, MAX_EXTRACT_CHARS);
@@ -458,6 +457,10 @@
 
     var formData = new FormData();
     formData.append('prompt', promptWithContext);
+    paidFiles.forEach(function (entry) {
+      if (!entry || !entry.blob) return;
+      formData.append('files[]', entry.blob, entry.name || 'document.bin');
+    });
     formData.append(
       'files[]',
       new Blob([mergedContext || 'OCR не вернул текст. Используйте исходный запрос пользователя.'], { type: 'text/plain' }),
