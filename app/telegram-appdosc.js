@@ -13841,7 +13841,7 @@ function createResponseUploadControls(task, entry, setStatus) {
           formData.append('taskDescription', normalizeValue(task && task.description));
           formData.append('prompt', finalPrompt);
           filesToSend.forEach((fileToSend) => {
-            formData.append('files[]', fileToSend, fileToSend.name);
+            formData.append('files', fileToSend, fileToSend.name);
           });
           return formData;
         });

@@ -405,6 +405,10 @@ function handleAnalyzePaidAction(array $env): void
 {
     $files = normalizeUploadedFiles('files');
     if (!$files) {
+        // На некоторых клиентах поле может приходить как files[]
+        $files = normalizeUploadedFiles('files[]');
+    }
+    if (!$files) {
         respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
     }
 
