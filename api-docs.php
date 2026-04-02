@@ -747,15 +747,70 @@ function extractTextWithoutOcr(array $file): string
         return extractDocxText($tmpFile);
     }
 
-    if (in_array($extension, ['txt', 'md', 'csv', 'json', 'xml', 'html'], true)) {
+    $mime = mb_strtolower(trim((string)($file['type'] ?? '')));
+    $isTextByExtension = in_array($extension, ['txt', 'md', 'csv', 'json', 'xml', 'html', 'log', 'ini', 'yaml', 'yml', 'sql', 'rtf'], true);
+    $isTextByMime = str_starts_with($mime, 'text/')
+        || in_array($mime, [
+            'application/json',
+            'application/xml',
+            'application/javascript',
+            'application/x-javascript',
+            'application/rtf',
+            'application/x-rtf',
+        ], true);
+
+    if ($isTextByExtension || $isTextByMime || $extension === '') {
         $raw = @file_get_contents($tmpFile);
         if (!is_string($raw) || $raw === '') {
             return '';
         }
-        return trim((string)$raw);
+
+        if ($extension === 'rtf' || $mime === 'application/rtf' || $mime === 'application/x-rtf') {
+            if (class_exists('RtfHtmlPhp\Document')) {
+                try {
+                    $document = new \RtfHtmlPhp\Document($raw);
+                    $html = $document->render();
+                    return htmlToPlainText((string)$html);
+                } catch (Throwable) {
+                    // fallback below
+                }
+            }
+            $plain = preg_replace('/\\\\par[d]?/u', "\n", $raw);
+            $plain = preg_replace('/\\\\[a-z]+-?\d* ?/ui', '', (string)$plain);
+            $plain = preg_replace('/[{}]/u', '', (string)$plain);
+            return trim((string)$plain);
+        }
+
+        $decoded = decodeTextContent($raw);
+        return trim($decoded);
     }
 
     return '';
+}
+
+function decodeTextContent(string $raw): string
+{
+    if ($raw === '') {
+        return '';
+    }
+
+    $encodings = ['UTF-8', 'Windows-1251', 'KOI8-R', 'ISO-8859-1'];
+    $detected = mb_detect_encoding($raw, $encodings, true);
+    if ($detected !== false && mb_strtoupper($detected) !== 'UTF-8') {
+        $converted = @mb_convert_encoding($raw, 'UTF-8', $detected);
+        if (is_string($converted) && $converted !== '') {
+            return $converted;
+        }
+    }
+
+    if (!mb_check_encoding($raw, 'UTF-8')) {
+        $converted = @iconv('Windows-1251', 'UTF-8//IGNORE', $raw);
+        if (is_string($converted) && $converted !== '') {
+            return $converted;
+        }
+    }
+
+    return $raw;
 }
 
 function localCommandExists(string $command): bool
