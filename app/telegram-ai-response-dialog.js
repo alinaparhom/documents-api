@@ -740,19 +740,18 @@ async function requestAssistantReply(userMessage, context, history) {
     } catch (_) {
       filesForPaid = [];
     }
-    const fileUrlsForPaid = Array.from(new Map(
-      [...extractedTexts, ...attachedFiles]
-        .map((entry) => ({
-          name: String(entry && entry.name || 'document').trim() || 'document',
-          type: String(entry && entry.type || '').trim(),
-          url: String(entry && entry.url || '').trim(),
-        }))
-        .filter((entry) => entry.url)
-        .map((entry) => [entry.url, entry]),
-    ).values());
+    const ocrTextFiles = (Array.isArray(extractedTexts) ? extractedTexts : [])
+      .map((entry, index) => {
+        const text = String(entry && entry.text || '').trim();
+        if (!text) return null;
+        const name = String(entry && entry.name || `document-${index + 1}`).trim() || `document-${index + 1}`;
+        const baseName = name.replace(/\.[a-z0-9]+$/i, '') || `document-${index + 1}`;
+        const trimmedText = text.slice(0, 40000);
+        return new File([new Blob([trimmedText], { type: 'text/plain' })], `${baseName}-ocr.txt`, { type: 'text/plain' });
+      })
+      .filter(Boolean);
     const hasTextContext = Boolean(extractedFilesText.trim());
-    const shouldSendFileUrls = !hasTextContext && !filesForPaid.length && fileUrlsForPaid.length > 0;
-    if (!filesForPaid.length && !shouldSendFileUrls && !hasTextContext) {
+    if (!filesForPaid.length && !ocrTextFiles.length && !hasTextContext) {
       throw new Error('Для платного ИИ не удалось получить текст из файлов. Проверьте доступ к вложениям и повторите.');
     }
     const paidPrompt = [
@@ -768,9 +767,7 @@ async function requestAssistantReply(userMessage, context, history) {
       filesForPaid.forEach((file) => {
         formData.append('files', file, file.name || 'document.pdf');
       });
-      if (shouldSendFileUrls) {
-        formData.append('file_urls', JSON.stringify(fileUrlsForPaid));
-      }
+      ocrTextFiles.forEach((file) => formData.append('files', file, file.name || 'document-ocr.txt'));
       return formData;
     }, { timeoutMs: Math.max(timeoutMs, 45000) });
     const paidResponse = paidRequest && paidRequest.response;
