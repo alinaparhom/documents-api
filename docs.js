@@ -13665,13 +13665,57 @@
         return '';
       }
 
+      function isPdfFile(name, type) {
+        var fileName = String(name || '').toLowerCase();
+        var fileType = String(type || '').toLowerCase();
+        return fileType.indexOf('application/pdf') === 0 || /\.pdf$/i.test(fileName);
+      }
+
+      async function tryExtractOcrTextForVip(fileOrBlob, fileName, remoteUrl) {
+        var ocrApiUrl = (payload && payload.apiUrl) || '/js/documents/api-docs.php';
+        var ocrFormData = new FormData();
+        ocrFormData.append('action', 'ocr_extract');
+        ocrFormData.append('language', 'rus');
+        if (remoteUrl) {
+          ocrFormData.append('file_url', String(remoteUrl));
+        } else if (fileOrBlob) {
+          ocrFormData.append('file', fileOrBlob, fileName || 'document.pdf');
+        } else {
+          return '';
+        }
+        try {
+          var response = await fetch(ocrApiUrl + '?action=ocr_extract', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: ocrFormData
+          });
+          var data = await response.json().catch(function() { return null; });
+          if (!response.ok || !data || data.ok !== true) {
+            return '';
+          }
+          return String(data.text || '').trim();
+        } catch (_) {
+          return '';
+        }
+      }
+
       async function appendSourceFilesToFormData(formData, linkedFiles, pendingFiles) {
         var appendedCount = 0;
-        pendingFiles.forEach(function(file) {
-          if (!file) return;
-          formData.append('files[]', file);
+        for (var p = 0; p < pendingFiles.length; p += 1) {
+          var file = pendingFiles[p];
+          if (!file) continue;
+          var pendingName = file.name || ('file-' + (p + 1));
+          formData.append('files', file, pendingName);
           appendedCount += 1;
-        });
+          if (isPdfFile(pendingName, file.type)) {
+            // eslint-disable-next-line no-await-in-loop
+            var pendingOcrText = await tryExtractOcrTextForVip(file, pendingName, '');
+            if (pendingOcrText) {
+              formData.append('files', new Blob([pendingOcrText.slice(0, 40000)], { type: 'text/plain' }), pendingName.replace(/\.pdf$/i, '') + '-ocr.txt');
+              appendedCount += 1;
+            }
+          }
+        }
         for (var i = 0; i < linkedFiles.length; i += 1) {
           var linkedFile = linkedFiles[i];
           var fileUrl = resolveLinkedFileUrl(linkedFile);
@@ -13687,11 +13731,31 @@
             // eslint-disable-next-line no-await-in-loop
             var fileBlob = await fileResponse.blob();
             var fileName = linkedFile && linkedFile.name ? String(linkedFile.name) : ('file-' + (i + 1));
-            formData.append('files[]', fileBlob, fileName);
+            formData.append('files', fileBlob, fileName);
             appendedCount += 1;
+            if (isPdfFile(fileName, fileBlob.type)) {
+              // eslint-disable-next-line no-await-in-loop
+              var linkedOcrText = await tryExtractOcrTextForVip(null, fileName, fileUrl);
+              if (linkedOcrText) {
+                formData.append('files', new Blob([linkedOcrText.slice(0, 40000)], { type: 'text/plain' }), fileName.replace(/\.pdf$/i, '') + '-ocr.txt');
+                appendedCount += 1;
+              }
+            }
           } catch (_) {}
         }
         return appendedCount;
+      }
+
+      async function buildVipRequestFormData(promptText, selectedLinked, selectedPending, requestContext) {
+        var formData = new FormData();
+        formData.append('prompt', promptText);
+        formData.append('responseStyle', 'neutral');
+        formData.append('context', JSON.stringify(requestContext || {}));
+        var appendedCount = await appendSourceFilesToFormData(formData, selectedLinked, selectedPending);
+        if (!appendedCount) {
+          throw new Error('Выберите хотя бы один файл для VIP чата.');
+        }
+        return formData;
       }
 
       sendButton.addEventListener('click', function() {
@@ -13704,12 +13768,6 @@
         pushChat('assistant', '⏳ Обрабатываю запрос...');
         metaNode.innerHTML = '';
         var startedAt = Date.now();
-        var formData = new FormData();
-        formData.append('action', 'ai_response_analyze');
-        formData.append('mode', 'paid');
-        formData.append('prompt', promptText);
-        formData.append('documentTitle', payload.documentTitle || 'Документ');
-        formData.append('responseStyle', 'neutral');
         var requestContext = {};
         var sourceContext = payload.context || {};
         Object.keys(sourceContext).forEach(function(key) {
@@ -13731,13 +13789,25 @@
           }));
         chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
         requestContext.chatHistory = chatHistory.slice(-8);
-        formData.append('context', JSON.stringify(requestContext));
-        appendSourceFilesToFormData(formData, selectedLinked, selectedPending)
-          .then(function(appendedCount) {
-            if (!appendedCount) {
-              throw new Error('Выберите хотя бы один файл для VIP чата.');
+        Promise.resolve()
+          .then(function() {
+            var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+            function tryEndpoint(index) {
+              if (index >= paidEndpoints.length) {
+                throw new Error('Не удалось подключиться к VIP API. Проверьте endpoint api-groq-paid.php.');
+              }
+              return buildVipRequestFormData(promptText, selectedLinked, selectedPending, requestContext)
+                .then(function(formData) {
+                  return fetch(paidEndpoints[index], { method: 'POST', body: formData, credentials: 'same-origin' });
+                })
+                .then(function(response) {
+                  if ((response.status === 404 || response.status === 405) && index < paidEndpoints.length - 1) {
+                    return tryEndpoint(index + 1);
+                  }
+                  return response;
+                });
             }
-            return fetch(payload.apiUrl, { method: 'POST', body: formData, credentials: 'same-origin' });
+            return tryEndpoint(0);
           })
           .then(handleResponse)
           .then(function(data) {
