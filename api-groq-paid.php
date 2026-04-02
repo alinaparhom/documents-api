@@ -14,6 +14,7 @@ const MAX_TOTAL_UPLOAD_BYTES = 0; // 0 = без ограничения
 const MAX_TEXT_CHARS = 0; // 0 = без обрезки
 const MAX_TEXT_CHARS_PER_CHUNK = 12000;
 const MAX_TEXT_CHUNKS_TOTAL = 30;
+const MAX_TEXT_PAYLOAD_CHARS = 90000;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
@@ -303,6 +304,40 @@ function splitTextIntoChunks(string $text, int $maxChunkChars = MAX_TEXT_CHARS_P
     return array_slice($chunks, 0, MAX_TEXT_CHUNKS_TOTAL);
 }
 
+function takeChunksByCharBudget(array $chunks, int $maxChars): array
+{
+    if ($maxChars <= 0) {
+        return ['items' => [], 'omitted' => count($chunks), 'usedChars' => 0];
+    }
+
+    $selected = [];
+    $usedChars = 0;
+
+    foreach ($chunks as $chunk) {
+        $text = trim((string)$chunk);
+        if ($text === '') {
+            continue;
+        }
+        $chunkLen = mb_strlen($text);
+        if ($usedChars > 0 && ($usedChars + 2 + $chunkLen) > $maxChars) {
+            break;
+        }
+        if ($usedChars === 0 && $chunkLen > $maxChars) {
+            $selected[] = mb_substr($text, 0, $maxChars);
+            $usedChars = mb_strlen((string)$selected[0]);
+            break;
+        }
+        $selected[] = $text;
+        $usedChars += ($usedChars > 0 ? 2 : 0) + $chunkLen;
+    }
+
+    return [
+        'items' => $selected,
+        'omitted' => max(0, count($chunks) - count($selected)),
+        'usedChars' => $usedChars,
+    ];
+}
+
 function extractDocxText(string $path): string
 {
     if (!class_exists('ZipArchive')) {
@@ -561,11 +596,29 @@ function handleAnalyzePaidAction(array $env): void
     if ($limitedContextNotice !== '') {
         $textPayload .= "\n\n" . $limitedContextNotice;
     }
+
+    $reservedForMeta = $metaChunks ? 12000 : 0;
+    $payloadBaseLen = mb_strlen($textPayload);
+    $textBudget = max(0, MAX_TEXT_PAYLOAD_CHARS - $payloadBaseLen - $reservedForMeta);
     if ($textChunks) {
-        $textPayload .= "\n\nТекстовые файлы:\n" . implode("\n\n", $textChunks);
+        $limitedChunks = takeChunksByCharBudget($textChunks, $textBudget);
+        $selectedTextChunks = $limitedChunks['items'];
+        if ($selectedTextChunks) {
+            $textPayload .= "\n\nТекстовые файлы:\n" . implode("\n\n", $selectedTextChunks);
+        }
+        if (($limitedChunks['omitted'] ?? 0) > 0) {
+            $textPayload .= "\n\n[Контекст ограничен: пропущено частей текста: " . (int)$limitedChunks['omitted'] . ']';
+        }
     }
     if ($metaChunks) {
-        $textPayload .= "\n\nСводка файлов:\n" . implode("\n", $metaChunks);
+        $metaText = "Сводка файлов:\n" . implode("\n", $metaChunks);
+        $metaBudget = max(0, MAX_TEXT_PAYLOAD_CHARS - mb_strlen($textPayload) - 2);
+        if ($metaBudget > 0) {
+            if (mb_strlen($metaText) > $metaBudget) {
+                $metaText = mb_substr($metaText, 0, $metaBudget);
+            }
+            $textPayload .= "\n\n" . $metaText;
+        }
     }
 
     $requestPayload = [
