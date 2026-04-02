@@ -329,7 +329,19 @@
       if (remoteUrl) {
         formData.append('file_url', String(remoteUrl));
       } else if (fileOrBlob) {
-        formData.append('file', fileOrBlob, fileName || 'document.bin');
+        var normalizedName = String(fileName || (fileOrBlob && fileOrBlob.name) || 'document').trim() || 'document';
+        if (!/\.[a-z0-9]{2,8}$/i.test(normalizedName)) {
+          var type = String(fileOrBlob && fileOrBlob.type || '').toLowerCase();
+          if (type.indexOf('pdf') >= 0) normalizedName += '.pdf';
+          else if (type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0) normalizedName += '.jpg';
+          else if (type.indexOf('png') >= 0) normalizedName += '.png';
+          else if (type.indexOf('webp') >= 0) normalizedName += '.webp';
+          else if (type.indexOf('gif') >= 0) normalizedName += '.gif';
+          else if (type.indexOf('bmp') >= 0) normalizedName += '.bmp';
+          else if (type.indexOf('tiff') >= 0 || type.indexOf('tif') >= 0) normalizedName += '.tiff';
+          else normalizedName += '.bin';
+        }
+        formData.append('file', fileOrBlob, normalizedName);
       } else {
         return '';
       }
@@ -2393,7 +2405,15 @@
           formData.append('action', 'ocr_extract');
           formData.append('language', 'rus');
           if (fileEntry.fileObject) {
-            formData.append('file', fileEntry.fileObject, fileLabel || 'document.pdf');
+            var uploadName = String(fileLabel || (fileEntry.fileObject && fileEntry.fileObject.name) || 'document').trim() || 'document';
+            if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
+              var fileType = String(fileEntry.fileObject && fileEntry.fileObject.type || '').toLowerCase();
+              if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
+              else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
+              else if (fileType.indexOf('png') >= 0) uploadName += '.png';
+              else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+            }
+            formData.append('file', fileEntry.fileObject, uploadName);
           } else if (fileEntry.url) {
             formData.append('file_url', String(fileEntry.url));
           } else {

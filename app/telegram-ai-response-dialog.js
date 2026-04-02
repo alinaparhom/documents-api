@@ -392,7 +392,20 @@ function buildReadableAiError(error) {
 }
 
 function detectFileName(file, index) {
-  return String((file && (file.originalName || file.name || file.fileName || file.storedName)) || `Файл ${index + 1}`).trim();
+  const rawName = String((file && (file.originalName || file.name || file.fileName || file.storedName)) || `Файл ${index + 1}`).trim();
+  if (/\.[a-z0-9]{2,8}$/i.test(rawName)) return rawName;
+  const type = String(file && (file.type || file.mime || file.mimeType || '')).toLowerCase();
+  const url = String(file && (file.url || file.fileUrl || file.downloadUrl || '')).toLowerCase();
+  let ext = '';
+  if (type.includes('pdf') || /\.pdf([?#]|$)/i.test(url)) ext = 'pdf';
+  else if (type.includes('jpeg') || type.includes('jpg') || /\.jpe?g([?#]|$)/i.test(url)) ext = 'jpg';
+  else if (type.includes('png') || /\.png([?#]|$)/i.test(url)) ext = 'png';
+  else if (type.includes('webp') || /\.webp([?#]|$)/i.test(url)) ext = 'webp';
+  else if (type.includes('gif') || /\.gif([?#]|$)/i.test(url)) ext = 'gif';
+  else if (type.includes('bmp') || /\.bmp([?#]|$)/i.test(url)) ext = 'bmp';
+  else if (type.includes('tiff') || type.includes('tif') || /\.tiff?([?#]|$)/i.test(url)) ext = 'tiff';
+  else if (type.includes('wordprocessingml.document') || /\.docx([?#]|$)/i.test(url)) ext = 'docx';
+  return ext ? `${rawName}.${ext}` : rawName;
 }
 
 function detectFileUrl(file) {
