@@ -379,17 +379,6 @@
         }
         if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
         preparedFiles.push({ name: localName, blob: file.fileObject });
-        var localOcrText = '';
-        if (isPdfFile(localName, file.fileObject.type)) {
-          // eslint-disable-next-line no-await-in-loop
-          localOcrText = await tryExtractOcrTextForPaid(file.fileObject, localName, '');
-        }
-        if (localOcrText) {
-          preparedFiles.push({
-            name: localName.replace(/\.[^.]+$/, '') + '-ocr.txt',
-            blob: new Blob([localOcrText.slice(0, 20000)], { type: 'text/plain' })
-          });
-        }
         continue;
       }
       var remoteUrl = resolveFileUrl(file);
@@ -412,17 +401,6 @@
         }
         if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
         preparedFiles.push({ name: remoteName, blob: fileBlob });
-        var remoteOcrText = '';
-        if (isPdfFile(remoteName, fileBlob.type)) {
-          // eslint-disable-next-line no-await-in-loop
-          remoteOcrText = await tryExtractOcrTextForPaid(null, remoteName, remoteUrl);
-        }
-        if (remoteOcrText) {
-          preparedFiles.push({
-            name: remoteName.replace(/\.[^.]+$/, '') + '-ocr.txt',
-            blob: new Blob([remoteOcrText.slice(0, 20000)], { type: 'text/plain' })
-          });
-        }
       }
     }
     return preparedFiles;
@@ -433,12 +411,39 @@
     if (!Array.isArray(paidFiles) || !paidFiles.length) {
       throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
+
+    var mergedContextParts = [];
+    var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
+    for (var i = 0; i < sourceFiles.length; i += 1) {
+      var sourceEntry = sourceFiles[i];
+      if (!sourceEntry) {
+        continue;
+      }
+      var sourceName = String(sourceEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
+      var sourceText = normalizeContextText(sourceEntry.content || '');
+      if (!sourceText) {
+        continue;
+      }
+      mergedContextParts.push('[Файл: ' + sourceName + ']\n' + sourceText);
+    }
+
+    var mergedContext = normalizeContextText(mergedContextParts.join('\n\n')).slice(0, MAX_EXTRACT_CHARS);
+    var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
+    if (mergedContext) {
+      promptWithContext += '\n\nКонтекст всех вложений (OCR):\n' + mergedContext;
+    }
+
     var formData = new FormData();
-    formData.append('prompt', String(prompt || 'Сформируй ответ по приложенному файлу.'));
+    formData.append('prompt', promptWithContext);
     paidFiles.forEach(function (entry) {
       if (!entry || !entry.blob) return;
-      formData.append('files', entry.blob, entry.name || 'document.bin');
+      formData.append('files[]', entry.blob, entry.name || 'document.bin');
     });
+    formData.append(
+      'files[]',
+      new Blob([mergedContext || 'OCR не вернул текст. Используйте исходный запрос пользователя.'], { type: 'text/plain' }),
+      'attachments-context.txt'
+    );
     return formData;
   }
 
