@@ -2466,6 +2466,7 @@
     var request = await postGroqPaidForBrief(function() {
       var formData = new FormData();
       formData.append('action', 'generate_summary');
+      formData.append('files[]', fileForVip, fileForVip.name || sourceLabel);
       formData.append('files', fileForVip, fileForVip.name || sourceLabel);
       if (String(extractedText || '').trim()) {
         formData.append('extractedTexts', JSON.stringify([{

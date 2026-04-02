@@ -374,6 +374,7 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     const formData = new FormData();
     formData.append('action', 'generate_summary');
     formData.append('mode', 'paid');
+    formData.append('files[]', fileForVip, fileForVip.name || fileName);
     formData.append('files', fileForVip, fileForVip.name || fileName);
     if (extractedText) {
       formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }]));
