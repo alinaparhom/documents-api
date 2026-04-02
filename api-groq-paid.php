@@ -898,6 +898,8 @@ function handleGenerateResponseAction(array $env): void
     }
 
     $responseParts = [];
+    $remainingBudget = MAX_TEXT_PAYLOAD_CHARS > 0 ? MAX_TEXT_PAYLOAD_CHARS : 90000;
+    $truncatedDocs = 0;
     foreach ($decodedExtractedTexts as $entry) {
         if (!is_array($entry)) {
             continue;
@@ -907,11 +909,41 @@ function handleGenerateResponseAction(array $env): void
             continue;
         }
         $name = trim((string)($entry['name'] ?? 'Документ'));
-        $responseParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n" . mb_substr($text, 0, 24000);
+        $safeName = $name !== '' ? $name : 'Документ';
+        $header = '[' . $safeName . "]\n";
+        $maxPerDoc = min(22000, max(4000, $remainingBudget - 1200));
+        if ($maxPerDoc <= 0) {
+            $truncatedDocs += 1;
+            continue;
+        }
+        $docText = mb_substr($text, 0, $maxPerDoc);
+        if (mb_strlen($docText) < mb_strlen($text)) {
+            $truncatedDocs += 1;
+        }
+        $block = $header . $docText;
+        $blockLen = mb_strlen($block);
+        if ($blockLen > $remainingBudget) {
+            $allowedText = max(0, $remainingBudget - mb_strlen($header));
+            if ($allowedText <= 0) {
+                $truncatedDocs += 1;
+                continue;
+            }
+            $block = $header . mb_substr($docText, 0, $allowedText);
+            $blockLen = mb_strlen($block);
+            $truncatedDocs += 1;
+        }
+        $remainingBudget -= $blockLen;
+        $responseParts[] = $block;
+        if ($remainingBudget <= 0) {
+            break;
+        }
     }
     $fullText = trim(implode("\n\n", $responseParts));
     if ($fullText === '') {
         respond(422, ['ok' => false, 'error' => 'Текст документов пустой, ответ сформировать невозможно.']);
+    }
+    if ($truncatedDocs > 0) {
+        $fullText .= "\n\n[Контекст сокращён для стабильной обработки: " . $truncatedDocs . ']';
     }
 
     $userPrompt = trim((string)($_POST['prompt'] ?? ''));

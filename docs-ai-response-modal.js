@@ -439,10 +439,12 @@
     if (extractedTexts.length) {
       formData.append('extractedTexts', JSON.stringify(extractedTexts));
     }
-    paidFiles.forEach(function (entry) {
-      if (!entry || !entry.blob) return;
-      formData.append('files[]', entry.blob, entry.name || 'document.bin');
-    });
+    if (!extractedTexts.length) {
+      paidFiles.forEach(function (entry) {
+        if (!entry || !entry.blob) return;
+        formData.append('files[]', entry.blob, entry.name || 'document.bin');
+      });
+    }
     return formData;
   }
 
