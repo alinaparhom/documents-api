@@ -597,6 +597,82 @@ function handleAnalyzePaidAction(array $env): void
     ]);
 }
 
+function handleGenerateSummaryAction(array $env): void
+{
+    $apiKey = getGroqKey($env);
+    if ($apiKey === '') {
+        respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
+    }
+
+    $rawExtractedTexts = (string)($_POST['extractedTexts'] ?? '');
+    $decodedExtractedTexts = json_decode($rawExtractedTexts, true);
+    if (!is_array($decodedExtractedTexts)) {
+        respond(422, ['ok' => false, 'error' => 'extractedTexts должен быть JSON-массивом с текстами документов.']);
+    }
+
+    $summaryParts = [];
+    foreach ($decodedExtractedTexts as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $text = trim((string)($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        $name = trim((string)($entry['name'] ?? 'Документ'));
+        $summaryParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $text;
+    }
+    $fullText = trim(implode("\n\n", $summaryParts));
+    if ($fullText === '') {
+        respond(422, ['ok' => false, 'error' => 'Текст документов пустой, summary сформировать невозможно.']);
+    }
+
+    $model = resolveModel($env);
+    $summarySystemMessage = "Ты — ассистент, который делает краткое и точное изложение документов.\n\n"
+        . "Твоя задача: на основе предоставленного текста составить summary (резюме, краткое содержание).\n\n"
+        . "Правила:\n"
+        . "- Не добавляй шапку (кому, от кого), не добавляй подпись, не используй обращения.\n"
+        . "- Не пересказывай документ дословно и не цитируй большие куски.\n"
+        . "- Выдели самое главное: суть документа, ключевые факты, даты, суммы, требования, решения.\n"
+        . "- Структурируй summary в виде коротких пунктов или абзацев (2-5 предложений).\n"
+        . "- Используй деловой, нейтральный язык, без эмоций и без эмодзи.\n"
+        . "- Не добавляй оценку документу («хорошо», «плохо», «важно») — только факты.\n"
+        . "- Если документ содержит несколько частей (требования, просьбы, сроки) — отрази каждую.\n"
+        . "- Если информации недостаточно — укажи, какие данные отсутствуют.\n\n"
+        . "Формат ответа: только текст summary, без лишних слов.";
+
+    $requestPayload = [
+        'model' => $model,
+        'temperature' => 0.3,
+        'max_tokens' => 800,
+        'top_p' => 0.85,
+        'messages' => [
+            ['role' => 'system', 'content' => $summarySystemMessage],
+            ['role' => 'user', 'content' => "Сделай краткое содержание документа:\n\n" . $fullText],
+        ],
+    ];
+
+    $startedAt = microtime(true);
+    $groqResult = callGroqChat($requestPayload, $apiKey);
+    if (($groqResult['ok'] ?? false) !== true) {
+        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+    }
+
+    $decoded = (array)($groqResult['raw'] ?? []);
+    $summary = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    if ($summary === '') {
+        respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
+    }
+
+    respond(200, [
+        'ok' => true,
+        'summary' => $summary,
+        'model' => (string)($decoded['model'] ?? $model),
+        'durationMs' => max(1, (int)round((microtime(true) - $startedAt) * 1000)),
+        'tokensUsed' => (int)($decoded['usage']['total_tokens'] ?? 0),
+    ]);
+}
+
 function handleGetRequest(array $env): void
 {
     $action = trim((string)($_GET['action'] ?? ''));
@@ -606,7 +682,7 @@ function handleGetRequest(array $env): void
             'message' => 'pong',
             'apiKeyConfigured' => getGroqKey($env) !== '',
             'model' => resolveModel($env),
-            'actions' => ['analyze_paid'],
+            'actions' => ['analyze_paid', 'generate_summary'],
         ]);
     }
 
@@ -615,6 +691,7 @@ function handleGetRequest(array $env): void
         'message' => 'API доступен. Для обработки документов используйте POST action=analyze_paid и files[].',
         'method' => 'POST',
         'defaultAction' => 'analyze_paid',
+        'availablePostActions' => ['analyze_paid', 'generate_summary'],
         'availableGetActions' => ['health', 'ping'],
     ]);
 }
@@ -629,6 +706,9 @@ function handlePostRequest(array $env): void
     $handlers = [
         'analyze_paid' => static function (array $currentEnv): void {
             handleAnalyzePaidAction($currentEnv);
+        },
+        'generate_summary' => static function (array $currentEnv): void {
+            handleGenerateSummaryAction($currentEnv);
         },
     ];
 
