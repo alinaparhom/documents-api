@@ -539,11 +539,12 @@ async function fetchExternalFileContent(fileMeta) {
       if (isTextLikeMeta(fileMeta)) {
         return (await response.text()).trim();
       }
+      const blob = await response.blob();
       const ocrRequest = await postDocsAiWithFallback(() => {
         const form = new FormData();
         form.append('action', 'ocr_extract');
         form.append('language', 'rus');
-        form.append('file_url', url);
+        form.append('file', new File([blob], detectFileName(fileMeta, i + 1), { type: blob.type || 'application/octet-stream' }));
         return form;
       }, { timeoutMs: REQUEST_TIMEOUT_MS + 12000, fallbackErrorMessage: 'OCR временно недоступен' });
       const ocrResponse = ocrRequest && ocrRequest.response;

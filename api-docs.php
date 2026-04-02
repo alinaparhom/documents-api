@@ -2759,11 +2759,54 @@ if ($action === 'ocr_extract') {
     $ocrPreprocessRaw = trim((string)($_POST['preprocess'] ?? '1'));
     $ocrMaxSizeKbRaw = (int)($_POST['max_size_kb'] ?? ($env['OCR_MAX_FILE_KB'] ?? 1024));
 
-    if ($ocrApiKey === '') {
-        jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
-    }
     if (!$files && $ocrFileUrl === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
+    }
+
+    $downloadedOcrUrlFile = null;
+    if ($ocrFileUrl !== '') {
+        $downloadedOcrUrlFile = downloadAttachmentToTempFile($ocrFileUrl);
+        if (is_array($downloadedOcrUrlFile)) {
+            $files = array_merge([$downloadedOcrUrlFile], $files);
+            $ocrFileUrl = '';
+            register_shutdown_function(static function () use ($downloadedOcrUrlFile): void {
+                $tmp = (string)($downloadedOcrUrlFile['tmp_name'] ?? '');
+                if ($tmp !== '' && is_file($tmp)) {
+                    @unlink($tmp);
+                }
+            });
+        }
+    }
+
+    if ($ocrApiKey === '') {
+        $localFile = $files[0] ?? null;
+        $downloadedLocal = null;
+        if (!$localFile && $ocrFileUrl !== '') {
+            $downloadedLocal = downloadAttachmentToTempFile($ocrFileUrl);
+            if (is_array($downloadedLocal)) {
+                $localFile = $downloadedLocal;
+            }
+        }
+        if (!$localFile || !is_array($localFile)) {
+            jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env и локальный OCR не смог подготовить файл']);
+        }
+        $localText = extractTextWithLocalOcrFallback($localFile);
+        if (is_array($downloadedLocal)) {
+            $tmpPath = (string)($downloadedLocal['tmp_name'] ?? '');
+            if ($tmpPath !== '' && is_file($tmpPath)) {
+                @unlink($tmpPath);
+            }
+        }
+        if ($localText === '') {
+            jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env. Локальный OCR тоже не вернул текст.']);
+        }
+        jsonResponse(200, [
+            'ok' => true,
+            'text' => $localText,
+            'raw' => [
+                'source' => 'local_fallback',
+            ],
+        ]);
     }
 
     $targetLanguage = $ocrLanguage !== '' ? $ocrLanguage : 'rus';
