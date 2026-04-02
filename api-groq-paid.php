@@ -3,7 +3,8 @@
 declare(strict_types=1);
 
 /**
- * Универсальный обработчик файлов для Groq API.
+ * Гибкий API-обработчик для Groq (paid).
+ * Поддерживает маршрутизацию по методам и action.
  * PHP 8.1+
  */
 
@@ -55,6 +56,14 @@ function loadEnvFromFile(string $path): array
         $env[$key] = $value;
     }
     return $env;
+}
+
+function getRuntimeEnv(): array
+{
+    return array_merge(
+        loadEnvFromFile(__DIR__ . '/.env'),
+        loadEnvFromFile(__DIR__ . '/app/.env')
+    );
 }
 
 function sanitizeFileName(string $name): string
@@ -123,6 +132,12 @@ function detectMime(string $path, string $fallback = ''): string
     return strtolower(trim($mime));
 }
 
+function detectFileExtension(string $name): string
+{
+    $ext = strtolower((string)pathinfo($name, PATHINFO_EXTENSION));
+    return trim($ext);
+}
+
 function makeDataUriFromBinary(string $binary, string $mime): string
 {
     return 'data:' . $mime . ';base64,' . base64_encode($binary);
@@ -170,8 +185,9 @@ function extractPdfTextWithOcr(string $pdfPath): string
     }
     @unlink($tmpBase);
     $textParts = [];
+    $maxPages = OCR_MAX_PAGES > 0 ? OCR_MAX_PAGES : 500;
+
     try {
-        $maxPages = OCR_MAX_PAGES > 0 ? OCR_MAX_PAGES : 500;
         for ($page = 1; $page <= $maxPages; $page += 1) {
             $jpgPath = $tmpBase . '-p' . $page . '.jpg';
             $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
@@ -287,257 +303,363 @@ function splitTextIntoChunks(string $text, int $maxChunkChars = MAX_TEXT_CHARS_P
     return array_slice($chunks, 0, MAX_TEXT_CHUNKS_TOTAL);
 }
 
-/**
- * PDF -> JPEG (первая страница).
- * Порядок: Imagick -> pdftoppm -> gs
- */
-function convertPdfFirstPageToJpegDataUri(string $pdfPath): ?string
+function extractDocxText(string $path): string
 {
-    // 1) Imagick
-    if (class_exists('Imagick')) {
-        try {
-            $im = new Imagick();
-            $im->setResolution(180, 180);
-            $im->readImage($pdfPath . '[0]');
-            $im->setImageFormat('jpeg');
-            $jpeg = $im->getImageBlob();
-            $im->clear();
-            $im->destroy();
-            if ($jpeg !== '') {
-                return makeDataUriFromBinary($jpeg, 'image/jpeg');
-            }
-        } catch (Throwable $e) {
-            // fallback below
-        }
+    if (!class_exists('ZipArchive')) {
+        return '';
     }
 
-    $tmpBase = tempnam(sys_get_temp_dir(), 'pdfimg_');
-    if ($tmpBase === false) {
-        return null;
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) {
+        return '';
     }
-    @unlink($tmpBase);
-
-    $jpgFromPpm = $tmpBase . '.jpg';
-    $jpgFromGs = $tmpBase . '-gs.jpg';
 
     try {
-        // 2) pdftoppm
-        $cmdPpm = 'pdftoppm -jpeg -f 1 -singlefile ' . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpBase);
-        @exec($cmdPpm, $outPpm, $codePpm);
-        if ($codePpm === 0 && is_file($jpgFromPpm)) {
-            $bin = (string)@file_get_contents($jpgFromPpm);
-            if ($bin !== '') {
-                return makeDataUriFromBinary($bin, 'image/jpeg');
-            }
+        $xml = (string)$zip->getFromName('word/document.xml');
+        if ($xml === '') {
+            return '';
         }
 
-        // 3) ghostscript
-        $cmdGs = 'gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=jpeg -dFirstPage=1 -dLastPage=1 -r180 '
-            . '-sOutputFile=' . escapeshellarg($jpgFromGs) . ' ' . escapeshellarg($pdfPath);
-        @exec($cmdGs, $outGs, $codeGs);
-        if ($codeGs === 0 && is_file($jpgFromGs)) {
-            $bin = (string)@file_get_contents($jpgFromGs);
-            if ($bin !== '') {
-                return makeDataUriFromBinary($bin, 'image/jpeg');
-            }
-        }
+        $xml = preg_replace('/<w:p[^>]*>/u', "\n", $xml) ?? $xml;
+        $xml = preg_replace('/<[^>]+>/u', ' ', $xml) ?? $xml;
+        $xml = html_entity_decode($xml, ENT_QUOTES | ENT_XML1, 'UTF-8');
+
+        return cleanExtractedText($xml);
     } finally {
-        @unlink($jpgFromPpm);
-        @unlink($jpgFromGs);
+        $zip->close();
+    }
+}
+
+function extractDocText(string $path): string
+{
+    if (!commandExists('antiword')) {
+        return '';
+    }
+    $cmd = 'antiword ' . escapeshellarg($path) . ' 2>/dev/null';
+    $output = shell_exec($cmd);
+    return cleanExtractedText((string)$output);
+}
+
+function extractImageTextWithOcr(string $path): string
+{
+    if (!commandExists('tesseract')) {
+        return '';
+    }
+    $cmd = 'tesseract ' . escapeshellarg($path) . ' stdout -l rus+eng 2>/dev/null';
+    $output = shell_exec($cmd);
+    return cleanExtractedText((string)$output);
+}
+
+function getGroqKey(array $env): string
+{
+    return trim((string)(getenv('GROQ_API_KEY') ?: ($env['GROQ_API_KEY'] ?? '')));
+}
+
+function resolveModel(array $env): string
+{
+    $model = trim((string)(getenv('AI_MODEL') ?: ($env['AI_MODEL'] ?? MODEL_TEXT_DEFAULT)));
+    return $model !== '' ? $model : MODEL_TEXT_DEFAULT;
+}
+
+function callGroqChat(array $requestPayload, string $apiKey): array
+{
+    $ch = curl_init(GROQ_API_URL);
+    if ($ch === false) {
+        return ['ok' => false, 'status' => 500, 'error' => 'Не удалось инициализировать cURL'];
     }
 
-    return null;
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_TIMEOUT => 90,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => json_encode($requestPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]);
+
+    $rawResponse = curl_exec($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($rawResponse === false) {
+        return ['ok' => false, 'status' => 502, 'error' => 'Ошибка запроса к Groq: ' . $curlErr];
+    }
+
+    $decoded = json_decode((string)$rawResponse, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'status' => 502, 'error' => 'Groq вернул невалидный JSON'];
+    }
+
+    if ($httpCode >= 400) {
+        $msg = trim((string)($decoded['error']['message'] ?? 'Ошибка Groq API'));
+        return ['ok' => false, 'status' => $httpCode, 'error' => $msg, 'raw' => $decoded];
+    }
+
+    return ['ok' => true, 'status' => 200, 'raw' => $decoded];
+}
+
+function handleAnalyzePaidAction(array $env): void
+{
+    $files = normalizeUploadedFiles('files');
+    if (!$files) {
+        respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
+    }
+
+    $totalBytes = array_reduce($files, static function (int $sum, array $f): int {
+        return $sum + (int)($f['size'] ?? 0);
+    }, 0);
+    if ($totalBytes <= 0) {
+        respond(422, ['ok' => false, 'error' => 'Пустая загрузка файлов.']);
+    }
+    if (MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
+        respond(413, ['ok' => false, 'error' => 'Общий размер файлов превышает лимит.']);
+    }
+
+    $apiKey = getGroqKey($env);
+    if ($apiKey === '') {
+        respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
+    }
+
+    $userPrompt = trim((string)($_POST['prompt'] ?? ''));
+    if ($userPrompt === '') {
+        $userPrompt = 'Прими решение по приложенным документам.';
+    }
+
+    $textChunks = [];
+    $metaChunks = [];
+    $hasReadableContent = false;
+
+    $allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+    $supportedDocMimes = [
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword',
+        'application/vnd.ms-word',
+        'application/zip', // иногда docx приходит как zip
+    ];
+
+    foreach ($files as $file) {
+        $name = (string)$file['name'];
+        $size = (int)$file['size'];
+        $tmp = (string)$file['tmp_name'];
+        $mime = detectMime($tmp, (string)($file['client_type'] ?? ''));
+        $ext = detectFileExtension($name);
+
+        $isText = str_starts_with($mime, 'text/');
+        $isImage = in_array($mime, $allowedImageMimes, true);
+        $isPdf = $mime === 'application/pdf';
+        $isDocx = in_array($mime, $supportedDocMimes, true) && $ext === 'docx';
+        $isDoc = in_array($mime, $supportedDocMimes, true) && $ext === 'doc';
+
+        if ($isText) {
+            $raw = (string)@file_get_contents($tmp);
+            $chunks = splitTextIntoChunks($raw);
+            if ($chunks) {
+                foreach ($chunks as $index => $chunk) {
+                    $textChunks[] = "[Файл: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
+                }
+                $metaChunks[] = "[Текст: {$name}, чанков: " . count($chunks) . ']';
+                $hasReadableContent = true;
+            }
+            continue;
+        }
+
+        if ($isDocx) {
+            $docxText = extractDocxText($tmp);
+            if ($docxText !== '') {
+                $chunks = splitTextIntoChunks($docxText);
+                foreach ($chunks as $index => $chunk) {
+                    $textChunks[] = "[DOCX: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
+                }
+                $metaChunks[] = "[DOCX: {$name}, {$size} байт, чанков: " . count($chunks) . ']';
+                $hasReadableContent = true;
+            } else {
+                $metaChunks[] = "[DOCX: {$name}, {$size} байт, текст не извлечен]";
+            }
+            continue;
+        }
+
+        if ($isDoc) {
+            $docText = extractDocText($tmp);
+            if ($docText !== '') {
+                $chunks = splitTextIntoChunks($docText);
+                foreach ($chunks as $index => $chunk) {
+                    $textChunks[] = "[DOC: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
+                }
+                $metaChunks[] = "[DOC: {$name}, {$size} байт, чанков: " . count($chunks) . ']';
+                $hasReadableContent = true;
+            } else {
+                $metaChunks[] = "[DOC: {$name}, {$size} байт, текст не извлечен]";
+            }
+            continue;
+        }
+
+        if ($isImage) {
+            $imgText = extractImageTextWithOcr($tmp);
+            if ($imgText !== '') {
+                $chunks = splitTextIntoChunks($imgText);
+                foreach ($chunks as $index => $chunk) {
+                    $textChunks[] = "[Изображение OCR: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
+                }
+                $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}, OCR чанков: " . count($chunks) . ']';
+                $hasReadableContent = true;
+            } else {
+                $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}, OCR текст не извлечен]";
+            }
+            continue;
+        }
+
+        if ($isPdf) {
+            $pdfExtract = extractPdfText($tmp);
+            $pdfText = trim((string)($pdfExtract['text'] ?? ''));
+            $pdfSource = (string)($pdfExtract['source'] ?? '');
+            if ($pdfText !== '') {
+                $chunks = splitTextIntoChunks($pdfText);
+                if ($chunks) {
+                    foreach ($chunks as $index => $chunk) {
+                        $textChunks[] = "[PDF: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
+                    }
+                    $metaChunks[] = $pdfSource === 'ocr'
+                        ? "[PDF: {$name}, {$size} байт, OCR, чанков: " . count($chunks) . ']'
+                        : "[PDF: {$name}, {$size} байт, текстовый слой, чанков: " . count($chunks) . ']';
+                } else {
+                    $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
+                }
+                $hasReadableContent = true;
+                continue;
+            }
+            $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
+            continue;
+        }
+
+        $metaChunks[] = "[Неподдерживаемый формат: {$name}, {$size} байт, MIME={$mime}]";
+    }
+
+    $limitedContextNotice = '';
+    if (!$hasReadableContent) {
+        $limitedContextNotice = '⚠️ Вложенные файлы могут быть сканами без извлекаемого текста. '
+            . 'Не отклоняй запрос и не пиши про невозможность обработки/OCR. '
+            . 'Сформируй готовый нейтральный ответ на письмо по запросу пользователя и доступным данным.';
+    }
+
+    $model = resolveModel($env);
+    $systemMessagePaid = "Ты — сотрудник строительной компании, отвечающий за официальную переписку.\n\n"
+        . "Твоя задача: на основе предоставленных документов сформулировать ответ в деловом стиле.\n\n"
+        . "Правила:\n"
+        . "- Не добавляй шапку (кому, от кого), не добавляй подпись.\n"
+        . "- Не пересказывай документ дословно.\n"
+        . "- Выдели суть: что требуется, какие факты, какие решения.\n"
+        . "- Дай чёткий ответ: согласие/отказ/уточнение, сроки, действия.\n"
+        . "- Если есть претензии — либо прими с обоснованием, либо отклони с аргументацией.\n"
+        . "- Используй деловой язык, без воды, без эмодзи.\n"
+        . "- Если недостаточно информации — укажи, какие данные нужны.\n"
+        . "- Ответ должен быть готов к вставке в документ как основное содержание.\n\n";
+
+    $textPayload = $userPrompt;
+    if ($limitedContextNotice !== '') {
+        $textPayload .= "\n\n" . $limitedContextNotice;
+    }
+    if ($textChunks) {
+        $textPayload .= "\n\nТекстовые файлы:\n" . implode("\n\n", $textChunks);
+    }
+    if ($metaChunks) {
+        $textPayload .= "\n\nСводка файлов:\n" . implode("\n", $metaChunks);
+    }
+
+    $requestPayload = [
+        'model' => $model,
+        'temperature' => 0.2,
+        'max_tokens' => 1800,
+        'messages' => [
+            ['role' => 'system', 'content' => $systemMessagePaid],
+            ['role' => 'user', 'content' => $textPayload],
+        ],
+    ];
+
+    $groqResult = callGroqChat($requestPayload, $apiKey);
+    if (($groqResult['ok'] ?? false) !== true) {
+        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+    }
+
+    $decoded = (array)($groqResult['raw'] ?? []);
+    $answer = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    if ($answer === '') {
+        respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq']);
+    }
+
+    respond(200, [
+        'ok' => true,
+        'response' => $answer,
+        'model' => (string)($decoded['model'] ?? $model),
+        'tokensUsed' => (int)($decoded['usage']['total_tokens'] ?? 0),
+    ]);
+}
+
+function handleGetRequest(array $env): void
+{
+    $action = trim((string)($_GET['action'] ?? ''));
+    if ($action === 'health' || $action === 'ping') {
+        respond(200, [
+            'ok' => true,
+            'message' => 'pong',
+            'apiKeyConfigured' => getGroqKey($env) !== '',
+            'model' => resolveModel($env),
+            'actions' => ['analyze_paid'],
+        ]);
+    }
+
+    respond(200, [
+        'ok' => true,
+        'message' => 'API доступен. Для обработки документов используйте POST action=analyze_paid и files[].',
+        'method' => 'POST',
+        'defaultAction' => 'analyze_paid',
+        'availableGetActions' => ['health', 'ping'],
+    ]);
+}
+
+function handlePostRequest(array $env): void
+{
+    $action = trim((string)($_POST['action'] ?? 'analyze_paid'));
+    if ($action === '') {
+        $action = 'analyze_paid';
+    }
+
+    $handlers = [
+        'analyze_paid' => static function (array $currentEnv): void {
+            handleAnalyzePaidAction($currentEnv);
+        },
+    ];
+
+    if (!isset($handlers[$action])) {
+        respond(422, [
+            'ok' => false,
+            'error' => 'Неизвестный action.',
+            'provided' => $action,
+            'available' => array_keys($handlers),
+        ]);
+    }
+
+    $handlers[$action]($env);
 }
 
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+$env = getRuntimeEnv();
+
 if ($method === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
-if ($method !== 'POST') {
-    respond(405, ['ok' => false, 'error' => 'Method Not Allowed']);
+if ($method === 'GET') {
+    handleGetRequest($env);
+}
+if ($method === 'POST') {
+    handlePostRequest($env);
 }
 
-$files = normalizeUploadedFiles('files');
-if (!$files) {
-    respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
-}
-
-$totalBytes = array_reduce($files, static function (int $sum, array $f): int {
-    return $sum + (int)($f['size'] ?? 0);
-}, 0);
-if ($totalBytes <= 0) {
-    respond(422, ['ok' => false, 'error' => 'Пустая загрузка файлов.']);
-}
-if (MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
-    respond(413, ['ok' => false, 'error' => 'Общий размер файлов превышает 20 МБ.']);
-}
-
-$env = array_merge(
-    loadEnvFromFile(__DIR__ . '/.env'),
-    loadEnvFromFile(__DIR__ . '/app/.env')
-);
-$apiKey = trim((string)(getenv('GROQ_API_KEY') ?: ($env['GROQ_API_KEY'] ?? '')));
-if ($apiKey === '') {
-    respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
-}
-
-$userPrompt = trim((string)($_POST['prompt'] ?? ''));
-if ($userPrompt === '') {
-    $userPrompt = 'Прими решение по приложенным документам.';
-}
-
-$textChunks = [];
-$metaChunks = [];
-$hasReadableContent = false;
-
-$allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
-
-foreach ($files as $file) {
-    $name = (string)$file['name'];
-    $size = (int)$file['size'];
-    $tmp = (string)$file['tmp_name'];
-    $mime = detectMime($tmp, (string)($file['client_type'] ?? ''));
-
-    // Дополнительная безопасность: ограничиваем обработку только безопасными типами.
-    $isText = str_starts_with($mime, 'text/');
-    $isImage = in_array($mime, $allowedImageMimes, true);
-    $isPdf = $mime === 'application/pdf';
-
-    if ($isText) {
-        $raw = (string)@file_get_contents($tmp);
-        $chunks = splitTextIntoChunks($raw);
-        if ($chunks) {
-            foreach ($chunks as $index => $chunk) {
-                $textChunks[] = "[Файл: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
-            }
-            $metaChunks[] = "[Текст: {$name}, чанков: " . count($chunks) . ']';
-            $hasReadableContent = true;
-        }
-        continue;
-    }
-
-    if ($isImage) {
-        $metaChunks[] = "[Изображение: {$name}, {$size} байт, {$mime}]";
-        continue;
-    }
-
-    if ($isPdf) {
-        $pdfExtract = extractPdfText($tmp);
-        $pdfText = trim((string)($pdfExtract['text'] ?? ''));
-        $pdfSource = (string)($pdfExtract['source'] ?? '');
-        if ($pdfText !== '') {
-            $chunks = splitTextIntoChunks($pdfText);
-            if ($chunks) {
-                foreach ($chunks as $index => $chunk) {
-                    $textChunks[] = "[PDF: {$name}, часть " . ($index + 1) . '/' . count($chunks) . "]\n" . $chunk;
-                }
-                $metaChunks[] = $pdfSource === 'ocr'
-                    ? "[PDF: {$name}, {$size} байт, OCR, чанков: " . count($chunks) . ']'
-                    : "[PDF: {$name}, {$size} байт, текстовый слой, чанков: " . count($chunks) . ']';
-            } else {
-                $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
-            }
-            $hasReadableContent = true;
-            continue;
-        }
-        $metaChunks[] = "[PDF: {$name}, {$size} байт, текст не извлечен]";
-        continue;
-    }
-
-    // Неподдерживаемый формат: только метаданные.
-    $metaChunks[] = "[Неподдерживаемый формат: {$name}, {$size} байт, MIME={$mime}]";
-}
-
-$limitedContextNotice = '';
-if (!$hasReadableContent) {
-    $limitedContextNotice = '⚠️ Вложенные файлы могут быть сканами без извлекаемого текста. '
-        . 'Не отклоняй запрос и не пиши про невозможность обработки/OCR. '
-        . 'Сформируй готовый нейтральный ответ на письмо по запросу пользователя и доступным данным.';
-}
-
-$model = trim((string)(getenv('AI_MODEL') ?: ($env['AI_MODEL'] ?? MODEL_TEXT_DEFAULT)));
-if ($model === '') {
-    $model = MODEL_TEXT_DEFAULT;
-}
-$systemMessagePaid = "Ты — сотрудник строительной компании, отвечающий за официальную переписку.\n\n"
-    . "Твоя задача: на основе предоставленных документов сформулировать ответ в деловом стиле.\n\n"
-    . "Правила:\n"
-    . "- Не добавляй шапку (кому, от кого), не добавляй подпись.\n"
-    . "- Не пересказывай документ дословно.\n"
-    . "- Выдели суть: что требуется, какие факты, какие решения.\n"
-    . "- Дай чёткий ответ: согласие/отказ/уточнение, сроки, действия.\n"
-    . "- Если есть претензии — либо прими с обоснованием, либо отклони с аргументацией.\n"
-    . "- Используй деловой язык, без воды, без эмодзи.\n"
-    . "- Если недостаточно информации — укажи, какие данные нужны.\n"
-    . "- Ответ должен быть готов к вставке в документ как основное содержание.\n\n";
-
-$textPayload = $userPrompt;
-if ($limitedContextNotice !== '') {
-    $textPayload .= "\n\n" . $limitedContextNotice;
-}
-if ($textChunks) {
-    $textPayload .= "\n\nТекстовые файлы:\n" . implode("\n\n", $textChunks);
-}
-if ($metaChunks) {
-    $textPayload .= "\n\nСводка файлов:\n" . implode("\n", $metaChunks);
-}
-
-$messages = [
-    ['role' => 'system', 'content' => $systemMessagePaid],
-    ['role' => 'user', 'content' => $textPayload],
-];
-
-$requestPayload = [
-    'model' => $model,
-    'temperature' => 0.2,
-    'max_tokens' => 1800,
-    'messages' => $messages,
-];
-
-$ch = curl_init(GROQ_API_URL);
-if ($ch === false) {
-    respond(500, ['ok' => false, 'error' => 'Не удалось инициализировать cURL']);
-}
-
-curl_setopt_array($ch, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_POST => true,
-    CURLOPT_TIMEOUT => 90,
-    CURLOPT_HTTPHEADER => [
-        'Authorization: Bearer ' . $apiKey,
-        'Content-Type: application/json',
-    ],
-    CURLOPT_POSTFIELDS => json_encode($requestPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-]);
-
-$rawResponse = curl_exec($ch);
-$httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-$curlErr = curl_error($ch);
-curl_close($ch);
-
-if ($rawResponse === false) {
-    respond(502, ['ok' => false, 'error' => 'Ошибка запроса к Groq: ' . $curlErr]);
-}
-
-$decoded = json_decode((string)$rawResponse, true);
-if (!is_array($decoded)) {
-    respond(502, ['ok' => false, 'error' => 'Groq вернул невалидный JSON']);
-}
-
-if ($httpCode >= 400) {
-    $msg = trim((string)($decoded['error']['message'] ?? 'Ошибка Groq API'));
-    respond($httpCode, ['ok' => false, 'error' => $msg]);
-}
-
-$answer = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
-if ($answer === '') {
-    respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq']);
-}
-
-respond(200, [
-    'ok' => true,
-    'response' => $answer,
-    'model' => (string)($decoded['model'] ?? $model),
-    'tokensUsed' => (int)($decoded['usage']['total_tokens'] ?? 0),
+respond(405, [
+    'ok' => false,
+    'error' => 'Method Not Allowed',
+    'allowed' => ['GET', 'POST', 'OPTIONS'],
 ]);
