@@ -695,6 +695,19 @@ function sanitizeAssistantText(text) {
   return deduped.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function buildExtractedFilesContextText(extractedTexts = []) {
+  const chunks = (Array.isArray(extractedTexts) ? extractedTexts : [])
+    .map((item, index) => {
+      const name = String(item && item.name || `Файл ${index + 1}`).trim();
+      const type = String(item && item.type || '').trim();
+      const text = String(item && item.text || '').trim();
+      if (!text) return '';
+      return `Файл: ${name}${type ? ` (${type})` : ''}\n${text}`;
+    })
+    .filter(Boolean);
+  return chunks.join('\n\n-----\n\n');
+}
+
 async function requestAssistantReply(userMessage, context, history) {
   const prompt = String(userMessage || '').trim();
   if (!prompt) return '';
@@ -720,7 +733,13 @@ async function requestAssistantReply(userMessage, context, history) {
   });
   const timeoutMs = calculateAiTimeoutMs(context, history, userMessage);
   if (aiMode === 'paid') {
-    const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
+    const extractedFilesText = buildExtractedFilesContextText(extractedTexts);
+    let filesForPaid = [];
+    try {
+      filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
+    } catch (_) {
+      filesForPaid = [];
+    }
     const fileUrlsForPaid = Array.from(new Map(
       [...extractedTexts, ...attachedFiles]
         .map((entry) => ({
@@ -731,22 +750,25 @@ async function requestAssistantReply(userMessage, context, history) {
         .filter((entry) => entry.url)
         .map((entry) => [entry.url, entry]),
     ).values());
-    if (!filesForPaid.length && !fileUrlsForPaid.length) {
-      throw new Error('Для VIP режима не удалось подготовить файлы. Добавьте PDF и повторите.');
+    const hasTextContext = Boolean(extractedFilesText.trim());
+    const shouldSendFileUrls = !hasTextContext && !filesForPaid.length && fileUrlsForPaid.length > 0;
+    if (!filesForPaid.length && !shouldSendFileUrls && !hasTextContext) {
+      throw new Error('Для платного ИИ не удалось получить текст из файлов. Проверьте доступ к вложениям и повторите.');
     }
     const paidPrompt = [
       prompt,
       '',
+      extractedFilesText ? `Контекст файлов после OCR:\n${extractedFilesText}` : '',
       'Учитывай chatHistory и extractedTexts из контекста.',
       'Если пользователь просит переделать/исправить — обнови предыдущий ответ.',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
     const paidRequest = await postGroqPaidWithFallback(() => {
       const formData = new FormData();
       formData.append('prompt', paidPrompt);
       filesForPaid.forEach((file) => {
         formData.append('files', file, file.name || 'document.pdf');
       });
-      if (fileUrlsForPaid.length) {
+      if (shouldSendFileUrls) {
         formData.append('file_urls', JSON.stringify(fileUrlsForPaid));
       }
       return formData;
