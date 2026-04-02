@@ -1266,6 +1266,12 @@ function openAiChatDialog(context = {}) {
     const generationParams = requestContext && requestContext.generationParams ? requestContext.generationParams : {};
     const behaviorFromContext = requestContext && typeof requestContext.aiBehavior === 'string' ? requestContext.aiBehavior.trim() : '';
     const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
+    const safeExtractedTexts = extractedForContext.map((entry) => ({
+      name: entry.name,
+      type: entry.type || 'text/plain',
+      text: String(entry.text || ''),
+    }));
+    requestContext.extractedTexts = safeExtractedTexts;
     const serializedContext = JSON.stringify({
       task: {
         id: task.id || null,
@@ -1273,8 +1279,8 @@ function openAiChatDialog(context = {}) {
         description: task.description || task.text || '',
       },
       chatHistory: buildChatHistoryContext(state.chatHistory),
-      attachedFiles: requestContext.attachedFiles || [],
-      extractedTexts: requestContext.extractedTexts || [],
+      attachedFiles: [],
+      extractedTexts: safeExtractedTexts,
       source: 'telegram_mini_app_vip_ocr_sequential',
     });
     if (pending) pending.update('Отправляем запрос в api-docs.php...');
@@ -1286,7 +1292,7 @@ function openAiChatDialog(context = {}) {
       formData.append('responseStyle', state.responseStyle);
       formData.append('mode', 'paid');
       formData.append('aiBehavior', behaviorText);
-      formData.append('extractedTexts', JSON.stringify(requestContext.extractedTexts || []));
+      formData.append('extractedTexts', JSON.stringify(safeExtractedTexts));
       formData.append('temperature', String(Number(generationParams.temperature) || 0.7));
       formData.append('top_p', String(Number(generationParams.top_p) || 1));
       formData.append('frequency_penalty', String(Number(generationParams.frequency_penalty) || 0));
