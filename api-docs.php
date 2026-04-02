@@ -2854,12 +2854,12 @@ if ($action === 'ai_response_analyze' || $action === 'generate_summary') {
 if ($action === 'ocr_extract') {
     $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
-    $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
+    $ocrLanguage = trim((string)($_POST['language'] ?? ($env['OCR_LANGUAGE'] ?? 'rus')));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
-    $ocrEngine = trim((string)($_POST['OCREngine'] ?? '2'));
-    $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
-    $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? 'true'));
-    $ocrPreprocessRaw = trim((string)($_POST['preprocess'] ?? '1'));
+    $ocrEngine = trim((string)($_POST['OCREngine'] ?? ($env['OCR_ENGINE'] ?? '2')));
+    $ocrScale = trim((string)($_POST['scale'] ?? ($env['OCR_SCALE'] ?? 'true')));
+    $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? ($env['OCR_DETECT_ORIENTATION'] ?? 'true')));
+    $ocrPreprocessRaw = trim((string)($_POST['preprocess'] ?? ($env['OCR_PREPROCESS'] ?? '1')));
     $ocrMaxSizeKbRaw = (int)($_POST['max_size_kb'] ?? ($env['OCR_MAX_FILE_KB'] ?? 1024));
 
     if (!$files && $ocrFileUrl === '') {
@@ -2924,6 +2924,19 @@ if ($action === 'ocr_extract') {
                     'text' => $localText,
                     'raw' => [
                         'source' => 'local_text_extract',
+                        'extension' => $extension,
+                    ],
+                ]);
+            }
+        }
+        if (in_array($extension, ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff'], true)) {
+            $localOcrText = extractTextWithLocalOcrFallback($firstFile);
+            if ($localOcrText !== '') {
+                jsonResponse(200, [
+                    'ok' => true,
+                    'text' => $localOcrText,
+                    'raw' => [
+                        'source' => 'local_ocr_first',
                         'extension' => $extension,
                     ],
                 ]);
