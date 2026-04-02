@@ -13806,8 +13806,12 @@ function createResponseUploadControls(task, entry, setStatus) {
         const selectedFiles = Array.from(selectedKeys)
           .map((key) => files[Number(key)])
           .map((file) => {
-            const fileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
-            if (!fileUrl) return null;
+            const rawFileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
+            if (!rawFileUrl) return null;
+            let fileUrl = rawFileUrl;
+            try {
+              fileUrl = new URL(rawFileUrl, window.location.origin).toString();
+            } catch (_) {}
             return {
               name: normalizeValue(file && (file.originalName || file.name || file.storedName)) || 'task-file',
               url: fileUrl,

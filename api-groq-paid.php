@@ -126,7 +126,18 @@ function normalizeSelectedFilesFromPost(string $field): array
             continue;
         }
         $url = trim((string)($item['url'] ?? ''));
-        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+        if ($url === '') {
+            continue;
+        }
+        if (!preg_match('#^https?://#i', $url)) {
+            $isHttps = (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off');
+            $scheme = $isHttps ? 'https' : 'http';
+            $host = trim((string)($_SERVER['HTTP_HOST'] ?? ''));
+            if ($host !== '' && str_starts_with($url, '/')) {
+                $url = $scheme . '://' . $host . $url;
+            }
+        }
+        if (!preg_match('#^https?://#i', $url)) {
             continue;
         }
         $result[] = [
