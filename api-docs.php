@@ -334,6 +334,23 @@ function safeJsonDecode(?string $value): array
     return is_array($decoded) ? $decoded : [];
 }
 
+function getJsonRequestPayload(): array
+{
+    $contentTypeRaw = isset($_SERVER['CONTENT_TYPE']) ? (string)$_SERVER['CONTENT_TYPE'] : '';
+    $contentType = mb_strtolower(trim(explode(';', $contentTypeRaw)[0] ?? ''));
+    if ($contentType !== 'application/json' && $contentType !== 'text/json') {
+        return [];
+    }
+
+    $raw = @file_get_contents('php://input');
+    if (!is_string($raw) || trim($raw) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
 function normalizeRetryAfterSeconds(mixed $rawValue, int $default = 8, int $min = 3): int
 {
     $resolvedDefault = $default >= $min ? $default : $min;
@@ -2363,10 +2380,13 @@ function applyInputBudget(array $entries, int $maxChars): array
 }
 
 $env = loadEnv(getEnvPaths());
+$jsonRequest = getJsonRequestPayload();
 
-$prompt = trim((string)($_POST['prompt'] ?? ''));
-$documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
-$contextRaw = isset($_POST['context']) ? (string)$_POST['context'] : '';
+$prompt = trim((string)($_POST['prompt'] ?? ($jsonRequest['prompt'] ?? '')));
+$documentTitle = trim((string)($_POST['documentTitle'] ?? ($jsonRequest['documentTitle'] ?? '')));
+$contextRaw = isset($_POST['context'])
+    ? (string)$_POST['context']
+    : (isset($jsonRequest['context']) && is_string($jsonRequest['context']) ? (string)$jsonRequest['context'] : '');
 $maxContextChars = (int)($env['AI_MAX_CONTEXT_CHARS'] ?? 120000);
 if ($maxContextChars < 2000) {
     $maxContextChars = 2000;
@@ -2417,7 +2437,7 @@ if (!in_array($aiMode, ['free', 'paid'], true)) {
 }
 $requestedModel = trim((string)($_POST['model'] ?? ''));
 $briefModeRaw = $_POST['briefMode'] ?? '';
-$action = trim((string)($_POST['action'] ?? ''));
+$action = trim((string)($_POST['action'] ?? ($jsonRequest['action'] ?? ($_GET['action'] ?? ''))));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 $maxExtractedTextsChars = normalizeIntSetting($env['AI_MAX_EXTRACTED_TEXTS_CHARS'] ?? 200000, 200000, 20000, 1500000);
 if ($extractedTextsRaw !== '' && mb_strlen($extractedTextsRaw) > $maxExtractedTextsChars) {
@@ -2751,13 +2771,13 @@ if ($action === 'ai_response_analyze' || $action === 'generate_summary') {
 if ($action === 'ocr_extract') {
     $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
-    $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
-    $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
-    $ocrEngine = trim((string)($_POST['OCREngine'] ?? '2'));
-    $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
-    $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? 'true'));
-    $ocrPreprocessRaw = trim((string)($_POST['preprocess'] ?? '1'));
-    $ocrMaxSizeKbRaw = (int)($_POST['max_size_kb'] ?? ($env['OCR_MAX_FILE_KB'] ?? 1024));
+    $ocrLanguage = trim((string)($_POST['language'] ?? ($jsonRequest['language'] ?? 'rus')));
+    $ocrFileUrl = trim((string)($_POST['file_url'] ?? ($jsonRequest['file_url'] ?? '')));
+    $ocrEngine = trim((string)($_POST['OCREngine'] ?? ($jsonRequest['OCREngine'] ?? '2')));
+    $ocrScale = trim((string)($_POST['scale'] ?? ($jsonRequest['scale'] ?? 'true')));
+    $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? ($jsonRequest['detectOrientation'] ?? 'true')));
+    $ocrPreprocessRaw = trim((string)($_POST['preprocess'] ?? ($jsonRequest['preprocess'] ?? '1')));
+    $ocrMaxSizeKbRaw = (int)($_POST['max_size_kb'] ?? ($jsonRequest['max_size_kb'] ?? ($env['OCR_MAX_FILE_KB'] ?? 1024)));
 
     if ($ocrApiKey === '') {
         jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
