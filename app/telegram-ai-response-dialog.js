@@ -677,7 +677,17 @@ async function requestAssistantReply(userMessage, context, history) {
   const hasPdfInContext = extractedTexts.some((entry) => isPdfLikeByNameType(entry && entry.name, entry && entry.type));
   if (aiMode === 'paid' && hasPdfInContext) {
     const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
-    if (!filesForPaid.length) {
+    const fileUrlsForPaid = Array.from(new Map(
+      [...extractedTexts, ...attachedFiles]
+        .map((entry) => ({
+          name: String(entry && entry.name || 'document').trim() || 'document',
+          type: String(entry && entry.type || '').trim(),
+          url: String(entry && entry.url || '').trim(),
+        }))
+        .filter((entry) => entry.url)
+        .map((entry) => [entry.url, entry]),
+    ).values());
+    if (!filesForPaid.length && !fileUrlsForPaid.length) {
       throw new Error('Для VIP режима не удалось подготовить файлы. Добавьте PDF и повторите.');
     }
     const paidPrompt = [
@@ -692,6 +702,9 @@ async function requestAssistantReply(userMessage, context, history) {
       filesForPaid.forEach((file) => {
         formData.append('files', file, file.name || 'document.pdf');
       });
+      if (fileUrlsForPaid.length) {
+        formData.append('file_urls', JSON.stringify(fileUrlsForPaid));
+      }
       return formData;
     }, { timeoutMs: Math.max(timeoutMs, 45000) });
     const paidResponse = paidRequest && paidRequest.response;

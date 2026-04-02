@@ -120,6 +120,86 @@ function normalizeUploadedFiles(string $field): array
     return $out;
 }
 
+function normalizeRemoteFilesFromPost(): array
+{
+    $rawJson = trim((string)($_POST['file_urls'] ?? ''));
+    if ($rawJson === '') {
+        return [];
+    }
+    $decoded = json_decode($rawJson, true);
+    if (!is_array($decoded)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($decoded as $index => $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $url = trim((string)($item['url'] ?? ''));
+        if ($url === '' || !preg_match('/^https?:\/\//i', $url)) {
+            continue;
+        }
+        $name = sanitizeFileName((string)($item['name'] ?? ('file-' . ($index + 1))));
+        $result[] = [
+            'url' => $url,
+            'name' => $name !== '' ? $name : ('file-' . ($index + 1)),
+            'client_type' => trim((string)($item['type'] ?? '')),
+        ];
+    }
+    return $result;
+}
+
+function downloadRemoteFiles(array $remoteFiles): array
+{
+    $downloaded = [];
+    $cleanup = [];
+
+    foreach ($remoteFiles as $file) {
+        $url = (string)($file['url'] ?? '');
+        if ($url === '') {
+            continue;
+        }
+
+        $context = stream_context_create([
+            'http' => ['method' => 'GET', 'timeout' => 20, 'ignore_errors' => true],
+            'https' => ['method' => 'GET', 'timeout' => 20, 'ignore_errors' => true],
+        ]);
+        $binary = @file_get_contents($url, false, $context);
+        if ($binary === false || $binary === '') {
+            continue;
+        }
+
+        $tmpPath = tempnam(sys_get_temp_dir(), 'groq_remote_');
+        if ($tmpPath === false) {
+            continue;
+        }
+        $written = @file_put_contents($tmpPath, $binary);
+        if ($written === false || $written <= 0) {
+            @unlink($tmpPath);
+            continue;
+        }
+
+        $cleanup[] = $tmpPath;
+        $downloaded[] = [
+            'name' => sanitizeFileName((string)($file['name'] ?? 'file')),
+            'tmp_name' => $tmpPath,
+            'size' => (int)$written,
+            'client_type' => (string)($file['client_type'] ?? ''),
+        ];
+    }
+
+    if ($cleanup) {
+        register_shutdown_function(static function () use ($cleanup): void {
+            foreach ($cleanup as $path) {
+                @unlink((string)$path);
+            }
+        });
+    }
+
+    return $downloaded;
+}
+
 function detectMime(string $path, string $fallback = ''): string
 {
     $mime = '';
@@ -439,6 +519,12 @@ function callGroqChat(array $requestPayload, string $apiKey): array
 function handleAnalyzePaidAction(array $env): void
 {
     $files = normalizeUploadedFiles('files');
+    if (!$files) {
+        $remoteFiles = normalizeRemoteFilesFromPost();
+        if ($remoteFiles) {
+            $files = downloadRemoteFiles($remoteFiles);
+        }
+    }
     if (!$files) {
         respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
     }
