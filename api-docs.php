@@ -2763,6 +2763,21 @@ if ($action === 'ocr_extract') {
         jsonResponse(400, ['ok' => false, 'error' => 'Файл для OCR не передан']);
     }
 
+    $downloadedOcrUrlFile = null;
+    if ($ocrFileUrl !== '') {
+        $downloadedOcrUrlFile = downloadAttachmentToTempFile($ocrFileUrl);
+        if (is_array($downloadedOcrUrlFile)) {
+            $files = array_merge([$downloadedOcrUrlFile], $files);
+            $ocrFileUrl = '';
+            register_shutdown_function(static function () use ($downloadedOcrUrlFile): void {
+                $tmp = (string)($downloadedOcrUrlFile['tmp_name'] ?? '');
+                if ($tmp !== '' && is_file($tmp)) {
+                    @unlink($tmp);
+                }
+            });
+        }
+    }
+
     if ($ocrApiKey === '') {
         $localFile = $files[0] ?? null;
         $downloadedLocal = null;
