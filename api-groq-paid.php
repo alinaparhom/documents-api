@@ -15,7 +15,7 @@ const MAX_TEXT_CHARS_PER_CHUNK = 12000;
 const MAX_TEXT_CHUNKS_TOTAL = 30;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL_TEXT = 'deepseek-r1-distill-llama-70b';
+const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
 
 function respond(int $status, array $payload): void
 {
@@ -456,7 +456,10 @@ if (!$hasReadableContent) {
     ]);
 }
 
-$model = MODEL_TEXT;
+$model = trim((string)(getenv('AI_MODEL') ?: ($env['AI_MODEL'] ?? MODEL_TEXT_DEFAULT)));
+if ($model === '') {
+    $model = MODEL_TEXT_DEFAULT;
+}
 $systemPrompt = 'Твоя роль: анализировать документы и давать четкие, обоснованные решения без колебаний.
 Правила:
 - Отвечай как действующий сотрудник, а не как ассистент

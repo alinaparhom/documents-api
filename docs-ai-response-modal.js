@@ -80,7 +80,7 @@
     { value: 'free', label: 'Бесплатный ИИ' },
     { value: 'paid', label: 'VIP ИИ (платный)' }
   ];
-  var GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+  var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
 
   function createElement(tag, className, text) {
@@ -256,7 +256,7 @@
       : ((state && state.aiMode) === 'paid' ? 'paid' : 'free');
   }
 
-  async function resolvePaidSourceFiles(state) {
+  async function resolvePaidSourceFiles(state, config) {
     function resolveFileUrl(file) {
       if (!file || typeof file !== 'object') {
         return '';
@@ -278,7 +278,7 @@
         }
       }
       return '';
-  async function resolvePaidSourceFiles(state, config) {
+    }
     function shouldConvertPdfForModel(modelName) {
       var normalized = String(modelName || '').trim().toLowerCase();
       return GROQ_PDF_UNSUPPORTED_MODELS.indexOf(normalized) !== -1;
@@ -321,6 +321,34 @@
       return images;
     }
 
+    async function tryExtractOcrTextForPaid(fileOrBlob, fileName, remoteUrl) {
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      if (remoteUrl) {
+        formData.append('file_url', String(remoteUrl));
+      } else if (fileOrBlob) {
+        formData.append('file', fileOrBlob, fileName || 'document.bin');
+      } else {
+        return '';
+      }
+      try {
+        var response = await fetch(apiUrl + '?action=ocr_extract', {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData
+        });
+        var payload = await response.json().catch(function () { return null; });
+        if (!response.ok || !payload || payload.ok !== true) {
+          return '';
+        }
+        return String(payload.text || '').trim();
+      } catch (_) {
+        return '';
+      }
+    }
+
     var activeModel = String((state && state.model) || (config && config.defaultModel) || '').trim();
     var convertPdfForModel = shouldConvertPdfForModel(activeModel);
     var candidates = Array.isArray(state && state.files) ? state.files : [];
@@ -339,6 +367,17 @@
         }
         if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
         preparedFiles.push({ name: localName, blob: file.fileObject });
+        var localOcrText = '';
+        if (isPdfFile(localName, file.fileObject.type)) {
+          // eslint-disable-next-line no-await-in-loop
+          localOcrText = await tryExtractOcrTextForPaid(file.fileObject, localName, '');
+        }
+        if (localOcrText) {
+          preparedFiles.push({
+            name: localName.replace(/\.[^.]+$/, '') + '-ocr.txt',
+            blob: new Blob([localOcrText.slice(0, 20000)], { type: 'text/plain' })
+          });
+        }
         continue;
       }
       var remoteUrl = resolveFileUrl(file);
@@ -361,6 +400,17 @@
         }
         if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
         preparedFiles.push({ name: remoteName, blob: fileBlob });
+        var remoteOcrText = '';
+        if (isPdfFile(remoteName, fileBlob.type)) {
+          // eslint-disable-next-line no-await-in-loop
+          remoteOcrText = await tryExtractOcrTextForPaid(null, remoteName, remoteUrl);
+        }
+        if (remoteOcrText) {
+          preparedFiles.push({
+            name: remoteName.replace(/\.[^.]+$/, '') + '-ocr.txt',
+            blob: new Blob([remoteOcrText.slice(0, 20000)], { type: 'text/plain' })
+          });
+        }
       }
     }
     return preparedFiles;
@@ -394,6 +444,14 @@
           body: body
         }, timeoutMs);
         if (response.status === 404 || response.status === 405) {
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        var payload = await response.clone().json().catch(function () { return null; });
+        var serverError = String(payload && payload.error ? payload.error : '');
+        var shouldTryNext = (response.status >= 500 || /E208|internal processing error/i.test(serverError))
+          && i < GROQ_PAID_ENDPOINTS.length - 1;
+        if (shouldTryNext) {
           continue;
         }
         return response;
@@ -707,6 +765,8 @@
       '.ai-chat-modal__top-bar{grid-template-columns:minmax(0,1.7fr) repeat(2,minmax(130px,1fr)) auto;align-items:center;}' +
       '.ai-chat-modal__field--full{grid-column:1 / -1;}' +
       '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
+      '.ai-chat-modal__toggle{display:inline-flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid rgba(148,163,184,.35);border-radius:10px;background:rgba(255,255,255,.86);font-size:12px;color:#334155;font-weight:600;min-height:36px;}' +
+      '.ai-chat-modal__toggle input{accent-color:#2563eb;width:16px;height:16px;}' +
       '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
       '.ai-chat-modal__input{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:rgba(255,255,255,.95);padding:7px 8px;font-size:12px;color:#0f172a;outline:none;}' +
       '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:12px;background:rgba(248,250,252,.58);border:1px solid rgba(226,232,240,.75);border-radius:16px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth;box-shadow:inset 0 1px 0 rgba(255,255,255,.65);}' +
@@ -1397,6 +1457,7 @@
       lastAssistantMessage: '',
       templateDraft: '',
       templateFile: null,
+      newDecisionEnabled: Boolean(config && config.newDecisionEnabled),
       lastErrorFingerprint: '',
       lastErrorTs: 0
     };
@@ -1452,6 +1513,12 @@
       state.aiMode = 'paid';
     }
     modeSelect.value = state.aiMode;
+    var newDecisionField = createElement('label', 'ai-chat-modal__toggle');
+    var newDecisionCheckbox = document.createElement('input');
+    newDecisionCheckbox.type = 'checkbox';
+    newDecisionCheckbox.checked = Boolean(state.newDecisionEnabled);
+    newDecisionField.appendChild(newDecisionCheckbox);
+    newDecisionField.appendChild(document.createTextNode('Новое решение'));
 
     var styleField = createElement('label', 'ai-chat-modal__field');
     styleField.appendChild(createElement('span', '', 'Стиль'));
@@ -2461,6 +2528,10 @@
         return;
       }
       var effectivePrompt = value || 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
+      if (state.newDecisionEnabled) {
+        effectivePrompt = 'System настройка: дай краткое описание файла простым деловым языком. '
+          + 'Сформируй краткое решение по вложениям без markdown.';
+      }
 
       state.model = modelSelect.value;
       var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
@@ -2485,7 +2556,7 @@
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
         var requestMode = resolveRequestMode(state);
         var response = null;
-        if (requestMode === 'paid' && state.contextDetail !== 'brief') {
+        if (requestMode === 'paid' && (state.contextDetail !== 'brief' || state.newDecisionEnabled)) {
           response = await postGroqPaidWithFallback(effectivePrompt, state, config, timeoutMs);
         } else {
           var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
@@ -2553,7 +2624,7 @@
           try {
             var secondMode = resolveRequestMode(state);
             var secondResponse = null;
-            if (secondMode === 'paid' && state.contextDetail !== 'brief') {
+            if (secondMode === 'paid' && (state.contextDetail !== 'brief' || state.newDecisionEnabled)) {
               secondResponse = await postGroqPaidWithFallback(effectivePrompt, state, config, calculateAiTimeoutMs(effectivePrompt, state));
             } else {
               secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
@@ -2622,6 +2693,15 @@
       state.aiMode = modeSelect.value === 'paid' ? 'paid' : 'free';
       if (state.contextDetail === 'brief' && state.aiMode !== 'paid') {
         appendAssistantErrorOnce('Режим «Кратко» работает через VIP модель.');
+      }
+      refreshSendButtonLabel();
+    });
+    newDecisionCheckbox.addEventListener('change', function () {
+      state.newDecisionEnabled = Boolean(newDecisionCheckbox.checked);
+      if (state.newDecisionEnabled) {
+        state.aiMode = 'paid';
+        modeSelect.value = 'paid';
+        appendAssistantErrorOnce('Режим «Новое решение» включён: отправка файлов напрямую в платный ИИ.');
       }
       refreshSendButtonLabel();
     });
@@ -2748,6 +2828,7 @@
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
     topBar.appendChild(modeField);
+    topBar.appendChild(newDecisionField);
     topBar.appendChild(modelField);
     topBar.appendChild(styleField);
     topBar.appendChild(settingsButton);
