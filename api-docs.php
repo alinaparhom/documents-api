@@ -211,10 +211,25 @@ function detectFileExtension(array $file): string
 {
     $name = strtolower(trim((string)($file['name'] ?? '')));
     if ($name === '' || !str_contains($name, '.')) {
-        return '';
+        $mimeExtension = extensionFromMimeType((string)($file['type'] ?? ''));
+        if ($mimeExtension !== '') {
+            return $mimeExtension;
+        }
+        $tmp = (string)($file['tmp_name'] ?? '');
+        $archiveExtension = detectOfficeExtensionFromArchive($tmp);
+        return $archiveExtension;
     }
     $parts = explode('.', $name);
-    return trim((string)end($parts));
+    $extension = trim((string)end($parts));
+    if ($extension !== '') {
+        return $extension;
+    }
+    $mimeExtension = extensionFromMimeType((string)($file['type'] ?? ''));
+    if ($mimeExtension !== '') {
+        return $mimeExtension;
+    }
+    $tmp = (string)($file['tmp_name'] ?? '');
+    return detectOfficeExtensionFromArchive($tmp);
 }
 
 
@@ -238,6 +253,74 @@ function detectMimeType(array $file): string
     }
 
     return 'application/octet-stream';
+}
+
+function extensionFromMimeType(string $mimeType): string
+{
+    $mime = strtolower(trim($mimeType));
+    if ($mime === '') {
+        return '';
+    }
+
+    $map = [
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.template' => 'dotx',
+        'application/msword' => 'doc',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
+        'application/vnd.ms-excel' => 'xls',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'pptx',
+        'application/vnd.ms-powerpoint' => 'ppt',
+        'application/pdf' => 'pdf',
+        'image/jpeg' => 'jpg',
+        'image/jpg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+        'image/bmp' => 'bmp',
+        'image/tiff' => 'tiff',
+        'text/plain' => 'txt',
+    ];
+    if (isset($map[$mime])) {
+        return $map[$mime];
+    }
+
+    return '';
+}
+
+function detectOfficeExtensionFromArchive(string $tmpFile): string
+{
+    if ($tmpFile === '' || !is_file($tmpFile) || !class_exists('ZipArchive')) {
+        return '';
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($tmpFile) !== true) {
+        return '';
+    }
+
+    $detected = '';
+    if ($zip->locateName('word/document.xml', ZipArchive::FL_NOCASE) !== false) {
+        $detected = 'docx';
+    } elseif ($zip->locateName('xl/workbook.xml', ZipArchive::FL_NOCASE) !== false) {
+        $detected = 'xlsx';
+    } elseif ($zip->locateName('ppt/presentation.xml', ZipArchive::FL_NOCASE) !== false) {
+        $detected = 'pptx';
+    }
+
+    $zip->close();
+    return $detected;
+}
+
+function ensureFileNameWithExtension(string $name, string $extension): string
+{
+    $normalizedName = trim($name) !== '' ? trim($name) : 'document';
+    if ($extension === '') {
+        return $normalizedName;
+    }
+    if (preg_match('/\.[a-z0-9]{1,10}$/i', $normalizedName)) {
+        return $normalizedName;
+    }
+    return $normalizedName . '.' . strtolower($extension);
 }
 
 function decodeDocxXmlText(string $xml): string
@@ -366,8 +449,13 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
             return ['status' => 400, 'body' => false, 'curl_error' => 'Файл для OCR не найден'];
         }
         $mime = detectMimeType($file);
-        $name = (string)($file['name'] ?? 'document');
+        $extension = detectFileExtension($file);
+        $name = ensureFileNameWithExtension((string)($file['name'] ?? 'document'), $extension);
         $postFields['file'] = curl_file_create($tmpName, $mime, $name);
+        if ($extension !== '') {
+            $postFields['filetype'] = strtoupper($extension);
+            $postFields['file_type'] = strtoupper($extension);
+        }
     }
 
     curl_setopt_array($ch, [
