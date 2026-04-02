@@ -1,5 +1,6 @@
 const DIALOG_STYLE_ID = 'appdosc-ai-dialog-style-v8';
 const DIALOG_ROOT_SELECTOR = '.appdosc-ai-dialog';
+const DIALOG_CHOOSER_SELECTOR = '.appdosc-ai-mode-chooser';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
 const GROQ_PDF_UNSUPPORTED_MODELS = new Set(['llama-3.1-8b-instant']);
@@ -93,6 +94,8 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__attachment-btn--danger{background:rgba(239,68,68,.12);color:#b91c1c}
     .appdosc-ai-dialog__attachment-error{font-size:10px;color:#b91c1c}
     .appdosc-ai-dialog__attachments-footer{display:flex;gap:6px;flex-wrap:wrap}
+    .appdosc-ai-dialog__upload{position:relative;overflow:hidden}
+    .appdosc-ai-dialog__upload input{position:absolute;inset:0;opacity:0;cursor:pointer}
     @keyframes appdoscAttachmentIn{from{opacity:0;transform:scale(.98)}to{opacity:1;transform:scale(1)}}
     .appdosc-ai-dialog__advanced{border:1px solid rgba(148,163,184,.24);border-radius:11px;background:rgba(255,255,255,.74)}
     .appdosc-ai-dialog__advanced > summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:8px 10px;font-size:12px;color:#334155;font-weight:600}
@@ -107,6 +110,15 @@ function ensureAiDialogStyles() {
     .appdosc-ai-dialog__btn:disabled{opacity:.55;cursor:not-allowed}
     .appdosc-ai-dialog__file-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
     .appdosc-ai-dialog__file-reveal{border:1px solid rgba(37,99,235,.28);background:rgba(239,246,255,.9);color:#1e3a8a;border-radius:10px;padding:6px 8px;font-size:11px;line-height:1.2}
+    .appdosc-ai-mode-chooser{position:fixed;inset:0;z-index:2600;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(15,23,42,.42);backdrop-filter:blur(8px)}
+    .appdosc-ai-mode-chooser__panel{width:min(440px,100%);padding:14px;border-radius:18px;background:linear-gradient(155deg,rgba(255,255,255,.95),rgba(255,255,255,.88));border:1px solid rgba(255,255,255,.85);box-shadow:0 20px 40px rgba(15,23,42,.18);display:flex;flex-direction:column;gap:10px}
+    .appdosc-ai-mode-chooser__title{font-size:17px;font-weight:700;color:#0f172a}
+    .appdosc-ai-mode-chooser__hint{font-size:12px;color:#64748b}
+    .appdosc-ai-mode-chooser__actions{display:grid;grid-template-columns:1fr;gap:8px}
+    .appdosc-ai-mode-chooser__btn{border:none;min-height:44px;border-radius:12px;padding:10px 12px;text-align:left;display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,.78);color:#0f172a;border:1px solid rgba(148,163,184,.24)}
+    .appdosc-ai-mode-chooser__btn strong{font-size:14px}
+    .appdosc-ai-mode-chooser__btn small{font-size:11px;color:#64748b}
+    .appdosc-ai-mode-chooser__btn--paid{background:linear-gradient(135deg,rgba(59,130,246,.14),rgba(139,92,246,.14))}
     @media (max-width:560px){.appdosc-ai-dialog{padding:0}.appdosc-ai-dialog__panel{width:100%;height:100dvh;border-radius:0;border:none}.appdosc-ai-dialog__header{padding:10px}.appdosc-ai-dialog__controls{grid-template-columns:1fr}.appdosc-ai-dialog__btn{flex:1;min-height:40px;font-size:14px}.appdosc-ai-dialog__attachments-grid{grid-template-columns:1fr;max-height:180px}}
   `;
   document.head.appendChild(style);
@@ -470,11 +482,24 @@ function isPdfLikeByNameType(name, type) {
 
 async function collectPaidAiFiles(extractedTexts = [], attachedFiles = [], modelName = '') {
   const sourceMap = new Map();
+  const sourceByUrl = new Map();
   (Array.isArray(attachedFiles) ? attachedFiles : []).forEach((file) => {
     const key = String(file && file.name || '').trim().toLowerCase();
     if (!key) return;
     if (!sourceMap.has(key)) {
       sourceMap.set(key, file);
+    }
+    const urls = Array.isArray(file && file.urls) ? file.urls : [];
+    urls.forEach((url) => {
+      const normalized = String(url || '').trim();
+      if (!normalized) return;
+      if (!sourceByUrl.has(normalized)) {
+        sourceByUrl.set(normalized, file);
+      }
+    });
+    const singleUrl = String(file && file.url || '').trim();
+    if (singleUrl && !sourceByUrl.has(singleUrl)) {
+      sourceByUrl.set(singleUrl, file);
     }
   });
 
@@ -482,20 +507,39 @@ async function collectPaidAiFiles(extractedTexts = [], attachedFiles = [], model
   (Array.isArray(extractedTexts) ? extractedTexts : []).forEach((entry) => {
     const name = String(entry && entry.name || '').trim();
     const key = name.toLowerCase();
-    const linked = sourceMap.get(key) || {};
-    const url = String((entry && entry.url) || linked.url || '').trim();
+    const primaryUrl = String((entry && entry.url) || '').trim();
+    const linkedByUrl = primaryUrl ? (sourceByUrl.get(primaryUrl) || {}) : {};
+    const linked = sourceMap.get(key) || linkedByUrl || {};
+    const url = primaryUrl || String(linked.url || '').trim();
+    const urls = []
+      .concat(Array.isArray(entry && entry.urls) ? entry.urls : [])
+      .concat(Array.isArray(linked && linked.urls) ? linked.urls : [])
+      .concat(url ? [url] : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
     const type = String((entry && entry.type) || linked.type || '').trim();
-    if (!url) return;
-    selected.push({ name: name || 'document', type, url });
+    selected.push({ name: name || 'document', type, url, urls, file: linked.file instanceof File ? linked.file : null });
   });
 
   const paidFiles = [];
   for (let index = 0; index < selected.length; index += 1) {
     const item = selected[index];
     try {
-      const response = await fetchWithTimeout(item.url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
-      if (!response.ok) continue;
-      const blob = await response.blob();
+      let blob = null;
+      if (item.file instanceof File) {
+        blob = item.file;
+      } else {
+        const candidateUrls = Array.from(new Set((item.urls || []).filter(Boolean)));
+        for (let i = 0; i < candidateUrls.length; i += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          const response = await fetchWithTimeout(candidateUrls[i], { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000).catch(() => null);
+          if (!response || !response.ok) continue;
+          // eslint-disable-next-line no-await-in-loop
+          blob = await response.blob();
+          if (blob) break;
+        }
+      }
+      if (!blob) continue;
       const name = String(item.name || `document-${index + 1}`).trim();
       const type = String(blob.type || item.type || 'application/octet-stream').trim();
       const isPdf = isPdfLikeByNameType(name, type);
@@ -532,6 +576,25 @@ function isTextLikeMeta(fileMeta) {
 }
 
 async function fetchExternalFileContent(fileMeta) {
+  if (fileMeta && fileMeta.file instanceof File) {
+    if (isTextLikeMeta(fileMeta)) {
+      return (await fileMeta.file.text()).trim();
+    }
+    const ocrRequest = await postDocsAiWithFallback(() => {
+      const form = new FormData();
+      form.append('action', 'ocr_extract');
+      form.append('language', 'rus');
+      form.append('file', fileMeta.file, fileMeta.file.name || 'document');
+      return form;
+    }, { timeoutMs: REQUEST_TIMEOUT_MS + 12000, fallbackErrorMessage: 'OCR временно недоступен' });
+    const ocrResponse = ocrRequest && ocrRequest.response;
+    const payload = ocrRequest && ocrRequest.payload;
+    const endpoint = ocrRequest && ocrRequest.endpoint;
+    if (!ocrResponse.ok || !payload || payload.ok !== true) {
+      throw new Error(`${(payload && payload.error) || 'OCR временно недоступен'}. Endpoint: ${endpoint || 'неизвестно'}`);
+    }
+    return String(payload.text || '').trim();
+  }
   const candidates = Array.isArray(fileMeta && fileMeta.urls) && fileMeta.urls.length
     ? fileMeta.urls
     : [fileMeta && fileMeta.url].filter(Boolean);
@@ -664,6 +727,19 @@ function sanitizeAssistantText(text) {
   return deduped.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function buildExtractedFilesContextText(extractedTexts = []) {
+  const chunks = (Array.isArray(extractedTexts) ? extractedTexts : [])
+    .map((item, index) => {
+      const name = String(item && item.name || `Файл ${index + 1}`).trim();
+      const type = String(item && item.type || '').trim();
+      const text = String(item && item.text || '').trim();
+      if (!text) return '';
+      return `Файл: ${name}${type ? ` (${type})` : ''}\n${text}`;
+    })
+    .filter(Boolean);
+  return chunks.join('\n\n-----\n\n');
+}
+
 async function requestAssistantReply(userMessage, context, history) {
   const prompt = String(userMessage || '').trim();
   if (!prompt) return '';
@@ -688,37 +764,42 @@ async function requestAssistantReply(userMessage, context, history) {
     source: 'telegram_mini_app_dialog',
   });
   const timeoutMs = calculateAiTimeoutMs(context, history, userMessage);
-  const hasPdfInContext = extractedTexts.some((entry) => isPdfLikeByNameType(entry && entry.name, entry && entry.type));
-  if (aiMode === 'paid' && hasPdfInContext) {
-    const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
-    const fileUrlsForPaid = Array.from(new Map(
-      [...extractedTexts, ...attachedFiles]
-        .map((entry) => ({
-          name: String(entry && entry.name || 'document').trim() || 'document',
-          type: String(entry && entry.type || '').trim(),
-          url: String(entry && entry.url || '').trim(),
-        }))
-        .filter((entry) => entry.url)
-        .map((entry) => [entry.url, entry]),
-    ).values());
-    if (!filesForPaid.length && !fileUrlsForPaid.length) {
-      throw new Error('Для VIP режима не удалось подготовить файлы. Добавьте PDF и повторите.');
+  if (aiMode === 'paid') {
+    const extractedFilesText = buildExtractedFilesContextText(extractedTexts);
+    let filesForPaid = [];
+    try {
+      filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
+    } catch (_) {
+      filesForPaid = [];
+    }
+    const ocrTextFiles = (Array.isArray(extractedTexts) ? extractedTexts : [])
+      .map((entry, index) => {
+        const text = String(entry && entry.text || '').trim();
+        if (!text) return null;
+        const name = String(entry && entry.name || `document-${index + 1}`).trim() || `document-${index + 1}`;
+        const baseName = name.replace(/\.[a-z0-9]+$/i, '') || `document-${index + 1}`;
+        const trimmedText = text.slice(0, 40000);
+        return new File([new Blob([trimmedText], { type: 'text/plain' })], `${baseName}-ocr.txt`, { type: 'text/plain' });
+      })
+      .filter(Boolean);
+    const hasTextContext = Boolean(extractedFilesText.trim());
+    if (!filesForPaid.length && !ocrTextFiles.length && !hasTextContext) {
+      throw new Error('Для платного ИИ не удалось получить текст из файлов. Проверьте доступ к вложениям и повторите.');
     }
     const paidPrompt = [
       prompt,
       '',
+      extractedFilesText ? `Контекст файлов после OCR:\n${extractedFilesText}` : '',
       'Учитывай chatHistory и extractedTexts из контекста.',
       'Если пользователь просит переделать/исправить — обнови предыдущий ответ.',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
     const paidRequest = await postGroqPaidWithFallback(() => {
       const formData = new FormData();
       formData.append('prompt', paidPrompt);
       filesForPaid.forEach((file) => {
         formData.append('files', file, file.name || 'document.pdf');
       });
-      if (fileUrlsForPaid.length) {
-        formData.append('file_urls', JSON.stringify(fileUrlsForPaid));
-      }
+      ocrTextFiles.forEach((file) => formData.append('files', file, file.name || 'document-ocr.txt'));
       return formData;
     }, { timeoutMs: Math.max(timeoutMs, 45000) });
     const paidResponse = paidRequest && paidRequest.response;
@@ -827,7 +908,7 @@ async function requestAssistantWithSmartRetry(userMessage, context, history) {
   }
 }
 
-function openAiResponseDialog(context = {}) {
+function openAiChatDialog(context = {}) {
   ensureAiDialogStyles();
   const existingRef = window.__aiDialogInstance;
   if (existingRef && existingRef.isConnected) return;
@@ -848,7 +929,7 @@ function openAiResponseDialog(context = {}) {
     attachedFiles: [],
     selectedAttachmentIds: new Set(),
     responseStyle: 'neutral',
-    aiMode: 'free',
+    aiMode: String(context && context.forceMode || 'free') === 'paid' ? 'paid' : 'free',
     selectedModel: resolveAiModel(context),
     availableModels: MODEL_FALLBACK_OPTIONS.slice(),
     rateLimitUntil: 0,
@@ -1075,6 +1156,189 @@ function openAiResponseDialog(context = {}) {
     const list = Array.isArray(context.extractedTexts) ? context.extractedTexts : [];
     return list.reduce((sum, item) => sum + String((item && item.text) || '').length, 0);
   };
+  const isOcrSupportedFile = (file) => {
+    const name = String(file && file.name || '').toLowerCase();
+    const type = String(file && file.type || '').toLowerCase();
+    return type.startsWith('image/') || type.includes('pdf') || /\.(png|jpe?g|pdf)$/i.test(name);
+  };
+
+  const syncContextAttachments = () => {
+    context.attachedFiles = state.attachedFiles.map((file) => ({
+      name: file.name,
+      type: file.type || '',
+      size: Number(file.size) || 0,
+      url: file.url || '',
+      urls: Array.isArray(file.urls) ? file.urls.slice() : [],
+      extracted: Boolean(file.extracted),
+      extractError: file.extractError || null,
+      file: file.file || null,
+    }));
+  };
+
+  const ensurePaidOcrContext = async () => {
+    const selectedFiles = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+    const filesForOcr = selectedFiles.filter((file) => isOcrSupportedFile(file));
+    if (!filesForOcr.length) {
+      context.extractedTexts = [];
+      syncContextAttachments();
+      return 0;
+    }
+    const extractedForContext = [];
+    for (let i = 0; i < filesForOcr.length; i += 1) {
+      const file = filesForOcr[i];
+      try {
+        const text = String(await fetchExternalFileContent(file) || '').trim();
+        file.fullText = text;
+        file.text = text.slice(0, MAX_AUTO_CONTEXT_TEXT_CHARS);
+        file.preview = file.text.slice(0, 200);
+        file.extracted = Boolean(file.text);
+        file.extractError = file.extracted ? '' : 'Текст не найден';
+      } catch (error) {
+        file.extracted = false;
+        file.text = '';
+        file.fullText = '';
+        file.extractError = error && error.message ? error.message : 'Ошибка OCR';
+      }
+      extractedForContext.push({
+        name: file.name,
+        type: file.type || '',
+        text: String(file.text || ''),
+        url: file.url || '',
+        urls: Array.isArray(file.urls) ? file.urls.slice() : [],
+      });
+    }
+    context.extractedTexts = extractedForContext;
+    syncContextAttachments();
+    renderAttachments();
+    return extractedForContext.filter((entry) => String(entry.text || '').trim()).length;
+  };
+
+  const sendPaidRequestWithSequentialOcr = async (rawPrompt, pending) => {
+    const selectedFiles = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+    const filesForOcr = selectedFiles.filter((file) => isOcrSupportedFile(file));
+    if (!filesForOcr.length) {
+      throw new Error('Выберите хотя бы один JPG/PNG/PDF файл для платного ИИ.');
+    }
+
+    const extractedForContext = [];
+    for (let i = 0; i < filesForOcr.length; i += 1) {
+      const file = filesForOcr[i];
+      if (pending) pending.update(`OCR ${i + 1}/${filesForOcr.length}: ${file.name}`);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const text = String(await fetchExternalFileContent(file) || '').trim();
+        file.fullText = text;
+        file.text = text.slice(0, MAX_AUTO_CONTEXT_TEXT_CHARS);
+        file.preview = file.text.slice(0, 200);
+        file.extracted = Boolean(file.text);
+        file.extractError = file.extracted ? '' : 'Текст не найден';
+      } catch (error) {
+        file.extracted = false;
+        file.text = '';
+        file.fullText = '';
+        file.extractError = error && error.message ? error.message : 'Ошибка OCR';
+      }
+      extractedForContext.push({
+        name: file.name,
+        type: file.type || '',
+        text: String(file.text || ''),
+        url: file.url || '',
+        urls: Array.isArray(file.urls) ? file.urls.slice() : [],
+      });
+    }
+
+    context.extractedTexts = extractedForContext;
+    syncContextAttachments();
+    renderAttachments();
+
+    const mergedOcrText = extractedForContext
+      .map((entry) => String(entry && entry.text || '').trim())
+      .filter(Boolean)
+      .join('\n\n-----\n\n')
+      .slice(0, MAX_AUTO_CONTEXT_TEXT_CHARS);
+    if (!mergedOcrText) {
+      throw new Error('OCR не распознал текст в выбранных файлах.');
+    }
+
+    const finalPrompt = `${String(rawPrompt || '').trim()}\n\nКонтекст OCR файлов:\n${mergedOcrText}`;
+    const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: 'paid' };
+    const task = requestContext && requestContext.task ? requestContext.task : {};
+    const generationParams = requestContext && requestContext.generationParams ? requestContext.generationParams : {};
+    const behaviorFromContext = requestContext && typeof requestContext.aiBehavior === 'string' ? requestContext.aiBehavior.trim() : '';
+    const behaviorText = normalizeAiBehavior(behaviorFromContext || DEFAULT_SITE_AI_BEHAVIOR);
+    const safeExtractedTexts = extractedForContext.map((entry) => ({
+      name: entry.name,
+      type: entry.type || 'text/plain',
+      text: String(entry.text || ''),
+    }));
+    requestContext.extractedTexts = safeExtractedTexts;
+    const serializedContext = JSON.stringify({
+      task: {
+        id: task.id || null,
+        title: task.title || task.name || '',
+        description: task.description || task.text || '',
+      },
+      chatHistory: buildChatHistoryContext(state.chatHistory),
+      attachedFiles: [],
+      extractedTexts: safeExtractedTexts,
+      source: 'telegram_mini_app_vip_ocr_sequential',
+    });
+    if (pending) pending.update('Отправляем запрос в api-docs.php...');
+    const request = await postDocsAiWithFallback(() => {
+      const formData = new FormData();
+      formData.append('action', 'ai_response_analyze');
+      formData.append('documentTitle', String(task.title || task.name || 'Задача'));
+      formData.append('prompt', `${finalPrompt}\n\nУчитывай chatHistory из context. Если пользователь просит переделать/исправить — обнови предыдущий ответ.`);
+      formData.append('responseStyle', state.responseStyle);
+      formData.append('mode', 'paid');
+      formData.append('aiBehavior', behaviorText);
+      formData.append('extractedTexts', JSON.stringify(safeExtractedTexts));
+      formData.append('temperature', String(Number(generationParams.temperature) || 0.7));
+      formData.append('top_p', String(Number(generationParams.top_p) || 1));
+      formData.append('frequency_penalty', String(Number(generationParams.frequency_penalty) || 0));
+      formData.append('presence_penalty', String(Number(generationParams.presence_penalty) || 0));
+      if (state.selectedModel) formData.append('model', state.selectedModel);
+      formData.append('context', serializedContext);
+      return formData;
+    }, { timeoutMs: calculateAiTimeoutMs(requestContext, state.chatHistory, finalPrompt) });
+    const response = request && request.response;
+    const payload = request && request.payload;
+    if (!response || !response.ok || !payload) {
+      throw new Error((payload && payload.error) || `Ошибка сервера (${response ? response.status : 'network'})`);
+    }
+    const assistantReply = sanitizeAssistantText(parseAiPayload(payload));
+    requestContext.__lastAiMeta = {
+      mode: String((payload && payload.mode) || 'paid'),
+      model: String((payload && payload.model) || state.selectedModel || ''),
+      tokensUsed: Number(payload && payload.tokensUsed) || 0,
+      timeMs: Number(payload && payload.timeMs) || 0,
+    };
+    return { assistantReply, requestContext };
+  };
+
+  const scanSelectedFilesToSingleMessage = async (pending) => {
+    const selectedFiles = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+    if (!selectedFiles.length) {
+      throw new Error('Выберите файлы для OCR.');
+    }
+    const results = [];
+    for (let i = 0; i < selectedFiles.length; i += 1) {
+      const file = selectedFiles[i];
+      if (!(file && file.file instanceof File)) {
+        results.push(`Файл: ${file.name}\n⚠️ Пропущен: доступен только как ссылка. Загрузите файл локально через «Добавить файл».`);
+        continue;
+      }
+      if (pending) pending.update(`OCR ${i + 1}/${selectedFiles.length}: ${file.name}`);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const text = String(await fetchExternalFileContent(file) || '').trim();
+        results.push(`Файл: ${file.name}\n${text || '⚠️ Текст не найден.'}`);
+      } catch (error) {
+        results.push(`Файл: ${file.name}\n⚠️ Ошибка OCR: ${error && error.message ? error.message : 'неизвестная ошибка'}`);
+      }
+    }
+    return results.join('\n\n──────────\n\n').trim();
+  };
 
 
   const reorderFiles = (draggedIndex, targetIndex) => {
@@ -1166,6 +1430,7 @@ function openAiResponseDialog(context = {}) {
       type: file.type || 'text/plain',
       text: String(file.text || ''),
       url: file.url || '',
+      urls: Array.isArray(file.urls) ? file.urls.slice() : [],
     }));
     if (readableFiles.length) {
       appendFileTextRevealMessage(readableFiles);
@@ -1176,14 +1441,7 @@ function openAiResponseDialog(context = {}) {
       appendBubble(`В контекст добавлены выбранные файлы (${extractedForContext.length}), текст не извлечён. VIP ИИ учтёт вложения как файлы.`, 'assistant');
     }
 
-    context.attachedFiles = state.attachedFiles.map((file) => ({
-      name: file.name,
-      type: file.type || '',
-      size: Number(file.size) || 0,
-      url: file.url || '',
-      extracted: Boolean(file.extracted),
-      extractError: file.extractError || null,
-    }));
+    syncContextAttachments();
     renderAttachments();
   };
 
@@ -1303,6 +1561,41 @@ function openAiResponseDialog(context = {}) {
     readBtn.textContent = `Прочитать выбранные (${selectedCount})`;
     readBtn.addEventListener('click', handleBatchAdd);
     footer.appendChild(readBtn);
+    const uploadBtn = document.createElement('label');
+    uploadBtn.className = 'appdosc-ai-dialog__attachment-btn appdosc-ai-dialog__upload';
+    uploadBtn.textContent = 'Добавить файл';
+    const uploadInput = document.createElement('input');
+    uploadInput.type = 'file';
+    uploadInput.accept = '.png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf';
+    uploadInput.multiple = true;
+    uploadInput.addEventListener('change', () => {
+      const files = Array.from(uploadInput.files || []);
+      if (!files.length) return;
+      files.forEach((file, idx) => {
+        const id = `upload_${Date.now()}_${idx}_${Math.random().toString(16).slice(2, 7)}`;
+        state.attachedFiles.push({
+          id,
+          name: file.name || `upload-${idx + 1}`,
+          type: file.type || '',
+          size: Number(file.size) || 0,
+          urls: [],
+          url: '',
+          file,
+          extracted: false,
+          extractError: '',
+          text: '',
+          preview: '',
+          fullText: '',
+        });
+        state.selectedAttachmentIds.add(id);
+      });
+      syncContextAttachments();
+      renderAttachments();
+      uploadInput.value = '';
+      appendBubble(`Добавлено новых файлов: ${files.length}.`, 'assistant');
+    });
+    uploadBtn.appendChild(uploadInput);
+    footer.appendChild(uploadBtn);
     attachmentsNode.appendChild(footer);
   };
 
@@ -1354,8 +1647,16 @@ function openAiResponseDialog(context = {}) {
     root.querySelector('[data-send]').disabled = true;
     const pending = appendPendingBubble('Готовим ответ...');
     try {
-      const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
-      const assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
+      let assistantReply = '';
+      let requestContext = null;
+      if (state.aiMode === 'paid') {
+        const paidResult = await sendPaidRequestWithSequentialOcr(prompt, pending);
+        assistantReply = paidResult.assistantReply;
+        requestContext = paidResult.requestContext;
+      } else {
+        requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
+        assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
+      }
       pending.remove();
       appendBubble(assistantReply, 'assistant');
       appendResponseMeta(requestContext.__lastAiMeta || null);
@@ -1387,48 +1688,26 @@ function openAiResponseDialog(context = {}) {
     if (state.isSending) return;
     if (applyRateLimitState()) return;
     const prompt = String(input.value || '').trim();
-    if (!prompt) return;
-    appendBubble(prompt, 'user');
-    state.chatHistory.push({ role: 'user', text: prompt, ts: Date.now() });
-    state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+    appendBubble(prompt || 'Сканировать выбранные файлы', 'user');
     state.isSending = true;
     sendBtn.disabled = true;
     input.disabled = true;
-    notify('info', 'Генерируем ответ ИИ...');
-    const pending = appendPendingBubble('Готовим ответ...');
-    let assistantReply = '';
+    notify('info', 'Запускаем OCR...');
+    const pending = appendPendingBubble('OCR выбранных файлов...');
     try {
-      const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
-      assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
-      appendResponseMeta(requestContext.__lastAiMeta || null);
+      const ocrText = await scanSelectedFilesToSingleMessage(pending);
+      pending.remove();
+      appendBubble(ocrText || 'OCR завершён, но текст не найден.', 'assistant');
+      notify('success', 'OCR завершён.');
     } catch (error) {
       pending.remove();
-      assistantReply = '';
-      const errorMessage = buildReadableAiError(error);
-      const modelsHandled = applyAvailableModelsFromError(error);
+      const errorMessage = String(error && error.message || 'Ошибка OCR.');
       appendErrorBubbleOnce(`Ошибка: ${errorMessage}`);
       notify('warning', errorMessage);
-      if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
-        const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
-        state.rateLimitUntil = Date.now() + (waitSeconds * 1000);
-        applyRateLimitState();
-      }
-      if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendErrorBubbleOnce('Модель из .env временно недоступна на сервере.');
-      }
-    }
-    if (assistantReply) {
-      pending.remove();
-      appendBubble(assistantReply, 'assistant');
-      state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
-      state.chatHistory = normalizeHistoryMessages(state.chatHistory);
     }
     input.value = '';
     state.isSending = false;
     applyRateLimitState();
-    if (assistantReply) {
-      notify('success', 'Ответ ИИ готов.');
-    }
   });
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -1460,23 +1739,73 @@ function openAiResponseDialog(context = {}) {
   window.addEventListener('keydown', onEscClose);
   collectTaskAttachmentTexts(context && context.task, appendBubble).then((files) => {
     state.attachedFiles = files;
-    context.attachedFiles = files.map((file) => ({
-      name: file.name,
-      type: file.type || '',
-      size: Number(file.size) || 0,
-      url: file.url || '',
-      extracted: Boolean(file.extracted),
-      extractError: file.extractError || null,
-    }));
+    state.selectedAttachmentIds = new Set(files.map((file) => file.id));
+    syncContextAttachments();
     context.extractedTexts = files
       .filter((file) => file.extracted && file.text)
-      .map((file) => ({ name: file.name, type: file.type || 'text/plain', text: file.text }));
+      .map((file) => ({
+        name: file.name,
+        type: file.type || 'text/plain',
+        text: file.text,
+        url: file.url || '',
+        urls: Array.isArray(file.urls) ? file.urls.slice() : [],
+      }));
     renderAttachments();
   }).catch((error) => {
     appendBubble(`Не удалось подключить вложения: ${error && error.message ? error.message : 'неизвестная ошибка'}`, 'assistant');
   });
   renderAttachments();
   setTimeout(() => input.focus(), 0);
+}
+
+function openAiModeChooser(context = {}) {
+  ensureAiDialogStyles();
+  const existing = document.querySelector(DIALOG_CHOOSER_SELECTOR);
+  if (existing) return;
+  const chooser = document.createElement('div');
+  chooser.className = 'appdosc-ai-mode-chooser';
+  chooser.innerHTML = `
+    <div class="appdosc-ai-mode-chooser__panel" role="dialog" aria-label="Выбор режима ИИ">
+      <div class="appdosc-ai-mode-chooser__title">Ответ с помощью ИИ</div>
+      <div class="appdosc-ai-mode-chooser__hint">Выберите режим: бесплатный (как раньше) или платный чат с OCR файлов.</div>
+      <div class="appdosc-ai-mode-chooser__actions">
+        <button type="button" class="appdosc-ai-mode-chooser__btn" data-ai-choice="free">
+          <strong>Бесплатный ИИ</strong>
+          <small>Текущая логика без доп. настроек</small>
+        </button>
+        <button type="button" class="appdosc-ai-mode-chooser__btn appdosc-ai-mode-chooser__btn--paid" data-ai-choice="paid">
+          <strong>Платный ИИ</strong>
+          <small>Чат + OCR JPG/PNG/PDF + история диалога</small>
+        </button>
+        <button type="button" class="appdosc-ai-dialog__btn appdosc-ai-dialog__btn--ghost" data-ai-choice="close">Отмена</button>
+      </div>
+    </div>`;
+  document.body.appendChild(chooser);
+
+  const closeChooser = () => {
+    if (chooser.isConnected) chooser.remove();
+  };
+  chooser.addEventListener('click', (event) => {
+    const button = event.target && event.target.closest('[data-ai-choice]');
+    if (!button) {
+      if (event.target === chooser) closeChooser();
+      return;
+    }
+    const choice = String(button.getAttribute('data-ai-choice') || '');
+    closeChooser();
+    if (choice === 'free' || choice === 'paid') {
+      openAiChatDialog({ ...context, forceMode: choice });
+    }
+  });
+}
+
+function openAiResponseDialog(context = {}) {
+  const explicitMode = String(context && context.forceMode || '').toLowerCase();
+  if (explicitMode === 'free' || explicitMode === 'paid') {
+    openAiChatDialog(context);
+    return;
+  }
+  openAiModeChooser(context);
 }
 
 if (typeof window !== 'undefined') {
