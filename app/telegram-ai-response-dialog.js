@@ -482,11 +482,24 @@ function isPdfLikeByNameType(name, type) {
 
 async function collectPaidAiFiles(extractedTexts = [], attachedFiles = [], modelName = '') {
   const sourceMap = new Map();
+  const sourceByUrl = new Map();
   (Array.isArray(attachedFiles) ? attachedFiles : []).forEach((file) => {
     const key = String(file && file.name || '').trim().toLowerCase();
     if (!key) return;
     if (!sourceMap.has(key)) {
       sourceMap.set(key, file);
+    }
+    const urls = Array.isArray(file && file.urls) ? file.urls : [];
+    urls.forEach((url) => {
+      const normalized = String(url || '').trim();
+      if (!normalized) return;
+      if (!sourceByUrl.has(normalized)) {
+        sourceByUrl.set(normalized, file);
+      }
+    });
+    const singleUrl = String(file && file.url || '').trim();
+    if (singleUrl && !sourceByUrl.has(singleUrl)) {
+      sourceByUrl.set(singleUrl, file);
     }
   });
 
@@ -494,20 +507,39 @@ async function collectPaidAiFiles(extractedTexts = [], attachedFiles = [], model
   (Array.isArray(extractedTexts) ? extractedTexts : []).forEach((entry) => {
     const name = String(entry && entry.name || '').trim();
     const key = name.toLowerCase();
-    const linked = sourceMap.get(key) || {};
-    const url = String((entry && entry.url) || linked.url || '').trim();
+    const primaryUrl = String((entry && entry.url) || '').trim();
+    const linkedByUrl = primaryUrl ? (sourceByUrl.get(primaryUrl) || {}) : {};
+    const linked = sourceMap.get(key) || linkedByUrl || {};
+    const url = primaryUrl || String(linked.url || '').trim();
+    const urls = []
+      .concat(Array.isArray(entry && entry.urls) ? entry.urls : [])
+      .concat(Array.isArray(linked && linked.urls) ? linked.urls : [])
+      .concat(url ? [url] : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
     const type = String((entry && entry.type) || linked.type || '').trim();
-    if (!url) return;
-    selected.push({ name: name || 'document', type, url });
+    selected.push({ name: name || 'document', type, url, urls, file: linked.file instanceof File ? linked.file : null });
   });
 
   const paidFiles = [];
   for (let index = 0; index < selected.length; index += 1) {
     const item = selected[index];
     try {
-      const response = await fetchWithTimeout(item.url, { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000);
-      if (!response.ok) continue;
-      const blob = await response.blob();
+      let blob = null;
+      if (item.file instanceof File) {
+        blob = item.file;
+      } else {
+        const candidateUrls = Array.from(new Set((item.urls || []).filter(Boolean)));
+        for (let i = 0; i < candidateUrls.length; i += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          const response = await fetchWithTimeout(candidateUrls[i], { credentials: 'same-origin' }, REQUEST_TIMEOUT_MS + 12000).catch(() => null);
+          if (!response || !response.ok) continue;
+          // eslint-disable-next-line no-await-in-loop
+          blob = await response.blob();
+          if (blob) break;
+        }
+      }
+      if (!blob) continue;
       const name = String(item.name || `document-${index + 1}`).trim();
       const type = String(blob.type || item.type || 'application/octet-stream').trim();
       const isPdf = isPdfLikeByNameType(name, type);
@@ -1136,6 +1168,7 @@ function openAiChatDialog(context = {}) {
       type: file.type || '',
       size: Number(file.size) || 0,
       url: file.url || '',
+      urls: Array.isArray(file.urls) ? file.urls.slice() : [],
       extracted: Boolean(file.extracted),
       extractError: file.extractError || null,
       file: file.file || null,
@@ -1171,6 +1204,7 @@ function openAiChatDialog(context = {}) {
         type: file.type || '',
         text: String(file.text || ''),
         url: file.url || '',
+        urls: Array.isArray(file.urls) ? file.urls.slice() : [],
       });
     }
     context.extractedTexts = extractedForContext;
@@ -1269,6 +1303,7 @@ function openAiChatDialog(context = {}) {
       type: file.type || 'text/plain',
       text: String(file.text || ''),
       url: file.url || '',
+      urls: Array.isArray(file.urls) ? file.urls.slice() : [],
     }));
     if (readableFiles.length) {
       appendFileTextRevealMessage(readableFiles);
@@ -1607,10 +1642,17 @@ function openAiChatDialog(context = {}) {
   window.addEventListener('keydown', onEscClose);
   collectTaskAttachmentTexts(context && context.task, appendBubble).then((files) => {
     state.attachedFiles = files;
+    state.selectedAttachmentIds = new Set(files.map((file) => file.id));
     syncContextAttachments();
     context.extractedTexts = files
       .filter((file) => file.extracted && file.text)
-      .map((file) => ({ name: file.name, type: file.type || 'text/plain', text: file.text }));
+      .map((file) => ({
+        name: file.name,
+        type: file.type || 'text/plain',
+        text: file.text,
+        url: file.url || '',
+        urls: Array.isArray(file.urls) ? file.urls.slice() : [],
+      }));
     renderAttachments();
   }).catch((error) => {
     appendBubble(`Не удалось подключить вложения: ${error && error.message ? error.message : 'неизвестная ошибка'}`, 'assistant');
