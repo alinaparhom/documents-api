@@ -119,6 +119,123 @@ function normalizeUploadedFiles(string $field): array
     return $out;
 }
 
+
+
+function normalizeRemoteFilesFromPost(): array
+{
+    $candidates = [];
+    foreach (['remoteFiles', 'files', 'files_json'] as $field) {
+        $raw = $_POST[$field] ?? null;
+        if (!is_string($raw) || trim($raw) === '') {
+            continue;
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            continue;
+        }
+        $candidates = $decoded;
+        break;
+    }
+
+    if (!$candidates) {
+        return [];
+    }
+
+    $out = [];
+    foreach ($candidates as $item) {
+        if (is_string($item)) {
+            $url = trim($item);
+            $name = '';
+        } elseif (is_array($item)) {
+            $url = trim((string)($item['url'] ?? ''));
+            $name = sanitizeFileName((string)($item['name'] ?? ''));
+        } else {
+            continue;
+        }
+
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            continue;
+        }
+
+        $out[] = [
+            'url' => $url,
+            'name' => $name,
+        ];
+    }
+
+    return $out;
+}
+
+function downloadRemoteFiles(array $remoteFiles): array
+{
+    $out = [];
+    foreach ($remoteFiles as $index => $remoteFile) {
+        $url = trim((string)($remoteFile['url'] ?? ''));
+        if ($url === '') {
+            continue;
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'groqrf_');
+        if ($tmp === false) {
+            continue;
+        }
+
+        $fp = @fopen($tmp, 'wb');
+        if (!is_resource($fp)) {
+            @unlink($tmp);
+            continue;
+        }
+
+        $ch = curl_init($url);
+        if ($ch === false) {
+            fclose($fp);
+            @unlink($tmp);
+            continue;
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_FILE => $fp,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_TIMEOUT => 45,
+            CURLOPT_FAILONERROR => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_USERAGENT => 'documents-api/1.0',
+        ]);
+
+        $ok = curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $type = trim((string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE));
+        curl_close($ch);
+        fclose($fp);
+
+        $size = (int)@filesize($tmp);
+        if ($ok === false || $status >= 400 || $size <= 0) {
+            @unlink($tmp);
+            continue;
+        }
+
+        $urlPath = (string)parse_url($url, PHP_URL_PATH);
+        $urlName = sanitizeFileName((string)basename($urlPath));
+        $name = sanitizeFileName((string)($remoteFile['name'] ?? ''));
+        if ($name === 'file') {
+            $name = '';
+        }
+        if ($name === '') {
+            $name = $urlName !== '' && $urlName !== 'file' ? $urlName : ('remote-file-' . ($index + 1) . '.bin');
+        }
+
+        $out[] = [
+            'name' => $name,
+            'tmp_name' => $tmp,
+            'size' => $size,
+            'client_type' => $type !== '' ? $type : 'application/octet-stream',
+        ];
+    }
+
+    return $out;
+}
 function detectMime(string $path, string $fallback = ''): string
 {
     $mime = '';
@@ -407,6 +524,12 @@ function handleAnalyzePaidAction(array $env): void
     if (!$files) {
         // На некоторых клиентах поле может приходить как files[]
         $files = normalizeUploadedFiles('files[]');
+    }
+    if (!$files) {
+        $remoteFiles = normalizeRemoteFilesFromPost();
+        if ($remoteFiles) {
+            $files = downloadRemoteFiles($remoteFiles);
+        }
     }
     if (!$files) {
         respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
