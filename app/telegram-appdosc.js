@@ -370,22 +370,35 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   } catch (_) {
     extractedText = '';
   }
-  const request = await postGroqPaidWithFallback(() => {
+  const createVipFormData = () => {
     const formData = new FormData();
     formData.append('action', 'generate_summary');
     formData.append('mode', 'paid');
+    formData.append('files[]', fileForVip, fileForVip.name || fileName);
     formData.append('files', fileForVip, fileForVip.name || fileName);
     if (extractedText) {
       formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }]));
     }
     return formData;
-  });
+  };
+  const request = await postGroqPaidWithFallback(createVipFormData);
   const response = request && request.response;
   const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
+    const statusCode = response && Number.isFinite(response.status) ? Number(response.status) : 0;
+    const errorText = normalizeValue(payload && payload.error);
+    const shouldFallbackToTextSummary = statusCode === 422
+      && /extractedTexts|files\[\]/i.test(errorText)
+      && extractedText.length >= 20;
+    if (shouldFallbackToTextSummary) {
+      return requestTelegramBriefAi(source && source.label ? String(source.label) : fileName, extractedText, 'paid');
+    }
+    throw new Error(errorText || `Ошибка ИИ (${statusCode})`);
   }
   if (!hasMeaningfulTelegramBriefPayload(payload)) {
+    if (extractedText.length >= 20) {
+      return requestTelegramBriefAi(source && source.label ? String(source.label) : fileName, extractedText, 'paid');
+    }
     throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
   }
   return payload;

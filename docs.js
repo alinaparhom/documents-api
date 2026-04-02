@@ -2466,6 +2466,7 @@
     var request = await postGroqPaidForBrief(function() {
       var formData = new FormData();
       formData.append('action', 'generate_summary');
+      formData.append('files[]', fileForVip, fileForVip.name || sourceLabel);
       formData.append('files', fileForVip, fileForVip.name || sourceLabel);
       if (String(extractedText || '').trim()) {
         formData.append('extractedTexts', JSON.stringify([{
@@ -2479,9 +2480,20 @@
     var response = request && request.response;
     var payload = request && request.payload;
     if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
+      var statusCode = response && typeof response.status === 'number' ? response.status : 0;
+      var serverError = payload && payload.error ? String(payload.error).trim() : '';
+      var shouldFallbackToText = statusCode === 422
+        && /extractedTexts|files\[\]/i.test(serverError)
+        && String(extractedText || '').trim().length >= 20;
+      if (shouldFallbackToText) {
+        return requestAiBriefSummaryForText(source, extractedText, apiUrl, 'paid');
+      }
+      throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ')'));
     }
     if (!isMeaningfulAiBriefPayload(payload)) {
+      if (String(extractedText || '').trim().length >= 20) {
+        return requestAiBriefSummaryForText(source, extractedText, apiUrl, 'paid');
+      }
       throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
     }
     return payload;
@@ -2514,7 +2526,16 @@
     });
     var payload = await response.json().catch(function() { return null; });
     if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
+      var statusCode = response && typeof response.status === 'number' ? response.status : 0;
+      var serverError = payload && payload.error ? String(payload.error).trim() : '';
+      var shouldFallbackToText = statusCode === 422 && /extractedTexts|files\[\]/i.test(serverError);
+      if (shouldFallbackToText) {
+        var ocrText = await requestOcrTextForSource(source, apiUrl).catch(function() { return ''; });
+        if (String(ocrText || '').trim()) {
+          return requestAiBriefSummaryForText(source, ocrText, apiUrl, aiMode);
+        }
+      }
+      throw new Error(serverError || ('Ошибка ИИ (' + statusCode + ')'));
     }
     if (!isMeaningfulAiBriefPayload(payload)) {
       throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
