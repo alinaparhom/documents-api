@@ -2753,6 +2753,7 @@ if ($action === 'ocr_extract') {
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
+    $ocrFileType = trim((string)($_POST['file_type'] ?? ($_POST['filetype'] ?? '')));
     $ocrEngine = trim((string)($_POST['OCREngine'] ?? '2'));
     $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
     $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? 'true'));
@@ -2775,6 +2776,9 @@ if ($action === 'ocr_extract') {
         'scale' => $ocrScale !== '' ? $ocrScale : 'true',
         'detectOrientation' => $ocrDetectOrientation !== '' ? $ocrDetectOrientation : 'true',
     ];
+    if ($ocrFileType !== '') {
+        $ocrExtraFields['filetype'] = mb_strtolower($ocrFileType);
+    }
 
     if ($ocrFileUrl !== '') {
         $ocrResult = performOcrRequest(
