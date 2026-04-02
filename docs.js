@@ -1,5 +1,5 @@
 (function() {
-  var API_URL = 'docs.php';
+  var API_URL = '/docs.php';
   var DATE_FORMATTER = new Intl.DateTimeFormat('ru-RU');
   var DATE_TIME_FORMATTER;
   var docsLogger = {

@@ -2,10 +2,7 @@ import { createPdfViewer } from './apppdf.js';
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
-const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
-const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
-const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
@@ -678,7 +675,15 @@ function openTelegramBriefModal(task, statusHandler) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-brief-ai__item';
-    button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>Вложение</small></span>`;
+    const titleWrap = document.createElement('span');
+    const titleNode = document.createElement('strong');
+    titleNode.textContent = normalizeValue(source.label) || 'Файл';
+    titleWrap.appendChild(titleNode);
+    const typeWrap = document.createElement('span');
+    const typeNode = document.createElement('small');
+    typeNode.textContent = 'Вложение';
+    typeWrap.appendChild(typeNode);
+    button.append(titleWrap, typeWrap);
     button.addEventListener('click', async () => {
       const requestId = ++activeRequestId;
       activate(button);
@@ -733,6 +738,9 @@ function openTelegramBriefModal(task, statusHandler) {
   });
   if (!sources.length) {
     list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
+    if (modeSelect) modeSelect.disabled = true;
+    if (newDecisionCheckbox) newDecisionCheckbox.disabled = true;
+    setStatus('Нет файлов для анализа в этой задаче.', 'error');
   }
   document.body.appendChild(modal);
 }
