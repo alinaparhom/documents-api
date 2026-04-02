@@ -355,14 +355,16 @@
     var preparedFiles = [];
     for (var i = 0; i < candidates.length; i += 1) {
       var file = candidates[i];
-      if (file && file.fileObject) {
-        var localName = file.name || 'document.bin';
-        if (isPdfFile(localName, file.fileObject.type) && convertPdfForModel) {
-          // eslint-disable-next-line no-await-in-loop
-          var localJpegs = await convertPdfBlobToJpegBlobs(file.fileObject, localName.replace(/\.pdf$/i, '') || 'document');
-          if (localJpegs.length) {
-            preparedFiles = preparedFiles.concat(localJpegs);
-            continue;
+      try {
+        if (file && file.fileObject) {
+          var localName = file.name || 'document.bin';
+          if (isPdfFile(localName, file.fileObject.type) && convertPdfForModel) {
+            // eslint-disable-next-line no-await-in-loop
+            var localJpegs = await convertPdfBlobToJpegBlobs(file.fileObject, localName.replace(/\.pdf$/i, '') || 'document');
+            if (localJpegs.length) {
+              preparedFiles = preparedFiles.concat(localJpegs);
+              continue;
+            }
           }
         }
         if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
@@ -387,16 +389,26 @@
         if (!fileResponse.ok) {
           continue;
         }
-        // eslint-disable-next-line no-await-in-loop
-        var fileBlob = await fileResponse.blob();
-        var remoteName = file.name || 'document.bin';
-        if (isPdfFile(remoteName, fileBlob.type) && convertPdfForModel) {
+        var remoteUrl = resolveFileUrl(file);
+        if (remoteUrl) {
           // eslint-disable-next-line no-await-in-loop
-          var remoteJpegs = await convertPdfBlobToJpegBlobs(fileBlob, remoteName.replace(/\.pdf$/i, '') || 'document');
-          if (remoteJpegs.length) {
-            preparedFiles = preparedFiles.concat(remoteJpegs);
+          var fileResponse = await fetch(remoteUrl, { credentials: 'same-origin' });
+          if (!fileResponse.ok) {
             continue;
           }
+          // eslint-disable-next-line no-await-in-loop
+          var fileBlob = await fileResponse.blob();
+          var remoteName = file.name || 'document.bin';
+          if (isPdfFile(remoteName, fileBlob.type) && convertPdfForModel) {
+            // eslint-disable-next-line no-await-in-loop
+            var remoteJpegs = await convertPdfBlobToJpegBlobs(fileBlob, remoteName.replace(/\.pdf$/i, '') || 'document');
+            if (remoteJpegs.length) {
+              preparedFiles = preparedFiles.concat(remoteJpegs);
+              continue;
+            }
+          }
+          if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
+          preparedFiles.push({ name: remoteName, blob: fileBlob });
         }
         if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
         preparedFiles.push({ name: remoteName, blob: fileBlob });
@@ -1014,6 +1026,15 @@
 
   function sanitizeAssistantResponseText(text) {
     var value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    var compact = value.trim();
+    if (compact && compact.charAt(0) === '{' && /"response"\s*:/i.test(compact)) {
+      try {
+        var parsed = JSON.parse(compact);
+        if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+          value = String(parsed.response || '');
+        }
+      } catch (_) {}
+    }
     value = value.replace(/<think[\s\S]*?<\/think>/gi, '');
     value = value.replace(/<\/?think>/gi, '');
     var lines = value.split('\n').filter(function (line) {
