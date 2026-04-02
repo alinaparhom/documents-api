@@ -7,8 +7,6 @@ const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
-
-let aiDialogLoader = null;
 let briefPdfJsLoader = null;
 
 
@@ -122,50 +120,6 @@ async function convertPdfToImageFileForBrief(file, fallbackName) {
   }
 }
 
-function loadExternalScript(src, marker) {
-  return new Promise((resolve, reject) => {
-    if (!src) {
-      reject(new Error('Пустой путь скрипта ИИ.'));
-      return;
-    }
-    const existing = document.querySelector(`script[${marker}]`);
-    if (existing) {
-      if (typeof window.openAiResponseDialog === 'function') {
-        resolve(window.openAiResponseDialog);
-        return;
-      }
-      if (existing.dataset.loaded === 'true') {
-        reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
-        return;
-      }
-      existing.addEventListener('load', () => {
-        if (typeof window.openAiResponseDialog === 'function') {
-          resolve(window.openAiResponseDialog);
-        } else {
-          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
-        }
-      }, { once: true });
-      existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = src;
-    script.defer = true;
-    script.setAttribute(marker, 'true');
-    script.onload = () => {
-      script.dataset.loaded = 'true';
-      if (typeof window.openAiResponseDialog === 'function') {
-        resolve(window.openAiResponseDialog);
-      } else {
-        reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
-      }
-    };
-    script.onerror = () => reject(new Error(`Не удалось загрузить скрипт ИИ: ${src}`));
-    document.head.appendChild(script);
-  });
-}
-
 function escapeHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -173,109 +127,6 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function ensureAiDialogScriptLoaded() {
-  if (window && typeof window.openAiResponseDialog === 'function') {
-    return Promise.resolve(window.openAiResponseDialog);
-  }
-
-  if (!aiDialogLoader) {
-    const dynamicImportCandidates = [];
-    try {
-      if (typeof import.meta !== 'undefined' && import.meta.url) {
-        dynamicImportCandidates.push(new URL('./telegram-ai-response-dialog.js', import.meta.url).toString());
-      }
-    } catch (_) {}
-    if (typeof location !== 'undefined' && location.origin) {
-      dynamicImportCandidates.push(new URL('/js/documents/app/telegram-ai-response-dialog.js', location.origin).toString());
-      dynamicImportCandidates.push(new URL('/app/telegram-ai-response-dialog.js', location.origin).toString());
-    }
-    const runtimeVersion = String(window.__RUNTIME_ASSET_VERSION__ || '').trim();
-    const assetVersion = String(window.__ASSET_VERSION__ || '').trim();
-    const cacheVersion = runtimeVersion || (assetVersion ? `${assetVersion}-${Date.now().toString(36)}` : Date.now().toString(36));
-    const candidates = [
-      `/js/documents/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
-      `./telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
-      `/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
-    ];
-    const loadViaDynamicImport = async (index) => {
-      if (index >= dynamicImportCandidates.length) return;
-      const src = dynamicImportCandidates[index];
-      if (!src) return loadViaDynamicImport(index + 1);
-      try {
-        await import(src);
-      } catch (_) {
-        return loadViaDynamicImport(index + 1);
-      }
-      if (typeof window.openAiResponseDialog === 'function') {
-        return;
-      }
-      return loadViaDynamicImport(index + 1);
-    };
-    const tryLoad = (index) => {
-      if (index >= candidates.length) {
-        return Promise.reject(new Error('Не удалось загрузить ИИ-скрипт ни по одному пути.'));
-      }
-      return loadExternalScript(candidates[index], `data-ai-dialog-script-${index}`).catch(() => tryLoad(index + 1));
-    };
-
-    aiDialogLoader = loadViaDynamicImport(0)
-      .then(() => {
-        if (typeof window.openAiResponseDialog === 'function') {
-          return window.openAiResponseDialog;
-        }
-        return tryLoad(0);
-      })
-      .catch((error) => {
-        aiDialogLoader = null;
-        throw error;
-      });
-  }
-
-  return aiDialogLoader;
-}
-
-async function openAiDialogSafely(context = {}) {
-  const reportDependencyLoad = (payload = {}) => {
-    const stage = normalizeValue(payload && payload.stage) || '';
-    if (!stage) {
-      return;
-    }
-    if (stage !== 'local_failed' && stage !== 'cdn_failed' && stage !== 'all_sources_failed') {
-      return;
-    }
-    logClientEvent('task_view_error', {
-      reason: stage,
-      dependency: normalizeValue(payload && payload.title),
-      source: normalizeValue(payload && payload.source),
-      sourceType: normalizeValue(payload && payload.sourceType),
-      details: normalizeValue(payload && payload.reason),
-      taskId: normalizeValue(context && context.task && context.task.id),
-    });
-  };
-
-  try {
-    const openDialog = await ensureAiDialogScriptLoaded();
-    openDialog({
-      ...context,
-      onDependencyLoad(payload) {
-        reportDependencyLoad(payload);
-        if (typeof context.onDependencyLoad === 'function') {
-          context.onDependencyLoad(payload);
-        }
-      },
-    });
-  } catch (error) {
-    if (typeof context.onStatus === 'function') {
-      const errorText = error instanceof Error ? error.message : 'неизвестная ошибка';
-      context.onStatus('error', `Не удалось открыть ИИ-диалог: ${errorText}`);
-    }
-    logClientEvent('task_view_error', {
-      reason: 'ai_dialog_open_failed',
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 function ensureTelegramBriefModalStyle() {
@@ -718,6 +569,207 @@ ${escapeHtml(message)}</p>`;
     if (paidCheckbox) paidCheckbox.disabled = true;
     setStatus('Нет файлов для анализа в этой задаче.', 'error');
   }
+  document.body.appendChild(modal);
+}
+
+const TELEGRAM_RESPONSE_MERGE_STYLE_ID = 'appdosc-response-merge-style-v1';
+
+function ensureTelegramResponseMergeModalStyle() {
+  if (document.getElementById(TELEGRAM_RESPONSE_MERGE_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = TELEGRAM_RESPONSE_MERGE_STYLE_ID;
+  style.textContent = `
+    .appdosc-response-merge{position:fixed;inset:0;z-index:3700;background:rgba(15,23,42,.34);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:8px}
+    .appdosc-response-merge__panel{width:min(920px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(248,250,252,.95));border-radius:22px;border:1px solid rgba(255,255,255,.92);overflow:hidden;box-shadow:0 16px 36px rgba(15,23,42,.16)}
+    .appdosc-response-merge__header{display:flex;justify-content:space-between;gap:10px;padding:12px;border-bottom:1px solid rgba(226,232,240,.95)}
+    .appdosc-response-merge__title{font-size:16px;font-weight:700;color:#0f172a}
+    .appdosc-response-merge__sub{font-size:12px;color:#64748b}
+    .appdosc-response-merge__close{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:600;min-height:32px}
+    .appdosc-response-merge__status{margin:0;padding:8px 12px;border-bottom:1px solid rgba(226,232,240,.85);font-size:12px;color:#334155;background:rgba(248,250,252,.88)}
+    .appdosc-response-merge__status[data-tone="error"]{color:#b91c1c}
+    .appdosc-response-merge__status[data-tone="success"]{color:#166534}
+    .appdosc-response-merge__status[data-tone="loading"]{color:#1d4ed8}
+    .appdosc-response-merge__body{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:10px;padding:10px;min-height:0;flex:1}
+    .appdosc-response-merge__list{display:flex;flex-direction:column;gap:8px;overflow:auto}
+    .appdosc-response-merge__item{display:flex;gap:8px;align-items:flex-start;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.86);border-radius:12px;padding:9px}
+    .appdosc-response-merge__item input{margin-top:3px;accent-color:#2563eb}
+    .appdosc-response-merge__name{font-size:13px;font-weight:600;color:#0f172a;word-break:break-word}
+    .appdosc-response-merge__meta{font-size:11px;color:#64748b}
+    .appdosc-response-merge__preview{margin:0;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:rgba(255,255,255,.9);padding:12px;overflow:auto;white-space:pre-wrap;font-size:13px;line-height:1.5;color:#0f172a}
+    .appdosc-response-merge__actions{display:flex;gap:8px;padding:0 10px 10px}
+    .appdosc-response-merge__btn{border:none;min-height:40px;padding:8px 12px;border-radius:12px;font-size:13px;font-weight:600}
+    .appdosc-response-merge__btn--ghost{background:rgba(148,163,184,.16);color:#0f172a}
+    .appdosc-response-merge__btn--primary{background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff}
+    .appdosc-response-merge__btn:disabled{opacity:.6}
+    @media (max-width:768px){.appdosc-response-merge{padding:0}.appdosc-response-merge__panel{max-height:100dvh;border-radius:0}.appdosc-response-merge__body{grid-template-columns:1fr}.appdosc-response-merge__actions{flex-direction:column}}
+  `;
+  document.head.appendChild(style);
+}
+
+async function buildCombinedTextFromTaskFiles(selectedSources = []) {
+  const chunks = [];
+  const errors = [];
+  for (let index = 0; index < selectedSources.length; index += 1) {
+    const source = selectedSources[index];
+    const sourceName = normalizeValue(source && source.label) || `Файл ${index + 1}`;
+    const sourceUrl = normalizeValue(source && source.url);
+    if (!sourceUrl) {
+      errors.push(`${sourceName}: отсутствует ссылка`);
+      continue;
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const response = await fetch(sourceUrl, { credentials: 'include' });
+      if (!response.ok) {
+        errors.push(`${sourceName}: ошибка загрузки (${response.status})`);
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const blob = await response.blob();
+      let extracted = '';
+      const mime = String(blob.type || '').toLowerCase();
+      if (mime.startsWith('text/') || /\.txt$/i.test(sourceName) || /\.csv$/i.test(sourceName) || /\.json$/i.test(sourceName)) {
+        // eslint-disable-next-line no-await-in-loop
+        extracted = String(await blob.text()).trim();
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        extracted = await requestTelegramOcrByFile(blob, sourceName);
+      }
+      if (!extracted) {
+        errors.push(`${sourceName}: пустой текст`);
+        continue;
+      }
+      chunks.push(`=== ${sourceName} ===\n${extracted}`);
+    } catch (error) {
+      errors.push(`${sourceName}: ${normalizeValue(error && error.message) || 'ошибка обработки'}`);
+    }
+  }
+  return {
+    text: chunks.join('\n\n').trim(),
+    errors,
+  };
+}
+
+function openTelegramResponseMergeModal(task, options = {}) {
+  ensureTelegramResponseMergeModalStyle();
+  const onApply = typeof options.onApply === 'function' ? options.onApply : null;
+  const onStatus = typeof options.onStatus === 'function' ? options.onStatus : null;
+  const previousBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+
+  const modal = document.createElement('div');
+  modal.className = 'appdosc-response-merge';
+  modal.innerHTML = `
+    <div class="appdosc-response-merge__panel">
+      <div class="appdosc-response-merge__header">
+        <div>
+          <div class="appdosc-response-merge__title">Ответ с помощью файлов</div>
+          <div class="appdosc-response-merge__sub">Выберите несколько файлов и объедините их текст в один ответ</div>
+        </div>
+        <button type="button" class="appdosc-response-merge__close" data-close>✕</button>
+      </div>
+      <p class="appdosc-response-merge__status" data-status>Выберите файлы и нажмите «Объединить текст».</p>
+      <div class="appdosc-response-merge__body">
+        <div class="appdosc-response-merge__list" data-list></div>
+        <div class="appdosc-response-merge__preview" data-preview>Тут появится объединённый текст.</div>
+      </div>
+      <div class="appdosc-response-merge__actions">
+        <button type="button" class="appdosc-response-merge__btn appdosc-response-merge__btn--ghost" data-cancel>Отмена</button>
+        <button type="button" class="appdosc-response-merge__btn appdosc-response-merge__btn--primary" data-merge>Объединить текст</button>
+      </div>
+    </div>
+  `;
+
+  const listNode = modal.querySelector('[data-list]');
+  const previewNode = modal.querySelector('[data-preview]');
+  const statusNode = modal.querySelector('[data-status]');
+  const mergeBtn = modal.querySelector('[data-merge]');
+  const sources = [];
+  const selected = new Set();
+
+  (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
+    const label = getAttachmentName(file, index + 1);
+    const url = resolveFileFetchUrl(file);
+    if (!url) return;
+    sources.push({ label, url });
+  });
+
+  const setStatusText = (message, tone = 'idle') => {
+    if (!statusNode) return;
+    statusNode.textContent = message;
+    statusNode.setAttribute('data-tone', tone);
+  };
+
+  const close = () => {
+    document.body.style.overflow = previousBodyOverflow;
+    modal.remove();
+  };
+
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  modal.querySelector('[data-close]')?.addEventListener('click', close);
+  modal.querySelector('[data-cancel]')?.addEventListener('click', close);
+
+  if (!sources.length) {
+    listNode.innerHTML = '<div class="appdosc-empty">Нет файлов для выбора.</div>';
+    mergeBtn.disabled = true;
+    setStatusText('В задаче нет доступных файлов.', 'error');
+  } else {
+    listNode.innerHTML = sources.map((source, index) => `
+      <label class="appdosc-response-merge__item">
+        <input type="checkbox" data-source-index="${index}">
+        <span>
+          <span class="appdosc-response-merge__name">${escapeHtml(source.label)}</span>
+          <span class="appdosc-response-merge__meta">Вложение задачи</span>
+        </span>
+      </label>
+    `).join('');
+
+    listNode.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+      const index = Number(target.dataset.sourceIndex);
+      if (!Number.isFinite(index)) return;
+      if (target.checked) selected.add(index);
+      else selected.delete(index);
+      setStatusText(selected.size ? `Выбрано файлов: ${selected.size}` : 'Выберите хотя бы один файл.');
+    });
+  }
+
+  mergeBtn?.addEventListener('click', async () => {
+    if (!selected.size) {
+      setStatusText('Сначала выберите хотя бы один файл.', 'error');
+      return;
+    }
+    mergeBtn.disabled = true;
+    setStatusText('Собираем текст из выбранных файлов...', 'loading');
+    previewNode.textContent = '⏳ Обрабатываем файлы...';
+    try {
+      const selectedSources = Array.from(selected)
+        .map((index) => sources[index])
+        .filter(Boolean);
+      const result = await buildCombinedTextFromTaskFiles(selectedSources);
+      if (!result.text) {
+        throw new Error(result.errors[0] || 'Не удалось получить текст из файлов.');
+      }
+      previewNode.textContent = result.text;
+      setStatusText('Готово. Текст собран.', 'success');
+      if (onApply) {
+        onApply(result.text, result.errors);
+      }
+      if (onStatus && result.errors.length) {
+        onStatus('warning', `Часть файлов пропущена: ${result.errors.slice(0, 2).join('; ')}`);
+      }
+      close();
+    } catch (error) {
+      const message = normalizeValue(error && error.message) || 'Ошибка объединения.';
+      previewNode.textContent = `Ошибка:\n${message}`;
+      setStatusText(message, 'error');
+      if (onStatus) onStatus('warning', message);
+    } finally {
+      mergeBtn.disabled = false;
+    }
+  });
+
   document.body.appendChild(modal);
 }
 
@@ -13639,238 +13691,31 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  const ensureAiChoiceStyles = () => {
-    if (document.getElementById('tg-ai-mode-style-v1')) return;
-    const style = document.createElement('style');
-    style.id = 'tg-ai-mode-style-v1';
-    style.textContent = `
-      .tg-ai-mode{position:fixed;inset:0;z-index:3500;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.36);backdrop-filter:blur(8px);padding:10px}
-      .tg-ai-mode__panel{width:min(420px,100%);border-radius:20px;border:1px solid rgba(255,255,255,.9);background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(241,245,249,.92));padding:14px;box-shadow:0 22px 50px rgba(15,23,42,.2)}
-      .tg-ai-mode__btn{width:100%;border:1px solid rgba(203,213,225,.95);border-radius:13px;padding:11px 12px;background:#fff;text-align:left;font-size:14px;color:#0f172a}
-      .tg-ai-mode__btn + .tg-ai-mode__btn{margin-top:8px}
-      .tg-ai-mode__btn--vip{background:linear-gradient(135deg,rgba(224,242,254,.95),rgba(240,253,250,.95))}
-      .tg-paid-chat{position:fixed;inset:0;z-index:3600;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,23,42,.4);backdrop-filter:blur(8px)}
-      .tg-paid-chat__card{width:min(900px,100%);height:min(100dvh,920px);display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(241,245,249,.9));border-radius:22px 22px 0 0;overflow:hidden}
-      .tg-paid-chat__head{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:12px;border-bottom:1px solid rgba(203,213,225,.7)}
-      .tg-paid-chat__title{font-size:16px;font-weight:800;color:#0f172a}
-      .tg-paid-chat__sub{font-size:12px;color:#64748b}
-      .tg-paid-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
-      .tg-paid-chat__bubble{max-width:92%;padding:9px 11px;border-radius:12px;font-size:13px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
-      .tg-paid-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
-      .tg-paid-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
-      .tg-paid-chat__status{padding:7px 12px;font-size:12px;color:#334155;border-top:1px solid rgba(203,213,225,.6);background:rgba(255,255,255,.78)}
-      .tg-paid-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;align-items:flex-end;background:rgba(255,255,255,.9)}
-      .tg-paid-chat__input{flex:1;min-height:42px;max-height:120px;border:1px solid rgba(148,163,184,.32);border-radius:12px;padding:9px;font-size:13px;resize:none;background:rgba(255,255,255,.95)}
-      .tg-paid-chat__send{border:none;min-height:42px;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#14b8a6);color:#fff;font-weight:700}
-      .tg-paid-chat__send:disabled{opacity:.55}
-      .tg-paid-chat__files-toggle{border:none;min-height:42px;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
-      .tg-paid-chat__files-sheet{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.98);padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
-      .tg-paid-chat__files-sheet[hidden]{display:none}
-      .tg-paid-chat__files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:220px;overflow:auto}
-      .tg-paid-chat__file{display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#fff;font-size:12px;color:#334155}
-      .tg-paid-chat__file input{margin-top:2px;accent-color:#2563eb}
-      .tg-paid-chat__meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
-      .tg-paid-chat__chip{padding:5px 9px;border:1px solid rgba(203,213,225,.95);border-radius:999px;font-size:12px;color:#334155;background:rgba(255,255,255,.9)}
-      @media (max-width:560px){.tg-paid-chat__card{height:100dvh;border-radius:0}.tg-paid-chat__composer{flex-wrap:wrap}.tg-paid-chat__send,.tg-paid-chat__files-toggle{flex:1}.tg-paid-chat__files-grid{grid-template-columns:1fr}}
-    `;
-    document.head.appendChild(style);
-  };
-
-  const openVipTelegramModal = async () => {
-    ensureAiChoiceStyles();
-    const overlay = document.createElement('div');
-    overlay.className = 'tg-paid-chat';
-    overlay.innerHTML = `
-      <div class="tg-paid-chat__card">
-        <div class="tg-paid-chat__head">
-          <div>
-            <div class="tg-paid-chat__title">💎 Платный ИИ</div>
-            <div class="tg-paid-chat__sub">Чат с выбором файлов из текущей задачи</div>
-          </div>
-          <button type="button" data-close style="border:none;background:#fff;border-radius:10px;padding:6px 10px">✕</button>
-        </div>
-        <div class="tg-paid-chat__messages" data-messages>
-          <div class="tg-paid-chat__bubble tg-paid-chat__bubble--assistant">Привет! Выберите файлы из задачи и задайте вопрос — дам ответ по выбранным документам.</div>
-        </div>
-        <div class="tg-paid-chat__status" data-status>Готов к работе.</div>
-        <div class="tg-paid-chat__composer">
-          <button type="button" class="tg-paid-chat__files-toggle" data-files-toggle>📎 Файлы</button>
-          <textarea class="tg-paid-chat__input" data-input placeholder="Например: сделай краткое решение по этим файлам"></textarea>
-          <button type="button" class="tg-paid-chat__send" data-send>Отправить</button>
-        </div>
-        <div class="tg-paid-chat__files-sheet" data-files-sheet hidden>
-          <div style="font-size:12px;color:#475569;margin-bottom:8px">Выберите один или несколько файлов из задачи:</div>
-          <div class="tg-paid-chat__files-grid" data-files-grid></div>
-          <div class="tg-paid-chat__meta" data-meta></div>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    const files = Array.isArray(task && task.files) ? task.files : [];
-    const selectedKeys = new Set();
-    const filesGrid = overlay.querySelector('[data-files-grid]');
-    const filesSheet = overlay.querySelector('[data-files-sheet]');
-    const filesToggle = overlay.querySelector('[data-files-toggle]');
-    const statusNode = overlay.querySelector('[data-status]');
-    const metaNode = overlay.querySelector('[data-meta]');
-    const messagesNode = overlay.querySelector('[data-messages]');
-    const inputNode = overlay.querySelector('[data-input]');
-
-    const appendBubble = (text, role = 'assistant') => {
-      const bubble = document.createElement('div');
-      bubble.className = `tg-paid-chat__bubble tg-paid-chat__bubble--${role === 'user' ? 'user' : 'assistant'}`;
-      bubble.textContent = normalizeValue(text) || 'Пустой ответ.';
-      messagesNode.appendChild(bubble);
-      messagesNode.scrollTop = messagesNode.scrollHeight;
-    };
-
-    const renderMeta = (payload = null, elapsed = null) => {
-      if (!metaNode) return;
-      if (!payload) {
-        metaNode.innerHTML = '';
-        return;
-      }
-      metaNode.innerHTML = `
-        <span class="tg-paid-chat__chip">Модель: ${normalizeValue(payload.model) || '—'}</span>
-        <span class="tg-paid-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
-        <span class="tg-paid-chat__chip">Токены: ${Number(payload.tokensUsed) || '—'}</span>
-      `;
-    };
-
-    if (filesGrid) {
-      filesGrid.innerHTML = files.length
-        ? files.map((file, index) => {
-          const fileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
-          const fileName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
-          const fileKey = String(index);
-          const disabledAttr = fileUrl ? '' : 'disabled';
-          return `<label class="tg-paid-chat__file"><input type="checkbox" data-file-key="${fileKey}" ${disabledAttr}><span>${escapeHtml(fileName)}</span></label>`;
-        }).join('')
-        : '<div style="font-size:12px;color:#64748b">В задаче нет файлов для анализа.</div>';
-    }
-
-    const close = () => overlay.remove();
-    overlay.querySelector('[data-close]')?.addEventListener('click', close);
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) close();
-    });
-
-    filesToggle?.addEventListener('click', () => {
-      filesSheet.hidden = !filesSheet.hidden;
-    });
-
-    filesGrid?.addEventListener('change', (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
-      const key = normalizeValue(target.dataset.fileKey);
-      if (!key) return;
-      if (target.checked) selectedKeys.add(key);
-      else selectedKeys.delete(key);
-      statusNode.textContent = selectedKeys.size
-        ? `Выбрано файлов: ${selectedKeys.size}.`
-        : 'Файлы не выбраны. Можно отправить без файлов.';
-    });
-
-    overlay.querySelector('[data-send]')?.addEventListener('click', async (event) => {
-      const sendBtn = event.currentTarget;
-      const prompt = String((inputNode && inputNode.value) || '').trim();
-      sendBtn.disabled = true;
-      statusNode.textContent = 'Собираем запрос...';
-      renderMeta(null);
-      const startedAt = Date.now();
-      try {
-        const selectedFiles = Array.from(selectedKeys)
-          .map((key) => files[Number(key)])
-          .filter((file) => file && normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl)));
-
-        if (!selectedFiles.length && files.length) {
-          throw new Error('Выберите хотя бы один файл внизу (кнопка "📎 Файлы").');
-        }
-
-        const filesToSend = [];
-        const failedFiles = [];
-        for (const file of selectedFiles) {
-          const selectedFileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
-          statusNode.textContent = `Скачиваем файл ${filesToSend.length + 1}...`;
-          // eslint-disable-next-line no-await-in-loop
-          const fileResponse = await fetch(selectedFileUrl, { credentials: 'include' });
-          if (!fileResponse.ok) {
-            failedFiles.push(normalizeValue(file && (file.originalName || file.name || file.storedName)) || 'Без названия');
-            continue;
-          }
-          // eslint-disable-next-line no-await-in-loop
-          const fileBlob = await fileResponse.blob();
-          const fallbackName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `task-file-${filesToSend.length + 1}.bin`;
-          filesToSend.push(new File([fileBlob], fallbackName, { type: fileBlob.type || 'application/octet-stream' }));
-        }
-        if (!filesToSend.length && selectedFiles.length) {
-          const failedLabel = failedFiles.length ? ` (${failedFiles.slice(0, 2).join(', ')})` : '';
-          throw new Error(`Не удалось скачать выбранные файлы${failedLabel}. Попробуйте снова.`);
-        }
-        const finalPrompt = prompt || 'Сделай краткий вывод и решение по выбранным файлам.';
-        appendBubble(finalPrompt, 'user');
-        statusNode.textContent = 'Отправляем запрос в Платный ИИ...';
-        const result = await postGroqPaidWithFallback(() => {
-          const formData = new FormData();
-          formData.append('taskId', normalizeValue(task && task.id));
-          formData.append('taskTitle', normalizeValue(task && task.title) || 'Задача');
-          formData.append('taskDescription', normalizeValue(task && task.description));
-          formData.append('prompt', finalPrompt);
-          filesToSend.forEach((fileToSend) => {
-            formData.append('files[]', fileToSend, fileToSend.name);
-          });
-          return formData;
-        });
-        const payload = result && result.payload ? result.payload : null;
-        if (!payload || payload.ok !== true) {
-          throw new Error((payload && payload.error) || 'VIP ИИ временно недоступен.');
-        }
-        statusNode.textContent = 'Ответ готов.';
-        appendBubble(normalizeValue(payload.response) || 'Пустой ответ.', 'assistant');
-        const elapsed = Date.now() - startedAt;
-        renderMeta(payload, elapsed);
-        if (inputNode) inputNode.value = '';
-      } catch (error) {
-        statusNode.textContent = 'Ошибка';
-        appendBubble(error?.message || 'Не удалось получить ответ.', 'assistant');
-      } finally {
-        sendBtn.disabled = false;
-      }
-    });
-  };
-
-  const openAiModeSelectorTelegram = () => {
-    ensureAiChoiceStyles();
-    const overlay = document.createElement('div');
-    overlay.className = 'tg-ai-mode';
-    overlay.innerHTML = `
-      <div class="tg-ai-mode__panel">
-        <div style="font-size:17px;font-weight:700;color:#0f172a">Режим ИИ</div>
-        <div style="font-size:12px;color:#64748b;margin:4px 0 10px">Выберите нужный формат ответа.</div>
-        <button type="button" class="tg-ai-mode__btn" data-free>🤍 Бесплатный ИИ</button>
-        <button type="button" class="tg-ai-mode__btn tg-ai-mode__btn--vip" data-paid>💎 VIP ИИ</button>
-        <button type="button" class="tg-ai-mode__btn" data-cancel>Отмена</button>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    const close = () => overlay.remove();
-    overlay.querySelector('[data-free]')?.addEventListener('click', () => {
-      close();
-      openAiDialogSafely({ task, entry, onStatus: setStatus });
-    });
-    overlay.querySelector('[data-paid]')?.addEventListener('click', () => {
-      close();
-      openVipTelegramModal();
-    });
-    overlay.querySelector('[data-cancel]')?.addEventListener('click', close);
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) close();
-    });
-  };
-
   aiButton.addEventListener('click', () => {
-    openAiModeSelectorTelegram();
+    if (aiButton.disabled) {
+      return;
+    }
+    openTelegramResponseMergeModal(task, {
+      onApply(combinedText, errors = []) {
+        const safeText = normalizeValue(combinedText);
+        if (!safeText) {
+          meta.textContent = 'Не удалось собрать текст из файлов';
+          return;
+        }
+        const maxLength = Number(textInput.maxLength) || 12000;
+        const wasTrimmed = safeText.length > maxLength;
+        textInput.value = safeText.slice(0, maxLength);
+        textInput.dispatchEvent(new Event('input'));
+        meta.textContent = wasTrimmed
+          ? `Текст объединён и сокращён до ${maxLength} символов`
+          : 'Текст по выбранным файлам добавлен в поле ответа';
+        if (typeof setStatus === 'function') {
+          const warningTail = errors.length ? ` Есть ошибки по ${errors.length} файлам.` : '';
+          setStatus('info', `Текст из файлов подготовлен.${warningTail}`);
+        }
+      },
+      onStatus: setStatus,
+    });
   });
 
   textInput.addEventListener('input', () => {
