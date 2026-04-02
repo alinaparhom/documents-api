@@ -13669,7 +13669,7 @@
         var appendedCount = 0;
         pendingFiles.forEach(function(file) {
           if (!file) return;
-          formData.append('files[]', file);
+          formData.append('files', file);
           appendedCount += 1;
         });
         for (var i = 0; i < linkedFiles.length; i += 1) {
@@ -13687,7 +13687,7 @@
             // eslint-disable-next-line no-await-in-loop
             var fileBlob = await fileResponse.blob();
             var fileName = linkedFile && linkedFile.name ? String(linkedFile.name) : ('file-' + (i + 1));
-            formData.append('files[]', fileBlob, fileName);
+            formData.append('files', fileBlob, fileName);
             appendedCount += 1;
           } catch (_) {}
         }
@@ -13705,10 +13705,7 @@
         metaNode.innerHTML = '';
         var startedAt = Date.now();
         var formData = new FormData();
-        formData.append('action', 'ai_response_analyze');
-        formData.append('mode', 'paid');
         formData.append('prompt', promptText);
-        formData.append('documentTitle', payload.documentTitle || 'Документ');
         formData.append('responseStyle', 'neutral');
         var requestContext = {};
         var sourceContext = payload.context || {};
@@ -13737,7 +13734,20 @@
             if (!appendedCount) {
               throw new Error('Выберите хотя бы один файл для VIP чата.');
             }
-            return fetch(payload.apiUrl, { method: 'POST', body: formData, credentials: 'same-origin' });
+            var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+            function tryEndpoint(index) {
+              if (index >= paidEndpoints.length) {
+                throw new Error('Не удалось подключиться к VIP API. Проверьте endpoint api-groq-paid.php.');
+              }
+              return fetch(paidEndpoints[index], { method: 'POST', body: formData, credentials: 'same-origin' })
+                .then(function(response) {
+                  if ((response.status === 404 || response.status === 405) && index < paidEndpoints.length - 1) {
+                    return tryEndpoint(index + 1);
+                  }
+                  return response;
+                });
+            }
+            return tryEndpoint(0);
           })
           .then(handleResponse)
           .then(function(data) {
