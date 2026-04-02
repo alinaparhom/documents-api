@@ -262,12 +262,12 @@ function ensureTelegramBriefModalStyle() {
   document.head.appendChild(style);
 }
 
-async function requestTelegramOcrByUrl(fileUrl) {
+async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
   const request = await postDocsAiWithFallback(() => {
     const formData = new FormData();
     formData.append('action', 'ocr_extract');
     formData.append('language', 'rus');
-    formData.append('file_url', fileUrl);
+    formData.append('file', fileOrBlob, fileName);
     return formData;
   }, { fallbackErrorMessage: 'OCR временно недоступен' });
   const response = request && request.response;
@@ -350,7 +350,7 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   const blob = await fetched.blob();
   const fileName = normalizeValue(source && source.label) || 'brief-file';
   const fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-  const extractedText = await requestTelegramOcrByUrl(fileUrl);
+  const extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
   if (!String(extractedText || '').trim()) {
     throw new Error('OCR не вернул текст для выбранного файла.');
   }

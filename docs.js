@@ -2266,17 +2266,32 @@
     var formData = new FormData();
     formData.append('action', 'ocr_extract');
     formData.append('language', 'rus');
+
+    var prepareSource = Promise.resolve();
     if (source && source.fileObject) {
       formData.append('file', source.fileObject);
     } else if (source && source.url) {
-      formData.append('file_url', source.url);
+      prepareSource = fetch(String(source.url), { credentials: 'same-origin' })
+        .then(function(fileResponse) {
+          if (!fileResponse.ok) {
+            throw new Error('Не удалось загрузить файл для OCR (' + fileResponse.status + ')');
+          }
+          return fileResponse.blob();
+        })
+        .then(function(fileBlob) {
+          var fileName = source && source.label ? String(source.label) : 'ocr-file';
+          formData.append('file', new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' }), fileName);
+        });
     } else {
       return Promise.reject(new Error('Источник для OCR не найден.'));
     }
-    return fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
+
+    return prepareSource.then(function() {
+      return fetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      });
     }).then(function(response) {
       return response.json().catch(function() { return null; }).then(function(payload) {
         if (!response.ok || !payload || payload.ok !== true) {
