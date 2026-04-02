@@ -335,20 +335,20 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   }
   const blob = await fetched.blob();
   const fileName = normalizeValue(source && source.label) || 'brief-file';
+  const fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
   let extractedText = '';
   try {
     extractedText = await requestTelegramOcrByUrl(fileUrl);
   } catch (_) {
     extractedText = '';
   }
-  const request = await postDocsAiSummaryDirect(() => {
+  const request = await postGroqPaidWithFallback(() => {
     const formData = new FormData();
+    formData.append('action', 'generate_summary');
     formData.append('mode', 'paid');
-    const context = {
-      extractedTexts: extractedText ? [{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }] : [],
-    };
-    if (context.extractedTexts.length) {
-      formData.append('extractedTexts', JSON.stringify(context.extractedTexts));
+    formData.append('files', fileForVip, fileForVip.name || fileName);
+    if (extractedText) {
+      formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }]));
     }
     return formData;
   });

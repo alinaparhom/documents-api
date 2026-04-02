@@ -401,6 +401,54 @@ function callGroqChat(array $requestPayload, string $apiKey): array
     return ['ok' => true, 'status' => 200, 'raw' => $decoded];
 }
 
+function buildExtractedTextsFromFiles(array $files): array
+{
+    $entries = [];
+    $allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+    $supportedDocMimes = [
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword',
+        'application/vnd.ms-word',
+        'application/zip',
+    ];
+
+    foreach ($files as $file) {
+        $name = (string)($file['name'] ?? 'Файл');
+        $tmp = (string)($file['tmp_name'] ?? '');
+        if ($tmp === '' || !is_file($tmp)) {
+            continue;
+        }
+        $mime = detectMime($tmp, (string)($file['client_type'] ?? ''));
+        $ext = detectFileExtension($name);
+        $text = '';
+
+        if (str_starts_with($mime, 'text/')) {
+            $text = (string)@file_get_contents($tmp);
+        } elseif (in_array($mime, $supportedDocMimes, true) && $ext === 'docx') {
+            $text = extractDocxText($tmp);
+        } elseif (in_array($mime, $supportedDocMimes, true) && $ext === 'doc') {
+            $text = extractDocText($tmp);
+        } elseif (in_array($mime, $allowedImageMimes, true)) {
+            $text = extractImageTextWithOcr($tmp);
+        } elseif ($mime === 'application/pdf') {
+            $pdfExtract = extractPdfText($tmp);
+            $text = (string)($pdfExtract['text'] ?? '');
+        }
+
+        $text = cleanExtractedText($text);
+        if ($text === '') {
+            continue;
+        }
+        $entries[] = [
+            'name' => $name !== '' ? $name : 'Документ',
+            'type' => $mime,
+            'text' => mb_substr($text, 0, 24000),
+        ];
+    }
+
+    return $entries;
+}
+
 function handleAnalyzePaidAction(array $env): void
 {
     $files = normalizeUploadedFiles('files');
@@ -607,7 +655,18 @@ function handleGenerateSummaryAction(array $env): void
     $rawExtractedTexts = (string)($_POST['extractedTexts'] ?? '');
     $decodedExtractedTexts = json_decode($rawExtractedTexts, true);
     if (!is_array($decodedExtractedTexts)) {
-        respond(422, ['ok' => false, 'error' => 'extractedTexts должен быть JSON-массивом с текстами документов.']);
+        $decodedExtractedTexts = [];
+    }
+    $uploadedFiles = array_merge(
+        normalizeUploadedFiles('files'),
+        normalizeUploadedFiles('file'),
+        normalizeUploadedFiles('attachments')
+    );
+    if (!$decodedExtractedTexts && $uploadedFiles) {
+        $decodedExtractedTexts = buildExtractedTextsFromFiles($uploadedFiles);
+    }
+    if (!is_array($decodedExtractedTexts) || !$decodedExtractedTexts) {
+        respond(422, ['ok' => false, 'error' => 'Передайте extractedTexts или файлы (files[]) для формирования summary.']);
     }
 
     $summaryParts = [];

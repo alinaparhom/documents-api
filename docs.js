@@ -2442,23 +2442,38 @@
 
   async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+    var fileForVip = null;
     var extractedText = '';
+    if (source && source.fileObject instanceof File) {
+      fileForVip = source.fileObject;
+    } else if (source && source.url) {
+      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
+      if (fetched.ok) {
+        var blob = await fetched.blob();
+        var fileName = sourceLabel || 'brief-file';
+        fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+      }
+    }
     try {
       extractedText = await requestOcrTextForSource(source, apiUrl);
     } catch (_) {
       extractedText = '';
     }
-    if (!String(extractedText || '').trim()) {
-      throw new Error('Не удалось получить текст из файла для режима VIP.');
+    if (!(fileForVip instanceof File)) {
+      throw new Error('Не удалось подготовить файл для платного ИИ.');
     }
+    fileForVip = await convertPdfToImageFileForBrief(fileForVip, sourceLabel);
     var request = await postGroqPaidForBrief(function() {
       var formData = new FormData();
       formData.append('action', 'generate_summary');
-      formData.append('extractedTexts', JSON.stringify([{
-        name: sourceLabel,
-        type: 'text/plain',
-        text: String(extractedText).slice(0, 16000)
-      }]));
+      formData.append('files', fileForVip, fileForVip.name || sourceLabel);
+      if (String(extractedText || '').trim()) {
+        formData.append('extractedTexts', JSON.stringify([{
+          name: sourceLabel,
+          type: 'text/plain',
+          text: String(extractedText).slice(0, 16000)
+        }]));
+      }
       return formData;
     });
     var response = request && request.response;

@@ -2738,7 +2738,7 @@ $extractedTextsDiagnostics = [
     'skippedFiles' => 0,
     'skipped' => [],
 ];
-if ($action === 'ai_response_analyze') {
+if ($action === 'ai_response_analyze' || $action === 'generate_summary') {
     $serverExtraction = extractTextsFromUploadedFiles($files, $env);
     $serverExtractedTexts = isset($serverExtraction['entries']) && is_array($serverExtraction['entries'])
         ? $serverExtraction['entries']
