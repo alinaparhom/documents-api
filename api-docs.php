@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
+header('Access-Control-Max-Age: 86400');
 const LOCAL_OCR_MAX_PAGES = 5;
 
 function jsonResponse(int $status, array $payload): void
@@ -46,6 +49,9 @@ if ($method === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
+
+$scriptPath = (string)($_SERVER['SCRIPT_NAME'] ?? '/api-docs.php');
+$endpointPath = $scriptPath !== '' ? $scriptPath : '/api-docs.php';
 if ($method === 'GET') {
     $action = isset($_GET['action']) ? trim((string)$_GET['action']) : '';
     if ($action === 'ai_models') {
@@ -80,7 +86,7 @@ if ($method === 'GET') {
         'message' => $isPing
             ? 'pong'
             : 'API доступен. Используйте POST для action=ai_response_analyze.',
-        'endpoint' => '/js/documents/api-docs.php',
+        'endpoint' => $endpointPath,
         'method' => 'POST'
     ];
     if ($isDebug) {
@@ -513,11 +519,15 @@ function buildModelAvailabilityRows(array $models, array $env): array
                 } elseif ($statusCode === 401 || $statusCode === 403) {
                     $reason = 'Проверьте API ключ и права доступа к модели';
                     $code = 'ACCESS_DENIED';
-                } elseif ($statusCode === 429 || $statusCode >= 500 || $statusCode === 408 || stripos($providerError, 'quota') !== false || stripos($providerError, 'rate') !== false) {
+                } elseif ($statusCode === 429 || $statusCode === 408 || stripos($providerError, 'quota') !== false || stripos($providerError, 'rate') !== false) {
                     $reason = 'Временная ошибка проверки, попробуйте снова';
                     $code = 'HEALTHCHECK_TEMPORARY';
                     $isAvailable = true;
                 } elseif ($statusCode === 503 || stripos($providerError, 'not available') !== false) {
+                    $reason = 'Временная ошибка проверки, попробуйте снова';
+                    $code = 'HEALTHCHECK_TEMPORARY';
+                    $isAvailable = true;
+                } elseif ($statusCode >= 500) {
                     $reason = 'Временная ошибка проверки, попробуйте снова';
                     $code = 'HEALTHCHECK_TEMPORARY';
                     $isAvailable = true;
@@ -575,11 +585,50 @@ function buildFilesSummary(array $files): array
 function detectFileExtension(array $file): string
 {
     $name = strtolower(trim((string)($file['name'] ?? '')));
-    if ($name === '' || !str_contains($name, '.')) {
-        return '';
+    if ($name !== '' && str_contains($name, '.')) {
+        $parts = explode('.', $name);
+        return trim((string)end($parts));
     }
-    $parts = explode('.', $name);
-    return trim((string)end($parts));
+    $mime = mb_strtolower(trim((string)($file['type'] ?? '')));
+    $mimeToExtension = [
+        'application/pdf' => 'pdf',
+        'image/jpeg' => 'jpg',
+        'image/jpg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+        'image/bmp' => 'bmp',
+        'image/tiff' => 'tiff',
+        'image/x-tiff' => 'tiff',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+        'application/msword' => 'doc',
+        'text/plain' => 'txt',
+        'text/markdown' => 'md',
+        'text/csv' => 'csv',
+        'application/json' => 'json',
+        'application/xml' => 'xml',
+        'text/xml' => 'xml',
+        'text/html' => 'html',
+    ];
+    if ($mime !== '' && isset($mimeToExtension[$mime])) {
+        return $mimeToExtension[$mime];
+    }
+    return '';
+}
+
+function ensureFileNameHasExtension(string $name, string $extension): string
+{
+    $safeName = trim($name);
+    if ($safeName === '') {
+        $safeName = 'document';
+    }
+    if ($extension === '') {
+        return $safeName;
+    }
+    if (str_contains($safeName, '.')) {
+        return $safeName;
+    }
+    return $safeName . '.' . $extension;
 }
 
 function getUploadedTemplateFile(string $field = 'templateFile'): ?array
@@ -837,7 +886,8 @@ function performOcrRequest(
             return ['status' => 400, 'body' => false, 'curl_error' => 'Файл для OCR не найден'];
         }
         $mime = (string)($file['type'] ?? 'application/octet-stream');
-        $name = (string)($file['name'] ?? 'document');
+        $extension = detectFileExtension($file);
+        $name = ensureFileNameHasExtension((string)($file['name'] ?? 'document'), $extension);
         $postFields['file'] = curl_file_create($tmpName, $mime, $name);
     }
 
@@ -854,6 +904,59 @@ function performOcrRequest(
     curl_close($ch);
 
     return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
+}
+
+function normalizeOcrLanguageCode(string $language): string
+{
+    $value = mb_strtolower(trim($language));
+    if ($value === '') {
+        return 'rus';
+    }
+    if (preg_match('/^[a-z]{3}$/u', $value) === 1) {
+        return $value;
+    }
+    if (preg_match('/([a-z]{3})/u', $value, $match) === 1) {
+        return (string)$match[1];
+    }
+    return 'rus';
+}
+
+function shouldFallbackToUploadedOcr(array $ocrJson, int $statusCode): bool
+{
+    $message = mb_strtolower(textFromMixed($ocrJson['ErrorMessage'] ?? ''));
+    if ($statusCode >= 500) {
+        return true;
+    }
+    if (str_contains($message, 'file failed validation')) {
+        return true;
+    }
+    if (str_contains($message, 'valid extension')) {
+        return true;
+    }
+    if (str_contains($message, 'error e301')) {
+        return true;
+    }
+    if (str_contains($message, 'error e500')) {
+        return true;
+    }
+    if (str_contains($message, 'input file corrupted')) {
+        return true;
+    }
+    if (str_contains($message, 'system resource exhaustion')) {
+        return true;
+    }
+    return false;
+}
+
+function isOcrE301Error(array $ocrJson): bool
+{
+    $message = mb_strtolower(textFromMixed($ocrJson['ErrorMessage'] ?? ''));
+    return str_contains($message, 'error e301') || str_contains($message, 'input file corrupted');
+}
+
+function ocrE301HelpText(): string
+{
+    return 'OCR не смог прочитать файл (E301). Возможные причины: файл повреждён при передаче, PDF защищён паролем/ограничениями, либо структура PDF нестандартная.';
 }
 
 function getImageDiagnostics(string $filePath): array
@@ -2751,12 +2854,12 @@ if ($action === 'ai_response_analyze' || $action === 'generate_summary') {
 if ($action === 'ocr_extract') {
     $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
-    $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
+    $ocrLanguage = trim((string)($_POST['language'] ?? ($env['OCR_LANGUAGE'] ?? 'rus')));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
-    $ocrEngine = trim((string)($_POST['OCREngine'] ?? '2'));
-    $ocrScale = trim((string)($_POST['scale'] ?? 'true'));
-    $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? 'true'));
-    $ocrPreprocessRaw = trim((string)($_POST['preprocess'] ?? '1'));
+    $ocrEngine = trim((string)($_POST['OCREngine'] ?? ($env['OCR_ENGINE'] ?? '2')));
+    $ocrScale = trim((string)($_POST['scale'] ?? ($env['OCR_SCALE'] ?? 'true')));
+    $ocrDetectOrientation = trim((string)($_POST['detectOrientation'] ?? ($env['OCR_DETECT_ORIENTATION'] ?? 'true')));
+    $ocrPreprocessRaw = trim((string)($_POST['preprocess'] ?? ($env['OCR_PREPROCESS'] ?? '1')));
     $ocrMaxSizeKbRaw = (int)($_POST['max_size_kb'] ?? ($env['OCR_MAX_FILE_KB'] ?? 1024));
 
     if (!$files && $ocrFileUrl === '') {
@@ -2809,7 +2912,38 @@ if ($action === 'ocr_extract') {
         ]);
     }
 
-    $targetLanguage = $ocrLanguage !== '' ? $ocrLanguage : 'rus';
+    $targetLanguage = normalizeOcrLanguageCode($ocrLanguage);
+    $firstFile = isset($files[0]) && is_array($files[0]) ? $files[0] : null;
+    if (is_array($firstFile)) {
+        $extension = detectFileExtension($firstFile);
+        if (in_array($extension, ['docx', 'docm', 'txt', 'md', 'csv', 'json', 'xml', 'html'], true)) {
+            $localText = extractTextWithoutOcr($firstFile);
+            if ($localText !== '') {
+                jsonResponse(200, [
+                    'ok' => true,
+                    'text' => $localText,
+                    'raw' => [
+                        'source' => 'local_text_extract',
+                        'extension' => $extension,
+                    ],
+                ]);
+            }
+        }
+        if (in_array($extension, ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff'], true)) {
+            $localOcrText = extractTextWithLocalOcrFallback($firstFile);
+            if ($localOcrText !== '') {
+                jsonResponse(200, [
+                    'ok' => true,
+                    'text' => $localOcrText,
+                    'raw' => [
+                        'source' => 'local_ocr_first',
+                        'extension' => $extension,
+                    ],
+                ]);
+            }
+        }
+    }
+    $primarySourceFile = isset($files[0]) && is_array($files[0]) ? $files[0] : null;
     $ocrPreprocessEnabled = !in_array(mb_strtolower($ocrPreprocessRaw), ['0', 'false', 'off', 'no'], true);
     $ocrMaxSizeKb = max(128, min(8192, $ocrMaxSizeKbRaw > 0 ? $ocrMaxSizeKbRaw : 1024));
     $ocrMaxBytes = $ocrMaxSizeKb * 1024;
@@ -2844,24 +2978,64 @@ if ($action === 'ocr_extract') {
             if ($message === '') {
                 $message = 'OCR API error';
             }
-            jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
-        }
-        if (isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true) {
+            if (!shouldFallbackToUploadedOcr($ocrJson, $ocrStatusCode)) {
+                if (isOcrE301Error($ocrJson)) {
+                    $message = trim($message . ' ' . ocrE301HelpText());
+                }
+                jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+            }
+            $downloadedOcrUrlFile = downloadAttachmentToTempFile($ocrFileUrl);
+            if (!is_array($downloadedOcrUrlFile)) {
+                if (isOcrE301Error($ocrJson)) {
+                    $message = trim($message . ' ' . ocrE301HelpText());
+                }
+                jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+            }
+            $files = array_merge([$downloadedOcrUrlFile], $files);
+            $ocrFileUrl = '';
+            register_shutdown_function(static function () use ($downloadedOcrUrlFile): void {
+                $tmp = (string)($downloadedOcrUrlFile['tmp_name'] ?? '');
+                if ($tmp !== '' && is_file($tmp)) {
+                    @unlink($tmp);
+                }
+            });
+        } elseif (isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true) {
             $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-            jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
+            if (!shouldFallbackToUploadedOcr($ocrJson, $ocrStatusCode)) {
+                if (isOcrE301Error($ocrJson)) {
+                    $errorMessage = trim(($errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл') . ' ' . ocrE301HelpText());
+                }
+                jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
+            }
+            $downloadedOcrUrlFile = downloadAttachmentToTempFile($ocrFileUrl);
+            if (!is_array($downloadedOcrUrlFile)) {
+                if (isOcrE301Error($ocrJson)) {
+                    $errorMessage = trim(($errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл') . ' ' . ocrE301HelpText());
+                }
+                jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
+            }
+            $files = array_merge([$downloadedOcrUrlFile], $files);
+            $ocrFileUrl = '';
+            register_shutdown_function(static function () use ($downloadedOcrUrlFile): void {
+                $tmp = (string)($downloadedOcrUrlFile['tmp_name'] ?? '');
+                if ($tmp !== '' && is_file($tmp)) {
+                    @unlink($tmp);
+                }
+            });
+        } else {
+            $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
+            $ocrText = '';
+            if (isset($parsedResults[0]) && is_array($parsedResults[0]) && isset($parsedResults[0]['ParsedText']) && is_string($parsedResults[0]['ParsedText'])) {
+                $ocrText = $parsedResults[0]['ParsedText'];
+            }
+            jsonResponse(200, [
+                'ok' => true,
+                'text' => $ocrText,
+                'raw' => [
+                    'response' => $ocrJson,
+                ],
+            ]);
         }
-        $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
-        $ocrText = '';
-        if (isset($parsedResults[0]) && is_array($parsedResults[0]) && isset($parsedResults[0]['ParsedText']) && is_string($parsedResults[0]['ParsedText'])) {
-            $ocrText = $parsedResults[0]['ParsedText'];
-        }
-        jsonResponse(200, [
-            'ok' => true,
-            'text' => $ocrText,
-            'raw' => [
-                'response' => $ocrJson,
-            ],
-        ]);
     }
 
     $tempDir = ensureOcrTempDir();
@@ -2929,11 +3103,40 @@ if ($action === 'ocr_extract') {
             if ($message === '') {
                 $message = 'OCR API error';
             }
+            if (isOcrE301Error($ocrJson) && is_array($primarySourceFile)) {
+                $localFallbackText = extractTextWithLocalOcrFallback($primarySourceFile);
+                if ($localFallbackText !== '') {
+                    cleanupDirectory($tempDir);
+                    jsonResponse(200, [
+                        'ok' => true,
+                        'text' => $localFallbackText,
+                        'raw' => [
+                            'source' => 'local_fallback_after_e301',
+                            'status' => $ocrStatusCode,
+                        ],
+                    ]);
+                }
+                $message = trim($message . ' ' . ocrE301HelpText());
+            }
             cleanupDirectory($tempDir);
             jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode, 'page' => $index + 1]);
         }
         if (isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true) {
             $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+            if (isOcrE301Error($ocrJson) && is_array($primarySourceFile)) {
+                $localFallbackText = extractTextWithLocalOcrFallback($primarySourceFile);
+                if ($localFallbackText !== '') {
+                    cleanupDirectory($tempDir);
+                    jsonResponse(200, [
+                        'ok' => true,
+                        'text' => $localFallbackText,
+                        'raw' => [
+                            'source' => 'local_fallback_after_e301',
+                        ],
+                    ]);
+                }
+                $errorMessage = trim(($errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл') . ' ' . ocrE301HelpText());
+            }
             cleanupDirectory($tempDir);
             jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл', 'page' => $index + 1]);
         }

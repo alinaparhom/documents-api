@@ -267,7 +267,21 @@ async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
     const formData = new FormData();
     formData.append('action', 'ocr_extract');
     formData.append('language', 'rus');
-    formData.append('file', fileOrBlob, fileName);
+    const normalizedName = (() => {
+      const base = String(fileName || (fileOrBlob && fileOrBlob.name) || 'ocr-file').trim() || 'ocr-file';
+      if (/\.[a-z0-9]{2,8}$/i.test(base)) return base;
+      const type = String(fileOrBlob && fileOrBlob.type || '').toLowerCase();
+      if (type.includes('pdf')) return `${base}.pdf`;
+      if (type.includes('jpeg') || type.includes('jpg')) return `${base}.jpg`;
+      if (type.includes('png')) return `${base}.png`;
+      if (type.includes('webp')) return `${base}.webp`;
+      if (type.includes('gif')) return `${base}.gif`;
+      if (type.includes('bmp')) return `${base}.bmp`;
+      if (type.includes('tiff') || type.includes('tif')) return `${base}.tiff`;
+      if (type.includes('wordprocessingml.document')) return `${base}.docx`;
+      return base;
+    })();
+    formData.append('file', fileOrBlob, normalizedName);
     return formData;
   }, { fallbackErrorMessage: 'OCR временно недоступен' });
   const response = request && request.response;

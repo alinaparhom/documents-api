@@ -2261,6 +2261,29 @@
     return String(endpoint).replace(/[?&]action=generate_summary$/i, '') + '?action=generate_summary';
   }
 
+  function inferUploadExtensionFromType(type) {
+    var normalized = String(type || '').toLowerCase();
+    if (normalized.indexOf('pdf') >= 0) return 'pdf';
+    if (normalized.indexOf('jpeg') >= 0 || normalized.indexOf('jpg') >= 0) return 'jpg';
+    if (normalized.indexOf('png') >= 0) return 'png';
+    if (normalized.indexOf('webp') >= 0) return 'webp';
+    if (normalized.indexOf('gif') >= 0) return 'gif';
+    if (normalized.indexOf('bmp') >= 0) return 'bmp';
+    if (normalized.indexOf('tiff') >= 0 || normalized.indexOf('tif') >= 0) return 'tiff';
+    if (normalized.indexOf('wordprocessingml.document') >= 0) return 'docx';
+    if (normalized.indexOf('text/plain') >= 0) return 'txt';
+    return '';
+  }
+
+  function ensureUploadFileName(name, type, fallbackBase) {
+    var base = String(name || fallbackBase || 'document').trim() || 'document';
+    if (/\.[a-z0-9]{2,8}$/i.test(base)) {
+      return base;
+    }
+    var ext = inferUploadExtensionFromType(type);
+    return ext ? (base + '.' + ext) : base;
+  }
+
   function requestOcrTextForSource(source, apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var formData = new FormData();
@@ -2269,7 +2292,8 @@
 
     var prepareSource = Promise.resolve();
     if (source && source.fileObject) {
-      formData.append('file', source.fileObject);
+      var localName = ensureUploadFileName(source.fileObject.name, source.fileObject.type, source && source.label ? source.label : 'ocr-file');
+      formData.append('file', source.fileObject, localName);
     } else if (source && source.url) {
       prepareSource = fetch(String(source.url), { credentials: 'same-origin' })
         .then(function(fileResponse) {
@@ -2279,7 +2303,11 @@
           return fileResponse.blob();
         })
         .then(function(fileBlob) {
-          var fileName = source && source.label ? String(source.label) : 'ocr-file';
+          var fileName = ensureUploadFileName(
+            source && source.label ? String(source.label) : '',
+            fileBlob.type,
+            'ocr-file'
+          );
           formData.append('file', new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' }), fileName);
         });
     } else {
