@@ -123,44 +123,56 @@ function normalizeUploadedFiles(string $field): array
 
 function normalizeRemoteFilesFromPost(): array
 {
-    $candidates = [];
+    $payloads = [];
+
+    $legacyFileUrls = trim((string)($_POST['file_urls'] ?? ''));
+    if ($legacyFileUrls !== '') {
+        $decoded = json_decode($legacyFileUrls, true);
+        if (is_array($decoded)) {
+            $payloads[] = $decoded;
+        }
+    }
+
     foreach (['remoteFiles', 'files', 'files_json'] as $field) {
         $raw = $_POST[$field] ?? null;
         if (!is_string($raw) || trim($raw) === '') {
             continue;
         }
         $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) {
-            continue;
+        if (is_array($decoded)) {
+            $payloads[] = $decoded;
         }
-        $candidates = $decoded;
-        break;
     }
 
-    if (!$candidates) {
+    if (!$payloads) {
         return [];
     }
 
     $out = [];
-    foreach ($candidates as $item) {
-        if (is_string($item)) {
-            $url = trim($item);
-            $name = '';
-        } elseif (is_array($item)) {
-            $url = trim((string)($item['url'] ?? ''));
-            $name = sanitizeFileName((string)($item['name'] ?? ''));
-        } else {
-            continue;
-        }
+    foreach ($payloads as $items) {
+        foreach ($items as $index => $item) {
+            if (is_string($item)) {
+                $url = trim($item);
+                $name = 'file-' . ($index + 1);
+                $clientType = '';
+            } elseif (is_array($item)) {
+                $url = trim((string)($item['url'] ?? ''));
+                $name = sanitizeFileName((string)($item['name'] ?? ('file-' . ($index + 1))));
+                $clientType = trim((string)($item['type'] ?? ($item['client_type'] ?? '')));
+            } else {
+                continue;
+            }
 
-        if ($url === '' || !preg_match('#^https?://#i', $url)) {
-            continue;
-        }
+            if ($url === '' || !preg_match('#^https?://#i', $url)) {
+                continue;
+            }
 
-        $out[] = [
-            'url' => $url,
-            'name' => $name,
-        ];
+            $out[] = [
+                'url' => $url,
+                'name' => $name !== '' ? $name : ('file-' . ($index + 1)),
+                'client_type' => $clientType,
+            ];
+        }
     }
 
     return $out;
@@ -169,6 +181,7 @@ function normalizeRemoteFilesFromPost(): array
 function downloadRemoteFiles(array $remoteFiles): array
 {
     $out = [];
+    $cleanup = [];
     foreach ($remoteFiles as $index => $remoteFile) {
         $url = trim((string)($remoteFile['url'] ?? ''));
         if ($url === '') {
@@ -226,16 +239,26 @@ function downloadRemoteFiles(array $remoteFiles): array
             $name = $urlName !== '' && $urlName !== 'file' ? $urlName : ('remote-file-' . ($index + 1) . '.bin');
         }
 
+        $cleanup[] = $tmp;
         $out[] = [
             'name' => $name,
             'tmp_name' => $tmp,
             'size' => $size,
-            'client_type' => $type !== '' ? $type : 'application/octet-stream',
+            'client_type' => $type !== '' ? $type : (string)($remoteFile['client_type'] ?? 'application/octet-stream'),
         ];
+    }
+
+    if ($cleanup) {
+        register_shutdown_function(static function () use ($cleanup): void {
+            foreach ($cleanup as $path) {
+                @unlink((string)$path);
+            }
+        });
     }
 
     return $out;
 }
+
 function detectMime(string $path, string $fallback = ''): string
 {
     $mime = '';
