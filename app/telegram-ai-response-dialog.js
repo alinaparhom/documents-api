@@ -1316,6 +1316,30 @@ function openAiChatDialog(context = {}) {
     return { assistantReply, requestContext };
   };
 
+  const scanSelectedFilesToSingleMessage = async (pending) => {
+    const selectedFiles = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+    if (!selectedFiles.length) {
+      throw new Error('Выберите файлы для OCR.');
+    }
+    const results = [];
+    for (let i = 0; i < selectedFiles.length; i += 1) {
+      const file = selectedFiles[i];
+      if (!(file && file.file instanceof File)) {
+        results.push(`Файл: ${file.name}\n⚠️ Пропущен: доступен только как ссылка. Загрузите файл локально через «Добавить файл».`);
+        continue;
+      }
+      if (pending) pending.update(`OCR ${i + 1}/${selectedFiles.length}: ${file.name}`);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const text = String(await fetchExternalFileContent(file) || '').trim();
+        results.push(`Файл: ${file.name}\n${text || '⚠️ Текст не найден.'}`);
+      } catch (error) {
+        results.push(`Файл: ${file.name}\n⚠️ Ошибка OCR: ${error && error.message ? error.message : 'неизвестная ошибка'}`);
+      }
+    }
+    return results.join('\n\n──────────\n\n').trim();
+  };
+
 
   const reorderFiles = (draggedIndex, targetIndex) => {
     if (!Array.isArray(state.attachedFiles)) return;
@@ -1664,55 +1688,26 @@ function openAiChatDialog(context = {}) {
     if (state.isSending) return;
     if (applyRateLimitState()) return;
     const prompt = String(input.value || '').trim();
-    if (!prompt) return;
-    appendBubble(prompt, 'user');
-    state.chatHistory.push({ role: 'user', text: prompt, ts: Date.now() });
-    state.chatHistory = normalizeHistoryMessages(state.chatHistory);
+    appendBubble(prompt || 'Сканировать выбранные файлы', 'user');
     state.isSending = true;
     sendBtn.disabled = true;
     input.disabled = true;
-    notify('info', 'Генерируем ответ ИИ...');
-    const pending = appendPendingBubble('Готовим ответ...');
-    let assistantReply = '';
+    notify('info', 'Запускаем OCR...');
+    const pending = appendPendingBubble('OCR выбранных файлов...');
     try {
-      let requestContext = null;
-      if (state.aiMode === 'paid') {
-        const paidResult = await sendPaidRequestWithSequentialOcr(prompt, pending);
-        assistantReply = paidResult.assistantReply;
-        requestContext = paidResult.requestContext;
-      } else {
-        requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
-        assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
-      }
-      appendResponseMeta(requestContext.__lastAiMeta || null);
+      const ocrText = await scanSelectedFilesToSingleMessage(pending);
+      pending.remove();
+      appendBubble(ocrText || 'OCR завершён, но текст не найден.', 'assistant');
+      notify('success', 'OCR завершён.');
     } catch (error) {
       pending.remove();
-      assistantReply = '';
-      const errorMessage = buildReadableAiError(error);
-      const modelsHandled = applyAvailableModelsFromError(error);
+      const errorMessage = String(error && error.message || 'Ошибка OCR.');
       appendErrorBubbleOnce(`Ошибка: ${errorMessage}`);
       notify('warning', errorMessage);
-      if ((error && (error.code === 'RATE_LIMITED' || /429/.test(String(error.message)))) || Number(error && error.retryAfterSeconds) > 0) {
-        const waitSeconds = Math.max(5, Number(error && error.retryAfterSeconds) || 30);
-        state.rateLimitUntil = Date.now() + (waitSeconds * 1000);
-        applyRateLimitState();
-      }
-      if (!modelsHandled && error && error.code === 'MODEL_NOT_ALLOWED') {
-        appendErrorBubbleOnce('Модель из .env временно недоступна на сервере.');
-      }
-    }
-    if (assistantReply) {
-      pending.remove();
-      appendBubble(assistantReply, 'assistant');
-      state.chatHistory.push({ role: 'assistant', text: assistantReply, ts: Date.now() });
-      state.chatHistory = normalizeHistoryMessages(state.chatHistory);
     }
     input.value = '';
     state.isSending = false;
     applyRateLimitState();
-    if (assistantReply) {
-      notify('success', 'Ответ ИИ готов.');
-    }
   });
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
