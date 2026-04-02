@@ -355,16 +355,14 @@
     var preparedFiles = [];
     for (var i = 0; i < candidates.length; i += 1) {
       var file = candidates[i];
-      try {
-        if (file && file.fileObject) {
-          var localName = file.name || 'document.bin';
-          if (isPdfFile(localName, file.fileObject.type) && convertPdfForModel) {
-            // eslint-disable-next-line no-await-in-loop
-            var localJpegs = await convertPdfBlobToJpegBlobs(file.fileObject, localName.replace(/\.pdf$/i, '') || 'document');
-            if (localJpegs.length) {
-              preparedFiles = preparedFiles.concat(localJpegs);
-              continue;
-            }
+      if (file && file.fileObject) {
+        var localName = file.name || 'document.bin';
+        if (isPdfFile(localName, file.fileObject.type) && convertPdfForModel) {
+          // eslint-disable-next-line no-await-in-loop
+          var localJpegs = await convertPdfBlobToJpegBlobs(file.fileObject, localName.replace(/\.pdf$/i, '') || 'document');
+          if (localJpegs.length) {
+            preparedFiles = preparedFiles.concat(localJpegs);
+            continue;
           }
         }
         if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
@@ -389,26 +387,16 @@
         if (!fileResponse.ok) {
           continue;
         }
-        var remoteUrl = resolveFileUrl(file);
-        if (remoteUrl) {
+        // eslint-disable-next-line no-await-in-loop
+        var fileBlob = await fileResponse.blob();
+        var remoteName = file.name || 'document.bin';
+        if (isPdfFile(remoteName, fileBlob.type) && convertPdfForModel) {
           // eslint-disable-next-line no-await-in-loop
-          var fileResponse = await fetch(remoteUrl, { credentials: 'same-origin' });
-          if (!fileResponse.ok) {
+          var remoteJpegs = await convertPdfBlobToJpegBlobs(fileBlob, remoteName.replace(/\.pdf$/i, '') || 'document');
+          if (remoteJpegs.length) {
+            preparedFiles = preparedFiles.concat(remoteJpegs);
             continue;
           }
-          // eslint-disable-next-line no-await-in-loop
-          var fileBlob = await fileResponse.blob();
-          var remoteName = file.name || 'document.bin';
-          if (isPdfFile(remoteName, fileBlob.type) && convertPdfForModel) {
-            // eslint-disable-next-line no-await-in-loop
-            var remoteJpegs = await convertPdfBlobToJpegBlobs(fileBlob, remoteName.replace(/\.pdf$/i, '') || 'document');
-            if (remoteJpegs.length) {
-              preparedFiles = preparedFiles.concat(remoteJpegs);
-              continue;
-            }
-          }
-          if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
-          preparedFiles.push({ name: remoteName, blob: fileBlob });
         }
         if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
         preparedFiles.push({ name: remoteName, blob: fileBlob });
@@ -777,8 +765,6 @@
       '.ai-chat-modal__top-bar{grid-template-columns:minmax(0,1.7fr) repeat(2,minmax(130px,1fr)) auto;align-items:center;}' +
       '.ai-chat-modal__field--full{grid-column:1 / -1;}' +
       '.ai-chat-modal__field{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#475569;}' +
-      '.ai-chat-modal__toggle{display:inline-flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid rgba(148,163,184,.35);border-radius:10px;background:rgba(255,255,255,.86);font-size:12px;color:#334155;font-weight:600;min-height:36px;}' +
-      '.ai-chat-modal__toggle input{accent-color:#2563eb;width:16px;height:16px;}' +
       '.ai-chat-modal__select{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:#fff;padding:6px;font-size:12px;color:#0f172a;}' +
       '.ai-chat-modal__input{border:1px solid rgba(148,163,184,.45);border-radius:8px;background:rgba(255,255,255,.95);padding:7px 8px;font-size:12px;color:#0f172a;outline:none;}' +
       '.ai-chat-modal__messages{flex:1;min-height:0;overflow:auto;padding:12px;background:rgba(248,250,252,.58);border:1px solid rgba(226,232,240,.75);border-radius:16px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth;box-shadow:inset 0 1px 0 rgba(255,255,255,.65);}' +
@@ -1026,15 +1012,6 @@
 
   function sanitizeAssistantResponseText(text) {
     var value = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    var compact = value.trim();
-    if (compact && compact.charAt(0) === '{' && /"response"\s*:/i.test(compact)) {
-      try {
-        var parsed = JSON.parse(compact);
-        if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
-          value = String(parsed.response || '');
-        }
-      } catch (_) {}
-    }
     value = value.replace(/<think[\s\S]*?<\/think>/gi, '');
     value = value.replace(/<\/?think>/gi, '');
     var lines = value.split('\n').filter(function (line) {
@@ -1478,7 +1455,6 @@
       lastAssistantMessage: '',
       templateDraft: '',
       templateFile: null,
-      newDecisionEnabled: Boolean(config && config.newDecisionEnabled),
       lastErrorFingerprint: '',
       lastErrorTs: 0
     };
@@ -1534,12 +1510,6 @@
       state.aiMode = 'paid';
     }
     modeSelect.value = state.aiMode;
-    var newDecisionField = createElement('label', 'ai-chat-modal__toggle');
-    var newDecisionCheckbox = document.createElement('input');
-    newDecisionCheckbox.type = 'checkbox';
-    newDecisionCheckbox.checked = Boolean(state.newDecisionEnabled);
-    newDecisionField.appendChild(newDecisionCheckbox);
-    newDecisionField.appendChild(document.createTextNode('Новое решение'));
 
     var styleField = createElement('label', 'ai-chat-modal__field');
     styleField.appendChild(createElement('span', '', 'Стиль'));
@@ -2549,10 +2519,6 @@
         return;
       }
       var effectivePrompt = value || 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
-      if (state.newDecisionEnabled) {
-        effectivePrompt = 'System настройка: дай краткое описание файла простым деловым языком. '
-          + 'Сформируй краткое решение по вложениям без markdown.';
-      }
 
       state.model = modelSelect.value;
       var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
@@ -2577,7 +2543,7 @@
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
         var requestMode = resolveRequestMode(state);
         var response = null;
-        if (requestMode === 'paid' && (state.contextDetail !== 'brief' || state.newDecisionEnabled)) {
+        if (requestMode === 'paid' && state.contextDetail !== 'brief') {
           response = await postGroqPaidWithFallback(effectivePrompt, state, config, timeoutMs);
         } else {
           var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
@@ -2645,7 +2611,7 @@
           try {
             var secondMode = resolveRequestMode(state);
             var secondResponse = null;
-            if (secondMode === 'paid' && (state.contextDetail !== 'brief' || state.newDecisionEnabled)) {
+            if (secondMode === 'paid' && state.contextDetail !== 'brief') {
               secondResponse = await postGroqPaidWithFallback(effectivePrompt, state, config, calculateAiTimeoutMs(effectivePrompt, state));
             } else {
               secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
@@ -2714,15 +2680,6 @@
       state.aiMode = modeSelect.value === 'paid' ? 'paid' : 'free';
       if (state.contextDetail === 'brief' && state.aiMode !== 'paid') {
         appendAssistantErrorOnce('Режим «Кратко» работает через VIP модель.');
-      }
-      refreshSendButtonLabel();
-    });
-    newDecisionCheckbox.addEventListener('change', function () {
-      state.newDecisionEnabled = Boolean(newDecisionCheckbox.checked);
-      if (state.newDecisionEnabled) {
-        state.aiMode = 'paid';
-        modeSelect.value = 'paid';
-        appendAssistantErrorOnce('Режим «Новое решение» включён: отправка файлов напрямую в платный ИИ.');
       }
       refreshSendButtonLabel();
     });
@@ -2849,7 +2806,6 @@
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
     topBar.appendChild(modeField);
-    topBar.appendChild(newDecisionField);
     topBar.appendChild(modelField);
     topBar.appendChild(styleField);
     topBar.appendChild(settingsButton);
