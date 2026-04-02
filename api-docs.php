@@ -217,8 +217,35 @@ function detectFileExtension(array $file): string
     return trim((string)end($parts));
 }
 
+
+function detectMimeType(array $file): string
+{
+    $type = trim((string)($file['type'] ?? ''));
+    if ($type !== '') {
+        return strtolower($type);
+    }
+
+    $tmp = (string)($file['tmp_name'] ?? '');
+    if ($tmp !== '' && is_file($tmp) && function_exists('finfo_open')) {
+        $finfo = @finfo_open(FILEINFO_MIME_TYPE);
+        if ($finfo !== false) {
+            $detected = @finfo_file($finfo, $tmp);
+            @finfo_close($finfo);
+            if (is_string($detected) && trim($detected) !== '') {
+                return strtolower(trim($detected));
+            }
+        }
+    }
+
+    return 'application/octet-stream';
+}
+
 function decodeDocxXmlText(string $xml): string
 {
+    if (!class_exists('DOMDocument') || !class_exists('DOMXPath')) {
+        return '';
+    }
+
     $dom = new DOMDocument();
     $loaded = @$dom->loadXML($xml, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET | LIBXML_COMPACT);
     if (!$loaded) {
@@ -338,7 +365,7 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
         if ($tmpName === '' || !is_file($tmpName)) {
             return ['status' => 400, 'body' => false, 'curl_error' => 'Файл для OCR не найден'];
         }
-        $mime = (string)($file['type'] ?? 'application/octet-stream');
+        $mime = detectMimeType($file);
         $name = (string)($file['name'] ?? 'document');
         $postFields['file'] = curl_file_create($tmpName, $mime, $name);
     }
