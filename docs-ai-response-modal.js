@@ -80,7 +80,7 @@
     { value: 'free', label: 'Бесплатный ИИ' },
     { value: 'paid', label: 'VIP ИИ (платный)' }
   ];
-  var GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+  var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
 
   function createElement(tag, className, text) {
@@ -322,6 +322,34 @@
       return images;
     }
 
+    async function tryExtractOcrTextForPaid(fileOrBlob, fileName, remoteUrl) {
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      if (remoteUrl) {
+        formData.append('file_url', String(remoteUrl));
+      } else if (fileOrBlob) {
+        formData.append('file', fileOrBlob, fileName || 'document.bin');
+      } else {
+        return '';
+      }
+      try {
+        var response = await fetch(apiUrl + '?action=ocr_extract', {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData
+        });
+        var payload = await response.json().catch(function () { return null; });
+        if (!response.ok || !payload || payload.ok !== true) {
+          return '';
+        }
+        return String(payload.text || '').trim();
+      } catch (_) {
+        return '';
+      }
+    }
+
     var activeModel = String((state && state.model) || (config && config.defaultModel) || '').trim();
     var convertPdfForModel = shouldConvertPdfForModel(activeModel);
     var candidates = Array.isArray(state && state.files) ? state.files : [];
@@ -339,8 +367,27 @@
               continue;
             }
           }
-          if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
-          preparedFiles.push({ name: localName, blob: file.fileObject });
+        }
+        if (isPdfFile(localName, file.fileObject.type) && !/\.pdf$/i.test(localName)) localName += '.pdf';
+        preparedFiles.push({ name: localName, blob: file.fileObject });
+        var localOcrText = '';
+        if (isPdfFile(localName, file.fileObject.type)) {
+          // eslint-disable-next-line no-await-in-loop
+          localOcrText = await tryExtractOcrTextForPaid(file.fileObject, localName, '');
+        }
+        if (localOcrText) {
+          preparedFiles.push({
+            name: localName.replace(/\.[^.]+$/, '') + '-ocr.txt',
+            blob: new Blob([localOcrText.slice(0, 20000)], { type: 'text/plain' })
+          });
+        }
+        continue;
+      }
+      var remoteUrl = resolveFileUrl(file);
+      if (remoteUrl) {
+        // eslint-disable-next-line no-await-in-loop
+        var fileResponse = await fetch(remoteUrl, { credentials: 'same-origin' });
+        if (!fileResponse.ok) {
           continue;
         }
         var remoteUrl = resolveFileUrl(file);
@@ -364,8 +411,19 @@
           if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
           preparedFiles.push({ name: remoteName, blob: fileBlob });
         }
-      } catch (_) {
-        continue;
+        if (isPdfFile(remoteName, fileBlob.type) && !/\.pdf$/i.test(remoteName)) remoteName += '.pdf';
+        preparedFiles.push({ name: remoteName, blob: fileBlob });
+        var remoteOcrText = '';
+        if (isPdfFile(remoteName, fileBlob.type)) {
+          // eslint-disable-next-line no-await-in-loop
+          remoteOcrText = await tryExtractOcrTextForPaid(null, remoteName, remoteUrl);
+        }
+        if (remoteOcrText) {
+          preparedFiles.push({
+            name: remoteName.replace(/\.[^.]+$/, '') + '-ocr.txt',
+            blob: new Blob([remoteOcrText.slice(0, 20000)], { type: 'text/plain' })
+          });
+        }
       }
     }
     return preparedFiles;
@@ -399,6 +457,14 @@
           body: body
         }, timeoutMs);
         if (response.status === 404 || response.status === 405) {
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        var payload = await response.clone().json().catch(function () { return null; });
+        var serverError = String(payload && payload.error ? payload.error : '');
+        var shouldTryNext = (response.status >= 500 || /E208|internal processing error/i.test(serverError))
+          && i < GROQ_PAID_ENDPOINTS.length - 1;
+        if (shouldTryNext) {
           continue;
         }
         return response;
