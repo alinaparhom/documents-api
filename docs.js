@@ -13694,6 +13694,18 @@
         return appendedCount;
       }
 
+      async function buildVipRequestFormData(promptText, selectedLinked, selectedPending, requestContext) {
+        var formData = new FormData();
+        formData.append('prompt', promptText);
+        formData.append('responseStyle', 'neutral');
+        formData.append('context', JSON.stringify(requestContext || {}));
+        var appendedCount = await appendSourceFilesToFormData(formData, selectedLinked, selectedPending);
+        if (!appendedCount) {
+          throw new Error('Выберите хотя бы один файл для VIP чата.');
+        }
+        return formData;
+      }
+
       sendButton.addEventListener('click', function() {
         var promptText = String(inputNode.value || '').trim();
         if (!promptText) {
@@ -13704,9 +13716,6 @@
         pushChat('assistant', '⏳ Обрабатываю запрос...');
         metaNode.innerHTML = '';
         var startedAt = Date.now();
-        var formData = new FormData();
-        formData.append('prompt', promptText);
-        formData.append('responseStyle', 'neutral');
         var requestContext = {};
         var sourceContext = payload.context || {};
         Object.keys(sourceContext).forEach(function(key) {
@@ -13728,18 +13737,17 @@
           }));
         chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
         requestContext.chatHistory = chatHistory.slice(-8);
-        formData.append('context', JSON.stringify(requestContext));
-        appendSourceFilesToFormData(formData, selectedLinked, selectedPending)
-          .then(function(appendedCount) {
-            if (!appendedCount) {
-              throw new Error('Выберите хотя бы один файл для VIP чата.');
-            }
+        Promise.resolve()
+          .then(function() {
             var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
             function tryEndpoint(index) {
               if (index >= paidEndpoints.length) {
                 throw new Error('Не удалось подключиться к VIP API. Проверьте endpoint api-groq-paid.php.');
               }
-              return fetch(paidEndpoints[index], { method: 'POST', body: formData, credentials: 'same-origin' })
+              return buildVipRequestFormData(promptText, selectedLinked, selectedPending, requestContext)
+                .then(function(formData) {
+                  return fetch(paidEndpoints[index], { method: 'POST', body: formData, credentials: 'same-origin' });
+                })
                 .then(function(response) {
                   if ((response.status === 404 || response.status === 405) && index < paidEndpoints.length - 1) {
                     return tryEndpoint(index + 1);
