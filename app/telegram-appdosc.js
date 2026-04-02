@@ -350,11 +350,9 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   const blob = await fetched.blob();
   const fileName = normalizeValue(source && source.label) || 'brief-file';
   const fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-  let extractedText = '';
-  try {
-    extractedText = await requestTelegramOcrByUrl(fileUrl);
-  } catch (_) {
-    extractedText = '';
+  const extractedText = await requestTelegramOcrByUrl(fileUrl);
+  if (!String(extractedText || '').trim()) {
+    throw new Error('OCR не вернул текст для выбранного файла.');
   }
   const request = await postGroqPaidWithFallback(() => {
     const formData = new FormData();
@@ -555,11 +553,9 @@ function openTelegramBriefModal(task, statusHandler) {
       <div class="appdosc-brief-ai__header">
         <div>
           <div class="appdosc-brief-ai__title">Кратко ИИ</div>
-          <div class="appdosc-brief-ai__sub">Краткий вывод по документу</div>
-          <div class="appdosc-brief-ai__mode">Только текст выбранного файла</div>
-          <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-new-decision>Новое решение</label>
-          <div style="margin-top:6px"><select data-ai-mode style="min-height:30px;border:1px solid rgba(203,213,225,.95);border-radius:9px;padding:4px 8px;background:#fff"><option value="free">Бесплатный ИИ</option><option value="paid">VIP ИИ</option></select></div>
-          <div class="appdosc-brief-ai__hint">1) Выберите файл → 2) Дождитесь анализа → 3) Скопируйте нужные пункты.</div>
+          <div class="appdosc-brief-ai__sub">Файл → OCR → api-groq-paid.php → краткий вывод</div>
+          <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-paid-ai>Платный ИИ</label>
+          <div class="appdosc-brief-ai__hint">1) Включите «Платный ИИ» → 2) Нажмите файл → 3) Получите краткое решение.</div>
         </div>
         <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
       </div>
@@ -568,7 +564,7 @@ function openTelegramBriefModal(task, statusHandler) {
       <div class="appdosc-brief-ai__body">
         <div class="appdosc-brief-ai__list" data-list></div>
         <div class="appdosc-brief-ai__preview" data-preview>
-          <p class="appdosc-brief-ai__placeholder">Выберите файл слева — покажу краткий изолированный разбор только по его тексту.</p>
+          <p class="appdosc-brief-ai__placeholder">Отметьте «Платный ИИ», затем выберите файл.</p>
         </div>
       </div>
     </div>`;
@@ -576,8 +572,7 @@ function openTelegramBriefModal(task, statusHandler) {
   const preview = modal.querySelector('[data-preview]');
   const statusNode = modal.querySelector('[data-status]');
   const metaNode = modal.querySelector('[data-meta]');
-  const modeSelect = modal.querySelector('[data-ai-mode]');
-  const newDecisionCheckbox = modal.querySelector('[data-new-decision]');
+  const paidCheckbox = modal.querySelector('[data-paid-ai]');
   const sources = [];
   let activeRequestId = 0;
 
@@ -586,6 +581,7 @@ function openTelegramBriefModal(task, statusHandler) {
     statusNode.textContent = message;
     statusNode.setAttribute('data-tone', tone);
   };
+
   (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
     const name = getAttachmentName(file, index + 1);
     const url = resolveFileFetchUrl(file);
@@ -605,16 +601,6 @@ function openTelegramBriefModal(task, statusHandler) {
   };
   modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
   modal.querySelector('[data-close]').addEventListener('click', close);
-  if (newDecisionCheckbox) {
-    newDecisionCheckbox.addEventListener('change', () => {
-      if (modeSelect) {
-        modeSelect.disabled = newDecisionCheckbox.checked;
-      }
-      if (newDecisionCheckbox.checked) {
-        setStatus('Режим "Новое решение": файл пойдёт напрямую в платный ИИ.', 'idle');
-      }
-    });
-  }
   document.addEventListener('keydown', onEscClose);
 
   sources.forEach((source) => {
@@ -631,42 +617,31 @@ function openTelegramBriefModal(task, statusHandler) {
     typeWrap.appendChild(typeNode);
     button.append(titleWrap, typeWrap);
     button.addEventListener('click', async () => {
+      if (!paidCheckbox || !paidCheckbox.checked) {
+        setStatus('Сначала включите галочку «Платный ИИ».', 'error');
+        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">Без режима «Платный ИИ» анализ не запускается.</p>';
+        return;
+      }
       const requestId = ++activeRequestId;
       activate(button);
-      let sourceText = '';
       try {
         button.disabled = true;
-        setStatus(`Подготовка файла: ${source.label}`, 'loading');
-        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Подготовка текста файла...</p>';
-        const useNewDecision = Boolean(newDecisionCheckbox && newDecisionCheckbox.checked);
-        const selectedMode = modeSelect && modeSelect.value === 'paid' ? 'paid' : 'free';
-        let aiPayload = null;
-        if (useNewDecision || selectedMode === 'paid') {
-          setStatus(`VIP анализ файла: ${source.label}`, 'loading');
-          preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">⏳ ${useNewDecision ? 'Новое решение' : 'VIP режим'}: отправка файла напрямую в платный ИИ...</p>`;
-          aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
-        } else {
-          setStatus(`Анализ ИИ: ${source.label}`, 'loading');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла в ИИ для краткого вывода...</p>';
-          const aiStartedAt = Date.now();
-          aiPayload = await requestTelegramBriefAiByAttachment(source, selectedMode);
-          if (requestId !== activeRequestId) return;
-          if (metaNode) {
-            const elapsedSec = (Math.max(1, Number(aiPayload && (aiPayload.durationMs || aiPayload.timeMs)) || (Date.now() - aiStartedAt)) / 1000).toFixed(1);
-            metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек`;
-          }
-        }
+        setStatus(`OCR и платный анализ: ${source.label}`, 'loading');
+        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ OCR и отправка в api-groq-paid.php...</p>';
+        const startedAt = Date.now();
+        const aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
         if (requestId !== activeRequestId) return;
-        renderTelegramBriefPreview(preview, aiPayload, sourceText);
-        setStatus('Готово. Разбор сформирован только по выбранному файлу.', 'success');
+        renderTelegramBriefPreview(preview, aiPayload, '');
+        setStatus('Готово. Краткий вывод получен через Платный ИИ.', 'success');
         if (metaNode) {
-          const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || 1000) / 1000).toFixed(1);
-          metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек${useNewDecision ? ' • Режим: Новое решение' : ''}`;
+          const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - startedAt)) / 1000).toFixed(1);
+          metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек • Режим: Платный ИИ`;
         }
       } catch (error) {
         if (requestId !== activeRequestId) return;
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
-        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.\n${escapeHtml(message)}</p>`;
+        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.
+${escapeHtml(message)}</p>`;
         setStatus(`Ошибка: ${message}`, 'error');
         if (metaNode) metaNode.textContent = '';
         if (typeof statusHandler === 'function') statusHandler('warning', message);
@@ -678,12 +653,12 @@ function openTelegramBriefModal(task, statusHandler) {
   });
   if (!sources.length) {
     list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
-    if (modeSelect) modeSelect.disabled = true;
-    if (newDecisionCheckbox) newDecisionCheckbox.disabled = true;
+    if (paidCheckbox) paidCheckbox.disabled = true;
     setStatus('Нет файлов для анализа в этой задаче.', 'error');
   }
   document.body.appendChild(modal);
 }
+
 
 const ALLOWED_LOG_EVENTS = new Set([
   'bootstrap_after_init_telegram',
