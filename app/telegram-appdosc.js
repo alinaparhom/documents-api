@@ -357,13 +357,20 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
   if (!fileUrl) {
     throw new Error('Не найден URL файла для VIP режима.');
   }
-  const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
-  if (!fetched.ok) {
-    throw new Error(`Не удалось загрузить файл (${fetched.status})`);
-  }
-  const blob = await fetched.blob();
   const fileName = normalizeValue(source && source.label) || 'brief-file';
-  const fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+  let fileForVip = null;
+
+  try {
+    const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+    if (!fetched.ok) {
+      throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+    }
+    const blob = await fetched.blob();
+    fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+  } catch (_) {
+    fileForVip = null;
+  }
+
   let extractedText = '';
   try {
     extractedText = await requestTelegramOcrByUrl(fileUrl);
@@ -374,7 +381,11 @@ async function requestTelegramBriefAiDirectWithAttachment(source) {
     const formData = new FormData();
     formData.append('action', 'generate_summary');
     formData.append('mode', 'paid');
-    formData.append('files', fileForVip, fileForVip.name || fileName);
+    if (fileForVip) {
+      formData.append('files', fileForVip, fileForVip.name || fileName);
+    } else {
+      formData.append('file_urls', JSON.stringify([{ url: fileUrl, name: fileName }]));
+    }
     if (extractedText) {
       formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 12000) }]));
     }
@@ -622,10 +633,15 @@ function openTelegramBriefModal(task, statusHandler) {
   if (newDecisionCheckbox) {
     newDecisionCheckbox.addEventListener('change', () => {
       if (modeSelect) {
+        if (newDecisionCheckbox.checked) {
+          modeSelect.value = 'paid';
+        }
         modeSelect.disabled = newDecisionCheckbox.checked;
       }
       if (newDecisionCheckbox.checked) {
         setStatus('Режим "Новое решение": файл пойдёт напрямую в платный ИИ.', 'idle');
+      } else {
+        setStatus('Выберите файл для анализа.', 'idle');
       }
     });
   }
