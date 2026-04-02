@@ -13,23 +13,7 @@ let aiDialogLoader = null;
 
 function getDirectDocsAiEndpoint() {
   const configured = String((window && window.DOCUMENTS_AI_API_URL) || '').trim();
-  return configured || '/js/documents/api-docs.php';
-}
-
-async function postDocsAiAnalyzeDirect(createFormData) {
-  const endpoint = getDirectDocsAiEndpoint();
-  const url = `${endpoint}?action=ai_response_analyze`;
-  const response = await fetch(url, { method: 'POST', credentials: 'include', body: createFormData() });
-  const payload = await response.json().catch(() => null);
-  return { endpoint: url, response, payload };
-}
-
-async function postDocsAiSummaryDirect(createFormData) {
-  const endpoint = getDirectDocsAiEndpoint();
-  const url = `${endpoint}?action=generate_summary`;
-  const response = await fetch(url, { method: 'POST', credentials: 'include', body: createFormData() });
-  const payload = await response.json().catch(() => null);
-  return { endpoint: url, response, payload };
+  return configured || '/api-docs.php';
 }
 
 
@@ -298,8 +282,9 @@ async function requestTelegramOcrByUrl(fileUrl) {
 
 async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   const normalizedText = String(text || '').trim();
-  const request = await postDocsAiSummaryDirect(() => {
+  const request = await postDocsAiWithFallback(() => {
     const formData = new FormData();
+    formData.append('action', 'generate_summary');
     formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
     formData.append('extractedTexts', JSON.stringify([{ name: sourceLabel || 'Файл', type: 'text/plain', text: normalizedText.slice(0, 12000) }]));
     return formData;
@@ -335,8 +320,9 @@ async function requestTelegramBriefAiByAttachment(source, aiMode = 'free') {
   }
   const blob = await fetched.blob();
   const fileName = normalizeValue(source && source.label) || 'brief-file';
-  const request = await postDocsAiSummaryDirect(() => {
+  const request = await postDocsAiWithFallback(() => {
     const formData = new FormData();
+    formData.append('action', 'generate_summary');
     formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
     formData.append('attachment', new File([blob], fileName, { type: blob.type || 'application/octet-stream' }), fileName);
     return formData;
