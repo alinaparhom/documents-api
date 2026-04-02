@@ -2487,6 +2487,41 @@
     return payload;
   }
 
+  async function requestAiBriefSummaryByAttachment(source, apiUrl, aiMode) {
+    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+    var fileForSummary = null;
+    if (source && source.fileObject instanceof File) {
+      fileForSummary = source.fileObject;
+    } else if (source && source.url) {
+      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
+      if (fetched.ok) {
+        var blob = await fetched.blob();
+        var fileName = sourceLabel || 'brief-file';
+        fileForSummary = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+      }
+    }
+    if (!(fileForSummary instanceof File)) {
+      throw new Error('Не удалось подготовить файл для краткого вывода.');
+    }
+    var endpoint = getDirectAiSummaryUrl(apiUrl);
+    var formData = new FormData();
+    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+    formData.append('attachment', fileForSummary, fileForSummary.name || sourceLabel);
+    var response = await fetch(endpoint, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    });
+    var payload = await response.json().catch(function() { return null; });
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
+    }
+    if (!isMeaningfulAiBriefPayload(payload)) {
+      throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
+    }
+    return payload;
+  }
+
   function openAiBriefSummaryModal(config) {
     ensureResponsesStyle();
     var options = config && typeof config === 'object' ? config : {};
@@ -2588,10 +2623,8 @@
           preview.textContent = '⏳ Новое решение: отправляю файл в платный ИИ...';
           requestPromise = requestAiBriefSummaryForFileDirect(source, options.apiUrl);
         } else {
-          requestPromise = resolveSourceText(source, true).then(function(sourceText) {
-            preview.textContent = '⏳ OCR завершён. Отправляю текст в ИИ...';
-            return requestAiBriefSummaryForText(source, sourceText, options.apiUrl, 'free');
-          });
+          preview.textContent = '⏳ Отправляю файл в ИИ для краткого вывода...';
+          requestPromise = requestAiBriefSummaryByAttachment(source, options.apiUrl, 'free');
         }
         requestPromise
           .then(function(sourceText) {

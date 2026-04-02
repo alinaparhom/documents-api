@@ -324,6 +324,34 @@ async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
   return payload;
 }
 
+async function requestTelegramBriefAiByAttachment(source, aiMode = 'free') {
+  const fileUrl = normalizeValue(source && source.url);
+  if (!fileUrl) {
+    throw new Error('Не найден URL файла.');
+  }
+  const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+  if (!fetched.ok) {
+    throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+  }
+  const blob = await fetched.blob();
+  const fileName = normalizeValue(source && source.label) || 'brief-file';
+  const request = await postDocsAiSummaryDirect(() => {
+    const formData = new FormData();
+    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+    formData.append('attachment', new File([blob], fileName, { type: blob.type || 'application/octet-stream' }), fileName);
+    return formData;
+  });
+  const response = request && request.response;
+  const payload = request && request.payload;
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
+  }
+  if (!hasMeaningfulTelegramBriefPayload(payload)) {
+    throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
+  }
+  return payload;
+}
+
 async function requestTelegramBriefAiDirectWithAttachment(source) {
   const fileUrl = normalizeValue(source && source.url);
   if (!fileUrl) {
@@ -632,19 +660,13 @@ function openTelegramBriefModal(task, statusHandler) {
           preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">⏳ ${useNewDecision ? 'Новое решение' : 'VIP режим'}: отправка файла напрямую в платный ИИ...</p>`;
           aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
         } else {
-          sourceText = await requestTelegramOcrByUrl(source.url);
-          if (requestId !== activeRequestId) return;
-          source.text = sourceText;
-          if (!normalizeTelegramOcrText(sourceText)) {
-            throw new Error('Файл прочитан, но текст пустой. Проверьте качество файла.');
-          }
           setStatus(`Анализ ИИ: ${source.label}`, 'loading');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Анализ только по тексту файла...</p>';
+          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ Отправка файла в ИИ для краткого вывода...</p>';
           const aiStartedAt = Date.now();
-          aiPayload = await requestTelegramBriefAi(source.label, sourceText, selectedMode);
+          aiPayload = await requestTelegramBriefAiByAttachment(source, selectedMode);
           if (requestId !== activeRequestId) return;
           if (metaNode) {
-            const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - aiStartedAt)) / 1000).toFixed(1);
+            const elapsedSec = (Math.max(1, Number(aiPayload && (aiPayload.durationMs || aiPayload.timeMs)) || (Date.now() - aiStartedAt)) / 1000).toFixed(1);
             metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек`;
           }
         }
