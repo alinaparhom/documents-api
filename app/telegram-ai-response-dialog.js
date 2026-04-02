@@ -677,7 +677,17 @@ async function requestAssistantReply(userMessage, context, history) {
   const hasPdfInContext = extractedTexts.some((entry) => isPdfLikeByNameType(entry && entry.name, entry && entry.type));
   if (aiMode === 'paid' && hasPdfInContext) {
     const filesForPaid = await collectPaidAiFiles(extractedTexts, attachedFiles, resolvedModel);
-    if (!filesForPaid.length) {
+    const fileUrlsForPaid = Array.from(new Map(
+      [...extractedTexts, ...attachedFiles]
+        .map((entry) => ({
+          name: String(entry && entry.name || 'document').trim() || 'document',
+          type: String(entry && entry.type || '').trim(),
+          url: String(entry && entry.url || '').trim(),
+        }))
+        .filter((entry) => entry.url)
+        .map((entry) => [entry.url, entry]),
+    ).values());
+    if (!filesForPaid.length && !fileUrlsForPaid.length) {
       throw new Error('Для VIP режима не удалось подготовить файлы. Добавьте PDF и повторите.');
     }
     const paidPrompt = [
@@ -692,6 +702,9 @@ async function requestAssistantReply(userMessage, context, history) {
       filesForPaid.forEach((file) => {
         formData.append('files', file, file.name || 'document.pdf');
       });
+      if (fileUrlsForPaid.length) {
+        formData.append('file_urls', JSON.stringify(fileUrlsForPaid));
+      }
       return formData;
     }, { timeoutMs: Math.max(timeoutMs, 45000) });
     const paidResponse = paidRequest && paidRequest.response;
@@ -1063,45 +1076,100 @@ function openAiResponseDialog(context = {}) {
   const handleBatchAdd = async () => {
     const selected = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
     if (!selected.length) return;
-    let totalChars = 0;
     const extractedForContext = [];
+    const readableFiles = [];
+
     for (let i = 0; i < selected.length; i += 1) {
       const file = selected[i];
-      if (totalChars >= MAX_AUTO_CONTEXT_TEXT_CHARS) break;
       try {
         if (!file.extracted || !String(file.text || '').trim()) {
           const raw = await fetchExternalFileContent(file);
           const text = String(raw || '').trim();
           if (!text) {
-            file.extractError = 'Пустой текст';
-            continue;
+            file.text = '';
+            file.fullText = '';
+            file.preview = '';
+            file.extractError = 'Текст не найден';
+            file.extracted = false;
+          } else {
+            file.text = text;
+            file.fullText = text;
+            file.preview = text.slice(0, 200);
+            file.extractError = '';
+            file.extracted = true;
           }
-          const next = Math.max(0, MAX_AUTO_CONTEXT_TEXT_CHARS - totalChars);
-          file.text = text.slice(0, next);
-          file.preview = file.text.slice(0, 200);
-          file.extracted = true;
         }
+
         const normalized = String(file.text || '').trim();
-        if (!normalized) continue;
-        file.extractError = '';
-        totalChars += normalized.length;
-        extractedForContext.push(file);
+        if (normalized) {
+          readableFiles.push(file);
+        }
       } catch (error) {
+        file.fullText = '';
         file.extractError = error && error.message ? error.message : 'Ошибка чтения';
         file.extracted = false;
       }
+      extractedForContext.push(file);
     }
+
+    if (readableFiles.length) {
+      const totalBudget = MAX_AUTO_CONTEXT_TEXT_CHARS;
+      const minPerFile = 1800;
+      const basePerFile = Math.max(minPerFile, Math.floor(totalBudget / readableFiles.length));
+      let usedChars = 0;
+
+      readableFiles.forEach((file) => {
+        const sourceText = String(file.fullText || file.text || '').trim();
+        const initialLimit = Math.max(0, Math.min(sourceText.length, basePerFile));
+        file.text = sourceText.slice(0, initialLimit);
+        usedChars += file.text.length;
+      });
+
+      let remaining = Math.max(0, totalBudget - usedChars);
+      if (remaining > 0) {
+        for (let i = 0; i < readableFiles.length && remaining > 0; i += 1) {
+          const file = readableFiles[i];
+          const fullText = String(file.text || '').trim();
+          const sourceText = String(file.fullText || file.text || '').trim();
+          const already = fullText.length;
+          const canTake = Math.max(0, sourceText.length - already);
+          if (!canTake) continue;
+          const extra = Math.min(canTake, remaining);
+          file.text = sourceText.slice(0, already + extra);
+          remaining -= extra;
+        }
+      }
+
+      readableFiles.forEach((file) => {
+        file.preview = String(file.text || '').slice(0, 200);
+        file.extractError = '';
+        file.extracted = true;
+      });
+    }
+
     context.extractedTexts = extractedForContext.map((file) => ({
       name: file.name,
       type: file.type || 'text/plain',
-      text: file.text,
+      text: String(file.text || ''),
       url: file.url || '',
     }));
-    if (extractedForContext.length) {
-      appendFileTextRevealMessage(extractedForContext);
+    if (readableFiles.length) {
+      appendFileTextRevealMessage(readableFiles);
+      if (readableFiles.length < extractedForContext.length) {
+        appendBubble(`В контекст добавлены все выбранные файлы (${extractedForContext.length}), часть без текста учтена как вложения.`, 'assistant');
+      }
     } else {
-      appendBubble('Не удалось добавить выбранные файлы в контекст.', 'assistant');
+      appendBubble(`В контекст добавлены выбранные файлы (${extractedForContext.length}), текст не извлечён. VIP ИИ учтёт вложения как файлы.`, 'assistant');
     }
+
+    context.attachedFiles = state.attachedFiles.map((file) => ({
+      name: file.name,
+      type: file.type || '',
+      size: Number(file.size) || 0,
+      url: file.url || '',
+      extracted: Boolean(file.extracted),
+      extractError: file.extractError || null,
+    }));
     renderAttachments();
   };
 
