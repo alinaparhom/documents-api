@@ -410,6 +410,28 @@
     var paidFiles = await resolvePaidSourceFiles(state, config);
     var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
     var extractedTexts = [];
+    function resolveSourceUrlForOcr(sourceEntry) {
+      if (!sourceEntry || typeof sourceEntry !== 'object') {
+        return '';
+      }
+      var candidates = [
+        sourceEntry.url,
+        sourceEntry.fileUrl,
+        sourceEntry.downloadUrl,
+        sourceEntry.resolvedUrl,
+        sourceEntry.previewUrl,
+        sourceEntry.previewPdfUrl,
+        sourceEntry.pdfUrl,
+        sourceEntry.pdf
+      ];
+      for (var idx = 0; idx < candidates.length; idx += 1) {
+        var value = typeof candidates[idx] === 'string' ? candidates[idx].trim() : '';
+        if (value) {
+          return value;
+        }
+      }
+      return '';
+    }
     async function requestOcrTextForPaidFile(sourceEntry, fallbackName) {
       var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
       var formData = new FormData();
@@ -426,8 +448,31 @@
           else uploadName += '.bin';
         }
         formData.append('file', sourceEntry.fileObject, uploadName);
-      } else if (sourceEntry && sourceEntry.url) {
-        formData.append('file_url', String(sourceEntry.url));
+      } else if (sourceEntry) {
+        var sourceUrl = resolveSourceUrlForOcr(sourceEntry);
+        if (!sourceUrl) {
+          return '';
+        }
+        try {
+          var fetched = await fetch(String(sourceUrl), { credentials: 'same-origin' });
+          if (fetched.ok) {
+            var blob = await fetched.blob();
+            var remoteName = String(fallbackName || 'document').trim() || 'document';
+            if (!/\.[a-z0-9]{2,8}$/i.test(remoteName)) {
+              var blobType = String(blob && blob.type || '').toLowerCase();
+              if (blobType.indexOf('pdf') >= 0) remoteName += '.pdf';
+              else if (blobType.indexOf('jpeg') >= 0 || blobType.indexOf('jpg') >= 0) remoteName += '.jpg';
+              else if (blobType.indexOf('png') >= 0) remoteName += '.png';
+              else if (blobType.indexOf('webp') >= 0) remoteName += '.webp';
+              else remoteName += '.bin';
+            }
+            formData.append('file', blob, remoteName);
+          } else {
+            formData.append('file_url', String(sourceUrl));
+          }
+        } catch (_) {
+          formData.append('file_url', String(sourceUrl));
+        }
       } else {
         return '';
       }
@@ -465,6 +510,9 @@
 
     if ((!Array.isArray(paidFiles) || !paidFiles.length) && !extractedTexts.length) {
       throw new Error('Для платного ИИ прикрепите минимум один файл.');
+    }
+    if (!extractedTexts.length) {
+      throw new Error('OCR не вернул текст по вложениям. Откройте файл и нажмите «📄 Текст», затем повторите отправку.');
     }
 
     var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
