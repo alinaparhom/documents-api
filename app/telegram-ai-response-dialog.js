@@ -1213,6 +1213,60 @@ function openAiChatDialog(context = {}) {
     return extractedForContext.filter((entry) => String(entry.text || '').trim()).length;
   };
 
+  const sendPaidRequestWithSequentialOcr = async (rawPrompt, pending) => {
+    const selectedFiles = state.attachedFiles.filter((file) => state.selectedAttachmentIds.has(file.id));
+    const filesForOcr = selectedFiles.filter((file) => isOcrSupportedFile(file));
+    if (!filesForOcr.length) {
+      throw new Error('Выберите хотя бы один JPG/PNG/PDF файл для платного ИИ.');
+    }
+
+    const extractedForContext = [];
+    for (let i = 0; i < filesForOcr.length; i += 1) {
+      const file = filesForOcr[i];
+      if (pending) pending.update(`OCR ${i + 1}/${filesForOcr.length}: ${file.name}`);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const text = String(await fetchExternalFileContent(file) || '').trim();
+        file.fullText = text;
+        file.text = text.slice(0, MAX_AUTO_CONTEXT_TEXT_CHARS);
+        file.preview = file.text.slice(0, 200);
+        file.extracted = Boolean(file.text);
+        file.extractError = file.extracted ? '' : 'Текст не найден';
+      } catch (error) {
+        file.extracted = false;
+        file.text = '';
+        file.fullText = '';
+        file.extractError = error && error.message ? error.message : 'Ошибка OCR';
+      }
+      extractedForContext.push({
+        name: file.name,
+        type: file.type || '',
+        text: String(file.text || ''),
+        url: file.url || '',
+        urls: Array.isArray(file.urls) ? file.urls.slice() : [],
+      });
+    }
+
+    context.extractedTexts = extractedForContext;
+    syncContextAttachments();
+    renderAttachments();
+
+    const mergedOcrText = extractedForContext
+      .map((entry) => String(entry && entry.text || '').trim())
+      .filter(Boolean)
+      .join('\n\n-----\n\n')
+      .slice(0, MAX_AUTO_CONTEXT_TEXT_CHARS);
+    if (!mergedOcrText) {
+      throw new Error('OCR не распознал текст в выбранных файлах.');
+    }
+
+    const finalPrompt = `${String(rawPrompt || '').trim()}\n\nКонтекст OCR файлов:\n${mergedOcrText}`;
+    const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: 'paid' };
+    if (pending) pending.update('Отправляем запрос в платный ИИ...');
+    const assistantReply = await requestAssistantWithSmartRetry(finalPrompt, requestContext, state.chatHistory);
+    return { assistantReply, requestContext };
+  };
+
 
   const reorderFiles = (draggedIndex, targetIndex) => {
     if (!Array.isArray(state.attachedFiles)) return;
@@ -1520,16 +1574,16 @@ function openAiChatDialog(context = {}) {
     root.querySelector('[data-send]').disabled = true;
     const pending = appendPendingBubble('Готовим ответ...');
     try {
+      let assistantReply = '';
+      let requestContext = null;
       if (state.aiMode === 'paid') {
-        pending.update('OCR вложений для платного ИИ...');
-        const readyCount = await ensurePaidOcrContext();
-        if (!readyCount) {
-          throw new Error('Для платного ИИ выберите JPG/PNG/PDF файлы и добавьте их в контекст.');
-        }
-        pending.update('Отправляем запрос в платный ИИ...');
+        const paidResult = await sendPaidRequestWithSequentialOcr(prompt, pending);
+        assistantReply = paidResult.assistantReply;
+        requestContext = paidResult.requestContext;
+      } else {
+        requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
+        assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
       }
-      const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
-      const assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
       pending.remove();
       appendBubble(assistantReply, 'assistant');
       appendResponseMeta(requestContext.__lastAiMeta || null);
@@ -1572,16 +1626,15 @@ function openAiChatDialog(context = {}) {
     const pending = appendPendingBubble('Готовим ответ...');
     let assistantReply = '';
     try {
+      let requestContext = null;
       if (state.aiMode === 'paid') {
-        pending.update('OCR вложений для платного ИИ...');
-        const readyCount = await ensurePaidOcrContext();
-        if (!readyCount) {
-          throw new Error('Для платного ИИ выберите JPG/PNG/PDF файлы и добавьте их в контекст.');
-        }
-        pending.update('Отправляем запрос в платный ИИ...');
+        const paidResult = await sendPaidRequestWithSequentialOcr(prompt, pending);
+        assistantReply = paidResult.assistantReply;
+        requestContext = paidResult.requestContext;
+      } else {
+        requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
+        assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
       }
-      const requestContext = { ...context, responseStyle: state.responseStyle, aiModel: state.selectedModel, aiMode: state.aiMode };
-      assistantReply = await requestAssistantWithSmartRetry(prompt, requestContext, state.chatHistory);
       appendResponseMeta(requestContext.__lastAiMeta || null);
     } catch (error) {
       pending.remove();
