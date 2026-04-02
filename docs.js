@@ -2266,17 +2266,32 @@
     var formData = new FormData();
     formData.append('action', 'ocr_extract');
     formData.append('language', 'rus');
+
+    var prepareSource = Promise.resolve();
     if (source && source.fileObject) {
       formData.append('file', source.fileObject);
     } else if (source && source.url) {
-      formData.append('file_url', source.url);
+      prepareSource = fetch(String(source.url), { credentials: 'same-origin' })
+        .then(function(fileResponse) {
+          if (!fileResponse.ok) {
+            throw new Error('Не удалось загрузить файл для OCR (' + fileResponse.status + ')');
+          }
+          return fileResponse.blob();
+        })
+        .then(function(fileBlob) {
+          var fileName = source && source.label ? String(source.label) : 'ocr-file';
+          formData.append('file', new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' }), fileName);
+        });
     } else {
       return Promise.reject(new Error('Источник для OCR не найден.'));
     }
-    return fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
+
+    return prepareSource.then(function() {
+      return fetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      });
     }).then(function(response) {
       return response.json().catch(function() { return null; }).then(function(payload) {
         if (!response.ok || !payload || payload.ok !== true) {
@@ -2454,10 +2469,9 @@
         fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
       }
     }
-    try {
-      extractedText = await requestOcrTextForSource(source, apiUrl);
-    } catch (_) {
-      extractedText = '';
+    extractedText = await requestOcrTextForSource(source, apiUrl);
+    if (!String(extractedText || '').trim()) {
+      throw new Error('OCR не вернул текст для выбранного файла.');
     }
     if (!(fileForVip instanceof File)) {
       throw new Error('Не удалось подготовить файл для платного ИИ.');
@@ -2525,7 +2539,6 @@
   function openAiBriefSummaryModal(config) {
     ensureResponsesStyle();
     var options = config && typeof config === 'object' ? config : {};
-    var documentData = options.documentData && typeof options.documentData === 'object' ? options.documentData : {};
     var linkedFiles = Array.isArray(options.linkedFiles) ? options.linkedFiles : [];
     var pendingFiles = Array.isArray(options.pendingFiles) ? options.pendingFiles : [];
     var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : function() {};
@@ -2534,54 +2547,38 @@
     var header = createElement('div', 'documents-brief-header');
     var titleWrap = createElement('div', '');
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для OCR и краткого анализа ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Только текст выбранного файла'));
-    var newDecisionToggleWrap = createElement('label', 'documents-brief-toggle');
-    var newDecisionToggle = document.createElement('input');
-    newDecisionToggle.type = 'checkbox';
-    newDecisionToggle.setAttribute('data-new-decision', '1');
-    newDecisionToggleWrap.appendChild(newDecisionToggle);
-    newDecisionToggleWrap.appendChild(document.createTextNode('Новое решение (VIP файл)'));
-    titleWrap.appendChild(newDecisionToggleWrap);
-    var vipChatButton = createElement('button', 'documents-button documents-button--secondary', 'VIP ИИ чат');
-    vipChatButton.style.marginTop = '8px';
-    titleWrap.appendChild(vipChatButton);
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл, включите «Платный ИИ», запустите OCR и получите краткий вывод.'));
+    var paidToggleWrap = createElement('label', 'documents-brief-toggle');
+    var paidToggle = document.createElement('input');
+    paidToggle.type = 'checkbox';
+    paidToggle.setAttribute('data-paid-ai', '1');
+    paidToggleWrap.appendChild(paidToggle);
+    paidToggleWrap.appendChild(document.createTextNode('Платный ИИ'));
+    titleWrap.appendChild(paidToggleWrap);
+    titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Логика: файл → OCR → api-groq-paid.php → краткий ответ'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
-    var preview = createElement('pre', 'documents-brief-preview', 'Нажмите на источник слева, чтобы получить краткое резюме.');
+    var preview = createElement('pre', 'documents-brief-preview', 'Отметьте «Платный ИИ», затем выберите файл для анализа.');
     var metaCompact = createElement('div', 'documents-brief-item-meta', '');
     metaCompact.style.padding = '0 14px 8px';
     metaCompact.style.fontSize = '12px';
 
     var sources = [];
-
     linkedFiles.forEach(function(file, index) {
       sources.push({
         id: 'linked_' + index,
         label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)),
-        text: '',
-        url: file && file.url ? String(file.url) : '',
-        extracted: false
+        url: file && file.url ? String(file.url) : ''
       });
     });
-
     pendingFiles.forEach(function(file, index) {
       sources.push({
         id: 'pending_' + index,
         label: file && file.name ? String(file.name) : ('Новый файл ' + (index + 1)),
-        text: '',
-        fileObject: file,
-        extracted: false
+        fileObject: file
       });
     });
-
-    function setPreviewLoading(loading, label) {
-      preview.classList.toggle('is-loading', Boolean(loading));
-      if (loading) {
-        preview.textContent = '⏳ Обрабатываю: ' + label;
-      }
-    }
 
     function makeActive(button) {
       Array.from(list.querySelectorAll('.documents-brief-item')).forEach(function(item) {
@@ -2590,63 +2587,42 @@
       button.classList.add('is-active');
     }
 
-    function resolveSourceText(source, forceRefresh) {
-      if (!forceRefresh && source.text && String(source.text).trim()) {
-        return Promise.resolve(String(source.text).trim());
-      }
-      if (!source || (!source.fileObject && !source.url)) {
-        return Promise.reject(new Error('Для этого источника нет текста. Добавьте файл или заполните описание задачи.'));
-      }
-      return requestOcrTextForSource(source, options.apiUrl).then(function(ocrText) {
-        source.text = ocrText;
-        source.extracted = true;
-        return ocrText;
-      });
-    }
-
     function addSourceButton(source) {
       var button = createElement('button', 'documents-brief-item');
       var nameNode = createElement('span', 'documents-brief-item-name', source.label);
-      var metaLabel = source.fileObject ? 'Новый файл (локально)' : 'Файл из документа';
+      var metaLabel = source.fileObject ? 'Новый файл (локально)' : 'Файл из задачи';
       var metaNode = createElement('span', 'documents-brief-item-meta', metaLabel);
       button.appendChild(nameNode);
       button.appendChild(metaNode);
       button.title = source.label;
       button.type = 'button';
       button.addEventListener('click', function() {
+        if (!paidToggle.checked) {
+          preview.textContent = 'Сначала включите галочку «Платный ИИ». После этого нажмите файл снова.';
+          metaCompact.textContent = '';
+          showStatusMessage('warning', 'Для кнопки «Кратко ИИ» нужен режим «Платный ИИ».');
+          return;
+        }
         makeActive(button);
         button.disabled = true;
-        var useNewDecision = Boolean(newDecisionToggle && newDecisionToggle.checked);
-        setPreviewLoading(true, source.label);
-        var requestPromise;
-        if (useNewDecision) {
-          preview.textContent = '⏳ Новое решение: отправляю файл в платный ИИ...';
-          requestPromise = requestAiBriefSummaryForFileDirect(source, options.apiUrl);
-        } else {
-          preview.textContent = '⏳ Отправляю файл в ИИ для краткого вывода...';
-          requestPromise = requestAiBriefSummaryByAttachment(source, options.apiUrl, 'free');
-        }
-        requestPromise
-          .then(function(sourceText) {
-            var aiPayload = sourceText;
+        preview.classList.add('is-loading');
+        preview.textContent = '⏳ Запускаю OCR и отправляю текст в api-groq-paid.php...';
+        metaCompact.textContent = 'Подготовка файла...';
+        var startedAt = Date.now();
+        requestAiBriefSummaryForFileDirect(source, options.apiUrl)
+          .then(function(aiPayload) {
             preview.classList.remove('is-loading');
-            if (useNewDecision) {
-              var plainText = extractPlainAiBriefText(aiPayload);
-              preview.textContent = plainText || 'ИИ не вернул чистый текст ответа. Попробуйте ещё раз.';
-            } else {
-              var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
-              preview.textContent = summaryText || buildAiBriefSummaryText(aiPayload, source && source.text ? source.text : '');
-            }
+            var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
+            preview.textContent = summaryText || extractPlainAiBriefText(aiPayload) || 'Пустой ответ от ИИ.';
             var durationRaw = Number(aiPayload && (aiPayload.durationMs || aiPayload.timeMs));
-            var elapsedSec = (Math.max(1, Number.isFinite(durationRaw) ? durationRaw : 1000) / 1000).toFixed(1);
-            metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Ожидание: ' + elapsedSec + ' сек'
-              + (useNewDecision ? ' • Режим: Новое решение' : '');
+            var elapsedSec = (Math.max(1, Number.isFinite(durationRaw) ? durationRaw : (Date.now() - startedAt)) / 1000).toFixed(1);
+            metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Время: ' + elapsedSec + ' сек • Режим: Платный ИИ';
           })
           .catch(function(error) {
             preview.classList.remove('is-loading');
-            preview.textContent = 'Не удалось получить summary: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+            preview.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка');
             metaCompact.textContent = '';
-            showStatusMessage('warning', 'Не удалось обработать "' + source.label + '".');
+            showStatusMessage('warning', 'Не удалось обработать файл «' + source.label + '».');
           })
           .finally(function() {
             button.disabled = false;
@@ -2664,11 +2640,6 @@
     function closeBriefModal() {
       closeModal(modal);
     }
-    vipChatButton.type = 'button';
-    vipChatButton.addEventListener('click', function() {
-      closeBriefModal();
-      openAiModeSelector();
-    });
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', closeBriefModal);
@@ -2680,18 +2651,15 @@
 
     header.appendChild(titleWrap);
     header.appendChild(closeButton);
+    panel.appendChild(header);
     panel.appendChild(metaCompact);
     body.appendChild(list);
     body.appendChild(preview);
-    panel.appendChild(header);
     panel.appendChild(body);
     modal.appendChild(panel);
     document.body.appendChild(modal);
-    var firstSourceButton = list.querySelector('.documents-brief-item');
-    if (firstSourceButton) {
-      firstSourceButton.click();
-    }
   }
+
 
   function ensureSearchStyles() {
     if (document.getElementById('documents-search-style')) {
@@ -13705,13 +13673,23 @@
         var ocrFormData = new FormData();
         ocrFormData.append('action', 'ocr_extract');
         ocrFormData.append('language', 'rus');
-        if (remoteUrl) {
-          ocrFormData.append('file_url', String(remoteUrl));
-        } else if (fileOrBlob) {
-          ocrFormData.append('file', fileOrBlob, fileName || 'document.pdf');
-        } else {
+        var localFile = fileOrBlob || null;
+        if (!localFile && remoteUrl) {
+          try {
+            var remoteResponse = await fetch(String(remoteUrl), { credentials: 'same-origin' });
+            if (!remoteResponse.ok) {
+              return '';
+            }
+            var remoteBlob = await remoteResponse.blob();
+            localFile = new File([remoteBlob], fileName || 'document', { type: remoteBlob.type || 'application/octet-stream' });
+          } catch (_) {
+            return '';
+          }
+        }
+        if (!localFile) {
           return '';
         }
+        ocrFormData.append('file', localFile, fileName || 'document');
         try {
           var response = await fetch(ocrApiUrl + '?action=ocr_extract', {
             method: 'POST',
