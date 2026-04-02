@@ -410,13 +410,49 @@
     var paidFiles = await resolvePaidSourceFiles(state, config);
     var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
     var extractedTexts = [];
+    async function requestOcrTextForPaidFile(sourceEntry, fallbackName) {
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      if (sourceEntry && sourceEntry.fileObject) {
+        var uploadName = String(fallbackName || (sourceEntry.fileObject && sourceEntry.fileObject.name) || 'document').trim() || 'document';
+        if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
+          var fileType = String(sourceEntry.fileObject && sourceEntry.fileObject.type || '').toLowerCase();
+          if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
+          else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
+          else if (fileType.indexOf('png') >= 0) uploadName += '.png';
+          else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+          else uploadName += '.bin';
+        }
+        formData.append('file', sourceEntry.fileObject, uploadName);
+      } else if (sourceEntry && sourceEntry.url) {
+        formData.append('file_url', String(sourceEntry.url));
+      } else {
+        return '';
+      }
+      var response = await fetch(apiUrl + '?action=ocr_extract', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      });
+      var payload = await response.json().catch(function () { return null; });
+      if (!response.ok || !payload || payload.ok !== true) {
+        return '';
+      }
+      return String(payload.text || '').trim();
+    }
+
     for (var i = 0; i < sourceFiles.length; i += 1) {
       var sourceEntry = sourceFiles[i];
       if (!sourceEntry) {
         continue;
       }
       var sourceName = String(sourceEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
-      var sourceText = normalizeContextText(sourceEntry.content || '');
+      // Для Telegram/VIP всегда стараемся прогонять файл через api-docs OCR.
+      // eslint-disable-next-line no-await-in-loop
+      var ocrText = await requestOcrTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
+      var sourceText = normalizeContextText(ocrText || sourceEntry.content || '');
       if (!sourceText) {
         continue;
       }
