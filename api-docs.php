@@ -585,11 +585,50 @@ function buildFilesSummary(array $files): array
 function detectFileExtension(array $file): string
 {
     $name = strtolower(trim((string)($file['name'] ?? '')));
-    if ($name === '' || !str_contains($name, '.')) {
-        return '';
+    if ($name !== '' && str_contains($name, '.')) {
+        $parts = explode('.', $name);
+        return trim((string)end($parts));
     }
-    $parts = explode('.', $name);
-    return trim((string)end($parts));
+    $mime = mb_strtolower(trim((string)($file['type'] ?? '')));
+    $mimeToExtension = [
+        'application/pdf' => 'pdf',
+        'image/jpeg' => 'jpg',
+        'image/jpg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+        'image/bmp' => 'bmp',
+        'image/tiff' => 'tiff',
+        'image/x-tiff' => 'tiff',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+        'application/msword' => 'doc',
+        'text/plain' => 'txt',
+        'text/markdown' => 'md',
+        'text/csv' => 'csv',
+        'application/json' => 'json',
+        'application/xml' => 'xml',
+        'text/xml' => 'xml',
+        'text/html' => 'html',
+    ];
+    if ($mime !== '' && isset($mimeToExtension[$mime])) {
+        return $mimeToExtension[$mime];
+    }
+    return '';
+}
+
+function ensureFileNameHasExtension(string $name, string $extension): string
+{
+    $safeName = trim($name);
+    if ($safeName === '') {
+        $safeName = 'document';
+    }
+    if ($extension === '') {
+        return $safeName;
+    }
+    if (str_contains($safeName, '.')) {
+        return $safeName;
+    }
+    return $safeName . '.' . $extension;
 }
 
 function getUploadedTemplateFile(string $field = 'templateFile'): ?array
@@ -847,7 +886,8 @@ function performOcrRequest(
             return ['status' => 400, 'body' => false, 'curl_error' => 'Файл для OCR не найден'];
         }
         $mime = (string)($file['type'] ?? 'application/octet-stream');
-        $name = (string)($file['name'] ?? 'document');
+        $extension = detectFileExtension($file);
+        $name = ensureFileNameHasExtension((string)($file['name'] ?? 'document'), $extension);
         $postFields['file'] = curl_file_create($tmpName, $mime, $name);
     }
 
