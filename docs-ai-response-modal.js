@@ -408,42 +408,127 @@
 
   async function buildPaidRequestFormData(prompt, state, config) {
     var paidFiles = await resolvePaidSourceFiles(state, config);
-    if (!Array.isArray(paidFiles) || !paidFiles.length) {
-      throw new Error('Для платного ИИ прикрепите минимум один файл.');
+    var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
+    var extractedTexts = [];
+    function resolveSourceUrlForOcr(sourceEntry) {
+      if (!sourceEntry || typeof sourceEntry !== 'object') {
+        return '';
+      }
+      var candidates = [
+        sourceEntry.url,
+        sourceEntry.fileUrl,
+        sourceEntry.downloadUrl,
+        sourceEntry.resolvedUrl,
+        sourceEntry.previewUrl,
+        sourceEntry.previewPdfUrl,
+        sourceEntry.pdfUrl,
+        sourceEntry.pdf
+      ];
+      for (var idx = 0; idx < candidates.length; idx += 1) {
+        var value = typeof candidates[idx] === 'string' ? candidates[idx].trim() : '';
+        if (value) {
+          return value;
+        }
+      }
+      return '';
+    }
+    async function requestOcrTextForPaidFile(sourceEntry, fallbackName) {
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      if (sourceEntry && sourceEntry.fileObject) {
+        var uploadName = String(fallbackName || (sourceEntry.fileObject && sourceEntry.fileObject.name) || 'document').trim() || 'document';
+        if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
+          var fileType = String(sourceEntry.fileObject && sourceEntry.fileObject.type || '').toLowerCase();
+          if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
+          else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
+          else if (fileType.indexOf('png') >= 0) uploadName += '.png';
+          else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+          else uploadName += '.bin';
+        }
+        formData.append('file', sourceEntry.fileObject, uploadName);
+      } else if (sourceEntry) {
+        var sourceUrl = resolveSourceUrlForOcr(sourceEntry);
+        if (!sourceUrl) {
+          return '';
+        }
+        try {
+          var fetched = await fetch(String(sourceUrl), { credentials: 'same-origin' });
+          if (fetched.ok) {
+            var blob = await fetched.blob();
+            var remoteName = String(fallbackName || 'document').trim() || 'document';
+            if (!/\.[a-z0-9]{2,8}$/i.test(remoteName)) {
+              var blobType = String(blob && blob.type || '').toLowerCase();
+              if (blobType.indexOf('pdf') >= 0) remoteName += '.pdf';
+              else if (blobType.indexOf('jpeg') >= 0 || blobType.indexOf('jpg') >= 0) remoteName += '.jpg';
+              else if (blobType.indexOf('png') >= 0) remoteName += '.png';
+              else if (blobType.indexOf('webp') >= 0) remoteName += '.webp';
+              else remoteName += '.bin';
+            }
+            formData.append('file', blob, remoteName);
+          } else {
+            formData.append('file_url', String(sourceUrl));
+          }
+        } catch (_) {
+          formData.append('file_url', String(sourceUrl));
+        }
+      } else {
+        return '';
+      }
+      var response = await fetch(apiUrl + '?action=ocr_extract', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      });
+      var payload = await response.json().catch(function () { return null; });
+      if (!response.ok || !payload || payload.ok !== true) {
+        return '';
+      }
+      return String(payload.text || '').trim();
     }
 
-    var mergedContextParts = [];
-    var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
     for (var i = 0; i < sourceFiles.length; i += 1) {
       var sourceEntry = sourceFiles[i];
       if (!sourceEntry) {
         continue;
       }
       var sourceName = String(sourceEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
-      var sourceText = normalizeContextText(sourceEntry.content || '');
+      // Для Telegram/VIP всегда стараемся прогонять файл через api-docs OCR.
+      // eslint-disable-next-line no-await-in-loop
+      var ocrText = await requestOcrTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
+      var sourceText = normalizeContextText(ocrText || sourceEntry.content || '');
       if (!sourceText) {
         continue;
       }
-      mergedContextParts.push('[Файл: ' + sourceName + ']\n' + sourceText);
+      extractedTexts.push({
+        name: sourceName,
+        type: 'text/plain',
+        text: sourceText.slice(0, 24000)
+      });
     }
 
-    var mergedContext = normalizeContextText(mergedContextParts.join('\n\n')).slice(0, MAX_EXTRACT_CHARS);
-    var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
-    if (mergedContext) {
-      promptWithContext += '\n\nКонтекст всех вложений (OCR):\n' + mergedContext;
+    if ((!Array.isArray(paidFiles) || !paidFiles.length) && !extractedTexts.length) {
+      throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
+    if (!extractedTexts.length) {
+      throw new Error('OCR не вернул текст по вложениям. Откройте файл и нажмите «📄 Текст», затем повторите отправку.');
+    }
+
+    var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
 
     var formData = new FormData();
+    formData.append('action', 'generate_response');
     formData.append('prompt', promptWithContext);
-    paidFiles.forEach(function (entry) {
-      if (!entry || !entry.blob) return;
-      formData.append('files[]', entry.blob, entry.name || 'document.bin');
-    });
-    formData.append(
-      'files[]',
-      new Blob([mergedContext || 'OCR не вернул текст. Используйте исходный запрос пользователя.'], { type: 'text/plain' }),
-      'attachments-context.txt'
-    );
+    if (extractedTexts.length) {
+      formData.append('extractedTexts', JSON.stringify(extractedTexts));
+    }
+    if (!extractedTexts.length) {
+      paidFiles.forEach(function (entry) {
+        if (!entry || !entry.blob) return;
+        formData.append('files[]', entry.blob, entry.name || 'document.bin');
+      });
+    }
     return formData;
   }
 
