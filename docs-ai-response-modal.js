@@ -747,7 +747,7 @@
     var sourceChars = 0;
     var truncatedFiles = 0;
     (state.files || []).forEach(function (file) {
-      if (!file || typeof file.content !== 'string') {
+      if (!file || file.selected === false || typeof file.content !== 'string') {
         return;
       }
       var original = normalizeContextText(file.content);
@@ -1014,7 +1014,8 @@
         extracting: false,
         extractError: null,
         url: resolvedUrl,
-        fileObject: null
+        fileObject: null,
+        selected: entry.selected !== false
       };
     }).filter(Boolean);
   }
@@ -1039,7 +1040,8 @@
           extracting: false,
           extractError: null,
           url: '',
-          fileObject: file
+          fileObject: file,
+          selected: true
         };
       });
   }
@@ -1580,7 +1582,7 @@
     var filesWrap = createElement('div', 'ai-chat-modal__files');
     var filesHint = createElement('div', 'ai-chat-modal__empty', 'Можно прикрепить несколько файлов: ИИ учтёт общий контекст всех файлов.');
     var attachButton = createElement('button', 'ai-chat-modal__attach', '+ Прикрепить файл');
-    var extractAllButton = createElement('button', 'ai-chat-modal__attach', '📚 Прочитать все файлы');
+    var extractAllButton = createElement('button', 'ai-chat-modal__attach', '🔎 OCR выбранные');
     attachButton.type = 'button';
     attachButton.style.marginTop = '4px';
     extractAllButton.type = 'button';
@@ -2381,6 +2383,12 @@
       modelSelect.value = state.model;
     }
 
+    function getSelectedFiles() {
+      return (state.files || []).filter(function (file) {
+        return file && file.selected !== false;
+      });
+    }
+
     function renderFiles() {
       filesWrap.textContent = '';
       if (!state.files.length) {
@@ -2393,10 +2401,19 @@
         var ocrStatus = file.extracting
           ? '⏳ Текст'
           : (file.extracted ? '✅ Текст' : (file.extractError ? '⚠️ Текст' : '⭕ Текст'));
+        var select = document.createElement('input');
+        select.type = 'checkbox';
+        select.checked = file.selected !== false;
+        select.setAttribute('aria-label', 'Выбрать файл ' + String(file.name || 'Файл'));
+        select.addEventListener('change', function () {
+          file.selected = !!select.checked;
+          updateContextUsageHint();
+        });
         var icon = createElement('span', '', detectIcon(file));
         var name = createElement('span', '', String(file.name || 'Файл'));
         var size = createElement('span', 'ai-chat-chip__meta', formatSize(file.size));
         var status = createElement('span', 'ai-chat-chip__meta', ocrStatus);
+        chip.appendChild(select);
         chip.appendChild(icon);
         chip.appendChild(name);
         chip.appendChild(size);
@@ -2620,11 +2637,12 @@
       if (state.isLoading) {
         return;
       }
-      var hasFileContent = state.files.some(function (file) {
+      var selectedFiles = getSelectedFiles();
+      var hasFileContent = selectedFiles.some(function (file) {
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       });
-      if (!value && !hasFileContent) {
-        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст из файла.', true));
+      if (!value && !hasFileContent && !selectedFiles.length) {
+        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или выберите файл для OCR.', true));
         messages.scrollTop = messages.scrollHeight;
         return;
       }
@@ -2650,6 +2668,11 @@
 
       try {
         await hydrateFileContents(state);
+        if (!hasFileContent) {
+          await autoExtractFiles(selectedFiles.filter(function (file) {
+            return !(file && file.content && String(file.content).trim());
+          }));
+        }
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
         var requestMode = resolveRequestMode(state);
         var response = null;
@@ -2881,7 +2904,13 @@
       hiddenInput.click();
     });
     extractAllButton.addEventListener('click', function () {
-      autoExtractFiles(state.files);
+      var selectedFiles = getSelectedFiles();
+      if (!selectedFiles.length) {
+        messages.appendChild(createMessage('assistant', 'Выберите хотя бы один файл для OCR.', true));
+        messages.scrollTop = messages.scrollHeight;
+        return;
+      }
+      autoExtractFiles(selectedFiles);
     });
 
     hiddenInput.addEventListener('change', function () {
@@ -2936,6 +2965,10 @@
     requestAnimationFrame(function () {
       root.classList.add('ai-chat-modal--visible');
     });
+
+    if (state.files.length) {
+      autoExtractFiles(getSelectedFiles());
+    }
 
     renderFiles();
     resanitizeFileContents();
