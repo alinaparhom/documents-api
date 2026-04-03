@@ -385,12 +385,13 @@ export function createTelegramBriefAi(deps = {}) {
         });
         const localResponse = localRequest && localRequest.response;
         const localResult = localRequest && localRequest.payload;
-        if (localResponse && localResponse.ok && localResult && localResult.ok === true && hasMeaningfulTelegramBriefPayload(localResult)) {
+        if (localResponse && localResponse.ok && localResult && localResult.ok === true) {
           return localResult;
         }
       }
     }
 
+    let remoteErrorMessage = '';
     if (fileUrl) {
       const remoteRequest = await postGroqPaidWithFallback(() => {
         const formData = new FormData();
@@ -401,23 +402,20 @@ export function createTelegramBriefAi(deps = {}) {
       });
       const remoteResponse = remoteRequest && remoteRequest.response;
       const remotePayload = remoteRequest && remoteRequest.payload;
-      if (remoteResponse && remoteResponse.ok && remotePayload && remotePayload.ok === true && hasMeaningfulTelegramBriefPayload(remotePayload)) {
+      if (remoteResponse && remoteResponse.ok && remotePayload && remotePayload.ok === true) {
         return remotePayload;
       }
+      remoteErrorMessage = normalizeValue(remotePayload && remotePayload.error) || `Ошибка ИИ (${remoteResponse ? remoteResponse.status : 0})`;
+    }
+
+    // Для URL-сценария НЕ уходим в OCR upload fallback (внешний OCR лимит 1024KB).
+    if (fileUrl) {
+      throw new Error(remoteErrorMessage || 'Не удалось получить ответ по file_url. Попробуйте ещё раз.');
     }
 
     let extractedText = '';
     let ocrUrlError = null;
-    if (fileUrl) {
-      try {
-        extractedText = await requestTelegramOcrByUrl(fileUrl);
-      } catch (error) {
-        ocrUrlError = error;
-      }
-    }
-    // В логике как в docs-ai-response-modal.js при наличии URL не уходим в принудительный multipart OCR upload,
-    // чтобы не упираться в внешний лимит 1024 KB.
-    if (!extractedText && !fileUrl && fileForVip) {
+    if (fileForVip) {
       try {
         extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
       } catch (error) {
