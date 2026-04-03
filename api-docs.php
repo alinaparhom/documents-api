@@ -473,29 +473,75 @@ function shellCommandExists(string $command): bool
     return $code === 0 && !empty($output);
 }
 
+function detectPdfPageCountFast(string $pdfPath): int
+{
+    if ($pdfPath === '' || !is_file($pdfPath) || !shellCommandExists('pdfinfo')) {
+        return 0;
+    }
+    $output = shell_exec('pdfinfo ' . escapeshellarg($pdfPath) . ' 2>/dev/null');
+    if (!is_string($output) || trim($output) === '') {
+        return 0;
+    }
+    if (preg_match('/^Pages:\s*(\d+)/mi', $output, $matches) !== 1) {
+        return 0;
+    }
+    return max(0, (int)($matches[1] ?? 0));
+}
+
 function extractPdfTextFast(string $pdfPath): string
 {
     if ($pdfPath === '' || !is_file($pdfPath) || !shellCommandExists('pdftotext')) {
         return '';
     }
 
-    $tmpTextPath = tempnam(sys_get_temp_dir(), 'ocr_pdftxt_');
-    if ($tmpTextPath === false) {
-        return '';
-    }
+    $pageCount = detectPdfPageCountFast($pdfPath);
+    $maxPages = $pageCount > 0 ? $pageCount : 0;
+    $batchPages = 10;
 
-    try {
-        $cmd = 'pdftotext -enc UTF-8 -f 1 -l 25 '
-            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
-        @exec($cmd, $out, $code);
-        if ($code !== 0 || !is_file($tmpTextPath)) {
+    if ($maxPages <= 0) {
+        $tmpTextPath = tempnam(sys_get_temp_dir(), 'ocr_pdftxt_full_');
+        if ($tmpTextPath === false) {
             return '';
         }
-        $raw = @file_get_contents($tmpTextPath);
-        return is_string($raw) ? trim($raw) : '';
-    } finally {
-        @unlink($tmpTextPath);
+        try {
+            $cmd = 'pdftotext -enc UTF-8 -f 1 '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
+            @exec($cmd, $out, $code);
+            if ($code !== 0 || !is_file($tmpTextPath)) {
+                return '';
+            }
+            $raw = @file_get_contents($tmpTextPath);
+            return is_string($raw) ? trim($raw) : '';
+        } finally {
+            @unlink($tmpTextPath);
+        }
     }
+
+    $parts = [];
+    for ($start = 1; $start <= $maxPages; $start += $batchPages) {
+        $end = min($maxPages, $start + $batchPages - 1);
+        $tmpTextPath = tempnam(sys_get_temp_dir(), 'ocr_pdftxt_chunk_');
+        if ($tmpTextPath === false) {
+            continue;
+        }
+        try {
+            $cmd = 'pdftotext -enc UTF-8 -f ' . $start . ' -l ' . $end . ' '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
+            @exec($cmd, $out, $code);
+            if ($code !== 0 || !is_file($tmpTextPath)) {
+                continue;
+            }
+            $raw = @file_get_contents($tmpTextPath);
+            $chunk = is_string($raw) ? trim($raw) : '';
+            if ($chunk !== '') {
+                $parts[] = $chunk;
+            }
+        } finally {
+            @unlink($tmpTextPath);
+        }
+    }
+
+    return trim(implode("\n\n", $parts));
 }
 
 function extractTextWithoutOcr(array $file): string

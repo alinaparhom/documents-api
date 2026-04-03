@@ -82,7 +82,7 @@
   ];
   var DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
-  var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
+  var GROQ_PDF_UNSUPPORTED_MODELS = [];
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);

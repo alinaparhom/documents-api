@@ -20,6 +20,7 @@ const MAX_TEXT_CHARS_PER_CHUNK = 12000;
 const MAX_TEXT_CHUNKS_TOTAL = 30;
 const MAX_TEXT_PAYLOAD_CHARS = 90000;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
+const OCR_BATCH_PAGES = 10;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
 
@@ -289,27 +290,75 @@ function commandExists(string $command): bool
     return $exitCode === 0 && !empty($output);
 }
 
+function detectPdfPageCount(string $pdfPath): int
+{
+    if ($pdfPath === '' || !is_file($pdfPath) || !commandExists('pdfinfo')) {
+        return 0;
+    }
+    $cmd = 'pdfinfo ' . escapeshellarg($pdfPath) . ' 2>/dev/null';
+    $output = shell_exec($cmd);
+    if (!is_string($output) || trim($output) === '') {
+        return 0;
+    }
+    if (preg_match('/^Pages:\s*(\d+)/mi', $output, $matches) !== 1) {
+        return 0;
+    }
+    return max(0, (int)($matches[1] ?? 0));
+}
+
 function extractPdfTextWithPdftotext(string $pdfPath): string
 {
-    if (!commandExists('pdftotext')) {
+    if ($pdfPath === '' || !is_file($pdfPath) || !commandExists('pdftotext')) {
         return '';
     }
-    $tmpTextPath = tempnam(sys_get_temp_dir(), 'pdftext_');
-    if ($tmpTextPath === false) {
-        return '';
-    }
-    try {
-        $cmd = 'pdftotext -enc UTF-8 -f 1 '
-            . (OCR_MAX_PAGES > 0 ? ('-l ' . OCR_MAX_PAGES . ' ') : '')
-            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath);
-        @exec($cmd, $out, $code);
-        if ($code !== 0 || !is_file($tmpTextPath)) {
+
+    $pageCount = detectPdfPageCount($pdfPath);
+    $effectiveMaxPages = OCR_MAX_PAGES > 0
+        ? OCR_MAX_PAGES
+        : ($pageCount > 0 ? $pageCount : 0);
+
+    if ($effectiveMaxPages <= 0) {
+        $tmpTextPath = tempnam(sys_get_temp_dir(), 'pdftext_full_');
+        if ($tmpTextPath === false) {
             return '';
         }
-        return trim((string)@file_get_contents($tmpTextPath));
-    } finally {
-        @unlink($tmpTextPath);
+        try {
+            $cmd = 'pdftotext -enc UTF-8 -f 1 '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
+            @exec($cmd, $out, $code);
+            if ($code !== 0 || !is_file($tmpTextPath)) {
+                return '';
+            }
+            return trim((string)@file_get_contents($tmpTextPath));
+        } finally {
+            @unlink($tmpTextPath);
+        }
     }
+
+    $batchPages = max(1, OCR_BATCH_PAGES);
+    $parts = [];
+    for ($start = 1; $start <= $effectiveMaxPages; $start += $batchPages) {
+        $end = min($effectiveMaxPages, $start + $batchPages - 1);
+        $tmpTextPath = tempnam(sys_get_temp_dir(), 'pdftext_chunk_');
+        if ($tmpTextPath === false) {
+            continue;
+        }
+        try {
+            $cmd = 'pdftotext -enc UTF-8 -f ' . $start . ' -l ' . $end . ' '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
+            @exec($cmd, $out, $code);
+            if ($code !== 0 || !is_file($tmpTextPath)) {
+                continue;
+            }
+            $chunkText = trim((string)@file_get_contents($tmpTextPath));
+            if ($chunkText !== '') {
+                $parts[] = $chunkText;
+            }
+        } finally {
+            @unlink($tmpTextPath);
+        }
+    }
+    return trim(implode("\n\n", $parts));
 }
 
 function extractPdfTextWithOcr(string $pdfPath): string
@@ -326,24 +375,28 @@ function extractPdfTextWithOcr(string $pdfPath): string
     $maxPages = OCR_MAX_PAGES > 0 ? OCR_MAX_PAGES : 500;
 
     try {
-        for ($page = 1; $page <= $maxPages; $page += 1) {
-            $jpgPath = $tmpBase . '-p' . $page . '.jpg';
-            $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
-                . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4));
-            @exec($cmdRender, $renderOut, $renderCode);
-            if ($renderCode !== 0 || !is_file($jpgPath)) {
-                if ($page === 1) {
-                    break;
+        $batchPages = max(1, OCR_BATCH_PAGES);
+        for ($batchStart = 1; $batchStart <= $maxPages; $batchStart += $batchPages) {
+            $batchEnd = min($maxPages, $batchStart + $batchPages - 1);
+            for ($page = $batchStart; $page <= $batchEnd; $page += 1) {
+                $jpgPath = $tmpBase . '-p' . $page . '.jpg';
+                $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
+                    . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4));
+                @exec($cmdRender, $renderOut, $renderCode);
+                if ($renderCode !== 0 || !is_file($jpgPath)) {
+                    if ($page === 1) {
+                        break 2;
+                    }
+                    continue;
                 }
-                continue;
+                $cmdOcr = 'tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null';
+                $ocr = shell_exec($cmdOcr);
+                $ocrText = trim((string)$ocr);
+                if ($ocrText !== '') {
+                    $textParts[] = $ocrText;
+                }
+                @unlink($jpgPath);
             }
-            $cmdOcr = 'tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null';
-            $ocr = shell_exec($cmdOcr);
-            $ocrText = trim((string)$ocr);
-            if ($ocrText !== '') {
-                $textParts[] = $ocrText;
-            }
-            @unlink($jpgPath);
         }
     } finally {
         for ($page = 1; $page <= $maxPages; $page += 1) {
