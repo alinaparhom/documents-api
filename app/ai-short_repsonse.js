@@ -14,8 +14,6 @@ export function createTelegramBriefAi(deps = {}) {
     resolveFileFetchUrl = () => '',
   } = deps;
 
-  let briefPdfJsLoader = null;
-
   async function postGroqPaidWithFallback(createFormData) {
     let lastError = null;
     for (let index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
@@ -74,61 +72,6 @@ export function createTelegramBriefAi(deps = {}) {
       @media (max-width:768px){.appdosc-brief-ai{padding:0}.appdosc-brief-ai__panel{max-height:100dvh;border-radius:0}.appdosc-brief-ai__body{grid-template-columns:1fr}.appdosc-brief-ai__list{flex-direction:row;overflow:auto;padding-bottom:2px}.appdosc-brief-ai__item{min-width:180px}.appdosc-brief-ai__close{min-height:30px;padding:6px 9px}}
     `;
     document.head.appendChild(style);
-  }
-
-  function ensureBriefPdfJsLoaded() {
-    if (typeof window !== 'undefined' && window.pdfjsLib) {
-      return Promise.resolve(window.pdfjsLib);
-    }
-    if (briefPdfJsLoader) {
-      return briefPdfJsLoader;
-    }
-    briefPdfJsLoader = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '/pdf/pdf.min.js';
-      script.onload = () => {
-        if (window.pdfjsLib) {
-          resolve(window.pdfjsLib);
-        } else {
-          reject(new Error('pdfjsLib не найден'));
-        }
-      };
-      script.onerror = () => reject(new Error('Не удалось загрузить PDF библиотеку'));
-      document.head.appendChild(script);
-    });
-    return briefPdfJsLoader;
-  }
-
-  async function convertPdfToImageFileForBrief(file, fallbackName) {
-    const fileName = String(fallbackName || (file && file.name) || 'brief-file');
-    const isPdf = file && ((file.type && String(file.type).toLowerCase() === 'application/pdf') || /\.pdf$/i.test(fileName));
-    if (!isPdf || !file) {
-      return file;
-    }
-    try {
-      const pdfjsLib = await ensureBriefPdfJsLoaded();
-      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
-      }
-      const bytes = await file.arrayBuffer();
-      const loadingTask = pdfjsLib.getDocument({ data: bytes });
-      const pdf = await loadingTask.promise;
-      const page = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 2 });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.floor(viewport.width));
-      canvas.height = Math.max(1, Math.floor(viewport.height));
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return file;
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      const blob = await new Promise((resolve) => {
-        canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.9);
-      });
-      if (!blob) return file;
-      return new File([blob], fileName.replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
-    } catch (_) {
-      return file;
-    }
   }
 
   function hasMeaningfulTelegramBriefPayload(payload) {
@@ -297,16 +240,10 @@ export function createTelegramBriefAi(deps = {}) {
     if (!extractedTextsPayload.length) {
       throw new Error('После подготовки OCR не осталось текста для отправки в ИИ.');
     }
-    if (fileForVip) {
-      fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
-    }
     const request = await postGroqPaidWithFallback(() => {
       const formData = new FormData();
       formData.append('action', 'generate_summary');
       formData.append('mode', 'paid');
-      if (fileForVip) {
-        formData.append('files', fileForVip, fileForVip.name || fileName);
-      }
       formData.append('extractedTexts', JSON.stringify(extractedTextsPayload));
       return formData;
     });

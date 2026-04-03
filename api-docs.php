@@ -441,6 +441,69 @@ function extractPdfTextFast(string $pdfPath): string
     }
 }
 
+function extractPdfTextWithLocalOcr(string $pdfPath): string
+{
+    if ($pdfPath === '' || !is_file($pdfPath) || !shellCommandExists('pdftoppm') || !shellCommandExists('tesseract')) {
+        return '';
+    }
+
+    $tmpBase = tempnam(sys_get_temp_dir(), 'ocr_pdfimg_');
+    if (!is_string($tmpBase) || $tmpBase === '') {
+        return '';
+    }
+    @unlink($tmpBase);
+
+    $parts = [];
+    $maxPages = 40;
+    try {
+        for ($page = 1; $page <= $maxPages; $page += 1) {
+            $jpgPath = $tmpBase . '-p' . $page . '.jpg';
+            $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4)) . ' 2>/dev/null';
+            @exec($cmdRender, $renderOut, $renderCode);
+            if ($renderCode !== 0 || !is_file($jpgPath)) {
+                if ($page === 1) {
+                    break;
+                }
+                continue;
+            }
+            $cmdOcr = 'tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null';
+            $ocr = shell_exec($cmdOcr);
+            $text = trim((string)$ocr);
+            if ($text !== '') {
+                $parts[] = $text;
+            }
+            @unlink($jpgPath);
+        }
+    } finally {
+        for ($page = 1; $page <= $maxPages; $page += 1) {
+            @unlink($tmpBase . '-p' . $page . '.jpg');
+        }
+    }
+
+    return trim(implode("\n\n", $parts));
+}
+
+function extractImageTextWithLocalOcr(string $imagePath): string
+{
+    if ($imagePath === '' || !is_file($imagePath) || !shellCommandExists('tesseract')) {
+        return '';
+    }
+    $cmd = 'tesseract ' . escapeshellarg($imagePath) . ' stdout -l rus+eng 2>/dev/null';
+    $ocr = shell_exec($cmd);
+    return trim((string)$ocr);
+}
+
+function extractDocTextWithAntiword(string $docPath): string
+{
+    if ($docPath === '' || !is_file($docPath) || !shellCommandExists('antiword')) {
+        return '';
+    }
+    $cmd = 'antiword ' . escapeshellarg($docPath) . ' 2>/dev/null';
+    $raw = shell_exec($cmd);
+    return trim((string)$raw);
+}
+
 function extractTextWithoutOcr(array $file): string
 {
     $tmpFile = (string)($file['tmp_name'] ?? '');
@@ -461,10 +524,42 @@ function extractTextWithoutOcr(array $file): string
         return trim((string)$raw);
     }
     if ($extension === 'pdf') {
-        return extractPdfTextFast($tmpFile);
+        $fast = extractPdfTextFast($tmpFile);
+        if ($fast !== '') {
+            return $fast;
+        }
+        return extractPdfTextWithLocalOcr($tmpFile);
+    }
+    if ($extension === 'doc') {
+        return extractDocTextWithAntiword($tmpFile);
+    }
+    if (in_array($extension, ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif'], true)) {
+        return extractImageTextWithLocalOcr($tmpFile);
     }
 
     return '';
+}
+
+function isOcrSizeLimitError(array $ocrJson, int $statusCode, string $responseBody): bool
+{
+    $errorText = '';
+    if (isset($ocrJson['ErrorMessage'])) {
+        $errorText = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+    }
+    if ($errorText === '') {
+        $errorText = mb_substr(trim($responseBody), 0, 500);
+    }
+    $haystack = mb_strtolower((string)$errorText);
+    if ($haystack === '' && $statusCode < 400) {
+        return false;
+    }
+    return str_contains($haystack, 'file failed validation')
+        || str_contains($haystack, 'maximum permissible file size')
+        || str_contains($haystack, 'file size exceeds')
+        || str_contains($haystack, 'too large')
+        || str_contains($haystack, 'size limit')
+        || str_contains($haystack, 'превыш')
+        || str_contains($haystack, 'слишком большой');
 }
 
 function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
@@ -1538,18 +1633,45 @@ if ($action === 'ocr_extract') {
     }
 
     if ($ocrStatusCode >= 400) {
-        $cleanupRemoteOcrTemp();
         $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
         if ($message === '') {
             $message = 'OCR API error';
         }
+        if ($ocrUploadFile && isOcrSizeLimitError($ocrJson, $ocrStatusCode, (string)$ocrResponseBody)) {
+            $localText = extractTextWithoutOcr($ocrUploadFile);
+            if ($localText !== '') {
+                $cleanupRemoteOcrTemp();
+                jsonResponse(200, [
+                    'ok' => true,
+                    'text' => $localText,
+                    'raw' => [
+                        'source' => 'local_fallback_after_size_limit',
+                        'status' => $ocrStatusCode,
+                    ],
+                ]);
+            }
+        }
+        $cleanupRemoteOcrTemp();
         jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
     }
 
     $hasErrorOnProcessing = isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true;
     if ($hasErrorOnProcessing) {
-        $cleanupRemoteOcrTemp();
         $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+        if ($ocrUploadFile && isOcrSizeLimitError($ocrJson, $ocrStatusCode, (string)$ocrResponseBody)) {
+            $localText = extractTextWithoutOcr($ocrUploadFile);
+            if ($localText !== '') {
+                $cleanupRemoteOcrTemp();
+                jsonResponse(200, [
+                    'ok' => true,
+                    'text' => $localText,
+                    'raw' => [
+                        'source' => 'local_fallback_after_processing_error',
+                    ],
+                ]);
+            }
+        }
+        $cleanupRemoteOcrTemp();
         jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
     }
 
