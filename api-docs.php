@@ -544,6 +544,52 @@ function extractPdfTextFast(string $pdfPath): string
     return trim(implode("\n\n", $parts));
 }
 
+function extractPdfTextWithLocalOcrFast(string $pdfPath, int $maxPages = 30): string
+{
+    if ($pdfPath === '' || !is_file($pdfPath) || !shellCommandExists('pdftoppm') || !shellCommandExists('tesseract')) {
+        return '';
+    }
+
+    $detectedPages = detectPdfPageCountFast($pdfPath);
+    $limit = $maxPages > 0 ? $maxPages : 30;
+    $effectiveMaxPages = $detectedPages > 0 ? min($detectedPages, $limit) : $limit;
+    $tmpBase = tempnam(sys_get_temp_dir(), 'ocr_pdf_local_');
+    if ($tmpBase === false) {
+        return '';
+    }
+    @unlink($tmpBase);
+
+    $parts = [];
+    try {
+        for ($page = 1; $page <= $effectiveMaxPages; $page += 1) {
+            $jpgPath = $tmpBase . '-p' . $page . '.jpg';
+            $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4)) . ' 2>/dev/null';
+            @exec($cmdRender, $renderOut, $renderCode);
+            if ($renderCode !== 0 || !is_file($jpgPath)) {
+                if ($page === 1) {
+                    break;
+                }
+                continue;
+            }
+
+            $cmdOcr = 'tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null';
+            $ocrRaw = shell_exec($cmdOcr);
+            $ocrText = trim((string)$ocrRaw);
+            if ($ocrText !== '') {
+                $parts[] = $ocrText;
+            }
+            @unlink($jpgPath);
+        }
+    } finally {
+        for ($page = 1; $page <= $effectiveMaxPages; $page += 1) {
+            @unlink($tmpBase . '-p' . $page . '.jpg');
+        }
+    }
+
+    return trim(implode("\n\n", $parts));
+}
+
 function extractTextWithoutOcr(array $file): string
 {
     $tmpFile = (string)($file['tmp_name'] ?? '');
@@ -564,7 +610,11 @@ function extractTextWithoutOcr(array $file): string
         return trim((string)$raw);
     }
     if ($extension === 'pdf') {
-        return extractPdfTextFast($tmpFile);
+        $pdfText = extractPdfTextFast($tmpFile);
+        if ($pdfText !== '') {
+            return $pdfText;
+        }
+        return extractPdfTextWithLocalOcrFast($tmpFile);
     }
 
     return '';
