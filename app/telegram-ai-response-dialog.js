@@ -77,14 +77,6 @@
 
     const task = context && context.task ? context.task : {};
     const files = Array.isArray(task && task.files) ? task.files : [];
-    const requestPaidAiChat = context && typeof context.requestPaidAiChat === 'function' ? context.requestPaidAiChat : null;
-
-    if (!requestPaidAiChat) {
-      if (typeof context.onStatus === 'function') {
-        context.onStatus('error', 'Не передан обработчик запроса в ИИ.');
-      }
-      return;
-    }
 
     const overlay = document.createElement('div');
     overlay.className = 'tg-ai-chat';
@@ -165,24 +157,32 @@
       const startedAt = Date.now();
 
       try {
-        const payload = await requestPaidAiChat({
+        const submitPayload = {
           prompt,
           selectedFiles,
           task,
-        });
-        const answer = normalize(payload && (payload.response || payload.summary || payload.analysis));
-        createBubble(messages, answer || 'Ответ пустой.', 'assistant');
+          sentAt: new Date().toISOString(),
+        };
+
+        if (typeof context.onSubmit === 'function') {
+          const result = await context.onSubmit(submitPayload);
+          const answer = normalize(result && (result.response || result.summary || result.analysis || result.message));
+          createBubble(messages, answer || 'Файлы и вопрос переданы в обработчик.', 'assistant');
+        } else {
+          window.dispatchEvent(new CustomEvent('telegram-ai-dialog-submit', { detail: submitPayload }));
+          createBubble(messages, 'Файлы и вопрос переданы. Дальнейшая логика обрабатывается отдельно.', 'assistant');
+        }
+
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
-          <span class="tg-ai-chat__chip">Модель: ${escapeHtml(normalize(payload && payload.model) || '—')}</span>
+          <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
-          <span class="tg-ai-chat__chip">Токены: ${Number(payload && payload.tokensUsed) || '—'}</span>
         `;
-        status.textContent = 'Ответ готов.';
+        status.textContent = 'Данные переданы.';
         if (input) input.value = '';
       } catch (error) {
-        createBubble(messages, (error && error.message) || 'Не удалось получить ответ.', 'assistant');
-        status.textContent = 'Ошибка запроса.';
+        createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
+        status.textContent = 'Ошибка передачи.';
       } finally {
         sendButton.disabled = false;
       }

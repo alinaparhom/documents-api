@@ -13639,55 +13639,8 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  const requestPaidAiChat = async ({ prompt, selectedFiles }) => {
-    const files = Array.isArray(selectedFiles) ? selectedFiles : [];
-    const filesToSend = [];
-    const failedFiles = [];
-
-    for (const file of files) {
-      const selectedFileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
-      if (!selectedFileUrl) {
-        failedFiles.push(normalizeValue(file && (file.originalName || file.name || file.storedName)) || 'Без названия');
-        continue;
-      }
-      // eslint-disable-next-line no-await-in-loop
-      const fileResponse = await fetch(selectedFileUrl, { credentials: 'include' });
-      if (!fileResponse.ok) {
-        failedFiles.push(normalizeValue(file && (file.originalName || file.name || file.storedName)) || 'Без названия');
-        continue;
-      }
-      // eslint-disable-next-line no-await-in-loop
-      const fileBlob = await fileResponse.blob();
-      const fallbackName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `task-file-${filesToSend.length + 1}.bin`;
-      filesToSend.push(new File([fileBlob], fallbackName, { type: fileBlob.type || 'application/octet-stream' }));
-    }
-
-    if (!filesToSend.length) {
-      const failedLabel = failedFiles.length ? ` (${failedFiles.slice(0, 2).join(', ')})` : '';
-      throw new Error(`Не удалось скачать выбранные файлы${failedLabel}. Попробуйте снова.`);
-    }
-
-    const finalPrompt = String(prompt || '').trim() || 'Сделай краткий вывод и решение по выбранным файлам.';
-    const result = await postGroqPaidWithFallback(() => {
-      const formData = new FormData();
-      formData.append('taskId', normalizeValue(task && task.id));
-      formData.append('taskTitle', normalizeValue(task && task.title) || 'Задача');
-      formData.append('taskDescription', normalizeValue(task && task.description));
-      formData.append('prompt', finalPrompt);
-      filesToSend.forEach((fileToSend) => {
-        formData.append('files[]', fileToSend, fileToSend.name);
-      });
-      return formData;
-    });
-    const payload = result && result.payload ? result.payload : null;
-    if (!payload || payload.ok !== true) {
-      throw new Error((payload && payload.error) || 'ИИ временно недоступен.');
-    }
-    return payload;
-  };
-
   aiButton.addEventListener('click', () => {
-    openAiDialogSafely({ task, entry, onStatus: setStatus, requestPaidAiChat });
+    openAiDialogSafely({ task, entry, onStatus: setStatus });
   });
 
   textInput.addEventListener('input', () => {
