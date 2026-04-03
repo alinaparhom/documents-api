@@ -1,1 +1,193 @@
+(function initTelegramAiResponseDialog(globalScope) {
+  if (!globalScope || typeof document === 'undefined') return;
 
+  const STYLE_ID = 'tg-ai-response-dialog-style-v1';
+
+  function normalize(value) {
+    return String(value || '').trim();
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function ensureStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px)}
+      .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(241,245,249,.92));box-shadow:0 20px 50px rgba(15,23,42,.22)}
+      .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
+      .tg-ai-chat__title{font-size:16px;font-weight:800;color:#0f172a}
+      .tg-ai-chat__sub{font-size:12px;color:#64748b;margin-top:2px}
+      .tg-ai-chat__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.9);color:#0f172a;border-radius:11px;padding:6px 11px;min-height:34px;font-weight:700}
+      .tg-ai-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
+      .tg-ai-chat__bubble{max-width:92%;padding:9px 11px;border-radius:13px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+      .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
+      .tg-ai-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
+      .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
+      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto 1fr auto;gap:8px;background:rgba(255,255,255,.93)}
+      .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
+      .tg-ai-chat__input{min-height:42px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.98);border-radius:12px;padding:9px;font-size:13px;color:#0f172a}
+      .tg-ai-chat__send{min-height:42px;border:none;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#14b8a6);color:#fff;font-weight:700}
+      .tg-ai-chat__send:disabled{opacity:.6}
+      .tg-ai-chat__files{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.97);padding:9px 12px calc(9px + env(safe-area-inset-bottom,0px))}
+      .tg-ai-chat__files[hidden]{display:none}
+      .tg-ai-chat__files-title{font-size:12px;color:#64748b;margin:0 0 8px}
+      .tg-ai-chat__files-list{display:flex;flex-wrap:wrap;gap:6px;max-height:156px;overflow:auto}
+      .tg-ai-chat__file{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:999px;font-size:12px;color:#334155}
+      .tg-ai-chat__file input{accent-color:#2563eb}
+      .tg-ai-chat__meta{display:flex;flex-wrap:wrap;gap:7px;padding:7px 12px;border-top:1px solid rgba(226,232,240,.7);background:rgba(255,255,255,.88)}
+      .tg-ai-chat__chip{padding:4px 8px;border:1px solid rgba(203,213,225,.95);border-radius:999px;background:#fff;font-size:12px;color:#334155}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr 1fr}.tg-ai-chat__toggle{grid-column:1/-1}.tg-ai-chat__input{grid-column:1/-1}.tg-ai-chat__send{grid-column:1/-1}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function createBubble(container, text, role) {
+    const bubble = document.createElement('div');
+    bubble.className = `tg-ai-chat__bubble tg-ai-chat__bubble--${role === 'user' ? 'user' : 'assistant'}`;
+    bubble.textContent = normalize(text) || 'Пустой ответ.';
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function renderFiles(container, files) {
+    if (!container) return;
+    if (!files.length) {
+      container.innerHTML = '<span class="tg-ai-chat__file">В задаче нет файлов</span>';
+      return;
+    }
+    container.innerHTML = files.map((file, index) => {
+      const name = normalize(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
+      const hasUrl = normalize(file && (file.resolvedUrl || file.url || file.previewUrl));
+      const disabled = hasUrl ? '' : 'disabled';
+      return `<label class="tg-ai-chat__file"><input type="checkbox" data-file-index="${index}" ${disabled}><span>${escapeHtml(name)}</span></label>`;
+    }).join('');
+  }
+
+  globalScope.openAiResponseDialog = function openAiResponseDialog(context = {}) {
+    ensureStyles();
+
+    const task = context && context.task ? context.task : {};
+    const files = Array.isArray(task && task.files) ? task.files : [];
+    const requestPaidAiChat = context && typeof context.requestPaidAiChat === 'function' ? context.requestPaidAiChat : null;
+
+    if (!requestPaidAiChat) {
+      if (typeof context.onStatus === 'function') {
+        context.onStatus('error', 'Не передан обработчик запроса в ИИ.');
+      }
+      return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'tg-ai-chat';
+    overlay.innerHTML = `
+      <div class="tg-ai-chat__card">
+        <div class="tg-ai-chat__head">
+          <div>
+            <div class="tg-ai-chat__title">Ответ с помощью ИИ</div>
+            <div class="tg-ai-chat__sub">Выберите файлы и задайте вопрос по задаче</div>
+          </div>
+          <button type="button" class="tg-ai-chat__close" data-close>✕</button>
+        </div>
+        <div class="tg-ai-chat__messages" data-messages>
+          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Отметьте файлы внизу и напишите вопрос.</div>
+        </div>
+        <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
+        <div class="tg-ai-chat__composer">
+          <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
+          <textarea class="tg-ai-chat__input" data-input placeholder="Например: сделай краткий вывод по выбранным файлам"></textarea>
+          <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
+        </div>
+        <div class="tg-ai-chat__files" data-files hidden>
+          <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
+          <div class="tg-ai-chat__files-list" data-files-list></div>
+        </div>
+        <div class="tg-ai-chat__meta" data-meta></div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const selected = new Set();
+    const messages = overlay.querySelector('[data-messages]');
+    const status = overlay.querySelector('[data-status]');
+    const filesPanel = overlay.querySelector('[data-files]');
+    const filesList = overlay.querySelector('[data-files-list]');
+    const input = overlay.querySelector('[data-input]');
+    const meta = overlay.querySelector('[data-meta]');
+
+    renderFiles(filesList, files);
+
+    const close = () => overlay.remove();
+    overlay.querySelector('[data-close]')?.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+
+    overlay.querySelector('[data-files-toggle]')?.addEventListener('click', () => {
+      filesPanel.hidden = !filesPanel.hidden;
+    });
+
+    filesList?.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+      const key = normalize(target.dataset.fileIndex);
+      if (!key) return;
+      if (target.checked) selected.add(key);
+      else selected.delete(key);
+      status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
+    });
+
+    overlay.querySelector('[data-send]')?.addEventListener('click', async (event) => {
+      const sendButton = event.currentTarget;
+      const prompt = normalize(input && input.value);
+      const selectedFiles = Array.from(selected)
+        .map((key) => files[Number(key)])
+        .filter(Boolean);
+
+      if (!selectedFiles.length) {
+        createBubble(messages, 'Выберите хотя бы один файл в меню «📎 Файлы».', 'assistant');
+        status.textContent = 'Нет выбранных файлов.';
+        return;
+      }
+
+      sendButton.disabled = true;
+      meta.innerHTML = '';
+      createBubble(messages, prompt || 'Сделай краткий вывод и решение по выбранным файлам.', 'user');
+      status.textContent = 'Отправляем запрос в ИИ...';
+      const startedAt = Date.now();
+
+      try {
+        const payload = await requestPaidAiChat({
+          prompt,
+          selectedFiles,
+          task,
+        });
+        const answer = normalize(payload && (payload.response || payload.summary || payload.analysis));
+        createBubble(messages, answer || 'Ответ пустой.', 'assistant');
+        const elapsed = Date.now() - startedAt;
+        meta.innerHTML = `
+          <span class="tg-ai-chat__chip">Модель: ${escapeHtml(normalize(payload && payload.model) || '—')}</span>
+          <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
+          <span class="tg-ai-chat__chip">Токены: ${Number(payload && payload.tokensUsed) || '—'}</span>
+        `;
+        status.textContent = 'Ответ готов.';
+        if (input) input.value = '';
+      } catch (error) {
+        createBubble(messages, (error && error.message) || 'Не удалось получить ответ.', 'assistant');
+        status.textContent = 'Ошибка запроса.';
+      } finally {
+        sendButton.disabled = false;
+      }
+    });
+  };
+}(typeof window !== 'undefined' ? window : globalThis));
+
+export {};
