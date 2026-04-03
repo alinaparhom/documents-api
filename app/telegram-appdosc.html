@@ -18,6 +18,32 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script>
       (function bootstrapVersionedAssets() {
+        const ensureFreshTelegramLaunch = function() {
+          const inTelegram = Boolean(window.Telegram && window.Telegram.WebApp);
+          if (!inTelegram) {
+            return false;
+          }
+          let currentUrl;
+          try {
+            currentUrl = new URL(window.location.href);
+          } catch (_) {
+            return false;
+          }
+          const now = Date.now();
+          const currentStamp = Number.parseInt(currentUrl.searchParams.get('_tg_open_ts') || '', 10);
+          const isFreshStamp = Number.isFinite(currentStamp) && Math.abs(now - currentStamp) < 15000;
+          if (isFreshStamp) {
+            return false;
+          }
+          currentUrl.searchParams.set('_tg_open_ts', String(now));
+          window.location.replace(currentUrl.toString());
+          return true;
+        };
+
+        if (ensureFreshTelegramLaunch()) {
+          return;
+        }
+
         const runtimeNonce = Date.now().toString(36);
         const cacheVersionUrl = '/cache-version.php?t=' + encodeURIComponent(runtimeNonce);
 
