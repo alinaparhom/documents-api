@@ -954,29 +954,54 @@ function handleGenerateImageBriefAction(array $env): void
     $ragMeta = null;
     if ($isPdf) {
         $pageImages = convertPdfPagesToImageDataUris($tmp, 8);
-        if (!$pageImages) {
-            respond(422, ['ok' => false, 'error' => 'Не удалось преобразовать PDF в изображения страниц. Проверьте наличие pdftoppm на сервере.']);
+        if ($pageImages) {
+            $content = [[
+                'type' => 'text',
+                'text' => $prompt . "\n\nPDF автоматически преобразован в изображения страниц. Проанализируй все переданные страницы и дай краткий ответ для новичка.",
+            ]];
+            foreach ($pageImages as $uri) {
+                $content[] = ['type' => 'image_url', 'image_url' => ['url' => $uri]];
+            }
+            $requestPayload = [
+                'model' => $model,
+                'temperature' => 0.2,
+                'max_tokens' => 900,
+                'messages' => [[
+                    'role' => 'user',
+                    'content' => $content,
+                ]],
+            ];
+            $ragMeta = [
+                'mode' => 'pdf-pages-as-images',
+                'pagesSent' => count($pageImages),
+            ];
+        } else {
+            $pdfExtract = extractPdfText($tmp);
+            $pdfText = trim((string)($pdfExtract['text'] ?? ''));
+            if ($pdfText === '') {
+                respond(422, ['ok' => false, 'error' => 'PDF не удалось конвертировать в изображения и не удалось извлечь текст. Загрузите PDF с текстовым слоем или используйте изображение (JPG/PNG).']);
+            }
+            $chunks = splitTextIntoChunks($pdfText);
+            $budget = takeChunksByCharBudget($chunks, 18000);
+            $context = trim(implode("\n\n---\n\n", (array)($budget['items'] ?? [])));
+            if ($context === '') {
+                $context = mb_substr($pdfText, 0, 6000);
+            }
+            $requestPayload = [
+                'model' => $model,
+                'temperature' => 0.2,
+                'max_tokens' => 900,
+                'messages' => [
+                    ['role' => 'system', 'content' => 'Ты анализируешь текст PDF. Отвечай коротко и понятно для новичка.'],
+                    ['role' => 'user', 'content' => "Запрос:\n{$prompt}\n\nТекст из PDF:\n{$context}"],
+                ],
+            ];
+            $ragMeta = [
+                'mode' => 'pdf-text-fallback',
+                'pagesSent' => 0,
+                'extractSource' => (string)($pdfExtract['source'] ?? ''),
+            ];
         }
-        $content = [[
-            'type' => 'text',
-            'text' => $prompt . "\n\nPDF автоматически преобразован в изображения страниц. Проанализируй все переданные страницы и дай краткий ответ для новичка.",
-        ]];
-        foreach ($pageImages as $uri) {
-            $content[] = ['type' => 'image_url', 'image_url' => ['url' => $uri]];
-        }
-        $requestPayload = [
-            'model' => $model,
-            'temperature' => 0.2,
-            'max_tokens' => 900,
-            'messages' => [[
-                'role' => 'user',
-                'content' => $content,
-            ]],
-        ];
-        $ragMeta = [
-            'mode' => 'pdf-pages-as-images',
-            'pagesSent' => count($pageImages),
-        ];
     } else {
         $binary = (string)@file_get_contents($tmp);
         if ($binary === '') {
