@@ -408,8 +408,38 @@ export function createTelegramBriefAi(deps = {}) {
       remoteErrorMessage = normalizeValue(remotePayload && remotePayload.error) || `Ошибка ИИ (${remoteResponse ? remoteResponse.status : 0})`;
     }
 
-    // Для URL-сценария НЕ уходим в OCR upload fallback (внешний OCR лимит 1024KB).
+    // Fallback как в docs-ai-response-modal.js: если file_urls не сработал, отправляем files[].
     if (fileUrl) {
+      const shouldTryFilesFallback = /extractedtexts|files\[\]/i.test(remoteErrorMessage);
+      if (shouldTryFilesFallback) {
+        let uploadBlob = fileForVip;
+        let uploadName = fileName;
+        if (!uploadBlob) {
+          try {
+            const downloadResponse = await fetch(fileUrl, { credentials: 'same-origin' });
+            if (downloadResponse.ok) {
+              uploadBlob = await downloadResponse.blob();
+              const guessedName = String(fileUrl.split('/').pop() || '').split('?')[0].trim();
+              uploadName = guessedName || fileName || 'document.bin';
+            }
+          } catch (_) {}
+        }
+        if (uploadBlob) {
+          const filesRequest = await postGroqPaidWithFallback(() => {
+            const formData = new FormData();
+            formData.append('action', 'generate_summary');
+            formData.append('mode', 'paid');
+            formData.append('files[]', uploadBlob, uploadName || 'document.bin');
+            return formData;
+          });
+          const filesResponse = filesRequest && filesRequest.response;
+          const filesPayload = filesRequest && filesRequest.payload;
+          if (filesResponse && filesResponse.ok && filesPayload && filesPayload.ok === true) {
+            return filesPayload;
+          }
+          remoteErrorMessage = normalizeValue(filesPayload && filesPayload.error) || remoteErrorMessage;
+        }
+      }
       throw new Error(remoteErrorMessage || 'Не удалось получить ответ по file_url. Попробуйте ещё раз.');
     }
 
