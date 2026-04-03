@@ -873,6 +873,83 @@ function handleGenerateSummaryAction(array $env): void
     ]);
 }
 
+function handleGenerateImageBriefAction(array $env): void
+{
+    $apiKey = getGroqKey($env);
+    if ($apiKey === '') {
+        respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
+    }
+
+    $uploaded = array_merge(
+        normalizeUploadedFiles('file'),
+        normalizeUploadedFiles('files'),
+        normalizeUploadedFiles('attachments')
+    );
+    $file = $uploaded[0] ?? null;
+    if (!$file || !is_array($file)) {
+        respond(422, ['ok' => false, 'error' => 'Передайте изображение в поле file.']);
+    }
+
+    $tmp = (string)($file['tmp_name'] ?? '');
+    $name = (string)($file['name'] ?? 'image');
+    if ($tmp === '' || !is_file($tmp)) {
+        respond(422, ['ok' => false, 'error' => 'Файл не загружен.']);
+    }
+
+    $mime = detectMime($tmp, (string)($file['client_type'] ?? ''));
+    $allowedImageMimes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/bmp'];
+    if (!in_array($mime, $allowedImageMimes, true)) {
+        respond(422, ['ok' => false, 'error' => 'Новая логика принимает только изображения PNG/JPG/WEBP/GIF/BMP.']);
+    }
+
+    $binary = (string)@file_get_contents($tmp);
+    if ($binary === '') {
+        respond(422, ['ok' => false, 'error' => 'Не удалось прочитать изображение.']);
+    }
+
+    $prompt = trim((string)($_POST['prompt'] ?? 'Что на этом изображении?'));
+    $model = trim((string)($_POST['model'] ?? 'meta-llama/llama-4-scout-17b-16e-instruct'));
+    if ($model === '') {
+        $model = 'meta-llama/llama-4-scout-17b-16e-instruct';
+    }
+    $dataUri = makeDataUriFromBinary($binary, $mime);
+
+    $requestPayload = [
+        'model' => $model,
+        'temperature' => 0.2,
+        'max_tokens' => 700,
+        'messages' => [[
+            'role' => 'user',
+            'content' => [
+                ['type' => 'text', 'text' => $prompt],
+                ['type' => 'image_url', 'image_url' => ['url' => $dataUri]],
+            ],
+        ]],
+    ];
+
+    $startedAt = microtime(true);
+    $groqResult = callGroqChat($requestPayload, $apiKey);
+    if (($groqResult['ok'] ?? false) !== true) {
+        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+    }
+
+    $decoded = (array)($groqResult['raw'] ?? []);
+    $summary = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    if ($summary === '') {
+        respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq']);
+    }
+
+    respond(200, [
+        'ok' => true,
+        'summary' => $summary,
+        'response' => $summary,
+        'file' => $name,
+        'model' => (string)($decoded['model'] ?? $model),
+        'durationMs' => max(1, (int)round((microtime(true) - $startedAt) * 1000)),
+        'tokensUsed' => (int)($decoded['usage']['total_tokens'] ?? 0),
+    ]);
+}
+
 function handleGenerateResponseAction(array $env): void
 {
     $apiKey = getGroqKey($env);
@@ -1002,7 +1079,7 @@ function handleGetRequest(array $env): void
             'message' => 'pong',
             'apiKeyConfigured' => getGroqKey($env) !== '',
             'model' => resolveModel($env),
-            'actions' => ['analyze_paid', 'generate_summary', 'generate_response'],
+            'actions' => ['analyze_paid', 'generate_summary', 'generate_response', 'generate_image_brief'],
         ]);
     }
 
@@ -1011,7 +1088,7 @@ function handleGetRequest(array $env): void
         'message' => 'API доступен. Для обработки документов используйте POST action=analyze_paid и files[].',
         'method' => 'POST',
         'defaultAction' => 'analyze_paid',
-        'availablePostActions' => ['analyze_paid', 'generate_summary', 'generate_response'],
+        'availablePostActions' => ['analyze_paid', 'generate_summary', 'generate_response', 'generate_image_brief'],
         'availableGetActions' => ['health', 'ping'],
     ]);
 }
@@ -1032,6 +1109,9 @@ function handlePostRequest(array $env): void
         },
         'generate_response' => static function (array $currentEnv): void {
             handleGenerateResponseAction($currentEnv);
+        },
+        'generate_image_brief' => static function (array $currentEnv): void {
+            handleGenerateImageBriefAction($currentEnv);
         },
     ];
 

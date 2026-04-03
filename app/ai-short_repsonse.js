@@ -2,6 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+const BRIEF_AI_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -280,6 +281,48 @@ export function createTelegramBriefAi(deps = {}) {
     return payload;
   }
 
+  async function requestTelegramBriefAiVisionWithAttachment(source) {
+    const fileName = normalizeValue(source && source.label) || 'brief-file';
+    let fileForVision = null;
+    const fileUrl = normalizeValue(source && source.url);
+    if (source && source.fileObject instanceof File) {
+      fileForVision = source.fileObject;
+    } else {
+      if (!fileUrl) {
+        throw new Error('Не найден URL файла для новой логики.');
+      }
+      const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+      if (!fetched.ok) {
+        throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+      }
+      const blob = await fetched.blob();
+      fileForVision = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+    }
+    fileForVision = await convertPdfToImageFileForBrief(fileForVision, fileName);
+    const type = String(fileForVision && fileForVision.type || '').toLowerCase();
+    if (!type.startsWith('image/')) {
+      throw new Error('Новая логика поддерживает только изображения (PNG/JPG/WEBP) и PDF.');
+    }
+
+    const request = await postGroqPaidWithFallback(() => {
+      const formData = new FormData();
+      formData.append('action', 'generate_image_brief');
+      formData.append('model', BRIEF_AI_VISION_MODEL);
+      formData.append('prompt', 'Что на этом изображении? Дай краткий ответ по сути для новичка.');
+      formData.append('file', fileForVision, fileForVision.name || fileName);
+      return formData;
+    });
+    const response = request && request.response;
+    const payload = request && request.payload;
+    if (!response || !response.ok || !payload || payload.ok !== true) {
+      throw new Error((payload && payload.error) || `Ошибка новой логики (${response ? response.status : 0})`);
+    }
+    if (!hasMeaningfulTelegramBriefPayload(payload)) {
+      throw new Error('Новая логика не вернула осмысленный ответ.');
+    }
+    return payload;
+  }
+
   function extractTelegramPlainAiBriefText(payload) {
     if (!payload || typeof payload !== 'object') return '';
     const candidates = [payload.summary, payload.response, payload.analysis, payload.text, payload.answer];
@@ -308,7 +351,8 @@ export function createTelegramBriefAi(deps = {}) {
             <div class="appdosc-brief-ai__title">Кратко ИИ</div>
             <div class="appdosc-brief-ai__sub">Файл → OCR → api-groq-paid.php → краткий вывод</div>
             <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-paid-ai>Платный ИИ</label>
-            <div class="appdosc-brief-ai__hint">1) Включите «Платный ИИ» → 2) Нажмите файл → 3) Получите краткое решение.</div>
+            <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-new-logic>Новая логика (Vision)</label>
+            <div class="appdosc-brief-ai__hint">1) Включите «Платный ИИ» или «Новая логика» → 2) Нажмите файл → 3) Получите краткий ответ.</div>
           </div>
           <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
         </div>
@@ -326,6 +370,7 @@ export function createTelegramBriefAi(deps = {}) {
     const statusNode = modal.querySelector('[data-status]');
     const metaNode = modal.querySelector('[data-meta]');
     const paidCheckbox = modal.querySelector('[data-paid-ai]');
+    const newLogicCheckbox = modal.querySelector('[data-new-logic]');
     const sources = [];
     let activeRequestId = 0;
 
@@ -370,25 +415,31 @@ export function createTelegramBriefAi(deps = {}) {
       typeWrap.appendChild(typeNode);
       button.append(titleWrap, typeWrap);
       button.addEventListener('click', async () => {
-        if (!paidCheckbox || !paidCheckbox.checked) {
-          setStatus('Сначала включите галочку «Платный ИИ».', 'error');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">Без режима «Платный ИИ» анализ не запускается.</p>';
+        const isVisionMode = Boolean(newLogicCheckbox && newLogicCheckbox.checked);
+        const isPaidMode = Boolean(paidCheckbox && paidCheckbox.checked);
+        if (!isVisionMode && !isPaidMode) {
+          setStatus('Сначала включите «Платный ИИ» или «Новая логика».', 'error');
+          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">Без выбранного режима анализ не запускается.</p>';
           return;
         }
         const requestId = ++activeRequestId;
         activate(button);
         try {
           button.disabled = true;
-          setStatus(`OCR и платный анализ: ${source.label}`, 'loading');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ OCR и отправка в api-groq-paid.php...</p>';
+          setStatus(isVisionMode ? `Новая логика Vision: ${source.label}` : `OCR и платный анализ: ${source.label}`, 'loading');
+          preview.innerHTML = isVisionMode
+            ? '<p class="appdosc-brief-ai__placeholder">⏳ Отправка изображения в Vision модель...</p>'
+            : '<p class="appdosc-brief-ai__placeholder">⏳ OCR и отправка в api-groq-paid.php...</p>';
           const startedAt = Date.now();
-          const aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
+          const aiPayload = isVisionMode
+            ? await requestTelegramBriefAiVisionWithAttachment(source)
+            : await requestTelegramBriefAiDirectWithAttachment(source);
           if (requestId !== activeRequestId) return;
           renderTelegramBriefPreview(preview, aiPayload);
-          setStatus('Готово. Краткий вывод получен через Платный ИИ.', 'success');
+          setStatus(isVisionMode ? 'Готово. Ответ получен через новую Vision логику.' : 'Готово. Краткий вывод получен через Платный ИИ.', 'success');
           if (metaNode) {
             const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - startedAt)) / 1000).toFixed(1);
-            metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек • Режим: Платный ИИ`;
+            metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек • Режим: ${isVisionMode ? 'Новая логика' : 'Платный ИИ'}`;
           }
         } catch (error) {
           if (requestId !== activeRequestId) return;
