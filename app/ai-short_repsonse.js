@@ -2,6 +2,8 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+const BRIEF_OCR_UPLOAD_LIMIT_BYTES = 1024 * 1024; // 1MB
+const BRIEF_EXTRACTED_TEXT_MAX_CHARS = 90000;
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -250,14 +252,35 @@ export function createTelegramBriefAi(deps = {}) {
         fileForVip = null;
       }
     }
-    const extractedText = fileForVip
-      ? await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName)
-      : await requestTelegramOcrByUrl(fileUrl);
+    let extractedText = '';
+    if (fileForVip) {
+      const fileSize = Number(fileForVip.size) || 0;
+      const shouldUseFileUploadForOcr = fileSize > 0 && fileSize <= BRIEF_OCR_UPLOAD_LIMIT_BYTES;
+      if (shouldUseFileUploadForOcr) {
+        try {
+          extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
+        } catch (error) {
+          if (fileUrl) {
+            extractedText = await requestTelegramOcrByUrl(fileUrl);
+          } else {
+            throw error;
+          }
+        }
+      } else if (fileUrl) {
+        extractedText = await requestTelegramOcrByUrl(fileUrl);
+      } else {
+        extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
+      }
+    } else {
+      extractedText = await requestTelegramOcrByUrl(fileUrl);
+    }
     if (!String(extractedText || '').trim()) {
       throw new Error('OCR не вернул текст для выбранного файла.');
     }
-    if (fileForVip) {
+    if (fileForVip && (Number(fileForVip.size) || 0) <= BRIEF_OCR_UPLOAD_LIMIT_BYTES) {
       fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
+    } else {
+      fileForVip = null;
     }
     const request = await postGroqPaidWithFallback(() => {
       const formData = new FormData();
@@ -266,7 +289,7 @@ export function createTelegramBriefAi(deps = {}) {
       if (fileForVip) {
         formData.append('files', fileForVip, fileForVip.name || fileName);
       }
-      formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 16000) }]));
+      formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, BRIEF_EXTRACTED_TEXT_MAX_CHARS) }]));
       return formData;
     });
     const response = request && request.response;
