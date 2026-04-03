@@ -316,11 +316,11 @@ export function createTelegramBriefAi(deps = {}) {
       const blob = await fetched.blob();
       fileForVision = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
     }
-    fileForVision = await convertPdfToImageFileForBrief(fileForVision, fileName);
     const type = String(fileForVision && fileForVision.type || '').toLowerCase();
     const name = normalizeValue(fileForVision && fileForVision.name).toLowerCase();
+    const isPdf = type === 'application/pdf' || /\.pdf$/i.test(name);
     const isImageByName = /\.(png|jpe?g|webp|gif|bmp)$/i.test(name);
-    if (!type.startsWith('image/') && !isImageByName) {
+    if (!isPdf && !type.startsWith('image/') && !isImageByName) {
       throw new Error('Новая логика поддерживает только изображения (PNG/JPG/WEBP) и PDF.');
     }
 
