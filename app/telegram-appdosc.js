@@ -179,8 +179,8 @@ function cloneTaskAttachmentPreviewCacheEntry(entry) {
 }
 
 function ensureAiDialogScriptLoaded() {
-  if (window && typeof window.openAiResponseDialog === 'function') {
-    return Promise.resolve(window.openAiResponseDialog);
+  if (window && typeof window.openDocumentsAiResponseModal === 'function') {
+    return Promise.resolve(window.openDocumentsAiResponseModal);
   }
 
   if (!aiDialogLoader) {
@@ -188,8 +188,8 @@ function ensureAiDialogScriptLoaded() {
       const existing = document.querySelector('script[data-ai-dialog-script]');
       if (existing) {
         existing.addEventListener('load', () => {
-          if (typeof window.openAiResponseDialog === 'function') {
-            resolve(window.openAiResponseDialog);
+          if (typeof window.openDocumentsAiResponseModal === 'function') {
+            resolve(window.openDocumentsAiResponseModal);
           } else {
             reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
           }
@@ -199,12 +199,12 @@ function ensureAiDialogScriptLoaded() {
       }
 
       const script = document.createElement('script');
-      script.src = '/js/documents/app/telegram-ai-response-dialog.js?v=' + encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
+      script.src = '/js/documents/docs-ai-response-modal.js?v=' + encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
       script.defer = true;
       script.dataset.aiDialogScript = 'true';
       script.onload = () => {
-        if (typeof window.openAiResponseDialog === 'function') {
-          resolve(window.openAiResponseDialog);
+        if (typeof window.openDocumentsAiResponseModal === 'function') {
+          resolve(window.openDocumentsAiResponseModal);
         } else {
           reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
         }
