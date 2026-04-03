@@ -7,6 +7,9 @@
   const REQUEST_TIMEOUT_MS = 45000;
   const VISION_BATCH_SIZE = 5;
   let briefPdfJsLoader = null;
+  const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
+Запрещено начинать с "Анализ письма", "Разбор", "Рекомендации".
+Нужен финальный текст ответа для отправки адресату в деловом стиле.`;
   const SYSTEM_TONE_PROMPTS = {
     neutral: {
       value: 'neutral',
@@ -911,7 +914,7 @@
       const sendButton = event.currentTarget;
       const prompt = normalize(input && input.value);
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
-      const effectivePrompt = [prompt, styleMeta.prompt].filter(Boolean).join('\n\n');
+      const effectivePrompt = [prompt, styleMeta.prompt, RESPONSE_OUTPUT_DIRECTIVE].filter(Boolean).join('\n\n');
       const selectedFiles = Array.from(selected)
         .map((key) => files[Number(key)])
         .filter(Boolean);
