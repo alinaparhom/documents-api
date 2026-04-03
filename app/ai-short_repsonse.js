@@ -1,5 +1,5 @@
 const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
-const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+const DOCS_AI_OCR_ENDPOINT = '/api-docs.php';
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
 
@@ -83,7 +83,7 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
-    const request = await postDocsOcrWithFallback(() => {
+    const request = await postDocsOcrSingle(() => {
       const formData = new FormData();
       formData.append('action', 'ocr_extract');
       formData.append('language', 'rus');
@@ -114,40 +114,27 @@ export function createTelegramBriefAi(deps = {}) {
     return text;
   }
 
-  async function postDocsOcrWithFallback(createFormData) {
-    let lastResult = null;
-    for (let index = 0; index < DOCS_AI_FALLBACK_ENDPOINTS.length; index += 1) {
-      const endpoint = DOCS_AI_FALLBACK_ENDPOINTS[index];
-      let response = null;
-      let payload = null;
-      const controller = typeof AbortController === 'function' ? new AbortController() : null;
-      const timeoutId = controller ? setTimeout(() => controller.abort(), BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
-      try {
-        response = await fetch(endpoint, {
-          method: 'POST',
-          credentials: 'include',
-          body: createFormData(),
-          signal: controller ? controller.signal : undefined,
-        });
-        payload = await response.json().catch(() => null);
-      } catch (error) {
-        const timeoutError = error && error.name === 'AbortError'
-          ? new Error('OCR превысил лимит ожидания (90 сек). Попробуйте файл меньшего размера.')
-          : error;
-        lastResult = { endpoint, error: timeoutError, response, payload };
-        continue;
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId);
-      }
-      const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
-      if (shouldTryNextEndpoint && index < DOCS_AI_FALLBACK_ENDPOINTS.length - 1) {
-        lastResult = { endpoint, response, payload };
-        continue;
-      }
+  async function postDocsOcrSingle(createFormData) {
+    const endpoint = DOCS_AI_OCR_ENDPOINT;
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: createFormData(),
+        signal: controller ? controller.signal : undefined,
+      });
+      const payload = await response.json().catch(() => null);
       return { endpoint, response, payload };
+    } catch (error) {
+      if (error && error.name === 'AbortError') {
+        throw new Error('OCR превысил лимит ожидания (90 сек). Попробуйте файл меньшего размера.');
+      }
+      throw error;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
-    if (lastResult) return lastResult;
-    throw new Error('OCR временно недоступен.');
   }
 
   async function requestTelegramBriefAiDirectWithAttachment(source) {
