@@ -80,6 +80,7 @@
     { value: 'free', label: 'Бесплатный ИИ' },
     { value: 'paid', label: 'VIP ИИ (платный)' }
   ];
+  var DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
 
@@ -101,6 +102,47 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function getDocsAiEndpoints(preferredApiUrl) {
+    var preferred = String(preferredApiUrl || window.DOCUMENTS_AI_API_URL || '').trim();
+    var endpoints = preferred ? [preferred].concat(DOCS_AI_FALLBACK_ENDPOINTS) : DOCS_AI_FALLBACK_ENDPOINTS.slice();
+    return Array.from(new Set(endpoints.filter(Boolean)));
+  }
+
+  async function postDocsAiWithFallback(createFormData, preferredApiUrl, actionName) {
+    var endpoints = getDocsAiEndpoints(preferredApiUrl);
+    var lastResult = null;
+    for (var index = 0; index < endpoints.length; index += 1) {
+      var endpoint = endpoints[index];
+      var response = null;
+      var payload = null;
+      try {
+        var requestBody = await createFormData();
+        if (!(requestBody instanceof FormData)) {
+          throw new Error('Форма запроса не подготовлена');
+        }
+        response = await fetch(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: requestBody
+        });
+        payload = await response.json().catch(function () { return null; });
+      } catch (error) {
+        lastResult = { endpoint: endpoint, response: response, payload: payload, error: error };
+        continue;
+      }
+      var shouldTryNext = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+      if (shouldTryNext && index < endpoints.length - 1) {
+        lastResult = { endpoint: endpoint, response: response, payload: payload };
+        continue;
+      }
+      return { endpoint: endpoint, response: response, payload: payload };
+    }
+    if (lastResult) {
+      return lastResult;
+    }
+    throw new Error((actionName || 'OCR') + ' временно недоступен');
   }
 
   function sanitizeHtml(inputHtml) {
@@ -322,36 +364,37 @@
     }
 
     async function tryExtractOcrTextForPaid(fileOrBlob, fileName, remoteUrl) {
-      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-      var formData = new FormData();
-      formData.append('action', 'ocr_extract');
-      formData.append('language', 'rus');
-      if (remoteUrl) {
-        formData.append('file_url', String(remoteUrl));
-      } else if (fileOrBlob) {
-        var normalizedName = String(fileName || (fileOrBlob && fileOrBlob.name) || 'document').trim() || 'document';
-        if (!/\.[a-z0-9]{2,8}$/i.test(normalizedName)) {
-          var type = String(fileOrBlob && fileOrBlob.type || '').toLowerCase();
-          if (type.indexOf('pdf') >= 0) normalizedName += '.pdf';
-          else if (type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0) normalizedName += '.jpg';
-          else if (type.indexOf('png') >= 0) normalizedName += '.png';
-          else if (type.indexOf('webp') >= 0) normalizedName += '.webp';
-          else if (type.indexOf('gif') >= 0) normalizedName += '.gif';
-          else if (type.indexOf('bmp') >= 0) normalizedName += '.bmp';
-          else if (type.indexOf('tiff') >= 0 || type.indexOf('tif') >= 0) normalizedName += '.tiff';
-          else normalizedName += '.bin';
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+      function buildOcrFormData() {
+        var formData = new FormData();
+        formData.append('action', 'ocr_extract');
+        formData.append('language', 'rus');
+        if (remoteUrl) {
+          formData.append('file_url', String(remoteUrl));
+        } else if (fileOrBlob) {
+          var normalizedName = String(fileName || (fileOrBlob && fileOrBlob.name) || 'document').trim() || 'document';
+          if (!/\.[a-z0-9]{2,8}$/i.test(normalizedName)) {
+            var type = String(fileOrBlob && fileOrBlob.type || '').toLowerCase();
+            if (type.indexOf('pdf') >= 0) normalizedName += '.pdf';
+            else if (type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0) normalizedName += '.jpg';
+            else if (type.indexOf('png') >= 0) normalizedName += '.png';
+            else if (type.indexOf('webp') >= 0) normalizedName += '.webp';
+            else if (type.indexOf('gif') >= 0) normalizedName += '.gif';
+            else if (type.indexOf('bmp') >= 0) normalizedName += '.bmp';
+            else if (type.indexOf('tiff') >= 0 || type.indexOf('tif') >= 0) normalizedName += '.tiff';
+            else normalizedName += '.bin';
+          }
+          formData.append('file', fileOrBlob, normalizedName);
         }
-        formData.append('file', fileOrBlob, normalizedName);
-      } else {
+        return formData;
+      }
+      if (!remoteUrl && !fileOrBlob) {
         return '';
       }
       try {
-        var response = await fetch(apiUrl + '?action=ocr_extract', {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: formData
-        });
-        var payload = await response.json().catch(function () { return null; });
+        var request = await postDocsAiWithFallback(buildOcrFormData, apiUrl, 'OCR');
+        var response = request && request.response;
+        var payload = request && request.payload;
         if (!response.ok || !payload || payload.ok !== true) {
           return '';
         }
@@ -435,25 +478,30 @@
       return '';
     }
     async function requestOcrTextForPaidFile(sourceEntry, fallbackName) {
-      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-      var formData = new FormData();
-      formData.append('action', 'ocr_extract');
-      formData.append('language', 'rus');
-      if (sourceEntry && sourceEntry.fileObject) {
-        var uploadName = String(fallbackName || (sourceEntry.fileObject && sourceEntry.fileObject.name) || 'document').trim() || 'document';
-        if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
-          var fileType = String(sourceEntry.fileObject && sourceEntry.fileObject.type || '').toLowerCase();
-          if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
-          else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
-          else if (fileType.indexOf('png') >= 0) uploadName += '.png';
-          else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
-          else uploadName += '.bin';
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+      if (!sourceEntry) {
+        return '';
+      }
+      var sourceUrl = resolveSourceUrlForOcr(sourceEntry);
+      async function buildFormDataAsync() {
+        var formData = new FormData();
+        formData.append('action', 'ocr_extract');
+        formData.append('language', 'rus');
+        if (sourceEntry.fileObject) {
+          var uploadName = String(fallbackName || (sourceEntry.fileObject && sourceEntry.fileObject.name) || 'document').trim() || 'document';
+          if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
+            var fileType = String(sourceEntry.fileObject && sourceEntry.fileObject.type || '').toLowerCase();
+            if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
+            else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
+            else if (fileType.indexOf('png') >= 0) uploadName += '.png';
+            else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+            else uploadName += '.bin';
+          }
+          formData.append('file', sourceEntry.fileObject, uploadName);
+          return formData;
         }
-        formData.append('file', sourceEntry.fileObject, uploadName);
-      } else if (sourceEntry) {
-        var sourceUrl = resolveSourceUrlForOcr(sourceEntry);
         if (!sourceUrl) {
-          return '';
+          return null;
         }
         try {
           var fetched = await fetch(String(sourceUrl), { credentials: 'same-origin' });
@@ -469,21 +517,17 @@
               else remoteName += '.bin';
             }
             formData.append('file', blob, remoteName);
-          } else {
-            formData.append('file_url', String(sourceUrl));
+            return formData;
           }
-        } catch (_) {
-          formData.append('file_url', String(sourceUrl));
-        }
-      } else {
-        return '';
+        } catch (_) {}
+        formData.append('file_url', String(sourceUrl));
+        return formData;
       }
-      var response = await fetch(apiUrl + '?action=ocr_extract', {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: formData
-      });
-      var payload = await response.json().catch(function () { return null; });
+      var finalRequest = await postDocsAiWithFallback(function () {
+        return buildFormDataAsync();
+      }, apiUrl, 'OCR');
+      var response = finalRequest && finalRequest.response;
+      var payload = finalRequest && finalRequest.payload;
       if (!response.ok || !payload || payload.ok !== true) {
         return '';
       }
@@ -2499,36 +2543,32 @@
           }
         }
         if (!hasUsefulExtractedText(extractedText)) {
-          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-          var formData = new FormData();
-          formData.append('action', 'ocr_extract');
-          formData.append('language', 'rus');
-          if (fileEntry.fileObject) {
-            var uploadName = String(fileLabel || (fileEntry.fileObject && fileEntry.fileObject.name) || 'document').trim() || 'document';
-            if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
-              var fileType = String(fileEntry.fileObject && fileEntry.fileObject.type || '').toLowerCase();
-              if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
-              else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
-              else if (fileType.indexOf('png') >= 0) uploadName += '.png';
-              else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+          var request = await postDocsAiWithFallback(function () {
+            var formData = new FormData();
+            formData.append('action', 'ocr_extract');
+            formData.append('language', 'rus');
+            if (fileEntry.fileObject) {
+              var uploadName = String(fileLabel || (fileEntry.fileObject && fileEntry.fileObject.name) || 'document').trim() || 'document';
+              if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
+                var fileType = String(fileEntry.fileObject && fileEntry.fileObject.type || '').toLowerCase();
+                if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
+                else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
+                else if (fileType.indexOf('png') >= 0) uploadName += '.png';
+                else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+              }
+              formData.append('file', fileEntry.fileObject, uploadName);
+            } else if (fileEntry.url) {
+              formData.append('file_url', String(fileEntry.url));
+            } else {
+              throw new Error('Файл недоступен для чтения');
             }
-            formData.append('file', fileEntry.fileObject, uploadName);
-          } else if (fileEntry.url) {
-            formData.append('file_url', String(fileEntry.url));
-          } else {
-            throw new Error('Файл недоступен для чтения');
-          }
-          var response = await fetch(apiUrl + '?action=ocr_extract', {
-            method: 'POST',
-            credentials: 'same-origin',
-            body: formData
-          });
-          var rawResponseText = await response.text();
-          var payload = null;
-          try {
-            payload = rawResponseText ? JSON.parse(rawResponseText) : null;
-          } catch (parseError) {
-            throw new Error('Сервис извлечения текста временно недоступен (неверный формат ответа).');
+            return formData;
+          }, apiUrl, 'OCR');
+          var response = request && request.response;
+          var payload = request && request.payload;
+          if (!response) {
+            throw new Error('Сервис извлечения текста временно недоступен.');
           }
           if (!response.ok || !payload || payload.ok !== true) {
             throw new Error(payload && payload.error ? payload.error : ('Ошибка извлечения текста (' + response.status + ')'));
