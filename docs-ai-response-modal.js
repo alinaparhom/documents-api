@@ -84,7 +84,6 @@
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
   var VISION_BATCH_SIZE = 4;
-  var VISION_MAX_PDF_PAGES = 6;
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -480,7 +479,7 @@
     var loadingTask = pdfjsLib.getDocument({ data: bytes });
     var pdf = await loadingTask.promise;
     var totalPages = Number(pdf && pdf.numPages || 0);
-    var pagesToProcess = Math.min(Math.max(1, totalPages), VISION_MAX_PDF_PAGES);
+    var pagesToProcess = Math.max(1, totalPages);
     var images = [];
     for (var pageIndex = 1; pageIndex <= pagesToProcess; pageIndex += 1) {
       // eslint-disable-next-line no-await-in-loop

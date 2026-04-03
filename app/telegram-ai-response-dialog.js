@@ -5,8 +5,8 @@
   const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
-  const VISION_BATCH_SIZE = 4;
-  let pdfJsPromise = null;
+  const VISION_BATCH_SIZE = 5;
+  let briefPdfJsLoader = null;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -257,7 +257,7 @@
   function isImageLike(name, type) {
     const lowerName = normalize(name).toLowerCase();
     const lowerType = normalize(type).toLowerCase();
-    return lowerType.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif|heic|heif)$/i.test(lowerName);
+    return lowerType === 'image/jpeg' || lowerType === 'image/png' || /\.(jpe?g|png)$/i.test(lowerName);
   }
 
   function isPdfLike(name, type) {
@@ -275,27 +275,180 @@
     });
   }
 
-  async function ensurePdfJsLoaded() {
-    if (globalScope.pdfjsLib && typeof globalScope.pdfjsLib.getDocument === 'function') {
-      return globalScope.pdfjsLib;
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib) {
+      return Promise.resolve(window.pdfjsLib);
     }
-    if (pdfJsPromise) return pdfJsPromise;
-    pdfJsPromise = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '/pdf/pdf.min.js';
-      script.async = true;
-      script.onload = () => {
-        if (globalScope.pdfjsLib && globalScope.pdfjsLib.GlobalWorkerOptions) {
-          globalScope.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
-          resolve(globalScope.pdfjsLib);
+    if (briefPdfJsLoader) {
+      return briefPdfJsLoader;
+    }
+    const sources = [
+      { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
+      { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+      { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
+    ];
+    briefPdfJsLoader = new Promise((resolve, reject) => {
+      let index = 0;
+      const tryNext = () => {
+        if (typeof window !== 'undefined' && window.pdfjsLib) {
+          window.__briefPdfWorkerSrc = sources[Math.max(0, index - 1)].worker;
+          resolve(window.pdfjsLib);
           return;
         }
-        reject(new Error('pdf.js не загрузился.'));
+        if (index >= sources.length) {
+          reject(new Error('Не удалось загрузить PDF библиотеку. Проверьте интернет или доступ к /pdf/pdf.min.js'));
+          return;
+        }
+        const source = sources[index];
+        index += 1;
+        const script = document.createElement('script');
+        script.src = source.script;
+        script.onload = () => {
+          if (typeof window !== 'undefined' && window.pdfjsLib) {
+            window.__briefPdfWorkerSrc = source.worker;
+            resolve(window.pdfjsLib);
+            return;
+          }
+          tryNext();
+        };
+        script.onerror = () => tryNext();
+        document.head.appendChild(script);
       };
-      script.onerror = () => reject(new Error('Не удалось загрузить pdf.js.'));
+      tryNext();
+    }).catch((error) => {
+      briefPdfJsLoader = null;
+      throw error;
+    });
+    return briefPdfJsLoader;
+  }
+
+  async function loadBriefScript(url, checkLoaded) {
+    if (checkLoaded()) return;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = url;
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Не удалось загрузить библиотеку: ${url}`));
       document.head.appendChild(script);
     });
-    return pdfJsPromise;
+    if (!checkLoaded()) {
+      throw new Error(`Библиотека не инициализирована: ${url}`);
+    }
+  }
+
+  async function ensureMammothLoaded() {
+    if (window.mammoth) return window.mammoth;
+    await loadBriefScript('https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js', () => Boolean(window.mammoth));
+    return window.mammoth;
+  }
+
+  async function ensureXlsxLoaded() {
+    if (window.XLSX) return window.XLSX;
+    await loadBriefScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', () => Boolean(window.XLSX));
+    return window.XLSX;
+  }
+
+  function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Не удалось прочитать текст файла.'));
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  async function buildVisionPayloadFromFile(file, onProgress) {
+    if (!(file instanceof File)) {
+      throw new Error('Файл не выбран.');
+    }
+    const mime = String(file.type || '').toLowerCase();
+    const name = String(file.name || 'document').toLowerCase();
+    const isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
+    const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
+    const isText = mime.startsWith('text/') || /\.(txt|md|csv|json|xml|html?)$/i.test(name);
+    const isDocx = mime.includes('wordprocessingml.document') || /\.docx$/i.test(name);
+    const isXlsx = mime.includes('spreadsheetml') || /\.xlsx$/i.test(name);
+
+    if (isImage) {
+      onProgress('Подготавливаю изображение...', 100);
+      const imageDataUrl = await readBlobAsDataUrl(file);
+      return {
+        kind: 'multimodal',
+        messageText: 'Проанализируй содержимое этого файла',
+        images: [{ dataUrl: imageDataUrl, fileName: file.name || 'image.jpg', mime: mime || 'image/jpeg' }],
+      };
+    }
+
+    if (isPdf) {
+      onProgress('Открываю PDF...', 5);
+      const pdfjsLib = await ensureBriefPdfJsLoaded();
+      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
+      }
+      const bytes = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: bytes });
+      const pdf = await loadingTask.promise;
+      const totalPages = Number(pdf.numPages || 0);
+      if (!totalPages) throw new Error('PDF повреждён или пустой.');
+      const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+      const images = [];
+      for (let index = 0; index < pages.length; index += 1) {
+        const pageNumber = pages[index];
+        onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 90));
+        // eslint-disable-next-line no-await-in-loop
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1.25 });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Не удалось инициализировать canvas для PDF.');
+        // eslint-disable-next-line no-await-in-loop
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        // eslint-disable-next-line no-await-in-loop
+        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.82));
+        if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
+        // eslint-disable-next-line no-await-in-loop
+        const dataUrl = await readBlobAsDataUrl(blob);
+        images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
+      }
+      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images, totalPages, selectedPages: pages };
+    }
+
+    if (isText) {
+      onProgress('Читаю текстовый файл...', 100);
+      const text = await readFileAsText(file);
+      return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
+    }
+
+    if (isDocx) {
+      onProgress('Извлекаю текст из DOCX...', 35);
+      const mammoth = await ensureMammothLoaded();
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      return {
+        kind: 'text',
+        extractedText: String(result && result.value || '').trim(),
+        fileName: file.name || 'document.docx',
+        warning: 'Изображения внутри DOCX не анализируются в Vision режиме.',
+      };
+    }
+
+    if (isXlsx) {
+      onProgress('Извлекаю таблицы из XLSX...', 35);
+      const XLSX = await ensureXlsxLoaded();
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const sheetTexts = (workbook && workbook.SheetNames || []).map((sheetName) => {
+        const sheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        return `# Лист: ${sheetName}\n${csv}`;
+      });
+      return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
+    }
+
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
   }
 
   async function requestTelegramVisionResponse(payload = {}, onStatus) {
@@ -307,42 +460,23 @@
     for (let index = 0; index < selectedFiles.length; index += 1) {
       const currentFile = selectedFiles[index];
       const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-      onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`);
+      onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
       // eslint-disable-next-line no-await-in-loop
       const blobFile = await loadSelectedFileAsBlob(currentFile);
-      const sourceBlob = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
-      if (isImageLike(fileLabel, sourceBlob.type)) {
-        // eslint-disable-next-line no-await-in-loop
-        const dataUrl = await readBlobAsDataUrl(sourceBlob);
-        images.push({ dataUrl, fileName: buildOcrFileName(sourceBlob, fileLabel), mime: sourceBlob.type || 'image/jpeg' });
-      } else if (isPdfLike(fileLabel, sourceBlob.type)) {
-        // eslint-disable-next-line no-await-in-loop
-        const pdfjsLib = await ensurePdfJsLoaded();
-        // eslint-disable-next-line no-await-in-loop
-        const pdf = await pdfjsLib.getDocument({ data: await sourceBlob.arrayBuffer() }).promise;
-        const pageLimit = Math.min(Number(pdf.numPages || 0), 6);
-        for (let page = 1; page <= pageLimit; page += 1) {
-          // eslint-disable-next-line no-await-in-loop
-          const pdfPage = await pdf.getPage(page);
-          const viewport = pdfPage.getViewport({ scale: 1.2 });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.floor(viewport.width));
-          canvas.height = Math.max(1, Math.floor(viewport.height));
-          const ctx = canvas.getContext('2d');
-          if (!ctx) continue;
-          // eslint-disable-next-line no-await-in-loop
-          await pdfPage.render({ canvasContext: ctx, viewport }).promise;
-          // eslint-disable-next-line no-await-in-loop
-          const pageBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
-          if (!pageBlob) continue;
-          // eslint-disable-next-line no-await-in-loop
-          const dataUrl = await readBlobAsDataUrl(pageBlob);
-          images.push({ dataUrl, fileName: `${fileLabel.replace(/\.pdf$/i, '')}-p${page}.jpg`, mime: 'image/jpeg' });
+      const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
+      // eslint-disable-next-line no-await-in-loop
+      const prepared = await buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading'));
+      if (prepared.kind === 'multimodal') {
+        images.push(...(Array.isArray(prepared.images) ? prepared.images : []));
+      } else if (prepared.kind === 'text') {
+        const text = normalize(prepared.extractedText);
+        if (text) {
+          extractedTexts.push({
+            name: prepared.fileName || fileLabel,
+            type: sourceFile.type || 'text/plain',
+            text: text.slice(0, 60000),
+          });
         }
-      } else {
-        // eslint-disable-next-line no-await-in-loop
-        const fallbackText = await requestTelegramOcrByFile(sourceBlob, fileLabel).catch(() => '');
-        if (fallbackText) extractedTexts.push({ name: fileLabel, type: 'text/plain', text: String(fallbackText).slice(0, 20000) });
       }
     }
 
