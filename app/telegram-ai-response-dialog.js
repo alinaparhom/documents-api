@@ -515,7 +515,27 @@
     }
 
     if (!images.length) {
-      throw new Error('Vision режим поддерживает изображения и PDF.');
+      if (!extractedTexts.length) {
+        throw new Error('Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.');
+      }
+      onStatus('Vision: отправляю извлечённый текст (DOCX/TXT) в ИИ...', 'loading');
+      const textOnlyRequest = await postGroqResponseWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'generate_response');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        formData.append('extractedTexts', JSON.stringify(extractedTexts));
+        return formData;
+      });
+      const textOnlyPayload = textOnlyRequest && textOnlyRequest.payload;
+      if (textOnlyRequest && textOnlyRequest.response && textOnlyRequest.response.ok && textOnlyPayload && textOnlyPayload.ok === true) {
+        const textOnlySummary = normalize(textOnlyPayload.response || textOnlyPayload.summary);
+        if (textOnlySummary) {
+          return textOnlySummary;
+        }
+      }
+      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать DOCX/TXT через Vision pipeline.');
     }
 
     const batches = chunkItems(images, VISION_BATCH_SIZE);
