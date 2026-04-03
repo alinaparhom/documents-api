@@ -667,38 +667,58 @@ function handleAnalyzePaidAction(array $env): void
             $ocrText .= ($ocrText !== '' ? "\n\n" : '') . '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $chunk;
         }
 
-        // Добавляем подсказку от пользователя и OCR-текст в первый user message.
-        foreach ($messages as $idx => $message) {
-            if (!is_array($message) || (string)($message['role'] ?? '') !== 'user') {
-                continue;
-            }
-            $content = $message['content'] ?? '';
-            if (is_string($content)) {
-                $extra = $userPrompt !== '' ? $userPrompt : '';
-                if ($ocrText !== '') {
-                    $extra .= ($extra !== '' ? "\n\n" : '') . "OCR текст:\n" . $ocrText;
-                }
-                if ($extra !== '') {
-                    $messages[$idx]['content'] = trim($content . "\n\n" . $extra);
-                }
-            } elseif (is_array($content)) {
-                $extra = $userPrompt !== '' ? $userPrompt : '';
-                if ($ocrText !== '') {
-                    $extra .= ($extra !== '' ? "\n\n" : '') . "OCR текст:\n" . $ocrText;
-                }
-                if ($extra !== '') {
-                    array_unshift($content, ['type' => 'text', 'text' => $extra]);
-                    $messages[$idx]['content'] = $content;
+        // Читаем system prompt из входящего payload (если клиент его прислал).
+        $systemPrompt = '';
+        foreach ($messages as $message) {
+            if (is_array($message) && (string)($message['role'] ?? '') === 'system') {
+                $systemPrompt = trim((string)($message['content'] ?? ''));
+                if ($systemPrompt !== '') {
+                    break;
                 }
             }
-            break;
+        }
+        if ($systemPrompt === '') {
+            $systemPrompt = "Ты — аналитический ИИ-ассистент. Отвечай строго по фактам, в деловом стиле, без эмоций.\n"
+                . "Верни готовый итоговый ответ для отправки, без пересказа и без технических комментариев.";
         }
 
+        // Добавляем user prompt и OCR-текст в последнее user сообщение.
+        $lastUserIndex = -1;
+        foreach ($messages as $idx => $message) {
+            if (is_array($message) && (string)($message['role'] ?? '') === 'user') {
+                $lastUserIndex = (int)$idx;
+            }
+        }
+        if ($lastUserIndex !== -1) {
+            $content = $messages[$lastUserIndex]['content'] ?? '';
+            $extra = $userPrompt !== '' ? $userPrompt : '';
+            if ($ocrText !== '') {
+                $extra .= ($extra !== '' ? "\n\n" : '') . "OCR текст:\n" . $ocrText;
+            }
+            if ($extra !== '') {
+                if (is_string($content)) {
+                    $messages[$lastUserIndex]['content'] = trim($content . "\n\n" . $extra);
+                } elseif (is_array($content)) {
+                    array_unshift($content, ['type' => 'text', 'text' => $extra]);
+                    $messages[$lastUserIndex]['content'] = $content;
+                }
+            }
+        }
+
+        $messagesWithoutSystem = [];
+        foreach ($messages as $message) {
+            if (!is_array($message) || (string)($message['role'] ?? '') !== 'system') {
+                $messagesWithoutSystem[] = $message;
+            }
+        }
         $visionRequestPayload = [
             'model' => (string)($visionPayload['model'] ?? resolveModel($env)),
-            'messages' => $messages,
-            'max_tokens' => (int)($visionPayload['max_tokens'] ?? 1000),
-            'temperature' => (float)($visionPayload['temperature'] ?? 0.3),
+            'messages' => array_merge(
+                [['role' => 'system', 'content' => $systemPrompt]],
+                $messagesWithoutSystem
+            ),
+            'max_tokens' => (int)($visionPayload['max_tokens'] ?? 2000),
+            'temperature' => (float)($visionPayload['temperature'] ?? 0.5),
         ];
         if (isset($visionPayload['top_p'])) {
             $visionRequestPayload['top_p'] = (float)$visionPayload['top_p'];
@@ -1079,7 +1099,7 @@ function handleGenerateResponseAction(array $env): void
     }
 
     $model = resolveModel($env);
-    $systemMessage = "Ты — сотрудник строительной компании, отвечающий за официальную переписку.\n\n"
+    $baseSystemMessage = "Ты — сотрудник строительной компании, отвечающий за официальную переписку.\n\n"
         . "Твоя задача: на основе текста документов подготовить готовый официальный ответ.\n\n"
         . "Правила:\n"
         . "- Не добавляй шапку письма, подпись, должность и служебные реквизиты.\n"
@@ -1087,15 +1107,22 @@ function handleGenerateResponseAction(array $env): void
         . "- Формулируй ответ в деловом и уверенном стиле, без воды.\n"
         . "- Если есть сроки, указывай даты в формате ДД.ММ.ГГГГ.\n"
         . "- Если данных не хватает, запроси конкретные недостающие сведения.\n"
-        . "- Не пиши про OCR, ограничения чтения файла или технические детали.\n";
+        . "- Не пиши про OCR, ограничения чтения файла или технические детали.\n"
+        . "- ВЕРНИ ТОЛЬКО ГОТОВЫЙ ТЕКСТ ОТВЕТА, БЕЗ АНАЛИЗА И ПОЯСНЕНИЙ.\n";
+
+    // Клиент часто передаёт тональность/стиль внутри prompt — учитываем это как доп. системную инструкцию.
+    $systemMessage = $baseSystemMessage;
+    if ($userPrompt !== '') {
+        $systemMessage .= "\nДополнительные требования к стилю от пользователя:\n" . $userPrompt;
+    }
 
     $requestPayload = [
         'model' => $model,
         'temperature' => 0.2,
-        'max_tokens' => 1800,
+        'max_tokens' => 2000,
         'messages' => [
             ['role' => 'system', 'content' => $systemMessage],
-            ['role' => 'user', 'content' => $userPrompt . "\n\nТекст документов:\n\n" . $fullText],
+            ['role' => 'user', 'content' => "Сформируй итоговый готовый ответ по документам.\n\nТекст документов:\n\n" . $fullText],
         ],
     ];
 
