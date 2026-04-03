@@ -2,6 +2,7 @@
   if (!globalScope || typeof document === 'undefined') return;
 
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
+  const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 
   function normalize(value) {
     return String(value || '').trim();
@@ -14,6 +15,89 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function getDocsAiEndpoints() {
+    const configured = normalize(globalScope && globalScope.DOCUMENTS_AI_API_URL);
+    const endpoints = configured ? [configured, ...DOCS_AI_FALLBACK_ENDPOINTS] : DOCS_AI_FALLBACK_ENDPOINTS.slice();
+    return Array.from(new Set(endpoints.filter(Boolean)));
+  }
+
+  async function postDocsAiWithFallback(createFormData) {
+    const endpoints = getDocsAiEndpoints();
+    let lastResult = null;
+    for (let index = 0; index < endpoints.length; index += 1) {
+      const endpoint = endpoints[index];
+      let response = null;
+      let payload = null;
+      try {
+        response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+        payload = await response.json().catch(() => null);
+      } catch (error) {
+        lastResult = { endpoint, error, response, payload };
+        continue;
+      }
+      const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+      if (shouldTryNextEndpoint && index < endpoints.length - 1) {
+        lastResult = { endpoint, response, payload };
+        continue;
+      }
+      return { endpoint, response, payload };
+    }
+    if (lastResult) return lastResult;
+    throw new Error('OCR временно недоступен.');
+  }
+
+  function buildOcrFileName(fileOrBlob, fileName) {
+    const base = normalize(fileName || (fileOrBlob && fileOrBlob.name) || 'ocr-file') || 'ocr-file';
+    if (/\.[a-z0-9]{2,8}$/i.test(base)) return base;
+    const type = normalize(fileOrBlob && fileOrBlob.type).toLowerCase();
+    if (type.includes('pdf')) return `${base}.pdf`;
+    if (type.includes('jpeg') || type.includes('jpg')) return `${base}.jpg`;
+    if (type.includes('png')) return `${base}.png`;
+    if (type.includes('webp')) return `${base}.webp`;
+    if (type.includes('gif')) return `${base}.gif`;
+    if (type.includes('bmp')) return `${base}.bmp`;
+    if (type.includes('tiff') || type.includes('tif')) return `${base}.tiff`;
+    if (type.includes('wordprocessingml.document')) return `${base}.docx`;
+    return base;
+  }
+
+  async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
+    const request = await postDocsAiWithFallback(() => {
+      const formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      formData.append('file', fileOrBlob, buildOcrFileName(fileOrBlob, fileName));
+      return formData;
+    });
+    const response = request && request.response;
+    const payload = request && request.payload;
+    if (!response || !response.ok || !payload || payload.ok !== true) {
+      throw new Error((payload && payload.error) || 'OCR временно недоступен');
+    }
+    const text = normalize(payload && payload.text);
+    if (!text) {
+      throw new Error('OCR не вернул текст');
+    }
+    return text;
+  }
+
+  async function loadSelectedFileAsBlob(file) {
+    if (file && file.fileObject instanceof File) {
+      return file.fileObject;
+    }
+    const url = normalize(file && (file.resolvedUrl || file.url || file.previewUrl));
+    if (!url) {
+      throw new Error('Не найден URL файла.');
+    }
+    const response = await fetch(url, { credentials: 'same-origin' });
+    if (!response.ok) {
+      throw new Error(`Не удалось загрузить файл (${response.status})`);
+    }
+    const blob = await response.blob();
+    const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
+    return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
   }
 
   function ensureStyles() {
@@ -153,13 +237,32 @@
       sendButton.disabled = true;
       meta.innerHTML = '';
       createBubble(messages, prompt || 'Сделай краткий вывод и решение по выбранным файлам.', 'user');
-      status.textContent = 'Отправляем запрос в ИИ...';
+      status.textContent = 'Готовим файлы...';
       const startedAt = Date.now();
 
       try {
+        const extractedTexts = [];
+        for (let index = 0; index < selectedFiles.length; index += 1) {
+          const currentFile = selectedFiles[index];
+          const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
+          status.textContent = `OCR ${index + 1}/${selectedFiles.length}: ${fileLabel}`;
+          const fileBlob = await loadSelectedFileAsBlob(currentFile);
+          const extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
+          if (!normalize(extractedText)) {
+            throw new Error(`OCR не вернул текст для файла: ${fileLabel}`);
+          }
+          extractedTexts.push({
+            name: fileLabel,
+            type: 'text/plain',
+            text: String(extractedText).slice(0, 16000),
+          });
+        }
+
+        status.textContent = 'Отправляем запрос в ИИ...';
         const submitPayload = {
           prompt,
           selectedFiles,
+          extractedTexts,
           task,
           sentAt: new Date().toISOString(),
         };
@@ -176,6 +279,7 @@
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
+          <span class="tg-ai-chat__chip">OCR: ${extractedTexts.length}</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
         `;
         status.textContent = 'Данные переданы.';
