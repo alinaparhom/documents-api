@@ -573,6 +573,30 @@
     throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
   }
 
+  // === Бесплатный ИИ ===
+  async function requestFreeAiResponse(prompt, state, config, timeoutMs) {
+    var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+    return fetchWithTimeout(apiUrl + '?action=ai_response_analyze', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: buildRequestBlueprint(prompt, state, config)
+    }, timeoutMs);
+  }
+
+  // === VIP платный ИИ ===
+  async function requestVipAiResponse(prompt, state, config, timeoutMs) {
+    return postGroqPaidWithFallback(prompt, state, config, timeoutMs);
+  }
+
+  async function requestAiResponseByMode(prompt, state, config, timeoutMs, forcedMode) {
+    var requestMode = forcedMode || resolveRequestMode(state);
+    if (requestMode === 'paid') {
+      return requestVipAiResponse(prompt, state, config, timeoutMs);
+    }
+    return requestFreeAiResponse(prompt, state, config, timeoutMs);
+  }
+
+
   function calculateAiTimeoutMs(prompt, state) {
     var promptTokens = estimateTokens(prompt);
     var filesTokens = Array.isArray(state && state.files)
@@ -2679,17 +2703,7 @@
         }
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
         var requestMode = resolveRequestMode(state);
-        var response = null;
-        if (requestMode === 'paid') {
-          response = await postGroqPaidWithFallback(effectivePrompt, state, config, timeoutMs);
-        } else {
-          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-          response = await fetchWithTimeout(apiUrl + '?action=ai_response_analyze', {
-            method: 'POST',
-            credentials: 'same-origin',
-            body: buildRequestBlueprint(effectivePrompt, state, config)
-          }, timeoutMs);
-        }
+        var response = await requestAiResponseByMode(effectivePrompt, state, config, timeoutMs, requestMode);
 
         var payload = await response.json();
         if (!response.ok || !payload || payload.ok !== true) {
@@ -2747,16 +2761,7 @@
           await new Promise(function (resolve) { setTimeout(resolve, AI_SOFT_RETRY_DELAY_MS); });
           try {
             var secondMode = resolveRequestMode(state);
-            var secondResponse = null;
-            if (secondMode === 'paid') {
-              secondResponse = await postGroqPaidWithFallback(effectivePrompt, state, config, calculateAiTimeoutMs(effectivePrompt, state));
-            } else {
-              secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
-                method: 'POST',
-                credentials: 'same-origin',
-                body: buildRequestBlueprint(effectivePrompt, state, config)
-              }, calculateAiTimeoutMs(effectivePrompt, state));
-            }
+            var secondResponse = await requestAiResponseByMode(effectivePrompt, state, config, calculateAiTimeoutMs(effectivePrompt, state), secondMode);
             var secondPayload = await secondResponse.json();
             if (!secondResponse.ok || !secondPayload || secondPayload.ok !== true) {
               throw error;
