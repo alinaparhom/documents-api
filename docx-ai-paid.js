@@ -617,15 +617,14 @@
     var createElement = options.createElement;
     var closeModal = options.closeModal;
     var escapeHtmlText = options.escapeHtmlText;
-    var handleResponse = options.handleResponse;
-    if (!createElement || !closeModal || !escapeHtmlText || !handleResponse) {
+    if (!createElement || !closeModal || !escapeHtmlText) {
       throw new Error('Недостаточно зависимостей для VIP ИИ модуля.');
     }
 
     var payload = options.payload || {};
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><button class="documents-vip-ai__send" type="button" data-vision-toggle>👁 Vision: OFF</button><select class="documents-vip-ai__input" data-style></select><textarea class="documents-vip-ai__input" data-prompt placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button" data-send>Отправить</button></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__input" data-style></select><textarea class="documents-vip-ai__input" data-prompt placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button" data-send>Отправить</button></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -633,7 +632,6 @@
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
     var styleNode = panel.querySelector('[data-style]');
-    var visionToggle = panel.querySelector('[data-vision-toggle]');
     var inputNode = panel.querySelector('[data-prompt]');
     var sendButton = panel.querySelector('[data-send]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
@@ -643,7 +641,7 @@
     var pendingEntries = pending.map(function(item, index) { return { key: 'pending_' + index, file: item, source: 'pending' }; });
     var fileEntries = linkedEntries.concat(pendingEntries);
     var selectedFiles = {};
-    var visionMode = false;
+    var visionMode = true;
     fileEntries.forEach(function(entry) {
       selectedFiles[entry.key] = true;
     });
@@ -652,13 +650,6 @@
         return '<option value="' + escapeHtmlText(item.value) + '">' + escapeHtmlText('Стиль: ' + item.label) + '</option>';
       }).join('');
     }
-    if (visionToggle) {
-      visionToggle.addEventListener('click', function() {
-        visionMode = !visionMode;
-        visionToggle.textContent = visionMode ? '👁 Vision: ON' : '👁 Vision: OFF';
-      });
-    }
-
     if (!fileEntries.length) {
       filesNode.innerHTML = '<em>Нет вложений</em>';
     } else {
@@ -702,54 +693,15 @@
       pushChat('assistant', '⏳ Обрабатываю запрос...');
       metaNode.innerHTML = '';
       var startedAt = Date.now();
-      var requestContext = {};
-      var sourceContext = payload.context || {};
-      Object.keys(sourceContext).forEach(function(key) {
-        requestContext[key] = sourceContext[key];
-      });
-      var selectedLinked = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
-      var selectedPending = pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
       var selectedEntryObjects = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; })
         .concat(pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }));
-      requestContext.attachedFiles = []
-        .concat(selectedLinked.map(function(file) {
-          return {
-            name: file && file.name ? file.name : '',
-            url: resolveLinkedFileUrl(file),
-            size: file && file.size ? file.size : 0,
-            type: file && file.type ? file.type : ''
-          };
-        }))
-        .concat(selectedPending.map(function(file) {
-          return { name: file.name || '', size: file.size || 0, type: file.type || '' };
-        }));
       chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
-      requestContext.chatHistory = chatHistory.slice(-8);
 
       Promise.resolve()
         .then(function() {
-          if (visionMode) {
-            return requestVipVisionResponse(promptText, selectedEntryObjects, selectedStyle, function(message) {
-              metaNode.innerHTML = '<span class="documents-vip-ai__chip">' + escapeHtmlText(message) + '</span>';
-            });
-          }
-          var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
-          function tryEndpoint(index) {
-            if (index >= paidEndpoints.length) {
-              throw new Error('Не удалось подключиться к VIP API. Проверьте endpoint api-groq-paid.php.');
-            }
-            return buildVipRequestFormData(payload, promptText, selectedLinked, selectedPending, requestContext, selectedStyle)
-              .then(function(formData) {
-                return fetch(paidEndpoints[index], { method: 'POST', body: formData, credentials: 'same-origin' });
-              })
-              .then(function(response) {
-                if ((response.status === 404 || response.status === 405) && index < paidEndpoints.length - 1) {
-                  return tryEndpoint(index + 1);
-                }
-                return response;
-              });
-          }
-          return tryEndpoint(0).then(handleResponse);
+          return requestVipVisionResponse(promptText, selectedEntryObjects, selectedStyle, function(message) {
+            metaNode.innerHTML = '<span class="documents-vip-ai__chip">' + escapeHtmlText(message) + '</span>';
+          });
         })
         .then(function(data) {
           var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
@@ -757,7 +709,7 @@
           chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
           var elapsed = Date.now() - startedAt;
           var tokens = data && data.tokensUsed ? data.tokensUsed : '—';
-          var mode = data && data.mode ? String(data.mode) : (visionMode ? 'vision' : 'paid');
+          var mode = data && data.mode ? String(data.mode) : 'vision';
           metaNode.innerHTML = '<span class="documents-vip-ai__chip">Режим: ' + escapeHtmlText(mode) + '</span><span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>';
           inputNode.value = '';
         })
