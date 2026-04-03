@@ -473,7 +473,7 @@
         if (updateStatus) updateStatus('Vision: объединяю результаты...');
         return postWithFallback(function() {
           var formData = new FormData();
-          formData.append('action', 'analyze_paid');
+          formData.append('action', 'generate_response');
           formData.append('mode', 'paid');
           formData.append('vision_mode', '1');
           formData.append('prompt', [preparedPrompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));

@@ -708,7 +708,7 @@
       onStatus('Vision: объединяю результаты всех блоков...', 'loading');
       const mergeRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
-        formData.append('action', 'analyze_paid');
+        formData.append('action', 'generate_response');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
