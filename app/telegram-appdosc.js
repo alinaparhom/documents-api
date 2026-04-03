@@ -12,6 +12,149 @@ const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v1';
 
 let aiDialogLoader = null;
 const taskAttachmentPreviewCache = new Map();
+const taskPdfBinaryCache = new Map();
+const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
+const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
+
+function normalizePdfBinaryCacheKey(url) {
+  const normalized = normalizeValue(url);
+  if (!normalized) {
+    return '';
+  }
+  try {
+    const parsed = new URL(normalized, window.location.origin);
+    parsed.searchParams.delete('v');
+    parsed.hash = '';
+    return parsed.toString();
+  } catch (error) {
+    return normalized.replace(/([?&])v=\d+(&)?/g, (match, prefix, tail) => (tail ? prefix : '')).replace(/[?&]$/, '');
+  }
+}
+
+function compactTaskPdfBinaryCache() {
+  if (!taskPdfBinaryCache.size) {
+    return;
+  }
+  const now = Date.now();
+  taskPdfBinaryCache.forEach((entry, key) => {
+    const createdAt = entry && typeof entry.createdAt === 'number' ? entry.createdAt : 0;
+    if (!createdAt || now - createdAt > TASK_PDF_BINARY_CACHE_TTL_MS) {
+      taskPdfBinaryCache.delete(key);
+    }
+  });
+  if (taskPdfBinaryCache.size <= TASK_PDF_BINARY_CACHE_MAX_ENTRIES) {
+    return;
+  }
+  const ordered = Array.from(taskPdfBinaryCache.entries())
+    .sort((a, b) => {
+      const aAt = a[1] && typeof a[1].lastAccessedAt === 'number' ? a[1].lastAccessedAt : 0;
+      const bAt = b[1] && typeof b[1].lastAccessedAt === 'number' ? b[1].lastAccessedAt : 0;
+      return aAt - bAt;
+    });
+  while (ordered.length > TASK_PDF_BINARY_CACHE_MAX_ENTRIES) {
+    const oldest = ordered.shift();
+    if (oldest && oldest[0]) {
+      taskPdfBinaryCache.delete(oldest[0]);
+    }
+  }
+}
+
+function getTaskPdfBinaryCacheEntry(url) {
+  const key = normalizePdfBinaryCacheKey(url);
+  if (!key) {
+    return null;
+  }
+  const entry = taskPdfBinaryCache.get(key);
+  if (!entry) {
+    return null;
+  }
+  const now = Date.now();
+  if (entry.createdAt && now - entry.createdAt > TASK_PDF_BINARY_CACHE_TTL_MS) {
+    taskPdfBinaryCache.delete(key);
+    return null;
+  }
+  entry.lastAccessedAt = now;
+  return entry;
+}
+
+function setTaskPdfBinaryCacheEntry(url, entry) {
+  const key = normalizePdfBinaryCacheKey(url);
+  if (!key || !entry || typeof entry !== 'object') {
+    return null;
+  }
+  const now = Date.now();
+  const nextEntry = {
+    ...entry,
+    createdAt: entry.createdAt || now,
+    lastAccessedAt: now,
+  };
+  taskPdfBinaryCache.set(key, nextEntry);
+  compactTaskPdfBinaryCache();
+  return nextEntry;
+}
+
+async function fetchPdfBinaryForViewer(previewUrl) {
+  const sameOrigin = isSameOriginUrl(previewUrl);
+  const cachedEntry = getTaskPdfBinaryCacheEntry(previewUrl);
+  if (cachedEntry && cachedEntry.arrayBuffer) {
+    return { ...cachedEntry, fromCache: true, sameOrigin };
+  }
+  if (cachedEntry && cachedEntry.promise) {
+    const awaited = await cachedEntry.promise;
+    return { ...awaited, fromCache: true, sameOrigin };
+  }
+
+  const fetchStartedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+  const requestPromise = fetch(previewUrl, {
+    credentials: sameOrigin ? 'include' : 'omit',
+    cache: sameOrigin ? 'default' : 'no-store',
+  }).then(async (response) => {
+    const fetchRespondedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
+    if (!response.ok) {
+      const error = new Error(`http_${response.status}`);
+      error.responseStatus = response.status;
+      throw error;
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    const result = {
+      status: response.status,
+      statusText: response.statusText,
+      redirected: response.redirected,
+      responseType: response.type,
+      responseUrl: response.url || previewUrl,
+      headers: collectResponseHeaders(response),
+      contentType: response.headers ? response.headers.get('content-type') : '',
+      contentLength: response.headers ? response.headers.get('content-length') : '',
+      fetchDurationMs: Math.max(0, Math.round(fetchRespondedAt - fetchStartedAt)),
+      sameOrigin,
+      cacheMode: sameOrigin ? 'default' : 'no-store',
+      resourceTiming: getFetchResourceTimingSample(response.url || previewUrl),
+      connectionInfo: getConnectionDiagnostics(),
+      arrayBuffer,
+      byteLength: arrayBuffer ? arrayBuffer.byteLength : 0,
+    };
+    setTaskPdfBinaryCacheEntry(previewUrl, result);
+    return result;
+  }).finally(() => {
+    const key = normalizePdfBinaryCacheKey(previewUrl);
+    if (!key) {
+      return;
+    }
+    const current = taskPdfBinaryCache.get(key);
+    if (current && current.promise) {
+      const { promise, ...rest } = current;
+      taskPdfBinaryCache.set(key, rest);
+    }
+  });
+
+  setTaskPdfBinaryCacheEntry(previewUrl, { promise: requestPromise });
+  const loaded = await requestPromise;
+  return { ...loaded, fromCache: false, sameOrigin };
+}
 
 function buildTaskAttachmentPreviewCacheKey(task, file) {
   const taskId = normalizeValue(task && task.id);
@@ -4778,6 +4921,26 @@ function isHeicFile(file) {
   return mime.includes('heic') || mime.includes('heif');
 }
 
+function isPdfFile(file) {
+  if (!file) {
+    return false;
+  }
+  const nameCandidate = normalizeValueString(file.name)
+    || normalizeValueString(file.originalName)
+    || normalizeValueString(file.storedName)
+    || normalizeValueString(file.url)
+    || normalizeValueString(file.previewUrl);
+  const extension = getFileExtension(nameCandidate);
+  if (extension === 'pdf') {
+    return true;
+  }
+  const mimeCandidate = normalizeValueString(file.type) || normalizeValueString(file.mimeType);
+  if (!mimeCandidate) {
+    return false;
+  }
+  return mimeCandidate.toLowerCase().includes('pdf');
+}
+
 function resolveFileFetchUrl(file) {
   const source = file.resolvedUrl || file.url || file.previewUrl || '';
   const resolved = resolveDocumentUrl(source);
@@ -4942,23 +5105,76 @@ function drawAttachmentHeader(page, fonts, colors, file, options) {
   }
 }
 
-async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, file) {
+async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, file, task = null) {
   if (!file) {
     return;
   }
   if (isOfficeFile(file)) {
+    logClientEvent('task_view_pdf_diagnostics', {
+      ...buildTaskViewLogDetails(task),
+      prefix: 'Просмотр2',
+      step: 'attachment_preview_skip_office',
+      details: {
+        fileName: getAttachmentName(file),
+      },
+      source: 'attachment_preview',
+      activeFile: getAttachmentName(file),
+    }, { keepalive: true });
     return;
   }
   const resolvedUrl = resolveFileFetchUrl(file);
   if (!resolvedUrl) {
+    logClientEvent('task_view_pdf_diagnostics', {
+      ...buildTaskViewLogDetails(task),
+      prefix: 'Просмотр2',
+      step: 'attachment_preview_missing_url',
+      details: {
+        fileName: getAttachmentName(file),
+      },
+      source: 'attachment_preview',
+      activeFile: getAttachmentName(file),
+    }, { keepalive: true });
     return;
   }
+  const startedAt = performance.now();
+  const fileName = getAttachmentName(file);
+  let fetchStartedAt = 0;
+  let fetchDoneAt = 0;
+  let bufferDoneAt = 0;
+  let processStartedAt = 0;
+  let processDoneAt = 0;
+  const reportTiming = (result, extra = {}) => {
+    const totalMs = Math.max(0, Math.round(performance.now() - startedAt));
+    const fetchMs = fetchDoneAt > fetchStartedAt ? Math.max(0, Math.round(fetchDoneAt - fetchStartedAt)) : 0;
+    const bufferMs = bufferDoneAt > fetchDoneAt ? Math.max(0, Math.round(bufferDoneAt - fetchDoneAt)) : 0;
+    const processMs = processDoneAt > processStartedAt ? Math.max(0, Math.round(processDoneAt - processStartedAt)) : 0;
+    logClientEvent('task_view_pdf_diagnostics', {
+      ...buildTaskViewLogDetails(task),
+      prefix: 'Просмотр2',
+      step: 'attachment_preview_timing',
+      details: {
+        result,
+        fileName,
+        resolvedUrl,
+        totalMs,
+        fetchMs,
+        bufferMs,
+        processMs,
+        ...extra,
+      },
+      source: 'attachment_preview',
+      activeFile: fileName,
+    }, { keepalive: true });
+  };
   try {
+    fetchStartedAt = performance.now();
     const response = await fetch(resolvedUrl, { credentials: 'include', cache: 'no-store' });
+    fetchDoneAt = performance.now();
     if (!response.ok) {
       throw new Error(`Статус ${response.status}`);
     }
     const buffer = await response.arrayBuffer();
+    bufferDoneAt = performance.now();
     const mimeType = response.headers && response.headers.get
       ? (response.headers.get('Content-Type') || '').toLowerCase()
       : '';
@@ -4967,6 +5183,7 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
     const isPng = mimeType.includes('png') || extension === 'png';
     const isJpeg = mimeType.includes('jpeg') || mimeType.includes('jpg') || extension === 'jpg' || extension === 'jpeg';
     const isTxt = mimeType.includes('text/plain') || extension === 'txt';
+    processStartedAt = performance.now();
 
     if (isPdf) {
       const attachment = await PDFLib.PDFDocument.load(buffer);
@@ -4974,6 +5191,13 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
       const copied = await pdfDoc.copyPages(attachment, indices);
       copied.forEach((page) => {
         pdfDoc.addPage(page);
+      });
+      processDoneAt = performance.now();
+      reportTiming('ok_pdf', {
+        contentType: mimeType || 'unknown',
+        extension,
+        bytes: buffer.byteLength || 0,
+        pages: copied.length,
       });
     } else if (isPng || isJpeg) {
       const imagePage = pdfDoc.addPage([595.28, 841.89]);
@@ -4999,16 +5223,39 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
         width: scaled.width,
         height: scaled.height,
       });
+      processDoneAt = performance.now();
+      reportTiming('ok_image', {
+        contentType: mimeType || 'unknown',
+        extension,
+        bytes: buffer.byteLength || 0,
+        imageType: isPng ? 'png' : 'jpeg',
+      });
     } else if (isTxt) {
       const textContent = decodeTextAttachmentBuffer(buffer);
       buildAttachmentTextPage(pdfDoc, fonts, colors, margin, file, textContent);
+      processDoneAt = performance.now();
+      reportTiming('ok_txt', {
+        contentType: mimeType || 'unknown',
+        extension,
+        bytes: buffer.byteLength || 0,
+      });
     } else {
       buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file,
         'Формат вложения не поддерживается в предпросмотре.', resolvedUrl);
+      processDoneAt = performance.now();
+      reportTiming('unsupported_format', {
+        contentType: mimeType || 'unknown',
+        extension,
+        bytes: buffer.byteLength || 0,
+      });
     }
   } catch (error) {
     buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file,
       `Не удалось загрузить файл: ${error.message}`, resolvedUrl);
+    processDoneAt = performance.now();
+    reportTiming('error', {
+      error: error && error.message ? error.message : String(error),
+    });
   }
 }
 
@@ -5220,15 +5467,19 @@ async function generateTaskAttachmentPdf(task, file) {
   if (!file) {
     throw new Error('Файл не найден.');
   }
+  const generationStartedAt = performance.now();
   const PDFLib = await ensureMiniAppPdfLib();
   if (!PDFLib || !PDFLib.PDFDocument) {
     throw new Error('PDF библиотека недоступна.');
   }
+  const pdfLibReadyAt = performance.now();
   const { pdfDoc, fonts } = await createPdfDocumentWithFonts(PDFLib);
+  const docReadyAt = performance.now();
   const colors = getPdfThemeColors(PDFLib);
   const margin = 48;
 
-  await appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, file);
+  await appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, file, task);
+  const pagesReadyAt = performance.now();
   if (pdfDoc.getPageCount() === 0) {
     buildAttachmentErrorPage(
       pdfDoc,
@@ -5242,6 +5493,24 @@ async function generateTaskAttachmentPdf(task, file) {
     );
   }
   const pdfBytes = await pdfDoc.save();
+  const savedAt = performance.now();
+  logClientEvent('task_view_pdf_diagnostics', {
+    ...buildTaskViewLogDetails(task),
+    prefix: 'Просмотр2',
+    step: 'attachment_pdf_generate_timing',
+    details: {
+      fileName: getAttachmentName(file),
+      totalMs: Math.max(0, Math.round(savedAt - generationStartedAt)),
+      pdfLibLoadMs: Math.max(0, Math.round(pdfLibReadyAt - generationStartedAt)),
+      pdfDocSetupMs: Math.max(0, Math.round(docReadyAt - pdfLibReadyAt)),
+      appendPagesMs: Math.max(0, Math.round(pagesReadyAt - docReadyAt)),
+      saveMs: Math.max(0, Math.round(savedAt - pagesReadyAt)),
+      outputBytes: pdfBytes && (pdfBytes.length || pdfBytes.byteLength) ? (pdfBytes.length || pdfBytes.byteLength) : 0,
+      pages: typeof pdfDoc.getPageCount === 'function' ? pdfDoc.getPageCount() : 0,
+    },
+    source: 'attachment_preview',
+    activeFile: getAttachmentName(file),
+  }, { keepalive: true });
   return new Blob([pdfBytes], { type: 'application/pdf' });
 }
 
@@ -6227,54 +6496,36 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
   try {
     updateViewerLoaderStep('Скачивание PDF…', 45);
     docLoadStep('fetch pdf начало');
-    const fetchStartedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-      ? performance.now()
-      : Date.now();
-    const sameOrigin = isSameOriginUrl(previewUrl);
-    const response = await fetch(previewUrl, {
-      credentials: sameOrigin ? 'include' : 'omit',
-      cache: sameOrigin ? 'default' : 'no-store',
-    });
-    const fetchRespondedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-      ? performance.now()
-      : Date.now();
-    const contentType = response.headers ? response.headers.get('content-type') : '';
-    const contentLength = response.headers ? response.headers.get('content-length') : '';
-    docLoadStep('fetch pdf ответ: ' + response.status);
-
-    if (!response.ok) {
-      const error = new Error(`http_${response.status}`);
-      logClientEvent('task_view_fetch_error', {
-        ...baseDetails,
-        status: response.status,
-        statusText: response.statusText,
-      });
-      throw error;
-    }
+    const fetchPayload = await fetchPdfBinaryForViewer(previewUrl);
+    const contentType = fetchPayload.contentType || '';
+    const contentLength = fetchPayload.contentLength || '';
+    docLoadStep(`fetch pdf ответ: ${fetchPayload.status}${fetchPayload.fromCache ? ' (cache)' : ''}`);
 
     logClientEvent('task_view_fetch_success', {
       ...baseDetails,
-      status: response.status,
+      status: fetchPayload.status,
       contentType: contentType || 'unknown',
       contentLength: contentLength || 'unknown',
+      fromCache: Boolean(fetchPayload.fromCache),
     });
 
     updateViewerLoaderStep('Чтение данных…', 60);
-    docLoadStep('чтение blob');
-    const responseHeaders = collectResponseHeaders(response);
-    const resourceTiming = getFetchResourceTimingSample(response.url || previewUrl);
-    const connectionInfo = getConnectionDiagnostics();
-    const fetchDurationMs = Math.max(0, Math.round(fetchRespondedAt - fetchStartedAt));
+    docLoadStep(fetchPayload.fromCache ? 'используется cache' : 'чтение arrayBuffer');
+    const responseHeaders = fetchPayload.headers || {};
+    const resourceTiming = fetchPayload.resourceTiming || null;
+    const connectionInfo = fetchPayload.connectionInfo || null;
+    const fetchDurationMs = typeof fetchPayload.fetchDurationMs === 'number' ? fetchPayload.fetchDurationMs : 0;
     logViewerDebugDeep('inline:fetch_headers', {
-      url: response.url || previewUrl,
-      status: response.status,
-      statusText: response.statusText,
-      redirected: response.redirected,
-      responseType: response.type,
+      url: fetchPayload.responseUrl || previewUrl,
+      status: fetchPayload.status,
+      statusText: fetchPayload.statusText,
+      redirected: fetchPayload.redirected,
+      responseType: fetchPayload.responseType,
       headers: responseHeaders,
       fetchDurationMs,
-      sameOrigin,
-      cacheMode: sameOrigin ? 'default' : 'no-store',
+      sameOrigin: fetchPayload.sameOrigin,
+      cacheMode: fetchPayload.cacheMode || 'default',
+      fromCache: Boolean(fetchPayload.fromCache),
       resourceTiming,
       connectionInfo,
     });
@@ -6282,39 +6533,42 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
       prefix: 'Просмотр2',
       step: 'inline:fetch_diagnostics',
       details: {
-        url: response.url || previewUrl,
-        status: response.status,
-        statusText: response.statusText,
-        redirected: response.redirected,
-        responseType: response.type,
+        url: fetchPayload.responseUrl || previewUrl,
+        status: fetchPayload.status,
+        statusText: fetchPayload.statusText,
+        redirected: fetchPayload.redirected,
+        responseType: fetchPayload.responseType,
         headers: responseHeaders,
         fetchDurationMs,
-        sameOrigin,
-        cacheMode: sameOrigin ? 'default' : 'no-store',
+        sameOrigin: fetchPayload.sameOrigin,
+        cacheMode: fetchPayload.cacheMode || 'default',
+        fromCache: Boolean(fetchPayload.fromCache),
         resourceTiming,
         connectionInfo,
       },
       source: 'fetch',
       activeFile: fileName || '',
     }, { keepalive: true });
-    const blob = await response.blob();
-    docLoadStep('blob готов: ' + blob.size + ' байт');
+    const arrayBuffer = fetchPayload.arrayBuffer;
+    const byteLength = typeof fetchPayload.byteLength === 'number'
+      ? fetchPayload.byteLength
+      : (arrayBuffer ? arrayBuffer.byteLength : 0);
+    docLoadStep('arrayBuffer готов: ' + byteLength + ' байт');
     updateViewerLoaderStep('Подготовка рендеринга…', 70);
-    const arrayBuffer = await blob.arrayBuffer();
-    docLoadStep('arrayBuffer готов');
     const viewer = pdfViewerInstance;
     const viewerReady = viewer && typeof viewer.isReady === 'function' ? viewer.isReady() : false;
     const shouldPassData = true;
     logClientEvent('task_view_inline_headers', {
       ...baseDetails,
-      status: response.status,
-      statusText: response.statusText,
-      redirected: response.redirected,
-      responseType: response.type,
-      responseUrl: response.url || previewUrl,
+      status: fetchPayload.status,
+      statusText: fetchPayload.statusText,
+      redirected: fetchPayload.redirected,
+      responseType: fetchPayload.responseType,
+      responseUrl: fetchPayload.responseUrl || previewUrl,
       headers: responseHeaders,
-      blobType: blob.type || 'unknown',
-      blobSize: blob.size,
+      blobType: contentType || 'unknown',
+      blobSize: byteLength,
+      fromCache: Boolean(fetchPayload.fromCache),
     });
 
     if (viewer) {
@@ -6346,7 +6600,7 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
         url: previewUrl,
         fileName: fileName || '',
         options: effectiveViewerOptions,
-        blob: { type: blob.type || 'unknown', size: blob.size },
+        blob: { type: contentType || 'unknown', size: byteLength },
       });
       const mode = viewer.open(
         previewUrl,
@@ -6384,16 +6638,25 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
           ...baseDetails,
           mode,
           contentType: contentType || 'unknown',
-          size: blob.size,
+          size: byteLength,
+          fromCache: Boolean(fetchPayload.fromCache),
         });
-        logViewerDebug('inline:success', { mode, contentType, size: blob.size });
-        logViewerDebugDeep('inline:viewer_mode', { mode, contentType, size: blob.size });
+        logViewerDebug('inline:success', { mode, contentType, size: byteLength, fromCache: Boolean(fetchPayload.fromCache) });
+        logViewerDebugDeep('inline:viewer_mode', { mode, contentType, size: byteLength, fromCache: Boolean(fetchPayload.fromCache) });
         return 'inline';
       }
     }
 
     throw new Error('inline_viewer_unavailable');
   } catch (error) {
+    const status = typeof error.responseStatus === 'number' ? error.responseStatus : 0;
+    if (status) {
+      logClientEvent('task_view_fetch_error', {
+        ...baseDetails,
+        status,
+        statusText: error && error.message ? error.message : '',
+      });
+    }
     logClientEvent('task_view_inline_error', {
       ...baseDetails,
       error: error && error.message ? error.message : String(error),
@@ -7303,6 +7566,7 @@ async function openViewerFile(file, task, options = {}) {
   const isSummary = Boolean(file && file.isSummary);
   const isOffice = isOfficeFile(file);
   const isHeic = isHeicFile(file);
+  const isPdf = isPdfFile(file);
   let preview = null;
   let rawUrl = '';
   let fileName = '';
@@ -7362,13 +7626,25 @@ async function openViewerFile(file, task, options = {}) {
     });
     updateViewerLoaderStep('Подготовка документа…', 10);
     docLoadStep('подготовка вложения');
-    preview = await ensureTaskAttachmentPreview(task, file);
-    logTaskViewStage(task, 'open_viewer_prepare_attachment_done', {
-      fileName: preview && preview.fileName ? preview.fileName : '',
-    });
-    rawUrl = (file && file.previewBlobUrl) || preview.previewUrl;
-    fileName = preview.fileName;
-    docLoadStep('вложение готово');
+    const directPdfUrl = isPdf ? resolveFileFetchUrl(file) : '';
+    if (isPdf && directPdfUrl) {
+      rawUrl = directPdfUrl;
+      fileName = getAttachmentName(file);
+      file.previewUrl = directPdfUrl;
+      file.resolvedUrl = directPdfUrl;
+      logTaskViewStage(task, 'open_viewer_prepare_attachment_direct_pdf', {
+        fileName,
+      });
+      docLoadStep('вложение готово (pdf напрямую)');
+    } else {
+      preview = await ensureTaskAttachmentPreview(task, file);
+      logTaskViewStage(task, 'open_viewer_prepare_attachment_done', {
+        fileName: preview && preview.fileName ? preview.fileName : '',
+      });
+      rawUrl = (file && file.previewBlobUrl) || preview.previewUrl;
+      fileName = preview.fileName;
+      docLoadStep('вложение готово');
+    }
   }
 
   updateViewerLoaderStep('Загрузка файла…', 30);
@@ -7459,6 +7735,40 @@ async function openViewerFile(file, task, options = {}) {
   }
 
   throw new Error('viewer_open_failed');
+}
+
+function warmupTaskPdfFiles(task, files, skipFile) {
+  if (!Array.isArray(files) || files.length < 2) {
+    return;
+  }
+  const queue = files.filter((file) => file && file !== skipFile && isPdfFile(file));
+  if (!queue.length) {
+    return;
+  }
+  const maxWarmups = 3;
+  queue.slice(0, maxWarmups).forEach((file, index) => {
+    const rawUrl = resolveFileFetchUrl(file);
+    if (!rawUrl) {
+      return;
+    }
+    const plannedDelayMs = 180 + index * 140;
+    window.setTimeout(() => {
+      fetchPdfBinaryForViewer(rawUrl)
+        .then((payload) => {
+          logTaskViewStage(task, 'pdf_warmup_ready', {
+            fileName: getAttachmentName(file, index + 1),
+            size: payload && typeof payload.byteLength === 'number' ? payload.byteLength : 0,
+            fromCache: Boolean(payload && payload.fromCache),
+          });
+        })
+        .catch((error) => {
+          logTaskViewStage(task, 'pdf_warmup_error', {
+            fileName: getAttachmentName(file, index + 1),
+            error: error && error.message ? error.message : String(error),
+          });
+        });
+    }, plannedDelayMs);
+  });
 }
 
 async function handleViewerTabClick(index, task) {
@@ -7642,6 +7952,7 @@ async function handleCardView(button, task) {
     });
     docLoadStep('открытие файла');
     await openViewerFile(firstFile, task, { notify: true, hasMultiple: files.length > 1 });
+    warmupTaskPdfFiles(task, files, firstFile);
     logViewWatchEvent('task_view_watch_open_success', task, {
       firstFileName: firstFile && firstFile.name ? firstFile.name : '',
       firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
