@@ -215,26 +215,33 @@ export function createTelegramBriefAi(deps = {}) {
     const fileUrl = normalizeValue(source && source.url);
     if (source && source.fileObject instanceof File) {
       fileForVip = source.fileObject;
-    } else {
-      if (!fileUrl) {
-        throw new Error('Не найден URL файла для VIP режима.');
-      }
+    }
+    if (!fileForVip && !fileUrl) {
+      throw new Error('Не найден файл или URL для VIP режима.');
+    }
+
+    let extractedText = '';
+    let ocrUrlError = null;
+    let ocrFileError = null;
+    if (fileUrl) {
       try {
-        const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
-        if (!fetched.ok) {
-          throw new Error(`Не удалось загрузить файл (${fetched.status})`);
-        }
-        const blob = await fetched.blob();
-        fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-      } catch (_) {
-        fileForVip = null;
+        extractedText = await requestTelegramOcrByUrl(fileUrl);
+      } catch (error) {
+        ocrUrlError = error;
       }
     }
-    const extractedText = fileForVip
-      ? await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName)
-      : await requestTelegramOcrByUrl(fileUrl);
+    if (!extractedText && fileForVip) {
+      try {
+        extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
+      } catch (error) {
+        ocrFileError = error;
+      }
+    }
     if (!String(extractedText || '').trim()) {
-      throw new Error('OCR не вернул текст для выбранного файла.');
+      const urlMessage = ocrUrlError instanceof Error ? ocrUrlError.message : '';
+      const fileMessage = ocrFileError instanceof Error ? ocrFileError.message : '';
+      const reason = [urlMessage, fileMessage].filter(Boolean).join(' | ');
+      throw new Error(reason || 'OCR не вернул текст для выбранного файла.');
     }
     const extractedTextsPayload = buildExtractedTextsPayload(fileName, extractedText);
     if (!extractedTextsPayload.length) {
