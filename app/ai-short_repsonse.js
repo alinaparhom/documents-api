@@ -220,6 +220,21 @@ export function createTelegramBriefAi(deps = {}) {
       throw new Error('Не найден файл или URL для VIP режима.');
     }
 
+    if (fileUrl) {
+      const remoteRequest = await postGroqPaidWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('file_urls', JSON.stringify([{ url: fileUrl, name: fileName }]));
+        return formData;
+      });
+      const remoteResponse = remoteRequest && remoteRequest.response;
+      const remotePayload = remoteRequest && remoteRequest.payload;
+      if (remoteResponse && remoteResponse.ok && remotePayload && remotePayload.ok === true && hasMeaningfulTelegramBriefPayload(remotePayload)) {
+        return remotePayload;
+      }
+    }
+
     let extractedText = '';
     let ocrUrlError = null;
     let ocrFileError = null;

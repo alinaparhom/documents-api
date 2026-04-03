@@ -803,6 +803,12 @@ function handleGenerateSummaryAction(array $env): void
         normalizeUploadedFiles('file'),
         normalizeUploadedFiles('attachments')
     );
+    if (!$decodedExtractedTexts && !$uploadedFiles) {
+        $remoteFiles = normalizeRemoteFilesFromPost();
+        if ($remoteFiles) {
+            $uploadedFiles = downloadRemoteFiles($remoteFiles);
+        }
+    }
     if (!$decodedExtractedTexts && $uploadedFiles) {
         $decodedExtractedTexts = buildExtractedTextsFromFiles($uploadedFiles);
     }
