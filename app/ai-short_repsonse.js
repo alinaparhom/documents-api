@@ -194,9 +194,21 @@ export function createTelegramBriefAi(deps = {}) {
         fileForVip = null;
       }
     }
-    const extractedText = fileForVip
-      ? await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName)
-      : await requestTelegramOcrByUrl(fileUrl);
+    let extractedText = '';
+    if (fileUrl) {
+      try {
+        extractedText = await requestTelegramOcrByUrl(fileUrl);
+      } catch (_) {
+        extractedText = '';
+      }
+    }
+    if (!String(extractedText || '').trim()) {
+      if (fileForVip) {
+        extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
+      } else {
+        extractedText = await requestTelegramOcrByUrl(fileUrl);
+      }
+    }
     if (!String(extractedText || '').trim()) {
       throw new Error('OCR не вернул текст для выбранного файла.');
     }
