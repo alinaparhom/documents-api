@@ -123,6 +123,30 @@
     return text;
   }
 
+  async function requestTelegramOcrByUrl(fileUrl) {
+    const normalizedUrl = normalize(fileUrl);
+    if (!normalizedUrl) {
+      throw new Error('URL файла для OCR не найден');
+    }
+    const request = await postDocsAiWithFallback(() => {
+      const formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      formData.append('file_url', normalizedUrl);
+      return formData;
+    });
+    const response = request && request.response;
+    const payload = request && request.payload;
+    if (!response || !response.ok || !payload || payload.ok !== true) {
+      throw new Error((payload && payload.error) || 'OCR временно недоступен');
+    }
+    const text = normalize(payload && payload.text);
+    if (!text) {
+      throw new Error('OCR не вернул текст');
+    }
+    return text;
+  }
+
   async function requestTelegramAiResponse(payload = {}) {
     const request = await postDocsAiWithFallback(() => {
       const formData = new FormData();
@@ -342,8 +366,17 @@
           const currentFile = selectedFiles[index];
           const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
           status.textContent = `OCR ${index + 1}/${selectedFiles.length}: ${fileLabel}`;
-          const fileBlob = await loadSelectedFileAsBlob(currentFile);
-          const extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
+          let extractedText = '';
+          try {
+            const fileBlob = await loadSelectedFileAsBlob(currentFile);
+            extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
+          } catch (blobError) {
+            const fallbackUrl = buildFileUrlCandidates(currentFile)[0] || '';
+            if (!fallbackUrl) {
+              throw blobError;
+            }
+            extractedText = await requestTelegramOcrByUrl(fallbackUrl);
+          }
           if (!normalize(extractedText)) {
             throw new Error(`OCR не вернул текст для файла: ${fileLabel}`);
           }

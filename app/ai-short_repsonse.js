@@ -171,6 +171,28 @@ export function createTelegramBriefAi(deps = {}) {
     return text;
   }
 
+  async function requestTelegramOcrByUrl(fileUrl) {
+    const normalizedUrl = normalizeValue(fileUrl);
+    if (!normalizedUrl) {
+      throw new Error('URL файла для OCR не найден');
+    }
+    const request = await postDocsOcrWithFallback(() => {
+      const formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      formData.append('file_url', normalizedUrl);
+      return formData;
+    });
+    const response = request && request.response;
+    const payload = request && request.payload;
+    if (!response || !response.ok || !payload || payload.ok !== true) {
+      throw new Error((payload && payload.error) || 'OCR временно недоступен');
+    }
+    const text = payload && payload.text ? String(payload.text).trim() : '';
+    if (!text) throw new Error('OCR не вернул текст');
+    return text;
+  }
+
   async function postDocsOcrWithFallback(createFormData) {
     let lastResult = null;
     for (let index = 0; index < DOCS_AI_FALLBACK_ENDPOINTS.length; index += 1) {
@@ -210,30 +232,40 @@ export function createTelegramBriefAi(deps = {}) {
   async function requestTelegramBriefAiDirectWithAttachment(source) {
     const fileName = normalizeValue(source && source.label) || 'brief-file';
     let fileForVip = null;
+    const fileUrl = normalizeValue(source && source.url);
     if (source && source.fileObject instanceof File) {
       fileForVip = source.fileObject;
     } else {
-      const fileUrl = normalizeValue(source && source.url);
       if (!fileUrl) {
         throw new Error('Не найден URL файла для VIP режима.');
       }
-      const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
-      if (!fetched.ok) {
-        throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+      try {
+        const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+        if (!fetched.ok) {
+          throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+        }
+        const blob = await fetched.blob();
+        fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+      } catch (_) {
+        fileForVip = null;
       }
-      const blob = await fetched.blob();
-      fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
     }
-    const extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
+    const extractedText = fileForVip
+      ? await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName)
+      : await requestTelegramOcrByUrl(fileUrl);
     if (!String(extractedText || '').trim()) {
       throw new Error('OCR не вернул текст для выбранного файла.');
     }
-    fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
+    if (fileForVip) {
+      fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
+    }
     const request = await postGroqPaidWithFallback(() => {
       const formData = new FormData();
       formData.append('action', 'generate_summary');
       formData.append('mode', 'paid');
-      formData.append('files', fileForVip, fileForVip.name || fileName);
+      if (fileForVip) {
+        formData.append('files', fileForVip, fileForVip.name || fileName);
+      }
       formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 16000) }]));
       return formData;
     });
