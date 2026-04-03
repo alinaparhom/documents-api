@@ -67,6 +67,42 @@ function getRuntimeEnv(): array
     );
 }
 
+function getJsonRequestBody(): array
+{
+    static $cached = null;
+    if (is_array($cached)) {
+        return $cached;
+    }
+    $contentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
+    if (!str_contains($contentType, 'application/json')) {
+        $cached = [];
+        return $cached;
+    }
+    $raw = (string)@file_get_contents('php://input');
+    if ($raw === '') {
+        $cached = [];
+        return $cached;
+    }
+    $decoded = json_decode($raw, true);
+    $cached = is_array($decoded) ? $decoded : [];
+    return $cached;
+}
+
+function requestStringField(string $key, string $default = ''): string
+{
+    if (isset($_POST[$key])) {
+        return trim((string)$_POST[$key]);
+    }
+    $json = getJsonRequestBody();
+    if (array_key_exists($key, $json)) {
+        $value = $json[$key];
+        if (is_scalar($value)) {
+            return trim((string)$value);
+        }
+    }
+    return $default;
+}
+
 function sanitizeFileName(string $name): string
 {
     $name = preg_replace('/[^a-zA-Zа-яА-Я0-9._-]/u', '_', $name) ?? 'file';
@@ -566,6 +602,12 @@ function buildExtractedTextsFromFiles(array $files): array
 
 function handleAnalyzePaidAction(array $env): void
 {
+    $jsonBody = getJsonRequestBody();
+    $rawVisionPayload = requestStringField('vision_payload');
+    if ($rawVisionPayload === '' && isset($jsonBody['messages']) && is_array($jsonBody['messages'])) {
+        $rawVisionPayload = json_encode($jsonBody, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
+    }
+
     $files = normalizeUploadedFiles('files');
     if (!$files) {
         $remoteFiles = normalizeRemoteFilesFromPost();
@@ -573,17 +615,17 @@ function handleAnalyzePaidAction(array $env): void
             $files = downloadRemoteFiles($remoteFiles);
         }
     }
-    if (!$files) {
+    if ($rawVisionPayload === '' && !$files) {
         respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
     }
 
     $totalBytes = array_reduce($files, static function (int $sum, array $f): int {
         return $sum + (int)($f['size'] ?? 0);
     }, 0);
-    if ($totalBytes <= 0) {
+    if ($rawVisionPayload === '' && $totalBytes <= 0) {
         respond(422, ['ok' => false, 'error' => 'Пустая загрузка файлов.']);
     }
-    if (MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
+    if ($rawVisionPayload === '' && MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
         respond(413, ['ok' => false, 'error' => 'Общий размер файлов превышает лимит.']);
     }
 
@@ -592,12 +634,10 @@ function handleAnalyzePaidAction(array $env): void
         respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
     }
 
-    $userPrompt = trim((string)($_POST['prompt'] ?? ''));
+    $userPrompt = requestStringField('prompt');
     if ($userPrompt === '') {
         $userPrompt = 'Прими решение по приложенным документам.';
     }
-
-    $rawVisionPayload = trim((string)($_POST['vision_payload'] ?? ''));
     if ($rawVisionPayload !== '') {
         $visionPayload = json_decode($rawVisionPayload, true);
         if (!is_array($visionPayload)) {
@@ -609,7 +649,7 @@ function handleAnalyzePaidAction(array $env): void
             respond(422, ['ok' => false, 'error' => 'vision_payload.messages обязателен для Vision режима.']);
         }
 
-        $rawExtractedTexts = (string)($_POST['extractedTexts'] ?? '');
+        $rawExtractedTexts = requestStringField('extractedTexts');
         $decodedExtractedTexts = json_decode($rawExtractedTexts, true);
         if (!is_array($decodedExtractedTexts)) {
             $decodedExtractedTexts = [];
