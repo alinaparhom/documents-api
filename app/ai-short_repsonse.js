@@ -2,6 +2,9 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+const BRIEF_MAX_EXTRACT_TEXT_CHARS = 500000;
+const BRIEF_EXTRACT_ENTRY_MAX_BYTES = 1024 * 1024;
+const BRIEF_EXTRACT_ENTRY_SAFE_BYTES = Math.floor(BRIEF_EXTRACT_ENTRY_MAX_BYTES * 0.9);
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -139,6 +142,40 @@ export function createTelegramBriefAi(deps = {}) {
     return Boolean(summary || analysis || responseText || hasActions || hasRequirements);
   }
 
+  function chunkTextByByteLimit(text, maxBytesPerChunk) {
+    const source = String(text || '');
+    if (!source) return [];
+    const encoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+    const chunks = [];
+    let currentChunk = '';
+    let currentBytes = 0;
+
+    for (let index = 0; index < source.length; index += 1) {
+      const char = source[index];
+      const charBytes = encoder ? encoder.encode(char).length : new Blob([char]).size;
+      if (currentChunk && currentBytes + charBytes > maxBytesPerChunk) {
+        chunks.push(currentChunk);
+        currentChunk = '';
+        currentBytes = 0;
+      }
+      currentChunk += char;
+      currentBytes += charBytes;
+    }
+    if (currentChunk) chunks.push(currentChunk);
+    return chunks;
+  }
+
+  function buildExtractedTextsPayload(fileName, rawExtractedText) {
+    const normalizedText = String(rawExtractedText || '').slice(0, BRIEF_MAX_EXTRACT_TEXT_CHARS).trim();
+    if (!normalizedText) return [];
+    const chunks = chunkTextByByteLimit(normalizedText, BRIEF_EXTRACT_ENTRY_SAFE_BYTES);
+    return chunks.map((chunk, index) => ({
+      name: chunks.length > 1 ? `${fileName} (часть ${index + 1}/${chunks.length})` : fileName,
+      type: 'text/plain',
+      text: chunk,
+    }));
+  }
+
   async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
     const request = await postDocsOcrWithFallback(() => {
       const formData = new FormData();
@@ -256,6 +293,10 @@ export function createTelegramBriefAi(deps = {}) {
     if (!String(extractedText || '').trim()) {
       throw new Error('OCR не вернул текст для выбранного файла.');
     }
+    const extractedTextsPayload = buildExtractedTextsPayload(fileName, extractedText);
+    if (!extractedTextsPayload.length) {
+      throw new Error('После подготовки OCR не осталось текста для отправки в ИИ.');
+    }
     if (fileForVip) {
       fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
     }
@@ -266,7 +307,7 @@ export function createTelegramBriefAi(deps = {}) {
       if (fileForVip) {
         formData.append('files', fileForVip, fileForVip.name || fileName);
       }
-      formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 16000) }]));
+      formData.append('extractedTexts', JSON.stringify(extractedTextsPayload));
       return formData;
     });
     const response = request && request.response;
