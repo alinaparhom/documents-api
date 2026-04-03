@@ -46,12 +46,52 @@
       (function bootstrapVersionedAssets() {
         const runtimeNonce = Date.now().toString(36);
         const cacheVersionUrl = '/cache-version.php?t=' + encodeURIComponent(runtimeNonce);
+        const currentUrl = new URL(window.location.href);
+        const currentAppVersion = currentUrl.searchParams.get('appv');
 
         const setRuntimeVersion = function() {
           const serverVersion = String(window.__ASSET_VERSION__ || '').trim();
           window.__RUNTIME_ASSET_VERSION__ = serverVersion
             ? `${serverVersion}-${runtimeNonce}`
             : runtimeNonce;
+          return serverVersion;
+        };
+
+        const ensureFreshAppUrl = function(serverVersion) {
+          if (!serverVersion) {
+            return false;
+          }
+
+          if (currentAppVersion === serverVersion) {
+            return false;
+          }
+
+          const nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set('appv', serverVersion);
+          nextUrl.searchParams.set('_tgv', Date.now().toString(36));
+          window.location.replace(nextUrl.toString());
+          return true;
+        };
+
+        const parseAssetVersion = function(source) {
+          const match = source.match(/__ASSET_VERSION__\s*=\s*['"]([^'"]+)['"]/);
+          return match && match[1] ? String(match[1]).trim() : '';
+        };
+
+        const syncVersionOnVisible = async function() {
+          try {
+            const response = await fetch('/cache-version.php?t=' + encodeURIComponent(Date.now().toString(36)), {
+              cache: 'no-store'
+            });
+            const source = await response.text();
+            const freshVersion = parseAssetVersion(source);
+            if (freshVersion && freshVersion !== currentAppVersion) {
+              const nextUrl = new URL(window.location.href);
+              nextUrl.searchParams.set('appv', freshVersion);
+              nextUrl.searchParams.set('_tgv', Date.now().toString(36));
+              window.location.replace(nextUrl.toString());
+            }
+          } catch (_) {}
         };
 
         const appendStylesheet = function() {
@@ -81,7 +121,10 @@
         const versionScript = document.createElement('script');
         versionScript.src = cacheVersionUrl;
         versionScript.onload = function() {
-          setRuntimeVersion();
+          const serverVersion = setRuntimeVersion();
+          if (ensureFreshAppUrl(serverVersion)) {
+            return;
+          }
           appendStylesheet();
           appendModuleWhenReady();
         };
@@ -91,6 +134,12 @@
           appendModuleWhenReady();
         };
         document.head.appendChild(versionScript);
+
+        document.addEventListener('visibilitychange', function() {
+          if (document.visibilityState === 'visible') {
+            syncVersionOnVisible();
+          }
+        });
       })();
     </script>
     <noscript>
