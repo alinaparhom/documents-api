@@ -5,6 +5,160 @@
   const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
+  const VISION_BATCH_SIZE = 5;
+  let briefPdfJsLoader = null;
+  const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
+Запрещено начинать с "Анализ письма", "Разбор", "Рекомендации".
+Нужен финальный текст ответа для отправки адресату в деловом стиле.`;
+  const SYSTEM_TONE_PROMPTS = {
+    neutral: {
+      value: 'neutral',
+      label: 'Нейтральный',
+      prompt: `Ты — аналитический ИИ-ассистент. Твоя задача — анализировать загруженные файлы (изображения, PDF, документы) и давать точные, фактические ответы.
+
+Правила:
+- Отвечай строго по фактам, без эмоций и оценок.
+- Если информация отсутствует в файле — скажи об этом прямо.
+- Не додумывай и не добавляй лишнего.
+- Используй деловой, сухой стиль без эпитетов.
+- Для числовых данных — выводи в том же формате, что в файле.
+- Если файл содержит таблицу — структурируй ответ в виде списка или таблицы.
+- Если файл — скан или изображение — извлеки весь видимый текст.
+- Не используй восклицательные знаки, смайлы, разговорные выражения.
+
+Ты — нейтральный анализатор документов. Твоя ценность — в точности, а не в красоте речи.`
+    },
+    aggressive: {
+      value: 'aggressive',
+      label: 'Агрессивный',
+      prompt: `Ты — жёсткий, напористый и прямолинейный ИИ-аналитик. Твоя задача — безжалостно вычищать информацию из файлов и выдавать её максимально конкретно.
+
+Правила:
+- Отвечай резко, без воды и лишних слов.
+- Не используй вводные фразы типа "я думаю", "возможно", "вероятно".
+- Если файл плохого качества или информация нечитаема — скажи об этом прямо и жёстко.
+- Не извиняйся, не оправдывайся, не смягчай формулировки.
+- Используй короткие, рубленые фразы. Твой стиль — как служебная записка.
+- Не терпи неопределённость: если данных нет — скажи "НЕТ ДАННЫХ".
+- Цифры, даты, имена — выводи без искажений.
+- Требуй от пользователя чётких вопросов. На размытые вопросы отвечай: "Уточните запрос".
+
+Ты — агрегатор фактов, а не собеседник. Дело, а не эмоции.`
+    },
+    calm: {
+      value: 'calm',
+      label: 'Спокойный',
+      prompt: `Ты — спокойный, доброжелательный и понятный ИИ-помощник. Ты анализируешь файлы и помогаешь пользователю разобраться в их содержимом.
+
+Правила:
+- Отвечай мягко, но уверенно. Сохраняй информативность.
+- Будь вежливым и уважительным к пользователю.
+- Объясняй сложные вещи простым языком, но без потери смысла.
+- Если файл содержит ошибки или нечитаемые участки — сообщи об этом корректно.
+- Поддерживай диалог: если что-то непонятно, вежливо попроси уточнить.
+- Форматируй ответ: используй абзацы, списки для удобства чтения.
+- При анализе таблиц и графиков — давай пояснения, но без лишней воды.
+- Твой голос — ровный, спокойный, как у терпеливого наставника.
+
+Ты — заботливый эксперт, который делает сложное — понятным.`
+    },
+    neutral_enhanced: {
+      value: 'neutral_enhanced',
+      label: 'Нейтральный (усиленный)',
+      prompt: `[СИСТЕМНАЯ ДИРЕКТИВА: РЕЖИМ ТОЧНОСТИ]
+
+Ты — ИИ-анализатор документов с максимальным приоритетом на точность и полноту извлечения данных.
+
+СТРОГИЕ ПРАВИЛА:
+1. ЗАПРЕЩЕНЫ: эпитеты, оценочные суждения, вводные слова, личные местоимения (я, мы, они).
+2. ОБЯЗАТЕЛЬНО: извлекай ВСЕ видимые символы с изображения/PDF.
+3. ТАБЛИЦЫ: воспроизводи в том же порядке строк и столбцов.
+4. ЦИФРЫ: сохраняй разрядность, разделители, единицы измерения.
+5. ДАТЫ: выводи в исходном формате.
+6. ПРОПУСКИ: если символ нечитаем — поставь [?].
+7. СТРУКТУРА: заголовки → подзаголовки → списки → тело → примечания.
+8. ГРАФИКИ: опиши оси, тренды, ключевые точки (min, max, среднее).
+
+ОТВЕТ ДОЛЖЕН БЫТЬ:
+- Только извлечёнными данными
+- Без комментариев "я вижу", "на картинке изображено"
+- Без вступлений и заключений
+
+Выполнение директивы обязательно. Отклонения недопустимы.`
+    },
+    aggressive_enhanced: {
+      value: 'aggressive_enhanced',
+      label: 'Агрессивный (усиленный)',
+      prompt: `[СИСТЕМА: РЕЖИМ МАКСИМАЛЬНОЙ ЖЁСТКОСТИ]
+
+ТЫ — ИИ-ЭКСТРАКТОР. НЕ СОБЕСЕДНИК. НЕ ПОМОЩНИК. НЕ ДРУГ.
+
+ТВОЯ ЗАДАЧА:
+ВЫТАЩИТЬ ИЗ ФАЙЛА ВСЁ. БЕЗ ПОЩАДЫ. БЕЗ ЛИШНИХ СЛОВ.
+
+ПРАВИЛА:
+✗ НИКАКИХ: "пожалуйста", "возможно", "думаю", "наверное", "вероятно"
+✗ НИКАКИХ объяснений своих действий
+✗ НИКАКИХ вступлений типа "я проанализировал"
+✗ НИКАКИХ извинений
+
+✓ ТОЛЬКО: сухие данные
+✓ ТОЛЬКО: извлечённый текст
+✓ ТОЛЬКО: цифры в исходном виде
+✓ ТОЛЬКО: факты
+
+ЕСЛИ ФАЙЛ ХРЕНЬ:
+→ "ФАЙЛ НЕЧИТАЕМ. ТРЕБУЕТСЯ ЛУЧШЕЕ КАЧЕСТВО"
+
+ЕСЛИ ДАННЫХ НЕТ:
+→ "НЕТ ДАННЫХ"
+
+ЕСЛИ НЕПОНЯТЕН ЗАПРОС:
+→ "УТОЧНИТЕ ЗАПРОС. ОЖИДАЮ КОНКРЕТИКУ."
+
+НЕ РАЗГЛАГОЛЬСТВУЙ. НЕ РАССУЖДАЙ. НЕ УКРАШАЙ.
+
+ВЫПОЛНЯЙ.`
+    },
+    calm_enhanced: {
+      value: 'calm_enhanced',
+      label: 'Спокойный (усиленный)',
+      prompt: `[СИСТЕМНАЯ УСТАНОВКА: РЕЖИМ ДОБРОЖЕЛАТЕЛЬНОЙ ТОЧНОСТИ]
+
+Ты — внимательный и терпеливый ИИ-аналитик документов. Твоя цель — помочь пользователю разобраться в содержимом файла максимально понятно и комфортно.
+
+ПРИНЦИПЫ РАБОТЫ:
+
+1. ВЕЖЛИВОСТЬ И УВАЖЕНИЕ
+   - Начинай ответ с короткого приветствия или подтверждения
+   - Используй слова "пожалуйста" и "спасибо" при необходимости
+   - Не перебивай и не критикуй пользователя
+
+2. ПОЛНОТА АНАЛИЗА
+   - Извлекай весь видимый текст из файла
+   - Для таблиц — используй понятное форматирование (markdown-таблицы)
+   - Для списков — сохраняй иерархию
+   - Отмечай, если что-то осталось непонятным
+
+3. ЯСНОСТЬ ИЗЛОЖЕНИЯ
+   - Разбивай длинные ответы на логические блоки
+   - Используй заголовки для разных разделов документа
+   - Выделяй важные цифры и даты
+
+4. ПОДДЕРЖКА ПОЛЬЗОВАТЕЛЯ
+   - Если файл пустой или битый — сообщи мягко
+   - Если качество скана плохое — предложи загрузить лучшую копию
+   - После анализа спроси, нужны ли уточнения
+
+5. ТВОЙ СТИЛЬ
+   - Спокойный, ровный голос
+   - Оптимизм и конструктив
+   - Готовность помочь
+
+Помни: пользователь обратился к тебе за помощью. Сделай всё, чтобы ему было понятно и приятно.`
+    }
+  };
+  const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
 
   function normalize(value) {
     return String(value || '').trim();
@@ -17,6 +171,10 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function getResponseStyleMeta(styleValue) {
+    return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
   }
 
   function getDocsAiEndpoints() {
@@ -252,6 +410,317 @@
     return answer;
   }
 
+  function isImageLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType === 'image/jpeg' || lowerType === 'image/png' || /\.(jpe?g|png)$/i.test(lowerName);
+  }
+
+  function isPdfLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.includes('pdf') || /\.pdf$/i.test(lowerName);
+  }
+
+  function readBlobAsDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Не удалось прочитать файл.'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib) {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) {
+      return briefPdfJsLoader;
+    }
+    const sources = [
+      { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
+      { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+      { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
+    ];
+    briefPdfJsLoader = new Promise((resolve, reject) => {
+      let index = 0;
+      const tryNext = () => {
+        if (typeof window !== 'undefined' && window.pdfjsLib) {
+          window.__briefPdfWorkerSrc = sources[Math.max(0, index - 1)].worker;
+          resolve(window.pdfjsLib);
+          return;
+        }
+        if (index >= sources.length) {
+          reject(new Error('Не удалось загрузить PDF библиотеку. Проверьте интернет или доступ к /pdf/pdf.min.js'));
+          return;
+        }
+        const source = sources[index];
+        index += 1;
+        const script = document.createElement('script');
+        script.src = source.script;
+        script.onload = () => {
+          if (typeof window !== 'undefined' && window.pdfjsLib) {
+            window.__briefPdfWorkerSrc = source.worker;
+            resolve(window.pdfjsLib);
+            return;
+          }
+          tryNext();
+        };
+        script.onerror = () => tryNext();
+        document.head.appendChild(script);
+      };
+      tryNext();
+    }).catch((error) => {
+      briefPdfJsLoader = null;
+      throw error;
+    });
+    return briefPdfJsLoader;
+  }
+
+  async function loadBriefScript(url, checkLoaded) {
+    if (checkLoaded()) return;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = url;
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Не удалось загрузить библиотеку: ${url}`));
+      document.head.appendChild(script);
+    });
+    if (!checkLoaded()) {
+      throw new Error(`Библиотека не инициализирована: ${url}`);
+    }
+  }
+
+  async function ensureMammothLoaded() {
+    if (window.mammoth) return window.mammoth;
+    await loadBriefScript('https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js', () => Boolean(window.mammoth));
+    return window.mammoth;
+  }
+
+  async function ensureXlsxLoaded() {
+    if (window.XLSX) return window.XLSX;
+    await loadBriefScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', () => Boolean(window.XLSX));
+    return window.XLSX;
+  }
+
+  function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Не удалось прочитать текст файла.'));
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  function chunkItems(items, size) {
+    const normalized = Array.isArray(items) ? items : [];
+    const chunkSize = Math.max(1, Number(size) || 1);
+    const chunks = [];
+    for (let index = 0; index < normalized.length; index += chunkSize) {
+      chunks.push(normalized.slice(index, index + chunkSize));
+    }
+    return chunks;
+  }
+
+  async function buildVisionPayloadFromFile(file, onProgress) {
+    if (!(file instanceof File)) {
+      throw new Error('Файл не выбран.');
+    }
+    const mime = String(file.type || '').toLowerCase();
+    const name = String(file.name || 'document').toLowerCase();
+    const isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
+    const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
+    const isText = mime.startsWith('text/') || /\.(txt|md|csv|json|xml|html?)$/i.test(name);
+    const isDocx = mime.includes('wordprocessingml.document') || /\.docx$/i.test(name);
+    const isXlsx = mime.includes('spreadsheetml') || /\.xlsx$/i.test(name);
+
+    if (isImage) {
+      onProgress('Подготавливаю изображение...', 100);
+      const imageDataUrl = await readBlobAsDataUrl(file);
+      return {
+        kind: 'multimodal',
+        messageText: 'Проанализируй содержимое этого файла',
+        images: [{ dataUrl: imageDataUrl, fileName: file.name || 'image.jpg', mime: mime || 'image/jpeg' }],
+      };
+    }
+
+    if (isPdf) {
+      onProgress('Открываю PDF...', 5);
+      const pdfjsLib = await ensureBriefPdfJsLoaded();
+      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
+      }
+      const bytes = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: bytes });
+      const pdf = await loadingTask.promise;
+      const totalPages = Number(pdf.numPages || 0);
+      if (!totalPages) throw new Error('PDF повреждён или пустой.');
+      const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+      const images = [];
+      for (let index = 0; index < pages.length; index += 1) {
+        const pageNumber = pages[index];
+        onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 90));
+        // eslint-disable-next-line no-await-in-loop
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1.25 });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Не удалось инициализировать canvas для PDF.');
+        // eslint-disable-next-line no-await-in-loop
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        // eslint-disable-next-line no-await-in-loop
+        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.82));
+        if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
+        // eslint-disable-next-line no-await-in-loop
+        const dataUrl = await readBlobAsDataUrl(blob);
+        images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
+      }
+      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images, totalPages, selectedPages: pages };
+    }
+
+    if (isText) {
+      onProgress('Читаю текстовый файл...', 100);
+      const text = await readFileAsText(file);
+      return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
+    }
+
+    if (isDocx) {
+      onProgress('Извлекаю текст из DOCX...', 35);
+      const mammoth = await ensureMammothLoaded();
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      return {
+        kind: 'text',
+        extractedText: String(result && result.value || '').trim(),
+        fileName: file.name || 'document.docx',
+        warning: 'Изображения внутри DOCX не анализируются в Vision режиме.',
+      };
+    }
+
+    if (isXlsx) {
+      onProgress('Извлекаю таблицы из XLSX...', 35);
+      const XLSX = await ensureXlsxLoaded();
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const sheetTexts = (workbook && workbook.SheetNames || []).map((sheetName) => {
+        const sheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        return `# Лист: ${sheetName}\n${csv}`;
+      });
+      return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
+    }
+
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+  }
+
+  async function requestTelegramVisionResponse(payload = {}, onStatus) {
+    const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
+    const prompt = normalize(payload.prompt) || 'Проанализируй документы и предложи готовое решение.';
+    const images = [];
+    const extractedTexts = [];
+
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      const currentFile = selectedFiles[index];
+      const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
+      onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
+      // eslint-disable-next-line no-await-in-loop
+      const blobFile = await loadSelectedFileAsBlob(currentFile);
+      const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
+      // eslint-disable-next-line no-await-in-loop
+      const prepared = await buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading'));
+      if (prepared.kind === 'multimodal') {
+        images.push(...(Array.isArray(prepared.images) ? prepared.images : []));
+      } else if (prepared.kind === 'text') {
+        const text = normalize(prepared.extractedText);
+        if (text) {
+          extractedTexts.push({
+            name: prepared.fileName || fileLabel,
+            type: sourceFile.type || 'text/plain',
+            text: text.slice(0, 60000),
+          });
+        }
+      }
+    }
+
+    if (!images.length) {
+      throw new Error('Vision режим поддерживает изображения и PDF.');
+    }
+
+    const batches = chunkItems(images, VISION_BATCH_SIZE);
+    const partialAnswers = [];
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const currentBatch = batches[batchIndex];
+      onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
+      // eslint-disable-next-line no-await-in-loop
+      const request = await postGroqResponseWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'analyze_paid');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        if (extractedTexts.length && batchIndex === 0) {
+          formData.append('extractedTexts', JSON.stringify(extractedTexts));
+        }
+        formData.append('vision_payload', JSON.stringify({
+          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          max_tokens: 1200,
+          temperature: 0.6,
+          messages: [{
+            role: 'user',
+            content: [{ type: 'text', text: `${prompt}\n\nБлок ${batchIndex + 1}/${batches.length}.` }].concat(
+              currentBatch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
+            ),
+          }],
+        }));
+        currentBatch.forEach((item, idx) => {
+          const raw = String(item.dataUrl || '');
+          const base64 = raw.includes(',') ? raw.split(',')[1] : '';
+          if (!base64) return;
+          const binary = atob(base64);
+          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+          formData.append('files', new Blob([bytes], { type: item.mime || 'image/jpeg' }), item.fileName || `vision-${batchIndex + 1}-${idx + 1}.jpg`);
+        });
+        return formData;
+      });
+      const response = request && request.response;
+      const result = request && request.payload;
+      if (!response || !response.ok || !result || result.ok !== true) {
+        throw new Error((result && result.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
+      }
+      partialAnswers.push(normalize(result.response || result.summary));
+    }
+
+    let finalSummary = partialAnswers.join('\n\n').trim();
+    if (partialAnswers.length > 1) {
+      onStatus('Vision: объединяю результаты всех блоков...', 'loading');
+      const mergeRequest = await postGroqResponseWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('extractedTexts', JSON.stringify([{
+          name: 'vision-batches.txt',
+          type: 'text/plain',
+          text: partialAnswers.map((item, idx) => `Блок ${idx + 1}/${partialAnswers.length}:\n${item}`).join('\n\n'),
+        }]));
+        return formData;
+      });
+      const mergePayload = mergeRequest && mergeRequest.payload;
+      if (mergeRequest && mergeRequest.response && mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
+        finalSummary = normalize(mergePayload.summary || mergePayload.response) || finalSummary;
+      }
+    }
+    if (!finalSummary) {
+      throw new Error('Vision не вернул итоговый текст.');
+    }
+    return finalSummary;
+  }
+
   async function loadSelectedFileAsBlob(file) {
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
@@ -296,7 +765,7 @@
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
       .tg-ai-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
       .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
-      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto 1fr auto;gap:8px;background:rgba(255,255,255,.93)}
+      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto auto auto 1fr auto;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
       .tg-ai-chat__input{min-height:42px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.98);border-radius:12px;padding:9px;font-size:13px;color:#0f172a}
       .tg-ai-chat__send{min-height:42px;border:none;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#14b8a6);color:#fff;font-weight:700}
@@ -317,7 +786,7 @@
       .tg-ai-chat__dots span:nth-child(3){animation-delay:.32s}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr 1fr}.tg-ai-chat__toggle{grid-column:1/-1}.tg-ai-chat__input{grid-column:1/-1}.tg-ai-chat__send{grid-column:1/-1}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr 1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-chat__input{grid-column:1/-1}.tg-ai-chat__send{grid-column:1/-1}}
     `;
     document.head.appendChild(style);
   }
@@ -380,6 +849,8 @@
         <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
+          <button type="button" class="tg-ai-chat__toggle" data-vision-toggle>👁 Vision: OFF</button>
+          <button type="button" class="tg-ai-chat__toggle" data-style-toggle>🎯 Стиль: Нейтральный</button>
           <textarea class="tg-ai-chat__input" data-input placeholder="Например: реши задачу по выбранным файлам"></textarea>
           <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
         </div>
@@ -399,6 +870,10 @@
     const filesList = overlay.querySelector('[data-files-list]');
     const input = overlay.querySelector('[data-input]');
     const meta = overlay.querySelector('[data-meta]');
+    const visionToggle = overlay.querySelector('[data-vision-toggle]');
+    const styleToggle = overlay.querySelector('[data-style-toggle]');
+    let visionMode = false;
+    let styleIndex = 0;
 
     renderFiles(filesList, files);
 
@@ -410,6 +885,19 @@
 
     overlay.querySelector('[data-files-toggle]')?.addEventListener('click', () => {
       filesPanel.hidden = !filesPanel.hidden;
+    });
+    visionToggle?.addEventListener('click', () => {
+      visionMode = !visionMode;
+      visionToggle.textContent = visionMode ? '👁 Vision: ON' : '👁 Vision: OFF';
+      status.textContent = visionMode
+        ? 'Vision включён: анализ изображений/PDF через VIP ИИ.'
+        : 'Vision выключен: обычный OCR + текстовый ответ.';
+    });
+    styleToggle?.addEventListener('click', () => {
+      styleIndex = (styleIndex + 1) % RESPONSE_STYLE_OPTIONS.length;
+      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex];
+      styleToggle.textContent = `🎯 Стиль: ${styleMeta.label}`;
+      status.textContent = `Стиль ответа: ${styleMeta.label}.`;
     });
 
     filesList?.addEventListener('change', (event) => {
@@ -425,6 +913,8 @@
     overlay.querySelector('[data-send]')?.addEventListener('click', async (event) => {
       const sendButton = event.currentTarget;
       const prompt = normalize(input && input.value);
+      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
+      const effectivePrompt = [prompt, styleMeta.prompt, RESPONSE_OUTPUT_DIRECTIVE].filter(Boolean).join('\n\n');
       const selectedFiles = Array.from(selected)
         .map((key) => files[Number(key)])
         .filter(Boolean);
@@ -444,58 +934,60 @@
 
       try {
         const extractedTexts = [];
-        for (let index = 0; index < selectedFiles.length; index += 1) {
-          const currentFile = selectedFiles[index];
-          const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-          status.textContent = `OCR ${index + 1}/${selectedFiles.length}: ${fileLabel}`;
-          let extractedText = '';
-          try {
-            const fileBlob = await loadSelectedFileAsBlob(currentFile);
-            extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
-          } catch (blobError) {
-            const fallbackUrl = buildFileUrlCandidates(currentFile)[0] || '';
-            if (!fallbackUrl) {
-              throw blobError;
+        let answer = '';
+        if (visionMode) {
+          answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, selectedFiles }, (message) => {
+            status.textContent = message;
+          });
+        } else {
+          for (let index = 0; index < selectedFiles.length; index += 1) {
+            const currentFile = selectedFiles[index];
+            const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
+            status.textContent = `OCR ${index + 1}/${selectedFiles.length}: ${fileLabel}`;
+            let extractedText = '';
+            try {
+              const fileBlob = await loadSelectedFileAsBlob(currentFile);
+              extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
+            } catch (blobError) {
+              const fallbackUrl = buildFileUrlCandidates(currentFile)[0] || '';
+              if (!fallbackUrl) {
+                throw blobError;
+              }
+              extractedText = await requestTelegramOcrByUrl(fallbackUrl);
             }
-            extractedText = await requestTelegramOcrByUrl(fallbackUrl);
+            if (!normalize(extractedText)) {
+              throw new Error(`OCR не вернул текст для файла: ${fileLabel}`);
+            }
+            extractedTexts.push({
+              name: fileLabel,
+              type: 'text/plain',
+              text: String(extractedText).slice(0, 16000),
+            });
           }
-          if (!normalize(extractedText)) {
-            throw new Error(`OCR не вернул текст для файла: ${fileLabel}`);
-          }
-          extractedTexts.push({
-            name: fileLabel,
-            type: 'text/plain',
-            text: String(extractedText).slice(0, 16000),
+
+          status.textContent = 'Отправляем запрос в ИИ...';
+          answer = await requestTelegramAiResponse({
+            prompt: effectivePrompt,
+            documentTitle: normalize(task && (task.title || task.documentTitle || task.subject)) || 'Задача Telegram',
+            extractedTexts,
+            context: {
+              source: 'telegram-ai-response-dialog',
+              responseStyle: styleMeta.value,
+              task,
+              selectedFiles: selectedFiles.map((item) => ({
+                name: normalize(item && (item.originalName || item.name || item.storedName)),
+                url: buildFileUrlCandidates(item)[0] || '',
+              })),
+            },
           });
         }
-
-        status.textContent = 'Отправляем запрос в ИИ...';
-        const submitPayload = {
-          prompt,
-          selectedFiles,
-          extractedTexts,
-          task,
-          sentAt: new Date().toISOString(),
-        };
-        const answer = await requestTelegramAiResponse({
-          prompt,
-          documentTitle: normalize(task && (task.title || task.documentTitle || task.subject)) || 'Задача Telegram',
-          extractedTexts,
-          context: {
-            source: 'telegram-ai-response-dialog',
-            task,
-            selectedFiles: selectedFiles.map((item) => ({
-              name: normalize(item && (item.originalName || item.name || item.storedName)),
-              url: buildFileUrlCandidates(item)[0] || '',
-            })),
-          },
-        });
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
 
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
-          <span class="tg-ai-chat__chip">Режим: generate_response</span>
+          <span class="tg-ai-chat__chip">Режим: ${visionMode ? 'vision' : 'generate_response'}</span>
+          <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: ${extractedTexts.length}</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
