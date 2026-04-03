@@ -512,31 +512,37 @@
     if ((!Array.isArray(paidFiles) || !paidFiles.length) && !mergedSourceChunks.length) {
       throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
-    if (missingSourceNames.length) {
-      throw new Error('Не удалось извлечь текст для: ' + missingSourceNames.slice(0, 4).join(', ') + (missingSourceNames.length > 4 ? ' и ещё ' + (missingSourceNames.length - 4) : '') + '.');
+    if (mergedSourceChunks.length) {
+      extractedTexts.push({
+        name: 'Общий контекст всех файлов',
+        type: 'text/plain',
+        text: mergedSourceChunks.join('\n\n====================\n\n').slice(0, 90000)
+      });
     }
-    if (!mergedSourceChunks.length) {
-      throw new Error('OCR не вернул текст по вложениям. Откройте файл и нажмите «📄 Текст», затем повторите отправку.');
-    }
-    extractedTexts.push({
-      name: 'Общий контекст всех файлов',
-      type: 'text/plain',
-      text: mergedSourceChunks.join('\n\n====================\n\n').slice(0, 90000)
-    });
 
     var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
 
     var formData = new FormData();
     formData.append('action', 'generate_response');
     formData.append('prompt', promptWithContext);
+    formData.append('responseStyle', String(state && state.responseStyle ? state.responseStyle : 'neutral'));
+
+    var baseContext = config && config.context && typeof config.context === 'object' ? config.context : {};
+    var requestContext = {
+      organization: baseContext.organization || '',
+      documentId: baseContext.documentId || '',
+      registryNumber: baseContext.registryNumber || '',
+      missingSourceNames: missingSourceNames.slice(0, 10)
+    };
+    formData.append('context', JSON.stringify(requestContext));
+
+    paidFiles.forEach(function (entry) {
+      if (!entry || !entry.blob) return;
+      formData.append('files[]', entry.blob, entry.name || 'document.bin');
+    });
+
     if (extractedTexts.length) {
       formData.append('extractedTexts', JSON.stringify(extractedTexts));
-    }
-    if (!extractedTexts.length) {
-      paidFiles.forEach(function (entry) {
-        if (!entry || !entry.blob) return;
-        formData.append('files[]', entry.blob, entry.name || 'document.bin');
-      });
     }
     return formData;
   }
