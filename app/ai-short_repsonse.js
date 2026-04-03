@@ -2,7 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
-const BRIEF_SUMMARY_PROMPT = 'Сделай максимально краткий вывод: 2-4 коротких предложения, только ключевая суть без пересказа.';
+const BRIEF_SUMMARY_PROMPT = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -16,9 +16,7 @@ export function createTelegramBriefAi(deps = {}) {
 
   function toBriefSummaryText(value) {
     const text = normalizeValue(value);
-    if (!text) return '';
-    const limit = 520;
-    return text.length > limit ? `${text.slice(0, limit - 1).trim()}…` : text;
+    return text || '';
   }
 
   async function postGroqPaidWithFallback(createFormData) {
