@@ -410,6 +410,8 @@
     var paidFiles = await resolvePaidSourceFiles(state, config);
     var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
     var extractedTexts = [];
+    var mergedSourceChunks = [];
+    var missingSourceNames = [];
     function resolveSourceUrlForOcr(sourceEntry) {
       if (!sourceEntry || typeof sourceEntry !== 'object') {
         return '';
@@ -494,26 +496,33 @@
         continue;
       }
       var sourceName = String(sourceEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
-      // Для Telegram/VIP всегда стараемся прогонять файл через api-docs OCR.
-      // eslint-disable-next-line no-await-in-loop
-      var ocrText = await requestOcrTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
-      var sourceText = normalizeContextText(ocrText || sourceEntry.content || '');
+      var sourceText = normalizeContextText(sourceEntry.content || sourceEntry.rawContent || '');
       if (!sourceText) {
+        // eslint-disable-next-line no-await-in-loop
+        var ocrText = await requestOcrTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
+        sourceText = normalizeContextText(ocrText || '');
+      }
+      if (!sourceText) {
+        missingSourceNames.push(sourceName);
         continue;
       }
-      extractedTexts.push({
-        name: sourceName,
-        type: 'text/plain',
-        text: sourceText.slice(0, 24000)
-      });
+      mergedSourceChunks.push('[' + sourceName + ']\n' + sourceText);
     }
 
-    if ((!Array.isArray(paidFiles) || !paidFiles.length) && !extractedTexts.length) {
+    if ((!Array.isArray(paidFiles) || !paidFiles.length) && !mergedSourceChunks.length) {
       throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
-    if (!extractedTexts.length) {
+    if (missingSourceNames.length) {
+      throw new Error('Не удалось извлечь текст для: ' + missingSourceNames.slice(0, 4).join(', ') + (missingSourceNames.length > 4 ? ' и ещё ' + (missingSourceNames.length - 4) : '') + '.');
+    }
+    if (!mergedSourceChunks.length) {
       throw new Error('OCR не вернул текст по вложениям. Откройте файл и нажмите «📄 Текст», затем повторите отправку.');
     }
+    extractedTexts.push({
+      name: 'Общий контекст всех файлов',
+      type: 'text/plain',
+      text: mergedSourceChunks.join('\n\n====================\n\n').slice(0, 90000)
+    });
 
     var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
 
