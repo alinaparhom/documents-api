@@ -361,6 +361,7 @@ export function createTelegramBriefAi(deps = {}) {
     const fileName = normalizeValue(source && source.label) || 'brief-file';
     let fileForVip = null;
     const fileUrl = normalizeValue(source && source.url);
+    const sourceInlineText = normalizeValue(source && (source.content || source.rawContent || source.text));
     if (source && source.fileObject instanceof File) {
       fileForVip = source.fileObject;
     }
@@ -368,9 +369,10 @@ export function createTelegramBriefAi(deps = {}) {
       throw new Error('Не найден файл или URL для VIP режима.');
     }
 
-    const localExtractedText = fileForVip
-      ? await extractTextLocallyFromFile(fileForVip)
-      : await fetchExternalFileContent(fileUrl, fileName);
+    const localExtractedText = sourceInlineText
+      || (fileForVip
+        ? await extractTextLocallyFromFile(fileForVip)
+        : await fetchExternalFileContent(fileUrl, fileName));
     if (String(localExtractedText || '').trim()) {
       const localPayload = buildExtractedTextsPayload(fileName, localExtractedText);
       if (localPayload.length) {
@@ -406,7 +408,6 @@ export function createTelegramBriefAi(deps = {}) {
 
     let extractedText = '';
     let ocrUrlError = null;
-    let ocrFileError = null;
     if (fileUrl) {
       try {
         extractedText = await requestTelegramOcrByUrl(fileUrl);
@@ -414,17 +415,18 @@ export function createTelegramBriefAi(deps = {}) {
         ocrUrlError = error;
       }
     }
-    if (!extractedText && fileForVip) {
+    // В логике как в docs-ai-response-modal.js при наличии URL не уходим в принудительный multipart OCR upload,
+    // чтобы не упираться в внешний лимит 1024 KB.
+    if (!extractedText && !fileUrl && fileForVip) {
       try {
         extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
       } catch (error) {
-        ocrFileError = error;
+        ocrUrlError = error;
       }
     }
     if (!String(extractedText || '').trim()) {
       const urlMessage = ocrUrlError instanceof Error ? ocrUrlError.message : '';
-      const fileMessage = ocrFileError instanceof Error ? ocrFileError.message : '';
-      const reason = [urlMessage, fileMessage].filter(Boolean).join(' | ');
+      const reason = [urlMessage].filter(Boolean).join(' | ');
       throw new Error(reason || 'OCR не вернул текст для выбранного файла.');
     }
     const extractedTextsPayload = buildExtractedTextsPayload(fileName, extractedText);
@@ -507,7 +509,17 @@ export function createTelegramBriefAi(deps = {}) {
     (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
       const name = getAttachmentName(file, index + 1);
       const url = resolveFileFetchUrl(file);
-      if (url) sources.push({ label: name, url, type: 'file' });
+      if (url || normalizeValue(file && (file.content || file.rawContent || file.text))) {
+        sources.push({
+          label: name,
+          url,
+          type: 'file',
+          content: file && file.content,
+          rawContent: file && file.rawContent,
+          text: file && file.text,
+          fileObject: file && file.fileObject instanceof File ? file.fileObject : null,
+        });
+      }
     });
 
     const activate = (button) => Array.from(list.querySelectorAll('.appdosc-brief-ai__item')).forEach((el) => el.classList.toggle('is-active', el === button));
