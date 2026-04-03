@@ -16,22 +16,55 @@
     <link rel="preload" href="/shrift/Roboto-Regular.ttf" as="font" type="font/ttf" crossorigin />
     <link rel="preload" href="/shrift/RobotoFlex.ttf" as="font" type="font/ttf" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-    <script src="/cache-version.php"></script>
     <script>
-      (function setRuntimeAssetVersion() {
-        const serverVersion = String(window.__ASSET_VERSION__ || '').trim();
+      (function bootstrapVersionedAssets() {
         const runtimeNonce = Date.now().toString(36);
-        window.__RUNTIME_ASSET_VERSION__ = serverVersion
-          ? `${serverVersion}-${runtimeNonce}`
-          : runtimeNonce;
-      })();
+        const cacheVersionUrl = '/cache-version.php?t=' + encodeURIComponent(runtimeNonce);
 
-      (function attachVersionedStylesheet() {
-        const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()).toString();
-        const stylesheet = document.createElement('link');
-        stylesheet.rel = 'stylesheet';
-        stylesheet.href = '/css/telegram-appdosc.css?v=' + encodeURIComponent(version);
-        document.head.appendChild(stylesheet);
+        const setRuntimeVersion = function() {
+          const serverVersion = String(window.__ASSET_VERSION__ || '').trim();
+          window.__RUNTIME_ASSET_VERSION__ = serverVersion
+            ? `${serverVersion}-${runtimeNonce}`
+            : runtimeNonce;
+        };
+
+        const appendStylesheet = function() {
+          const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || runtimeNonce).toString();
+          const stylesheet = document.createElement('link');
+          stylesheet.rel = 'stylesheet';
+          stylesheet.href = '/css/telegram-appdosc.css?v=' + encodeURIComponent(version);
+          document.head.appendChild(stylesheet);
+        };
+
+        const appendModule = function() {
+          const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || runtimeNonce).toString();
+          const moduleScript = document.createElement('script');
+          moduleScript.type = 'module';
+          moduleScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
+          document.body.appendChild(moduleScript);
+        };
+
+        const appendModuleWhenReady = function() {
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', appendModule, { once: true });
+          } else {
+            appendModule();
+          }
+        };
+
+        const versionScript = document.createElement('script');
+        versionScript.src = cacheVersionUrl;
+        versionScript.onload = function() {
+          setRuntimeVersion();
+          appendStylesheet();
+          appendModuleWhenReady();
+        };
+        versionScript.onerror = function() {
+          setRuntimeVersion();
+          appendStylesheet();
+          appendModuleWhenReady();
+        };
+        document.head.appendChild(versionScript);
       })();
     </script>
     <noscript>
@@ -471,14 +504,5 @@
     </template>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script>
-      (function attachVersionedModule() {
-        const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()).toString();
-        const moduleScript = document.createElement('script');
-        moduleScript.type = 'module';
-        moduleScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
-        document.body.appendChild(moduleScript);
-      })();
-    </script>
   </body>
 </html>
