@@ -319,8 +319,20 @@ export function createTelegramBriefAi(deps = {}) {
     const type = String(fileForVision && fileForVision.type || '').toLowerCase();
     const name = normalizeValue(fileForVision && fileForVision.name).toLowerCase();
     const isPdf = type === 'application/pdf' || /\.pdf$/i.test(name);
-    const isImageByName = /\.(png|jpe?g|webp|gif|bmp)$/i.test(name);
-    if (!isPdf && !type.startsWith('image/') && !isImageByName) {
+    if (isPdf) {
+      const converted = await convertPdfToImageFileForBrief(fileForVision, fileName);
+      const convertedType = String(converted && converted.type || '').toLowerCase();
+      const convertedName = normalizeValue(converted && converted.name).toLowerCase();
+      const looksLikeImage = convertedType.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(convertedName);
+      if (!looksLikeImage) {
+        throw new Error('PDF не удалось конвертировать в изображение на устройстве. Попробуйте другой PDF или JPG/PNG.');
+      }
+      fileForVision = converted;
+    }
+    const nextType = String(fileForVision && fileForVision.type || '').toLowerCase();
+    const nextName = normalizeValue(fileForVision && fileForVision.name).toLowerCase();
+    const isImageByName = /\.(png|jpe?g|webp|gif|bmp)$/i.test(nextName);
+    if (!nextType.startsWith('image/') && !isImageByName) {
       throw new Error('Новая логика поддерживает только изображения (PNG/JPG/WEBP) и PDF.');
     }
 
