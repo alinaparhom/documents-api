@@ -363,7 +363,7 @@ function extractPdfTextWithPdftotext(string $pdfPath): string
 
 function extractPdfTextWithOcr(string $pdfPath): string
 {
-    if (!commandExists('pdftoppm') || !commandExists('tesseract')) {
+    if ($pdfPath === '' || !is_file($pdfPath) || !commandExists('pdftoppm') || !commandExists('tesseract')) {
         return '';
     }
     $tmpBase = tempnam(sys_get_temp_dir(), 'pdfocr_');
@@ -372,7 +372,10 @@ function extractPdfTextWithOcr(string $pdfPath): string
     }
     @unlink($tmpBase);
     $textParts = [];
-    $maxPages = OCR_MAX_PAGES > 0 ? OCR_MAX_PAGES : 500;
+    $detectedPages = detectPdfPageCount($pdfPath);
+    $maxPages = OCR_MAX_PAGES > 0
+        ? OCR_MAX_PAGES
+        : ($detectedPages > 0 ? $detectedPages : 500);
 
     try {
         $batchPages = max(1, OCR_BATCH_PAGES);
