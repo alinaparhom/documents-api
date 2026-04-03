@@ -2258,14 +2258,7 @@
     var header = createElement('div', 'documents-brief-header');
     var titleWrap = createElement('div', '');
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для краткого вывода.'));
-    var visionToggleWrap = createElement('label', 'documents-brief-toggle');
-    var visionToggle = document.createElement('input');
-    visionToggle.type = 'checkbox';
-    visionToggle.checked = true;
-    visionToggleWrap.appendChild(visionToggle);
-    visionToggleWrap.appendChild(document.createTextNode('Vision (как ai-short_repsonse.js)'));
-    titleWrap.appendChild(visionToggleWrap);
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для краткого вывода (Vision режим).'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
@@ -2292,47 +2285,22 @@
         button.disabled = true;
         preview.textContent = '⏳ Обрабатываю файл...';
         var startedAt = Date.now();
-        var worker = visionToggle.checked
-          ? requestBriefVisionByFile(source, function(message) { preview.textContent = message || '⏳ Обрабатываю файл...'; })
-          : requestSummaryByAttachment(source, options.apiUrl);
-        worker.then(function(aiPayload) {
+        requestBriefVisionByFile(source, function(message) { preview.textContent = message || '⏳ Обрабатываю файл...'; })
+          .then(function(aiPayload) {
           var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
           preview.textContent = summaryText || 'Пустой ответ от ИИ.';
           var elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
           metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Время: ' + elapsed + ' сек';
-        }).catch(function(error) {
+          })
+          .catch(function(error) {
           preview.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка');
           metaCompact.textContent = '';
           showStatusMessage('warning', 'Не удалось обработать файл «' + source.label + '».');
-        }).finally(function() { button.disabled = false; });
+          })
+          .finally(function() { button.disabled = false; });
       });
       list.appendChild(button);
     });
-
-    function requestSummaryByAttachment(source, apiUrl) {
-      return (async function() {
-        var fileForSummary = null;
-        var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-        if (source && source.fileObject instanceof File) {
-          fileForSummary = source.fileObject;
-        } else if (source && source.url) {
-          var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
-          if (fetched.ok) {
-            var blob = await fetched.blob();
-            fileForSummary = new File([blob], sourceLabel || 'brief-file', { type: blob.type || 'application/octet-stream' });
-          }
-        }
-        if (!(fileForSummary instanceof File)) throw new Error('Не удалось подготовить файл для краткого вывода.');
-        var endpoint = String(apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-        var formData = new FormData();
-        formData.append('mode', 'paid');
-        formData.append('attachment', fileForSummary, fileForSummary.name || sourceLabel);
-        var response = await fetch(endpoint, { method: 'POST', credentials: 'same-origin', body: formData });
-        var payload = await response.json().catch(function() { return null; });
-        if (!response.ok || !payload || payload.ok !== true) throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
-        return payload;
-      })();
-    }
 
     if (!sources.length) list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
     closeButton.type = 'button';
