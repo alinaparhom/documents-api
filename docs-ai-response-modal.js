@@ -2649,6 +2649,13 @@
       var requestStartedAt = Date.now();
 
       try {
+        var pendingOcrFiles = state.files.filter(function (file) {
+          return file && !hasUsefulExtractedText(file.content);
+        });
+        for (var i = 0; i < pendingOcrFiles.length; i += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          await extractSingleFile(pendingOcrFiles[i], { silent: true });
+        }
         await hydrateFileContents(state);
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
         var requestMode = resolveRequestMode(state);
