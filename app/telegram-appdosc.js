@@ -2,179 +2,177 @@ import { createPdfViewer } from './apppdf.js';
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
-const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
-const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
-const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
-const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
-const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v1';
+const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 
 let aiDialogLoader = null;
-const taskAttachmentPreviewCache = new Map();
-const taskPdfBinaryCache = new Map();
-const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
-const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
+let briefPdfJsLoader = null;
 
-function normalizePdfBinaryCacheKey(url) {
-  const normalized = normalizeValue(url);
-  if (!normalized) {
-    return '';
+
+function getDirectDocsAiEndpoint() {
+  const configured = String((window && window.DOCUMENTS_AI_API_URL) || '').trim();
+  return configured || '/api-docs.php';
+}
+
+
+function getDocsAiEndpoints() {
+  const configured = String((window && window.DOCUMENTS_AI_API_URL) || '').trim();
+  const endpoints = configured ? [configured, ...DOCS_AI_FALLBACK_ENDPOINTS] : DOCS_AI_FALLBACK_ENDPOINTS.slice();
+  return Array.from(new Set(endpoints.filter(Boolean)));
+}
+
+async function postDocsAiWithFallback(createFormData, options = {}) {
+  const endpoints = getDocsAiEndpoints();
+  let lastResult = null;
+  for (let index = 0; index < endpoints.length; index += 1) {
+    const endpoint = endpoints[index];
+    let response = null;
+    let payload = null;
+    try {
+      response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+      payload = await response.json().catch(() => null);
+    } catch (error) {
+      lastResult = { endpoint, error, response, payload };
+      continue;
+    }
+    const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+    if (shouldTryNextEndpoint && index < endpoints.length - 1) {
+      lastResult = { endpoint, response, payload };
+      continue;
+    }
+    return { endpoint, response, payload };
+  }
+  if (lastResult) {
+    return lastResult;
+  }
+  throw new Error(options.fallbackErrorMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+}
+
+async function postGroqPaidWithFallback(createFormData) {
+  let lastError = null;
+  for (let index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
+    const endpoint = GROQ_PAID_ENDPOINTS[index];
+    try {
+      const response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+      if (response.status === 404 || response.status === 405) continue;
+      const payload = await response.json().catch(() => null);
+      return { endpoint, response, payload };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
+}
+
+function ensureBriefPdfJsLoaded() {
+  if (typeof window !== 'undefined' && window.pdfjsLib) {
+    return Promise.resolve(window.pdfjsLib);
+  }
+  if (briefPdfJsLoader) {
+    return briefPdfJsLoader;
+  }
+  briefPdfJsLoader = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '/pdf/pdf.min.js';
+    script.onload = () => {
+      if (window.pdfjsLib) {
+        resolve(window.pdfjsLib);
+      } else {
+        reject(new Error('pdfjsLib не найден'));
+      }
+    };
+    script.onerror = () => reject(new Error('Не удалось загрузить PDF библиотеку'));
+    document.head.appendChild(script);
+  });
+  return briefPdfJsLoader;
+}
+
+async function convertPdfToImageFileForBrief(file, fallbackName) {
+  const fileName = String(fallbackName || (file && file.name) || 'brief-file');
+  const isPdf = file && ((file.type && String(file.type).toLowerCase() === 'application/pdf') || /\.pdf$/i.test(fileName));
+  if (!isPdf || !file) {
+    return file;
   }
   try {
-    const parsed = new URL(normalized, window.location.origin);
-    parsed.searchParams.delete('v');
-    parsed.hash = '';
-    return parsed.toString();
-  } catch (error) {
-    return normalized.replace(/([?&])v=\d+(&)?/g, (match, prefix, tail) => (tail ? prefix : '')).replace(/[?&]$/, '');
-  }
-}
-
-function compactTaskPdfBinaryCache() {
-  if (!taskPdfBinaryCache.size) {
-    return;
-  }
-  const now = Date.now();
-  taskPdfBinaryCache.forEach((entry, key) => {
-    const createdAt = entry && typeof entry.createdAt === 'number' ? entry.createdAt : 0;
-    if (!createdAt || now - createdAt > TASK_PDF_BINARY_CACHE_TTL_MS) {
-      taskPdfBinaryCache.delete(key);
+    const pdfjsLib = await ensureBriefPdfJsLoaded();
+    if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
     }
-  });
-  if (taskPdfBinaryCache.size <= TASK_PDF_BINARY_CACHE_MAX_ENTRIES) {
-    return;
-  }
-  const ordered = Array.from(taskPdfBinaryCache.entries())
-    .sort((a, b) => {
-      const aAt = a[1] && typeof a[1].lastAccessedAt === 'number' ? a[1].lastAccessedAt : 0;
-      const bAt = b[1] && typeof b[1].lastAccessedAt === 'number' ? b[1].lastAccessedAt : 0;
-      return aAt - bAt;
+    const bytes = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: bytes });
+    const pdf = await loadingTask.promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.9);
     });
-  while (ordered.length > TASK_PDF_BINARY_CACHE_MAX_ENTRIES) {
-    const oldest = ordered.shift();
-    if (oldest && oldest[0]) {
-      taskPdfBinaryCache.delete(oldest[0]);
-    }
+    if (!blob) return file;
+    return new File([blob], fileName.replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
+  } catch (_) {
+    return file;
   }
 }
 
-function getTaskPdfBinaryCacheEntry(url) {
-  const key = normalizePdfBinaryCacheKey(url);
-  if (!key) {
-    return null;
-  }
-  const entry = taskPdfBinaryCache.get(key);
-  if (!entry) {
-    return null;
-  }
-  const now = Date.now();
-  if (entry.createdAt && now - entry.createdAt > TASK_PDF_BINARY_CACHE_TTL_MS) {
-    taskPdfBinaryCache.delete(key);
-    return null;
-  }
-  entry.lastAccessedAt = now;
-  return entry;
-}
-
-function setTaskPdfBinaryCacheEntry(url, entry) {
-  const key = normalizePdfBinaryCacheKey(url);
-  if (!key || !entry || typeof entry !== 'object') {
-    return null;
-  }
-  const now = Date.now();
-  const nextEntry = {
-    ...entry,
-    createdAt: entry.createdAt || now,
-    lastAccessedAt: now,
-  };
-  taskPdfBinaryCache.set(key, nextEntry);
-  compactTaskPdfBinaryCache();
-  return nextEntry;
-}
-
-async function fetchPdfBinaryForViewer(previewUrl) {
-  const sameOrigin = isSameOriginUrl(previewUrl);
-  const cachedEntry = getTaskPdfBinaryCacheEntry(previewUrl);
-  if (cachedEntry && cachedEntry.arrayBuffer) {
-    return { ...cachedEntry, fromCache: true, sameOrigin };
-  }
-  if (cachedEntry && cachedEntry.promise) {
-    const awaited = await cachedEntry.promise;
-    return { ...awaited, fromCache: true, sameOrigin };
-  }
-
-  const fetchStartedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-    ? performance.now()
-    : Date.now();
-  const requestPromise = fetch(previewUrl, {
-    credentials: sameOrigin ? 'include' : 'omit',
-    cache: sameOrigin ? 'default' : 'no-store',
-  }).then(async (response) => {
-    const fetchRespondedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
-      ? performance.now()
-      : Date.now();
-    if (!response.ok) {
-      const error = new Error(`http_${response.status}`);
-      error.responseStatus = response.status;
-      throw error;
-    }
-    const arrayBuffer = await response.arrayBuffer();
-    const result = {
-      status: response.status,
-      statusText: response.statusText,
-      redirected: response.redirected,
-      responseType: response.type,
-      responseUrl: response.url || previewUrl,
-      headers: collectResponseHeaders(response),
-      contentType: response.headers ? response.headers.get('content-type') : '',
-      contentLength: response.headers ? response.headers.get('content-length') : '',
-      fetchDurationMs: Math.max(0, Math.round(fetchRespondedAt - fetchStartedAt)),
-      sameOrigin,
-      cacheMode: sameOrigin ? 'default' : 'no-store',
-      resourceTiming: getFetchResourceTimingSample(response.url || previewUrl),
-      connectionInfo: getConnectionDiagnostics(),
-      arrayBuffer,
-      byteLength: arrayBuffer ? arrayBuffer.byteLength : 0,
-    };
-    setTaskPdfBinaryCacheEntry(previewUrl, result);
-    return result;
-  }).finally(() => {
-    const key = normalizePdfBinaryCacheKey(previewUrl);
-    if (!key) {
+function loadExternalScript(src, marker) {
+  return new Promise((resolve, reject) => {
+    if (!src) {
+      reject(new Error('Пустой путь скрипта ИИ.'));
       return;
     }
-    const current = taskPdfBinaryCache.get(key);
-    if (current && current.promise) {
-      const { promise, ...rest } = current;
-      taskPdfBinaryCache.set(key, rest);
+    const existing = document.querySelector(`script[${marker}]`);
+    if (existing) {
+      if (typeof window.openAiResponseDialog === 'function') {
+        resolve(window.openAiResponseDialog);
+        return;
+      }
+      if (existing.dataset.loaded === 'true') {
+        reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+        return;
+      }
+      existing.addEventListener('load', () => {
+        if (typeof window.openAiResponseDialog === 'function') {
+          resolve(window.openAiResponseDialog);
+        } else {
+          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+        }
+      }, { once: true });
+      existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
+      return;
     }
+
+    const script = document.createElement('script');
+    script.src = src;
+    script.defer = true;
+    script.setAttribute(marker, 'true');
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      if (typeof window.openAiResponseDialog === 'function') {
+        resolve(window.openAiResponseDialog);
+      } else {
+        reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+      }
+    };
+    script.onerror = () => reject(new Error(`Не удалось загрузить скрипт ИИ: ${src}`));
+    document.head.appendChild(script);
   });
-
-  setTaskPdfBinaryCacheEntry(previewUrl, { promise: requestPromise });
-  const loaded = await requestPromise;
-  return { ...loaded, fromCache: false, sameOrigin };
 }
 
-function buildTaskAttachmentPreviewCacheKey(task, file) {
-  const taskId = normalizeValue(task && task.id);
-  const fileUrl = normalizeValue(file && file.url);
-  if (!taskId || !fileUrl) {
-    return '';
-  }
-  return `${taskId}|${fileUrl}`;
-}
-
-function cloneTaskAttachmentPreviewCacheEntry(entry) {
-  if (!entry || typeof entry !== 'object') {
-    return null;
-  }
-  return {
-    previewBlobUrl: entry.previewBlobUrl || '',
-    previewRemoteUrl: entry.previewRemoteUrl || '',
-    previewPdf: entry.previewPdf || null,
-    previewPdfPromise: entry.previewPdfPromise || null,
-  };
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function ensureAiDialogScriptLoaded() {
@@ -183,37 +181,56 @@ function ensureAiDialogScriptLoaded() {
   }
 
   if (!aiDialogLoader) {
-    aiDialogLoader = new Promise((resolve, reject) => {
-      const existing = document.querySelector('script[data-ai-dialog-script]');
-      if (existing) {
-        existing.addEventListener('load', () => {
-          if (typeof window.openAiResponseDialog === 'function') {
-            resolve(window.openAiResponseDialog);
-          } else {
-            reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
-          }
-        }, { once: true });
-        existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
+    const dynamicImportCandidates = [];
+    try {
+      if (typeof import.meta !== 'undefined' && import.meta.url) {
+        dynamicImportCandidates.push(new URL('./telegram-ai-response-dialog.js', import.meta.url).toString());
+      }
+    } catch (_) {}
+    if (typeof location !== 'undefined' && location.origin) {
+      dynamicImportCandidates.push(new URL('/js/documents/app/telegram-ai-response-dialog.js', location.origin).toString());
+      dynamicImportCandidates.push(new URL('/app/telegram-ai-response-dialog.js', location.origin).toString());
+    }
+    const runtimeVersion = String(window.__RUNTIME_ASSET_VERSION__ || '').trim();
+    const assetVersion = String(window.__ASSET_VERSION__ || '').trim();
+    const cacheVersion = runtimeVersion || (assetVersion ? `${assetVersion}-${Date.now().toString(36)}` : Date.now().toString(36));
+    const candidates = [
+      `/js/documents/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+      `./telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+      `/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+    ];
+    const loadViaDynamicImport = async (index) => {
+      if (index >= dynamicImportCandidates.length) return;
+      const src = dynamicImportCandidates[index];
+      if (!src) return loadViaDynamicImport(index + 1);
+      try {
+        await import(src);
+      } catch (_) {
+        return loadViaDynamicImport(index + 1);
+      }
+      if (typeof window.openAiResponseDialog === 'function') {
         return;
       }
+      return loadViaDynamicImport(index + 1);
+    };
+    const tryLoad = (index) => {
+      if (index >= candidates.length) {
+        return Promise.reject(new Error('Не удалось загрузить ИИ-скрипт ни по одному пути.'));
+      }
+      return loadExternalScript(candidates[index], `data-ai-dialog-script-${index}`).catch(() => tryLoad(index + 1));
+    };
 
-      const script = document.createElement('script');
-      script.src = '/js/documents/app/telegram-ai-response-dialog.js?v=' + encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
-      script.defer = true;
-      script.dataset.aiDialogScript = 'true';
-      script.onload = () => {
+    aiDialogLoader = loadViaDynamicImport(0)
+      .then(() => {
         if (typeof window.openAiResponseDialog === 'function') {
-          resolve(window.openAiResponseDialog);
-        } else {
-          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+          return window.openAiResponseDialog;
         }
-      };
-      script.onerror = () => reject(new Error('Не удалось загрузить скрипт ИИ.'));
-      document.head.appendChild(script);
-    }).catch((error) => {
-      aiDialogLoader = null;
-      throw error;
-    });
+        return tryLoad(0);
+      })
+      .catch((error) => {
+        aiDialogLoader = null;
+        throw error;
+      });
   }
 
   return aiDialogLoader;
@@ -251,7 +268,8 @@ async function openAiDialogSafely(context = {}) {
     });
   } catch (error) {
     if (typeof context.onStatus === 'function') {
-      context.onStatus('error', 'Не удалось открыть ИИ-диалог. Обновите страницу.');
+      const errorText = error instanceof Error ? error.message : 'неизвестная ошибка';
+      context.onStatus('error', `Не удалось открыть ИИ-диалог: ${errorText}`);
     }
     logClientEvent('task_view_error', {
       reason: 'ai_dialog_open_failed',
@@ -266,30 +284,64 @@ function ensureTelegramBriefModalStyle() {
   style.id = TELEGRAM_BRIEF_MODAL_STYLE_ID;
   style.textContent = `
     .appdosc-brief-ai{position:fixed;inset:0;z-index:2800;background:rgba(15,23,42,.32);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:8px}
-    .appdosc-brief-ai__panel{width:min(980px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.98),rgba(255,255,255,.92));border-radius:20px;border:1px solid rgba(255,255,255,.9);overflow:hidden}
-    .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid rgba(226,232,240,.95)}
+    .appdosc-brief-ai__panel{width:min(920px,100%);max-height:calc(100dvh - 16px);display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.94));border-radius:22px;border:1px solid rgba(255,255,255,.9);overflow:hidden;box-shadow:0 14px 38px rgba(15,23,42,.16)}
+    .appdosc-brief-ai__header{display:flex;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(226,232,240,.95)}
+    .appdosc-brief-ai__close{border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.9);color:#0f172a;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:600;min-height:32px;flex:0 0 auto}
     .appdosc-brief-ai__title{font-size:16px;font-weight:700;color:#0f172a}
     .appdosc-brief-ai__sub{font-size:12px;color:#64748b}
-    .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,300px) minmax(0,1fr);gap:10px;padding:12px;min-height:0;flex:1}
+    .appdosc-brief-ai__mode{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 8px;border-radius:999px;background:rgba(219,234,254,.7);border:1px solid rgba(147,197,253,.8);font-size:11px;color:#1e3a8a;font-weight:600}
+    .appdosc-brief-ai__toggle{display:inline-flex;align-items:center;gap:8px;margin-top:7px;padding:6px 9px;border-radius:11px;border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.88);font-size:12px;color:#334155;font-weight:600}
+    .appdosc-brief-ai__toggle input{accent-color:#2563eb;width:16px;height:16px}
+    .appdosc-brief-ai__hint{margin-top:6px;font-size:11px;color:#475569}
+    .appdosc-brief-ai__status{margin:0;padding:6px 10px;border-bottom:1px solid rgba(226,232,240,.85);font-size:12px;color:#334155;background:rgba(248,250,252,.88)}
+    .appdosc-brief-ai__status[data-tone="loading"]{color:#1d4ed8}
+    .appdosc-brief-ai__status[data-tone="error"]{color:#b91c1c}
+    .appdosc-brief-ai__status[data-tone="success"]{color:#166534}
+    .appdosc-brief-ai__body{display:grid;grid-template-columns:minmax(210px,290px) minmax(0,1fr);gap:10px;padding:10px;min-height:0;flex:1}
     .appdosc-brief-ai__list{display:flex;flex-direction:column;gap:8px;overflow:auto}
-    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:12px;padding:10px;text-align:left;opacity:1}
+    .appdosc-brief-ai__item{border:1px solid rgba(203,213,225,.92);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:14px;padding:10px;text-align:left;opacity:1;min-height:54px;transition:.2s ease}
+    .appdosc-brief-ai__item:disabled{opacity:.6}
     .appdosc-brief-ai__item span{display:block;word-break:break-word;overflow-wrap:anywhere}
     .appdosc-brief-ai__item strong{font-size:13px;color:#0f172a}
     .appdosc-brief-ai__item small{font-size:11px;color:#64748b}
-    .appdosc-brief-ai__item.is-active{border-color:rgba(37,99,235,.55);background:rgba(239,246,255,.9)}
-    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:#fff;padding:12px;white-space:pre-wrap;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
-    @media (max-width:768px){.appdosc-brief-ai__body{grid-template-columns:1fr}}
+    .appdosc-brief-ai__item.is-active{border-color:rgba(59,130,246,.6);background:rgba(239,246,255,.9);box-shadow:0 8px 18px rgba(59,130,246,.16)}
+    .appdosc-brief-ai__preview{margin:0;border:1px solid rgba(203,213,225,.92);border-radius:16px;background:rgba(255,255,255,.9);padding:12px;overflow:auto;font-size:13px;line-height:1.58;color:#0f172a;opacity:1;font-weight:500}
+    .appdosc-brief-ai__placeholder{margin:0;color:#64748b;white-space:pre-wrap}
+    .appdosc-brief-ai__section{border:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.88);border-radius:14px;padding:10px 11px}
+    .appdosc-brief-ai__section + .appdosc-brief-ai__section{margin-top:8px}
+    .appdosc-brief-ai__section h4{margin:0 0 6px 0;font-size:12px;color:#334155;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+    .appdosc-brief-ai__section p{margin:0;color:#0f172a;white-space:pre-wrap}
+    .appdosc-brief-ai__section ul{margin:0;padding-left:18px;color:#0f172a}
+    .appdosc-brief-ai__section li + li{margin-top:5px}
+    @media (max-width:768px){.appdosc-brief-ai{padding:0}.appdosc-brief-ai__panel{max-height:100dvh;border-radius:0}.appdosc-brief-ai__body{grid-template-columns:1fr}.appdosc-brief-ai__list{flex-direction:row;overflow:auto;padding-bottom:2px}.appdosc-brief-ai__item{min-width:180px}.appdosc-brief-ai__close{min-height:30px;padding:6px 9px}}
   `;
   document.head.appendChild(style);
 }
 
-async function requestTelegramOcrByUrl(fileUrl) {
-  const formData = new FormData();
-  formData.append('action', 'ocr_extract');
-  formData.append('language', 'rus');
-  formData.append('file_url', fileUrl);
-  const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
-  const payload = await response.json().catch(() => null);
+async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
+  const request = await postDocsAiWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'ocr_extract');
+    formData.append('language', 'rus');
+    const normalizedName = (() => {
+      const base = String(fileName || (fileOrBlob && fileOrBlob.name) || 'ocr-file').trim() || 'ocr-file';
+      if (/\.[a-z0-9]{2,8}$/i.test(base)) return base;
+      const type = String(fileOrBlob && fileOrBlob.type || '').toLowerCase();
+      if (type.includes('pdf')) return `${base}.pdf`;
+      if (type.includes('jpeg') || type.includes('jpg')) return `${base}.jpg`;
+      if (type.includes('png')) return `${base}.png`;
+      if (type.includes('webp')) return `${base}.webp`;
+      if (type.includes('gif')) return `${base}.gif`;
+      if (type.includes('bmp')) return `${base}.bmp`;
+      if (type.includes('tiff') || type.includes('tif')) return `${base}.tiff`;
+      if (type.includes('wordprocessingml.document')) return `${base}.docx`;
+      return base;
+    })();
+    formData.append('file', fileOrBlob, normalizedName);
+    return formData;
+  }, { fallbackErrorMessage: 'OCR временно недоступен' });
+  const response = request && request.response;
+  const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
     throw new Error((payload && payload.error) || 'OCR временно недоступен');
   }
@@ -298,76 +350,300 @@ async function requestTelegramOcrByUrl(fileUrl) {
   return text;
 }
 
-async function requestTelegramBriefAi(sourceLabel, text) {
-  const context = {
-    extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: String(text || '').slice(0, 12000) }],
-    aiBehavior: 'Режим "Кратко ИИ". Кратко и понятно: о чем документ, кто отправитель/получатель, 3-4 ключевые детали.'
-  };
-  const formData = new FormData();
-  formData.append('action', 'ai_response_analyze');
-  formData.append('documentTitle', sourceLabel);
-  formData.append('prompt', 'Сделай короткое и понятное summary документа.');
-  formData.append('responseStyle', 'concise');
-  formData.append('context', JSON.stringify(context));
-  const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
-  const payload = await response.json().catch(() => null);
+async function requestTelegramBriefAi(sourceLabel, text, aiMode = 'free') {
+  const normalizedText = String(text || '').trim();
+  const request = await postDocsAiWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'generate_summary');
+    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+    formData.append('extractedTexts', JSON.stringify([{ name: sourceLabel || 'Файл', type: 'text/plain', text: normalizedText.slice(0, 12000) }]));
+    return formData;
+  });
+  const response = request && request.response;
+  const payload = request && request.payload;
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error((payload && payload.error) || 'ИИ временно недоступен');
+    const statusCode = response && Number.isFinite(response.status) ? response.status : 0;
+    const serverError = payload && payload.error ? String(payload.error).trim() : '';
+    const retryAfterSeconds = Math.max(10, Number(payload && payload.retryAfterSeconds) || 45);
+    if (statusCode === 429) {
+      throw new Error(`${serverError || 'Слишком много запросов к ИИ.'} Повторите через ${retryAfterSeconds} сек.`);
+    }
+    if (statusCode >= 500) {
+      throw new Error(`${serverError || 'ИИ-сервис перегружен или временно недоступен.'} Повторите через ${retryAfterSeconds} сек.`);
+    }
+    throw new Error(serverError || `Ошибка ИИ (${statusCode}).`);
+  }
+  if (!hasMeaningfulTelegramBriefPayload(payload)) {
+    throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
   }
   return payload;
 }
 
-function buildTelegramBriefText(payload, task) {
-  const analysis = payload && payload.analysis ? String(payload.analysis).trim() : '';
+async function requestTelegramBriefAiByAttachment(source, aiMode = 'free') {
+  const fileUrl = normalizeValue(source && source.url);
+  if (!fileUrl) {
+    throw new Error('Не найден URL файла.');
+  }
+  const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+  if (!fetched.ok) {
+    throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+  }
+  const blob = await fetched.blob();
+  const fileName = normalizeValue(source && source.label) || 'brief-file';
+  const request = await postDocsAiWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'generate_summary');
+    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
+    formData.append('attachment', new File([blob], fileName, { type: blob.type || 'application/octet-stream' }), fileName);
+    return formData;
+  });
+  const response = request && request.response;
+  const payload = request && request.payload;
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
+  }
+  if (!hasMeaningfulTelegramBriefPayload(payload)) {
+    throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
+  }
+  return payload;
+}
+
+async function requestTelegramBriefAiDirectWithAttachment(source) {
+  const fileName = normalizeValue(source && source.label) || 'brief-file';
+  let fileForVip = null;
+  if (source && source.fileObject instanceof File) {
+    fileForVip = source.fileObject;
+  } else {
+    const fileUrl = normalizeValue(source && source.url);
+    if (!fileUrl) {
+      throw new Error('Не найден URL файла для VIP режима.');
+    }
+    const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
+    if (!fetched.ok) {
+      throw new Error(`Не удалось загрузить файл (${fetched.status})`);
+    }
+    const blob = await fetched.blob();
+    fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+  }
+  const extractedText = await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName);
+  if (!String(extractedText || '').trim()) {
+    throw new Error('OCR не вернул текст для выбранного файла.');
+  }
+  fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
+  const request = await postGroqPaidWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'generate_summary');
+    formData.append('mode', 'paid');
+    formData.append('files', fileForVip, fileForVip.name || fileName);
+    if (extractedText) {
+      formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 16000) }]));
+    }
+    return formData;
+  });
+  const response = request && request.response;
+  const payload = request && request.payload;
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
+  }
+  if (!hasMeaningfulTelegramBriefPayload(payload)) {
+    throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
+  }
+  return payload;
+}
+
+function normalizeTelegramOcrText(text) {
+  return String(text || '')
+    .replace(/-\s*\n\s*/g, '')
+    .replace(/\s*\n+\s*/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\u00A0/g, ' ')
+    .trim();
+}
+
+function cleanTelegramSentence(text) {
+  const raw = String(text || '').trim();
+  let normalized = raw;
+  if (raw && raw.charAt(0) === '{' && /"response"\s*:/i.test(raw)) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.response === 'string' && parsed.response.trim()) {
+        normalized = parsed.response.trim();
+      }
+    } catch (_) {}
+  }
+  return String(normalized || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[•\-–—\d.)\s]+/u, '')
+    .replace(/[;,:-]+$/g, '')
+    .trim();
+}
+
+function getTelegramSentencePool(text) {
+  const normalized = normalizeTelegramOcrText(text);
+  if (!normalized) return [];
+  return normalized
+    .split(/(?<=[.!?])\s+|\n+/u)
+    .map(cleanTelegramSentence)
+    .filter((line) => line.length >= 16);
+}
+
+function isWeakTelegramAnalysis(text) {
+  const normalized = normalizeValue(text).toLowerCase();
+  if (!normalized) return true;
+  return normalized.includes('не указано в файле')
+    || normalized.includes('не удалось определить')
+    || normalized.includes('нет данных');
+}
+
+function buildTelegramAnalysisFallback(sourceText) {
+  const sentencePool = getTelegramSentencePool(sourceText);
+  if (!sentencePool.length) {
+    return 'Не удалось собрать понятное резюме из текста файла.';
+  }
+  const picked = sentencePool.slice(0, 3);
+  return picked.join('. ') + (/[.!?]$/.test(picked[picked.length - 1]) ? '' : '.');
+}
+
+function sanitizeTelegramAiList(items, limit) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => cleanTelegramSentence(item))
+    .filter((item) => item.length >= 12 && !/не указано в файле/i.test(item))
+    .slice(0, limit);
+}
+
+function hasMeaningfulTelegramBriefPayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const summary = normalizeValue(payload.summary);
+  const analysis = normalizeValue(payload.analysis);
+  const responseText = normalizeValue(payload.response);
   const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
-  const actions = Array.isArray(block.required_actions) ? block.required_actions.slice(0, 4) : [];
-  const requirements = Array.isArray(block.requirements) ? block.requirements.slice(0, 3) : [];
-  const decisionReason = block && block.decision_reason ? String(block.decision_reason).trim() : '';
-  const participants = Array.isArray(block.risks) ? block.risks.find((line) => /^отправитель\s*:/i.test(String(line || '').trim())) : '';
-  const taskSender = normalizeValue(task && task.correspondent) || normalizeValue(task && task.organization);
-  const taskRecipient = normalizeValue(task && task.organization);
-  const participantsLine = participants
-    || ((taskSender || taskRecipient) ? `Отправитель: ${taskSender || 'не определён'}; Получатель: ${taskRecipient || 'не определён'}` : 'Не удалось точно определить.');
-  return [
-    '✨ Кратко по документу',
-    '',
-    '📄 О чем файл',
-    analysis || 'Не удалось определить суть документа.',
-    '',
-    '👤 Кто прислал / кому',
-    participantsLine,
-    '',
-    '❓ Зачем это письмо',
-    decisionReason || 'Согласовать изменения по работам и принять решение о дальнейших действиях.',
-    '',
-    '🔎 Важные детали',
-    actions.length ? actions.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Детали не выделены.',
-    '',
-    '✅ Что нужно сделать',
-    requirements.length ? requirements.map((item) => `• ${String(item || '').trim()}`).join('\n') : '• Проверить требования документа и дать официальный ответ.'
-  ].join('\n');
+  const hasActions = Array.isArray(block.required_actions) && block.required_actions.some((item) => normalizeValue(item).length >= 4);
+  const hasRequirements = Array.isArray(block.requirements) && block.requirements.some((item) => normalizeValue(item).length >= 4);
+  return Boolean(summary || analysis || responseText || hasActions || hasRequirements);
+}
+
+function pickTelegramFactsFromText(sourceText, limit) {
+  const sentencePool = getTelegramSentencePool(sourceText);
+  if (!sentencePool.length) return [];
+  const scored = sentencePool
+    .map((line) => {
+      let score = 0;
+      if (/\d/.test(line)) score += 2;
+      if (/руб|срок|этап|договор|контракт|работ|объект|адрес|дата|стоим|монтаж|демонтаж/i.test(line)) score += 3;
+      if (line.length > 80) score += 1;
+      return { line, score };
+    })
+    .sort((a, b) => b.score - a.score);
+  const unique = [];
+  scored.forEach((entry) => {
+    if (unique.length >= limit) return;
+    if (unique.some((line) => line === entry.line)) return;
+    unique.push(entry.line);
+  });
+  return unique.slice(0, limit);
+}
+
+function buildTelegramStepsFallback(sourceText, limit) {
+  const facts = pickTelegramFactsFromText(sourceText, limit + 1);
+  if (!facts.length) return [];
+  return facts.slice(0, limit).map((fact) => `Проверить и выполнить по документу: ${fact}`);
+}
+
+function extractPartyByLabel(text, labelVariants) {
+  const safeText = String(text || '');
+  if (!safeText) return '';
+  const escapedLabels = labelVariants
+    .map((label) => String(label || '').trim())
+    .filter(Boolean)
+    .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!escapedLabels.length) return '';
+  const pattern = new RegExp(`(?:${escapedLabels.join('|')})\\s*[:\\-]\\s*([^\\n\\r;]+)`, 'i');
+  const match = safeText.match(pattern);
+  return match && match[1] ? String(match[1]).trim() : '';
+}
+
+function buildTelegramBriefSections(payload, sourceText) {
+  const analysis = payload && payload.analysis ? cleanTelegramSentence(payload.analysis) : '';
+  const responseText = cleanTelegramSentence(payload && payload.response);
+  const sourceFallback = buildTelegramAnalysisFallback(sourceText);
+  const block = payload && payload.decisionBlock && typeof payload.decisionBlock === 'object' ? payload.decisionBlock : {};
+  const aiActions = sanitizeTelegramAiList(block.required_actions, 5);
+  const aiRequirements = sanitizeTelegramAiList(block.requirements, 4);
+  const fallbackSteps = buildTelegramStepsFallback(sourceText, 4);
+  const risks = Array.isArray(block.risks) ? block.risks : [];
+  const participantsRaw = risks.find((item) => /^отправитель\s*:/i.test(normalizeValue(item)));
+  const sender = extractPartyByLabel(sourceText, ['отправитель', 'от кого', 'исполнитель']);
+  const recipient = extractPartyByLabel(sourceText, ['получатель', 'кому', 'заказчик']);
+  const sourceParticipants = (sender || recipient)
+    ? `Отправитель: ${sender || 'не найден'}. Получатель: ${recipient || 'не найден'}.`
+    : '';
+  const participants = participantsRaw || sourceParticipants || 'Отправитель/получатель: не указано в ответе ИИ';
+  return {
+    analysis: !isWeakTelegramAnalysis(analysis)
+      ? analysis
+      : (!isWeakTelegramAnalysis(responseText) ? responseText : sourceFallback),
+    participants,
+    actions: aiActions.length ? aiActions : fallbackSteps,
+    requirements: aiRequirements.length ? aiRequirements : fallbackSteps.slice(0, 3),
+  };
+}
+
+function extractTelegramPlainAiBriefText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidates = [payload.summary, payload.response, payload.analysis, payload.text, payload.answer];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = normalizeValue(candidates[index]);
+    if (candidate) return candidate;
+  }
+  return '';
+}
+
+function renderTelegramBriefPreview(container, payload) {
+  const summaryText = normalizeValue(payload && payload.summary) || extractTelegramPlainAiBriefText(payload);
+  container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
 }
 
 function openTelegramBriefModal(task, statusHandler) {
   ensureTelegramBriefModalStyle();
+  const previousBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
   const modal = document.createElement('div');
   modal.className = 'appdosc-brief-ai';
   modal.innerHTML = `
     <div class="appdosc-brief-ai__panel">
       <div class="appdosc-brief-ai__header">
-        <div><div class="appdosc-brief-ai__title">Кратко ИИ</div><div class="appdosc-brief-ai__sub">Выберите источник для анализа</div></div>
-        <button type="button" class="appdosc-card__action" data-close>Закрыть</button>
+        <div>
+          <div class="appdosc-brief-ai__title">Кратко ИИ</div>
+          <div class="appdosc-brief-ai__sub">Файл → OCR → api-groq-paid.php → краткий вывод</div>
+          <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-paid-ai>Платный ИИ</label>
+          <div class="appdosc-brief-ai__hint">1) Включите «Платный ИИ» → 2) Нажмите файл → 3) Получите краткое решение.</div>
+        </div>
+        <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
       </div>
+      <p class="appdosc-brief-ai__status" data-status data-tone="idle">Выберите файл для анализа.</p>
+      <p class="appdosc-brief-ai__status" data-meta data-tone="idle"> </p>
       <div class="appdosc-brief-ai__body">
         <div class="appdosc-brief-ai__list" data-list></div>
-        <pre class="appdosc-brief-ai__preview" data-preview>Нажмите на источник слева.</pre>
+        <div class="appdosc-brief-ai__preview" data-preview>
+          <p class="appdosc-brief-ai__placeholder">Отметьте «Платный ИИ», затем выберите файл.</p>
+        </div>
       </div>
     </div>`;
   const list = modal.querySelector('[data-list]');
   const preview = modal.querySelector('[data-preview]');
+  const statusNode = modal.querySelector('[data-status]');
+  const metaNode = modal.querySelector('[data-meta]');
+  const paidCheckbox = modal.querySelector('[data-paid-ai]');
   const sources = [];
-  const taskText = [task && task.summary, task && task.instruction, task && task.resolution].map((v) => String(v || '').trim()).filter(Boolean).join('\n');
-  if (taskText) sources.push({ label: 'Текст задачи', text: taskText, type: 'context' });
+  let activeRequestId = 0;
+
+  const setStatus = (message, tone = 'idle') => {
+    if (!statusNode) return;
+    statusNode.textContent = message;
+    statusNode.setAttribute('data-tone', tone);
+  };
+
   (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
     const name = getAttachmentName(file, index + 1);
     const url = resolveFileFetchUrl(file);
@@ -375,36 +651,76 @@ function openTelegramBriefModal(task, statusHandler) {
   });
 
   const activate = (button) => Array.from(list.querySelectorAll('.appdosc-brief-ai__item')).forEach((el) => el.classList.toggle('is-active', el === button));
-  const close = () => modal.remove();
+  const onEscClose = (event) => {
+    if (event.key === 'Escape') {
+      close();
+    }
+  };
+  const close = () => {
+    document.removeEventListener('keydown', onEscClose);
+    document.body.style.overflow = previousBodyOverflow;
+    modal.remove();
+  };
   modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
   modal.querySelector('[data-close]').addEventListener('click', close);
+  document.addEventListener('keydown', onEscClose);
 
   sources.forEach((source) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-brief-ai__item';
-    button.innerHTML = `<span><strong>${source.label}</strong></span><span><small>${source.type === 'file' ? 'Вложение' : 'Карточка задачи'}</small></span>`;
+    const titleWrap = document.createElement('span');
+    const titleNode = document.createElement('strong');
+    titleNode.textContent = normalizeValue(source.label) || 'Файл';
+    titleWrap.appendChild(titleNode);
+    const typeWrap = document.createElement('span');
+    const typeNode = document.createElement('small');
+    typeNode.textContent = 'Вложение';
+    typeWrap.appendChild(typeNode);
+    button.append(titleWrap, typeWrap);
     button.addEventListener('click', async () => {
+      if (!paidCheckbox || !paidCheckbox.checked) {
+        setStatus('Сначала включите галочку «Платный ИИ».', 'error');
+        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">Без режима «Платный ИИ» анализ не запускается.</p>';
+        return;
+      }
+      const requestId = ++activeRequestId;
       activate(button);
       try {
-        preview.textContent = '⏳ Подготовка текста...';
-        const sourceText = source.text || await requestTelegramOcrByUrl(source.url);
-        preview.textContent = '⏳ ИИ анализирует документ...';
-        const aiPayload = await requestTelegramBriefAi(source.label, sourceText);
-        preview.textContent = buildTelegramBriefText(aiPayload, task);
+        button.disabled = true;
+        setStatus(`OCR и платный анализ: ${source.label}`, 'loading');
+        preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ OCR и отправка в api-groq-paid.php...</p>';
+        const startedAt = Date.now();
+        const aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
+        if (requestId !== activeRequestId) return;
+        renderTelegramBriefPreview(preview, aiPayload);
+        setStatus('Готово. Краткий вывод получен через Платный ИИ.', 'success');
+        if (metaNode) {
+          const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - startedAt)) / 1000).toFixed(1);
+          metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек • Режим: Платный ИИ`;
+        }
       } catch (error) {
+        if (requestId !== activeRequestId) return;
         const message = error instanceof Error ? error.message : 'неизвестная ошибка';
-        preview.textContent = `ИИ временно недоступен. Попробуйте позже.\n\nДетали: ${message}`;
-        if (typeof statusHandler === 'function') statusHandler('warning', preview.textContent);
+        preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">Ошибка анализа.
+${escapeHtml(message)}</p>`;
+        setStatus(`Ошибка: ${message}`, 'error');
+        if (metaNode) metaNode.textContent = '';
+        if (typeof statusHandler === 'function') statusHandler('warning', message);
+      } finally {
+        button.disabled = false;
       }
     });
     list.appendChild(button);
   });
   if (!sources.length) {
-    list.innerHTML = '<div class="appdosc-empty">Нет текста или файлов для анализа.</div>';
+    list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
+    if (paidCheckbox) paidCheckbox.disabled = true;
+    setStatus('Нет файлов для анализа в этой задаче.', 'error');
   }
   document.body.appendChild(modal);
 }
+
 
 const ALLOWED_LOG_EVENTS = new Set([
   'bootstrap_after_init_telegram',
@@ -433,16 +749,9 @@ const ALLOWED_LOG_EVENTS = new Set([
   'task_view_files_empty',
   'task_view_open_start',
   'task_view_open_failed',
-  'task_view_watch_open_click',
-  'task_view_watch_open_success',
-  'task_view_watch_open_error',
-  'task_view_watch_tab_click',
-  'task_view_watch_tab_success',
-  'task_view_watch_tab_error',
   'task_view_inline_headers',
   'task_view_pdf_diagnostics',
   'task_view_resolve',
-  'task_view_stage',
   'task_assign_error',
   'task_assign_request',
   'task_assign_success',
@@ -603,30 +912,7 @@ function getPdfLogPlatformDetails() {
 }
 
 function sendPdfLogEntry(prefix, step, details) {
-  const now = Date.now();
-  if (now - pdfLogThrottleAt < PDF_LOG_THROTTLE_MS) {
-    return false;
-  }
-  pdfLogThrottleAt = now;
-
-  const payloadDetails = prepareLogDetails({
-    prefix: normalizeValue(prefix),
-    step: normalizeValue(step),
-    details: prepareLogDetails(details),
-    at: new Date(now).toISOString(),
-    ...getPdfLogPlatformDetails(),
-  });
-
-  if (payloadDetails && typeof payloadDetails === 'object' && !Array.isArray(payloadDetails)) {
-    annotateEventWithEnvironment(payloadDetails);
-  }
-
-  return sendLogPayload(PDF_LOG_ENDPOINT, {
-    event: 'task_view_pdf_diagnostics',
-    timestamp: new Date(now).toISOString(),
-    details: payloadDetails,
-    context: buildClientEventContext() || undefined,
-  }, { keepalive: true });
+  return false;
 }
 
 function sendConsoleLogEntry(step, details) {
@@ -734,32 +1020,7 @@ function logViewerModeDecision(mode, reason, details = {}) {
 let pdfDiagnosticThrottleAt = 0;
 
 function attachPdfDiagnostics() {
-  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
-    return;
-  }
-
-  window.addEventListener(PDF_DIAGNOSTIC_EVENT, (event) => {
-    const now = Date.now();
-    if (now - pdfDiagnosticThrottleAt < PDF_DIAGNOSTIC_THROTTLE_MS) {
-      return;
-    }
-    pdfDiagnosticThrottleAt = now;
-
-    const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
-    const entry = {
-      prefix: VIEWER_LOG_PREFIX_DEEP,
-      step: normalizeValue(detail.step),
-      details: detail.details && typeof detail.details === 'object'
-        ? detail.details
-        : (detail.details ?? ''),
-      source: 'pdfjs',
-      isViewerOpen: Boolean(elements && elements.viewer && !elements.viewer.hidden),
-      activeFile: viewerTabsState && viewerTabsState.activeFile ? (viewerTabsState.activeFile.name || '') : '',
-    };
-
-    sendPdfLogEntry(entry.prefix, entry.step, entry);
-    logClientEvent('task_view_pdf_diagnostics', entry, { keepalive: true });
-  });
+  // Отключено: обработчики logClientEvent и logViewerDebug деактивированы
 }
 
 function collectResponseHeaders(response) {
@@ -772,14 +1033,6 @@ function collectResponseHeaders(response) {
     'content-length',
     'content-disposition',
     'cache-control',
-    'etag',
-    'last-modified',
-    'age',
-    'server-timing',
-    'cf-cache-status',
-    'x-cache',
-    'x-served-by',
-    'via',
     'pragma',
     'expires',
     'accept-ranges',
@@ -796,86 +1049,6 @@ function collectResponseHeaders(response) {
     }
   });
   return result;
-}
-
-function getFetchResourceTimingSample(targetUrl) {
-  if (typeof performance === 'undefined' || !performance || typeof performance.getEntriesByType !== 'function') {
-    return null;
-  }
-
-  const normalizedUrl = normalizeValue(targetUrl);
-  if (!normalizedUrl) {
-    return null;
-  }
-
-  try {
-    const entries = performance.getEntriesByType('resource');
-    if (!Array.isArray(entries) || entries.length === 0) {
-      return null;
-    }
-
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const entry = entries[index];
-      if (!entry || typeof entry.name !== 'string') {
-        continue;
-      }
-      if (entry.name !== normalizedUrl) {
-        continue;
-      }
-
-      const protocol = typeof entry.nextHopProtocol === 'string' ? entry.nextHopProtocol : '';
-      const dnsMs = entry.domainLookupEnd > 0 && entry.domainLookupStart > 0
-        ? Math.max(0, entry.domainLookupEnd - entry.domainLookupStart)
-        : 0;
-      const tcpMs = entry.connectEnd > 0 && entry.connectStart > 0
-        ? Math.max(0, entry.connectEnd - entry.connectStart)
-        : 0;
-      const tlsMs = entry.connectEnd > 0 && entry.secureConnectionStart > 0
-        ? Math.max(0, entry.connectEnd - entry.secureConnectionStart)
-        : 0;
-      const ttfbMs = entry.responseStart > 0 && entry.requestStart > 0
-        ? Math.max(0, entry.responseStart - entry.requestStart)
-        : 0;
-      const downloadMs = entry.responseEnd > 0 && entry.responseStart > 0
-        ? Math.max(0, entry.responseEnd - entry.responseStart)
-        : 0;
-      const totalMs = entry.duration > 0 ? Math.max(0, entry.duration) : 0;
-
-      return {
-        initiatorType: normalizeValue(entry.initiatorType),
-        transferSize: Number.isFinite(entry.transferSize) ? Math.round(entry.transferSize) : 0,
-        encodedBodySize: Number.isFinite(entry.encodedBodySize) ? Math.round(entry.encodedBodySize) : 0,
-        decodedBodySize: Number.isFinite(entry.decodedBodySize) ? Math.round(entry.decodedBodySize) : 0,
-        protocol,
-        dnsMs: Math.round(dnsMs),
-        tcpMs: Math.round(tcpMs),
-        tlsMs: Math.round(tlsMs),
-        ttfbMs: Math.round(ttfbMs),
-        downloadMs: Math.round(downloadMs),
-        totalMs: Math.round(totalMs),
-      };
-    }
-  } catch (error) {
-    return {
-      error: error && error.message ? error.message : String(error),
-    };
-  }
-
-  return null;
-}
-
-function getConnectionDiagnostics() {
-  if (typeof navigator === 'undefined' || !navigator || !navigator.connection) {
-    return null;
-  }
-
-  const connection = navigator.connection;
-  return {
-    effectiveType: normalizeValue(connection.effectiveType),
-    rtt: Number.isFinite(connection.rtt) ? connection.rtt : null,
-    downlink: Number.isFinite(connection.downlink) ? connection.downlink : null,
-    saveData: Boolean(connection.saveData),
-  };
 }
 
 function createEmptyStatusCounters() {
@@ -1347,38 +1520,7 @@ function buildClientEventContext() {
 }
 
 function logClientEvent(eventName, details, options) {
-  const normalizedEvent = typeof eventName === 'string' ? eventName.trim() : '';
-  if (normalizedEvent === '' || !ALLOWED_LOG_EVENTS.has(normalizedEvent)) {
-    return false;
-  }
-  if (!normalizedEvent.startsWith('task_view_')) {
-    return false;
-  }
-
-  const normalizedDetails = prepareLogDetails(details);
-  if (normalizedDetails && typeof normalizedDetails === 'object' && !Array.isArray(normalizedDetails)) {
-    annotateEventWithEnvironment(normalizedDetails);
-  }
-
-  const payload = {
-    event: normalizedEvent,
-    timestamp: new Date().toISOString(),
-  };
-
-  if (normalizedDetails !== undefined) {
-    payload.details = normalizedDetails;
-  }
-
-  const context = buildClientEventContext();
-  if (context) {
-    payload.context = context;
-  }
-
-  const keepalive = options && typeof options === 'object' && Object.prototype.hasOwnProperty.call(options, 'keepalive')
-    ? Boolean(options.keepalive)
-    : true;
-
-  return sendLogPayload(CLIENT_LOG_ENDPOINT, payload, { keepalive });
+  return false;
 }
 
 function sendEntryTaskLog(eventName, details, options) {
@@ -2924,10 +3066,8 @@ function updateStateFromPayload(payload) {
     });
   }
 
-  const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
+  revokeTasksBlobUrls(state.tasks);
   state.tasks = sanitizedTasks;
-  const activePreviewKeys = applyTaskAttachmentPreviewCache(state.tasks, previousPreviewEntries);
-  cleanupTaskAttachmentPreviewCache(activePreviewKeys);
   updateVisibleTasks();
   if (state.entryTaskId) {
     const matchCount = Array.isArray(state.visibleTasks) ? state.visibleTasks.length : 0;
@@ -4505,8 +4645,8 @@ function ensureMiniAppPdfFontkit() {
 }
 
 function fetchPdfFontBytes(url) {
-  const resolved = resolveDocumentUrl(url);
-  return fetch(resolved, { cache: 'force-cache' })
+  const resolved = appendCacheBuster(url);
+  return fetch(resolved, { cache: 'no-store' })
     .then((response) => {
       if (!response || !response.ok) {
         throw new Error(`HTTP ${response ? response.status : '0'} при загрузке ${resolved}`);
@@ -4537,21 +4677,6 @@ function loadMiniAppPdfFontBytes() {
       throw error;
     });
   return miniAppPdfFontBytesPromise;
-}
-
-function prewarmMiniAppPdfResources() {
-  const run = () => {
-    ensureMiniAppPdfLib().catch(() => null);
-    ensureMiniAppPdfFontkit().catch(() => null);
-    loadMiniAppPdfFontBytes().catch(() => null);
-  };
-
-  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(() => run(), { timeout: 1200 });
-    return;
-  }
-
-  setTimeout(run, 180);
 }
 
 function sanitizePdfText(font, text) {
@@ -4921,26 +5046,6 @@ function isHeicFile(file) {
   return mime.includes('heic') || mime.includes('heif');
 }
 
-function isPdfFile(file) {
-  if (!file) {
-    return false;
-  }
-  const nameCandidate = normalizeValueString(file.name)
-    || normalizeValueString(file.originalName)
-    || normalizeValueString(file.storedName)
-    || normalizeValueString(file.url)
-    || normalizeValueString(file.previewUrl);
-  const extension = getFileExtension(nameCandidate);
-  if (extension === 'pdf') {
-    return true;
-  }
-  const mimeCandidate = normalizeValueString(file.type) || normalizeValueString(file.mimeType);
-  if (!mimeCandidate) {
-    return false;
-  }
-  return mimeCandidate.toLowerCase().includes('pdf');
-}
-
 function resolveFileFetchUrl(file) {
   const source = file.resolvedUrl || file.url || file.previewUrl || '';
   const resolved = resolveDocumentUrl(source);
@@ -5105,76 +5210,23 @@ function drawAttachmentHeader(page, fonts, colors, file, options) {
   }
 }
 
-async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, file, task = null) {
+async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, file) {
   if (!file) {
     return;
   }
   if (isOfficeFile(file)) {
-    logClientEvent('task_view_pdf_diagnostics', {
-      ...buildTaskViewLogDetails(task),
-      prefix: 'Просмотр2',
-      step: 'attachment_preview_skip_office',
-      details: {
-        fileName: getAttachmentName(file),
-      },
-      source: 'attachment_preview',
-      activeFile: getAttachmentName(file),
-    }, { keepalive: true });
     return;
   }
   const resolvedUrl = resolveFileFetchUrl(file);
   if (!resolvedUrl) {
-    logClientEvent('task_view_pdf_diagnostics', {
-      ...buildTaskViewLogDetails(task),
-      prefix: 'Просмотр2',
-      step: 'attachment_preview_missing_url',
-      details: {
-        fileName: getAttachmentName(file),
-      },
-      source: 'attachment_preview',
-      activeFile: getAttachmentName(file),
-    }, { keepalive: true });
     return;
   }
-  const startedAt = performance.now();
-  const fileName = getAttachmentName(file);
-  let fetchStartedAt = 0;
-  let fetchDoneAt = 0;
-  let bufferDoneAt = 0;
-  let processStartedAt = 0;
-  let processDoneAt = 0;
-  const reportTiming = (result, extra = {}) => {
-    const totalMs = Math.max(0, Math.round(performance.now() - startedAt));
-    const fetchMs = fetchDoneAt > fetchStartedAt ? Math.max(0, Math.round(fetchDoneAt - fetchStartedAt)) : 0;
-    const bufferMs = bufferDoneAt > fetchDoneAt ? Math.max(0, Math.round(bufferDoneAt - fetchDoneAt)) : 0;
-    const processMs = processDoneAt > processStartedAt ? Math.max(0, Math.round(processDoneAt - processStartedAt)) : 0;
-    logClientEvent('task_view_pdf_diagnostics', {
-      ...buildTaskViewLogDetails(task),
-      prefix: 'Просмотр2',
-      step: 'attachment_preview_timing',
-      details: {
-        result,
-        fileName,
-        resolvedUrl,
-        totalMs,
-        fetchMs,
-        bufferMs,
-        processMs,
-        ...extra,
-      },
-      source: 'attachment_preview',
-      activeFile: fileName,
-    }, { keepalive: true });
-  };
   try {
-    fetchStartedAt = performance.now();
     const response = await fetch(resolvedUrl, { credentials: 'include', cache: 'no-store' });
-    fetchDoneAt = performance.now();
     if (!response.ok) {
       throw new Error(`Статус ${response.status}`);
     }
     const buffer = await response.arrayBuffer();
-    bufferDoneAt = performance.now();
     const mimeType = response.headers && response.headers.get
       ? (response.headers.get('Content-Type') || '').toLowerCase()
       : '';
@@ -5183,7 +5235,6 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
     const isPng = mimeType.includes('png') || extension === 'png';
     const isJpeg = mimeType.includes('jpeg') || mimeType.includes('jpg') || extension === 'jpg' || extension === 'jpeg';
     const isTxt = mimeType.includes('text/plain') || extension === 'txt';
-    processStartedAt = performance.now();
 
     if (isPdf) {
       const attachment = await PDFLib.PDFDocument.load(buffer);
@@ -5191,13 +5242,6 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
       const copied = await pdfDoc.copyPages(attachment, indices);
       copied.forEach((page) => {
         pdfDoc.addPage(page);
-      });
-      processDoneAt = performance.now();
-      reportTiming('ok_pdf', {
-        contentType: mimeType || 'unknown',
-        extension,
-        bytes: buffer.byteLength || 0,
-        pages: copied.length,
       });
     } else if (isPng || isJpeg) {
       const imagePage = pdfDoc.addPage([595.28, 841.89]);
@@ -5223,74 +5267,37 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
         width: scaled.width,
         height: scaled.height,
       });
-      processDoneAt = performance.now();
-      reportTiming('ok_image', {
-        contentType: mimeType || 'unknown',
-        extension,
-        bytes: buffer.byteLength || 0,
-        imageType: isPng ? 'png' : 'jpeg',
-      });
     } else if (isTxt) {
       const textContent = decodeTextAttachmentBuffer(buffer);
       buildAttachmentTextPage(pdfDoc, fonts, colors, margin, file, textContent);
-      processDoneAt = performance.now();
-      reportTiming('ok_txt', {
-        contentType: mimeType || 'unknown',
-        extension,
-        bytes: buffer.byteLength || 0,
-      });
     } else {
       buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file,
         'Формат вложения не поддерживается в предпросмотре.', resolvedUrl);
-      processDoneAt = performance.now();
-      reportTiming('unsupported_format', {
-        contentType: mimeType || 'unknown',
-        extension,
-        bytes: buffer.byteLength || 0,
-      });
     }
   } catch (error) {
     buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file,
       `Не удалось загрузить файл: ${error.message}`, resolvedUrl);
-    processDoneAt = performance.now();
-    reportTiming('error', {
-      error: error && error.message ? error.message : String(error),
-    });
   }
 }
 
-async function createPdfDocumentWithFonts(PDFLib, task = null) {
-  const totalStart = performance.now();
+async function createPdfDocumentWithFonts(PDFLib) {
   const pdfDoc = await PDFLib.PDFDocument.create();
-  const fontkitStartedAt = performance.now();
   try {
     const fontkitInstance = await ensureMiniAppPdfFontkit();
     if (fontkitInstance && typeof pdfDoc.registerFontkit === 'function') {
       pdfDoc.registerFontkit(fontkitInstance);
     }
-    logTaskViewStage(task, 'summary_fontkit_ready', {
-      durationMs: Math.round(performance.now() - fontkitStartedAt),
-      enabled: Boolean(fontkitInstance),
-    });
   } catch (error) {
-    logTaskViewStage(task, 'summary_fontkit_failed', {
-      durationMs: Math.round(performance.now() - fontkitStartedAt),
-      error: stageErrorToText(error),
-    });
+    // ignore fontkit errors
   }
 
   let fonts;
-  const fontsStartedAt = performance.now();
   try {
     const fontBytes = await loadMiniAppPdfFontBytes();
     fonts = {
       regular: await pdfDoc.embedFont(fontBytes.regular, { subset: true }),
       bold: await pdfDoc.embedFont(fontBytes.bold, { subset: true }),
     };
-    logTaskViewStage(task, 'summary_fonts_embedded', {
-      durationMs: Math.round(performance.now() - fontsStartedAt),
-      strategy: 'custom',
-    });
   } catch (error) {
     fonts = {
       regular: await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica),
@@ -5299,16 +5306,7 @@ async function createPdfDocumentWithFonts(PDFLib, task = null) {
     const fallbackSanitizer = (value) => String(value || '').replace(/[^\x00-\x7F]/g, '?');
     fonts.regular.__bimmaxSanitize = fallbackSanitizer;
     fonts.bold.__bimmaxSanitize = fallbackSanitizer;
-    logTaskViewStage(task, 'summary_fonts_embedded', {
-      durationMs: Math.round(performance.now() - fontsStartedAt),
-      strategy: 'fallback_standard',
-      error: stageErrorToText(error),
-    });
   }
-
-  logTaskViewStage(task, 'summary_pdf_doc_ready', {
-    durationMs: Math.round(performance.now() - totalStart),
-  });
 
   return { pdfDoc, fonts };
 }
@@ -5328,22 +5326,11 @@ async function generateTaskSummaryPdf(task) {
   if (!task) {
     throw new Error('Задача не найдена.');
   }
-  const generationStartedAt = performance.now();
-  logTaskViewStage(task, 'summary_generate_start');
-
-  const libStartedAt = performance.now();
   const PDFLib = await ensureMiniAppPdfLib();
-  logTaskViewStage(task, 'summary_pdf_lib_ready', {
-    durationMs: Math.round(performance.now() - libStartedAt),
-  });
   if (!PDFLib || !PDFLib.PDFDocument) {
     throw new Error('PDF библиотека недоступна.');
   }
-  const docReadyAt = performance.now();
-  const { pdfDoc, fonts } = await createPdfDocumentWithFonts(PDFLib, task);
-  logTaskViewStage(task, 'summary_pdf_doc_with_fonts_ready', {
-    durationMs: Math.round(performance.now() - docReadyAt),
-  });
+  const { pdfDoc, fonts } = await createPdfDocumentWithFonts(PDFLib);
 
   const page = pdfDoc.addPage([595.28, 841.89]);
   const size = page.getSize();
@@ -5383,12 +5370,7 @@ async function generateTaskSummaryPdf(task) {
     color: colors.muted,
   });
 
-  const rowsBuildStartedAt = performance.now();
   const summaryRows = buildTaskSummaryRows(task, task.files || []);
-  logTaskViewStage(task, 'summary_rows_built', {
-    durationMs: Math.round(performance.now() - rowsBuildStartedAt),
-    rowsCount: Array.isArray(summaryRows) ? summaryRows.length : 0,
-  });
   const labelFontSize = 10;
   const valueFontSize = 10;
   const lineHeight = 14;
@@ -5448,15 +5430,7 @@ async function generateTaskSummaryPdf(task) {
     currentY -= valueLines.length * lineHeight + 6;
   });
 
-  const saveStartedAt = performance.now();
   const pdfBytes = await pdfDoc.save();
-  logTaskViewStage(task, 'summary_pdf_saved', {
-    durationMs: Math.round(performance.now() - saveStartedAt),
-    bytes: pdfBytes && (pdfBytes.length || pdfBytes.byteLength) ? (pdfBytes.length || pdfBytes.byteLength) : 0,
-  });
-  logTaskViewStage(task, 'summary_generate_done', {
-    totalMs: Math.round(performance.now() - generationStartedAt),
-  });
   return new Blob([pdfBytes], { type: 'application/pdf' });
 }
 
@@ -5467,19 +5441,15 @@ async function generateTaskAttachmentPdf(task, file) {
   if (!file) {
     throw new Error('Файл не найден.');
   }
-  const generationStartedAt = performance.now();
   const PDFLib = await ensureMiniAppPdfLib();
   if (!PDFLib || !PDFLib.PDFDocument) {
     throw new Error('PDF библиотека недоступна.');
   }
-  const pdfLibReadyAt = performance.now();
   const { pdfDoc, fonts } = await createPdfDocumentWithFonts(PDFLib);
-  const docReadyAt = performance.now();
   const colors = getPdfThemeColors(PDFLib);
   const margin = 48;
 
-  await appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, file, task);
-  const pagesReadyAt = performance.now();
+  await appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, file);
   if (pdfDoc.getPageCount() === 0) {
     buildAttachmentErrorPage(
       pdfDoc,
@@ -5493,24 +5463,6 @@ async function generateTaskAttachmentPdf(task, file) {
     );
   }
   const pdfBytes = await pdfDoc.save();
-  const savedAt = performance.now();
-  logClientEvent('task_view_pdf_diagnostics', {
-    ...buildTaskViewLogDetails(task),
-    prefix: 'Просмотр2',
-    step: 'attachment_pdf_generate_timing',
-    details: {
-      fileName: getAttachmentName(file),
-      totalMs: Math.max(0, Math.round(savedAt - generationStartedAt)),
-      pdfLibLoadMs: Math.max(0, Math.round(pdfLibReadyAt - generationStartedAt)),
-      pdfDocSetupMs: Math.max(0, Math.round(docReadyAt - pdfLibReadyAt)),
-      appendPagesMs: Math.max(0, Math.round(pagesReadyAt - docReadyAt)),
-      saveMs: Math.max(0, Math.round(savedAt - pagesReadyAt)),
-      outputBytes: pdfBytes && (pdfBytes.length || pdfBytes.byteLength) ? (pdfBytes.length || pdfBytes.byteLength) : 0,
-      pages: typeof pdfDoc.getPageCount === 'function' ? pdfDoc.getPageCount() : 0,
-    },
-    source: 'attachment_preview',
-    activeFile: getAttachmentName(file),
-  }, { keepalive: true });
   return new Blob([pdfBytes], { type: 'application/pdf' });
 }
 
@@ -5648,7 +5600,6 @@ async function ensureTaskSummaryPreview(task, file) {
   }
   const cacheTarget = file && typeof file === 'object' ? file : task;
   if (cacheTarget.summaryPdf && cacheTarget.summaryBlobUrl) {
-    logTaskViewStage(task, 'summary_preview_cache_hit');
     return {
       ...cacheTarget.summaryPdf,
       previewUrl: cacheTarget.summaryRemoteUrl || cacheTarget.summaryBlobUrl,
@@ -5656,21 +5607,10 @@ async function ensureTaskSummaryPreview(task, file) {
     };
   }
   if (cacheTarget.summaryPdfPromise) {
-    logTaskViewStage(task, 'summary_preview_wait_existing_promise');
     return cacheTarget.summaryPdfPromise;
   }
-  const summaryPrepareStartedAt = performance.now();
-  logTaskViewStage(task, 'summary_preview_prepare_start');
-  const stopLagProbe = startEventLoopLagProbe(task, 'summary_preview_prepare');
   cacheTarget.summaryPdfPromise = generateTaskSummaryPdf(task)
     .then((blob) => {
-      const lagStats = stopLagProbe();
-      logTaskViewStage(task, 'summary_pdf_generated', {
-        generationMs: Math.round(performance.now() - summaryPrepareStartedAt),
-        blobSize: blob && typeof blob.size === 'number' ? blob.size : 0,
-        eventLoopMaxLagMs: lagStats.maxLagMs,
-        eventLoopSamples: lagStats.samples,
-      });
       cacheTarget.summaryPdf = {
         blob,
         fileName: buildSummaryPdfFileName(task),
@@ -5678,36 +5618,25 @@ async function ensureTaskSummaryPreview(task, file) {
       if (!cacheTarget.summaryBlobUrl) {
         cacheTarget.summaryBlobUrl = URL.createObjectURL(blob);
       }
-      logTaskViewStage(task, 'summary_preview_local_ready', {
-        totalMs: Math.round(performance.now() - summaryPrepareStartedAt),
-      });
-      logTaskViewStage(task, 'summary_preview_upload_background_start');
-      void uploadPdfPreview(blob, cacheTarget.summaryPdf.fileName)
+      return uploadPdfPreview(blob, cacheTarget.summaryPdf.fileName)
         .then((remoteUrl) => {
           if (remoteUrl) {
             cacheTarget.summaryRemoteUrl = remoteUrl;
           }
-          logTaskViewStage(task, 'summary_preview_upload_background_success', {
-            uploaded: Boolean(remoteUrl),
-          });
+          const previewUrl = cacheTarget.summaryRemoteUrl || cacheTarget.summaryBlobUrl;
+          return {
+            ...cacheTarget.summaryPdf,
+            previewUrl,
+            remoteUrl: cacheTarget.summaryRemoteUrl || '',
+          };
         })
-        .catch((error) => {
-          logTaskViewStage(task, 'summary_preview_upload_background_error', {
-            error: error && error.message ? error.message : String(error),
-          });
-        });
-      return {
-        ...cacheTarget.summaryPdf,
-        previewUrl: cacheTarget.summaryBlobUrl,
-        remoteUrl: cacheTarget.summaryRemoteUrl || '',
-      };
+        .catch(() => ({
+          ...cacheTarget.summaryPdf,
+          previewUrl: cacheTarget.summaryBlobUrl,
+          remoteUrl: cacheTarget.summaryRemoteUrl || '',
+        }));
     })
     .catch((error) => {
-      stopLagProbe();
-      logTaskViewStage(task, 'summary_preview_prepare_error', {
-        totalMs: Math.round(performance.now() - summaryPrepareStartedAt),
-        error: stageErrorToText(error),
-      });
       cacheTarget.summaryPdfPromise = null;
       throw error;
     });
@@ -5718,18 +5647,10 @@ async function ensureTaskAttachmentPreview(task, file) {
   if (!file) {
     throw new Error('Файл не найден.');
   }
-  const cacheKey = buildTaskAttachmentPreviewCacheKey(task, file);
-  const cachedPreview = cacheKey ? taskAttachmentPreviewCache.get(cacheKey) : null;
-  if (cachedPreview) {
-    file.previewPdf = cachedPreview.previewPdf || file.previewPdf || null;
-    file.previewBlobUrl = cachedPreview.previewBlobUrl || file.previewBlobUrl || '';
-    file.previewRemoteUrl = cachedPreview.previewRemoteUrl || file.previewRemoteUrl || '';
-    file.previewPdfPromise = cachedPreview.previewPdfPromise || file.previewPdfPromise || null;
-  }
   if (file.previewPdf && file.previewBlobUrl) {
     return {
       ...file.previewPdf,
-      previewUrl: file.previewBlobUrl,
+      previewUrl: file.previewRemoteUrl || file.previewBlobUrl,
       remoteUrl: file.previewRemoteUrl || '',
     };
   }
@@ -5746,59 +5667,28 @@ async function ensureTaskAttachmentPreview(task, file) {
       if (!file.previewBlobUrl) {
         file.previewBlobUrl = URL.createObjectURL(blob);
       }
-      if (cacheKey) {
-        taskAttachmentPreviewCache.set(cacheKey, {
-          previewBlobUrl: file.previewBlobUrl || '',
-          previewRemoteUrl: file.previewRemoteUrl || '',
-          previewPdf: file.previewPdf || null,
-          previewPdfPromise: file.previewPdfPromise || null,
-        });
-      }
-      void uploadPdfPreview(blob, file.previewPdf.fileName)
+      return uploadPdfPreview(blob, file.previewPdf.fileName)
         .then((remoteUrl) => {
           if (remoteUrl) {
             file.previewRemoteUrl = remoteUrl;
-            if (cacheKey) {
-              const currentCache = taskAttachmentPreviewCache.get(cacheKey) || {};
-              taskAttachmentPreviewCache.set(cacheKey, {
-                previewBlobUrl: currentCache.previewBlobUrl || file.previewBlobUrl || '',
-                previewRemoteUrl: remoteUrl,
-                previewPdf: currentCache.previewPdf || file.previewPdf || null,
-                previewPdfPromise: currentCache.previewPdfPromise || file.previewPdfPromise || null,
-              });
-            }
           }
+          const previewUrl = file.previewRemoteUrl || file.previewBlobUrl;
+          return {
+            ...file.previewPdf,
+            previewUrl,
+            remoteUrl: file.previewRemoteUrl || '',
+          };
         })
-        .catch(() => {});
-      return {
-        ...file.previewPdf,
-        previewUrl: file.previewBlobUrl,
-        remoteUrl: file.previewRemoteUrl || '',
-      };
+        .catch(() => ({
+          ...file.previewPdf,
+          previewUrl: file.previewBlobUrl,
+          remoteUrl: file.previewRemoteUrl || '',
+        }));
     })
     .catch((error) => {
       file.previewPdfPromise = null;
-      if (cacheKey) {
-        const currentCache = taskAttachmentPreviewCache.get(cacheKey);
-        if (currentCache) {
-          taskAttachmentPreviewCache.set(cacheKey, {
-            previewBlobUrl: currentCache.previewBlobUrl || '',
-            previewRemoteUrl: currentCache.previewRemoteUrl || '',
-            previewPdf: currentCache.previewPdf || null,
-            previewPdfPromise: null,
-          });
-        }
-      }
       throw error;
     });
-  if (cacheKey) {
-    taskAttachmentPreviewCache.set(cacheKey, {
-      previewBlobUrl: file.previewBlobUrl || '',
-      previewRemoteUrl: file.previewRemoteUrl || '',
-      previewPdf: file.previewPdf || null,
-      previewPdfPromise: file.previewPdfPromise || null,
-    });
-  }
   return file.previewPdfPromise;
 }
 
@@ -5848,88 +5738,6 @@ function revokeTasksBlobUrls(tasks) {
       file.previewPdfPromise = null;
       file.previewPdf = null;
     });
-  });
-}
-
-function collectTaskAttachmentPreviewCache(tasks) {
-  const entries = new Map();
-  if (!Array.isArray(tasks) || !tasks.length) {
-    return entries;
-  }
-  tasks.forEach((task) => {
-    if (!task || typeof task !== 'object') {
-      return;
-    }
-    const files = Array.isArray(task.files) ? task.files : [];
-    files.forEach((file) => {
-      if (!file || typeof file !== 'object') {
-        return;
-      }
-      const key = buildTaskAttachmentPreviewCacheKey(task, file);
-      if (!key) {
-        return;
-      }
-      entries.set(key, {
-        previewBlobUrl: file.previewBlobUrl || '',
-        previewRemoteUrl: file.previewRemoteUrl || '',
-        previewPdf: file.previewPdf || null,
-        previewPdfPromise: file.previewPdfPromise || null,
-      });
-    });
-  });
-  return entries;
-}
-
-function applyTaskAttachmentPreviewCache(tasks, entries) {
-  const activeKeys = new Set();
-  if (!Array.isArray(tasks) || !tasks.length) {
-    return activeKeys;
-  }
-  tasks.forEach((task) => {
-    if (!task || typeof task !== 'object') {
-      return;
-    }
-    const files = Array.isArray(task.files) ? task.files : [];
-    files.forEach((file) => {
-      if (!file || typeof file !== 'object') {
-        return;
-      }
-      const key = buildTaskAttachmentPreviewCacheKey(task, file);
-      if (!key) {
-        return;
-      }
-      const sourceEntry = (entries instanceof Map && entries.has(key))
-        ? entries.get(key)
-        : taskAttachmentPreviewCache.get(key);
-      const nextEntry = cloneTaskAttachmentPreviewCacheEntry(sourceEntry);
-      if (nextEntry) {
-        file.previewBlobUrl = nextEntry.previewBlobUrl || file.previewBlobUrl || '';
-        file.previewRemoteUrl = nextEntry.previewRemoteUrl || file.previewRemoteUrl || '';
-        file.previewPdf = nextEntry.previewPdf || file.previewPdf || null;
-        file.previewPdfPromise = nextEntry.previewPdfPromise || file.previewPdfPromise || null;
-      }
-      taskAttachmentPreviewCache.set(key, {
-        previewBlobUrl: file.previewBlobUrl || '',
-        previewRemoteUrl: file.previewRemoteUrl || '',
-        previewPdf: file.previewPdf || null,
-        previewPdfPromise: file.previewPdfPromise || null,
-      });
-      activeKeys.add(key);
-    });
-  });
-  return activeKeys;
-}
-
-function cleanupTaskAttachmentPreviewCache(activeKeys) {
-  const keepKeys = activeKeys instanceof Set ? activeKeys : new Set();
-  taskAttachmentPreviewCache.forEach((entry, key) => {
-    if (keepKeys.has(key)) {
-      return;
-    }
-    if (entry && entry.previewBlobUrl) {
-      try { URL.revokeObjectURL(entry.previewBlobUrl); } catch (_) { /* ignore */ }
-    }
-    taskAttachmentPreviewCache.delete(key);
   });
 }
 
@@ -6142,11 +5950,11 @@ function buildPreviewUrl(resolvedUrl, fileName = '') {
   if (normalized.startsWith('blob:') || normalized.startsWith('data:')) {
     return normalized;
   }
+  const normalizedWithVersion = appendCacheBuster(normalized);
   const extension = getFileExtension(fileName || normalized);
   const isPdf = extension === 'pdf'
     || normalized.toLowerCase().includes('.pdf')
     || normalized.includes('/cache/miniapp_pdf/');
-  const normalizedWithVersion = isPdf ? normalized : appendCacheBuster(normalized);
 
   if (isPdf) {
     const [base, hash] = normalizedWithVersion.split('#');
@@ -6370,78 +6178,6 @@ function logTaskViewClick(task, timestamp) {
   logClientEvent('task_view_click', details);
 }
 
-function logTaskViewStage(task, stage, extra) {
-  if (!stage) {
-    return;
-  }
-  const details = buildTaskViewLogDetails(task, {
-    stage,
-    ...(extra && typeof extra === 'object' ? extra : {}),
-  });
-  logClientEvent('task_view_stage', details);
-}
-
-function logViewWatchEvent(eventName, task, extra = {}) {
-  if (typeof eventName !== 'string' || eventName.trim() === '') {
-    return;
-  }
-  logClientEvent(eventName, buildTaskViewLogDetails(task, extra));
-}
-
-function stageErrorToText(error) {
-  if (!error) {
-    return '';
-  }
-  if (error && typeof error.message === 'string' && error.message.trim()) {
-    return error.message.trim();
-  }
-  return String(error);
-}
-
-function startEventLoopLagProbe(task, probeName, intervalMs = 120) {
-  if (typeof window === 'undefined' || typeof performance === 'undefined') {
-    return () => ({ maxLagMs: 0, samples: 0, totalMs: 0 });
-  }
-  const startedAt = performance.now();
-  let timerId = null;
-  let active = true;
-  let lastTickAt = startedAt;
-  let maxLagMs = 0;
-  let samples = 0;
-
-  const tick = () => {
-    if (!active) {
-      return;
-    }
-    const now = performance.now();
-    const elapsed = now - lastTickAt;
-    const lagMs = Math.max(0, elapsed - intervalMs);
-    if (lagMs > maxLagMs) {
-      maxLagMs = lagMs;
-    }
-    samples += 1;
-    lastTickAt = now;
-    timerId = window.setTimeout(tick, intervalMs);
-  };
-
-  timerId = window.setTimeout(tick, intervalMs);
-
-  return () => {
-    active = false;
-    if (timerId) {
-      window.clearTimeout(timerId);
-    }
-    const totalMs = Math.round(performance.now() - startedAt);
-    logTaskViewStage(task, 'summary_event_loop_probe', {
-      probe: probeName || 'summary',
-      probeTotalMs: totalMs,
-      samples,
-      maxLagMs: Math.round(maxLagMs),
-    });
-    return { maxLagMs: Math.round(maxLagMs), samples, totalMs };
-  };
-}
-
 function revokeObjectUrlLater(url) {
   if (!url || typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') {
     return;
@@ -6496,79 +6232,61 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
   try {
     updateViewerLoaderStep('Скачивание PDF…', 45);
     docLoadStep('fetch pdf начало');
-    const fetchPayload = await fetchPdfBinaryForViewer(previewUrl);
-    const contentType = fetchPayload.contentType || '';
-    const contentLength = fetchPayload.contentLength || '';
-    docLoadStep(`fetch pdf ответ: ${fetchPayload.status}${fetchPayload.fromCache ? ' (cache)' : ''}`);
+    const response = await fetch(previewUrl, {
+      credentials: isSameOriginUrl(previewUrl) ? 'include' : 'omit',
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache, no-store' },
+    });
+    const contentType = response.headers ? response.headers.get('content-type') : '';
+    const contentLength = response.headers ? response.headers.get('content-length') : '';
+    docLoadStep('fetch pdf ответ: ' + response.status);
+
+    if (!response.ok) {
+      const error = new Error(`http_${response.status}`);
+      logClientEvent('task_view_fetch_error', {
+        ...baseDetails,
+        status: response.status,
+        statusText: response.statusText,
+      });
+      throw error;
+    }
 
     logClientEvent('task_view_fetch_success', {
       ...baseDetails,
-      status: fetchPayload.status,
+      status: response.status,
       contentType: contentType || 'unknown',
       contentLength: contentLength || 'unknown',
-      fromCache: Boolean(fetchPayload.fromCache),
     });
 
     updateViewerLoaderStep('Чтение данных…', 60);
-    docLoadStep(fetchPayload.fromCache ? 'используется cache' : 'чтение arrayBuffer');
-    const responseHeaders = fetchPayload.headers || {};
-    const resourceTiming = fetchPayload.resourceTiming || null;
-    const connectionInfo = fetchPayload.connectionInfo || null;
-    const fetchDurationMs = typeof fetchPayload.fetchDurationMs === 'number' ? fetchPayload.fetchDurationMs : 0;
+    docLoadStep('чтение blob');
+    const responseHeaders = collectResponseHeaders(response);
     logViewerDebugDeep('inline:fetch_headers', {
-      url: fetchPayload.responseUrl || previewUrl,
-      status: fetchPayload.status,
-      statusText: fetchPayload.statusText,
-      redirected: fetchPayload.redirected,
-      responseType: fetchPayload.responseType,
+      url: response.url || previewUrl,
+      status: response.status,
+      statusText: response.statusText,
+      redirected: response.redirected,
+      responseType: response.type,
       headers: responseHeaders,
-      fetchDurationMs,
-      sameOrigin: fetchPayload.sameOrigin,
-      cacheMode: fetchPayload.cacheMode || 'default',
-      fromCache: Boolean(fetchPayload.fromCache),
-      resourceTiming,
-      connectionInfo,
     });
-    logClientEvent('task_view_pdf_diagnostics', {
-      prefix: 'Просмотр2',
-      step: 'inline:fetch_diagnostics',
-      details: {
-        url: fetchPayload.responseUrl || previewUrl,
-        status: fetchPayload.status,
-        statusText: fetchPayload.statusText,
-        redirected: fetchPayload.redirected,
-        responseType: fetchPayload.responseType,
-        headers: responseHeaders,
-        fetchDurationMs,
-        sameOrigin: fetchPayload.sameOrigin,
-        cacheMode: fetchPayload.cacheMode || 'default',
-        fromCache: Boolean(fetchPayload.fromCache),
-        resourceTiming,
-        connectionInfo,
-      },
-      source: 'fetch',
-      activeFile: fileName || '',
-    }, { keepalive: true });
-    const arrayBuffer = fetchPayload.arrayBuffer;
-    const byteLength = typeof fetchPayload.byteLength === 'number'
-      ? fetchPayload.byteLength
-      : (arrayBuffer ? arrayBuffer.byteLength : 0);
-    docLoadStep('arrayBuffer готов: ' + byteLength + ' байт');
+    const blob = await response.blob();
+    docLoadStep('blob готов: ' + blob.size + ' байт');
     updateViewerLoaderStep('Подготовка рендеринга…', 70);
+    const arrayBuffer = await blob.arrayBuffer();
+    docLoadStep('arrayBuffer готов');
     const viewer = pdfViewerInstance;
     const viewerReady = viewer && typeof viewer.isReady === 'function' ? viewer.isReady() : false;
     const shouldPassData = true;
     logClientEvent('task_view_inline_headers', {
       ...baseDetails,
-      status: fetchPayload.status,
-      statusText: fetchPayload.statusText,
-      redirected: fetchPayload.redirected,
-      responseType: fetchPayload.responseType,
-      responseUrl: fetchPayload.responseUrl || previewUrl,
+      status: response.status,
+      statusText: response.statusText,
+      redirected: response.redirected,
+      responseType: response.type,
+      responseUrl: response.url || previewUrl,
       headers: responseHeaders,
-      blobType: contentType || 'unknown',
-      blobSize: byteLength,
-      fromCache: Boolean(fetchPayload.fromCache),
+      blobType: blob.type || 'unknown',
+      blobSize: blob.size,
     });
 
     if (viewer) {
@@ -6600,7 +6318,7 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
         url: previewUrl,
         fileName: fileName || '',
         options: effectiveViewerOptions,
-        blob: { type: contentType || 'unknown', size: byteLength },
+        blob: { type: blob.type || 'unknown', size: blob.size },
       });
       const mode = viewer.open(
         previewUrl,
@@ -6638,25 +6356,16 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
           ...baseDetails,
           mode,
           contentType: contentType || 'unknown',
-          size: byteLength,
-          fromCache: Boolean(fetchPayload.fromCache),
+          size: blob.size,
         });
-        logViewerDebug('inline:success', { mode, contentType, size: byteLength, fromCache: Boolean(fetchPayload.fromCache) });
-        logViewerDebugDeep('inline:viewer_mode', { mode, contentType, size: byteLength, fromCache: Boolean(fetchPayload.fromCache) });
+        logViewerDebug('inline:success', { mode, contentType, size: blob.size });
+        logViewerDebugDeep('inline:viewer_mode', { mode, contentType, size: blob.size });
         return 'inline';
       }
     }
 
     throw new Error('inline_viewer_unavailable');
   } catch (error) {
-    const status = typeof error.responseStatus === 'number' ? error.responseStatus : 0;
-    if (status) {
-      logClientEvent('task_view_fetch_error', {
-        ...baseDetails,
-        status,
-        statusText: error && error.message ? error.message : '',
-      });
-    }
     logClientEvent('task_view_inline_error', {
       ...baseDetails,
       error: error && error.message ? error.message : String(error),
@@ -7566,31 +7275,20 @@ async function openViewerFile(file, task, options = {}) {
   const isSummary = Boolean(file && file.isSummary);
   const isOffice = isOfficeFile(file);
   const isHeic = isHeicFile(file);
-  const isPdf = isPdfFile(file);
   let preview = null;
   let rawUrl = '';
   let fileName = '';
   let isOfficePreview = false;
   if (isSummary) {
-    logTaskViewStage(task, 'open_viewer_prepare_summary_start', {
-      fileName: file && file.name ? file.name : '',
-    });
     updateViewerLoaderStep('Генерация сводки…', 10);
     docLoadStep('генерация сводки');
     preview = await ensureTaskSummaryPreview(task, file);
-    logTaskViewStage(task, 'open_viewer_prepare_summary_done', {
-      fileName: preview && preview.fileName ? preview.fileName : '',
-    });
-    rawUrl = (file && file.summaryBlobUrl) || (task && task.summaryBlobUrl) || preview.previewUrl;
+    rawUrl = preview.previewUrl;
     fileName = preview.fileName;
     file.previewUrl = preview.previewUrl;
     file.resolvedUrl = preview.previewUrl;
     docLoadStep('сводка готова');
   } else if (isOffice || isHeic) {
-    logTaskViewStage(task, 'open_viewer_prepare_office_start', {
-      fileName: file && file.name ? file.name : '',
-      isHeic,
-    });
     updateViewerLoaderStep(isHeic ? 'Подготовка HEIC…' : 'Подготовка Office…', 10);
     docLoadStep(isHeic ? 'подготовка heic' : 'подготовка office');
     const officeSource = file && (file.resolvedUrl || file.url || file.previewUrl);
@@ -7612,39 +7310,17 @@ async function openViewerFile(file, task, options = {}) {
         reason: isHeic ? 'missing_heic_url' : 'missing_office_url',
       });
       preview = await ensureTaskSummaryPreview(task, file);
-      rawUrl = (file && file.summaryBlobUrl) || (task && task.summaryBlobUrl) || preview.previewUrl;
+      rawUrl = preview.previewUrl;
       fileName = preview.fileName;
     }
     docLoadStep('url подготовлен');
-    logTaskViewStage(task, 'open_viewer_prepare_office_done', {
-      fileName: fileName || '',
-      hasRawUrl: Boolean(rawUrl),
-    });
   } else {
-    logTaskViewStage(task, 'open_viewer_prepare_attachment_start', {
-      fileName: file && file.name ? file.name : '',
-    });
     updateViewerLoaderStep('Подготовка документа…', 10);
     docLoadStep('подготовка вложения');
-    const directPdfUrl = isPdf ? resolveFileFetchUrl(file) : '';
-    if (isPdf && directPdfUrl) {
-      rawUrl = directPdfUrl;
-      fileName = getAttachmentName(file);
-      file.previewUrl = directPdfUrl;
-      file.resolvedUrl = directPdfUrl;
-      logTaskViewStage(task, 'open_viewer_prepare_attachment_direct_pdf', {
-        fileName,
-      });
-      docLoadStep('вложение готово (pdf напрямую)');
-    } else {
-      preview = await ensureTaskAttachmentPreview(task, file);
-      logTaskViewStage(task, 'open_viewer_prepare_attachment_done', {
-        fileName: preview && preview.fileName ? preview.fileName : '',
-      });
-      rawUrl = (file && file.previewBlobUrl) || preview.previewUrl;
-      fileName = preview.fileName;
-      docLoadStep('вложение готово');
-    }
+    preview = await ensureTaskAttachmentPreview(task, file);
+    rawUrl = preview.previewUrl;
+    fileName = preview.fileName;
+    docLoadStep('вложение готово');
   }
 
   updateViewerLoaderStep('Загрузка файла…', 30);
@@ -7737,40 +7413,6 @@ async function openViewerFile(file, task, options = {}) {
   throw new Error('viewer_open_failed');
 }
 
-function warmupTaskPdfFiles(task, files, skipFile) {
-  if (!Array.isArray(files) || files.length < 2) {
-    return;
-  }
-  const queue = files.filter((file) => file && file !== skipFile && isPdfFile(file));
-  if (!queue.length) {
-    return;
-  }
-  const maxWarmups = 3;
-  queue.slice(0, maxWarmups).forEach((file, index) => {
-    const rawUrl = resolveFileFetchUrl(file);
-    if (!rawUrl) {
-      return;
-    }
-    const plannedDelayMs = 180 + index * 140;
-    window.setTimeout(() => {
-      fetchPdfBinaryForViewer(rawUrl)
-        .then((payload) => {
-          logTaskViewStage(task, 'pdf_warmup_ready', {
-            fileName: getAttachmentName(file, index + 1),
-            size: payload && typeof payload.byteLength === 'number' ? payload.byteLength : 0,
-            fromCache: Boolean(payload && payload.fromCache),
-          });
-        })
-        .catch((error) => {
-          logTaskViewStage(task, 'pdf_warmup_error', {
-            fileName: getAttachmentName(file, index + 1),
-            error: error && error.message ? error.message : String(error),
-          });
-        });
-    }, plannedDelayMs);
-  });
-}
-
 async function handleViewerTabClick(index, task) {
   if (viewerTabsState.activeIndex === index) {
     return;
@@ -7787,12 +7429,6 @@ async function handleViewerTabClick(index, task) {
   }
 
   const displayName = file.name || `Файл ${index + 1}`;
-  const startedAt = performance.now();
-  logViewWatchEvent('task_view_watch_tab_click', task, {
-    tabIndex: index,
-    fileName: displayName,
-    fileKind: file && file.kind ? file.kind : '',
-  });
   showViewerLoader(displayName);
   docLoadStart(displayName, file.kind || '');
   docLoadStep('переключение вкладки');
@@ -7802,22 +7438,9 @@ async function handleViewerTabClick(index, task) {
     setViewerTabActive(index);
     viewerTabsState.activeFile = file;
     updateViewerDownloadState(file);
-    logViewWatchEvent('task_view_watch_tab_success', task, {
-      tabIndex: index,
-      fileName: displayName,
-      fileKind: file && file.kind ? file.kind : '',
-      openMs: Math.round(performance.now() - startedAt),
-    });
     docLoadFinish();
   } catch (error) {
     setStatus('error', 'Не удалось открыть файл. Попробуйте позже.');
-    logViewWatchEvent('task_view_watch_tab_error', task, {
-      tabIndex: index,
-      fileName: displayName,
-      fileKind: file && file.kind ? file.kind : '',
-      openMs: Math.round(performance.now() - startedAt),
-      error: stageErrorToText(error),
-    });
     docLoadFinish(error);
   } finally {
     hideViewerLoader();
@@ -7888,7 +7511,6 @@ async function handleCardView(button, task) {
 
   const card = button.closest('[data-card]');
   const timestamp = new Date().toISOString();
-  const flowStartedAt = performance.now();
 
   logTaskViewClick(task, timestamp);
   applyLocalTaskViewUpdate(task, timestamp);
@@ -7904,9 +7526,6 @@ async function handleCardView(button, task) {
   });
 
   const files = resolveTaskViewerFiles(task);
-  logViewWatchEvent('task_view_watch_open_click', task, {
-    filesCount: files.length,
-  });
   logClientEvent('task_view_files_resolved', {
     ...buildTaskViewLogDetails(task),
     count: files.length,
@@ -7928,48 +7547,17 @@ async function handleCardView(button, task) {
   }
 
   setActionButtonLoading(button, true);
-  logTaskViewStage(task, 'ui_button_loading_on', {
-    sinceClickMs: Math.round(performance.now() - flowStartedAt),
-  });
 
   const firstFile = files[0];
   const displayName = firstFile.name || 'Документ';
   showViewerLoader(displayName);
-  logTaskViewStage(task, 'ui_loader_shown', {
-    sinceClickMs: Math.round(performance.now() - flowStartedAt),
-    firstFileName: displayName,
-  });
   docLoadStart(displayName, firstFile.kind || '');
   docLoadStep('подготовка файлов');
 
   try {
-    const tabsRenderStartedAt = performance.now();
     renderViewerTabs(files, task);
-    logTaskViewStage(task, 'ui_tabs_rendered', {
-      sinceClickMs: Math.round(performance.now() - flowStartedAt),
-      renderMs: Math.round(performance.now() - tabsRenderStartedAt),
-      tabsCount: files.length,
-    });
     docLoadStep('открытие файла');
     await openViewerFile(firstFile, task, { notify: true, hasMultiple: files.length > 1 });
-    warmupTaskPdfFiles(task, files, firstFile);
-    logViewWatchEvent('task_view_watch_open_success', task, {
-      firstFileName: firstFile && firstFile.name ? firstFile.name : '',
-      firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
-      openMs: Math.round(performance.now() - flowStartedAt),
-      filesCount: files.length,
-    });
-    logTaskViewStage(task, 'open_viewer_done', {
-      sinceClickMs: Math.round(performance.now() - flowStartedAt),
-      fileName: firstFile && firstFile.name ? firstFile.name : '',
-    });
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        logTaskViewStage(task, 'ui_after_paint', {
-          sinceClickMs: Math.round(performance.now() - flowStartedAt),
-        });
-      });
-    });
     docLoadFinish();
   } catch (error) {
     logViewFlow('open:error', error && error.message ? error.message : String(error));
@@ -7986,23 +7574,10 @@ async function handleCardView(button, task) {
       error: error && error.message ? error.message : String(error),
       file: summarizeViewerFile(firstFile, 0),
     });
-    logViewWatchEvent('task_view_watch_open_error', task, {
-      firstFileName: firstFile && firstFile.name ? firstFile.name : '',
-      firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
-      openMs: Math.round(performance.now() - flowStartedAt),
-      filesCount: files.length,
-      error: stageErrorToText(error),
-    });
     docLoadFinish(error);
   } finally {
     hideViewerLoader();
-    logTaskViewStage(task, 'ui_loader_hidden', {
-      sinceClickMs: Math.round(performance.now() - flowStartedAt),
-    });
     setActionButtonLoading(button, false);
-    logTaskViewStage(task, 'ui_button_loading_off', {
-      sinceClickMs: Math.round(performance.now() - flowStartedAt),
-    });
   }
 }
 
@@ -12925,7 +12500,6 @@ function bootstrap() {
   readAssetVersionInfo();
   initTelegram();
   attachEvents();
-  prewarmMiniAppPdfResources();
   if (!safeRender('bootstrap_initial')) {
     try {
       renderEmpty();
@@ -14065,12 +13639,238 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  aiButton.addEventListener('click', () => {
-    openAiDialogSafely({
-      task,
-      entry,
-      onStatus: setStatus,
+  const ensureAiChoiceStyles = () => {
+    if (document.getElementById('tg-ai-mode-style-v1')) return;
+    const style = document.createElement('style');
+    style.id = 'tg-ai-mode-style-v1';
+    style.textContent = `
+      .tg-ai-mode{position:fixed;inset:0;z-index:3500;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.36);backdrop-filter:blur(8px);padding:10px}
+      .tg-ai-mode__panel{width:min(420px,100%);border-radius:20px;border:1px solid rgba(255,255,255,.9);background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(241,245,249,.92));padding:14px;box-shadow:0 22px 50px rgba(15,23,42,.2)}
+      .tg-ai-mode__btn{width:100%;border:1px solid rgba(203,213,225,.95);border-radius:13px;padding:11px 12px;background:#fff;text-align:left;font-size:14px;color:#0f172a}
+      .tg-ai-mode__btn + .tg-ai-mode__btn{margin-top:8px}
+      .tg-ai-mode__btn--vip{background:linear-gradient(135deg,rgba(224,242,254,.95),rgba(240,253,250,.95))}
+      .tg-paid-chat{position:fixed;inset:0;z-index:3600;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,23,42,.4);backdrop-filter:blur(8px)}
+      .tg-paid-chat__card{width:min(900px,100%);height:min(100dvh,920px);display:flex;flex-direction:column;background:linear-gradient(165deg,rgba(255,255,255,.95),rgba(241,245,249,.9));border-radius:22px 22px 0 0;overflow:hidden}
+      .tg-paid-chat__head{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:12px;border-bottom:1px solid rgba(203,213,225,.7)}
+      .tg-paid-chat__title{font-size:16px;font-weight:800;color:#0f172a}
+      .tg-paid-chat__sub{font-size:12px;color:#64748b}
+      .tg-paid-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
+      .tg-paid-chat__bubble{max-width:92%;padding:9px 11px;border-radius:12px;font-size:13px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+      .tg-paid-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
+      .tg-paid-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
+      .tg-paid-chat__status{padding:7px 12px;font-size:12px;color:#334155;border-top:1px solid rgba(203,213,225,.6);background:rgba(255,255,255,.78)}
+      .tg-paid-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;align-items:flex-end;background:rgba(255,255,255,.9)}
+      .tg-paid-chat__input{flex:1;min-height:42px;max-height:120px;border:1px solid rgba(148,163,184,.32);border-radius:12px;padding:9px;font-size:13px;resize:none;background:rgba(255,255,255,.95)}
+      .tg-paid-chat__send{border:none;min-height:42px;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#14b8a6);color:#fff;font-weight:700}
+      .tg-paid-chat__send:disabled{opacity:.55}
+      .tg-paid-chat__files-toggle{border:none;min-height:42px;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
+      .tg-paid-chat__files-sheet{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.98);padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+      .tg-paid-chat__files-sheet[hidden]{display:none}
+      .tg-paid-chat__files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:220px;overflow:auto}
+      .tg-paid-chat__file{display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid rgba(203,213,225,.9);border-radius:12px;background:#fff;font-size:12px;color:#334155}
+      .tg-paid-chat__file input{margin-top:2px;accent-color:#2563eb}
+      .tg-paid-chat__meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
+      .tg-paid-chat__chip{padding:5px 9px;border:1px solid rgba(203,213,225,.95);border-radius:999px;font-size:12px;color:#334155;background:rgba(255,255,255,.9)}
+      @media (max-width:560px){.tg-paid-chat__card{height:100dvh;border-radius:0}.tg-paid-chat__composer{flex-wrap:wrap}.tg-paid-chat__send,.tg-paid-chat__files-toggle{flex:1}.tg-paid-chat__files-grid{grid-template-columns:1fr}}
+    `;
+    document.head.appendChild(style);
+  };
+
+  const openVipTelegramModal = async () => {
+    ensureAiChoiceStyles();
+    const overlay = document.createElement('div');
+    overlay.className = 'tg-paid-chat';
+    overlay.innerHTML = `
+      <div class="tg-paid-chat__card">
+        <div class="tg-paid-chat__head">
+          <div>
+            <div class="tg-paid-chat__title">💎 Платный ИИ</div>
+            <div class="tg-paid-chat__sub">Чат с выбором файлов из текущей задачи</div>
+          </div>
+          <button type="button" data-close style="border:none;background:#fff;border-radius:10px;padding:6px 10px">✕</button>
+        </div>
+        <div class="tg-paid-chat__messages" data-messages>
+          <div class="tg-paid-chat__bubble tg-paid-chat__bubble--assistant">Привет! Выберите файлы из задачи и задайте вопрос — дам ответ по выбранным документам.</div>
+        </div>
+        <div class="tg-paid-chat__status" data-status>Готов к работе.</div>
+        <div class="tg-paid-chat__composer">
+          <button type="button" class="tg-paid-chat__files-toggle" data-files-toggle>📎 Файлы</button>
+          <textarea class="tg-paid-chat__input" data-input placeholder="Например: сделай краткое решение по этим файлам"></textarea>
+          <button type="button" class="tg-paid-chat__send" data-send>Отправить</button>
+        </div>
+        <div class="tg-paid-chat__files-sheet" data-files-sheet hidden>
+          <div style="font-size:12px;color:#475569;margin-bottom:8px">Выберите один или несколько файлов из задачи:</div>
+          <div class="tg-paid-chat__files-grid" data-files-grid></div>
+          <div class="tg-paid-chat__meta" data-meta></div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const files = Array.isArray(task && task.files) ? task.files : [];
+    const selectedKeys = new Set();
+    const filesGrid = overlay.querySelector('[data-files-grid]');
+    const filesSheet = overlay.querySelector('[data-files-sheet]');
+    const filesToggle = overlay.querySelector('[data-files-toggle]');
+    const statusNode = overlay.querySelector('[data-status]');
+    const metaNode = overlay.querySelector('[data-meta]');
+    const messagesNode = overlay.querySelector('[data-messages]');
+    const inputNode = overlay.querySelector('[data-input]');
+
+    const appendBubble = (text, role = 'assistant') => {
+      const bubble = document.createElement('div');
+      bubble.className = `tg-paid-chat__bubble tg-paid-chat__bubble--${role === 'user' ? 'user' : 'assistant'}`;
+      bubble.textContent = normalizeValue(text) || 'Пустой ответ.';
+      messagesNode.appendChild(bubble);
+      messagesNode.scrollTop = messagesNode.scrollHeight;
+    };
+
+    const renderMeta = (payload = null, elapsed = null) => {
+      if (!metaNode) return;
+      if (!payload) {
+        metaNode.innerHTML = '';
+        return;
+      }
+      metaNode.innerHTML = `
+        <span class="tg-paid-chat__chip">Модель: ${normalizeValue(payload.model) || '—'}</span>
+        <span class="tg-paid-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
+        <span class="tg-paid-chat__chip">Токены: ${Number(payload.tokensUsed) || '—'}</span>
+      `;
+    };
+
+    if (filesGrid) {
+      filesGrid.innerHTML = files.length
+        ? files.map((file, index) => {
+          const fileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
+          const fileName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
+          const fileKey = String(index);
+          const disabledAttr = fileUrl ? '' : 'disabled';
+          return `<label class="tg-paid-chat__file"><input type="checkbox" data-file-key="${fileKey}" ${disabledAttr}><span>${escapeHtml(fileName)}</span></label>`;
+        }).join('')
+        : '<div style="font-size:12px;color:#64748b">В задаче нет файлов для анализа.</div>';
+    }
+
+    const close = () => overlay.remove();
+    overlay.querySelector('[data-close]')?.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
     });
+
+    filesToggle?.addEventListener('click', () => {
+      filesSheet.hidden = !filesSheet.hidden;
+    });
+
+    filesGrid?.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+      const key = normalizeValue(target.dataset.fileKey);
+      if (!key) return;
+      if (target.checked) selectedKeys.add(key);
+      else selectedKeys.delete(key);
+      statusNode.textContent = selectedKeys.size
+        ? `Выбрано файлов: ${selectedKeys.size}.`
+        : 'Файлы не выбраны. Можно отправить без файлов.';
+    });
+
+    overlay.querySelector('[data-send]')?.addEventListener('click', async (event) => {
+      const sendBtn = event.currentTarget;
+      const prompt = String((inputNode && inputNode.value) || '').trim();
+      sendBtn.disabled = true;
+      statusNode.textContent = 'Собираем запрос...';
+      renderMeta(null);
+      const startedAt = Date.now();
+      try {
+        const selectedFiles = Array.from(selectedKeys)
+          .map((key) => files[Number(key)])
+          .filter((file) => file && normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl)));
+
+        if (!selectedFiles.length && files.length) {
+          throw new Error('Выберите хотя бы один файл внизу (кнопка "📎 Файлы").');
+        }
+
+        const filesToSend = [];
+        const failedFiles = [];
+        for (const file of selectedFiles) {
+          const selectedFileUrl = normalizeValue(file && (file.resolvedUrl || file.url || file.previewUrl));
+          statusNode.textContent = `Скачиваем файл ${filesToSend.length + 1}...`;
+          // eslint-disable-next-line no-await-in-loop
+          const fileResponse = await fetch(selectedFileUrl, { credentials: 'include' });
+          if (!fileResponse.ok) {
+            failedFiles.push(normalizeValue(file && (file.originalName || file.name || file.storedName)) || 'Без названия');
+            continue;
+          }
+          // eslint-disable-next-line no-await-in-loop
+          const fileBlob = await fileResponse.blob();
+          const fallbackName = normalizeValue(file && (file.originalName || file.name || file.storedName)) || `task-file-${filesToSend.length + 1}.bin`;
+          filesToSend.push(new File([fileBlob], fallbackName, { type: fileBlob.type || 'application/octet-stream' }));
+        }
+        if (!filesToSend.length && selectedFiles.length) {
+          const failedLabel = failedFiles.length ? ` (${failedFiles.slice(0, 2).join(', ')})` : '';
+          throw new Error(`Не удалось скачать выбранные файлы${failedLabel}. Попробуйте снова.`);
+        }
+        const finalPrompt = prompt || 'Сделай краткий вывод и решение по выбранным файлам.';
+        appendBubble(finalPrompt, 'user');
+        statusNode.textContent = 'Отправляем запрос в Платный ИИ...';
+        const result = await postGroqPaidWithFallback(() => {
+          const formData = new FormData();
+          formData.append('taskId', normalizeValue(task && task.id));
+          formData.append('taskTitle', normalizeValue(task && task.title) || 'Задача');
+          formData.append('taskDescription', normalizeValue(task && task.description));
+          formData.append('prompt', finalPrompt);
+          filesToSend.forEach((fileToSend) => {
+            formData.append('files[]', fileToSend, fileToSend.name);
+          });
+          return formData;
+        });
+        const payload = result && result.payload ? result.payload : null;
+        if (!payload || payload.ok !== true) {
+          throw new Error((payload && payload.error) || 'VIP ИИ временно недоступен.');
+        }
+        statusNode.textContent = 'Ответ готов.';
+        appendBubble(normalizeValue(payload.response) || 'Пустой ответ.', 'assistant');
+        const elapsed = Date.now() - startedAt;
+        renderMeta(payload, elapsed);
+        if (inputNode) inputNode.value = '';
+      } catch (error) {
+        statusNode.textContent = 'Ошибка';
+        appendBubble(error?.message || 'Не удалось получить ответ.', 'assistant');
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  };
+
+  const openAiModeSelectorTelegram = () => {
+    ensureAiChoiceStyles();
+    const overlay = document.createElement('div');
+    overlay.className = 'tg-ai-mode';
+    overlay.innerHTML = `
+      <div class="tg-ai-mode__panel">
+        <div style="font-size:17px;font-weight:700;color:#0f172a">Режим ИИ</div>
+        <div style="font-size:12px;color:#64748b;margin:4px 0 10px">Выберите нужный формат ответа.</div>
+        <button type="button" class="tg-ai-mode__btn" data-free>🤍 Бесплатный ИИ</button>
+        <button type="button" class="tg-ai-mode__btn tg-ai-mode__btn--vip" data-paid>💎 VIP ИИ</button>
+        <button type="button" class="tg-ai-mode__btn" data-cancel>Отмена</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('[data-free]')?.addEventListener('click', () => {
+      close();
+      openAiDialogSafely({ task, entry, onStatus: setStatus });
+    });
+    overlay.querySelector('[data-paid]')?.addEventListener('click', () => {
+      close();
+      openVipTelegramModal();
+    });
+    overlay.querySelector('[data-cancel]')?.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+  };
+
+  aiButton.addEventListener('click', () => {
+    openAiModeSelectorTelegram();
   });
 
   textInput.addEventListener('input', () => {
