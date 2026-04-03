@@ -18,30 +18,31 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script>
       (function bootstrapVersionedAssets() {
-        const ensureFreshTelegramLaunch = function() {
-          const inTelegram = Boolean(window.Telegram && window.Telegram.WebApp);
-          if (!inTelegram) {
-            return false;
-          }
-          let currentUrl;
-          try {
-            currentUrl = new URL(window.location.href);
-          } catch (_) {
-            return false;
-          }
-          const now = Date.now();
-          const currentStamp = Number.parseInt(currentUrl.searchParams.get('_tg_open_ts') || '', 10);
-          const isFreshStamp = Number.isFinite(currentStamp) && Math.abs(now - currentStamp) < 15000;
-          if (isFreshStamp) {
-            return false;
-          }
-          currentUrl.searchParams.set('_tg_open_ts', String(now));
-          window.location.replace(currentUrl.toString());
-          return true;
-        };
+        const inTelegram = Boolean(window.Telegram && window.Telegram.WebApp);
+        const FORCE_RELOAD_AFTER_HIDDEN_MS = 1500;
 
-        if (ensureFreshTelegramLaunch()) {
-          return;
+        if (inTelegram) {
+          let hiddenAt = Date.now();
+
+          document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'hidden') {
+              hiddenAt = Date.now();
+              return;
+            }
+            if (document.visibilityState !== 'visible') {
+              return;
+            }
+            if (Date.now() - hiddenAt < FORCE_RELOAD_AFTER_HIDDEN_MS) {
+              return;
+            }
+            window.location.reload();
+          });
+
+          window.addEventListener('pageshow', function(event) {
+            if (event && event.persisted) {
+              window.location.reload();
+            }
+          });
         }
 
         const runtimeNonce = Date.now().toString(36);
