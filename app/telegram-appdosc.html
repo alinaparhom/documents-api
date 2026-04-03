@@ -19,28 +19,50 @@
     <script>
       (function bootstrapVersionedAssets() {
         const inTelegram = Boolean(window.Telegram && window.Telegram.WebApp);
-        const FORCE_RELOAD_AFTER_HIDDEN_MS = 1500;
+        const MIN_RELOAD_INTERVAL_MS = 1200;
+
+        const reloadWithLaunchNonce = function() {
+          let currentUrl;
+          try {
+            currentUrl = new URL(window.location.href);
+          } catch (_) {
+            window.location.reload();
+            return;
+          }
+          const now = Date.now();
+          try {
+            const lastReloadAt = Number.parseInt(sessionStorage.getItem('__tg_force_reload_at') || '0', 10);
+            if (Number.isFinite(lastReloadAt) && now - lastReloadAt < MIN_RELOAD_INTERVAL_MS) {
+              return;
+            }
+            sessionStorage.setItem('__tg_force_reload_at', String(now));
+          } catch (_) {
+            // ignore storage restrictions
+          }
+          currentUrl.searchParams.set('_tg_launch', String(now));
+          window.location.replace(currentUrl.toString());
+        };
 
         if (inTelegram) {
-          let hiddenAt = Date.now();
+          try {
+            const initialUrl = new URL(window.location.href);
+            if (!initialUrl.searchParams.get('_tg_launch')) {
+              reloadWithLaunchNonce();
+              return;
+            }
+          } catch (_) {
+            // ignore
+          }
 
           document.addEventListener('visibilitychange', function() {
-            if (document.visibilityState === 'hidden') {
-              hiddenAt = Date.now();
-              return;
+            if (document.visibilityState === 'visible') {
+              reloadWithLaunchNonce();
             }
-            if (document.visibilityState !== 'visible') {
-              return;
-            }
-            if (Date.now() - hiddenAt < FORCE_RELOAD_AFTER_HIDDEN_MS) {
-              return;
-            }
-            window.location.reload();
           });
 
           window.addEventListener('pageshow', function(event) {
             if (event && event.persisted) {
-              window.location.reload();
+              reloadWithLaunchNonce();
             }
           });
         }
