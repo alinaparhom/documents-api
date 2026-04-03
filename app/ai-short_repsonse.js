@@ -193,6 +193,16 @@ export function createTelegramBriefAi(deps = {}) {
     return Array.from(pages).slice(0, 3);
   }
 
+  function chunkItems(items, size) {
+    const normalized = Array.isArray(items) ? items : [];
+    const chunkSize = Math.max(1, Number(size) || 1);
+    const chunks = [];
+    for (let index = 0; index < normalized.length; index += chunkSize) {
+      chunks.push(normalized.slice(index, index + chunkSize));
+    }
+    return chunks;
+  }
+
   async function loadBriefScript(url, checkLoaded) {
     if (checkLoaded()) return;
     await new Promise((resolve, reject) => {
@@ -359,47 +369,108 @@ export function createTelegramBriefAi(deps = {}) {
       ocrText = '';
     }
 
-    const request = await postGroqPaidWithFallback(() => {
-      const formData = new FormData();
-      formData.append('action', 'analyze_paid');
-      formData.append('mode', 'paid');
-      formData.append('vision_mode', '1');
-      formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
-      if (ocrText) {
+    const images = Array.isArray(prepared.images) ? prepared.images : [];
+    const imageBatches = chunkItems(images, 5);
+    const partialAnswers = [];
+    const startedAt = Date.now();
+
+    if (!imageBatches.length && ocrText) {
+      const fallbackRequest = await postGroqPaidWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
         formData.append('extractedTexts', JSON.stringify([{
           name: file.name || fileName,
           type: file.type || 'text/plain',
           text: String(ocrText).slice(0, 70000),
         }]));
-      }
-      formData.append('vision_payload', JSON.stringify({
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-        max_tokens: 1000,
-        temperature: 0.7,
-        messages: [{
-          role: 'user',
-          content: [{ type: 'text', text: (prepared.messageText || 'Проанализируй содержимое этого файла') + (ocrText ? `\n\nOCR текст:\n${String(ocrText).slice(0, 70000)}` : '') }].concat(
-            (prepared.images || []).map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
-          ),
-        }],
-      }));
-      (prepared.images || []).forEach((item, index) => {
-        const data = String(item.dataUrl || '');
-        const base64 = data.includes(',') ? data.split(',')[1] : data;
-        const mimeType = item.mime || 'image/jpeg';
-        const blob = new Blob([Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0))], { type: mimeType });
-        formData.append('files', blob, item.fileName || `vision-${index + 1}.jpg`);
+        return formData;
       });
-      return formData;
-    });
-    const payload = request && request.payload;
-    if (!request.response.ok || !payload || payload.ok !== true) {
-      throw new Error((payload && payload.error) || 'Ошибка Vision запроса к API.');
+      const fallbackPayload = fallbackRequest && fallbackRequest.payload;
+      if (!fallbackRequest.response.ok || !fallbackPayload || fallbackPayload.ok !== true) {
+        throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
+      }
+      return {
+        summary: normalizeValue(fallbackPayload.summary || fallbackPayload.response),
+        model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
+        warning: '',
+      };
+    }
+
+    for (let batchIndex = 0; batchIndex < imageBatches.length; batchIndex += 1) {
+      const currentBatch = imageBatches[batchIndex];
+      setStatus(`Vision: анализ блока ${batchIndex + 1}/${imageBatches.length} (${currentBatch.length} стр.)...`, 'loading');
+      // eslint-disable-next-line no-await-in-loop
+      const request = await postGroqPaidWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'analyze_paid');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
+        if (ocrText && batchIndex === 0) {
+          formData.append('extractedTexts', JSON.stringify([{
+            name: file.name || fileName,
+            type: file.type || 'text/plain',
+            text: String(ocrText).slice(0, 70000),
+          }]));
+        }
+        formData.append('vision_payload', JSON.stringify({
+          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          max_tokens: 1000,
+          temperature: 0.7,
+          messages: [{
+            role: 'user',
+            content: [{ type: 'text', text: `${prepared.messageText || 'Проанализируй содержимое этого файла'}\n\nБлок ${batchIndex + 1} из ${imageBatches.length}.` }].concat(
+              currentBatch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
+            ),
+          }],
+        }));
+        currentBatch.forEach((item, index) => {
+          const data = String(item.dataUrl || '');
+          const base64 = data.includes(',') ? data.split(',')[1] : data;
+          const mimeType = item.mime || 'image/jpeg';
+          const blob = new Blob([Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0))], { type: mimeType });
+          formData.append('files', blob, item.fileName || `vision-${batchIndex + 1}-${index + 1}.jpg`);
+        });
+        return formData;
+      });
+      const payload = request && request.payload;
+      if (!request.response.ok || !payload || payload.ok !== true) {
+        throw new Error((payload && payload.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
+      }
+      partialAnswers.push(normalizeValue(payload.response || payload.summary));
+    }
+
+    let finalSummary = partialAnswers.join('\n\n').trim();
+    if (partialAnswers.length > 1) {
+      setStatus('Vision: объединяю результаты всех блоков...', 'loading');
+      const mergeRequest = await postGroqPaidWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('extractedTexts', JSON.stringify([{
+          name: file.name || fileName,
+          type: 'text/plain',
+          text: partialAnswers.map((item, idx) => `Блок ${idx + 1}/${partialAnswers.length}:\n${item}`).join('\n\n'),
+        }]));
+        return formData;
+      });
+      const mergePayload = mergeRequest && mergeRequest.payload;
+      if (mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
+        finalSummary = normalizeValue(mergePayload.summary || mergePayload.response) || finalSummary;
+      }
+    }
+
+    if (!finalSummary) {
+      throw new Error('Vision не вернул итоговый текст.');
     }
     return {
-      summary: normalizeValue(payload.response || payload.summary),
-      model: payload.model,
-      timeMs: payload.durationMs || payload.timeMs,
+      summary: finalSummary,
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      timeMs: Date.now() - startedAt,
       warning: ocrText ? '' : 'OCR не вернул текст, ответ построен по изображению.',
     };
   }
