@@ -1,4 +1,15 @@
 (function() {
+  var VIP_RESPONSE_STYLE_OPTIONS = [
+    { value: 'neutral', label: 'Нейтральный', prompt: 'Тон ответа: нейтральный, деловой, без эмоций. Пиши по фактам.' },
+    { value: 'aggressive', label: 'Агрессивный', prompt: 'Тон ответа: жёсткий и напористый, но корректный и без оскорблений.' },
+    { value: 'calm', label: 'Спокойный', prompt: 'Тон ответа: спокойный, информационный, понятный и уважительный.' }
+  ];
+
+  function resolveVipStyle(styleValue) {
+    var found = VIP_RESPONSE_STYLE_OPTIONS.find(function(item) { return item.value === styleValue; });
+    return found || VIP_RESPONSE_STYLE_OPTIONS[0];
+  }
+
   function ensureVipAiModalStyles() {
     if (document.getElementById('documents-vip-ai-modal-style')) {
       return;
@@ -124,9 +135,10 @@
     return { appendedCount: appendedCount, ocrContexts: ocrContexts };
   }
 
-  async function buildVipRequestFormData(options, promptText, selectedLinked, selectedPending, requestContext) {
+  async function buildVipRequestFormData(options, promptText, selectedLinked, selectedPending, requestContext, responseStyle) {
+    var styleMeta = resolveVipStyle(responseStyle);
     var formData = new FormData();
-    formData.append('responseStyle', 'neutral');
+    formData.append('responseStyle', styleMeta.value);
     var appendResult = await appendSourceFilesToFormData(options, formData, selectedLinked, selectedPending);
     var appendedCount = appendResult && appendResult.appendedCount ? appendResult.appendedCount : 0;
     if (!appendedCount) {
@@ -138,6 +150,9 @@
       return 'Файл: ' + (item.name || 'Без имени') + '\nOCR:\n' + (item.ocrText || '');
     }).join('\n\n---\n\n').slice(0, 50000);
     var finalPrompt = String(promptText || '');
+    if (styleMeta && styleMeta.prompt) {
+      finalPrompt = (finalPrompt ? (finalPrompt + '\n\n') : '') + styleMeta.prompt;
+    }
     if (payloadContext.ocrSummary) {
       finalPrompt += '\n\nOCR контекст по каждому файлу:\n' + payloadContext.ocrSummary;
     }
@@ -160,14 +175,15 @@
     var payload = options.payload || {};
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><textarea class="documents-vip-ai__input" placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button">Отправить</button></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__input" data-style></select><textarea class="documents-vip-ai__input" data-prompt placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button">Отправить</button></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
     var filesNode = panel.querySelector('.documents-vip-ai__files');
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
-    var inputNode = panel.querySelector('.documents-vip-ai__input');
+    var styleNode = panel.querySelector('[data-style]');
+    var inputNode = panel.querySelector('[data-prompt]');
     var sendButton = panel.querySelector('.documents-vip-ai__send');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
@@ -179,6 +195,11 @@
     fileEntries.forEach(function(entry) {
       selectedFiles[entry.key] = true;
     });
+    if (styleNode) {
+      styleNode.innerHTML = VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
+        return '<option value="' + escapeHtmlText(item.value) + '">' + escapeHtmlText('Стиль: ' + item.label) + '</option>';
+      }).join('');
+    }
 
     if (!fileEntries.length) {
       filesNode.innerHTML = '<em>Нет вложений</em>';
@@ -214,6 +235,7 @@
 
     sendButton.addEventListener('click', function() {
       var promptText = String(inputNode.value || '').trim();
+      var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
       if (!promptText) {
         return;
       }
@@ -251,7 +273,7 @@
             if (index >= paidEndpoints.length) {
               throw new Error('Не удалось подключиться к VIP API. Проверьте endpoint api-groq-paid.php.');
             }
-            return buildVipRequestFormData(payload, promptText, selectedLinked, selectedPending, requestContext)
+            return buildVipRequestFormData(payload, promptText, selectedLinked, selectedPending, requestContext, selectedStyle)
               .then(function(formData) {
                 return fetch(paidEndpoints[index], { method: 'POST', body: formData, credentials: 'same-origin' });
               })

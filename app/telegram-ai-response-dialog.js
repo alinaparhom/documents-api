@@ -7,6 +7,11 @@
   const REQUEST_TIMEOUT_MS = 45000;
   const VISION_BATCH_SIZE = 5;
   let briefPdfJsLoader = null;
+  const RESPONSE_STYLE_OPTIONS = [
+    { value: 'neutral', label: 'Нейтральный', prompt: 'Тон ответа: нейтральный, деловой, без эмоций. Пиши чётко по делу.' },
+    { value: 'aggressive', label: 'Агрессивный', prompt: 'Тон ответа: жёсткий и напористый, но без оскорблений и мата. Пиши уверенно и требовательно.' },
+    { value: 'calm', label: 'Спокойный', prompt: 'Тон ответа: спокойный, информационный и уважительный. Объясняй просто и по шагам.' },
+  ];
 
   function normalize(value) {
     return String(value || '').trim();
@@ -19,6 +24,11 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function getResponseStyleMeta(styleValue) {
+    const found = RESPONSE_STYLE_OPTIONS.find((item) => item.value === styleValue);
+    return found || RESPONSE_STYLE_OPTIONS[0];
   }
 
   function getDocsAiEndpoints() {
@@ -609,7 +619,7 @@
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
       .tg-ai-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
       .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
-      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto auto 1fr auto;gap:8px;background:rgba(255,255,255,.93)}
+      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto auto auto 1fr auto;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
       .tg-ai-chat__input{min-height:42px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.98);border-radius:12px;padding:9px;font-size:13px;color:#0f172a}
       .tg-ai-chat__send{min-height:42px;border:none;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#14b8a6);color:#fff;font-weight:700}
@@ -694,6 +704,7 @@
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
           <button type="button" class="tg-ai-chat__toggle" data-vision-toggle>👁 Vision: OFF</button>
+          <button type="button" class="tg-ai-chat__toggle" data-style-toggle>🎯 Стиль: Нейтральный</button>
           <textarea class="tg-ai-chat__input" data-input placeholder="Например: реши задачу по выбранным файлам"></textarea>
           <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
         </div>
@@ -714,7 +725,9 @@
     const input = overlay.querySelector('[data-input]');
     const meta = overlay.querySelector('[data-meta]');
     const visionToggle = overlay.querySelector('[data-vision-toggle]');
+    const styleToggle = overlay.querySelector('[data-style-toggle]');
     let visionMode = false;
+    let styleIndex = 0;
 
     renderFiles(filesList, files);
 
@@ -734,6 +747,12 @@
         ? 'Vision включён: анализ изображений/PDF через VIP ИИ.'
         : 'Vision выключен: обычный OCR + текстовый ответ.';
     });
+    styleToggle?.addEventListener('click', () => {
+      styleIndex = (styleIndex + 1) % RESPONSE_STYLE_OPTIONS.length;
+      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex];
+      styleToggle.textContent = `🎯 Стиль: ${styleMeta.label}`;
+      status.textContent = `Стиль ответа: ${styleMeta.label}.`;
+    });
 
     filesList?.addEventListener('change', (event) => {
       const target = event.target;
@@ -748,6 +767,8 @@
     overlay.querySelector('[data-send]')?.addEventListener('click', async (event) => {
       const sendButton = event.currentTarget;
       const prompt = normalize(input && input.value);
+      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
+      const effectivePrompt = [prompt, styleMeta.prompt].filter(Boolean).join('\n\n');
       const selectedFiles = Array.from(selected)
         .map((key) => files[Number(key)])
         .filter(Boolean);
@@ -769,7 +790,7 @@
         const extractedTexts = [];
         let answer = '';
         if (visionMode) {
-          answer = await requestTelegramVisionResponse({ prompt, selectedFiles }, (message) => {
+          answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, selectedFiles }, (message) => {
             status.textContent = message;
           });
         } else {
@@ -800,11 +821,12 @@
 
           status.textContent = 'Отправляем запрос в ИИ...';
           answer = await requestTelegramAiResponse({
-            prompt,
+            prompt: effectivePrompt,
             documentTitle: normalize(task && (task.title || task.documentTitle || task.subject)) || 'Задача Telegram',
             extractedTexts,
             context: {
               source: 'telegram-ai-response-dialog',
+              responseStyle: styleMeta.value,
               task,
               selectedFiles: selectedFiles.map((item) => ({
                 name: normalize(item && (item.originalName || item.name || item.storedName)),
@@ -819,6 +841,7 @@
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
           <span class="tg-ai-chat__chip">Режим: ${visionMode ? 'vision' : 'generate_response'}</span>
+          <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: ${extractedTexts.length}</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
