@@ -32,12 +32,6 @@
     return '';
   }
 
-  function isPdfFile(name, type) {
-    var fileName = String(name || '').toLowerCase();
-    var fileType = String(type || '').toLowerCase();
-    return fileType.indexOf('application/pdf') === 0 || /\.pdf$/i.test(fileName);
-  }
-
   async function tryExtractOcrTextForVip(options, fileOrBlob, fileName, remoteUrl) {
     var ocrApiUrl = (options && options.apiUrl) || '/js/documents/api-docs.php';
     var ocrFormData = new FormData();
@@ -78,19 +72,23 @@
 
   async function appendSourceFilesToFormData(options, formData, linkedFiles, pendingFiles) {
     var appendedCount = 0;
+    var ocrContexts = [];
     for (var p = 0; p < pendingFiles.length; p += 1) {
       var file = pendingFiles[p];
       if (!file) continue;
       var pendingName = file.name || ('file-' + (p + 1));
       formData.append('files', file, pendingName);
       appendedCount += 1;
-      if (isPdfFile(pendingName, file.type)) {
-        // eslint-disable-next-line no-await-in-loop
-        var pendingOcrText = await tryExtractOcrTextForVip(options, file, pendingName, '');
-        if (pendingOcrText) {
-          formData.append('files', new Blob([pendingOcrText.slice(0, 40000)], { type: 'text/plain' }), pendingName.replace(/\.pdf$/i, '') + '-ocr.txt');
-          appendedCount += 1;
-        }
+      // eslint-disable-next-line no-await-in-loop
+      var pendingOcrText = await tryExtractOcrTextForVip(options, file, pendingName, '');
+      if (pendingOcrText) {
+        ocrContexts.push({
+          name: pendingName,
+          source: 'pending',
+          type: file.type || '',
+          size: file.size || 0,
+          ocrText: pendingOcrText.slice(0, 12000)
+        });
       }
     }
     for (var i = 0; i < linkedFiles.length; i += 1) {
@@ -110,28 +108,37 @@
         var fileName = linkedFile && linkedFile.name ? String(linkedFile.name) : ('file-' + (i + 1));
         formData.append('files', fileBlob, fileName);
         appendedCount += 1;
-        if (isPdfFile(fileName, fileBlob.type)) {
-          // eslint-disable-next-line no-await-in-loop
-          var linkedOcrText = await tryExtractOcrTextForVip(options, null, fileName, fileUrl);
-          if (linkedOcrText) {
-            formData.append('files', new Blob([linkedOcrText.slice(0, 40000)], { type: 'text/plain' }), fileName.replace(/\.pdf$/i, '') + '-ocr.txt');
-            appendedCount += 1;
-          }
+        // eslint-disable-next-line no-await-in-loop
+        var linkedOcrText = await tryExtractOcrTextForVip(options, null, fileName, fileUrl);
+        if (linkedOcrText) {
+          ocrContexts.push({
+            name: fileName,
+            source: 'linked',
+            type: fileBlob.type || '',
+            size: fileBlob.size || 0,
+            ocrText: linkedOcrText.slice(0, 12000)
+          });
         }
       } catch (_) {}
     }
-    return appendedCount;
+    return { appendedCount: appendedCount, ocrContexts: ocrContexts };
   }
 
   async function buildVipRequestFormData(options, promptText, selectedLinked, selectedPending, requestContext) {
     var formData = new FormData();
     formData.append('prompt', promptText);
     formData.append('responseStyle', 'neutral');
-    formData.append('context', JSON.stringify(requestContext || {}));
-    var appendedCount = await appendSourceFilesToFormData(options, formData, selectedLinked, selectedPending);
+    var appendResult = await appendSourceFilesToFormData(options, formData, selectedLinked, selectedPending);
+    var appendedCount = appendResult && appendResult.appendedCount ? appendResult.appendedCount : 0;
     if (!appendedCount) {
       throw new Error('Выберите хотя бы один файл для VIP чата.');
     }
+    var payloadContext = requestContext && typeof requestContext === 'object' ? requestContext : {};
+    payloadContext.ocrFiles = appendResult && Array.isArray(appendResult.ocrContexts) ? appendResult.ocrContexts : [];
+    payloadContext.ocrSummary = (payloadContext.ocrFiles || []).map(function(item) {
+      return 'Файл: ' + (item.name || 'Без имени') + '\nOCR:\n' + (item.ocrText || '');
+    }).join('\n\n---\n\n').slice(0, 50000);
+    formData.append('context', JSON.stringify(payloadContext));
     return formData;
   }
 
