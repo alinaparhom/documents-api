@@ -18,21 +18,95 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script>
       (function bootstrapVersionedAssets() {
-        const runtimeNonce = Date.now().toString(36);
-        const cacheVersionUrl = '/cache-version.php?t=' + encodeURIComponent(runtimeNonce);
+        const inTelegram = Boolean(window.Telegram && window.Telegram.WebApp);
 
-        const setRuntimeVersion = function() {
-          const serverVersion = String(window.__ASSET_VERSION__ || '').trim();
-          window.__RUNTIME_ASSET_VERSION__ = serverVersion
-            ? `${serverVersion}-${runtimeNonce}`
-            : runtimeNonce;
+        const forceFreshLoad = function() {
+          if (!inTelegram) {
+            return null;
+          }
+
+          const tg = window.Telegram.WebApp;
+          let currentUrl;
+          try {
+            currentUrl = new URL(window.location.href);
+          } catch (_) {
+            window.location.reload();
+            return null;
+          }
+
+          let launchVersion = currentUrl.searchParams.get('_tg_open_ts');
+          if (!launchVersion) {
+            launchVersion = String(Date.now());
+            currentUrl.searchParams.set('_tg_open_ts', launchVersion);
+            try {
+              sessionStorage.clear();
+            } catch (_) {
+              // ignore storage restrictions
+            }
+            window.location.replace(currentUrl.toString());
+            return null;
+          }
+
+          try {
+            const lastVersion = sessionStorage.getItem('app_version');
+            if (lastVersion && lastVersion !== launchVersion) {
+              sessionStorage.clear();
+            }
+            sessionStorage.setItem('app_version', launchVersion);
+          } catch (_) {
+            // ignore storage restrictions
+          }
+
+          tg.expand?.();
+
+          document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState !== 'visible') {
+              return;
+            }
+            const nextUrl = new URL(window.location.href);
+            nextUrl.searchParams.set('_tg_open_ts', String(Date.now()));
+            window.location.replace(nextUrl.toString());
+          });
+
+          window.addEventListener('pageshow', function(event) {
+            if (event && event.persisted) {
+              const nextUrl = new URL(window.location.href);
+              nextUrl.searchParams.set('_tg_open_ts', String(Date.now()));
+              window.location.replace(nextUrl.toString());
+            }
+          });
+
+          return launchVersion;
         };
+
+        const launchVersion = forceFreshLoad();
+        if (inTelegram && !launchVersion) {
+          return;
+        }
+
+        const runtimeNonce = launchVersion || Date.now().toString(36);
+        window.__RUNTIME_ASSET_VERSION__ = runtimeNonce;
 
         const appendStylesheet = function() {
           const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || runtimeNonce).toString();
+          const stylesheetSources = [
+            './telegram-appdosc.css?v=' + encodeURIComponent(version),
+            '/css/telegram-appdosc.css?v=' + encodeURIComponent(version),
+          ];
+          let currentIndex = 0;
           const stylesheet = document.createElement('link');
           stylesheet.rel = 'stylesheet';
-          stylesheet.href = '/css/telegram-appdosc.css?v=' + encodeURIComponent(version);
+          const loadNextStylesheet = function() {
+            if (currentIndex >= stylesheetSources.length) {
+              return;
+            }
+            stylesheet.href = stylesheetSources[currentIndex];
+            currentIndex += 1;
+          };
+          stylesheet.onerror = function() {
+            loadNextStylesheet();
+          };
+          loadNextStylesheet();
           document.head.appendChild(stylesheet);
         };
 
@@ -40,7 +114,13 @@
           const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || runtimeNonce).toString();
           const moduleScript = document.createElement('script');
           moduleScript.type = 'module';
-          moduleScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
+          moduleScript.src = './telegram-appdosc.js?v=' + encodeURIComponent(version);
+          moduleScript.onerror = function() {
+            const fallbackScript = document.createElement('script');
+            fallbackScript.type = 'module';
+            fallbackScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
+            document.body.appendChild(fallbackScript);
+          };
           document.body.appendChild(moduleScript);
         };
 
@@ -52,19 +132,8 @@
           }
         };
 
-        const versionScript = document.createElement('script');
-        versionScript.src = cacheVersionUrl;
-        versionScript.onload = function() {
-          setRuntimeVersion();
-          appendStylesheet();
-          appendModuleWhenReady();
-        };
-        versionScript.onerror = function() {
-          setRuntimeVersion();
-          appendStylesheet();
-          appendModuleWhenReady();
-        };
-        document.head.appendChild(versionScript);
+        appendStylesheet();
+        appendModuleWhenReady();
       })();
     </script>
     <noscript>
