@@ -1,4 +1,5 @@
 import { createPdfViewer } from './apppdf.js';
+import { createTelegramBriefAi } from './ai-short_repsonse.js';
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
@@ -259,7 +260,13 @@ async function openAiDialogSafely(context = {}) {
     });
   }
 }
-
+const openTelegramBriefModal = createTelegramBriefAi({
+  normalizeValue,
+  escapeHtml,
+  getAttachmentName,
+  resolveFileFetchUrl,
+  postDocsAiWithFallback,
+});
 function ensureTelegramBriefModalStyle() {
   if (document.getElementById(TELEGRAM_BRIEF_MODAL_STYLE_ID)) return;
   const style = document.createElement('style');
@@ -3656,6 +3663,7 @@ function createCard(task, index, anchorRegistry) {
   if (briefButton) {
     briefButton.addEventListener('click', () => openTelegramBriefModal(task, setStatus));
   }
+
 
   updateCardViewInfo(card, task);
 
