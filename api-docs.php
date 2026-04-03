@@ -408,6 +408,39 @@ function extractDocxText(string $tmpFile): string
     return trim(implode("\n\n", $parts));
 }
 
+function shellCommandExists(string $command): bool
+{
+    $output = [];
+    $code = 1;
+    @exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $output, $code);
+    return $code === 0 && !empty($output);
+}
+
+function extractPdfTextFast(string $pdfPath): string
+{
+    if ($pdfPath === '' || !is_file($pdfPath) || !shellCommandExists('pdftotext')) {
+        return '';
+    }
+
+    $tmpTextPath = tempnam(sys_get_temp_dir(), 'ocr_pdftxt_');
+    if ($tmpTextPath === false) {
+        return '';
+    }
+
+    try {
+        $cmd = 'pdftotext -enc UTF-8 -f 1 -l 25 '
+            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
+        @exec($cmd, $out, $code);
+        if ($code !== 0 || !is_file($tmpTextPath)) {
+            return '';
+        }
+        $raw = @file_get_contents($tmpTextPath);
+        return is_string($raw) ? trim($raw) : '';
+    } finally {
+        @unlink($tmpTextPath);
+    }
+}
+
 function extractTextWithoutOcr(array $file): string
 {
     $tmpFile = (string)($file['tmp_name'] ?? '');
@@ -426,6 +459,9 @@ function extractTextWithoutOcr(array $file): string
             return '';
         }
         return trim((string)$raw);
+    }
+    if ($extension === 'pdf') {
+        return extractPdfTextFast($tmpFile);
     }
 
     return '';
@@ -446,6 +482,7 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     } else {
         $tmpName = (string)($file['tmp_name'] ?? '');
         if ($tmpName === '' || !is_file($tmpName)) {
+            curl_close($ch);
             return ['status' => 400, 'body' => false, 'curl_error' => 'Файл для OCR не найден'];
         }
         $mime = detectMimeType($file);
@@ -464,7 +501,9 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
             'apikey: ' . $apiKey,
         ],
         CURLOPT_POSTFIELDS => $postFields,
-        CURLOPT_TIMEOUT => 120,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_NOSIGNAL => 1,
     ]);
 
     $responseBody = curl_exec($ch);
