@@ -1,4 +1,5 @@
 import { createPdfViewer } from './apppdf.js';
+import { openTelegramAiResponseModal } from './telegram-ai-response-dialog.js';
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
@@ -13870,7 +13871,12 @@ function createResponseUploadControls(task, entry, setStatus) {
   };
 
   aiButton.addEventListener('click', () => {
-    openAiModeSelectorTelegram();
+    openTelegramAiResponseModal({
+      task,
+      entry,
+      onStatus: setStatus,
+      openAiDialogSafely,
+    });
   });
 
   textInput.addEventListener('input', () => {
