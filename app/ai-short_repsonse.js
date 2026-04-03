@@ -351,19 +351,34 @@ export function createTelegramBriefAi(deps = {}) {
       };
     }
 
+    let ocrText = '';
+    try {
+      setStatus('Распознаю текст (OCR) из файла...', 'loading');
+      ocrText = await requestTelegramOcrByFile(file, file.name || fileName);
+    } catch (_) {
+      ocrText = '';
+    }
+
     const request = await postGroqPaidWithFallback(() => {
       const formData = new FormData();
       formData.append('action', 'analyze_paid');
       formData.append('mode', 'paid');
       formData.append('vision_mode', '1');
       formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
+      if (ocrText) {
+        formData.append('extractedTexts', JSON.stringify([{
+          name: file.name || fileName,
+          type: file.type || 'text/plain',
+          text: String(ocrText).slice(0, 70000),
+        }]));
+      }
       formData.append('vision_payload', JSON.stringify({
         model: 'meta-llama/llama-4-scout-17b-16e-instruct',
         max_tokens: 1000,
         temperature: 0.7,
         messages: [{
           role: 'user',
-          content: [{ type: 'text', text: prepared.messageText || 'Проанализируй содержимое этого файла' }].concat(
+          content: [{ type: 'text', text: (prepared.messageText || 'Проанализируй содержимое этого файла') + (ocrText ? `\n\nOCR текст:\n${String(ocrText).slice(0, 70000)}` : '') }].concat(
             (prepared.images || []).map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
           ),
         }],
@@ -385,7 +400,7 @@ export function createTelegramBriefAi(deps = {}) {
       summary: normalizeValue(payload.response || payload.summary),
       model: payload.model,
       timeMs: payload.durationMs || payload.timeMs,
-      warning: '',
+      warning: ocrText ? '' : 'OCR не вернул текст, ответ построен по изображению.',
     };
   }
 
