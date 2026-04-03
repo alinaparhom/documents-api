@@ -2657,6 +2657,17 @@
           await extractSingleFile(pendingOcrFiles[i], { silent: true });
         }
         await hydrateFileContents(state);
+        var missingContextFiles = state.files.filter(function (file) {
+          return file && !hasUsefulExtractedText(file.content);
+        });
+        if (state.files.length && missingContextFiles.length) {
+          var missingNames = missingContextFiles
+            .slice(0, 4)
+            .map(function (file) { return file && file.name ? file.name : 'Файл'; })
+            .join(', ');
+          var suffix = missingContextFiles.length > 4 ? ' и ещё ' + String(missingContextFiles.length - 4) : '';
+          throw new Error('Не удалось извлечь текст из всех файлов. Проблемные: ' + missingNames + suffix + '. Нажмите «📄 Текст» и повторите.');
+        }
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
         var requestMode = resolveRequestMode(state);
         var response = null;
