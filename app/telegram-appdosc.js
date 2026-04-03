@@ -7,7 +7,7 @@ const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
-const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
+const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v1';
 
 let aiDialogLoader = null;
@@ -15,6 +15,39 @@ const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
 const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
+
+function getDocsAiEndpoints() {
+  const configured = String((window && window.DOCUMENTS_AI_API_URL) || '').trim();
+  const endpoints = configured ? [configured, ...DOCS_AI_FALLBACK_ENDPOINTS] : DOCS_AI_FALLBACK_ENDPOINTS.slice();
+  return Array.from(new Set(endpoints.filter(Boolean)));
+}
+
+async function postDocsAiWithFallback(createFormData, options = {}) {
+  const endpoints = getDocsAiEndpoints();
+  let lastResult = null;
+  for (let index = 0; index < endpoints.length; index += 1) {
+    const endpoint = endpoints[index];
+    let response = null;
+    let payload = null;
+    try {
+      response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+      payload = await response.json().catch(() => null);
+    } catch (error) {
+      lastResult = { endpoint, error, response, payload };
+      continue;
+    }
+    const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+    if (shouldTryNextEndpoint && index < endpoints.length - 1) {
+      lastResult = { endpoint, response, payload };
+      continue;
+    }
+    return { endpoint, response, payload };
+  }
+  if (lastResult) {
+    return lastResult;
+  }
+  throw new Error(options.fallbackErrorMessage || 'Не удалось выполнить запрос к ИИ-сервису.');
+}
 
 function normalizePdfBinaryCacheKey(url) {
   const normalized = normalizeValue(url);
@@ -177,43 +210,106 @@ function cloneTaskAttachmentPreviewCacheEntry(entry) {
   };
 }
 
+function loadExternalScript(src, marker) {
+  return new Promise((resolve, reject) => {
+    if (!src) {
+      reject(new Error('Пустой путь скрипта ИИ.'));
+      return;
+    }
+    const existing = document.querySelector(`script[${marker}]`);
+    if (existing) {
+      if (typeof window.openAiResponseDialog === 'function') {
+        resolve(window.openAiResponseDialog);
+        return;
+      }
+      if (existing.dataset.loaded === 'true') {
+        reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+        return;
+      }
+      existing.addEventListener('load', () => {
+        if (typeof window.openAiResponseDialog === 'function') {
+          resolve(window.openAiResponseDialog);
+        } else {
+          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+        }
+      }, { once: true });
+      existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = src;
+    script.defer = true;
+    script.setAttribute(marker, 'true');
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      if (typeof window.openAiResponseDialog === 'function') {
+        resolve(window.openAiResponseDialog);
+      } else {
+        reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+      }
+    };
+    script.onerror = () => reject(new Error(`Не удалось загрузить скрипт ИИ: ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
 function ensureAiDialogScriptLoaded() {
   if (window && typeof window.openAiResponseDialog === 'function') {
     return Promise.resolve(window.openAiResponseDialog);
   }
 
   if (!aiDialogLoader) {
-    aiDialogLoader = new Promise((resolve, reject) => {
-      const existing = document.querySelector('script[data-ai-dialog-script]');
-      if (existing) {
-        existing.addEventListener('load', () => {
-          if (typeof window.openAiResponseDialog === 'function') {
-            resolve(window.openAiResponseDialog);
-          } else {
-            reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
-          }
-        }, { once: true });
-        existing.addEventListener('error', () => reject(new Error('Не удалось загрузить скрипт ИИ.')), { once: true });
+    const dynamicImportCandidates = [];
+    try {
+      if (typeof import.meta !== 'undefined' && import.meta.url) {
+        dynamicImportCandidates.push(new URL('./telegram-ai-response-dialog.js', import.meta.url).toString());
+      }
+    } catch (_) {}
+    if (typeof location !== 'undefined' && location.origin) {
+      dynamicImportCandidates.push(new URL('/js/documents/app/telegram-ai-response-dialog.js', location.origin).toString());
+      dynamicImportCandidates.push(new URL('/app/telegram-ai-response-dialog.js', location.origin).toString());
+    }
+    const runtimeVersion = String(window.__RUNTIME_ASSET_VERSION__ || '').trim();
+    const assetVersion = String(window.__ASSET_VERSION__ || '').trim();
+    const cacheVersion = runtimeVersion || (assetVersion ? `${assetVersion}-${Date.now().toString(36)}` : Date.now().toString(36));
+    const candidates = [
+      `/js/documents/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+      `./telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+      `/app/telegram-ai-response-dialog.js?v=${encodeURIComponent(cacheVersion)}`,
+    ];
+    const loadViaDynamicImport = async (index) => {
+      if (index >= dynamicImportCandidates.length) return;
+      const src = dynamicImportCandidates[index];
+      if (!src) return loadViaDynamicImport(index + 1);
+      try {
+        await import(src);
+      } catch (_) {
+        return loadViaDynamicImport(index + 1);
+      }
+      if (typeof window.openAiResponseDialog === 'function') {
         return;
       }
+      return loadViaDynamicImport(index + 1);
+    };
+    const tryLoad = (index) => {
+      if (index >= candidates.length) {
+        return Promise.reject(new Error('Не удалось загрузить ИИ-скрипт ни по одному пути.'));
+      }
+      return loadExternalScript(candidates[index], `data-ai-dialog-script-${index}`).catch(() => tryLoad(index + 1));
+    };
 
-      const script = document.createElement('script');
-      script.src = '/js/documents/app/telegram-ai-response-dialog.js?v=' + encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
-      script.defer = true;
-      script.dataset.aiDialogScript = 'true';
-      script.onload = () => {
+    aiDialogLoader = loadViaDynamicImport(0)
+      .then(() => {
         if (typeof window.openAiResponseDialog === 'function') {
-          resolve(window.openAiResponseDialog);
-        } else {
-          reject(new Error('Скрипт ИИ загружен, но функция не найдена.'));
+          return window.openAiResponseDialog;
         }
-      };
-      script.onerror = () => reject(new Error('Не удалось загрузить скрипт ИИ.'));
-      document.head.appendChild(script);
-    }).catch((error) => {
-      aiDialogLoader = null;
-      throw error;
-    });
+        return tryLoad(0);
+      })
+      .catch((error) => {
+        aiDialogLoader = null;
+        throw error;
+      });
   }
 
   return aiDialogLoader;
@@ -251,7 +347,8 @@ async function openAiDialogSafely(context = {}) {
     });
   } catch (error) {
     if (typeof context.onStatus === 'function') {
-      context.onStatus('error', 'Не удалось открыть ИИ-диалог. Обновите страницу.');
+      const errorText = error instanceof Error ? error.message : 'неизвестная ошибка';
+      context.onStatus('error', `Не удалось открыть ИИ-диалог: ${errorText}`);
     }
     logClientEvent('task_view_error', {
       reason: 'ai_dialog_open_failed',
@@ -284,12 +381,13 @@ function ensureTelegramBriefModalStyle() {
 }
 
 async function requestTelegramOcrByUrl(fileUrl) {
-  const formData = new FormData();
-  formData.append('action', 'ocr_extract');
-  formData.append('language', 'rus');
-  formData.append('file_url', fileUrl);
-  const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
-  const payload = await response.json().catch(() => null);
+  const { response, payload } = await postDocsAiWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'ocr_extract');
+    formData.append('language', 'rus');
+    formData.append('file_url', fileUrl);
+    return formData;
+  }, { fallbackErrorMessage: 'OCR временно недоступен' });
   if (!response.ok || !payload || payload.ok !== true) {
     throw new Error((payload && payload.error) || 'OCR временно недоступен');
   }
@@ -303,14 +401,15 @@ async function requestTelegramBriefAi(sourceLabel, text) {
     extractedTexts: [{ name: sourceLabel, type: 'text/plain', text: String(text || '').slice(0, 12000) }],
     aiBehavior: 'Режим "Кратко ИИ". Кратко и понятно: о чем документ, кто отправитель/получатель, 3-4 ключевые детали.'
   };
-  const formData = new FormData();
-  formData.append('action', 'ai_response_analyze');
-  formData.append('documentTitle', sourceLabel);
-  formData.append('prompt', 'Сделай короткое и понятное summary документа.');
-  formData.append('responseStyle', 'concise');
-  formData.append('context', JSON.stringify(context));
-  const response = await fetch(DOCS_AI_ENDPOINT, { method: 'POST', credentials: 'include', body: formData });
-  const payload = await response.json().catch(() => null);
+  const { response, payload } = await postDocsAiWithFallback(() => {
+    const formData = new FormData();
+    formData.append('action', 'ai_response_analyze');
+    formData.append('documentTitle', sourceLabel);
+    formData.append('prompt', 'Сделай короткое и понятное summary документа.');
+    formData.append('responseStyle', 'concise');
+    formData.append('context', JSON.stringify(context));
+    return formData;
+  });
   if (!response.ok || !payload || payload.ok !== true) {
     throw new Error((payload && payload.error) || 'ИИ временно недоступен');
   }
