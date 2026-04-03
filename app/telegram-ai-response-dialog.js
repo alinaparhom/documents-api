@@ -10,6 +10,10 @@
   const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
 Запрещено начинать с "Анализ письма", "Разбор", "Рекомендации".
 Нужен финальный текст ответа для отправки адресату в деловом стиле.`;
+  const VISION_QUALITY_DIRECTIVE = `Сформируй сильный итоговый ответ по задаче пользователя, а не пересказ документа.
+Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".
+Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.
+Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.`;
   const SYSTEM_TONE_PROMPTS = {
     neutral: {
       value: 'neutral',
@@ -619,7 +623,8 @@
 
   async function requestTelegramVisionResponse(payload = {}, onStatus) {
     const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
-    const prompt = normalize(payload.prompt) || 'Проанализируй документы и предложи готовое решение.';
+    const prompt = [normalize(payload.prompt), VISION_QUALITY_DIRECTIVE].filter(Boolean).join('\n\n') || 'Проанализируй документы и предложи готовое решение.';
+    const systemPrompt = normalize(payload.systemPrompt);
     const images = [];
     const extractedTexts = [];
 
@@ -671,6 +676,9 @@
           max_tokens: 1200,
           temperature: 0.6,
           messages: [{
+            role: 'system',
+            content: systemPrompt || '',
+          }, {
             role: 'user',
             content: [{ type: 'text', text: `${prompt}\n\nБлок ${batchIndex + 1}/${batches.length}.` }].concat(
               currentBatch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
@@ -700,9 +708,10 @@
       onStatus('Vision: объединяю результаты всех блоков...', 'loading');
       const mergeRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
-        formData.append('action', 'generate_summary');
+        formData.append('action', 'generate_response');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
+        formData.append('prompt', [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
         formData.append('extractedTexts', JSON.stringify([{
           name: 'vision-batches.txt',
           type: 'text/plain',
@@ -712,7 +721,7 @@
       });
       const mergePayload = mergeRequest && mergeRequest.payload;
       if (mergeRequest && mergeRequest.response && mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
-        finalSummary = normalize(mergePayload.summary || mergePayload.response) || finalSummary;
+        finalSummary = normalize(mergePayload.response || mergePayload.summary) || finalSummary;
       }
     }
     if (!finalSummary) {
@@ -936,7 +945,7 @@
         const extractedTexts = [];
         let answer = '';
         if (visionMode) {
-          answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, selectedFiles }, (message) => {
+          answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: styleMeta.prompt, selectedFiles }, (message) => {
             status.textContent = message;
           });
         } else {

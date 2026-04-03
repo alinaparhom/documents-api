@@ -2,6 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+const BRIEF_SUMMARY_PROMPT = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -12,6 +13,11 @@ export function createTelegramBriefAi(deps = {}) {
   } = deps;
 
   let briefPdfJsLoader = null;
+
+  function toBriefSummaryText(value) {
+    const text = normalizeValue(value);
+    return text || '';
+  }
 
   async function postGroqPaidWithFallback(createFormData) {
     let lastError = null;
@@ -346,6 +352,7 @@ export function createTelegramBriefAi(deps = {}) {
         formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
+        formData.append('prompt', BRIEF_SUMMARY_PROMPT);
         formData.append('extractedTexts', JSON.stringify([{ name: prepared.fileName || fileName, type: file.type || 'text/plain', text: text.slice(0, 60000) }]));
         return formData;
       });
@@ -354,7 +361,7 @@ export function createTelegramBriefAi(deps = {}) {
         throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
       }
       return {
-        summary: normalizeValue(payload.summary || payload.response),
+        summary: toBriefSummaryText(payload.summary || payload.response),
         model: payload.model,
         timeMs: payload.durationMs || payload.timeMs,
         warning: prepared.warning || '',
@@ -380,6 +387,7 @@ export function createTelegramBriefAi(deps = {}) {
         formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
+        formData.append('prompt', BRIEF_SUMMARY_PROMPT);
         formData.append('extractedTexts', JSON.stringify([{
           name: file.name || fileName,
           type: file.type || 'text/plain',
@@ -392,7 +400,7 @@ export function createTelegramBriefAi(deps = {}) {
         throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
       }
       return {
-        summary: normalizeValue(fallbackPayload.summary || fallbackPayload.response),
+        summary: toBriefSummaryText(fallbackPayload.summary || fallbackPayload.response),
         model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
         timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
         warning: '',
@@ -440,10 +448,10 @@ export function createTelegramBriefAi(deps = {}) {
       if (!request.response.ok || !payload || payload.ok !== true) {
         throw new Error((payload && payload.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
       }
-      partialAnswers.push(normalizeValue(payload.response || payload.summary));
+      partialAnswers.push(toBriefSummaryText(payload.response || payload.summary));
     }
 
-    let finalSummary = partialAnswers.join('\n\n').trim();
+    let finalSummary = toBriefSummaryText(partialAnswers.join('\n\n').trim());
     if (partialAnswers.length > 1) {
       setStatus('Vision: объединяю результаты всех блоков...', 'loading');
       const mergeRequest = await postGroqPaidWithFallback(() => {
@@ -451,6 +459,7 @@ export function createTelegramBriefAi(deps = {}) {
         formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
+        formData.append('prompt', BRIEF_SUMMARY_PROMPT);
         formData.append('extractedTexts', JSON.stringify([{
           name: file.name || fileName,
           type: 'text/plain',
@@ -460,7 +469,7 @@ export function createTelegramBriefAi(deps = {}) {
       });
       const mergePayload = mergeRequest && mergeRequest.payload;
       if (mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
-        finalSummary = normalizeValue(mergePayload.summary || mergePayload.response) || finalSummary;
+        finalSummary = toBriefSummaryText(mergePayload.summary || mergePayload.response) || finalSummary;
       }
     }
 
@@ -611,6 +620,7 @@ export function createTelegramBriefAi(deps = {}) {
       const formData = new FormData();
       formData.append('action', 'generate_summary');
       formData.append('mode', 'paid');
+      formData.append('prompt', BRIEF_SUMMARY_PROMPT);
       if (fileForVip) {
         formData.append('files', fileForVip, fileForVip.name || fileName);
       }
@@ -633,13 +643,13 @@ export function createTelegramBriefAi(deps = {}) {
     const candidates = [payload.summary, payload.response, payload.analysis, payload.text, payload.answer];
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = normalizeValue(candidates[index]);
-      if (candidate) return candidate;
+      if (candidate) return toBriefSummaryText(candidate);
     }
     return '';
   }
 
   function renderTelegramBriefPreview(container, payload) {
-    const summaryText = normalizeValue(payload && payload.summary) || extractTelegramPlainAiBriefText(payload);
+    const summaryText = toBriefSummaryText(payload && payload.summary) || extractTelegramPlainAiBriefText(payload);
     container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
   }
 
