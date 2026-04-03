@@ -19,55 +19,72 @@
     <script>
       (function bootstrapVersionedAssets() {
         const inTelegram = Boolean(window.Telegram && window.Telegram.WebApp);
-        const MIN_RELOAD_INTERVAL_MS = 1200;
 
-        const reloadWithLaunchNonce = function() {
+        const forceFreshLoad = function() {
+          if (!inTelegram) {
+            return null;
+          }
+
+          const tg = window.Telegram.WebApp;
           let currentUrl;
           try {
             currentUrl = new URL(window.location.href);
           } catch (_) {
             window.location.reload();
-            return;
+            return null;
           }
-          const now = Date.now();
-          try {
-            const lastReloadAt = Number.parseInt(sessionStorage.getItem('__tg_force_reload_at') || '0', 10);
-            if (Number.isFinite(lastReloadAt) && now - lastReloadAt < MIN_RELOAD_INTERVAL_MS) {
-              return;
+
+          let launchVersion = currentUrl.searchParams.get('_tg_open_ts');
+          if (!launchVersion) {
+            launchVersion = String(Date.now());
+            currentUrl.searchParams.set('_tg_open_ts', launchVersion);
+            try {
+              sessionStorage.clear();
+            } catch (_) {
+              // ignore storage restrictions
             }
-            sessionStorage.setItem('__tg_force_reload_at', String(now));
+            window.location.replace(currentUrl.toString());
+            return null;
+          }
+
+          try {
+            const lastVersion = sessionStorage.getItem('app_version');
+            if (lastVersion && lastVersion !== launchVersion) {
+              sessionStorage.clear();
+            }
+            sessionStorage.setItem('app_version', launchVersion);
           } catch (_) {
             // ignore storage restrictions
           }
-          currentUrl.searchParams.set('_tg_launch', String(now));
-          window.location.replace(currentUrl.toString());
-        };
 
-        if (inTelegram) {
-          try {
-            const initialUrl = new URL(window.location.href);
-            if (!initialUrl.searchParams.get('_tg_launch')) {
-              reloadWithLaunchNonce();
-              return;
-            }
-          } catch (_) {
-            // ignore
-          }
+          tg.expand?.();
 
           document.addEventListener('visibilitychange', function() {
-            if (document.visibilityState === 'visible') {
-              reloadWithLaunchNonce();
+            if (document.visibilityState !== 'visible') {
+              return;
             }
+            const nextUrl = new URL(window.location.href);
+            nextUrl.searchParams.set('_tg_open_ts', String(Date.now()));
+            window.location.replace(nextUrl.toString());
           });
 
           window.addEventListener('pageshow', function(event) {
             if (event && event.persisted) {
-              reloadWithLaunchNonce();
+              const nextUrl = new URL(window.location.href);
+              nextUrl.searchParams.set('_tg_open_ts', String(Date.now()));
+              window.location.replace(nextUrl.toString());
             }
           });
+
+          return launchVersion;
+        };
+
+        const launchVersion = forceFreshLoad();
+        if (inTelegram && !launchVersion) {
+          return;
         }
 
-        const runtimeNonce = Date.now().toString(36);
+        const runtimeNonce = launchVersion || Date.now().toString(36);
         window.__RUNTIME_ASSET_VERSION__ = runtimeNonce;
 
         const appendStylesheet = function() {
