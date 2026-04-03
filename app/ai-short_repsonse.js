@@ -2,6 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+const BRIEF_MAX_LOCAL_EXTRACT_CHARS = 220000;
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -10,6 +11,145 @@ export function createTelegramBriefAi(deps = {}) {
     getAttachmentName = (_, index) => `Файл ${index}`,
     resolveFileFetchUrl = () => '',
   } = deps;
+
+  let briefPdfJsLoader = null;
+  let briefMammothLoader = null;
+
+  function isPdfLike(file) {
+    const name = String(file && file.name || '').toLowerCase();
+    const type = String(file && file.type || '').toLowerCase();
+    return type.includes('pdf') || /\.pdf$/i.test(name);
+  }
+
+  function isDocxLike(file) {
+    const name = String(file && file.name || '').toLowerCase();
+    const type = String(file && file.type || '').toLowerCase();
+    return type.includes('wordprocessingml.document') || /\.docx$/i.test(name);
+  }
+
+  function isTextLike(file) {
+    const name = String(file && file.name || '').toLowerCase();
+    const type = String(file && file.type || '').toLowerCase();
+    return type.startsWith('text/') || /\.(txt|md|csv|json|xml|html)$/i.test(name);
+  }
+
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function') {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) return briefPdfJsLoader;
+    const candidates = ['/pdf/pdf.min.js', '/js/documents/pdf/pdf.min.js'];
+    briefPdfJsLoader = new Promise((resolve, reject) => {
+      const tryLoad = (index) => {
+        if (index >= candidates.length) {
+          reject(new Error('pdfjs_load_failed'));
+          return;
+        }
+        const script = document.createElement('script');
+        script.async = true;
+        script.src = candidates[index];
+        script.onload = () => {
+          if (window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function') {
+            if (window.pdfjsLib.GlobalWorkerOptions) {
+              window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+            }
+            resolve(window.pdfjsLib);
+          } else {
+            tryLoad(index + 1);
+          }
+        };
+        script.onerror = () => tryLoad(index + 1);
+        document.head.appendChild(script);
+      };
+      tryLoad(0);
+    }).catch((error) => {
+      briefPdfJsLoader = null;
+      throw error;
+    });
+    return briefPdfJsLoader;
+  }
+
+  function ensureBriefMammothLoaded() {
+    if (briefMammothLoader) return briefMammothLoader;
+    briefMammothLoader = new Promise((resolve, reject) => {
+      if (typeof window === 'undefined') {
+        reject(new Error('no_window'));
+        return;
+      }
+      if (window.mammoth && typeof window.mammoth.extractRawText === 'function') {
+        resolve(window.mammoth);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js';
+      script.async = true;
+      script.onload = () => {
+        if (window.mammoth && typeof window.mammoth.extractRawText === 'function') {
+          resolve(window.mammoth);
+        } else {
+          reject(new Error('mammoth_missing'));
+        }
+      };
+      script.onerror = () => reject(new Error('mammoth_load_failed'));
+      document.head.appendChild(script);
+    }).catch((error) => {
+      briefMammothLoader = null;
+      throw error;
+    });
+    return briefMammothLoader;
+  }
+
+  async function extractPdfTextLocally(file) {
+    try {
+      const pdfjsLib = await ensureBriefPdfJsLoaded();
+      const bytes = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+      const parts = [];
+      for (let pageNum = 1; pageNum <= Math.max(pdf.numPages || 0, 0); pageNum += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const page = await pdf.getPage(pageNum);
+        // eslint-disable-next-line no-await-in-loop
+        const textContent = await page.getTextContent();
+        const text = (textContent.items || []).map((item) => item && item.str ? item.str : '').join(' ').replace(/\s+/g, ' ').trim();
+        if (text) parts.push(`Страница ${pageNum}: ${text}`);
+        if (parts.join('\n').length >= BRIEF_MAX_LOCAL_EXTRACT_CHARS) break;
+      }
+      return String(parts.join('\n')).slice(0, BRIEF_MAX_LOCAL_EXTRACT_CHARS).trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  async function extractDocxTextLocally(file) {
+    try {
+      const mammoth = await ensureBriefMammothLoaded();
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      const text = String(result && result.value || '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+      return text.slice(0, BRIEF_MAX_LOCAL_EXTRACT_CHARS);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  async function extractTextLocallyFromFile(file) {
+    if (!file) return '';
+    if (isPdfLike(file)) {
+      return extractPdfTextLocally(file);
+    }
+    if (isDocxLike(file)) {
+      return extractDocxTextLocally(file);
+    }
+    if (isTextLike(file)) {
+      try {
+        const text = await file.text();
+        return String(text || '').slice(0, BRIEF_MAX_LOCAL_EXTRACT_CHARS).trim();
+      } catch (_) {
+        return '';
+      }
+    }
+    return '';
+  }
 
 
   async function postGroqPaidWithFallback(createFormData) {
@@ -195,9 +335,14 @@ export function createTelegramBriefAi(deps = {}) {
       }
     }
     let extractedText = '';
+    if (fileForVip) {
+      extractedText = await extractTextLocallyFromFile(fileForVip);
+    }
     if (fileUrl) {
       try {
-        extractedText = await requestTelegramOcrByUrl(fileUrl);
+        if (!String(extractedText || '').trim()) {
+          extractedText = await requestTelegramOcrByUrl(fileUrl);
+        }
       } catch (_) {
         extractedText = '';
       }
