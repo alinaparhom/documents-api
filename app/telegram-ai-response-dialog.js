@@ -2,7 +2,8 @@
   if (!globalScope || typeof document === 'undefined') return;
 
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
-  const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+  const OCR_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+  const PAID_AI_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php', '/api-docs.php', '/js/documents/api-docs.php'];
 
   function normalize(value) {
     return String(value || '').trim();
@@ -17,14 +18,25 @@
       .replace(/'/g, '&#39;');
   }
 
-  function getDocsAiEndpoints() {
-    const configured = normalize(globalScope && globalScope.DOCUMENTS_AI_API_URL);
-    const endpoints = configured ? [configured, ...DOCS_AI_FALLBACK_ENDPOINTS] : DOCS_AI_FALLBACK_ENDPOINTS.slice();
+  function getOcrEndpoints() {
+    const configured = normalize(globalScope && globalScope.DOCUMENTS_AI_OCR_URL);
+    const defaultConfigured = normalize(globalScope && globalScope.DOCUMENTS_AI_API_URL);
+    const endpoints = configured
+      ? [configured, ...OCR_FALLBACK_ENDPOINTS]
+      : (defaultConfigured ? [defaultConfigured, ...OCR_FALLBACK_ENDPOINTS] : OCR_FALLBACK_ENDPOINTS.slice());
     return Array.from(new Set(endpoints.filter(Boolean)));
   }
 
-  async function postDocsAiWithFallback(createFormData) {
-    const endpoints = getDocsAiEndpoints();
+  function getPaidAiEndpoints() {
+    const configured = normalize(globalScope && globalScope.DOCUMENTS_AI_PAID_URL);
+    const defaultConfigured = normalize(globalScope && globalScope.DOCUMENTS_AI_API_URL);
+    const endpoints = configured
+      ? [configured, ...PAID_AI_FALLBACK_ENDPOINTS]
+      : (defaultConfigured ? [defaultConfigured, ...PAID_AI_FALLBACK_ENDPOINTS] : PAID_AI_FALLBACK_ENDPOINTS.slice());
+    return Array.from(new Set(endpoints.filter(Boolean)));
+  }
+
+  async function postWithFallback(endpoints, createFormData) {
     let lastResult = null;
     for (let index = 0; index < endpoints.length; index += 1) {
       const endpoint = endpoints[index];
@@ -104,7 +116,7 @@
   }
 
   async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
-    const request = await postDocsAiWithFallback(() => {
+    const request = await postWithFallback(getOcrEndpoints(), () => {
       const formData = new FormData();
       formData.append('action', 'ocr_extract');
       formData.append('language', 'rus');
@@ -128,7 +140,7 @@
     if (!normalizedUrl) {
       throw new Error('URL файла для OCR не найден');
     }
-    const request = await postDocsAiWithFallback(() => {
+    const request = await postWithFallback(getOcrEndpoints(), () => {
       const formData = new FormData();
       formData.append('action', 'ocr_extract');
       formData.append('language', 'rus');
@@ -148,10 +160,10 @@
   }
 
   async function requestTelegramAiResponse(payload = {}) {
-    const request = await postDocsAiWithFallback(() => {
+    const request = await postWithFallback(getPaidAiEndpoints(), () => {
       const formData = new FormData();
-      formData.append('action', 'ai_response_analyze');
-      formData.append('prompt', normalize(payload.prompt) || 'Сделай краткий вывод и решение по выбранным файлам.');
+      formData.append('action', 'generate_response');
+      formData.append('prompt', normalize(payload.prompt) || 'Подготовь полное решение по выбранным файлам и сразу дай готовый ответ по сути.');
       formData.append('documentTitle', normalize(payload.documentTitle) || 'Задача Telegram');
       formData.append('context', JSON.stringify(payload.context || {}));
       formData.append('extractedTexts', JSON.stringify(Array.isArray(payload.extractedTexts) ? payload.extractedTexts : []));
@@ -298,7 +310,7 @@
         <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
-          <textarea class="tg-ai-chat__input" data-input placeholder="Например: сделай краткий вывод по выбранным файлам"></textarea>
+          <textarea class="tg-ai-chat__input" data-input placeholder="Например: реши задачу по выбранным файлам и дай готовый ответ"></textarea>
           <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
         </div>
         <div class="tg-ai-chat__files" data-files hidden>
@@ -355,7 +367,7 @@
 
       sendButton.disabled = true;
       meta.innerHTML = '';
-      createBubble(messages, prompt || 'Сделай краткий вывод и решение по выбранным файлам.', 'user');
+      createBubble(messages, prompt || 'Подготовь полное решение по выбранным файлам и сразу дай готовый ответ по сути.', 'user');
       status.textContent = 'Готовим файлы...';
       const startedAt = Date.now();
       const loadingBubble = createLoadingBubble(messages);
