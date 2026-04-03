@@ -8,9 +8,6 @@ const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
-const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
-const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', DOCS_AI_ENDPOINT];
-
 let aiDialogLoader = null;
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
@@ -265,30 +262,6 @@ async function openAiDialogSafely(context = {}) {
   }
 }
 
-async function postDocsAiWithFallback(createFormData) {
-  let lastResult = null;
-  for (let index = 0; index < DOCS_AI_FALLBACK_ENDPOINTS.length; index += 1) {
-    const endpoint = DOCS_AI_FALLBACK_ENDPOINTS[index];
-    let response = null;
-    let payload = null;
-    try {
-      response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
-      payload = await response.json().catch(() => null);
-    } catch (error) {
-      lastResult = { endpoint, error, response, payload };
-      continue;
-    }
-    const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
-    if (shouldTryNextEndpoint && index < DOCS_AI_FALLBACK_ENDPOINTS.length - 1) {
-      lastResult = { endpoint, response, payload };
-      continue;
-    }
-    return { endpoint, response, payload };
-  }
-  if (lastResult) return lastResult;
-  throw new Error('OCR временно недоступен.');
-}
-
 function openTelegramBriefModal(task, statusHandler) {
   try {
     telegramBriefModalFactory(task, statusHandler);
@@ -307,7 +280,6 @@ const telegramBriefModalFactory = createTelegramBriefAi({
   normalizeValue,
   getAttachmentName,
   resolveFileFetchUrl,
-  postDocsAiWithFallback,
 });
 
 const ALLOWED_LOG_EVENTS = new Set([
