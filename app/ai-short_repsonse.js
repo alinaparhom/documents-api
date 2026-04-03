@@ -665,9 +665,7 @@ export function createTelegramBriefAi(deps = {}) {
           <div>
             <div class="appdosc-brief-ai__title">Кратко ИИ</div>
             <div class="appdosc-brief-ai__sub">Файл → OCR → api-groq-paid.php → краткий вывод</div>
-            <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-paid-ai>Платный ИИ</label>
-            <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-vision-ai>Vision</label>
-            <div class="appdosc-brief-ai__hint">1) Включите «Платный ИИ» или «Vision» → 2) Нажмите файл → 3) Получите краткое решение.</div>
+            <div class="appdosc-brief-ai__hint">Vision режим активен: 1) Нажмите файл → 2) Получите краткое решение.</div>
           </div>
           <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
         </div>
@@ -676,7 +674,7 @@ export function createTelegramBriefAi(deps = {}) {
         <div class="appdosc-brief-ai__body">
           <div class="appdosc-brief-ai__list" data-list></div>
           <div class="appdosc-brief-ai__preview" data-preview>
-            <p class="appdosc-brief-ai__placeholder">Отметьте «Платный ИИ», затем выберите файл.</p>
+            <p class="appdosc-brief-ai__placeholder">Выберите файл для Vision-анализа.</p>
           </div>
         </div>
       </div>`;
@@ -684,19 +682,8 @@ export function createTelegramBriefAi(deps = {}) {
     const preview = modal.querySelector('[data-preview]');
     const statusNode = modal.querySelector('[data-status]');
     const metaNode = modal.querySelector('[data-meta]');
-    const paidCheckbox = modal.querySelector('[data-paid-ai]');
-    const visionCheckbox = modal.querySelector('[data-vision-ai]');
     const sources = [];
     let activeRequestId = 0;
-
-    if (paidCheckbox && visionCheckbox) {
-      paidCheckbox.addEventListener('change', () => {
-        if (paidCheckbox.checked) visionCheckbox.checked = false;
-      });
-      visionCheckbox.addEventListener('change', () => {
-        if (visionCheckbox.checked) paidCheckbox.checked = false;
-      });
-    }
 
     const setStatus = (message, tone = 'idle') => {
       if (!statusNode) return;
@@ -739,30 +726,21 @@ export function createTelegramBriefAi(deps = {}) {
       typeWrap.appendChild(typeNode);
       button.append(titleWrap, typeWrap);
       button.addEventListener('click', async () => {
-        const isPaidMode = Boolean(paidCheckbox && paidCheckbox.checked);
-        const isVisionMode = Boolean(visionCheckbox && visionCheckbox.checked);
-        if (!isPaidMode && !isVisionMode) {
-          setStatus('Сначала включите «Платный ИИ» или «Vision».', 'error');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">Без выбранного режима анализ не запускается.</p>';
-          return;
-        }
         const requestId = ++activeRequestId;
         activate(button);
         try {
           button.disabled = true;
-          const modeLabel = isVisionMode ? 'Vision' : 'Платный ИИ';
+          const modeLabel = 'Vision';
           setStatus(`${modeLabel}: ${source.label}`, 'loading');
           preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">⏳ ${escapeHtml(modeLabel)}: подготовка и отправка файла...</p>`;
           const startedAt = Date.now();
-          const aiPayload = isVisionMode
-            ? await requestTelegramVisionByFile(source, setStatus)
-            : await requestTelegramBriefAiDirectWithAttachment(source);
+          const aiPayload = await requestTelegramVisionByFile(source, setStatus);
           if (requestId !== activeRequestId) return;
           renderTelegramBriefPreview(preview, aiPayload);
-          setStatus(`Готово. Краткий вывод получен через ${isVisionMode ? 'Vision' : 'Платный ИИ'}.`, 'success');
+          setStatus('Готово. Краткий вывод получен через Vision.', 'success');
           if (metaNode) {
             const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - startedAt)) / 1000).toFixed(1);
-            metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек • Режим: ${isVisionMode ? 'Vision' : 'Платный ИИ'}`;
+            metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек • Режим: Vision`;
             const warning = normalizeValue(aiPayload && aiPayload.warning);
             if (warning) {
               metaNode.textContent += ` • ${warning}`;
@@ -784,8 +762,6 @@ export function createTelegramBriefAi(deps = {}) {
 
     if (!sources.length) {
       list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
-      if (paidCheckbox) paidCheckbox.disabled = true;
-      if (visionCheckbox) visionCheckbox.disabled = true;
       setStatus('Нет файлов для анализа в этой задаче.', 'error');
     }
 
