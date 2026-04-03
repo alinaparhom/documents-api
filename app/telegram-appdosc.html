@@ -68,14 +68,7 @@
         }
 
         const runtimeNonce = Date.now().toString(36);
-        const cacheVersionUrl = '/cache-version.php?t=' + encodeURIComponent(runtimeNonce);
-
-        const setRuntimeVersion = function() {
-          const serverVersion = String(window.__ASSET_VERSION__ || '').trim();
-          window.__RUNTIME_ASSET_VERSION__ = serverVersion
-            ? `${serverVersion}-${runtimeNonce}`
-            : runtimeNonce;
-        };
+        window.__RUNTIME_ASSET_VERSION__ = runtimeNonce;
 
         const appendStylesheet = function() {
           const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || runtimeNonce).toString();
@@ -107,19 +100,8 @@
           }
         };
 
-        const versionScript = document.createElement('script');
-        versionScript.src = cacheVersionUrl;
-        versionScript.onload = function() {
-          setRuntimeVersion();
-          appendStylesheet();
-          appendModuleWhenReady();
-        };
-        versionScript.onerror = function() {
-          setRuntimeVersion();
-          appendStylesheet();
-          appendModuleWhenReady();
-        };
-        document.head.appendChild(versionScript);
+        appendStylesheet();
+        appendModuleWhenReady();
       })();
     </script>
     <noscript>
