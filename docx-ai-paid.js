@@ -443,6 +443,9 @@
               max_tokens: 1200,
               temperature: 0.6,
               messages: [{
+                role: 'system',
+                content: styleMeta && styleMeta.prompt ? styleMeta.prompt : ''
+              }, {
                 role: 'user',
                 content: [{ type: 'text', text: preparedPrompt + '\n\nБлок ' + (batchIndex + 1) + '/' + batches.length + '.' }]
                   .concat(batch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; }))

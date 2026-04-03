@@ -624,6 +624,7 @@
   async function requestTelegramVisionResponse(payload = {}, onStatus) {
     const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
     const prompt = [normalize(payload.prompt), VISION_QUALITY_DIRECTIVE].filter(Boolean).join('\n\n') || 'Проанализируй документы и предложи готовое решение.';
+    const systemPrompt = normalize(payload.systemPrompt);
     const images = [];
     const extractedTexts = [];
 
@@ -675,6 +676,9 @@
           max_tokens: 1200,
           temperature: 0.6,
           messages: [{
+            role: 'system',
+            content: systemPrompt || '',
+          }, {
             role: 'user',
             content: [{ type: 'text', text: `${prompt}\n\nБлок ${batchIndex + 1}/${batches.length}.` }].concat(
               currentBatch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
@@ -941,7 +945,7 @@
         const extractedTexts = [];
         let answer = '';
         if (visionMode) {
-          answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, selectedFiles }, (message) => {
+          answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: styleMeta.prompt, selectedFiles }, (message) => {
             status.textContent = message;
           });
         } else {
