@@ -1849,6 +1849,341 @@
     }
   }
 
+
+
+  function briefNormalizeValue(value) {
+    return String(value || '').trim();
+  }
+
+  function briefToSummaryText(value) {
+    return briefNormalizeValue(value) || '';
+  }
+
+  function readBriefFileAsText(file) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('Не удалось прочитать текст файла.')); };
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  function readBriefBlobAsDataUrl(blob) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('Не удалось преобразовать файл в base64.')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function ensureBriefXlsxLoaded() {
+    if (window.XLSX) return window.XLSX;
+    await new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = function() { reject(new Error('Не удалось загрузить XLSX библиотеку.')); };
+      document.head.appendChild(script);
+    });
+    if (!window.XLSX) throw new Error('XLSX библиотека не инициализирована.');
+    return window.XLSX;
+  }
+
+  async function buildBriefVisionPayloadFromFile(file, onProgress) {
+    if (!(file instanceof File)) {
+      throw new Error('Файл не выбран.');
+    }
+    var mime = String(file.type || '').toLowerCase();
+    var name = String(file.name || 'document').toLowerCase();
+    var isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
+    var isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
+    var isText = /\.(txt|json|csv|md)$/i.test(name);
+    var isDocx = /\.docx$/i.test(name);
+    var isXlsx = /\.xlsx$/i.test(name);
+
+    if (isImage) {
+      onProgress('Подготавливаю изображение...', 100);
+      var imageDataUrl = await readBriefBlobAsDataUrl(file);
+      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого файла', images: [{ dataUrl: imageDataUrl, fileName: file.name || 'image.jpg', mime: mime || 'image/jpeg' }] };
+    }
+    if (isPdf) {
+      onProgress('Открываю PDF...', 5);
+      var pdfjsLib = await ensurePdfJsLoaded();
+      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+      }
+      var bytes = await file.arrayBuffer();
+      var loadingTask = pdfjsLib.getDocument({ data: bytes });
+      var pdf = await loadingTask.promise;
+      var totalPages = Number(pdf.numPages || 0);
+      if (!totalPages) throw new Error('PDF повреждён или пустой.');
+      var images = [];
+      for (var pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+        onProgress('Рендер страницы ' + pageNumber + '/' + totalPages + '...', Math.round((pageNumber / totalPages) * 90));
+        var page = await pdf.getPage(pageNumber);
+        var viewport = page.getViewport({ scale: 1.25 });
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        var ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Не удалось инициализировать canvas для PDF.');
+        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+        var blob = await new Promise(function(resolve) { canvas.toBlob(function(nextBlob) { resolve(nextBlob); }, 'image/jpeg', 0.82); });
+        if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
+        var dataUrl = await readBriefBlobAsDataUrl(blob);
+        images.push({ dataUrl: dataUrl, fileName: (file.name || 'scan').replace(/\.pdf$/i, '') + '-p' + pageNumber + '.jpg', mime: 'image/jpeg' });
+      }
+      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images: images };
+    }
+    if (isText) {
+      onProgress('Читаю текстовый файл...', 100);
+      var text = await readBriefFileAsText(file);
+      return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
+    }
+    if (isDocx) {
+      onProgress('Извлекаю текст из DOCX...', 35);
+      var mammoth = await ensureMammothLoaded();
+      var arrayBuffer = await file.arrayBuffer();
+      var result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+      return { kind: 'text', extractedText: String(result && result.value || '').trim(), fileName: file.name || 'document.docx', warning: 'Изображения внутри DOCX не анализируются в Vision режиме.' };
+    }
+    if (isXlsx) {
+      onProgress('Извлекаю таблицы из XLSX...', 35);
+      var XLSX = await ensureBriefXlsxLoaded();
+      var xbuffer = await file.arrayBuffer();
+      var workbook = XLSX.read(xbuffer, { type: 'array' });
+      var sheetTexts = (workbook && workbook.SheetNames || []).map(function(sheetName) {
+        var sheet = workbook.Sheets[sheetName];
+        var csv = XLSX.utils.sheet_to_csv(sheet);
+        return '# Лист: ' + sheetName + '\\n' + csv;
+      });
+      return { kind: 'text', extractedText: sheetTexts.join('\\n\\n').trim(), fileName: file.name || 'table.xlsx' };
+    }
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+  }
+
+  async function postBriefGroqPaidWithFallback(createFormData) {
+    var lastError = null;
+    for (var index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
+      var endpoint = GROQ_PAID_ENDPOINTS[index];
+      try {
+        var response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+        if (response.status === 404 || response.status === 405) {
+          continue;
+        }
+        var payload = await response.json().catch(function() { return null; });
+        return { endpoint: endpoint, response: response, payload: payload };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
+  }
+
+  async function requestBriefVisionByFile(source, setStatus) {
+    var file = source && source.fileObject instanceof File ? source.fileObject : null;
+    var fileName = briefNormalizeValue(source && source.label) || 'vision-file';
+    var fileUrl = briefNormalizeValue(source && source.url);
+    if (!file) {
+      if (!fileUrl) throw new Error('Не найден файл для Vision режима.');
+      setStatus('Загружаю файл...', 'loading');
+      var response = await fetch(fileUrl, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Не удалось загрузить файл (' + response.status + ').');
+      var blob = await response.blob();
+      file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+    }
+
+    var prepared = await buildBriefVisionPayloadFromFile(file, function(message) { setStatus(message, 'loading'); });
+    var prompt = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
+
+    if (prepared.kind === 'text') {
+      var text = briefNormalizeValue(prepared.extractedText);
+      if (!text) throw new Error('Не удалось извлечь текст из файла.');
+      var textRequest = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        formData.append('extractedTexts', JSON.stringify([{ name: prepared.fileName || fileName, type: file.type || 'text/plain', text: text.slice(0, 60000) }]));
+        return formData;
+      });
+      var textPayload = textRequest && textRequest.payload;
+      if (!textRequest.response.ok || !textPayload || textPayload.ok !== true) {
+        throw new Error((textPayload && textPayload.error) || 'Ошибка запроса Vision режима.');
+      }
+      return { summary: briefToSummaryText(textPayload.summary || textPayload.response), model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
+    }
+
+    var images = Array.isArray(prepared.images) ? prepared.images : [];
+    var imageBatches = chunkItems(images, 5);
+    var partialAnswers = [];
+    var startedAt = Date.now();
+
+    for (var batchIndex = 0; batchIndex < imageBatches.length; batchIndex += 1) {
+      var currentBatch = imageBatches[batchIndex];
+      setStatus('Vision: анализ блока ' + (batchIndex + 1) + '/' + imageBatches.length + ' (' + currentBatch.length + ' стр.)...', 'loading');
+      var request = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'analyze_paid');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
+        formData.append('vision_payload', JSON.stringify({
+          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          max_tokens: 1000,
+          temperature: 0.7,
+          messages: [{ role: 'user', content: [{ type: 'text', text: (prepared.messageText || 'Проанализируй содержимое этого файла') + '\\n\\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }].concat(currentBatch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; })) }]
+        }));
+        currentBatch.forEach(function(item, index) {
+          var data = String(item.dataUrl || '');
+          var base64 = data.indexOf(',') >= 0 ? data.split(',')[1] : data;
+          var mimeType = item.mime || 'image/jpeg';
+          var blob = new Blob([Uint8Array.from(atob(base64), function(ch) { return ch.charCodeAt(0); })], { type: mimeType });
+          formData.append('files', blob, item.fileName || ('vision-' + (batchIndex + 1) + '-' + (index + 1) + '.jpg'));
+        });
+        return formData;
+      });
+      var payload = request && request.payload;
+      if (!request.response.ok || !payload || payload.ok !== true) {
+        throw new Error((payload && payload.error) || ('Ошибка Vision запроса (блок ' + (batchIndex + 1) + ').'));
+      }
+      partialAnswers.push(briefToSummaryText(payload.response || payload.summary));
+    }
+
+    var finalSummary = briefToSummaryText(partialAnswers.join('\\n\\n').trim());
+    if (partialAnswers.length > 1) {
+      setStatus('Vision: объединяю результаты всех блоков...', 'loading');
+      var mergeRequest = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        formData.append('extractedTexts', JSON.stringify([{ name: file.name || fileName, type: 'text/plain', text: partialAnswers.map(function(item, idx) { return 'Блок ' + (idx + 1) + '/' + partialAnswers.length + ':\\n' + item; }).join('\\n\\n') }]));
+        return formData;
+      });
+      var mergePayload = mergeRequest && mergeRequest.payload;
+      if (mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
+        finalSummary = briefToSummaryText(mergePayload.summary || mergePayload.response) || finalSummary;
+      }
+    }
+    if (!finalSummary) throw new Error('Vision не вернул итоговый текст.');
+    return { summary: finalSummary, model: 'meta-llama/llama-4-scout-17b-16e-instruct', timeMs: Date.now() - startedAt };
+  }
+
+  function ensureBriefModalStyle() {
+    if (document.getElementById('documents-brief-style-v4')) return;
+    var style = document.createElement('style');
+    style.id = 'documents-brief-style-v4';
+    style.textContent = '.documents-brief-modal{position:fixed;inset:0;z-index:1700;background:linear-gradient(180deg, rgba(148,163,184,0.24), rgba(148,163,184,0.3));backdrop-filter:blur(12px);display:flex;justify-content:center;align-items:center;padding:16px;box-sizing:border-box;}.documents-brief-panel{width:min(980px,100%);max-height:min(90vh,920px);background:linear-gradient(165deg, rgba(255,255,255,0.97), rgba(255,255,255,0.9));border:1px solid rgba(255,255,255,0.95);border-radius:24px;box-shadow:0 30px 60px rgba(15,23,42,0.2);display:flex;flex-direction:column;overflow:hidden;}.documents-brief-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;border-bottom:1px solid rgba(226,232,240,0.95);}.documents-brief-body{display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);gap:14px;padding:14px;min-height:0;flex:1;}.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;}.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.96);border-radius:14px;padding:11px 12px;text-align:left;}.documents-brief-item.is-active{border-color:rgba(37,99,235,0.52);background:rgba(239,246,255,0.96);}.documents-brief-preview{border:1px solid rgba(203,213,225,0.9);border-radius:18px;background:rgba(255,255,255,0.98);padding:16px;font-size:13px;line-height:1.58;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto;}.documents-brief-toggle{display:inline-flex;align-items:center;gap:8px;margin-top:8px;padding:7px 10px;border:1px solid rgba(148,163,184,0.35);border-radius:12px;background:rgba(255,255,255,0.75);font-size:12px;color:#334155;font-weight:600;}@media (max-width:768px){.documents-brief-modal{padding:8px;align-items:flex-end;}.documents-brief-panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;}.documents-brief-body{grid-template-columns:1fr;padding:12px;}}';
+    document.head.appendChild(style);
+  }
+
+  function openDocumentsAiBriefSummaryModal(config) {
+    ensureBriefModalStyle();
+    var options = config && typeof config === 'object' ? config : {};
+    var linkedFiles = Array.isArray(options.linkedFiles) ? options.linkedFiles : [];
+    var pendingFiles = Array.isArray(options.pendingFiles) ? options.pendingFiles : [];
+    var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : function() {};
+    var modal = createElement('div', 'documents-brief-modal');
+    var panel = createElement('div', 'documents-brief-panel');
+    var header = createElement('div', 'documents-brief-header');
+    var titleWrap = createElement('div', '');
+    titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для краткого вывода.'));
+    var visionToggleWrap = createElement('label', 'documents-brief-toggle');
+    var visionToggle = document.createElement('input');
+    visionToggle.type = 'checkbox';
+    visionToggle.checked = true;
+    visionToggleWrap.appendChild(visionToggle);
+    visionToggleWrap.appendChild(document.createTextNode('Vision (как ai-short_repsonse.js)'));
+    titleWrap.appendChild(visionToggleWrap);
+    var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+    var body = createElement('div', 'documents-brief-body');
+    var list = createElement('div', 'documents-brief-list');
+    var preview = createElement('pre', 'documents-brief-preview', 'Выберите файл для анализа.');
+    var metaCompact = createElement('div', 'documents-brief-item-meta', '');
+    metaCompact.style.padding = '0 14px 8px';
+
+    var sources = [];
+    linkedFiles.forEach(function(file, index) { sources.push({ id: 'linked_' + index, label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)), url: file && file.url ? String(file.url) : '' }); });
+    pendingFiles.forEach(function(file, index) { sources.push({ id: 'pending_' + index, label: file && file.name ? String(file.name) : ('Новый файл ' + (index + 1)), fileObject: file }); });
+
+    function makeActive(button) {
+      Array.from(list.querySelectorAll('.documents-brief-item')).forEach(function(item) { item.classList.remove('is-active'); });
+      button.classList.add('is-active');
+    }
+
+    sources.forEach(function(source) {
+      var button = createElement('button', 'documents-brief-item');
+      button.type = 'button';
+      button.appendChild(createElement('span', 'documents-brief-item-name', source.label));
+      button.appendChild(createElement('span', 'documents-brief-item-meta', source.fileObject ? 'Новый файл (локально)' : 'Файл из задачи'));
+      button.addEventListener('click', function() {
+        makeActive(button);
+        button.disabled = true;
+        preview.textContent = '⏳ Обрабатываю файл...';
+        var startedAt = Date.now();
+        var worker = visionToggle.checked
+          ? requestBriefVisionByFile(source, function(message) { preview.textContent = message || '⏳ Обрабатываю файл...'; })
+          : requestSummaryByAttachment(source, options.apiUrl);
+        worker.then(function(aiPayload) {
+          var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
+          preview.textContent = summaryText || 'Пустой ответ от ИИ.';
+          var elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+          metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Время: ' + elapsed + ' сек';
+        }).catch(function(error) {
+          preview.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+          metaCompact.textContent = '';
+          showStatusMessage('warning', 'Не удалось обработать файл «' + source.label + '».');
+        }).finally(function() { button.disabled = false; });
+      });
+      list.appendChild(button);
+    });
+
+    function requestSummaryByAttachment(source, apiUrl) {
+      return (async function() {
+        var fileForSummary = null;
+        var sourceLabel = source && source.label ? String(source.label) : 'Файл';
+        if (source && source.fileObject instanceof File) {
+          fileForSummary = source.fileObject;
+        } else if (source && source.url) {
+          var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
+          if (fetched.ok) {
+            var blob = await fetched.blob();
+            fileForSummary = new File([blob], sourceLabel || 'brief-file', { type: blob.type || 'application/octet-stream' });
+          }
+        }
+        if (!(fileForSummary instanceof File)) throw new Error('Не удалось подготовить файл для краткого вывода.');
+        var endpoint = String(apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+        var formData = new FormData();
+        formData.append('mode', 'paid');
+        formData.append('attachment', fileForSummary, fileForSummary.name || sourceLabel);
+        var response = await fetch(endpoint, { method: 'POST', credentials: 'same-origin', body: formData });
+        var payload = await response.json().catch(function() { return null; });
+        if (!response.ok || !payload || payload.ok !== true) throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
+        return payload;
+      })();
+    }
+
+    if (!sources.length) list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', function() { modal.remove(); });
+    modal.addEventListener('click', function(event) { if (event.target === modal) modal.remove(); });
+
+    header.appendChild(titleWrap);
+    header.appendChild(closeButton);
+    panel.appendChild(header);
+    panel.appendChild(metaCompact);
+    body.appendChild(list);
+    body.appendChild(preview);
+    panel.appendChild(body);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+  }
   function openDocumentsAiResponseModal(options) {
     ensureStyles();
 
@@ -3337,5 +3672,6 @@
 
   if (typeof window !== 'undefined') {
     window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
+    window.openDocumentsAiBriefSummaryModal = openDocumentsAiBriefSummaryModal;
   }
 })();

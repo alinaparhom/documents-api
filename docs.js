@@ -2570,128 +2570,25 @@
   }
 
   function openAiBriefSummaryModal(config) {
-    ensureResponsesStyle();
     var options = config && typeof config === 'object' ? config : {};
-    var linkedFiles = Array.isArray(options.linkedFiles) ? options.linkedFiles : [];
-    var pendingFiles = Array.isArray(options.pendingFiles) ? options.pendingFiles : [];
-    var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : function() {};
-    var modal = createElement('div', 'documents-brief-modal');
-    var panel = createElement('div', 'documents-brief-panel');
-    var header = createElement('div', 'documents-brief-header');
-    var titleWrap = createElement('div', '');
-    titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл, включите «Платный ИИ», запустите OCR и получите краткий вывод.'));
-    var paidToggleWrap = createElement('label', 'documents-brief-toggle');
-    var paidToggle = document.createElement('input');
-    paidToggle.type = 'checkbox';
-    paidToggle.setAttribute('data-paid-ai', '1');
-    paidToggleWrap.appendChild(paidToggle);
-    paidToggleWrap.appendChild(document.createTextNode('Платный ИИ'));
-    titleWrap.appendChild(paidToggleWrap);
-    titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Логика: файл → OCR → api-groq-paid.php → краткий ответ'));
-    var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
-    var body = createElement('div', 'documents-brief-body');
-    var list = createElement('div', 'documents-brief-list');
-    var preview = createElement('pre', 'documents-brief-preview', 'Отметьте «Платный ИИ», затем выберите файл для анализа.');
-    var metaCompact = createElement('div', 'documents-brief-item-meta', '');
-    metaCompact.style.padding = '0 14px 8px';
-    metaCompact.style.fontSize = '12px';
-
-    var sources = [];
-    linkedFiles.forEach(function(file, index) {
-      sources.push({
-        id: 'linked_' + index,
-        label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)),
-        url: file && file.url ? String(file.url) : ''
-      });
-    });
-    pendingFiles.forEach(function(file, index) {
-      sources.push({
-        id: 'pending_' + index,
-        label: file && file.name ? String(file.name) : ('Новый файл ' + (index + 1)),
-        fileObject: file
-      });
-    });
-
-    function makeActive(button) {
-      Array.from(list.querySelectorAll('.documents-brief-item')).forEach(function(item) {
-        item.classList.remove('is-active');
-      });
-      button.classList.add('is-active');
+    var openFromModule = window.openDocumentsAiBriefSummaryModal;
+    if (typeof openFromModule === 'function') {
+      openFromModule(options);
+      return;
     }
-
-    function addSourceButton(source) {
-      var button = createElement('button', 'documents-brief-item');
-      var nameNode = createElement('span', 'documents-brief-item-name', source.label);
-      var metaLabel = source.fileObject ? 'Новый файл (локально)' : 'Файл из задачи';
-      var metaNode = createElement('span', 'documents-brief-item-meta', metaLabel);
-      button.appendChild(nameNode);
-      button.appendChild(metaNode);
-      button.title = source.label;
-      button.type = 'button';
-      button.addEventListener('click', function() {
-        if (!paidToggle.checked) {
-          preview.textContent = 'Сначала включите галочку «Платный ИИ». После этого нажмите файл снова.';
-          metaCompact.textContent = '';
-          showStatusMessage('warning', 'Для кнопки «Кратко ИИ» нужен режим «Платный ИИ».');
-          return;
+    ensureAiResponseModalScript()
+      .then(function() {
+        if (typeof window.openDocumentsAiBriefSummaryModal !== 'function') {
+          throw new Error('Модуль «Кратко ИИ» не инициализирован.');
         }
-        makeActive(button);
-        button.disabled = true;
-        preview.classList.add('is-loading');
-        preview.textContent = '⏳ Запускаю OCR и отправляю текст в api-groq-paid.php...';
-        metaCompact.textContent = 'Подготовка файла...';
-        var startedAt = Date.now();
-        requestAiBriefSummaryForFileDirect(source, options.apiUrl)
-          .then(function(aiPayload) {
-            preview.classList.remove('is-loading');
-            var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
-            preview.textContent = summaryText || extractPlainAiBriefText(aiPayload) || 'Пустой ответ от ИИ.';
-            var durationRaw = Number(aiPayload && (aiPayload.durationMs || aiPayload.timeMs));
-            var elapsedSec = (Math.max(1, Number.isFinite(durationRaw) ? durationRaw : (Date.now() - startedAt)) / 1000).toFixed(1);
-            metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Время: ' + elapsedSec + ' сек • Режим: Платный ИИ';
-          })
-          .catch(function(error) {
-            preview.classList.remove('is-loading');
-            preview.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка');
-            metaCompact.textContent = '';
-            showStatusMessage('warning', 'Не удалось обработать файл «' + source.label + '».');
-          })
-          .finally(function() {
-            button.disabled = false;
-          });
+        window.openDocumentsAiBriefSummaryModal(options);
+      })
+      .catch(function(error) {
+        var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : showMessage;
+        showStatusMessage('error', error && error.message ? error.message : 'Не удалось открыть «Кратко ИИ».');
       });
-      list.appendChild(button);
-    }
-
-    sources.forEach(addSourceButton);
-
-    if (!sources.length) {
-      list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
-    }
-
-    function closeBriefModal() {
-      closeModal(modal);
-    }
-
-    closeButton.type = 'button';
-    closeButton.addEventListener('click', closeBriefModal);
-    modal.addEventListener('click', function(event) {
-      if (event.target === modal) {
-        closeBriefModal();
-      }
-    });
-
-    header.appendChild(titleWrap);
-    header.appendChild(closeButton);
-    panel.appendChild(header);
-    panel.appendChild(metaCompact);
-    body.appendChild(list);
-    body.appendChild(preview);
-    panel.appendChild(body);
-    modal.appendChild(panel);
-    document.body.appendChild(modal);
   }
+
 
   function openAiConclusionModal(config) {
     ensureResponsesStyle();
