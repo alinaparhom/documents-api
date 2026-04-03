@@ -67,6 +67,42 @@ function getRuntimeEnv(): array
     );
 }
 
+function getJsonRequestBody(): array
+{
+    static $cached = null;
+    if (is_array($cached)) {
+        return $cached;
+    }
+    $contentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
+    if (!str_contains($contentType, 'application/json')) {
+        $cached = [];
+        return $cached;
+    }
+    $raw = (string)@file_get_contents('php://input');
+    if ($raw === '') {
+        $cached = [];
+        return $cached;
+    }
+    $decoded = json_decode($raw, true);
+    $cached = is_array($decoded) ? $decoded : [];
+    return $cached;
+}
+
+function requestStringField(string $key, string $default = ''): string
+{
+    if (isset($_POST[$key])) {
+        return trim((string)$_POST[$key]);
+    }
+    $json = getJsonRequestBody();
+    if (array_key_exists($key, $json)) {
+        $value = $json[$key];
+        if (is_scalar($value)) {
+            return trim((string)$value);
+        }
+    }
+    return $default;
+}
+
 function sanitizeFileName(string $name): string
 {
     $name = preg_replace('/[^a-zA-Zа-яА-Я0-9._-]/u', '_', $name) ?? 'file';
@@ -566,6 +602,12 @@ function buildExtractedTextsFromFiles(array $files): array
 
 function handleAnalyzePaidAction(array $env): void
 {
+    $jsonBody = getJsonRequestBody();
+    $rawVisionPayload = requestStringField('vision_payload');
+    if ($rawVisionPayload === '' && isset($jsonBody['messages']) && is_array($jsonBody['messages'])) {
+        $rawVisionPayload = json_encode($jsonBody, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
+    }
+
     $files = normalizeUploadedFiles('files');
     if (!$files) {
         $remoteFiles = normalizeRemoteFilesFromPost();
@@ -573,17 +615,17 @@ function handleAnalyzePaidAction(array $env): void
             $files = downloadRemoteFiles($remoteFiles);
         }
     }
-    if (!$files) {
+    if ($rawVisionPayload === '' && !$files) {
         respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
     }
 
     $totalBytes = array_reduce($files, static function (int $sum, array $f): int {
         return $sum + (int)($f['size'] ?? 0);
     }, 0);
-    if ($totalBytes <= 0) {
+    if ($rawVisionPayload === '' && $totalBytes <= 0) {
         respond(422, ['ok' => false, 'error' => 'Пустая загрузка файлов.']);
     }
-    if (MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
+    if ($rawVisionPayload === '' && MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
         respond(413, ['ok' => false, 'error' => 'Общий размер файлов превышает лимит.']);
     }
 
@@ -592,9 +634,94 @@ function handleAnalyzePaidAction(array $env): void
         respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
     }
 
-    $userPrompt = trim((string)($_POST['prompt'] ?? ''));
+    $userPrompt = requestStringField('prompt');
     if ($userPrompt === '') {
         $userPrompt = 'Прими решение по приложенным документам.';
+    }
+    if ($rawVisionPayload !== '') {
+        $visionPayload = json_decode($rawVisionPayload, true);
+        if (!is_array($visionPayload)) {
+            respond(422, ['ok' => false, 'error' => 'vision_payload должен быть корректным JSON объектом.']);
+        }
+
+        $messages = $visionPayload['messages'] ?? null;
+        if (!is_array($messages) || !$messages) {
+            respond(422, ['ok' => false, 'error' => 'vision_payload.messages обязателен для Vision режима.']);
+        }
+
+        $rawExtractedTexts = requestStringField('extractedTexts');
+        $decodedExtractedTexts = json_decode($rawExtractedTexts, true);
+        if (!is_array($decodedExtractedTexts)) {
+            $decodedExtractedTexts = [];
+        }
+        $ocrText = '';
+        foreach ($decodedExtractedTexts as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $chunk = trim((string)($entry['text'] ?? ''));
+            if ($chunk === '') {
+                continue;
+            }
+            $name = trim((string)($entry['name'] ?? 'Документ'));
+            $ocrText .= ($ocrText !== '' ? "\n\n" : '') . '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $chunk;
+        }
+
+        // Добавляем подсказку от пользователя и OCR-текст в первый user message.
+        foreach ($messages as $idx => $message) {
+            if (!is_array($message) || (string)($message['role'] ?? '') !== 'user') {
+                continue;
+            }
+            $content = $message['content'] ?? '';
+            if (is_string($content)) {
+                $extra = $userPrompt !== '' ? $userPrompt : '';
+                if ($ocrText !== '') {
+                    $extra .= ($extra !== '' ? "\n\n" : '') . "OCR текст:\n" . $ocrText;
+                }
+                if ($extra !== '') {
+                    $messages[$idx]['content'] = trim($content . "\n\n" . $extra);
+                }
+            } elseif (is_array($content)) {
+                $extra = $userPrompt !== '' ? $userPrompt : '';
+                if ($ocrText !== '') {
+                    $extra .= ($extra !== '' ? "\n\n" : '') . "OCR текст:\n" . $ocrText;
+                }
+                if ($extra !== '') {
+                    array_unshift($content, ['type' => 'text', 'text' => $extra]);
+                    $messages[$idx]['content'] = $content;
+                }
+            }
+            break;
+        }
+
+        $visionRequestPayload = [
+            'model' => (string)($visionPayload['model'] ?? resolveModel($env)),
+            'messages' => $messages,
+            'max_tokens' => (int)($visionPayload['max_tokens'] ?? 1000),
+            'temperature' => (float)($visionPayload['temperature'] ?? 0.3),
+        ];
+        if (isset($visionPayload['top_p'])) {
+            $visionRequestPayload['top_p'] = (float)$visionPayload['top_p'];
+        }
+
+        $startedAt = microtime(true);
+        $groqResult = callGroqChat($visionRequestPayload, $apiKey);
+        if (($groqResult['ok'] ?? false) !== true) {
+            respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+        }
+        $decoded = (array)($groqResult['raw'] ?? []);
+        $answer = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+        if ($answer === '') {
+            respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq в Vision режиме']);
+        }
+        respond(200, [
+            'ok' => true,
+            'response' => $answer,
+            'model' => (string)($decoded['model'] ?? ($visionRequestPayload['model'] ?? resolveModel($env))),
+            'durationMs' => max(1, (int)round((microtime(true) - $startedAt) * 1000)),
+            'tokensUsed' => (int)($decoded['usage']['total_tokens'] ?? 0),
+            'mode' => 'vision',
+        ]);
     }
 
     $textChunks = [];
