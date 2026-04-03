@@ -84,6 +84,8 @@
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
   var VISION_BATCH_SIZE = 4;
+  var BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+  var briefPdfJsLoader = null;
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -1891,6 +1893,53 @@
     return window.XLSX;
   }
 
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib) {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) {
+      return briefPdfJsLoader;
+    }
+    var sources = [
+      { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
+      { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+      { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' }
+    ];
+    briefPdfJsLoader = new Promise(function(resolve, reject) {
+      var index = 0;
+      function tryNext() {
+        if (typeof window !== 'undefined' && window.pdfjsLib) {
+          window.__briefPdfWorkerSrc = sources[Math.max(0, index - 1)].worker;
+          resolve(window.pdfjsLib);
+          return;
+        }
+        if (index >= sources.length) {
+          reject(new Error('Не удалось загрузить PDF библиотеку. Проверьте интернет или доступ к /pdf/pdf.min.js'));
+          return;
+        }
+        var source = sources[index];
+        index += 1;
+        var script = document.createElement('script');
+        script.src = source.script;
+        script.onload = function() {
+          if (typeof window !== 'undefined' && window.pdfjsLib) {
+            window.__briefPdfWorkerSrc = source.worker;
+            resolve(window.pdfjsLib);
+            return;
+          }
+          tryNext();
+        };
+        script.onerror = function() { tryNext(); };
+        document.head.appendChild(script);
+      }
+      tryNext();
+    }).catch(function(error) {
+      briefPdfJsLoader = null;
+      throw error;
+    });
+    return briefPdfJsLoader;
+  }
+
   async function buildBriefVisionPayloadFromFile(file, onProgress) {
     if (!(file instanceof File)) {
       throw new Error('Файл не выбран.');
@@ -1910,9 +1959,9 @@
     }
     if (isPdf) {
       onProgress('Открываю PDF...', 5);
-      var pdfjsLib = await ensurePdfJsLoaded();
+      var pdfjsLib = await ensureBriefPdfJsLoaded();
       if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
       }
       var bytes = await file.arrayBuffer();
       var loadingTask = pdfjsLib.getDocument({ data: bytes });
@@ -1968,18 +2017,93 @@
     var lastError = null;
     for (var index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
       var endpoint = GROQ_PAID_ENDPOINTS[index];
+      var controller = typeof AbortController === 'function' ? new AbortController() : null;
+      var timeoutId = controller ? setTimeout(function() { controller.abort(); }, BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
       try {
-        var response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+        var response = await fetch(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          body: createFormData(),
+          signal: controller ? controller.signal : undefined
+        });
         if (response.status === 404 || response.status === 405) {
           continue;
         }
         var payload = await response.json().catch(function() { return null; });
         return { endpoint: endpoint, response: response, payload: payload };
       } catch (error) {
-        lastError = error;
+        lastError = error && error.name === 'AbortError'
+          ? new Error('Сервер Платного ИИ не ответил за 90 сек. Повторите попытку.')
+          : error;
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
     }
     throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
+  }
+
+  async function postBriefDocsOcrWithFallback(createFormData) {
+    var endpoints = DOCS_AI_FALLBACK_ENDPOINTS.slice();
+    var lastResult = null;
+    for (var index = 0; index < endpoints.length; index += 1) {
+      var endpoint = endpoints[index];
+      var response = null;
+      var payload = null;
+      var controller = typeof AbortController === 'function' ? new AbortController() : null;
+      var timeoutId = controller ? setTimeout(function() { controller.abort(); }, BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
+      try {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          body: createFormData(),
+          signal: controller ? controller.signal : undefined
+        });
+        payload = await response.json().catch(function() { return null; });
+      } catch (error) {
+        var timeoutError = error && error.name === 'AbortError'
+          ? new Error('OCR превысил лимит ожидания (90 сек). Попробуйте файл меньшего размера.')
+          : error;
+        lastResult = { endpoint: endpoint, error: timeoutError, response: response, payload: payload };
+        continue;
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+      var shouldTryNext = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+      if (shouldTryNext && index < endpoints.length - 1) {
+        lastResult = { endpoint: endpoint, response: response, payload: payload };
+        continue;
+      }
+      return { endpoint: endpoint, response: response, payload: payload };
+    }
+    if (lastResult) {
+      return lastResult;
+    }
+    throw new Error('OCR временно недоступен.');
+  }
+
+  async function requestBriefOcrByFile(fileOrBlob, fileName) {
+    var normalizedName = String(fileName || (fileOrBlob && fileOrBlob.name) || 'ocr-file').trim() || 'ocr-file';
+    var request = await postBriefDocsOcrWithFallback(function() {
+      var formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      formData.append('file', fileOrBlob, normalizedName);
+      return formData;
+    });
+    var response = request && request.response;
+    var payload = request && request.payload;
+    if (!response || !response.ok || !payload || payload.ok !== true) {
+      throw new Error((payload && payload.error) || 'OCR временно недоступен');
+    }
+    var text = payload && payload.text ? String(payload.text).trim() : '';
+    if (!text) {
+      throw new Error('OCR не вернул текст');
+    }
+    return text;
   }
 
   async function requestBriefVisionByFile(source, setStatus) {
@@ -2021,6 +2145,40 @@
     var imageBatches = chunkItems(images, 5);
     var partialAnswers = [];
     var startedAt = Date.now();
+    var ocrText = '';
+
+    try {
+      setStatus('Распознаю текст (OCR) из файла...', 'loading');
+      ocrText = await requestBriefOcrByFile(file, file.name || fileName);
+    } catch (_) {
+      ocrText = '';
+    }
+
+    if (!imageBatches.length && ocrText) {
+      var fallbackRequest = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        formData.append('extractedTexts', JSON.stringify([{
+          name: file.name || fileName,
+          type: file.type || 'text/plain',
+          text: String(ocrText).slice(0, 70000)
+        }]));
+        return formData;
+      });
+      var fallbackPayload = fallbackRequest && fallbackRequest.payload;
+      if (!fallbackRequest.response.ok || !fallbackPayload || fallbackPayload.ok !== true) {
+        throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
+      }
+      return {
+        summary: briefToSummaryText(fallbackPayload.summary || fallbackPayload.response),
+        model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
+        warning: ''
+      };
+    }
 
     for (var batchIndex = 0; batchIndex < imageBatches.length; batchIndex += 1) {
       var currentBatch = imageBatches[batchIndex];
@@ -2031,6 +2189,13 @@
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
+        if (ocrText && batchIndex === 0) {
+          formData.append('extractedTexts', JSON.stringify([{
+            name: file.name || fileName,
+            type: file.type || 'text/plain',
+            text: String(ocrText).slice(0, 70000)
+          }]));
+        }
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
           max_tokens: 1000,
