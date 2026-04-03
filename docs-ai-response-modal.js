@@ -83,6 +83,8 @@
   var DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
+  var VISION_BATCH_SIZE = 4;
+  var VISION_MAX_PDF_PAGES = 6;
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -449,7 +451,158 @@
     return preparedFiles;
   }
 
+  function readBlobAsDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      if (!blob || typeof FileReader === 'undefined') {
+        reject(new Error('Не удалось прочитать файл.'));
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result || '')); };
+      reader.onerror = function () { reject(new Error('Ошибка чтения файла.')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function chunkItems(list, chunkSize) {
+    var source = Array.isArray(list) ? list : [];
+    var size = Math.max(1, Number(chunkSize || 1));
+    var chunks = [];
+    for (var i = 0; i < source.length; i += size) {
+      chunks.push(source.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  async function convertPdfBlobToVisionImages(pdfBlob, baseName) {
+    var pdfjsLib = await ensurePdfJsLoaded();
+    var bytes = await pdfBlob.arrayBuffer();
+    var loadingTask = pdfjsLib.getDocument({ data: bytes });
+    var pdf = await loadingTask.promise;
+    var totalPages = Number(pdf && pdf.numPages || 0);
+    var pagesToProcess = Math.min(Math.max(1, totalPages), VISION_MAX_PDF_PAGES);
+    var images = [];
+    for (var pageIndex = 1; pageIndex <= pagesToProcess; pageIndex += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      var page = await pdf.getPage(pageIndex);
+      var viewport = page.getViewport({ scale: 1.25 });
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      var ctx = canvas.getContext('2d');
+      if (!ctx) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      // eslint-disable-next-line no-await-in-loop
+      var jpegBlob = await new Promise(function (resolve) { canvas.toBlob(resolve, 'image/jpeg', 0.82); });
+      if (!jpegBlob) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      var dataUrl = await readBlobAsDataUrl(jpegBlob);
+      images.push({
+        dataUrl: dataUrl,
+        fileName: (baseName || 'scan') + '-p' + pageIndex + '.jpg',
+        mime: 'image/jpeg'
+      });
+    }
+    return images;
+  }
+
+  async function resolveVisionAssets(state) {
+    var files = Array.isArray(state && state.files) ? state.files : [];
+    var images = [];
+    var ocrTexts = [];
+    for (var index = 0; index < files.length; index += 1) {
+      var fileEntry = files[index];
+      if (!fileEntry) continue;
+      var fileName = String(fileEntry.name || ('document-' + (index + 1)));
+      var fileBlob = fileEntry.fileObject || null;
+      if (!fileBlob && fileEntry.url) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          var external = await fetch(String(fileEntry.url), { credentials: 'same-origin' });
+          if (external.ok) {
+            // eslint-disable-next-line no-await-in-loop
+            fileBlob = await external.blob();
+          }
+        } catch (_) {}
+      }
+      if (!fileBlob) continue;
+
+      if (isImageLike({ name: fileName, type: fileBlob.type })) {
+        // eslint-disable-next-line no-await-in-loop
+        var dataUrl = await readBlobAsDataUrl(fileBlob);
+        images.push({
+          dataUrl: dataUrl,
+          fileName: fileName || ('image-' + (index + 1) + '.jpg'),
+          mime: String(fileBlob.type || 'image/jpeg')
+        });
+      } else if (isPdfLike({ name: fileName, type: fileBlob.type })) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          var pdfImages = await convertPdfBlobToVisionImages(fileBlob, fileName.replace(/\.pdf$/i, '') || ('scan-' + (index + 1)));
+          images = images.concat(pdfImages);
+        } catch (_) {}
+      }
+
+      var text = normalizeContextText(fileEntry.content || fileEntry.rawContent || '');
+      if (text) {
+        ocrTexts.push({
+          name: fileName,
+          type: String(fileBlob.type || 'text/plain'),
+          text: text.slice(0, 70000)
+        });
+      }
+    }
+    return { images: images, ocrTexts: ocrTexts };
+  }
+
+  async function buildPaidVisionRequestFormData(prompt, state) {
+    var resolved = await resolveVisionAssets(state);
+    var images = Array.isArray(resolved.images) ? resolved.images : [];
+    if (!images.length) {
+      throw new Error('Vision режим требует файл-изображение или PDF.');
+    }
+    var imageBatches = chunkItems(images, VISION_BATCH_SIZE);
+    var messages = imageBatches.map(function (batch, index) {
+      return {
+        role: 'user',
+        content: [{ type: 'text', text: (prompt || 'Проанализируй содержимое файла') + '\n\nБлок ' + (index + 1) + ' из ' + imageBatches.length + '.' }]
+          .concat(batch.map(function (item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; }))
+      };
+    });
+    var formData = new FormData();
+    formData.append('action', 'analyze_paid');
+    formData.append('mode', 'paid');
+    formData.append('vision_mode', '1');
+    formData.append('prompt', String(prompt || 'Проанализируй содержимое файла'));
+    if (resolved.ocrTexts.length) {
+      formData.append('extractedTexts', JSON.stringify(resolved.ocrTexts));
+    }
+    formData.append('vision_payload', JSON.stringify({
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      max_tokens: 1200,
+      temperature: 0.6,
+      messages: messages
+    }));
+    images.forEach(function (item, idx) {
+      var data = String(item.dataUrl || '');
+      var base64 = data.indexOf(',') >= 0 ? data.split(',')[1] : '';
+      if (!base64) return;
+      var mimeType = item.mime || 'image/jpeg';
+      var blob = new Blob([Uint8Array.from(atob(base64), function (char) { return char.charCodeAt(0); })], { type: mimeType });
+      formData.append('files', blob, item.fileName || ('vision-' + (idx + 1) + '.jpg'));
+    });
+    return formData;
+  }
+
   async function buildPaidRequestFormData(prompt, state, config) {
+    if (state && state.visionMode) {
+      return buildPaidVisionRequestFormData(prompt, state);
+    }
     var paidFiles = await resolvePaidSourceFiles(state, config);
     var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
     var extractedTexts = [];
@@ -1003,6 +1156,12 @@
     var type = String(file.type || '').toLowerCase();
     var name = String(file.name || '').toLowerCase();
     return type.indexOf('pdf') !== -1 || /\.pdf$/i.test(name);
+  }
+
+  function isImageLike(file) {
+    var type = String(file && file.type || '').toLowerCase();
+    var name = String(file && file.name || '').toLowerCase();
+    return type.indexOf('image/') === 0 || /\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif|heic|heif)$/i.test(name);
   }
 
   function isDocxLike(file) {
@@ -1591,6 +1750,7 @@
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
       aiMode: 'free',
+      visionMode: false,
       responseStyle: STYLE_OPTIONS[0].value,
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
@@ -1665,6 +1825,15 @@
       state.aiMode = 'paid';
     }
     modeSelect.value = state.aiMode;
+    var visionField = createElement('label', 'ai-chat-modal__field');
+    visionField.appendChild(createElement('span', '', 'Vision'));
+    var visionCheckbox = document.createElement('input');
+    visionCheckbox.type = 'checkbox';
+    visionCheckbox.className = 'ai-chat-modal__select';
+    visionCheckbox.style.height = '40px';
+    visionCheckbox.style.width = '100%';
+    visionCheckbox.style.accentColor = '#2563eb';
+    visionField.appendChild(visionCheckbox);
 
     var styleField = createElement('label', 'ai-chat-modal__field');
     styleField.appendChild(createElement('span', '', 'Стиль'));
@@ -2496,6 +2665,10 @@
 
     function refreshSendButtonLabel() {
       var requestMode = resolveRequestMode(state);
+      if (requestMode === 'paid' && state.visionMode) {
+        sendButton.textContent = 'Vision анализ';
+        return;
+      }
       sendButton.textContent = requestMode === 'paid' ? 'Получить ответ' : 'Отправить в ИИ';
     }
 
@@ -2504,6 +2677,7 @@
       textarea.disabled = loading;
       sendButton.disabled = loading;
       templateButton.disabled = loading;
+      visionCheckbox.disabled = loading;
       if (loading) {
         sendButton.innerHTML = '<span class="ai-chat-spinner"></span>Отправка';
       } else {
@@ -2669,10 +2843,12 @@
       if (state.isLoading) {
         return;
       }
+      var requestMode = resolveRequestMode(state);
+      var isVisionPaid = requestMode === 'paid' && Boolean(state.visionMode);
       var hasFileContent = state.files.some(function (file) {
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       });
-      if (!value && !hasFileContent) {
+      if (!value && !hasFileContent && !isVisionPaid) {
         messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст из файла.', true));
         messages.scrollTop = messages.scrollHeight;
         return;
@@ -2698,27 +2874,28 @@
       var requestStartedAt = Date.now();
 
       try {
-        var pendingOcrFiles = state.files.filter(function (file) {
-          return file && !hasUsefulExtractedText(file.content);
-        });
-        for (var i = 0; i < pendingOcrFiles.length; i += 1) {
-          // eslint-disable-next-line no-await-in-loop
-          await extractSingleFile(pendingOcrFiles[i], { silent: true });
-        }
-        await hydrateFileContents(state);
-        var missingContextFiles = state.files.filter(function (file) {
-          return file && !hasUsefulExtractedText(file.content);
-        });
-        if (state.files.length && missingContextFiles.length) {
-          var missingNames = missingContextFiles
-            .slice(0, 4)
-            .map(function (file) { return file && file.name ? file.name : 'Файл'; })
-            .join(', ');
-          var suffix = missingContextFiles.length > 4 ? ' и ещё ' + String(missingContextFiles.length - 4) : '';
-          throw new Error('Не удалось извлечь текст из всех файлов. Проблемные: ' + missingNames + suffix + '. Нажмите «📄 Текст» и повторите.');
+        if (!isVisionPaid) {
+          var pendingOcrFiles = state.files.filter(function (file) {
+            return file && !hasUsefulExtractedText(file.content);
+          });
+          for (var i = 0; i < pendingOcrFiles.length; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await extractSingleFile(pendingOcrFiles[i], { silent: true });
+          }
+          await hydrateFileContents(state);
+          var missingContextFiles = state.files.filter(function (file) {
+            return file && !hasUsefulExtractedText(file.content);
+          });
+          if (state.files.length && missingContextFiles.length) {
+            var missingNames = missingContextFiles
+              .slice(0, 4)
+              .map(function (file) { return file && file.name ? file.name : 'Файл'; })
+              .join(', ');
+            var suffix = missingContextFiles.length > 4 ? ' и ещё ' + String(missingContextFiles.length - 4) : '';
+            throw new Error('Не удалось извлечь текст из всех файлов. Проблемные: ' + missingNames + suffix + '. Нажмите «📄 Текст» и повторите.');
+          }
         }
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
-        var requestMode = resolveRequestMode(state);
         var response = null;
         if (requestMode === 'paid') {
           response = await postGroqPaidWithFallback(effectivePrompt, state, config, timeoutMs);
@@ -2855,8 +3032,21 @@
     });
     modeSelect.addEventListener('change', function () {
       state.aiMode = modeSelect.value === 'paid' ? 'paid' : 'free';
+      if (state.aiMode !== 'paid' && state.visionMode) {
+        state.visionMode = false;
+        visionCheckbox.checked = false;
+      }
       if (state.contextDetail === 'brief' && state.aiMode !== 'paid') {
         appendAssistantErrorOnce('Режим «Кратко» работает через VIP модель.');
+      }
+      refreshSendButtonLabel();
+    });
+    visionCheckbox.addEventListener('change', function () {
+      state.visionMode = Boolean(visionCheckbox.checked);
+      if (state.visionMode) {
+        state.aiMode = 'paid';
+        modeSelect.value = 'paid';
+        appendAssistantErrorOnce('Vision активирован: анализ изображений/PDF пойдёт через VIP ИИ.');
       }
       refreshSendButtonLabel();
     });
@@ -2983,6 +3173,7 @@
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
     topBar.appendChild(modeField);
+    topBar.appendChild(visionField);
     topBar.appendChild(modelField);
     topBar.appendChild(styleField);
     topBar.appendChild(settingsButton);

@@ -5,6 +5,8 @@
   const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
+  const VISION_BATCH_SIZE = 4;
+  let pdfJsPromise = null;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -252,6 +254,139 @@
     return answer;
   }
 
+  function isImageLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif|heic|heif)$/i.test(lowerName);
+  }
+
+  function isPdfLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.includes('pdf') || /\.pdf$/i.test(lowerName);
+  }
+
+  function readBlobAsDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Не удалось прочитать файл.'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function ensurePdfJsLoaded() {
+    if (globalScope.pdfjsLib && typeof globalScope.pdfjsLib.getDocument === 'function') {
+      return globalScope.pdfjsLib;
+    }
+    if (pdfJsPromise) return pdfJsPromise;
+    pdfJsPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/pdf/pdf.min.js';
+      script.async = true;
+      script.onload = () => {
+        if (globalScope.pdfjsLib && globalScope.pdfjsLib.GlobalWorkerOptions) {
+          globalScope.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+          resolve(globalScope.pdfjsLib);
+          return;
+        }
+        reject(new Error('pdf.js не загрузился.'));
+      };
+      script.onerror = () => reject(new Error('Не удалось загрузить pdf.js.'));
+      document.head.appendChild(script);
+    });
+    return pdfJsPromise;
+  }
+
+  async function requestTelegramVisionResponse(payload = {}, onStatus) {
+    const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
+    const prompt = normalize(payload.prompt) || 'Проанализируй документы и предложи готовое решение.';
+    const images = [];
+    const extractedTexts = [];
+
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      const currentFile = selectedFiles[index];
+      const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
+      onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`);
+      // eslint-disable-next-line no-await-in-loop
+      const blobFile = await loadSelectedFileAsBlob(currentFile);
+      const sourceBlob = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
+      if (isImageLike(fileLabel, sourceBlob.type)) {
+        // eslint-disable-next-line no-await-in-loop
+        const dataUrl = await readBlobAsDataUrl(sourceBlob);
+        images.push({ dataUrl, fileName: buildOcrFileName(sourceBlob, fileLabel), mime: sourceBlob.type || 'image/jpeg' });
+      } else if (isPdfLike(fileLabel, sourceBlob.type)) {
+        // eslint-disable-next-line no-await-in-loop
+        const pdfjsLib = await ensurePdfJsLoaded();
+        // eslint-disable-next-line no-await-in-loop
+        const pdf = await pdfjsLib.getDocument({ data: await sourceBlob.arrayBuffer() }).promise;
+        const pageLimit = Math.min(Number(pdf.numPages || 0), 6);
+        for (let page = 1; page <= pageLimit; page += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          const pdfPage = await pdf.getPage(page);
+          const viewport = pdfPage.getViewport({ scale: 1.2 });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.floor(viewport.width));
+          canvas.height = Math.max(1, Math.floor(viewport.height));
+          const ctx = canvas.getContext('2d');
+          if (!ctx) continue;
+          // eslint-disable-next-line no-await-in-loop
+          await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+          // eslint-disable-next-line no-await-in-loop
+          const pageBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+          if (!pageBlob) continue;
+          // eslint-disable-next-line no-await-in-loop
+          const dataUrl = await readBlobAsDataUrl(pageBlob);
+          images.push({ dataUrl, fileName: `${fileLabel.replace(/\.pdf$/i, '')}-p${page}.jpg`, mime: 'image/jpeg' });
+        }
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        const fallbackText = await requestTelegramOcrByFile(sourceBlob, fileLabel).catch(() => '');
+        if (fallbackText) extractedTexts.push({ name: fileLabel, type: 'text/plain', text: String(fallbackText).slice(0, 20000) });
+      }
+    }
+
+    if (!images.length) {
+      throw new Error('Vision режим поддерживает изображения и PDF.');
+    }
+
+    const batches = [];
+    for (let i = 0; i < images.length; i += VISION_BATCH_SIZE) {
+      batches.push(images.slice(i, i + VISION_BATCH_SIZE));
+    }
+    const formData = new FormData();
+    formData.append('action', 'analyze_paid');
+    formData.append('mode', 'paid');
+    formData.append('vision_mode', '1');
+    formData.append('prompt', prompt);
+    if (extractedTexts.length) formData.append('extractedTexts', JSON.stringify(extractedTexts));
+    formData.append('vision_payload', JSON.stringify({
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      max_tokens: 1200,
+      temperature: 0.6,
+      messages: batches.map((batch, idx) => ({
+        role: 'user',
+        content: [{ type: 'text', text: `${prompt}\n\nБлок ${idx + 1}/${batches.length}.` }].concat(batch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))),
+      })),
+    }));
+    images.forEach((item, idx) => {
+      const raw = String(item.dataUrl || '');
+      const base64 = raw.includes(',') ? raw.split(',')[1] : '';
+      if (!base64) return;
+      const binary = atob(base64);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      formData.append('files', new Blob([bytes], { type: item.mime || 'image/jpeg' }), item.fileName || `vision-${idx + 1}.jpg`);
+    });
+
+    const request = await postGroqResponseWithFallback(() => formData);
+    const response = request && request.response;
+    const result = request && request.payload;
+    if (!response || !response.ok || !result || result.ok !== true) {
+      throw new Error((result && result.error) || 'Vision режим временно недоступен.');
+    }
+    return normalize(result.response || result.summary);
+  }
+
   async function loadSelectedFileAsBlob(file) {
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
@@ -296,7 +431,7 @@
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
       .tg-ai-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
       .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
-      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto 1fr auto;gap:8px;background:rgba(255,255,255,.93)}
+      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto auto 1fr auto;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
       .tg-ai-chat__input{min-height:42px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.98);border-radius:12px;padding:9px;font-size:13px;color:#0f172a}
       .tg-ai-chat__send{min-height:42px;border:none;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#14b8a6);color:#fff;font-weight:700}
@@ -317,7 +452,7 @@
       .tg-ai-chat__dots span:nth-child(3){animation-delay:.32s}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr 1fr}.tg-ai-chat__toggle{grid-column:1/-1}.tg-ai-chat__input{grid-column:1/-1}.tg-ai-chat__send{grid-column:1/-1}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr 1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-chat__input{grid-column:1/-1}.tg-ai-chat__send{grid-column:1/-1}}
     `;
     document.head.appendChild(style);
   }
@@ -380,6 +515,7 @@
         <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
+          <button type="button" class="tg-ai-chat__toggle" data-vision-toggle>👁 Vision: OFF</button>
           <textarea class="tg-ai-chat__input" data-input placeholder="Например: реши задачу по выбранным файлам"></textarea>
           <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
         </div>
@@ -399,6 +535,8 @@
     const filesList = overlay.querySelector('[data-files-list]');
     const input = overlay.querySelector('[data-input]');
     const meta = overlay.querySelector('[data-meta]');
+    const visionToggle = overlay.querySelector('[data-vision-toggle]');
+    let visionMode = false;
 
     renderFiles(filesList, files);
 
@@ -410,6 +548,13 @@
 
     overlay.querySelector('[data-files-toggle]')?.addEventListener('click', () => {
       filesPanel.hidden = !filesPanel.hidden;
+    });
+    visionToggle?.addEventListener('click', () => {
+      visionMode = !visionMode;
+      visionToggle.textContent = visionMode ? '👁 Vision: ON' : '👁 Vision: OFF';
+      status.textContent = visionMode
+        ? 'Vision включён: анализ изображений/PDF через VIP ИИ.'
+        : 'Vision выключен: обычный OCR + текстовый ответ.';
     });
 
     filesList?.addEventListener('change', (event) => {
@@ -444,58 +589,58 @@
 
       try {
         const extractedTexts = [];
-        for (let index = 0; index < selectedFiles.length; index += 1) {
-          const currentFile = selectedFiles[index];
-          const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-          status.textContent = `OCR ${index + 1}/${selectedFiles.length}: ${fileLabel}`;
-          let extractedText = '';
-          try {
-            const fileBlob = await loadSelectedFileAsBlob(currentFile);
-            extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
-          } catch (blobError) {
-            const fallbackUrl = buildFileUrlCandidates(currentFile)[0] || '';
-            if (!fallbackUrl) {
-              throw blobError;
+        let answer = '';
+        if (visionMode) {
+          answer = await requestTelegramVisionResponse({ prompt, selectedFiles }, (message) => {
+            status.textContent = message;
+          });
+        } else {
+          for (let index = 0; index < selectedFiles.length; index += 1) {
+            const currentFile = selectedFiles[index];
+            const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
+            status.textContent = `OCR ${index + 1}/${selectedFiles.length}: ${fileLabel}`;
+            let extractedText = '';
+            try {
+              const fileBlob = await loadSelectedFileAsBlob(currentFile);
+              extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
+            } catch (blobError) {
+              const fallbackUrl = buildFileUrlCandidates(currentFile)[0] || '';
+              if (!fallbackUrl) {
+                throw blobError;
+              }
+              extractedText = await requestTelegramOcrByUrl(fallbackUrl);
             }
-            extractedText = await requestTelegramOcrByUrl(fallbackUrl);
+            if (!normalize(extractedText)) {
+              throw new Error(`OCR не вернул текст для файла: ${fileLabel}`);
+            }
+            extractedTexts.push({
+              name: fileLabel,
+              type: 'text/plain',
+              text: String(extractedText).slice(0, 16000),
+            });
           }
-          if (!normalize(extractedText)) {
-            throw new Error(`OCR не вернул текст для файла: ${fileLabel}`);
-          }
-          extractedTexts.push({
-            name: fileLabel,
-            type: 'text/plain',
-            text: String(extractedText).slice(0, 16000),
+
+          status.textContent = 'Отправляем запрос в ИИ...';
+          answer = await requestTelegramAiResponse({
+            prompt,
+            documentTitle: normalize(task && (task.title || task.documentTitle || task.subject)) || 'Задача Telegram',
+            extractedTexts,
+            context: {
+              source: 'telegram-ai-response-dialog',
+              task,
+              selectedFiles: selectedFiles.map((item) => ({
+                name: normalize(item && (item.originalName || item.name || item.storedName)),
+                url: buildFileUrlCandidates(item)[0] || '',
+              })),
+            },
           });
         }
-
-        status.textContent = 'Отправляем запрос в ИИ...';
-        const submitPayload = {
-          prompt,
-          selectedFiles,
-          extractedTexts,
-          task,
-          sentAt: new Date().toISOString(),
-        };
-        const answer = await requestTelegramAiResponse({
-          prompt,
-          documentTitle: normalize(task && (task.title || task.documentTitle || task.subject)) || 'Задача Telegram',
-          extractedTexts,
-          context: {
-            source: 'telegram-ai-response-dialog',
-            task,
-            selectedFiles: selectedFiles.map((item) => ({
-              name: normalize(item && (item.originalName || item.name || item.storedName)),
-              url: buildFileUrlCandidates(item)[0] || '',
-            })),
-          },
-        });
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
 
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
-          <span class="tg-ai-chat__chip">Режим: generate_response</span>
+          <span class="tg-ai-chat__chip">Режим: ${visionMode ? 'vision' : 'generate_response'}</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: ${extractedTexts.length}</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
