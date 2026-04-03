@@ -597,6 +597,93 @@ function handleAnalyzePaidAction(array $env): void
         $userPrompt = 'Прими решение по приложенным документам.';
     }
 
+    $rawVisionPayload = trim((string)($_POST['vision_payload'] ?? ''));
+    if ($rawVisionPayload !== '') {
+        $visionPayload = json_decode($rawVisionPayload, true);
+        if (!is_array($visionPayload)) {
+            respond(422, ['ok' => false, 'error' => 'vision_payload должен быть корректным JSON объектом.']);
+        }
+
+        $messages = $visionPayload['messages'] ?? null;
+        if (!is_array($messages) || !$messages) {
+            respond(422, ['ok' => false, 'error' => 'vision_payload.messages обязателен для Vision режима.']);
+        }
+
+        $rawExtractedTexts = (string)($_POST['extractedTexts'] ?? '');
+        $decodedExtractedTexts = json_decode($rawExtractedTexts, true);
+        if (!is_array($decodedExtractedTexts)) {
+            $decodedExtractedTexts = [];
+        }
+        $ocrText = '';
+        foreach ($decodedExtractedTexts as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $chunk = trim((string)($entry['text'] ?? ''));
+            if ($chunk === '') {
+                continue;
+            }
+            $name = trim((string)($entry['name'] ?? 'Документ'));
+            $ocrText .= ($ocrText !== '' ? "\n\n" : '') . '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $chunk;
+        }
+
+        // Добавляем подсказку от пользователя и OCR-текст в первый user message.
+        foreach ($messages as $idx => $message) {
+            if (!is_array($message) || (string)($message['role'] ?? '') !== 'user') {
+                continue;
+            }
+            $content = $message['content'] ?? '';
+            if (is_string($content)) {
+                $extra = $userPrompt !== '' ? $userPrompt : '';
+                if ($ocrText !== '') {
+                    $extra .= ($extra !== '' ? "\n\n" : '') . "OCR текст:\n" . $ocrText;
+                }
+                if ($extra !== '') {
+                    $messages[$idx]['content'] = trim($content . "\n\n" . $extra);
+                }
+            } elseif (is_array($content)) {
+                $extra = $userPrompt !== '' ? $userPrompt : '';
+                if ($ocrText !== '') {
+                    $extra .= ($extra !== '' ? "\n\n" : '') . "OCR текст:\n" . $ocrText;
+                }
+                if ($extra !== '') {
+                    array_unshift($content, ['type' => 'text', 'text' => $extra]);
+                    $messages[$idx]['content'] = $content;
+                }
+            }
+            break;
+        }
+
+        $visionRequestPayload = [
+            'model' => (string)($visionPayload['model'] ?? resolveModel($env)),
+            'messages' => $messages,
+            'max_tokens' => (int)($visionPayload['max_tokens'] ?? 1000),
+            'temperature' => (float)($visionPayload['temperature'] ?? 0.3),
+        ];
+        if (isset($visionPayload['top_p'])) {
+            $visionRequestPayload['top_p'] = (float)$visionPayload['top_p'];
+        }
+
+        $startedAt = microtime(true);
+        $groqResult = callGroqChat($visionRequestPayload, $apiKey);
+        if (($groqResult['ok'] ?? false) !== true) {
+            respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+        }
+        $decoded = (array)($groqResult['raw'] ?? []);
+        $answer = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+        if ($answer === '') {
+            respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq в Vision режиме']);
+        }
+        respond(200, [
+            'ok' => true,
+            'response' => $answer,
+            'model' => (string)($decoded['model'] ?? ($visionRequestPayload['model'] ?? resolveModel($env))),
+            'durationMs' => max(1, (int)round((microtime(true) - $startedAt) * 1000)),
+            'tokensUsed' => (int)($decoded['usage']['total_tokens'] ?? 0),
+            'mode' => 'vision',
+        ]);
+    }
+
     $textChunks = [];
     $metaChunks = [];
     $hasReadableContent = false;
