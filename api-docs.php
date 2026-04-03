@@ -441,6 +441,48 @@ function extractPdfTextFast(string $pdfPath): string
     }
 }
 
+function envInt(array $env, string $key, int $default): int
+{
+    $raw = trim((string)($env[$key] ?? ''));
+    if ($raw === '' || !preg_match('/^-?\d+$/', $raw)) {
+        return $default;
+    }
+    return (int)$raw;
+}
+
+function getPdfPageCount(string $pdfPath): int
+{
+    if ($pdfPath === '' || !is_file($pdfPath) || !shellCommandExists('pdfinfo')) {
+        return 0;
+    }
+    $output = [];
+    $code = 1;
+    @exec('pdfinfo ' . escapeshellarg($pdfPath) . ' 2>/dev/null', $output, $code);
+    if ($code !== 0 || !$output) {
+        return 0;
+    }
+    foreach ($output as $line) {
+        if (preg_match('/^Pages:\s*(\d+)/i', (string)$line, $matches)) {
+            return max(0, (int)($matches[1] ?? 0));
+        }
+    }
+    return 0;
+}
+
+function buildPageBatches(int $totalPages, int $batchPages): array
+{
+    if ($totalPages <= 0) {
+        return [];
+    }
+    $batchPages = max(1, $batchPages);
+    $batches = [];
+    for ($start = 1; $start <= $totalPages; $start += $batchPages) {
+        $end = min($totalPages, $start + $batchPages - 1);
+        $batches[] = ['start' => $start, 'end' => $end];
+    }
+    return $batches;
+}
+
 function extractTextWithoutOcr(array $file): string
 {
     $tmpFile = (string)($file['tmp_name'] ?? '');
@@ -467,7 +509,15 @@ function extractTextWithoutOcr(array $file): string
     return '';
 }
 
-function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
+function performOcrRequest(
+    string $endpoint,
+    string $apiKey,
+    array $file,
+    string $language = 'rus',
+    ?string $fileUrl = null,
+    array $extraPostFields = [],
+    int $timeoutSeconds = 60
+): array
 {
     $ch = curl_init($endpoint);
     if ($ch === false) {
@@ -477,6 +527,14 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     $postFields = [
         'language' => $language,
     ];
+    foreach ($extraPostFields as $key => $value) {
+        if (!is_string($key) || trim($key) === '') {
+            continue;
+        }
+        if (is_scalar($value) || $value === null) {
+            $postFields[$key] = (string)$value;
+        }
+    }
     if (is_string($fileUrl) && trim($fileUrl) !== '') {
         $postFields['url'] = trim($fileUrl);
     } else {
@@ -502,7 +560,7 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
         ],
         CURLOPT_POSTFIELDS => $postFields,
         CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 60,
+        CURLOPT_TIMEOUT => max(10, $timeoutSeconds),
         CURLOPT_NOSIGNAL => 1,
     ]);
 
@@ -1467,6 +1525,9 @@ $files = array_merge($attachments, $singleAttachment, $ocrFile);
 if ($action === 'ocr_extract') {
     $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
     $ocrBaseUrl = trim((string)($env['OCR_BASE_URL'] ?? 'https://api.ocr.space/parse/image'));
+    $ocrBatchPages = max(1, envInt($env, 'OCR_BATCH_PAGES', 5));
+    $ocrMaxPages = max(0, envInt($env, 'OCR_MAX_PAGES', 0));
+    $ocrTimeoutPerBatch = max(10, envInt($env, 'OCR_TIMEOUT_PER_BATCH', 60));
     $ocrLanguage = trim((string)($_POST['language'] ?? 'rus'));
     $ocrFileUrl = trim((string)($_POST['file_url'] ?? ''));
 
@@ -1519,49 +1580,136 @@ if ($action === 'ocr_extract') {
         }
     };
 
-    $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $ocrUploadFile, $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrUrlUsed !== '' ? $ocrUrlUsed : null);
-    $ocrResponseBody = $ocrResult['body'];
-    $ocrCurlError = (string)$ocrResult['curl_error'];
-    $ocrStatusCode = (int)$ocrResult['status'];
-
-    if ($ocrResponseBody === false) {
-        $cleanupRemoteOcrTemp();
-        logApiDocs('error', 'OCR request failed', ['curlError' => $ocrCurlError]);
-        jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError]);
+    $isPdf = false;
+    $pdfPath = '';
+    if ($ocrUploadFile) {
+        $fileExt = strtolower(detectFileExtension($ocrUploadFile));
+        $fileMime = strtolower(detectMimeType($ocrUploadFile));
+        $isPdf = $fileExt === 'pdf' || $fileMime === 'application/pdf';
+        $pdfPath = (string)($ocrUploadFile['tmp_name'] ?? '');
+    } elseif ($ocrFileUrl !== '') {
+        $urlExt = strtolower(guessExtensionFromUrl($ocrFileUrl));
+        $isPdf = $urlExt === 'pdf';
     }
 
-    $ocrJson = json_decode((string)$ocrResponseBody, true);
-    if (!is_array($ocrJson)) {
-        $cleanupRemoteOcrTemp();
-        logApiDocs('error', 'OCR API returned non-JSON', ['response' => mb_substr((string)$ocrResponseBody, 0, 500)]);
-        jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ OCR API']);
-    }
-
-    if ($ocrStatusCode >= 400) {
-        $cleanupRemoteOcrTemp();
-        $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-        if ($message === '') {
-            $message = 'OCR API error';
+    $totalPages = 0;
+    if ($isPdf && $pdfPath !== '') {
+        $totalPages = getPdfPageCount($pdfPath);
+        if ($ocrMaxPages > 0 && $totalPages > 0) {
+            $totalPages = min($totalPages, $ocrMaxPages);
         }
-        jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+    }
+    $batches = $isPdf ? buildPageBatches($totalPages, $ocrBatchPages) : [];
+    if (!$batches) {
+        $batches = [['start' => 0, 'end' => 0]];
     }
 
-    $hasErrorOnProcessing = isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true;
-    if ($hasErrorOnProcessing) {
-        $cleanupRemoteOcrTemp();
-        $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
-        jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
-    }
-
-    $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
     $parts = [];
-    foreach ($parsedResults as $entry) {
-        if (is_array($entry) && isset($entry['ParsedText']) && is_string($entry['ParsedText'])) {
-            $textPart = trim($entry['ParsedText']);
-            if ($textPart !== '') {
-                $parts[] = $textPart;
+    $batchResponses = [];
+    foreach ($batches as $batchIndex => $batch) {
+        $pageStart = (int)$batch['start'];
+        $pageEnd = (int)$batch['end'];
+        $extraFields = [];
+        if ($isPdf && $pageStart > 0 && $pageEnd >= $pageStart) {
+            $extraFields['pages'] = $pageStart . '-' . $pageEnd;
+        } elseif ($ocrMaxPages > 0) {
+            $extraFields['pages'] = '1-' . $ocrMaxPages;
+        }
+
+        logApiDocs('info', 'OCR batch started', [
+            'batch' => $batchIndex + 1,
+            'totalBatches' => count($batches),
+            'pageStart' => $pageStart,
+            'pageEnd' => $pageEnd,
+        ]);
+
+        $ocrResult = performOcrRequest(
+            $ocrBaseUrl,
+            $ocrApiKey,
+            $ocrUploadFile,
+            $ocrLanguage !== '' ? $ocrLanguage : 'rus',
+            $ocrUrlUsed !== '' ? $ocrUrlUsed : null,
+            $extraFields,
+            $ocrTimeoutPerBatch
+        );
+        $ocrResponseBody = $ocrResult['body'];
+        $ocrCurlError = (string)$ocrResult['curl_error'];
+        $ocrStatusCode = (int)$ocrResult['status'];
+
+        if ($ocrResponseBody === false) {
+            $cleanupRemoteOcrTemp();
+            logApiDocs('error', 'OCR batch request failed', [
+                'batch' => $batchIndex + 1,
+                'pageStart' => $pageStart,
+                'pageEnd' => $pageEnd,
+                'curlError' => $ocrCurlError
+            ]);
+            jsonResponse(502, ['ok' => false, 'error' => 'Ошибка OCR батча ' . ($batchIndex + 1) . ': ' . $ocrCurlError]);
+        }
+
+        $ocrJson = json_decode((string)$ocrResponseBody, true);
+        if (!is_array($ocrJson)) {
+            $cleanupRemoteOcrTemp();
+            logApiDocs('error', 'OCR batch returned non-JSON', [
+                'batch' => $batchIndex + 1,
+                'pageStart' => $pageStart,
+                'pageEnd' => $pageEnd,
+                'response' => mb_substr((string)$ocrResponseBody, 0, 500)
+            ]);
+            jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ OCR API в батче ' . ($batchIndex + 1)]);
+        }
+
+        if ($ocrStatusCode >= 400) {
+            $cleanupRemoteOcrTemp();
+            $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+            if ($message === '') {
+                $message = 'OCR API error';
+            }
+            logApiDocs('error', 'OCR batch HTTP error', [
+                'batch' => $batchIndex + 1,
+                'pageStart' => $pageStart,
+                'pageEnd' => $pageEnd,
+                'status' => $ocrStatusCode,
+                'message' => $message
+            ]);
+            jsonResponse(502, ['ok' => false, 'error' => $message, 'status' => $ocrStatusCode]);
+        }
+
+        $hasErrorOnProcessing = isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true;
+        if ($hasErrorOnProcessing) {
+            $cleanupRemoteOcrTemp();
+            $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
+            logApiDocs('error', 'OCR batch processing error', [
+                'batch' => $batchIndex + 1,
+                'pageStart' => $pageStart,
+                'pageEnd' => $pageEnd,
+                'error' => $errorMessage
+            ]);
+            jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
+        }
+
+        $parsedResults = isset($ocrJson['ParsedResults']) && is_array($ocrJson['ParsedResults']) ? $ocrJson['ParsedResults'] : [];
+        foreach ($parsedResults as $entry) {
+            if (is_array($entry) && isset($entry['ParsedText']) && is_string($entry['ParsedText'])) {
+                $textPart = trim($entry['ParsedText']);
+                if ($textPart !== '') {
+                    $parts[] = $textPart;
+                }
             }
         }
+        $batchResponses[] = [
+            'batch' => $batchIndex + 1,
+            'pageStart' => $pageStart,
+            'pageEnd' => $pageEnd,
+            'raw' => $ocrJson,
+        ];
+        logApiDocs('info', 'OCR batch finished', [
+            'batch' => $batchIndex + 1,
+            'totalBatches' => count($batches),
+            'pageStart' => $pageStart,
+            'pageEnd' => $pageEnd,
+            'textLength' => mb_strlen(trim(implode("\n\n", $parts)))
+        ]);
     }
 
     $ocrText = trim(implode("\n\n", $parts));
@@ -1569,7 +1717,10 @@ if ($action === 'ocr_extract') {
     jsonResponse(200, [
         'ok' => true,
         'text' => $ocrText,
-        'raw' => $ocrJson,
+        'raw' => [
+            'batches' => $batchResponses,
+            'totalPages' => $totalPages,
+        ],
     ]);
 }
 

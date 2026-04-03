@@ -15,7 +15,9 @@ const MAX_TEXT_CHARS = 0; // 0 = без обрезки
 const MAX_TEXT_CHARS_PER_CHUNK = 12000;
 const MAX_TEXT_CHUNKS_TOTAL = 30;
 const MAX_TEXT_PAYLOAD_CHARS = 90000;
-const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
+const OCR_MAX_PAGES = 0; // fallback: 0 = все страницы PDF
+const OCR_BATCH_PAGES = 5;
+const OCR_TIMEOUT_PER_BATCH = 60;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
 
@@ -25,6 +27,25 @@ function respond(int $status, array $payload): void
     $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     echo $json === false ? '{"ok":false,"error":"JSON_ENCODE_FAILED"}' : $json;
     exit;
+}
+
+function logGroqPaid(string $level, string $message, array $context = []): void
+{
+    $directory = __DIR__ . '/app/logs';
+    if (!is_dir($directory)) {
+        @mkdir($directory, 0775, true);
+    }
+    $record = [
+        'time' => gmdate('c'),
+        'level' => $level,
+        'message' => $message,
+        'context' => $context,
+    ];
+    @file_put_contents(
+        $directory . '/api-groq-paid.log',
+        json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL,
+        FILE_APPEND
+    );
 }
 
 function loadEnvFromFile(string $path): array
@@ -232,30 +253,110 @@ function commandExists(string $command): bool
     return $exitCode === 0 && !empty($output);
 }
 
-function extractPdfTextWithPdftotext(string $pdfPath): string
+function envInt(array $env, string $key, int $default): int
+{
+    $raw = trim((string)($env[$key] ?? ''));
+    if ($raw === '' || !preg_match('/^-?\d+$/', $raw)) {
+        return $default;
+    }
+    return (int)$raw;
+}
+
+function getPdfPageCount(string $pdfPath): int
+{
+    if ($pdfPath === '' || !is_file($pdfPath) || !commandExists('pdfinfo')) {
+        return 0;
+    }
+    $output = [];
+    $code = 1;
+    @exec('pdfinfo ' . escapeshellarg($pdfPath) . ' 2>/dev/null', $output, $code);
+    if ($code !== 0 || !$output) {
+        return 0;
+    }
+    foreach ($output as $line) {
+        if (preg_match('/^Pages:\s*(\d+)/i', (string)$line, $matches)) {
+            return max(0, (int)($matches[1] ?? 0));
+        }
+    }
+    return 0;
+}
+
+function buildPageBatches(int $totalPages, int $batchPages): array
+{
+    if ($totalPages <= 0) {
+        return [];
+    }
+    $batchPages = max(1, $batchPages);
+    $batches = [];
+    for ($start = 1; $start <= $totalPages; $start += $batchPages) {
+        $end = min($totalPages, $start + $batchPages - 1);
+        $batches[] = ['start' => $start, 'end' => $end];
+    }
+    return $batches;
+}
+
+function extractPdfTextWithPdftotext(string $pdfPath, int $maxPages, int $batchPages, int $timeoutPerBatch): string
 {
     if (!commandExists('pdftotext')) {
         return '';
     }
-    $tmpTextPath = tempnam(sys_get_temp_dir(), 'pdftext_');
-    if ($tmpTextPath === false) {
+    $totalPages = getPdfPageCount($pdfPath);
+    if ($totalPages <= 0) {
+        $totalPages = $maxPages > 0 ? $maxPages : 1;
+    }
+    if ($maxPages > 0) {
+        $totalPages = min($totalPages, $maxPages);
+    }
+    $batches = buildPageBatches($totalPages, $batchPages);
+    if (!$batches) {
         return '';
     }
-    try {
-        $cmd = 'pdftotext -enc UTF-8 -f 1 '
-            . (OCR_MAX_PAGES > 0 ? ('-l ' . OCR_MAX_PAGES . ' ') : '')
-            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath);
-        @exec($cmd, $out, $code);
-        if ($code !== 0 || !is_file($tmpTextPath)) {
-            return '';
+    $textParts = [];
+    foreach ($batches as $index => $batch) {
+        $tmpTextPath = tempnam(sys_get_temp_dir(), 'pdftext_');
+        if ($tmpTextPath === false) {
+            continue;
         }
-        return trim((string)@file_get_contents($tmpTextPath));
-    } finally {
-        @unlink($tmpTextPath);
+        $start = (int)$batch['start'];
+        $end = (int)$batch['end'];
+        logGroqPaid('info', 'PDF pdftotext batch started', [
+            'batch' => $index + 1,
+            'totalBatches' => count($batches),
+            'pageStart' => $start,
+            'pageEnd' => $end,
+        ]);
+        try {
+            $cmd = 'timeout ' . max(5, $timeoutPerBatch)
+                . 's pdftotext -enc UTF-8 -f ' . $start . ' -l ' . $end . ' '
+                . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
+            @exec($cmd, $out, $code);
+            if ($code !== 0 || !is_file($tmpTextPath)) {
+                logGroqPaid('warn', 'PDF pdftotext batch failed', [
+                    'batch' => $index + 1,
+                    'pageStart' => $start,
+                    'pageEnd' => $end,
+                    'code' => $code,
+                ]);
+                continue;
+            }
+            $chunk = trim((string)@file_get_contents($tmpTextPath));
+            if ($chunk !== '') {
+                $textParts[] = $chunk;
+            }
+            logGroqPaid('info', 'PDF pdftotext batch finished', [
+                'batch' => $index + 1,
+                'pageStart' => $start,
+                'pageEnd' => $end,
+                'chars' => mb_strlen($chunk),
+            ]);
+        } finally {
+            @unlink($tmpTextPath);
+        }
     }
+    return trim(implode("\n\n", $textParts));
 }
 
-function extractPdfTextWithOcr(string $pdfPath): string
+function extractPdfTextWithOcr(string $pdfPath, int $maxPages, int $batchPages, int $timeoutPerBatch): string
 {
     if (!commandExists('pdftoppm') || !commandExists('tesseract')) {
         return '';
@@ -266,30 +367,54 @@ function extractPdfTextWithOcr(string $pdfPath): string
     }
     @unlink($tmpBase);
     $textParts = [];
-    $maxPages = OCR_MAX_PAGES > 0 ? OCR_MAX_PAGES : 500;
+    $totalPages = getPdfPageCount($pdfPath);
+    if ($totalPages <= 0) {
+        $totalPages = $maxPages > 0 ? $maxPages : 500;
+    }
+    if ($maxPages > 0) {
+        $totalPages = min($totalPages, $maxPages);
+    }
+    $batches = buildPageBatches($totalPages, $batchPages);
 
     try {
-        for ($page = 1; $page <= $maxPages; $page += 1) {
-            $jpgPath = $tmpBase . '-p' . $page . '.jpg';
-            $cmdRender = 'pdftoppm -jpeg -f ' . $page . ' -singlefile '
-                . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4));
-            @exec($cmdRender, $renderOut, $renderCode);
-            if ($renderCode !== 0 || !is_file($jpgPath)) {
-                if ($page === 1) {
-                    break;
+        foreach ($batches as $batchIndex => $batch) {
+            $start = (int)$batch['start'];
+            $end = (int)$batch['end'];
+            logGroqPaid('info', 'PDF OCR batch started', [
+                'batch' => $batchIndex + 1,
+                'totalBatches' => count($batches),
+                'pageStart' => $start,
+                'pageEnd' => $end,
+            ]);
+            for ($page = $start; $page <= $end; $page += 1) {
+                $jpgPath = $tmpBase . '-p' . $page . '.jpg';
+                $cmdRender = 'timeout ' . max(5, $timeoutPerBatch)
+                    . 's pdftoppm -jpeg -f ' . $page . ' -singlefile '
+                    . escapeshellarg($pdfPath) . ' ' . escapeshellarg(substr($jpgPath, 0, -4));
+                @exec($cmdRender, $renderOut, $renderCode);
+                if ($renderCode !== 0 || !is_file($jpgPath)) {
+                    if ($page === 1) {
+                        break;
+                    }
+                    continue;
                 }
-                continue;
+                $cmdOcr = 'timeout ' . max(5, $timeoutPerBatch)
+                    . 's tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null';
+                $ocr = shell_exec($cmdOcr);
+                $ocrText = trim((string)$ocr);
+                if ($ocrText !== '') {
+                    $textParts[] = $ocrText;
+                }
+                @unlink($jpgPath);
             }
-            $cmdOcr = 'tesseract ' . escapeshellarg($jpgPath) . ' stdout -l rus+eng 2>/dev/null';
-            $ocr = shell_exec($cmdOcr);
-            $ocrText = trim((string)$ocr);
-            if ($ocrText !== '') {
-                $textParts[] = $ocrText;
-            }
-            @unlink($jpgPath);
+            logGroqPaid('info', 'PDF OCR batch finished', [
+                'batch' => $batchIndex + 1,
+                'pageStart' => $start,
+                'pageEnd' => $end,
+            ]);
         }
     } finally {
-        for ($page = 1; $page <= $maxPages; $page += 1) {
+        for ($page = 1; $page <= max($totalPages, 1); $page += 1) {
             @unlink($tmpBase . '-p' . $page . '.jpg');
         }
     }
@@ -297,13 +422,16 @@ function extractPdfTextWithOcr(string $pdfPath): string
     return trim(implode("\n\n", $textParts));
 }
 
-function extractPdfText(string $pdfPath): array
+function extractPdfText(string $pdfPath, array $env): array
 {
-    $text = extractPdfTextWithPdftotext($pdfPath);
+    $batchPages = max(1, envInt($env, 'OCR_BATCH_PAGES', OCR_BATCH_PAGES));
+    $maxPages = max(0, envInt($env, 'OCR_MAX_PAGES', OCR_MAX_PAGES));
+    $timeoutPerBatch = max(5, envInt($env, 'OCR_TIMEOUT_PER_BATCH', OCR_TIMEOUT_PER_BATCH));
+    $text = extractPdfTextWithPdftotext($pdfPath, $maxPages, $batchPages, $timeoutPerBatch);
     if ($text !== '') {
         return ['text' => $text, 'source' => 'pdftotext'];
     }
-    $ocrText = extractPdfTextWithOcr($pdfPath);
+    $ocrText = extractPdfTextWithOcr($pdfPath, $maxPages, $batchPages, $timeoutPerBatch);
     if ($ocrText !== '') {
         return ['text' => $ocrText, 'source' => 'ocr'];
     }
@@ -516,7 +644,7 @@ function callGroqChat(array $requestPayload, string $apiKey): array
     return ['ok' => true, 'status' => 200, 'raw' => $decoded];
 }
 
-function buildExtractedTextsFromFiles(array $files): array
+function buildExtractedTextsFromFiles(array $files, array $env): array
 {
     $entries = [];
     $allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
@@ -546,7 +674,7 @@ function buildExtractedTextsFromFiles(array $files): array
         } elseif (in_array($mime, $allowedImageMimes, true)) {
             $text = extractImageTextWithOcr($tmp);
         } elseif ($mime === 'application/pdf') {
-            $pdfExtract = extractPdfText($tmp);
+            $pdfExtract = extractPdfText($tmp, $env);
             $text = (string)($pdfExtract['text'] ?? '');
         }
 
@@ -681,7 +809,7 @@ function handleAnalyzePaidAction(array $env): void
         }
 
         if ($isPdf) {
-            $pdfExtract = extractPdfText($tmp);
+            $pdfExtract = extractPdfText($tmp, $env);
             $pdfText = trim((string)($pdfExtract['text'] ?? ''));
             $pdfSource = (string)($pdfExtract['source'] ?? '');
             if ($pdfText !== '') {
@@ -804,7 +932,7 @@ function handleGenerateSummaryAction(array $env): void
         normalizeUploadedFiles('attachments')
     );
     if (!$decodedExtractedTexts && $uploadedFiles) {
-        $decodedExtractedTexts = buildExtractedTextsFromFiles($uploadedFiles);
+        $decodedExtractedTexts = buildExtractedTextsFromFiles($uploadedFiles, $env);
     }
     if (!is_array($decodedExtractedTexts) || !$decodedExtractedTexts) {
         respond(422, ['ok' => false, 'error' => 'Передайте extractedTexts или файлы (files[]) для формирования summary.']);
@@ -891,7 +1019,7 @@ function handleGenerateResponseAction(array $env): void
         normalizeUploadedFiles('attachments')
     );
     if (!$decodedExtractedTexts && $uploadedFiles) {
-        $decodedExtractedTexts = buildExtractedTextsFromFiles($uploadedFiles);
+        $decodedExtractedTexts = buildExtractedTextsFromFiles($uploadedFiles, $env);
     }
     if (!is_array($decodedExtractedTexts) || !$decodedExtractedTexts) {
         respond(422, ['ok' => false, 'error' => 'Передайте extractedTexts или файлы (files[]) для формирования ответа.']);
