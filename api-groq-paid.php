@@ -297,30 +297,6 @@ function extractPdfTextWithOcr(string $pdfPath): string
     return trim(implode("\n\n", $textParts));
 }
 
-function convertPdfFirstPageToJpegBinary(string $pdfPath): string
-{
-    if (!commandExists('pdftoppm')) {
-        return '';
-    }
-    $tmpBase = tempnam(sys_get_temp_dir(), 'pdfimg_');
-    if ($tmpBase === false) {
-        return '';
-    }
-    @unlink($tmpBase);
-    $jpgPath = $tmpBase . '.jpg';
-    try {
-        $cmd = 'pdftoppm -jpeg -f 1 -singlefile '
-            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpBase);
-        @exec($cmd, $out, $code);
-        if ($code !== 0 || !is_file($jpgPath)) {
-            return '';
-        }
-        return (string)@file_get_contents($jpgPath);
-    } finally {
-        @unlink($jpgPath);
-    }
-}
-
 function convertPdfPagesToImageDataUris(string $pdfPath, int $maxPages = 5): array
 {
     if (!commandExists('pdftoppm')) {
@@ -482,57 +458,6 @@ function takeChunksByCharBudget(array $chunks, int $maxChars): array
         'omitted' => max(0, count($chunks) - count($selected)),
         'usedChars' => $usedChars,
     ];
-}
-
-function tokenizeForRag(string $text): array
-{
-    $text = mb_strtolower(trim($text));
-    if ($text === '') {
-        return [];
-    }
-    $parts = preg_split('/[^a-zа-яё0-9]+/ui', $text) ?: [];
-    $tokens = [];
-    foreach ($parts as $part) {
-        $part = trim((string)$part);
-        if (mb_strlen($part) >= 3) {
-            $tokens[] = $part;
-        }
-    }
-    return array_values(array_unique($tokens));
-}
-
-function selectRelevantChunksByRag(array $chunks, string $query, int $maxChunks = 6): array
-{
-    if (!$chunks) {
-        return [];
-    }
-    $queryTokens = tokenizeForRag($query);
-    if (!$queryTokens) {
-        return array_slice($chunks, 0, max(1, $maxChunks));
-    }
-
-    $scored = [];
-    foreach ($chunks as $index => $chunk) {
-        $text = mb_strtolower((string)$chunk);
-        $score = 0;
-        foreach ($queryTokens as $token) {
-            if (mb_strpos($text, $token) !== false) {
-                $score += 1;
-            }
-        }
-        $scored[] = ['index' => $index, 'chunk' => (string)$chunk, 'score' => $score];
-    }
-
-    usort($scored, static function (array $a, array $b): int {
-        if ($a['score'] === $b['score']) {
-            return $a['index'] <=> $b['index'];
-        }
-        return $b['score'] <=> $a['score'];
-    });
-
-    $selected = array_slice($scored, 0, max(1, $maxChunks));
-    usort($selected, static fn(array $a, array $b): int => $a['index'] <=> $b['index']);
-    return array_map(static fn(array $row): string => (string)$row['chunk'], $selected);
 }
 
 function extractDocxText(string $path): string
@@ -1028,61 +953,30 @@ function handleGenerateImageBriefAction(array $env): void
     $requestPayload = [];
     $ragMeta = null;
     if ($isPdf) {
-        $pdfExtract = extractPdfText($tmp);
-        $pdfText = trim((string)($pdfExtract['text'] ?? ''));
-        if ($pdfText !== '') {
-            $allChunks = splitTextIntoChunks($pdfText);
-            if (!$allChunks) {
-                respond(422, ['ok' => false, 'error' => 'PDF прочитан, но не удалось подготовить чанки для RAG.']);
-            }
-            $relevantChunks = selectRelevantChunksByRag($allChunks, $prompt, 8);
-            $budget = takeChunksByCharBudget($relevantChunks, 18000);
-            $selectedChunks = (array)($budget['items'] ?? []);
-            if (!$selectedChunks) {
-                $selectedChunks = array_slice($allChunks, 0, 3);
-            }
-            $context = implode("\n\n---\n\n", $selectedChunks);
-            $requestPayload = [
-                'model' => $model,
-                'temperature' => 0.2,
-                'max_tokens' => 900,
-                'messages' => [
-                    ['role' => 'system', 'content' => 'Ты анализируешь PDF по RAG-контексту. Отвечай кратко и по фактам из контекста. Если данных не хватает — скажи это явно.'],
-                    ['role' => 'user', 'content' => "Запрос пользователя:\n{$prompt}\n\nRAG-контекст из PDF:\n{$context}"],
-                ],
-            ];
-            $ragMeta = [
-                'mode' => 'pdf-rag',
-                'chunksTotal' => count($allChunks),
-                'chunksSelected' => count($selectedChunks),
-                'extractSource' => (string)($pdfExtract['source'] ?? ''),
-            ];
-        } else {
-            $pageImages = convertPdfPagesToImageDataUris($tmp, 5);
-            if (!$pageImages) {
-                respond(422, ['ok' => false, 'error' => 'Не удалось прочитать PDF текстом и не удалось преобразовать страницы в изображения. Проверьте наличие pdftoppm/tesseract на сервере.']);
-            }
-            $content = [['type' => 'text', 'text' => $prompt . "\n\nПроанализируй PDF по изображениям страниц и дай краткий ответ для новичка."]];
-            foreach ($pageImages as $uri) {
-                $content[] = ['type' => 'image_url', 'image_url' => ['url' => $uri]];
-            }
-            $requestPayload = [
-                'model' => $model,
-                'temperature' => 0.2,
-                'max_tokens' => 900,
-                'messages' => [[
-                    'role' => 'user',
-                    'content' => $content,
-                ]],
-            ];
-            $ragMeta = [
-                'mode' => 'pdf-vision-fallback',
-                'chunksTotal' => 0,
-                'chunksSelected' => 0,
-                'extractSource' => '',
-                'pagesSent' => count($pageImages),
-            ];
+        $pageImages = convertPdfPagesToImageDataUris($tmp, 8);
+        if (!$pageImages) {
+            respond(422, ['ok' => false, 'error' => 'Не удалось преобразовать PDF в изображения страниц. Проверьте наличие pdftoppm на сервере.']);
         }
+        $content = [[
+            'type' => 'text',
+            'text' => $prompt . "\n\nPDF автоматически преобразован в изображения страниц. Проанализируй все переданные страницы и дай краткий ответ для новичка.",
+        ]];
+        foreach ($pageImages as $uri) {
+            $content[] = ['type' => 'image_url', 'image_url' => ['url' => $uri]];
+        }
+        $requestPayload = [
+            'model' => $model,
+            'temperature' => 0.2,
+            'max_tokens' => 900,
+            'messages' => [[
+                'role' => 'user',
+                'content' => $content,
+            ]],
+        ];
+        $ragMeta = [
+            'mode' => 'pdf-pages-as-images',
+            'pagesSent' => count($pageImages),
+        ];
     } else {
         $binary = (string)@file_get_contents($tmp);
         if ($binary === '') {
