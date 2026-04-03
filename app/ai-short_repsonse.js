@@ -80,18 +80,42 @@ export function createTelegramBriefAi(deps = {}) {
     if (briefPdfJsLoader) {
       return briefPdfJsLoader;
     }
+    const sources = [
+      { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
+      { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+      { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
+    ];
     briefPdfJsLoader = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '/pdf/pdf.min.js';
-      script.onload = () => {
-        if (window.pdfjsLib) {
+      let index = 0;
+      const tryNext = () => {
+        if (typeof window !== 'undefined' && window.pdfjsLib) {
+          window.__briefPdfWorkerSrc = sources[Math.max(0, index - 1)].worker;
           resolve(window.pdfjsLib);
-        } else {
-          reject(new Error('pdfjsLib не найден'));
+          return;
         }
+        if (index >= sources.length) {
+          reject(new Error('Не удалось загрузить PDF библиотеку. Проверьте интернет или доступ к /pdf/pdf.min.js'));
+          return;
+        }
+        const source = sources[index];
+        index += 1;
+        const script = document.createElement('script');
+        script.src = source.script;
+        script.onload = () => {
+          if (typeof window !== 'undefined' && window.pdfjsLib) {
+            window.__briefPdfWorkerSrc = source.worker;
+            resolve(window.pdfjsLib);
+            return;
+          }
+          tryNext();
+        };
+        script.onerror = () => tryNext();
+        document.head.appendChild(script);
       };
-      script.onerror = () => reject(new Error('Не удалось загрузить PDF библиотеку'));
-      document.head.appendChild(script);
+      tryNext();
+    }).catch((error) => {
+      briefPdfJsLoader = null;
+      throw error;
     });
     return briefPdfJsLoader;
   }
@@ -105,7 +129,7 @@ export function createTelegramBriefAi(deps = {}) {
     try {
       const pdfjsLib = await ensureBriefPdfJsLoaded();
       if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
       }
       const bytes = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: bytes });
@@ -222,7 +246,7 @@ export function createTelegramBriefAi(deps = {}) {
       onProgress('Открываю PDF...', 5);
       const pdfjsLib = await ensureBriefPdfJsLoaded();
       if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
       }
       const bytes = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: bytes });
