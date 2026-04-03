@@ -1,4 +1,6 @@
 (function() {
+  var VISION_BATCH_SIZE = 5;
+  var briefPdfJsLoader = null;
   var SYSTEM_TONE_PROMPTS = {
     neutral: {
       value: 'neutral',
@@ -186,6 +188,301 @@
     return '';
   }
 
+  function readBlobAsDataUrl(blob) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('Не удалось прочитать файл.')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function readFileAsText(file) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('Не удалось прочитать текст файла.')); };
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  function chunkItems(items, size) {
+    var normalized = Array.isArray(items) ? items : [];
+    var chunkSize = Math.max(1, Number(size) || 1);
+    var chunks = [];
+    for (var i = 0; i < normalized.length; i += chunkSize) {
+      chunks.push(normalized.slice(i, i + chunkSize));
+    }
+    return chunks;
+  }
+
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib) {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) return briefPdfJsLoader;
+    var sources = [
+      { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
+      { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+      { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' }
+    ];
+    briefPdfJsLoader = new Promise(function(resolve, reject) {
+      var index = 0;
+      var tryNext = function() {
+        if (typeof window !== 'undefined' && window.pdfjsLib) {
+          window.__briefPdfWorkerSrc = sources[Math.max(0, index - 1)].worker;
+          resolve(window.pdfjsLib);
+          return;
+        }
+        if (index >= sources.length) {
+          reject(new Error('Не удалось загрузить PDF библиотеку.'));
+          return;
+        }
+        var source = sources[index];
+        index += 1;
+        var script = document.createElement('script');
+        script.src = source.script;
+        script.onload = function() {
+          if (typeof window !== 'undefined' && window.pdfjsLib) {
+            window.__briefPdfWorkerSrc = source.worker;
+            resolve(window.pdfjsLib);
+            return;
+          }
+          tryNext();
+        };
+        script.onerror = function() { tryNext(); };
+        document.head.appendChild(script);
+      };
+      tryNext();
+    }).catch(function(error) {
+      briefPdfJsLoader = null;
+      throw error;
+    });
+    return briefPdfJsLoader;
+  }
+
+  function loadBriefScript(url, checkLoaded) {
+    if (checkLoaded()) return Promise.resolve();
+    return new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      script.src = url;
+      script.async = true;
+      script.onload = function() { resolve(); };
+      script.onerror = function() { reject(new Error('Не удалось загрузить библиотеку: ' + url)); };
+      document.head.appendChild(script);
+    }).then(function() {
+      if (!checkLoaded()) throw new Error('Библиотека не инициализирована: ' + url);
+    });
+  }
+
+  function ensureMammothLoaded() {
+    if (window.mammoth) return Promise.resolve(window.mammoth);
+    return loadBriefScript('https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js', function() { return Boolean(window.mammoth); })
+      .then(function() { return window.mammoth; });
+  }
+
+  function ensureXlsxLoaded() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    return loadBriefScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', function() { return Boolean(window.XLSX); })
+      .then(function() { return window.XLSX; });
+  }
+
+  function buildVisionPayloadFromFile(file, onProgress) {
+    var mime = String(file && file.type || '').toLowerCase();
+    var name = String(file && file.name || 'document').toLowerCase();
+    var isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
+    var isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
+    var isText = mime.indexOf('text/') === 0 || /\.(txt|md|csv|json|xml|html?)$/i.test(name);
+    var isDocx = mime.indexOf('wordprocessingml.document') >= 0 || /\.docx$/i.test(name);
+    var isXlsx = mime.indexOf('spreadsheetml') >= 0 || /\.xlsx$/i.test(name);
+
+    if (isImage) {
+      return readBlobAsDataUrl(file).then(function(imageDataUrl) {
+        return { kind: 'multimodal', images: [{ dataUrl: imageDataUrl, fileName: file.name || 'image.jpg', mime: mime || 'image/jpeg' }] };
+      });
+    }
+    if (isPdf) {
+      if (onProgress) onProgress('Открываю PDF...');
+      return ensureBriefPdfJsLoaded().then(function(pdfjsLib) {
+        if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
+        }
+        return file.arrayBuffer().then(function(bytes) {
+          return pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
+            var totalPages = Number(pdf.numPages || 0);
+            var pages = Array.from({ length: totalPages }, function(_, i) { return i + 1; });
+            var images = [];
+            return pages.reduce(function(chain, pageNumber, index) {
+              return chain.then(function() {
+                if (onProgress) onProgress('Рендер страницы ' + pageNumber + '/' + totalPages + '...');
+                return pdf.getPage(pageNumber).then(function(page) {
+                  var viewport = page.getViewport({ scale: 1.25 });
+                  var canvas = document.createElement('canvas');
+                  canvas.width = Math.max(1, Math.floor(viewport.width));
+                  canvas.height = Math.max(1, Math.floor(viewport.height));
+                  var ctx = canvas.getContext('2d');
+                  if (!ctx) return null;
+                  return page.render({ canvasContext: ctx, viewport: viewport }).promise
+                    .then(function() {
+                      return new Promise(function(resolve) { canvas.toBlob(function(blob) { resolve(blob); }, 'image/jpeg', 0.82); });
+                    })
+                    .then(function(blob) {
+                      if (!blob) return null;
+                      return readBlobAsDataUrl(blob).then(function(dataUrl) {
+                        images.push({ dataUrl: dataUrl, fileName: (file.name || 'scan').replace(/\.pdf$/i, '') + '-p' + pageNumber + '.jpg', mime: 'image/jpeg' });
+                        return null;
+                      });
+                    });
+                });
+              });
+            }, Promise.resolve()).then(function() {
+              return { kind: 'multimodal', images: images };
+            });
+          });
+        });
+      });
+    }
+    if (isText) {
+      return readFileAsText(file).then(function(text) { return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' }; });
+    }
+    if (isDocx) {
+      return ensureMammothLoaded().then(function(mammoth) {
+        return file.arrayBuffer().then(function(arrayBuffer) {
+          return mammoth.extractRawText({ arrayBuffer: arrayBuffer }).then(function(result) {
+            return { kind: 'text', extractedText: String(result && result.value || '').trim(), fileName: file.name || 'document.docx' };
+          });
+        });
+      });
+    }
+    if (isXlsx) {
+      return ensureXlsxLoaded().then(function(XLSX) {
+        return file.arrayBuffer().then(function(arrayBuffer) {
+          var workbook = XLSX.read(arrayBuffer, { type: 'array' });
+          var sheetTexts = (workbook && workbook.SheetNames || []).map(function(sheetName) {
+            var sheet = workbook.Sheets[sheetName];
+            return '# Лист: ' + sheetName + '\n' + XLSX.utils.sheet_to_csv(sheet);
+          });
+          return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
+        });
+      });
+    }
+    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX'));
+  }
+
+  function loadEntryAsFile(entry) {
+    if (!entry) return Promise.reject(new Error('Файл не найден'));
+    if (entry.source === 'pending' && entry.file instanceof File) return Promise.resolve(entry.file);
+    var url = resolveLinkedFileUrl(entry.file);
+    if (!url) return Promise.reject(new Error('URL файла не найден'));
+    var fileName = entry.file && entry.file.name ? String(entry.file.name) : 'document';
+    return fetch(url, { credentials: 'same-origin' })
+      .then(function(response) {
+        if (!response.ok) throw new Error('Не удалось загрузить файл');
+        return response.blob();
+      })
+      .then(function(blob) { return new File([blob], fileName, { type: blob.type || 'application/octet-stream' }); });
+  }
+
+  function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus) {
+    var styleMeta = resolveVipStyle(selectedStyle);
+    var preparedPrompt = [promptText, styleMeta && styleMeta.prompt ? styleMeta.prompt : '', 'Верни готовый ответ на письмо. Не пиши анализ.']
+      .filter(Boolean)
+      .join('\n\n');
+    var images = [];
+    var extractedTexts = [];
+    return selectedEntries.reduce(function(chain, entry, index) {
+      return chain.then(function() {
+        if (updateStatus) updateStatus('Vision: готовлю файл ' + (index + 1) + '/' + selectedEntries.length + '...');
+        return loadEntryAsFile(entry).then(function(file) {
+          return buildVisionPayloadFromFile(file, updateStatus).then(function(prepared) {
+            if (prepared.kind === 'multimodal') {
+              images = images.concat(prepared.images || []);
+            } else if (prepared.kind === 'text' && prepared.extractedText) {
+              extractedTexts.push({ name: prepared.fileName || file.name, type: file.type || 'text/plain', text: String(prepared.extractedText).slice(0, 60000) });
+            }
+          });
+        });
+      });
+    }, Promise.resolve()).then(function() {
+      if (!images.length) throw new Error('Vision режим требует изображения или PDF.');
+      var batches = chunkItems(images, VISION_BATCH_SIZE);
+      var partialAnswers = [];
+      var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+
+      function postWithFallback(createFormData, endpointIndex) {
+        if (endpointIndex >= paidEndpoints.length) return Promise.reject(new Error('Не удалось подключиться к VIP API.'));
+        return fetch(paidEndpoints[endpointIndex], { method: 'POST', body: createFormData(), credentials: 'same-origin' })
+          .then(function(response) {
+            if ((response.status === 404 || response.status === 405) && endpointIndex < paidEndpoints.length - 1) {
+              return postWithFallback(createFormData, endpointIndex + 1);
+            }
+            return response.json().then(function(payload) { return { response: response, payload: payload }; });
+          });
+      }
+
+      return batches.reduce(function(chain, batch, batchIndex) {
+        return chain.then(function() {
+          if (updateStatus) updateStatus('Vision: анализ блока ' + (batchIndex + 1) + '/' + batches.length + '...');
+          return postWithFallback(function() {
+            var formData = new FormData();
+            formData.append('action', 'analyze_paid');
+            formData.append('mode', 'paid');
+            formData.append('vision_mode', '1');
+            formData.append('prompt', preparedPrompt);
+            if (extractedTexts.length && batchIndex === 0) {
+              formData.append('extractedTexts', JSON.stringify(extractedTexts));
+            }
+            formData.append('vision_payload', JSON.stringify({
+              model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+              max_tokens: 1200,
+              temperature: 0.6,
+              messages: [{
+                role: 'user',
+                content: [{ type: 'text', text: preparedPrompt + '\n\nБлок ' + (batchIndex + 1) + '/' + batches.length + '.' }]
+                  .concat(batch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; }))
+              }]
+            }));
+            batch.forEach(function(item, idx) {
+              var raw = String(item.dataUrl || '');
+              var base64 = raw.indexOf(',') >= 0 ? raw.split(',')[1] : '';
+              if (!base64) return;
+              var binary = atob(base64);
+              var bytes = Uint8Array.from(binary, function(ch) { return ch.charCodeAt(0); });
+              formData.append('files', new Blob([bytes], { type: item.mime || 'image/jpeg' }), item.fileName || ('vision-' + (batchIndex + 1) + '-' + (idx + 1) + '.jpg'));
+            });
+            return formData;
+          }, 0).then(function(result) {
+            if (!result.response.ok || !result.payload || result.payload.ok !== true) {
+              throw new Error((result.payload && result.payload.error) || 'Ошибка Vision.');
+            }
+            partialAnswers.push(String(result.payload.response || result.payload.summary || '').trim());
+          });
+        });
+      }, Promise.resolve()).then(function() {
+        var finalText = partialAnswers.join('\n\n').trim();
+        if (partialAnswers.length <= 1) return { ok: true, response: finalText, mode: 'vision' };
+        if (updateStatus) updateStatus('Vision: объединяю результаты...');
+        return postWithFallback(function() {
+          var formData = new FormData();
+          formData.append('action', 'generate_summary');
+          formData.append('mode', 'paid');
+          formData.append('vision_mode', '1');
+          formData.append('extractedTexts', JSON.stringify([{
+            name: 'vision-batches.txt',
+            type: 'text/plain',
+            text: partialAnswers.map(function(item, idx) { return 'Блок ' + (idx + 1) + ':\n' + item; }).join('\n\n')
+          }]));
+          return formData;
+        }, 0).then(function(result) {
+          if (result.response.ok && result.payload && result.payload.ok === true) {
+            finalText = String(result.payload.summary || result.payload.response || '').trim() || finalText;
+          }
+          return { ok: true, response: finalText, mode: 'vision', model: result.payload && result.payload.model ? result.payload.model : '' };
+        });
+      });
+    });
+  }
+
   async function tryExtractOcrTextForVip(options, fileOrBlob, fileName, remoteUrl) {
     var ocrApiUrl = (options && options.apiUrl) || '/js/documents/api-docs.php';
     var ocrFormData = new FormData();
@@ -318,7 +615,7 @@
     var payload = options.payload || {};
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__input" data-style></select><textarea class="documents-vip-ai__input" data-prompt placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button">Отправить</button></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><button class="documents-vip-ai__send" type="button" data-vision-toggle>👁 Vision: OFF</button><select class="documents-vip-ai__input" data-style></select><textarea class="documents-vip-ai__input" data-prompt placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button" data-send>Отправить</button></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -326,8 +623,9 @@
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
     var styleNode = panel.querySelector('[data-style]');
+    var visionToggle = panel.querySelector('[data-vision-toggle]');
     var inputNode = panel.querySelector('[data-prompt]');
-    var sendButton = panel.querySelector('.documents-vip-ai__send');
+    var sendButton = panel.querySelector('[data-send]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
     var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
@@ -335,6 +633,7 @@
     var pendingEntries = pending.map(function(item, index) { return { key: 'pending_' + index, file: item, source: 'pending' }; });
     var fileEntries = linkedEntries.concat(pendingEntries);
     var selectedFiles = {};
+    var visionMode = false;
     fileEntries.forEach(function(entry) {
       selectedFiles[entry.key] = true;
     });
@@ -342,6 +641,12 @@
       styleNode.innerHTML = VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
         return '<option value="' + escapeHtmlText(item.value) + '">' + escapeHtmlText('Стиль: ' + item.label) + '</option>';
       }).join('');
+    }
+    if (visionToggle) {
+      visionToggle.addEventListener('click', function() {
+        visionMode = !visionMode;
+        visionToggle.textContent = visionMode ? '👁 Vision: ON' : '👁 Vision: OFF';
+      });
     }
 
     if (!fileEntries.length) {
@@ -394,6 +699,8 @@
       });
       var selectedLinked = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
       var selectedPending = pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
+      var selectedEntryObjects = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; })
+        .concat(pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }));
       requestContext.attachedFiles = []
         .concat(selectedLinked.map(function(file) {
           return {
@@ -411,6 +718,11 @@
 
       Promise.resolve()
         .then(function() {
+          if (visionMode) {
+            return requestVipVisionResponse(promptText, selectedEntryObjects, selectedStyle, function(message) {
+              metaNode.innerHTML = '<span class="documents-vip-ai__chip">' + escapeHtmlText(message) + '</span>';
+            });
+          }
           var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
           function tryEndpoint(index) {
             if (index >= paidEndpoints.length) {
@@ -427,16 +739,16 @@
                 return response;
               });
           }
-          return tryEndpoint(0);
+          return tryEndpoint(0).then(handleResponse);
         })
-        .then(handleResponse)
         .then(function(data) {
           var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
           pushChat('assistant', aiText);
           chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
           var elapsed = Date.now() - startedAt;
           var tokens = data && data.tokensUsed ? data.tokensUsed : '—';
-          metaNode.innerHTML = '<span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>';
+          var mode = data && data.mode ? String(data.mode) : (visionMode ? 'vision' : 'paid');
+          metaNode.innerHTML = '<span class="documents-vip-ai__chip">Режим: ' + escapeHtmlText(mode) + '</span><span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>';
           inputNode.value = '';
         })
         .catch(function(error) {
