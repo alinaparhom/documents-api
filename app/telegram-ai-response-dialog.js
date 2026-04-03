@@ -63,6 +63,46 @@
     return base;
   }
 
+  function toAbsoluteUrl(value) {
+    const raw = normalize(value);
+    if (!raw) return '';
+    if (raw.startsWith('blob:') || raw.startsWith('data:')) return raw;
+    try {
+      if (typeof window === 'undefined' || !window.location) {
+        return raw.startsWith('/') ? raw : `/${raw.replace(/^\/+/, '')}`;
+      }
+      return new URL(raw, window.location.origin).toString();
+    } catch (error) {
+      return raw.startsWith('/') ? raw : `/${raw.replace(/^\/+/, '')}`;
+    }
+  }
+
+  function buildFileUrlCandidates(file) {
+    const sourceValues = [
+      file && file.resolvedUrl,
+      file && file.previewUrl,
+      file && file.url,
+      file && file.downloadUrl,
+      file && file.fileUrl,
+      file && file.file,
+      file && file.path,
+      file && file.storedName,
+    ];
+    const candidates = [];
+    sourceValues.forEach((value) => {
+      const normalized = normalize(value);
+      if (!normalized) return;
+      candidates.push(toAbsoluteUrl(normalized));
+      if (!/^(https?:|blob:|data:|\/)/i.test(normalized)) {
+        candidates.push(toAbsoluteUrl(`/${normalized}`));
+        candidates.push(toAbsoluteUrl(`/uploads/${normalized}`));
+        candidates.push(toAbsoluteUrl(`/app/uploads/${normalized}`));
+        candidates.push(toAbsoluteUrl(`/js/documents/uploads/${normalized}`));
+      }
+    });
+    return Array.from(new Set(candidates.filter(Boolean)));
+  }
+
   async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
     const request = await postDocsAiWithFallback(() => {
       const formData = new FormData();
@@ -110,17 +150,28 @@
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
     }
-    const url = normalize(file && (file.resolvedUrl || file.url || file.previewUrl));
-    if (!url) {
+    const candidates = buildFileUrlCandidates(file);
+    if (!candidates.length) {
       throw new Error('Не найден URL файла.');
     }
-    const response = await fetch(url, { credentials: 'same-origin' });
-    if (!response.ok) {
-      throw new Error(`Не удалось загрузить файл (${response.status})`);
+    let lastStatus = 0;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const url = candidates[index];
+      let response = null;
+      try {
+        response = await fetch(url, { credentials: 'include', cache: 'no-store' });
+      } catch (error) {
+        continue;
+      }
+      if (!response || !response.ok) {
+        lastStatus = Number(response && response.status) || lastStatus;
+        continue;
+      }
+      const blob = await response.blob();
+      const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
+      return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
     }
-    const blob = await response.blob();
-    const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
-    return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+    throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
   }
 
   function ensureStyles() {
@@ -194,7 +245,7 @@
     }
     container.innerHTML = files.map((file, index) => {
       const name = normalize(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
-      const hasUrl = normalize(file && (file.resolvedUrl || file.url || file.previewUrl));
+      const hasUrl = buildFileUrlCandidates(file).length > 0;
       const disabled = hasUrl ? '' : 'disabled';
       return `<label class="tg-ai-chat__file"><input type="checkbox" data-file-index="${index}" ${disabled}><span>${escapeHtml(name)}</span></label>`;
     }).join('');
@@ -320,7 +371,7 @@
             task,
             selectedFiles: selectedFiles.map((item) => ({
               name: normalize(item && (item.originalName || item.name || item.storedName)),
-              url: normalize(item && (item.resolvedUrl || item.url || item.previewUrl)),
+              url: buildFileUrlCandidates(item)[0] || '',
             })),
           },
         });
