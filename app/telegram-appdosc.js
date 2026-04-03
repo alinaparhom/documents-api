@@ -1,4 +1,5 @@
 import { createPdfViewer } from './apppdf.js';
+import { createTelegramBriefAi } from './ai-short_repsonse.js';
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
@@ -11,7 +12,6 @@ const DOCS_AI_ENDPOINT = '/js/documents/api-docs.php';
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', DOCS_AI_ENDPOINT];
 
 let aiDialogLoader = null;
-let telegramBriefModalFactoryLoader = null;
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -290,47 +290,25 @@ async function postDocsAiWithFallback(createFormData) {
 }
 
 function openTelegramBriefModal(task, statusHandler) {
-  if (!telegramBriefModalFactoryLoader) {
-    telegramBriefModalFactoryLoader = (async () => {
-      let module = null;
-      try {
-        module = await import('./ai-short_repsonse.js');
-      } catch (_) {
-        module = await import('/js/documents/app/ai-short_repsonse.js');
-      }
-      const factoryCreator = module && module.createTelegramBriefAi;
-      if (typeof factoryCreator !== 'function') {
-        throw new Error('Не найден createTelegramBriefAi.');
-      }
-      return factoryCreator({
-        normalizeValue,
-        escapeHtml,
-        getAttachmentName,
-        resolveFileFetchUrl,
-        postDocsAiWithFallback,
-      });
-    })().catch((error) => {
-      telegramBriefModalFactoryLoader = null;
-      throw error;
+  try {
+    telegramBriefModalFactory(task, statusHandler);
+  } catch (error) {
+    if (typeof statusHandler === 'function') {
+      statusHandler('error', 'Не удалось открыть Кратко ИИ. Обновите страницу.');
+    }
+    logClientEvent('task_view_error', {
+      reason: 'brief_ai_open_failed',
+      message: error instanceof Error ? error.message : String(error),
     });
   }
-
-  telegramBriefModalFactoryLoader
-    .then((factory) => {
-      if (typeof factory === 'function') {
-        factory(task, statusHandler);
-      }
-    })
-    .catch((error) => {
-      if (typeof statusHandler === 'function') {
-        statusHandler('error', 'Не удалось открыть Кратко ИИ. Обновите страницу.');
-      }
-      logClientEvent('task_view_error', {
-        reason: 'brief_ai_open_failed',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
 }
+
+const telegramBriefModalFactory = createTelegramBriefAi({
+  normalizeValue,
+  getAttachmentName,
+  resolveFileFetchUrl,
+  postDocsAiWithFallback,
+});
 
 const ALLOWED_LOG_EVENTS = new Set([
   'bootstrap_after_init_telegram',
