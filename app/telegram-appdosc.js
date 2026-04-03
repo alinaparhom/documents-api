@@ -179,7 +179,7 @@ function cloneTaskAttachmentPreviewCacheEntry(entry) {
 }
 
 function ensureAiDialogScriptLoaded() {
-  if (window && typeof window.openAiResponseDialog === 'function') {
+  if (typeof window !== 'undefined' && typeof window.openAiResponseDialog === 'function') {
     return Promise.resolve(window.openAiResponseDialog);
   }
 
@@ -520,7 +520,7 @@ async function uploadPdfPreview(blob, fileName) {
     formData.append('pdf', blob, fileName || 'document.pdf');
     formData.append('telegramId', (state && state.telegram && state.telegram.id) ? String(state.telegram.id) : '');
 
-    const initData = window && window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp.initData : '';
+    const initData = (typeof window !== 'undefined' && window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp.initData : '';
     if (typeof initData === 'string' && initData.trim() !== '') {
       formData.append('initData', initData);
     }
@@ -2305,6 +2305,16 @@ function initElements() {
 }
 
 function initTelegram() {
+  if (typeof window === 'undefined') {
+    return {
+      telegramAvailable: false,
+      hasQueryId: false,
+      hasInitData: false,
+      platform: runtimeEnvironment.webAppPlatform || '',
+      colorScheme: runtimeEnvironment.colorScheme || 'light',
+    };
+  }
+
   const { Telegram } = window;
   if (!Telegram || !Telegram.WebApp) {
     readQueryContext();
