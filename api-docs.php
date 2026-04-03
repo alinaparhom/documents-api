@@ -454,7 +454,6 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
         $postFields['file'] = curl_file_create($tmpName, $mime, $name);
         if ($extension !== '') {
             $postFields['filetype'] = strtoupper($extension);
-            $postFields['file_type'] = strtoupper($extension);
         }
     }
 
