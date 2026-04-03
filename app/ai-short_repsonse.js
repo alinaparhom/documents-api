@@ -231,7 +231,16 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   async function requestTelegramBriefAiDirectWithAttachment(source) {
-    const fileName = normalizeValue(source && source.label) || 'brief-file';
+    const fileName = (() => {
+      const label = normalizeValue(source && source.label);
+      if (/\.[a-z0-9]{2,8}$/i.test(label)) return label;
+      const sourceUrl = normalizeValue(source && source.url);
+      const urlName = sourceUrl
+        ? normalizeValue(decodeURIComponent(sourceUrl.split('?')[0].split('#')[0].split('/').pop() || ''))
+        : '';
+      if (/\.[a-z0-9]{2,8}$/i.test(urlName)) return urlName;
+      return label || 'brief-file';
+    })();
     let fileForVip = null;
     const fileUrl = normalizeValue(source && source.url);
     if (source && source.fileObject instanceof File) {
@@ -282,7 +291,16 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   async function requestTelegramBriefAiVisionWithAttachment(source) {
-    const fileName = normalizeValue(source && source.label) || 'brief-file';
+    const fileName = (() => {
+      const label = normalizeValue(source && source.label);
+      if (/\.[a-z0-9]{2,8}$/i.test(label)) return label;
+      const sourceUrl = normalizeValue(source && source.url);
+      const urlName = sourceUrl
+        ? normalizeValue(decodeURIComponent(sourceUrl.split('?')[0].split('#')[0].split('/').pop() || ''))
+        : '';
+      if (/\.[a-z0-9]{2,8}$/i.test(urlName)) return urlName;
+      return label || 'brief-file';
+    })();
     let fileForVision = null;
     const fileUrl = normalizeValue(source && source.url);
     if (source && source.fileObject instanceof File) {
@@ -300,7 +318,9 @@ export function createTelegramBriefAi(deps = {}) {
     }
     fileForVision = await convertPdfToImageFileForBrief(fileForVision, fileName);
     const type = String(fileForVision && fileForVision.type || '').toLowerCase();
-    if (!type.startsWith('image/')) {
+    const name = normalizeValue(fileForVision && fileForVision.name).toLowerCase();
+    const isImageByName = /\.(png|jpe?g|webp|gif|bmp)$/i.test(name);
+    if (!type.startsWith('image/') && !isImageByName) {
       throw new Error('Новая логика поддерживает только изображения (PNG/JPG/WEBP) и PDF.');
     }
 

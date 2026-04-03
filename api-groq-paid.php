@@ -297,6 +297,30 @@ function extractPdfTextWithOcr(string $pdfPath): string
     return trim(implode("\n\n", $textParts));
 }
 
+function convertPdfFirstPageToJpegBinary(string $pdfPath): string
+{
+    if (!commandExists('pdftoppm')) {
+        return '';
+    }
+    $tmpBase = tempnam(sys_get_temp_dir(), 'pdfimg_');
+    if ($tmpBase === false) {
+        return '';
+    }
+    @unlink($tmpBase);
+    $jpgPath = $tmpBase . '.jpg';
+    try {
+        $cmd = 'pdftoppm -jpeg -f 1 -singlefile '
+            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpBase);
+        @exec($cmd, $out, $code);
+        if ($code !== 0 || !is_file($jpgPath)) {
+            return '';
+        }
+        return (string)@file_get_contents($jpgPath);
+    } finally {
+        @unlink($jpgPath);
+    }
+}
+
 function extractPdfText(string $pdfPath): array
 {
     $text = extractPdfTextWithPdftotext($pdfPath);
@@ -898,13 +922,21 @@ function handleGenerateImageBriefAction(array $env): void
 
     $mime = detectMime($tmp, (string)($file['client_type'] ?? ''));
     $allowedImageMimes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/bmp'];
-    if (!in_array($mime, $allowedImageMimes, true)) {
-        respond(422, ['ok' => false, 'error' => 'Новая логика принимает только изображения PNG/JPG/WEBP/GIF/BMP.']);
+    $isPdf = $mime === 'application/pdf' || detectFileExtension($name) === 'pdf';
+    if (!in_array($mime, $allowedImageMimes, true) && !$isPdf) {
+        respond(422, ['ok' => false, 'error' => 'Новая логика принимает изображения PNG/JPG/WEBP/GIF/BMP и PDF.']);
     }
 
-    $binary = (string)@file_get_contents($tmp);
+    if ($isPdf) {
+        $binary = convertPdfFirstPageToJpegBinary($tmp);
+        $mime = 'image/jpeg';
+    } else {
+        $binary = (string)@file_get_contents($tmp);
+    }
     if ($binary === '') {
-        respond(422, ['ok' => false, 'error' => 'Не удалось прочитать изображение.']);
+        respond(422, ['ok' => false, 'error' => $isPdf
+            ? 'Не удалось преобразовать PDF в изображение. Проверьте, что в окружении установлен pdftoppm.'
+            : 'Не удалось прочитать изображение.']);
     }
 
     $prompt = trim((string)($_POST['prompt'] ?? 'Что на этом изображении?'));
