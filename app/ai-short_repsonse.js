@@ -128,6 +128,253 @@ export function createTelegramBriefAi(deps = {}) {
     }
   }
 
+  function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Не удалось прочитать текст файла.'));
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  function readBlobAsDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Не удалось преобразовать файл в base64.'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function parsePageSelection(raw, maxPages) {
+    const value = normalizeValue(raw).replace(/\s+/g, '');
+    if (!value) return [];
+    const pages = new Set();
+    value.split(',').forEach((chunk) => {
+      if (!chunk) return;
+      const rangeMatch = chunk.match(/^(\d+)-(\d+)$/);
+      if (rangeMatch) {
+        const start = Math.max(1, Number(rangeMatch[1]));
+        const end = Math.max(start, Number(rangeMatch[2]));
+        for (let page = start; page <= end; page += 1) {
+          if (page <= maxPages) pages.add(page);
+        }
+        return;
+      }
+      const single = Number(chunk);
+      if (Number.isFinite(single) && single >= 1 && single <= maxPages) {
+        pages.add(single);
+      }
+    });
+    return Array.from(pages).slice(0, 3);
+  }
+
+  async function loadBriefScript(url, checkLoaded) {
+    if (checkLoaded()) return;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = url;
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Не удалось загрузить библиотеку: ${url}`));
+      document.head.appendChild(script);
+    });
+    if (!checkLoaded()) {
+      throw new Error(`Библиотека не инициализирована: ${url}`);
+    }
+  }
+
+  async function ensureMammothLoaded() {
+    if (window.mammoth) return window.mammoth;
+    await loadBriefScript('https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js', () => Boolean(window.mammoth));
+    return window.mammoth;
+  }
+
+  async function ensureXlsxLoaded() {
+    if (window.XLSX) return window.XLSX;
+    await loadBriefScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', () => Boolean(window.XLSX));
+    return window.XLSX;
+  }
+
+  async function buildVisionPayloadFromFile(file, onProgress) {
+    if (!(file instanceof File)) {
+      throw new Error('Файл не выбран.');
+    }
+    const mime = String(file.type || '').toLowerCase();
+    const name = String(file.name || 'document').toLowerCase();
+    const isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
+    const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
+    const isText = /\.(txt|json|csv|md)$/i.test(name);
+    const isDocx = /\.docx$/i.test(name);
+    const isXlsx = /\.xlsx$/i.test(name);
+
+    if (isImage) {
+      onProgress('Подготавливаю изображение...', 100);
+      const imageDataUrl = await readBlobAsDataUrl(file);
+      return {
+        kind: 'multimodal',
+        messageText: 'Проанализируй содержимое этого файла',
+        images: [{ dataUrl: imageDataUrl, fileName: file.name || 'image.jpg', mime: mime || 'image/jpeg' }],
+      };
+    }
+
+    if (isPdf) {
+      onProgress('Открываю PDF...', 5);
+      const pdfjsLib = await ensureBriefPdfJsLoaded();
+      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+      }
+      const bytes = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: bytes });
+      const pdf = await loadingTask.promise;
+      const totalPages = Number(pdf.numPages || 0);
+      if (!totalPages) throw new Error('PDF повреждён или пустой.');
+      let pages = Array.from({ length: Math.min(totalPages, 3) }, (_, i) => i + 1);
+      if (totalPages > 3) {
+        const sendFirst = window.confirm(`Найдено ${totalPages} страниц. Отправить первые 3 страницы?`);
+        if (!sendFirst) {
+          const raw = window.prompt('Укажите страницы (пример: 1,3-4). Максимум 3 страницы.', '1-3');
+          const selected = parsePageSelection(raw, totalPages);
+          if (!selected.length) throw new Error('Страницы для отправки не выбраны.');
+          pages = selected;
+        }
+      }
+      const images = [];
+      for (let index = 0; index < pages.length; index += 1) {
+        const pageNumber = pages[index];
+        onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 85));
+        // eslint-disable-next-line no-await-in-loop
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Не удалось инициализировать canvas для PDF.');
+        // eslint-disable-next-line no-await-in-loop
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        // eslint-disable-next-line no-await-in-loop
+        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.9));
+        if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
+        // eslint-disable-next-line no-await-in-loop
+        const dataUrl = await readBlobAsDataUrl(blob);
+        images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
+      }
+      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images, totalPages, selectedPages: pages };
+    }
+
+    if (isText) {
+      onProgress('Читаю текстовый файл...', 100);
+      const text = await readFileAsText(file);
+      return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
+    }
+
+    if (isDocx) {
+      onProgress('Извлекаю текст из DOCX...', 35);
+      const mammoth = await ensureMammothLoaded();
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      return {
+        kind: 'text',
+        extractedText: String(result && result.value || '').trim(),
+        fileName: file.name || 'document.docx',
+        warning: 'Изображения внутри DOCX не анализируются в Vision режиме.',
+      };
+    }
+
+    if (isXlsx) {
+      onProgress('Извлекаю таблицы из XLSX...', 35);
+      const XLSX = await ensureXlsxLoaded();
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const sheetTexts = (workbook && workbook.SheetNames || []).map((sheetName) => {
+        const sheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        return `# Лист: ${sheetName}\n${csv}`;
+      });
+      return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
+    }
+
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+  }
+
+  async function requestTelegramVisionByFile(source, setStatus) {
+    let file = source && source.fileObject instanceof File ? source.fileObject : null;
+    const fileName = normalizeValue(source && source.label) || 'vision-file';
+    const fileUrl = normalizeValue(source && source.url);
+    if (!file) {
+      if (!fileUrl) throw new Error('Не найден файл для Vision режима.');
+      setStatus('Загружаю файл...', 'loading');
+      const response = await fetch(fileUrl, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error(`Не удалось загрузить файл (${response.status}).`);
+      const blob = await response.blob();
+      file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+    }
+
+    const prepared = await buildVisionPayloadFromFile(file, (message) => setStatus(message, 'loading'));
+
+    if (prepared.kind === 'text') {
+      const text = normalizeValue(prepared.extractedText);
+      if (!text) throw new Error('Не удалось извлечь текст из файла.');
+      const request = await postGroqPaidWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('extractedTexts', JSON.stringify([{ name: prepared.fileName || fileName, type: file.type || 'text/plain', text: text.slice(0, 60000) }]));
+        return formData;
+      });
+      const payload = request && request.payload;
+      if (!request.response.ok || !payload || payload.ok !== true) {
+        throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
+      }
+      return {
+        summary: normalizeValue(payload.summary || payload.response),
+        model: payload.model,
+        timeMs: payload.durationMs || payload.timeMs,
+        warning: prepared.warning || '',
+      };
+    }
+
+    const request = await postGroqPaidWithFallback(() => {
+      const formData = new FormData();
+      formData.append('action', 'analyze_paid');
+      formData.append('mode', 'paid');
+      formData.append('vision_mode', '1');
+      formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
+      formData.append('vision_payload', JSON.stringify({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        max_tokens: 1000,
+        temperature: 0.7,
+        messages: [{
+          role: 'user',
+          content: [{ type: 'text', text: prepared.messageText || 'Проанализируй содержимое этого файла' }].concat(
+            (prepared.images || []).map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
+          ),
+        }],
+      }));
+      (prepared.images || []).forEach((item, index) => {
+        const data = String(item.dataUrl || '');
+        const base64 = data.includes(',') ? data.split(',')[1] : data;
+        const mimeType = item.mime || 'image/jpeg';
+        const blob = new Blob([Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0))], { type: mimeType });
+        formData.append('files', blob, item.fileName || `vision-${index + 1}.jpg`);
+      });
+      return formData;
+    });
+    const payload = request && request.payload;
+    if (!request.response.ok || !payload || payload.ok !== true) {
+      throw new Error((payload && payload.error) || 'Ошибка Vision запроса к API.');
+    }
+    return {
+      summary: normalizeValue(payload.response || payload.summary),
+      model: payload.model,
+      timeMs: payload.durationMs || payload.timeMs,
+      warning: '',
+    };
+  }
+
+
   function hasMeaningfulTelegramBriefPayload(payload) {
     if (!payload || typeof payload !== 'object') return false;
     const summary = normalizeValue(payload.summary);
@@ -308,7 +555,8 @@ export function createTelegramBriefAi(deps = {}) {
             <div class="appdosc-brief-ai__title">Кратко ИИ</div>
             <div class="appdosc-brief-ai__sub">Файл → OCR → api-groq-paid.php → краткий вывод</div>
             <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-paid-ai>Платный ИИ</label>
-            <div class="appdosc-brief-ai__hint">1) Включите «Платный ИИ» → 2) Нажмите файл → 3) Получите краткое решение.</div>
+            <label class="appdosc-brief-ai__toggle"><input type="checkbox" data-vision-ai>Vision</label>
+            <div class="appdosc-brief-ai__hint">1) Включите «Платный ИИ» или «Vision» → 2) Нажмите файл → 3) Получите краткое решение.</div>
           </div>
           <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
         </div>
@@ -326,8 +574,18 @@ export function createTelegramBriefAi(deps = {}) {
     const statusNode = modal.querySelector('[data-status]');
     const metaNode = modal.querySelector('[data-meta]');
     const paidCheckbox = modal.querySelector('[data-paid-ai]');
+    const visionCheckbox = modal.querySelector('[data-vision-ai]');
     const sources = [];
     let activeRequestId = 0;
+
+    if (paidCheckbox && visionCheckbox) {
+      paidCheckbox.addEventListener('change', () => {
+        if (paidCheckbox.checked) visionCheckbox.checked = false;
+      });
+      visionCheckbox.addEventListener('change', () => {
+        if (visionCheckbox.checked) paidCheckbox.checked = false;
+      });
+    }
 
     const setStatus = (message, tone = 'idle') => {
       if (!statusNode) return;
@@ -370,25 +628,34 @@ export function createTelegramBriefAi(deps = {}) {
       typeWrap.appendChild(typeNode);
       button.append(titleWrap, typeWrap);
       button.addEventListener('click', async () => {
-        if (!paidCheckbox || !paidCheckbox.checked) {
-          setStatus('Сначала включите галочку «Платный ИИ».', 'error');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">Без режима «Платный ИИ» анализ не запускается.</p>';
+        const isPaidMode = Boolean(paidCheckbox && paidCheckbox.checked);
+        const isVisionMode = Boolean(visionCheckbox && visionCheckbox.checked);
+        if (!isPaidMode && !isVisionMode) {
+          setStatus('Сначала включите «Платный ИИ» или «Vision».', 'error');
+          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">Без выбранного режима анализ не запускается.</p>';
           return;
         }
         const requestId = ++activeRequestId;
         activate(button);
         try {
           button.disabled = true;
-          setStatus(`OCR и платный анализ: ${source.label}`, 'loading');
-          preview.innerHTML = '<p class="appdosc-brief-ai__placeholder">⏳ OCR и отправка в api-groq-paid.php...</p>';
+          const modeLabel = isVisionMode ? 'Vision' : 'Платный ИИ';
+          setStatus(`${modeLabel}: ${source.label}`, 'loading');
+          preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">⏳ ${escapeHtml(modeLabel)}: подготовка и отправка файла...</p>`;
           const startedAt = Date.now();
-          const aiPayload = await requestTelegramBriefAiDirectWithAttachment(source);
+          const aiPayload = isVisionMode
+            ? await requestTelegramVisionByFile(source, setStatus)
+            : await requestTelegramBriefAiDirectWithAttachment(source);
           if (requestId !== activeRequestId) return;
           renderTelegramBriefPreview(preview, aiPayload);
-          setStatus('Готово. Краткий вывод получен через Платный ИИ.', 'success');
+          setStatus(`Готово. Краткий вывод получен через ${isVisionMode ? 'Vision' : 'Платный ИИ'}.`, 'success');
           if (metaNode) {
             const elapsedSec = (Math.max(1, Number(aiPayload && aiPayload.timeMs) || (Date.now() - startedAt)) / 1000).toFixed(1);
-            metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек • Режим: Платный ИИ`;
+            metaNode.textContent = `Модель: ${normalizeValue(aiPayload && aiPayload.model) || '—'} • Ожидание: ${elapsedSec} сек • Режим: ${isVisionMode ? 'Vision' : 'Платный ИИ'}`;
+            const warning = normalizeValue(aiPayload && aiPayload.warning);
+            if (warning) {
+              metaNode.textContent += ` • ${warning}`;
+            }
           }
         } catch (error) {
           if (requestId !== activeRequestId) return;
@@ -407,6 +674,7 @@ export function createTelegramBriefAi(deps = {}) {
     if (!sources.length) {
       list.innerHTML = '<div class="appdosc-empty">Нет файлов для анализа.</div>';
       if (paidCheckbox) paidCheckbox.disabled = true;
+      if (visionCheckbox) visionCheckbox.disabled = true;
       setStatus('Нет файлов для анализа в этой задаче.', 'error');
     }
 
