@@ -253,23 +253,14 @@ export function createTelegramBriefAi(deps = {}) {
       const pdf = await loadingTask.promise;
       const totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
-      let pages = Array.from({ length: Math.min(totalPages, 3) }, (_, i) => i + 1);
-      if (totalPages > 3) {
-        const sendFirst = window.confirm(`Найдено ${totalPages} страниц. Отправить первые 3 страницы?`);
-        if (!sendFirst) {
-          const raw = window.prompt('Укажите страницы (пример: 1,3-4). Максимум 3 страницы.', '1-3');
-          const selected = parsePageSelection(raw, totalPages);
-          if (!selected.length) throw new Error('Страницы для отправки не выбраны.');
-          pages = selected;
-        }
-      }
+      const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
       const images = [];
       for (let index = 0; index < pages.length; index += 1) {
         const pageNumber = pages[index];
-        onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 85));
+        onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 90));
         // eslint-disable-next-line no-await-in-loop
         const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1.5 });
+        const viewport = page.getViewport({ scale: 1.25 });
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.floor(viewport.width));
         canvas.height = Math.max(1, Math.floor(viewport.height));
@@ -278,7 +269,7 @@ export function createTelegramBriefAi(deps = {}) {
         // eslint-disable-next-line no-await-in-loop
         await page.render({ canvasContext: ctx, viewport }).promise;
         // eslint-disable-next-line no-await-in-loop
-        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.9));
+        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.82));
         if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
         // eslint-disable-next-line no-await-in-loop
         const dataUrl = await readBlobAsDataUrl(blob);
