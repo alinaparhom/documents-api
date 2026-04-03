@@ -737,7 +737,122 @@
     return formData;
   }
 
+  async function postGroqPaidVisionBatched(prompt, state, timeoutMs) {
+    var resolved = await resolveVisionAssets(state);
+    var images = Array.isArray(resolved && resolved.images) ? resolved.images : [];
+    if (!images.length) {
+      throw new Error('Vision режим требует изображения или PDF.');
+    }
+    var imageBatches = chunkItems(images, VISION_BATCH_SIZE);
+    var partialAnswers = [];
+
+    async function postVisionFormDataWithFallback(createFormData) {
+      var lastError = null;
+      for (var endpointIndex = 0; endpointIndex < GROQ_PAID_ENDPOINTS.length; endpointIndex += 1) {
+        var endpoint = GROQ_PAID_ENDPOINTS[endpointIndex];
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          var response = await fetchWithTimeout(endpoint, {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: createFormData()
+          }, timeoutMs);
+          if (response.status === 404 || response.status === 405) {
+            continue;
+          }
+          // eslint-disable-next-line no-await-in-loop
+          var payload = await response.clone().json().catch(function () { return null; });
+          var serverError = String(payload && payload.error ? payload.error : '');
+          var shouldTryNext = (response.status >= 500 || /E208|internal processing error/i.test(serverError))
+            && endpointIndex < GROQ_PAID_ENDPOINTS.length - 1;
+          if (shouldTryNext) {
+            continue;
+          }
+          return { response: response, payload: payload };
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError || new Error('Не удалось отправить Vision запрос.');
+    }
+
+    for (var batchIndex = 0; batchIndex < imageBatches.length; batchIndex += 1) {
+      var currentBatch = imageBatches[batchIndex];
+      // eslint-disable-next-line no-await-in-loop
+      var batchResult = await postVisionFormDataWithFallback(function () {
+        var formData = new FormData();
+        formData.append('action', 'analyze_paid');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', String(prompt || 'Проанализируй содержимое файла'));
+        if (Array.isArray(resolved.ocrTexts) && resolved.ocrTexts.length && batchIndex === 0) {
+          formData.append('extractedTexts', JSON.stringify(resolved.ocrTexts));
+        }
+        formData.append('vision_payload', JSON.stringify({
+          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          max_tokens: 1200,
+          temperature: 0.6,
+          messages: [{
+            role: 'user',
+            content: [{ type: 'text', text: (prompt || 'Проанализируй содержимое файла') + '\n\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }]
+              .concat(currentBatch.map(function (item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; }))
+          }]
+        }));
+        currentBatch.forEach(function (item, idx) {
+          var data = String(item.dataUrl || '');
+          var base64 = data.indexOf(',') >= 0 ? data.split(',')[1] : '';
+          if (!base64) return;
+          var mimeType = item.mime || 'image/jpeg';
+          var blob = new Blob([Uint8Array.from(atob(base64), function (char) { return char.charCodeAt(0); })], { type: mimeType });
+          formData.append('files', blob, item.fileName || ('vision-' + (batchIndex + 1) + '-' + (idx + 1) + '.jpg'));
+        });
+        return formData;
+      });
+      var batchPayload = batchResult && batchResult.payload;
+      if (!batchResult || !batchResult.response || !batchResult.response.ok || !batchPayload || batchPayload.ok !== true) {
+        throw new Error((batchPayload && batchPayload.error) || ('Ошибка Vision запроса (блок ' + (batchIndex + 1) + ')'));
+      }
+      partialAnswers.push(String(batchPayload.response || batchPayload.summary || '').trim());
+    }
+
+    var finalSummary = partialAnswers.join('\n\n').trim();
+    if (partialAnswers.length > 1) {
+      var mergeResult = await postVisionFormDataWithFallback(function () {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('extractedTexts', JSON.stringify([{
+          name: 'vision-batches.txt',
+          type: 'text/plain',
+          text: partialAnswers.map(function (item, idx) { return 'Блок ' + (idx + 1) + '/' + partialAnswers.length + ':\n' + item; }).join('\n\n')
+        }]));
+        return formData;
+      });
+      var mergePayload = mergeResult && mergeResult.payload;
+      if (mergeResult && mergeResult.response && mergeResult.response.ok && mergePayload && mergePayload.ok === true) {
+        finalSummary = String(mergePayload.summary || mergePayload.response || '').trim() || finalSummary;
+      }
+    }
+    if (!finalSummary) {
+      throw new Error('Vision не вернул итоговый текст.');
+    }
+    return new Response(JSON.stringify({
+      ok: true,
+      response: finalSummary,
+      mode: 'vision',
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      tokensUsed: 0
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   async function postGroqPaidWithFallback(prompt, state, config, timeoutMs) {
+    if (state && state.visionMode) {
+      return postGroqPaidVisionBatched(prompt, state, timeoutMs);
+    }
     var lastError = null;
     for (var i = 0; i < GROQ_PAID_ENDPOINTS.length; i += 1) {
       var endpoint = GROQ_PAID_ENDPOINTS[i];

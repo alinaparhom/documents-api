@@ -358,6 +358,16 @@
     });
   }
 
+  function chunkItems(items, size) {
+    const normalized = Array.isArray(items) ? items : [];
+    const chunkSize = Math.max(1, Number(size) || 1);
+    const chunks = [];
+    for (let index = 0; index < normalized.length; index += chunkSize) {
+      chunks.push(normalized.slice(index, index + chunkSize));
+    }
+    return chunks;
+  }
+
   async function buildVisionPayloadFromFile(file, onProgress) {
     if (!(file instanceof File)) {
       throw new Error('Файл не выбран.');
@@ -484,41 +494,75 @@
       throw new Error('Vision режим поддерживает изображения и PDF.');
     }
 
-    const batches = [];
-    for (let i = 0; i < images.length; i += VISION_BATCH_SIZE) {
-      batches.push(images.slice(i, i + VISION_BATCH_SIZE));
-    }
-    const formData = new FormData();
-    formData.append('action', 'analyze_paid');
-    formData.append('mode', 'paid');
-    formData.append('vision_mode', '1');
-    formData.append('prompt', prompt);
-    if (extractedTexts.length) formData.append('extractedTexts', JSON.stringify(extractedTexts));
-    formData.append('vision_payload', JSON.stringify({
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      max_tokens: 1200,
-      temperature: 0.6,
-      messages: batches.map((batch, idx) => ({
-        role: 'user',
-        content: [{ type: 'text', text: `${prompt}\n\nБлок ${idx + 1}/${batches.length}.` }].concat(batch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))),
-      })),
-    }));
-    images.forEach((item, idx) => {
-      const raw = String(item.dataUrl || '');
-      const base64 = raw.includes(',') ? raw.split(',')[1] : '';
-      if (!base64) return;
-      const binary = atob(base64);
-      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-      formData.append('files', new Blob([bytes], { type: item.mime || 'image/jpeg' }), item.fileName || `vision-${idx + 1}.jpg`);
-    });
+    const batches = chunkItems(images, VISION_BATCH_SIZE);
+    const partialAnswers = [];
 
-    const request = await postGroqResponseWithFallback(() => formData);
-    const response = request && request.response;
-    const result = request && request.payload;
-    if (!response || !response.ok || !result || result.ok !== true) {
-      throw new Error((result && result.error) || 'Vision режим временно недоступен.');
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const currentBatch = batches[batchIndex];
+      onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
+      // eslint-disable-next-line no-await-in-loop
+      const request = await postGroqResponseWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'analyze_paid');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        if (extractedTexts.length && batchIndex === 0) {
+          formData.append('extractedTexts', JSON.stringify(extractedTexts));
+        }
+        formData.append('vision_payload', JSON.stringify({
+          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          max_tokens: 1200,
+          temperature: 0.6,
+          messages: [{
+            role: 'user',
+            content: [{ type: 'text', text: `${prompt}\n\nБлок ${batchIndex + 1}/${batches.length}.` }].concat(
+              currentBatch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
+            ),
+          }],
+        }));
+        currentBatch.forEach((item, idx) => {
+          const raw = String(item.dataUrl || '');
+          const base64 = raw.includes(',') ? raw.split(',')[1] : '';
+          if (!base64) return;
+          const binary = atob(base64);
+          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+          formData.append('files', new Blob([bytes], { type: item.mime || 'image/jpeg' }), item.fileName || `vision-${batchIndex + 1}-${idx + 1}.jpg`);
+        });
+        return formData;
+      });
+      const response = request && request.response;
+      const result = request && request.payload;
+      if (!response || !response.ok || !result || result.ok !== true) {
+        throw new Error((result && result.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
+      }
+      partialAnswers.push(normalize(result.response || result.summary));
     }
-    return normalize(result.response || result.summary);
+
+    let finalSummary = partialAnswers.join('\n\n').trim();
+    if (partialAnswers.length > 1) {
+      onStatus('Vision: объединяю результаты всех блоков...', 'loading');
+      const mergeRequest = await postGroqResponseWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('extractedTexts', JSON.stringify([{
+          name: 'vision-batches.txt',
+          type: 'text/plain',
+          text: partialAnswers.map((item, idx) => `Блок ${idx + 1}/${partialAnswers.length}:\n${item}`).join('\n\n'),
+        }]));
+        return formData;
+      });
+      const mergePayload = mergeRequest && mergeRequest.payload;
+      if (mergeRequest && mergeRequest.response && mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
+        finalSummary = normalize(mergePayload.summary || mergePayload.response) || finalSummary;
+      }
+    }
+    if (!finalSummary) {
+      throw new Error('Vision не вернул итоговый текст.');
+    }
+    return finalSummary;
   }
 
   async function loadSelectedFileAsBlob(file) {
