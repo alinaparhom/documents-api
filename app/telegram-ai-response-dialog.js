@@ -3,6 +3,8 @@
 
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+  const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
+  const REQUEST_TIMEOUT_MS = 45000;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -23,6 +25,25 @@
     return Array.from(new Set(endpoints.filter(Boolean)));
   }
 
+  function getGroqResponseEndpoints() {
+    const configured = normalize(globalScope && (globalScope.GROQ_PAID_API_URL || globalScope.TELEGRAM_GROQ_API_URL));
+    const endpoints = configured ? [configured, ...GROQ_RESPONSE_FALLBACK_ENDPOINTS] : GROQ_RESPONSE_FALLBACK_ENDPOINTS.slice();
+    return Array.from(new Set(endpoints.filter(Boolean)));
+  }
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    if (typeof AbortController === 'undefined') {
+      return fetch(url, options);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function postDocsAiWithFallback(createFormData) {
     const endpoints = getDocsAiEndpoints();
     let lastResult = null;
@@ -31,9 +52,22 @@
       let response = null;
       let payload = null;
       try {
-        response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+        response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          body: createFormData(),
+        });
         payload = await response.json().catch(() => null);
       } catch (error) {
+        if (error && error.name === 'AbortError') {
+          lastResult = {
+            endpoint,
+            error: new Error('Превышено время ожидания OCR/ИИ. Попробуйте ещё раз.'),
+            response,
+            payload,
+          };
+          continue;
+        }
         lastResult = { endpoint, error, response, payload };
         continue;
       }
@@ -46,6 +80,44 @@
     }
     if (lastResult) return lastResult;
     throw new Error('OCR временно недоступен.');
+  }
+
+  async function postGroqResponseWithFallback(createFormData) {
+    const endpoints = getGroqResponseEndpoints();
+    let lastResult = null;
+    for (let index = 0; index < endpoints.length; index += 1) {
+      const endpoint = endpoints[index];
+      let response = null;
+      let payload = null;
+      try {
+        response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          body: createFormData(),
+        });
+        payload = await response.json().catch(() => null);
+      } catch (error) {
+        if (error && error.name === 'AbortError') {
+          lastResult = {
+            endpoint,
+            error: new Error('Превышено время ожидания ответа ИИ. Попробуйте ещё раз.'),
+            response,
+            payload,
+          };
+          continue;
+        }
+        lastResult = { endpoint, error, response, payload };
+        continue;
+      }
+      const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+      if (shouldTryNextEndpoint && index < endpoints.length - 1) {
+        lastResult = { endpoint, response, payload };
+        continue;
+      }
+      return { endpoint, response, payload };
+    }
+    if (lastResult) return lastResult;
+    throw new Error('Сервис ответа ИИ временно недоступен.');
   }
 
   function buildOcrFileName(fileOrBlob, fileName) {
@@ -113,6 +185,9 @@
     });
     const response = request && request.response;
     const payload = request && request.payload;
+    if (!response && request && request.error) {
+      throw request.error;
+    }
     if (!response || !response.ok || !payload || payload.ok !== true) {
       throw new Error((payload && payload.error) || 'OCR временно недоступен');
     }
@@ -137,6 +212,9 @@
     });
     const response = request && request.response;
     const payload = request && request.payload;
+    if (!response && request && request.error) {
+      throw request.error;
+    }
     if (!response || !response.ok || !payload || payload.ok !== true) {
       throw new Error((payload && payload.error) || 'OCR временно недоступен');
     }
@@ -148,22 +226,26 @@
   }
 
   async function requestTelegramAiResponse(payload = {}) {
-    const request = await postDocsAiWithFallback(() => {
+    const defaultPrompt = 'Проанализируй текст из выбранных файлов и дай готовое решение по задаче с четкими шагами.';
+    const request = await postGroqResponseWithFallback(() => {
       const formData = new FormData();
-      formData.append('action', 'ai_response_analyze');
-      formData.append('prompt', normalize(payload.prompt) || 'Сделай краткий вывод и решение по выбранным файлам.');
+      formData.append('action', 'generate_response');
+      formData.append('prompt', normalize(payload.prompt) || defaultPrompt);
       formData.append('documentTitle', normalize(payload.documentTitle) || 'Задача Telegram');
-      formData.append('context', JSON.stringify(payload.context || {}));
+      formData.append('context', JSON.stringify({ ...(payload.context || {}), responseMode: 'full_response' }));
       formData.append('extractedTexts', JSON.stringify(Array.isArray(payload.extractedTexts) ? payload.extractedTexts : []));
       return formData;
     });
 
     const response = request && request.response;
     const result = request && request.payload;
+    if (!response && request && request.error) {
+      throw request.error;
+    }
     if (!response || !response.ok || !result || result.ok !== true) {
       throw new Error((result && result.error) || 'Не удалось получить ответ ИИ');
     }
-    const answer = normalize(result.response || result.analysis || result.message);
+    const answer = normalize(result.response || result.message);
     if (!answer) {
       throw new Error('ИИ вернул пустой ответ');
     }
@@ -183,7 +265,7 @@
       const url = candidates[index];
       let response = null;
       try {
-        response = await fetch(url, { credentials: 'include', cache: 'no-store' });
+        response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, 25000);
       } catch (error) {
         continue;
       }
@@ -293,12 +375,12 @@
           <button type="button" class="tg-ai-chat__close" data-close>✕</button>
         </div>
         <div class="tg-ai-chat__messages" data-messages>
-          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Отметьте файлы внизу и напишите вопрос.</div>
+          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите файлы и отправьте запрос — подготовлю готовое решение по документам.</div>
         </div>
         <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
-          <textarea class="tg-ai-chat__input" data-input placeholder="Например: сделай краткий вывод по выбранным файлам"></textarea>
+          <textarea class="tg-ai-chat__input" data-input placeholder="Например: реши задачу по выбранным файлам"></textarea>
           <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
         </div>
         <div class="tg-ai-chat__files" data-files hidden>
@@ -355,7 +437,7 @@
 
       sendButton.disabled = true;
       meta.innerHTML = '';
-      createBubble(messages, prompt || 'Сделай краткий вывод и решение по выбранным файлам.', 'user');
+      createBubble(messages, prompt || 'Реши задачу по выбранным файлам и дай готовый ответ.', 'user');
       status.textContent = 'Готовим файлы...';
       const startedAt = Date.now();
       const loadingBubble = createLoadingBubble(messages);
@@ -413,6 +495,7 @@
 
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
+          <span class="tg-ai-chat__chip">Режим: generate_response</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: ${extractedTexts.length}</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
