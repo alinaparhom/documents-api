@@ -17,28 +17,25 @@
     <link rel="preload" href="/shrift/RobotoFlex.ttf" as="font" type="font/ttf" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script>
-      (async function resetTelegramRuntimeCache() {
-        const url = new URL(window.location.href);
-        if (url.searchParams.has('_tgcache_reset')) {
+      (function forceFreshLaunchUrl() {
+        const now = Date.now();
+        const storageKey = '__tg_last_boot_ts__';
+        let lastBootTs = 0;
+
+        try {
+          lastBootTs = Number(sessionStorage.getItem(storageKey) || '0');
+          sessionStorage.setItem(storageKey, String(now));
+        } catch (_) {
+          lastBootTs = 0;
+        }
+
+        if (now - lastBootTs < 5000 && lastBootTs > 0) {
           return;
         }
 
-        try {
-          if ('caches' in window) {
-            const cacheKeys = await window.caches.keys();
-            await Promise.all(cacheKeys.map((key) => window.caches.delete(key)));
-          }
-        } catch (_) {}
-
-        try {
-          if ('serviceWorker' in navigator) {
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            await Promise.all(registrations.map((registration) => registration.unregister()));
-          }
-        } catch (_) {}
-
-        url.searchParams.set('_tgcache_reset', '1');
-        url.searchParams.set('_tgv', Date.now().toString(36));
+        const url = new URL(window.location.href);
+        url.searchParams.set('_tgv', now.toString(36));
+        url.searchParams.set('_tgopen', now.toString(36));
         window.location.replace(url.toString());
       })();
     </script>
