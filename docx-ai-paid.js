@@ -1,5 +1,11 @@
 (function() {
   var VISION_BATCH_SIZE = 5;
+  var VISION_QUALITY_DIRECTIVE = [
+    'Сформируй сильный итоговый ответ по задаче пользователя, а не пересказ документа.',
+    'Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".',
+    'Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.',
+    'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.'
+  ].join('\n');
   var briefPdfJsLoader = null;
   var SYSTEM_TONE_PROMPTS = {
     neutral: {
@@ -385,7 +391,7 @@
 
   function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus) {
     var styleMeta = resolveVipStyle(selectedStyle);
-    var preparedPrompt = [promptText, styleMeta && styleMeta.prompt ? styleMeta.prompt : '', 'Верни готовый ответ на письмо. Не пиши анализ.']
+    var preparedPrompt = [promptText, styleMeta && styleMeta.prompt ? styleMeta.prompt : '', VISION_QUALITY_DIRECTIVE, 'Верни готовый ответ на письмо. Не пиши анализ.']
       .filter(Boolean)
       .join('\n\n');
     var images = [];
@@ -464,9 +470,10 @@
         if (updateStatus) updateStatus('Vision: объединяю результаты...');
         return postWithFallback(function() {
           var formData = new FormData();
-          formData.append('action', 'generate_summary');
+          formData.append('action', 'analyze_paid');
           formData.append('mode', 'paid');
           formData.append('vision_mode', '1');
+          formData.append('prompt', [preparedPrompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
           formData.append('extractedTexts', JSON.stringify([{
             name: 'vision-batches.txt',
             type: 'text/plain',
@@ -475,7 +482,7 @@
           return formData;
         }, 0).then(function(result) {
           if (result.response.ok && result.payload && result.payload.ok === true) {
-            finalText = String(result.payload.summary || result.payload.response || '').trim() || finalText;
+            finalText = String(result.payload.response || result.payload.summary || '').trim() || finalText;
           }
           return { ok: true, response: finalText, mode: 'vision', model: result.payload && result.payload.model ? result.payload.model : '' };
         });
