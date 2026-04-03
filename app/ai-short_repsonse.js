@@ -2,6 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+const TELEGRAM_BRIEF_MAX_EXTRACT_CHARS = 500000;
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -94,6 +95,31 @@ export function createTelegramBriefAi(deps = {}) {
       document.head.appendChild(script);
     });
     return briefPdfJsLoader;
+  }
+
+  function getBriefExtension(fileName) {
+    const value = String(fileName || '').trim().toLowerCase();
+    const match = value.match(/\.([a-z0-9]{1,10})$/i);
+    return match ? match[1] : '';
+  }
+
+  function isBriefTextLike(fileOrBlob, fallbackName = '') {
+    const mime = String(fileOrBlob && fileOrBlob.type || '').trim().toLowerCase();
+    const ext = getBriefExtension(fallbackName || (fileOrBlob && fileOrBlob.name) || '');
+    if (mime.includes('text/')) return true;
+    if (mime.includes('json') || mime.includes('xml') || mime.includes('csv')) return true;
+    return ['txt', 'md', 'csv', 'json', 'xml', 'log', 'rtf', 'html', 'htm'].includes(ext);
+  }
+
+  async function extractBriefTextWithoutOcr(fileOrBlob, fallbackName = '') {
+    if (!fileOrBlob || typeof fileOrBlob.text !== 'function') return '';
+    if (!isBriefTextLike(fileOrBlob, fallbackName)) return '';
+    try {
+      const text = await fileOrBlob.text();
+      return String(text || '').slice(0, TELEGRAM_BRIEF_MAX_EXTRACT_CHARS).trim();
+    } catch (_) {
+      return '';
+    }
   }
 
   async function convertPdfToImageFileForBrief(file, fallbackName) {
@@ -251,7 +277,8 @@ export function createTelegramBriefAi(deps = {}) {
       }
     }
     const extractedText = fileForVip
-      ? await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName)
+      ? (await extractBriefTextWithoutOcr(fileForVip, fileForVip.name || fileName)
+        || await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName))
       : await requestTelegramOcrByUrl(fileUrl);
     if (!String(extractedText || '').trim()) {
       throw new Error('OCR не вернул текст для выбранного файла.');

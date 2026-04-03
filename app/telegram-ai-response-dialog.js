@@ -5,6 +5,7 @@
   const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
+  const MAX_EXTRACT_CHARS = 500000;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -173,6 +174,31 @@
       }
     });
     return Array.from(new Set(candidates.filter(Boolean)));
+  }
+
+  function getFileExtension(fileName) {
+    const value = normalize(fileName).toLowerCase();
+    const match = value.match(/\.([a-z0-9]{1,10})$/i);
+    return match ? match[1] : '';
+  }
+
+  function isTextLikeFile(fileOrBlob, fallbackName = '') {
+    const mime = normalize(fileOrBlob && fileOrBlob.type).toLowerCase();
+    const ext = getFileExtension(fallbackName || (fileOrBlob && fileOrBlob.name) || '');
+    if (mime.includes('text/')) return true;
+    if (mime.includes('json') || mime.includes('xml') || mime.includes('csv')) return true;
+    return ['txt', 'md', 'csv', 'json', 'xml', 'log', 'rtf', 'html', 'htm'].includes(ext);
+  }
+
+  async function extractTextWithoutOcr(fileOrBlob, fallbackName = '') {
+    if (!fileOrBlob || typeof fileOrBlob.text !== 'function') return '';
+    if (!isTextLikeFile(fileOrBlob, fallbackName)) return '';
+    try {
+      const text = await fileOrBlob.text();
+      return String(text || '').slice(0, MAX_EXTRACT_CHARS).trim();
+    } catch (_) {
+      return '';
+    }
   }
 
   async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
@@ -451,7 +477,10 @@
           let extractedText = '';
           try {
             const fileBlob = await loadSelectedFileAsBlob(currentFile);
-            extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
+            extractedText = await extractTextWithoutOcr(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
+            if (!normalize(extractedText)) {
+              extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
+            }
           } catch (blobError) {
             const fallbackUrl = buildFileUrlCandidates(currentFile)[0] || '';
             if (!fallbackUrl) {
