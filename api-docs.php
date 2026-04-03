@@ -408,6 +408,39 @@ function extractDocxText(string $tmpFile): string
     return trim(implode("\n\n", $parts));
 }
 
+function shellCommandExists(string $command): bool
+{
+    $output = [];
+    $code = 1;
+    @exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $output, $code);
+    return $code === 0 && !empty($output);
+}
+
+function extractPdfTextFast(string $pdfPath): string
+{
+    if ($pdfPath === '' || !is_file($pdfPath) || !shellCommandExists('pdftotext')) {
+        return '';
+    }
+
+    $tmpTextPath = tempnam(sys_get_temp_dir(), 'ocr_pdftxt_');
+    if ($tmpTextPath === false) {
+        return '';
+    }
+
+    try {
+        $cmd = 'pdftotext -enc UTF-8 -f 1 -l 25 '
+            . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tmpTextPath) . ' 2>/dev/null';
+        @exec($cmd, $out, $code);
+        if ($code !== 0 || !is_file($tmpTextPath)) {
+            return '';
+        }
+        $raw = @file_get_contents($tmpTextPath);
+        return is_string($raw) ? trim($raw) : '';
+    } finally {
+        @unlink($tmpTextPath);
+    }
+}
+
 function extractTextWithoutOcr(array $file): string
 {
     $tmpFile = (string)($file['tmp_name'] ?? '');
@@ -426,6 +459,9 @@ function extractTextWithoutOcr(array $file): string
             return '';
         }
         return trim((string)$raw);
+    }
+    if ($extension === 'pdf') {
+        return extractPdfTextFast($tmpFile);
     }
 
     return '';
@@ -446,6 +482,7 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     } else {
         $tmpName = (string)($file['tmp_name'] ?? '');
         if ($tmpName === '' || !is_file($tmpName)) {
+            curl_close($ch);
             return ['status' => 400, 'body' => false, 'curl_error' => 'Файл для OCR не найден'];
         }
         $mime = detectMimeType($file);
@@ -454,7 +491,6 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
         $postFields['file'] = curl_file_create($tmpName, $mime, $name);
         if ($extension !== '') {
             $postFields['filetype'] = strtoupper($extension);
-            $postFields['file_type'] = strtoupper($extension);
         }
     }
 
@@ -465,7 +501,9 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
             'apikey: ' . $apiKey,
         ],
         CURLOPT_POSTFIELDS => $postFields,
-        CURLOPT_TIMEOUT => 120,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_NOSIGNAL => 1,
     ]);
 
     $responseBody = curl_exec($ch);
@@ -474,6 +512,127 @@ function performOcrRequest(string $endpoint, string $apiKey, array $file, string
     curl_close($ch);
 
     return ['status' => $statusCode, 'body' => $responseBody, 'curl_error' => $curlError];
+}
+
+function guessExtensionFromUrl(string $url): string
+{
+    $path = (string)parse_url($url, PHP_URL_PATH);
+    if ($path === '') {
+        return '';
+    }
+    $basename = strtolower((string)pathinfo($path, PATHINFO_BASENAME));
+    if ($basename === '' || !str_contains($basename, '.')) {
+        return '';
+    }
+    $extension = strtolower((string)pathinfo($basename, PATHINFO_EXTENSION));
+    if ($extension === '') {
+        return '';
+    }
+    if ($extension === 'jpeg') {
+        return 'jpg';
+    }
+    return preg_replace('/[^a-z0-9]+/i', '', $extension) ?: '';
+}
+
+function downloadRemoteFileForOcr(string $url): ?array
+{
+    $normalizedUrl = trim($url);
+    if ($normalizedUrl === '' || !filter_var($normalizedUrl, FILTER_VALIDATE_URL)) {
+        return null;
+    }
+
+    $parts = parse_url($normalizedUrl);
+    $scheme = strtolower((string)($parts['scheme'] ?? ''));
+    if (!in_array($scheme, ['http', 'https'], true)) {
+        return null;
+    }
+
+    $tmpFile = tempnam(sys_get_temp_dir(), 'ocr_url_');
+    if (!is_string($tmpFile) || $tmpFile === '') {
+        return null;
+    }
+
+    $fp = @fopen($tmpFile, 'wb');
+    if ($fp === false) {
+        @unlink($tmpFile);
+        return null;
+    }
+
+    $maxBytes = 50 * 1024 * 1024;
+    $writtenBytes = 0;
+    $contentType = '';
+    $httpStatus = 0;
+    $downloadFailed = false;
+    $sizeExceeded = false;
+    $curlError = '';
+
+    $ch = curl_init($normalizedUrl);
+    if ($ch === false) {
+        @fclose($fp);
+        @unlink($tmpFile);
+        return null;
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 4,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 45,
+        CURLOPT_FILE => $fp,
+        CURLOPT_HEADERFUNCTION => static function ($curl, string $headerLine) use (&$contentType): int {
+            $length = strlen($headerLine);
+            $parts = explode(':', $headerLine, 2);
+            if (count($parts) === 2 && strtolower(trim($parts[0])) === 'content-type') {
+                $contentType = strtolower(trim((string)$parts[1]));
+            }
+            return $length;
+        },
+        CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use ($fp, &$writtenBytes, $maxBytes, &$sizeExceeded): int {
+            $chunkLength = strlen($chunk);
+            $writtenBytes += $chunkLength;
+            if ($writtenBytes > $maxBytes) {
+                $sizeExceeded = true;
+                return 0;
+            }
+            $written = @fwrite($fp, $chunk);
+            if ($written === false) {
+                return 0;
+            }
+            return $written;
+        },
+    ]);
+
+    $execResult = curl_exec($ch);
+    $httpStatus = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = (string)curl_error($ch);
+    curl_close($ch);
+    @fclose($fp);
+
+    if ($execResult === false || $httpStatus < 200 || $httpStatus >= 300) {
+        $downloadFailed = true;
+    }
+
+    if ($downloadFailed || $sizeExceeded || !is_file($tmpFile) || filesize($tmpFile) <= 0) {
+        @unlink($tmpFile);
+        return null;
+    }
+
+    $extension = extensionFromMimeType($contentType);
+    if ($extension === '') {
+        $extension = guessExtensionFromUrl($normalizedUrl);
+    }
+    $name = ensureFileNameWithExtension('remote-ocr-file', $extension);
+    $mime = $contentType !== '' ? trim(explode(';', $contentType)[0]) : 'application/octet-stream';
+
+    return [
+        'name' => $name,
+        'tmp_name' => $tmpFile,
+        'type' => $mime !== '' ? $mime : 'application/octet-stream',
+        'size' => (int)filesize($tmpFile),
+        '_from_remote_url' => true,
+        '_source_url' => $normalizedUrl,
+        '_download_error' => $curlError,
+    ];
 }
 
 function textFromMixed(mixed $value): string
@@ -1333,23 +1492,53 @@ if ($action === 'ocr_extract') {
         jsonResponse(500, ['ok' => false, 'error' => 'OCR_API_KEY не найден в .env']);
     }
 
-    $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $files ? $files[0] : [], $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrFileUrl);
+    $ocrUploadFile = $files ? $files[0] : [];
+    $ocrUrlUsed = '';
+    if (!$ocrUploadFile && $ocrFileUrl !== '') {
+        $downloadedFile = downloadRemoteFileForOcr($ocrFileUrl);
+        if (is_array($downloadedFile)) {
+            $ocrUploadFile = $downloadedFile;
+            logApiDocs('info', 'OCR file_url downloaded and sent as multipart file', [
+                'url' => $ocrFileUrl,
+                'size' => (int)($downloadedFile['size'] ?? 0),
+                'name' => (string)($downloadedFile['name'] ?? ''),
+            ]);
+        } else {
+            $ocrUrlUsed = $ocrFileUrl;
+            logApiDocs('warn', 'OCR file_url download failed, fallback to OCR url mode', ['url' => $ocrFileUrl]);
+        }
+    }
+
+    $cleanupRemoteOcrTemp = static function () use ($ocrUploadFile): void {
+        if (!is_array($ocrUploadFile) || (($ocrUploadFile['_from_remote_url'] ?? false) !== true)) {
+            return;
+        }
+        $tmpRemoteFile = (string)($ocrUploadFile['tmp_name'] ?? '');
+        if ($tmpRemoteFile !== '') {
+            @unlink($tmpRemoteFile);
+        }
+    };
+
+    $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $ocrUploadFile, $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrUrlUsed !== '' ? $ocrUrlUsed : null);
     $ocrResponseBody = $ocrResult['body'];
     $ocrCurlError = (string)$ocrResult['curl_error'];
     $ocrStatusCode = (int)$ocrResult['status'];
 
     if ($ocrResponseBody === false) {
+        $cleanupRemoteOcrTemp();
         logApiDocs('error', 'OCR request failed', ['curlError' => $ocrCurlError]);
         jsonResponse(502, ['ok' => false, 'error' => 'Ошибка запроса к OCR API: ' . $ocrCurlError]);
     }
 
     $ocrJson = json_decode((string)$ocrResponseBody, true);
     if (!is_array($ocrJson)) {
+        $cleanupRemoteOcrTemp();
         logApiDocs('error', 'OCR API returned non-JSON', ['response' => mb_substr((string)$ocrResponseBody, 0, 500)]);
         jsonResponse(502, ['ok' => false, 'error' => 'Некорректный ответ OCR API']);
     }
 
     if ($ocrStatusCode >= 400) {
+        $cleanupRemoteOcrTemp();
         $message = textFromMixed($ocrJson['ErrorMessage'] ?? '');
         if ($message === '') {
             $message = 'OCR API error';
@@ -1359,6 +1548,7 @@ if ($action === 'ocr_extract') {
 
     $hasErrorOnProcessing = isset($ocrJson['IsErroredOnProcessing']) && $ocrJson['IsErroredOnProcessing'] === true;
     if ($hasErrorOnProcessing) {
+        $cleanupRemoteOcrTemp();
         $errorMessage = textFromMixed($ocrJson['ErrorMessage'] ?? '');
         jsonResponse(400, ['ok' => false, 'error' => $errorMessage !== '' ? $errorMessage : 'OCR не смог обработать файл']);
     }
@@ -1375,6 +1565,7 @@ if ($action === 'ocr_extract') {
     }
 
     $ocrText = trim(implode("\n\n", $parts));
+    $cleanupRemoteOcrTemp();
     jsonResponse(200, [
         'ok' => true,
         'text' => $ocrText,

@@ -1944,6 +1944,10 @@
       '.documents-brief-item.is-active{background:linear-gradient(135deg, rgba(239,246,255,0.96), rgba(255,255,255,0.98));border-color:rgba(37,99,235,0.52);}' +
       '.documents-brief-preview{border:1px solid rgba(203,213,225,0.9);border-radius:18px;background:rgba(255,255,255,0.98);padding:16px;font-size:13px;line-height:1.58;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto;min-height:0;box-shadow:inset 0 1px 0 rgba(255,255,255,0.75), 0 12px 26px rgba(15,23,42,0.06);}' +
       '.documents-brief-preview.is-loading{color:#2563eb;}' +
+      '.documents-conclusion-meta{padding:0 14px 8px;font-size:12px;color:#64748b;}' +
+      '.documents-conclusion-actions{display:flex;gap:8px;padding:0 14px 12px;}' +
+      '.documents-conclusion-actions .documents-button{flex:1 1 auto;}' +
+      '.documents-conclusion-preview{font-size:12px;line-height:1.55;}' +
       '@media (max-width: 768px){' +
       '.documents-responses-modal{padding:8px;align-items:center;}' +
       '.documents-responses-panel{width:100%;max-height:calc(100vh - 16px);border-radius:18px;}' +
@@ -1959,6 +1963,7 @@
       '.documents-brief-body{grid-template-columns:1fr;padding:12px;}' +
       '.documents-brief-item{padding:10px 11px;}' +
       '.documents-brief-item-name{font-size:12px;}' +
+      '.documents-conclusion-actions{padding:0 12px 10px;}' +
       '}';
     document.head.appendChild(style);
   }
@@ -2565,6 +2570,27 @@
   }
 
   function openAiBriefSummaryModal(config) {
+    var options = config && typeof config === 'object' ? config : {};
+    var openFromModule = window.openDocumentsAiBriefSummaryModal;
+    if (typeof openFromModule === 'function') {
+      openFromModule(options);
+      return;
+    }
+    ensureAiResponseModalScript()
+      .then(function() {
+        if (typeof window.openDocumentsAiBriefSummaryModal !== 'function') {
+          throw new Error('Модуль «Кратко ИИ» не инициализирован.');
+        }
+        window.openDocumentsAiBriefSummaryModal(options);
+      })
+      .catch(function(error) {
+        var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : showMessage;
+        showStatusMessage('error', error && error.message ? error.message : 'Не удалось открыть «Кратко ИИ».');
+      });
+  }
+
+
+  function openAiConclusionModal(config) {
     ensureResponsesStyle();
     var options = config && typeof config === 'object' ? config : {};
     var linkedFiles = Array.isArray(options.linkedFiles) ? options.linkedFiles : [];
@@ -2574,25 +2600,22 @@
     var panel = createElement('div', 'documents-brief-panel');
     var header = createElement('div', 'documents-brief-header');
     var titleWrap = createElement('div', '');
-    titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл, включите «Платный ИИ», запустите OCR и получите краткий вывод.'));
-    var paidToggleWrap = createElement('label', 'documents-brief-toggle');
-    var paidToggle = document.createElement('input');
-    paidToggle.type = 'checkbox';
-    paidToggle.setAttribute('data-paid-ai', '1');
-    paidToggleWrap.appendChild(paidToggle);
-    paidToggleWrap.appendChild(document.createTextNode('Платный ИИ'));
-    titleWrap.appendChild(paidToggleWrap);
-    titleWrap.appendChild(createElement('div', 'documents-brief-mode', 'Логика: файл → OCR → api-groq-paid.php → краткий ответ'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Вывод'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Нажмите файл, получите OCR-текст, затем отправьте его в ИИ.'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
-    var preview = createElement('pre', 'documents-brief-preview', 'Отметьте «Платный ИИ», затем выберите файл для анализа.');
-    var metaCompact = createElement('div', 'documents-brief-item-meta', '');
-    metaCompact.style.padding = '0 14px 8px';
-    metaCompact.style.fontSize = '12px';
+    var preview = createElement('pre', 'documents-brief-preview documents-conclusion-preview', 'Выберите файл из задачи или новый файл.');
+    var metaCompact = createElement('div', 'documents-conclusion-meta', 'Шаг 1: клик по файлу → OCR');
+    var actions = createElement('div', 'documents-conclusion-actions');
+    var sendToAiButton = createElement('button', 'documents-button documents-button--ai', 'Отправить ИИ');
+    sendToAiButton.type = 'button';
+    sendToAiButton.disabled = true;
+    actions.appendChild(sendToAiButton);
 
     var sources = [];
+    var activeSource = null;
+    var activeOcrText = '';
     linkedFiles.forEach(function(file, index) {
       sources.push({
         id: 'linked_' + index,
@@ -2608,49 +2631,44 @@
       });
     });
 
-    function makeActive(button) {
+    function setActive(button) {
       Array.from(list.querySelectorAll('.documents-brief-item')).forEach(function(item) {
         item.classList.remove('is-active');
       });
-      button.classList.add('is-active');
+      if (button) {
+        button.classList.add('is-active');
+      }
     }
 
     function addSourceButton(source) {
       var button = createElement('button', 'documents-brief-item');
-      var nameNode = createElement('span', 'documents-brief-item-name', source.label);
-      var metaLabel = source.fileObject ? 'Новый файл (локально)' : 'Файл из задачи';
-      var metaNode = createElement('span', 'documents-brief-item-meta', metaLabel);
-      button.appendChild(nameNode);
-      button.appendChild(metaNode);
-      button.title = source.label;
       button.type = 'button';
+      button.appendChild(createElement('span', 'documents-brief-item-name', source.label));
+      button.appendChild(createElement('span', 'documents-brief-item-meta', source.fileObject ? 'Новый файл (локально)' : 'Файл из задачи'));
       button.addEventListener('click', function() {
-        if (!paidToggle.checked) {
-          preview.textContent = 'Сначала включите галочку «Платный ИИ». После этого нажмите файл снова.';
-          metaCompact.textContent = '';
-          showStatusMessage('warning', 'Для кнопки «Кратко ИИ» нужен режим «Платный ИИ».');
-          return;
-        }
-        makeActive(button);
+        setActive(button);
         button.disabled = true;
+        sendToAiButton.disabled = true;
         preview.classList.add('is-loading');
-        preview.textContent = '⏳ Запускаю OCR и отправляю текст в api-groq-paid.php...';
-        metaCompact.textContent = 'Подготовка файла...';
+        preview.textContent = '⏳ Извлекаю OCR текст...';
+        metaCompact.textContent = 'Подготовка OCR...';
         var startedAt = Date.now();
-        requestAiBriefSummaryForFileDirect(source, options.apiUrl)
-          .then(function(aiPayload) {
+        requestOcrTextForSource(source, options.apiUrl)
+          .then(function(ocrText) {
+            activeSource = source;
+            activeOcrText = String(ocrText || '').trim();
             preview.classList.remove('is-loading');
-            var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
-            preview.textContent = summaryText || extractPlainAiBriefText(aiPayload) || 'Пустой ответ от ИИ.';
-            var durationRaw = Number(aiPayload && (aiPayload.durationMs || aiPayload.timeMs));
-            var elapsedSec = (Math.max(1, Number.isFinite(durationRaw) ? durationRaw : (Date.now() - startedAt)) / 1000).toFixed(1);
-            metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Время: ' + elapsedSec + ' сек • Режим: Платный ИИ';
+            preview.textContent = activeOcrText || 'OCR не вернул текст.';
+            sendToAiButton.disabled = !activeOcrText;
+            metaCompact.textContent = 'OCR готов за ' + ((Date.now() - startedAt) / 1000).toFixed(1) + ' сек. Шаг 2: нажмите «Отправить ИИ».';
           })
           .catch(function(error) {
+            activeSource = null;
+            activeOcrText = '';
             preview.classList.remove('is-loading');
-            preview.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка');
-            metaCompact.textContent = '';
-            showStatusMessage('warning', 'Не удалось обработать файл «' + source.label + '».');
+            preview.textContent = 'Ошибка OCR: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+            metaCompact.textContent = 'OCR не выполнен.';
+            showStatusMessage('warning', 'Не удалось получить OCR для файла «' + source.label + '».');
           })
           .finally(function() {
             button.disabled = false;
@@ -2659,21 +2677,44 @@
       list.appendChild(button);
     }
 
-    sources.forEach(addSourceButton);
+    sendToAiButton.addEventListener('click', function() {
+      if (!activeSource || !activeOcrText) {
+        showStatusMessage('warning', 'Сначала выберите файл и дождитесь OCR.');
+        return;
+      }
+      sendToAiButton.disabled = true;
+      preview.classList.add('is-loading');
+      metaCompact.textContent = '⏳ Отправляю OCR текст в ИИ...';
+      var startedAt = Date.now();
+      requestAiBriefSummaryForText(activeSource, activeOcrText, options.apiUrl, 'paid')
+        .then(function(aiPayload) {
+          preview.classList.remove('is-loading');
+          var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
+          preview.textContent = summaryText || extractPlainAiBriefText(aiPayload) || 'Пустой ответ от ИИ.';
+          var elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+          metaCompact.textContent = 'Готово за ' + elapsed + ' сек • Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—');
+        })
+        .catch(function(error) {
+          preview.classList.remove('is-loading');
+          metaCompact.textContent = 'Ошибка отправки в ИИ.';
+          preview.textContent = 'Ошибка ИИ: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+          showStatusMessage('warning', 'Не удалось получить вывод по OCR.');
+        })
+        .finally(function() {
+          sendToAiButton.disabled = false;
+        });
+    });
 
+    sources.forEach(addSourceButton);
     if (!sources.length) {
       list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
     }
 
-    function closeBriefModal() {
-      closeModal(modal);
-    }
-
     closeButton.type = 'button';
-    closeButton.addEventListener('click', closeBriefModal);
+    closeButton.addEventListener('click', function() { closeModal(modal); });
     modal.addEventListener('click', function(event) {
       if (event.target === modal) {
-        closeBriefModal();
+        closeModal(modal);
       }
     });
 
@@ -2681,6 +2722,7 @@
     header.appendChild(closeButton);
     panel.appendChild(header);
     panel.appendChild(metaCompact);
+    panel.appendChild(actions);
     body.appendChild(list);
     body.appendChild(preview);
     panel.appendChild(body);
@@ -13074,6 +13116,7 @@
     var headerActions = createElement('div', 'documents-responses-actions');
     var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
     var aiBriefButton = createElement('button', 'documents-button documents-button--ai', 'Кратко ИИ');
+    var aiConclusionButton = createElement('button', 'documents-button documents-button--ai', 'Вывод');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -13366,6 +13409,7 @@
         addButton.disabled = true;
         aiButton.disabled = true;
         aiBriefButton.disabled = true;
+        aiConclusionButton.disabled = true;
         closeButton.disabled = true;
         return fetch(buildApiUrl('response_text_update', { organization: state.organization }), {
           method: 'POST',
@@ -13394,6 +13438,7 @@
             addButton.disabled = false;
             aiButton.disabled = false;
             aiBriefButton.disabled = false;
+            aiConclusionButton.disabled = false;
             closeButton.disabled = false;
           });
       }
@@ -13407,6 +13452,7 @@
       addButton.disabled = true;
       aiButton.disabled = true;
       aiBriefButton.disabled = true;
+      aiConclusionButton.disabled = true;
       closeButton.disabled = true;
       var formData = new FormData();
       formData.append('action', 'response_upload');
@@ -13440,6 +13486,7 @@
           addButton.disabled = false;
           aiButton.disabled = false;
           aiBriefButton.disabled = false;
+          aiConclusionButton.disabled = false;
           closeButton.disabled = false;
         });
     }
@@ -13529,14 +13576,70 @@
       document.head.appendChild(style);
     }
 
-    function ensureVipAiModalStyles() {
-      if (document.getElementById('documents-vip-ai-modal-style')) {
-        return;
+    var vipAiPaidScriptPromise = null;
+
+    function ensureVipAiPaidScript() {
+      if (window.openDocumentsVipAiPaidModal) {
+        return Promise.resolve(window.openDocumentsVipAiPaidModal);
       }
-      var style = document.createElement('style');
-      style.id = 'documents-vip-ai-modal-style';
-      style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(8px);z-index:4100;display:flex;align-items:center;justify-content:center;padding:10px}.documents-vip-ai__panel{width:min(860px,100%);max-height:calc(100dvh - 20px);overflow:auto;border-radius:24px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(241,245,249,.9));border:1px solid rgba(255,255,255,.95);box-shadow:0 24px 56px rgba(15,23,42,.24)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9)}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:110px;overflow:auto}.documents-vip-ai__chat{height:min(44dvh,360px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__input{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;max-height:110px;padding:9px;font-size:13px}.documents-vip-ai__send{border:none;background:linear-gradient(135deg,#38bdf8,#14b8a6);color:#fff;padding:12px 14px;border-radius:12px;font-size:14px;font-weight:700}.documents-vip-ai__send:disabled{opacity:.6}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{max-height:100dvh;border-radius:0}.documents-vip-ai__composer{flex-direction:column}}';
-      document.head.appendChild(style);
+      if (vipAiPaidScriptPromise) {
+        return vipAiPaidScriptPromise;
+      }
+      vipAiPaidScriptPromise = new Promise(function(resolve, reject) {
+        var version = (window.__ASSET_VERSION__ || Date.now()).toString();
+        var scriptDirectory = '';
+        var scripts = document.getElementsByTagName('script');
+        for (var s = scripts.length - 1; s >= 0; s -= 1) {
+          var source = scripts[s] && scripts[s].src ? String(scripts[s].src) : '';
+          var docsIndex = source.indexOf('/docs.js');
+          if (docsIndex === -1) {
+            docsIndex = source.indexOf('/js/documents/docs.js');
+          }
+          if (docsIndex !== -1) {
+            scriptDirectory = source.slice(0, source.lastIndexOf('/') + 1);
+            break;
+          }
+        }
+        var candidates = [
+          '/js/documents/docx-ai-paid.js',
+          '/docx-ai-paid.js',
+          'docx-ai-paid.js',
+          './docx-ai-paid.js'
+        ];
+        if (scriptDirectory) {
+          candidates.unshift(scriptDirectory + 'docx-ai-paid.js');
+        }
+        var index = 0;
+        function loadNext() {
+          if (window.openDocumentsVipAiPaidModal) {
+            resolve(window.openDocumentsVipAiPaidModal);
+            return;
+          }
+          if (index >= candidates.length) {
+            vipAiPaidScriptPromise = null;
+            reject(new Error('Не удалось загрузить модуль VIP ИИ. Проверьте путь к docx-ai-paid.js.'));
+            return;
+          }
+          var src = candidates[index] + '?v=' + encodeURIComponent(version);
+          index += 1;
+          var script = document.createElement('script');
+          script.src = src;
+          script.async = true;
+          script.onload = function() {
+            if (window.openDocumentsVipAiPaidModal) {
+              resolve(window.openDocumentsVipAiPaidModal);
+              return;
+            }
+            loadNext();
+          };
+          script.onerror = function() {
+            loadNext();
+          };
+          document.head.appendChild(script);
+        }
+        loadNext();
+      });
+      return vipAiPaidScriptPromise;
     }
 
     function buildAiDialogPayload() {
@@ -13617,250 +13720,21 @@
     }
 
     function openVipAiModal() {
-      ensureVipAiModalStyles();
       var payload = buildAiDialogPayload();
-      var overlay = createElement('div', 'documents-vip-ai');
-      var panel = createElement('div', 'documents-vip-ai__panel');
-      panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><textarea class="documents-vip-ai__input" placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button">Отправить</button></div></div>';
-      overlay.appendChild(panel);
-      document.body.appendChild(overlay);
-      var filesNode = panel.querySelector('.documents-vip-ai__files');
-      var chatNode = panel.querySelector('.documents-vip-ai__chat');
-      var metaNode = panel.querySelector('.documents-vip-ai__meta');
-      var inputNode = panel.querySelector('.documents-vip-ai__input');
-      var sendButton = panel.querySelector('.documents-vip-ai__send');
-      var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
-      var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
-      var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
-      var linkedEntries = linked.map(function(item, index) { return { key: 'linked_' + index, file: item, source: 'linked' }; });
-      var pendingEntries = pending.map(function(item, index) { return { key: 'pending_' + index, file: item, source: 'pending' }; });
-      var fileEntries = linkedEntries.concat(pendingEntries);
-      var selectedFiles = {};
-      fileEntries.forEach(function(entry) {
-        selectedFiles[entry.key] = true;
-      });
-      if (!fileEntries.length) {
-        filesNode.innerHTML = '<em>Нет вложений</em>';
-      } else {
-        filesNode.innerHTML = fileEntries.slice(0, 20).map(function(entry) {
-          var name = entry && entry.file && entry.file.name ? entry.file.name : 'Файл';
-          return '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-file-key="' + escapeHtmlText(entry.key) + '" checked> <span>📎 ' + escapeHtmlText(name) + '</span></label>';
-        }).join('');
-        Array.from(filesNode.querySelectorAll('input[type="checkbox"][data-file-key]')).forEach(function(checkbox) {
-          checkbox.addEventListener('change', function() {
-            var key = checkbox.getAttribute('data-file-key');
-            if (!key) return;
-            selectedFiles[key] = checkbox.checked;
+      ensureVipAiPaidScript()
+        .then(function(openModal) {
+          openModal({
+            payload: payload,
+            apiUrl: payload.apiUrl,
+            createElement: createElement,
+            closeModal: closeModal,
+            escapeHtmlText: escapeHtmlText,
+            handleResponse: handleResponse
           });
+        })
+        .catch(function(error) {
+          showMessage('error', error && error.message ? error.message : 'Не удалось открыть VIP ИИ.');
         });
-      }
-      closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
-      overlay.addEventListener('click', function(event) {
-        if (event.target === overlay) {
-          closeModal(overlay);
-        }
-      });
-      var chatHistory = [];
-      function pushChat(role, text) {
-        var message = createElement('div', 'documents-vip-ai__msg documents-vip-ai__msg--' + role, String(text || ''));
-        chatNode.appendChild(message);
-        chatNode.scrollTop = chatNode.scrollHeight;
-      }
-      pushChat('assistant', 'Готов. Я учту все приложенные файлы (включая сканы) и подготовлю решение.');
-      function resolveLinkedFileUrl(file) {
-        if (!file || typeof file !== 'object') {
-          return '';
-        }
-        var candidates = [
-          file.url,
-          file.fileUrl,
-          file.downloadUrl,
-          file.resolvedUrl,
-          file.previewUrl,
-          file.previewPdfUrl,
-          file.pdfUrl,
-          file.pdf
-        ];
-        for (var i = 0; i < candidates.length; i += 1) {
-          var value = typeof candidates[i] === 'string' ? candidates[i].trim() : '';
-          if (value) {
-            return value;
-          }
-        }
-        return '';
-      }
-
-      function isPdfFile(name, type) {
-        var fileName = String(name || '').toLowerCase();
-        var fileType = String(type || '').toLowerCase();
-        return fileType.indexOf('application/pdf') === 0 || /\.pdf$/i.test(fileName);
-      }
-
-      async function tryExtractOcrTextForVip(fileOrBlob, fileName, remoteUrl) {
-        var ocrApiUrl = (payload && payload.apiUrl) || '/js/documents/api-docs.php';
-        var ocrFormData = new FormData();
-        ocrFormData.append('action', 'ocr_extract');
-        ocrFormData.append('language', 'rus');
-        var localFile = fileOrBlob || null;
-        if (!localFile && remoteUrl) {
-          try {
-            var remoteResponse = await fetch(String(remoteUrl), { credentials: 'same-origin' });
-            if (!remoteResponse.ok) {
-              return '';
-            }
-            var remoteBlob = await remoteResponse.blob();
-            localFile = new File([remoteBlob], fileName || 'document', { type: remoteBlob.type || 'application/octet-stream' });
-          } catch (_) {
-            return '';
-          }
-        }
-        if (!localFile) {
-          return '';
-        }
-        ocrFormData.append('file', localFile, fileName || 'document');
-        try {
-          var response = await fetch(ocrApiUrl + '?action=ocr_extract', {
-            method: 'POST',
-            credentials: 'same-origin',
-            body: ocrFormData
-          });
-          var data = await response.json().catch(function() { return null; });
-          if (!response.ok || !data || data.ok !== true) {
-            return '';
-          }
-          return String(data.text || '').trim();
-        } catch (_) {
-          return '';
-        }
-      }
-
-      async function appendSourceFilesToFormData(formData, linkedFiles, pendingFiles) {
-        var appendedCount = 0;
-        for (var p = 0; p < pendingFiles.length; p += 1) {
-          var file = pendingFiles[p];
-          if (!file) continue;
-          var pendingName = file.name || ('file-' + (p + 1));
-          formData.append('files', file, pendingName);
-          appendedCount += 1;
-          if (isPdfFile(pendingName, file.type)) {
-            // eslint-disable-next-line no-await-in-loop
-            var pendingOcrText = await tryExtractOcrTextForVip(file, pendingName, '');
-            if (pendingOcrText) {
-              formData.append('files', new Blob([pendingOcrText.slice(0, 40000)], { type: 'text/plain' }), pendingName.replace(/\.pdf$/i, '') + '-ocr.txt');
-              appendedCount += 1;
-            }
-          }
-        }
-        for (var i = 0; i < linkedFiles.length; i += 1) {
-          var linkedFile = linkedFiles[i];
-          var fileUrl = resolveLinkedFileUrl(linkedFile);
-          if (!fileUrl) {
-            continue;
-          }
-          try {
-            // eslint-disable-next-line no-await-in-loop
-            var fileResponse = await fetch(fileUrl, { credentials: 'same-origin' });
-            if (!fileResponse.ok) {
-              continue;
-            }
-            // eslint-disable-next-line no-await-in-loop
-            var fileBlob = await fileResponse.blob();
-            var fileName = linkedFile && linkedFile.name ? String(linkedFile.name) : ('file-' + (i + 1));
-            formData.append('files', fileBlob, fileName);
-            appendedCount += 1;
-            if (isPdfFile(fileName, fileBlob.type)) {
-              // eslint-disable-next-line no-await-in-loop
-              var linkedOcrText = await tryExtractOcrTextForVip(null, fileName, fileUrl);
-              if (linkedOcrText) {
-                formData.append('files', new Blob([linkedOcrText.slice(0, 40000)], { type: 'text/plain' }), fileName.replace(/\.pdf$/i, '') + '-ocr.txt');
-                appendedCount += 1;
-              }
-            }
-          } catch (_) {}
-        }
-        return appendedCount;
-      }
-
-      async function buildVipRequestFormData(promptText, selectedLinked, selectedPending, requestContext) {
-        var formData = new FormData();
-        formData.append('prompt', promptText);
-        formData.append('responseStyle', 'neutral');
-        formData.append('context', JSON.stringify(requestContext || {}));
-        var appendedCount = await appendSourceFilesToFormData(formData, selectedLinked, selectedPending);
-        if (!appendedCount) {
-          throw new Error('Выберите хотя бы один файл для VIP чата.');
-        }
-        return formData;
-      }
-
-      sendButton.addEventListener('click', function() {
-        var promptText = String(inputNode.value || '').trim();
-        if (!promptText) {
-          return;
-        }
-        sendButton.disabled = true;
-        pushChat('user', promptText);
-        pushChat('assistant', '⏳ Обрабатываю запрос...');
-        metaNode.innerHTML = '';
-        var startedAt = Date.now();
-        var requestContext = {};
-        var sourceContext = payload.context || {};
-        Object.keys(sourceContext).forEach(function(key) {
-          requestContext[key] = sourceContext[key];
-        });
-        var selectedLinked = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
-        var selectedPending = pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
-        requestContext.attachedFiles = []
-          .concat(selectedLinked.map(function(file) {
-            return {
-              name: file && file.name ? file.name : '',
-              url: resolveLinkedFileUrl(file),
-              size: file && file.size ? file.size : 0,
-              type: file && file.type ? file.type : ''
-            };
-          }))
-          .concat(selectedPending.map(function(file) {
-            return { name: file.name || '', size: file.size || 0, type: file.type || '' };
-          }));
-        chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
-        requestContext.chatHistory = chatHistory.slice(-8);
-        Promise.resolve()
-          .then(function() {
-            var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
-            function tryEndpoint(index) {
-              if (index >= paidEndpoints.length) {
-                throw new Error('Не удалось подключиться к VIP API. Проверьте endpoint api-groq-paid.php.');
-              }
-              return buildVipRequestFormData(promptText, selectedLinked, selectedPending, requestContext)
-                .then(function(formData) {
-                  return fetch(paidEndpoints[index], { method: 'POST', body: formData, credentials: 'same-origin' });
-                })
-                .then(function(response) {
-                  if ((response.status === 404 || response.status === 405) && index < paidEndpoints.length - 1) {
-                    return tryEndpoint(index + 1);
-                  }
-                  return response;
-                });
-            }
-            return tryEndpoint(0);
-          })
-          .then(handleResponse)
-          .then(function(data) {
-            var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
-            pushChat('assistant', aiText);
-            chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
-            var elapsed = Date.now() - startedAt;
-            var tokens = data && data.tokensUsed ? data.tokensUsed : '—';
-            metaNode.innerHTML = '<span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>';
-            inputNode.value = '';
-          })
-          .catch(function(error) {
-            pushChat('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Неизвестная ошибка'));
-          })
-          .finally(function() {
-            sendButton.disabled = false;
-          });
-      });
     }
 
     aiButton.type = 'button';
@@ -13888,6 +13762,27 @@
         linkedFiles: linkedFiles
       });
     });
+    aiConclusionButton.type = 'button';
+    aiConclusionButton.addEventListener('click', function() {
+      var linkedFiles = [];
+      if (currentDoc && Array.isArray(currentDoc.files)) {
+        linkedFiles = currentDoc.files.map(function(file) {
+          return {
+            name: getAttachmentName(file),
+            url: resolveAttachmentUrl(file, { bustCache: true }) || ''
+          };
+        }).filter(function(file) {
+          return Boolean(file && file.url);
+        });
+      }
+      openAiConclusionModal({
+        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
+        showMessage: showMessage,
+        documentData: currentDoc || doc || {},
+        pendingFiles: pendingFiles.slice(),
+        linkedFiles: linkedFiles
+      });
+    });
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
@@ -13902,6 +13797,7 @@
 
     headerActions.appendChild(aiButton);
     headerActions.appendChild(aiBriefButton);
+    headerActions.appendChild(aiConclusionButton);
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);

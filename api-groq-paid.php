@@ -67,6 +67,42 @@ function getRuntimeEnv(): array
     );
 }
 
+function getJsonRequestBody(): array
+{
+    static $cached = null;
+    if (is_array($cached)) {
+        return $cached;
+    }
+    $contentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
+    if (!str_contains($contentType, 'application/json')) {
+        $cached = [];
+        return $cached;
+    }
+    $raw = (string)@file_get_contents('php://input');
+    if ($raw === '') {
+        $cached = [];
+        return $cached;
+    }
+    $decoded = json_decode($raw, true);
+    $cached = is_array($decoded) ? $decoded : [];
+    return $cached;
+}
+
+function requestStringField(string $key, string $default = ''): string
+{
+    if (isset($_POST[$key])) {
+        return trim((string)$_POST[$key]);
+    }
+    $json = getJsonRequestBody();
+    if (array_key_exists($key, $json)) {
+        $value = $json[$key];
+        if (is_scalar($value)) {
+            return trim((string)$value);
+        }
+    }
+    return $default;
+}
+
 function sanitizeFileName(string $name): string
 {
     $name = preg_replace('/[^a-zA-Zа-яА-Я0-9._-]/u', '_', $name) ?? 'file';
@@ -566,6 +602,12 @@ function buildExtractedTextsFromFiles(array $files): array
 
 function handleAnalyzePaidAction(array $env): void
 {
+    $jsonBody = getJsonRequestBody();
+    $rawVisionPayload = requestStringField('vision_payload');
+    if ($rawVisionPayload === '' && isset($jsonBody['messages']) && is_array($jsonBody['messages'])) {
+        $rawVisionPayload = json_encode($jsonBody, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
+    }
+
     $files = normalizeUploadedFiles('files');
     if (!$files) {
         $remoteFiles = normalizeRemoteFilesFromPost();
@@ -573,17 +615,17 @@ function handleAnalyzePaidAction(array $env): void
             $files = downloadRemoteFiles($remoteFiles);
         }
     }
-    if (!$files) {
+    if ($rawVisionPayload === '' && !$files) {
         respond(422, ['ok' => false, 'error' => 'Файлы не переданы (поле files).']);
     }
 
     $totalBytes = array_reduce($files, static function (int $sum, array $f): int {
         return $sum + (int)($f['size'] ?? 0);
     }, 0);
-    if ($totalBytes <= 0) {
+    if ($rawVisionPayload === '' && $totalBytes <= 0) {
         respond(422, ['ok' => false, 'error' => 'Пустая загрузка файлов.']);
     }
-    if (MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
+    if ($rawVisionPayload === '' && MAX_TOTAL_UPLOAD_BYTES > 0 && $totalBytes > MAX_TOTAL_UPLOAD_BYTES) {
         respond(413, ['ok' => false, 'error' => 'Общий размер файлов превышает лимит.']);
     }
 
@@ -592,9 +634,135 @@ function handleAnalyzePaidAction(array $env): void
         respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
     }
 
-    $userPrompt = trim((string)($_POST['prompt'] ?? ''));
+    $userPrompt = requestStringField('prompt');
     if ($userPrompt === '') {
         $userPrompt = 'Прими решение по приложенным документам.';
+    }
+    if ($rawVisionPayload !== '') {
+        $visionPayload = json_decode($rawVisionPayload, true);
+        if (!is_array($visionPayload)) {
+            respond(422, ['ok' => false, 'error' => 'vision_payload должен быть корректным JSON объектом.']);
+        }
+
+        $messages = $visionPayload['messages'] ?? null;
+        if (!is_array($messages) || !$messages) {
+            respond(422, ['ok' => false, 'error' => 'vision_payload.messages обязателен для Vision режима.']);
+        }
+
+        $rawExtractedTexts = requestStringField('extractedTexts');
+        $decodedExtractedTexts = json_decode($rawExtractedTexts, true);
+        if (!is_array($decodedExtractedTexts)) {
+            $decodedExtractedTexts = [];
+        }
+        $ocrText = '';
+        foreach ($decodedExtractedTexts as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $chunk = trim((string)($entry['text'] ?? ''));
+            if ($chunk === '') {
+                continue;
+            }
+            $name = trim((string)($entry['name'] ?? 'Документ'));
+            $ocrText .= ($ocrText !== '' ? "\n\n" : '') . '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $chunk;
+        }
+
+        // Читаем system prompt из входящего payload (если клиент его прислал).
+        $systemPrompt = '';
+        foreach ($messages as $message) {
+            if (is_array($message) && (string)($message['role'] ?? '') === 'system') {
+                $systemPrompt = trim((string)($message['content'] ?? ''));
+                if ($systemPrompt !== '') {
+                    break;
+                }
+            }
+        }
+        if ($systemPrompt === '') {
+            $systemPrompt = "Ты — аналитический ИИ-ассистент. Отвечай строго по фактам, в деловом стиле, без эмоций.\n"
+                . "Верни готовый итоговый ответ для отправки, без пересказа и без технических комментариев.";
+        }
+
+        // 1) Vision-этап: извлекаем сырой текст из изображений/PDF «как есть».
+        $visionContent = [[
+            'type' => 'text',
+            'text' => "Извлеки весь текст из изображений/страниц строго как есть.\n"
+                . "Не делай выводов и не анализируй.\n"
+                . "Сохрани порядок блоков, строк, чисел, дат и имён.\n"
+                . "Верни только текст документа."
+        ]];
+        foreach ($messages as $message) {
+            if (!is_array($message) || (string)($message['role'] ?? '') !== 'user') {
+                continue;
+            }
+            $content = $message['content'] ?? null;
+            if (!is_array($content)) {
+                continue;
+            }
+            foreach ($content as $part) {
+                if (!is_array($part) || (string)($part['type'] ?? '') !== 'image_url') {
+                    continue;
+                }
+                $visionContent[] = $part;
+            }
+        }
+        if (count($visionContent) <= 1) {
+            respond(422, ['ok' => false, 'error' => 'Vision payload не содержит изображений для извлечения текста.']);
+        }
+
+        $startedAt = microtime(true);
+        $visionExtractPayload = [
+            'model' => (string)($visionPayload['model'] ?? 'meta-llama/llama-4-scout-17b-16e-instruct'),
+            'messages' => [
+                ['role' => 'system', 'content' => 'Ты OCR-движок. Возвращай только текст без анализа.'],
+                ['role' => 'user', 'content' => $visionContent],
+            ],
+            'max_tokens' => (int)($visionPayload['max_tokens'] ?? 2000),
+            'temperature' => 0.0,
+        ];
+        $visionExtractResult = callGroqChat($visionExtractPayload, $apiKey);
+        if (($visionExtractResult['ok'] ?? false) !== true) {
+            respond((int)($visionExtractResult['status'] ?? 502), ['ok' => false, 'error' => (string)($visionExtractResult['error'] ?? 'Ошибка Vision OCR этапа')]);
+        }
+        $visionDecoded = (array)($visionExtractResult['raw'] ?? []);
+        $visionRawText = trim((string)($visionDecoded['choices'][0]['message']['content'] ?? ''));
+        if ($visionRawText === '') {
+            respond(502, ['ok' => false, 'error' => 'Vision OCR не вернул текст документа']);
+        }
+
+        $combinedDocText = trim($visionRawText . ($ocrText !== '' ? ("\n\n" . $ocrText) : ''));
+        if ($combinedDocText === '') {
+            respond(422, ['ok' => false, 'error' => 'Не удалось собрать текст документов для анализа.']);
+        }
+
+        // 2) Текстовый этап: отправляем извлечённый текст в платную текстовую модель с выбранным стилем.
+        $analysisPayload = [
+            'model' => resolveModel($env),
+            'messages' => [
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => trim(($userPrompt !== '' ? $userPrompt : 'Подготовь готовый ответ по документам.') . "\n\nТекст документов:\n" . $combinedDocText)],
+            ],
+            'max_tokens' => 2000,
+            'temperature' => 0.2,
+        ];
+        $analysisResult = callGroqChat($analysisPayload, $apiKey);
+        if (($analysisResult['ok'] ?? false) !== true) {
+            respond((int)($analysisResult['status'] ?? 502), ['ok' => false, 'error' => (string)($analysisResult['error'] ?? 'Ошибка текстового анализа')]);
+        }
+        $analysisDecoded = (array)($analysisResult['raw'] ?? []);
+        $answer = trim((string)($analysisDecoded['choices'][0]['message']['content'] ?? ''));
+        if ($answer === '') {
+            respond(502, ['ok' => false, 'error' => 'Пустой ответ от текстовой модели после Vision OCR']);
+        }
+
+        respond(200, [
+            'ok' => true,
+            'response' => $answer,
+            'extractedText' => $combinedDocText,
+            'model' => (string)($analysisDecoded['model'] ?? resolveModel($env)),
+            'durationMs' => max(1, (int)round((microtime(true) - $startedAt) * 1000)),
+            'tokensUsed' => (int)($analysisDecoded['usage']['total_tokens'] ?? 0),
+            'mode' => 'vision_text_pipeline',
+        ]);
     }
 
     $textChunks = [];
@@ -952,7 +1120,7 @@ function handleGenerateResponseAction(array $env): void
     }
 
     $model = resolveModel($env);
-    $systemMessage = "Ты — сотрудник строительной компании, отвечающий за официальную переписку.\n\n"
+    $baseSystemMessage = "Ты — сотрудник строительной компании, отвечающий за официальную переписку.\n\n"
         . "Твоя задача: на основе текста документов подготовить готовый официальный ответ.\n\n"
         . "Правила:\n"
         . "- Не добавляй шапку письма, подпись, должность и служебные реквизиты.\n"
@@ -960,15 +1128,22 @@ function handleGenerateResponseAction(array $env): void
         . "- Формулируй ответ в деловом и уверенном стиле, без воды.\n"
         . "- Если есть сроки, указывай даты в формате ДД.ММ.ГГГГ.\n"
         . "- Если данных не хватает, запроси конкретные недостающие сведения.\n"
-        . "- Не пиши про OCR, ограничения чтения файла или технические детали.\n";
+        . "- Не пиши про OCR, ограничения чтения файла или технические детали.\n"
+        . "- ВЕРНИ ТОЛЬКО ГОТОВЫЙ ТЕКСТ ОТВЕТА, БЕЗ АНАЛИЗА И ПОЯСНЕНИЙ.\n";
+
+    // Клиент часто передаёт тональность/стиль внутри prompt — учитываем это как доп. системную инструкцию.
+    $systemMessage = $baseSystemMessage;
+    if ($userPrompt !== '') {
+        $systemMessage .= "\nДополнительные требования к стилю от пользователя:\n" . $userPrompt;
+    }
 
     $requestPayload = [
         'model' => $model,
         'temperature' => 0.2,
-        'max_tokens' => 1800,
+        'max_tokens' => 2000,
         'messages' => [
             ['role' => 'system', 'content' => $systemMessage],
-            ['role' => 'user', 'content' => $userPrompt . "\n\nТекст документов:\n\n" . $fullText],
+            ['role' => 'user', 'content' => "Сформируй итоговый готовый ответ по документам.\n\nТекст документов:\n\n" . $fullText],
         ],
     ];
 

@@ -80,8 +80,12 @@
     { value: 'free', label: 'Бесплатный ИИ' },
     { value: 'paid', label: 'VIP ИИ (платный)' }
   ];
+  var DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
+  var VISION_BATCH_SIZE = 4;
+  var BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+  var briefPdfJsLoader = null;
 
   function createElement(tag, className, text) {
     var node = document.createElement(tag);
@@ -101,6 +105,47 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function getDocsAiEndpoints(preferredApiUrl) {
+    var preferred = String(preferredApiUrl || window.DOCUMENTS_AI_API_URL || '').trim();
+    var endpoints = preferred ? [preferred].concat(DOCS_AI_FALLBACK_ENDPOINTS) : DOCS_AI_FALLBACK_ENDPOINTS.slice();
+    return Array.from(new Set(endpoints.filter(Boolean)));
+  }
+
+  async function postDocsAiWithFallback(createFormData, preferredApiUrl, actionName) {
+    var endpoints = getDocsAiEndpoints(preferredApiUrl);
+    var lastResult = null;
+    for (var index = 0; index < endpoints.length; index += 1) {
+      var endpoint = endpoints[index];
+      var response = null;
+      var payload = null;
+      try {
+        var requestBody = await createFormData();
+        if (!(requestBody instanceof FormData)) {
+          throw new Error('Форма запроса не подготовлена');
+        }
+        response = await fetch(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: requestBody
+        });
+        payload = await response.json().catch(function () { return null; });
+      } catch (error) {
+        lastResult = { endpoint: endpoint, response: response, payload: payload, error: error };
+        continue;
+      }
+      var shouldTryNext = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+      if (shouldTryNext && index < endpoints.length - 1) {
+        lastResult = { endpoint: endpoint, response: response, payload: payload };
+        continue;
+      }
+      return { endpoint: endpoint, response: response, payload: payload };
+    }
+    if (lastResult) {
+      return lastResult;
+    }
+    throw new Error((actionName || 'OCR') + ' временно недоступен');
   }
 
   function sanitizeHtml(inputHtml) {
@@ -322,36 +367,37 @@
     }
 
     async function tryExtractOcrTextForPaid(fileOrBlob, fileName, remoteUrl) {
-      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-      var formData = new FormData();
-      formData.append('action', 'ocr_extract');
-      formData.append('language', 'rus');
-      if (remoteUrl) {
-        formData.append('file_url', String(remoteUrl));
-      } else if (fileOrBlob) {
-        var normalizedName = String(fileName || (fileOrBlob && fileOrBlob.name) || 'document').trim() || 'document';
-        if (!/\.[a-z0-9]{2,8}$/i.test(normalizedName)) {
-          var type = String(fileOrBlob && fileOrBlob.type || '').toLowerCase();
-          if (type.indexOf('pdf') >= 0) normalizedName += '.pdf';
-          else if (type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0) normalizedName += '.jpg';
-          else if (type.indexOf('png') >= 0) normalizedName += '.png';
-          else if (type.indexOf('webp') >= 0) normalizedName += '.webp';
-          else if (type.indexOf('gif') >= 0) normalizedName += '.gif';
-          else if (type.indexOf('bmp') >= 0) normalizedName += '.bmp';
-          else if (type.indexOf('tiff') >= 0 || type.indexOf('tif') >= 0) normalizedName += '.tiff';
-          else normalizedName += '.bin';
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+      function buildOcrFormData() {
+        var formData = new FormData();
+        formData.append('action', 'ocr_extract');
+        formData.append('language', 'rus');
+        if (remoteUrl) {
+          formData.append('file_url', String(remoteUrl));
+        } else if (fileOrBlob) {
+          var normalizedName = String(fileName || (fileOrBlob && fileOrBlob.name) || 'document').trim() || 'document';
+          if (!/\.[a-z0-9]{2,8}$/i.test(normalizedName)) {
+            var type = String(fileOrBlob && fileOrBlob.type || '').toLowerCase();
+            if (type.indexOf('pdf') >= 0) normalizedName += '.pdf';
+            else if (type.indexOf('jpeg') >= 0 || type.indexOf('jpg') >= 0) normalizedName += '.jpg';
+            else if (type.indexOf('png') >= 0) normalizedName += '.png';
+            else if (type.indexOf('webp') >= 0) normalizedName += '.webp';
+            else if (type.indexOf('gif') >= 0) normalizedName += '.gif';
+            else if (type.indexOf('bmp') >= 0) normalizedName += '.bmp';
+            else if (type.indexOf('tiff') >= 0 || type.indexOf('tif') >= 0) normalizedName += '.tiff';
+            else normalizedName += '.bin';
+          }
+          formData.append('file', fileOrBlob, normalizedName);
         }
-        formData.append('file', fileOrBlob, normalizedName);
-      } else {
+        return formData;
+      }
+      if (!remoteUrl && !fileOrBlob) {
         return '';
       }
       try {
-        var response = await fetch(apiUrl + '?action=ocr_extract', {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: formData
-        });
-        var payload = await response.json().catch(function () { return null; });
+        var request = await postDocsAiWithFallback(buildOcrFormData, apiUrl, 'OCR');
+        var response = request && request.response;
+        var payload = request && request.payload;
         if (!response.ok || !payload || payload.ok !== true) {
           return '';
         }
@@ -406,10 +452,163 @@
     return preparedFiles;
   }
 
+  function readBlobAsDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      if (!blob || typeof FileReader === 'undefined') {
+        reject(new Error('Не удалось прочитать файл.'));
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result || '')); };
+      reader.onerror = function () { reject(new Error('Ошибка чтения файла.')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function chunkItems(list, chunkSize) {
+    var source = Array.isArray(list) ? list : [];
+    var size = Math.max(1, Number(chunkSize || 1));
+    var chunks = [];
+    for (var i = 0; i < source.length; i += size) {
+      chunks.push(source.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  async function convertPdfBlobToVisionImages(pdfBlob, baseName) {
+    var pdfjsLib = await ensurePdfJsLoaded();
+    var bytes = await pdfBlob.arrayBuffer();
+    var loadingTask = pdfjsLib.getDocument({ data: bytes });
+    var pdf = await loadingTask.promise;
+    var totalPages = Number(pdf && pdf.numPages || 0);
+    var pagesToProcess = Math.max(1, totalPages);
+    var images = [];
+    for (var pageIndex = 1; pageIndex <= pagesToProcess; pageIndex += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      var page = await pdf.getPage(pageIndex);
+      var viewport = page.getViewport({ scale: 1.25 });
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      var ctx = canvas.getContext('2d');
+      if (!ctx) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      // eslint-disable-next-line no-await-in-loop
+      var jpegBlob = await new Promise(function (resolve) { canvas.toBlob(resolve, 'image/jpeg', 0.82); });
+      if (!jpegBlob) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      var dataUrl = await readBlobAsDataUrl(jpegBlob);
+      images.push({
+        dataUrl: dataUrl,
+        fileName: (baseName || 'scan') + '-p' + pageIndex + '.jpg',
+        mime: 'image/jpeg'
+      });
+    }
+    return images;
+  }
+
+  async function resolveVisionAssets(state) {
+    var files = Array.isArray(state && state.files) ? state.files : [];
+    var images = [];
+    var ocrTexts = [];
+    for (var index = 0; index < files.length; index += 1) {
+      var fileEntry = files[index];
+      if (!fileEntry) continue;
+      var fileName = String(fileEntry.name || ('document-' + (index + 1)));
+      var fileBlob = fileEntry.fileObject || null;
+      if (!fileBlob && fileEntry.url) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          var external = await fetch(String(fileEntry.url), { credentials: 'same-origin' });
+          if (external.ok) {
+            // eslint-disable-next-line no-await-in-loop
+            fileBlob = await external.blob();
+          }
+        } catch (_) {}
+      }
+      if (!fileBlob) continue;
+
+      if (isImageLike({ name: fileName, type: fileBlob.type })) {
+        // eslint-disable-next-line no-await-in-loop
+        var dataUrl = await readBlobAsDataUrl(fileBlob);
+        images.push({
+          dataUrl: dataUrl,
+          fileName: fileName || ('image-' + (index + 1) + '.jpg'),
+          mime: String(fileBlob.type || 'image/jpeg')
+        });
+      } else if (isPdfLike({ name: fileName, type: fileBlob.type })) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          var pdfImages = await convertPdfBlobToVisionImages(fileBlob, fileName.replace(/\.pdf$/i, '') || ('scan-' + (index + 1)));
+          images = images.concat(pdfImages);
+        } catch (_) {}
+      }
+
+      var text = normalizeContextText(fileEntry.content || fileEntry.rawContent || '');
+      if (text) {
+        ocrTexts.push({
+          name: fileName,
+          type: String(fileBlob.type || 'text/plain'),
+          text: text.slice(0, 70000)
+        });
+      }
+    }
+    return { images: images, ocrTexts: ocrTexts };
+  }
+
+  async function buildPaidVisionRequestFormData(prompt, state) {
+    var resolved = await resolveVisionAssets(state);
+    var images = Array.isArray(resolved.images) ? resolved.images : [];
+    if (!images.length) {
+      throw new Error('Vision режим требует файл-изображение или PDF.');
+    }
+    var imageBatches = chunkItems(images, VISION_BATCH_SIZE);
+    var messages = imageBatches.map(function (batch, index) {
+      return {
+        role: 'user',
+        content: [{ type: 'text', text: (prompt || 'Проанализируй содержимое файла') + '\n\nБлок ' + (index + 1) + ' из ' + imageBatches.length + '.' }]
+          .concat(batch.map(function (item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; }))
+      };
+    });
+    var formData = new FormData();
+    formData.append('action', 'analyze_paid');
+    formData.append('mode', 'paid');
+    formData.append('vision_mode', '1');
+    formData.append('prompt', String(prompt || 'Проанализируй содержимое файла'));
+    if (resolved.ocrTexts.length) {
+      formData.append('extractedTexts', JSON.stringify(resolved.ocrTexts));
+    }
+    formData.append('vision_payload', JSON.stringify({
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      max_tokens: 1200,
+      temperature: 0.6,
+      messages: messages
+    }));
+    images.forEach(function (item, idx) {
+      var data = String(item.dataUrl || '');
+      var base64 = data.indexOf(',') >= 0 ? data.split(',')[1] : '';
+      if (!base64) return;
+      var mimeType = item.mime || 'image/jpeg';
+      var blob = new Blob([Uint8Array.from(atob(base64), function (char) { return char.charCodeAt(0); })], { type: mimeType });
+      formData.append('files', blob, item.fileName || ('vision-' + (idx + 1) + '.jpg'));
+    });
+    return formData;
+  }
+
   async function buildPaidRequestFormData(prompt, state, config) {
+    if (state && state.visionMode) {
+      return buildPaidVisionRequestFormData(prompt, state);
+    }
     var paidFiles = await resolvePaidSourceFiles(state, config);
     var sourceFiles = Array.isArray(state && state.files) ? state.files : [];
     var extractedTexts = [];
+    var mergedSourceChunks = [];
+    var missingSourceNames = [];
     function resolveSourceUrlForOcr(sourceEntry) {
       if (!sourceEntry || typeof sourceEntry !== 'object') {
         return '';
@@ -433,25 +632,30 @@
       return '';
     }
     async function requestOcrTextForPaidFile(sourceEntry, fallbackName) {
-      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-      var formData = new FormData();
-      formData.append('action', 'ocr_extract');
-      formData.append('language', 'rus');
-      if (sourceEntry && sourceEntry.fileObject) {
-        var uploadName = String(fallbackName || (sourceEntry.fileObject && sourceEntry.fileObject.name) || 'document').trim() || 'document';
-        if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
-          var fileType = String(sourceEntry.fileObject && sourceEntry.fileObject.type || '').toLowerCase();
-          if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
-          else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
-          else if (fileType.indexOf('png') >= 0) uploadName += '.png';
-          else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
-          else uploadName += '.bin';
+      var apiUrl = (config && config.apiUrl) || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+      if (!sourceEntry) {
+        return '';
+      }
+      var sourceUrl = resolveSourceUrlForOcr(sourceEntry);
+      async function buildFormDataAsync() {
+        var formData = new FormData();
+        formData.append('action', 'ocr_extract');
+        formData.append('language', 'rus');
+        if (sourceEntry.fileObject) {
+          var uploadName = String(fallbackName || (sourceEntry.fileObject && sourceEntry.fileObject.name) || 'document').trim() || 'document';
+          if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
+            var fileType = String(sourceEntry.fileObject && sourceEntry.fileObject.type || '').toLowerCase();
+            if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
+            else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
+            else if (fileType.indexOf('png') >= 0) uploadName += '.png';
+            else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+            else uploadName += '.bin';
+          }
+          formData.append('file', sourceEntry.fileObject, uploadName);
+          return formData;
         }
-        formData.append('file', sourceEntry.fileObject, uploadName);
-      } else if (sourceEntry) {
-        var sourceUrl = resolveSourceUrlForOcr(sourceEntry);
         if (!sourceUrl) {
-          return '';
+          return null;
         }
         try {
           var fetched = await fetch(String(sourceUrl), { credentials: 'same-origin' });
@@ -467,21 +671,17 @@
               else remoteName += '.bin';
             }
             formData.append('file', blob, remoteName);
-          } else {
-            formData.append('file_url', String(sourceUrl));
+            return formData;
           }
-        } catch (_) {
-          formData.append('file_url', String(sourceUrl));
-        }
-      } else {
-        return '';
+        } catch (_) {}
+        formData.append('file_url', String(sourceUrl));
+        return formData;
       }
-      var response = await fetch(apiUrl + '?action=ocr_extract', {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: formData
-      });
-      var payload = await response.json().catch(function () { return null; });
+      var finalRequest = await postDocsAiWithFallback(function () {
+        return buildFormDataAsync();
+      }, apiUrl, 'OCR');
+      var response = finalRequest && finalRequest.response;
+      var payload = finalRequest && finalRequest.payload;
       if (!response.ok || !payload || payload.ok !== true) {
         return '';
       }
@@ -494,26 +694,33 @@
         continue;
       }
       var sourceName = String(sourceEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
-      // Для Telegram/VIP всегда стараемся прогонять файл через api-docs OCR.
-      // eslint-disable-next-line no-await-in-loop
-      var ocrText = await requestOcrTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
-      var sourceText = normalizeContextText(ocrText || sourceEntry.content || '');
+      var sourceText = normalizeContextText(sourceEntry.content || sourceEntry.rawContent || '');
       if (!sourceText) {
+        // eslint-disable-next-line no-await-in-loop
+        var ocrText = await requestOcrTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
+        sourceText = normalizeContextText(ocrText || '');
+      }
+      if (!sourceText) {
+        missingSourceNames.push(sourceName);
         continue;
       }
-      extractedTexts.push({
-        name: sourceName,
-        type: 'text/plain',
-        text: sourceText.slice(0, 24000)
-      });
+      mergedSourceChunks.push('[' + sourceName + ']\n' + sourceText);
     }
 
-    if ((!Array.isArray(paidFiles) || !paidFiles.length) && !extractedTexts.length) {
+    if ((!Array.isArray(paidFiles) || !paidFiles.length) && !mergedSourceChunks.length) {
       throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
-    if (!extractedTexts.length) {
+    if (missingSourceNames.length) {
+      throw new Error('Не удалось извлечь текст для: ' + missingSourceNames.slice(0, 4).join(', ') + (missingSourceNames.length > 4 ? ' и ещё ' + (missingSourceNames.length - 4) : '') + '.');
+    }
+    if (!mergedSourceChunks.length) {
       throw new Error('OCR не вернул текст по вложениям. Откройте файл и нажмите «📄 Текст», затем повторите отправку.');
     }
+    extractedTexts.push({
+      name: 'Общий контекст всех файлов',
+      type: 'text/plain',
+      text: mergedSourceChunks.join('\n\n====================\n\n').slice(0, 90000)
+    });
 
     var promptWithContext = String(prompt || 'Сформируй ответ по приложенному файлу.');
 
@@ -532,7 +739,122 @@
     return formData;
   }
 
+  async function postGroqPaidVisionBatched(prompt, state, timeoutMs) {
+    var resolved = await resolveVisionAssets(state);
+    var images = Array.isArray(resolved && resolved.images) ? resolved.images : [];
+    if (!images.length) {
+      throw new Error('Vision режим требует изображения или PDF.');
+    }
+    var imageBatches = chunkItems(images, VISION_BATCH_SIZE);
+    var partialAnswers = [];
+
+    async function postVisionFormDataWithFallback(createFormData) {
+      var lastError = null;
+      for (var endpointIndex = 0; endpointIndex < GROQ_PAID_ENDPOINTS.length; endpointIndex += 1) {
+        var endpoint = GROQ_PAID_ENDPOINTS[endpointIndex];
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          var response = await fetchWithTimeout(endpoint, {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: createFormData()
+          }, timeoutMs);
+          if (response.status === 404 || response.status === 405) {
+            continue;
+          }
+          // eslint-disable-next-line no-await-in-loop
+          var payload = await response.clone().json().catch(function () { return null; });
+          var serverError = String(payload && payload.error ? payload.error : '');
+          var shouldTryNext = (response.status >= 500 || /E208|internal processing error/i.test(serverError))
+            && endpointIndex < GROQ_PAID_ENDPOINTS.length - 1;
+          if (shouldTryNext) {
+            continue;
+          }
+          return { response: response, payload: payload };
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError || new Error('Не удалось отправить Vision запрос.');
+    }
+
+    for (var batchIndex = 0; batchIndex < imageBatches.length; batchIndex += 1) {
+      var currentBatch = imageBatches[batchIndex];
+      // eslint-disable-next-line no-await-in-loop
+      var batchResult = await postVisionFormDataWithFallback(function () {
+        var formData = new FormData();
+        formData.append('action', 'analyze_paid');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', String(prompt || 'Проанализируй содержимое файла'));
+        if (Array.isArray(resolved.ocrTexts) && resolved.ocrTexts.length && batchIndex === 0) {
+          formData.append('extractedTexts', JSON.stringify(resolved.ocrTexts));
+        }
+        formData.append('vision_payload', JSON.stringify({
+          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          max_tokens: 1200,
+          temperature: 0.6,
+          messages: [{
+            role: 'user',
+            content: [{ type: 'text', text: (prompt || 'Проанализируй содержимое файла') + '\n\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }]
+              .concat(currentBatch.map(function (item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; }))
+          }]
+        }));
+        currentBatch.forEach(function (item, idx) {
+          var data = String(item.dataUrl || '');
+          var base64 = data.indexOf(',') >= 0 ? data.split(',')[1] : '';
+          if (!base64) return;
+          var mimeType = item.mime || 'image/jpeg';
+          var blob = new Blob([Uint8Array.from(atob(base64), function (char) { return char.charCodeAt(0); })], { type: mimeType });
+          formData.append('files', blob, item.fileName || ('vision-' + (batchIndex + 1) + '-' + (idx + 1) + '.jpg'));
+        });
+        return formData;
+      });
+      var batchPayload = batchResult && batchResult.payload;
+      if (!batchResult || !batchResult.response || !batchResult.response.ok || !batchPayload || batchPayload.ok !== true) {
+        throw new Error((batchPayload && batchPayload.error) || ('Ошибка Vision запроса (блок ' + (batchIndex + 1) + ')'));
+      }
+      partialAnswers.push(String(batchPayload.response || batchPayload.summary || '').trim());
+    }
+
+    var finalSummary = partialAnswers.join('\n\n').trim();
+    if (partialAnswers.length > 1) {
+      var mergeResult = await postVisionFormDataWithFallback(function () {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('extractedTexts', JSON.stringify([{
+          name: 'vision-batches.txt',
+          type: 'text/plain',
+          text: partialAnswers.map(function (item, idx) { return 'Блок ' + (idx + 1) + '/' + partialAnswers.length + ':\n' + item; }).join('\n\n')
+        }]));
+        return formData;
+      });
+      var mergePayload = mergeResult && mergeResult.payload;
+      if (mergeResult && mergeResult.response && mergeResult.response.ok && mergePayload && mergePayload.ok === true) {
+        finalSummary = String(mergePayload.summary || mergePayload.response || '').trim() || finalSummary;
+      }
+    }
+    if (!finalSummary) {
+      throw new Error('Vision не вернул итоговый текст.');
+    }
+    return new Response(JSON.stringify({
+      ok: true,
+      response: finalSummary,
+      mode: 'vision',
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      tokensUsed: 0
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   async function postGroqPaidWithFallback(prompt, state, config, timeoutMs) {
+    if (state && state.visionMode) {
+      return postGroqPaidVisionBatched(prompt, state, timeoutMs);
+    }
     var lastError = null;
     for (var i = 0; i < GROQ_PAID_ENDPOINTS.length; i += 1) {
       var endpoint = GROQ_PAID_ENDPOINTS[i];
@@ -950,6 +1272,12 @@
     var type = String(file.type || '').toLowerCase();
     var name = String(file.name || '').toLowerCase();
     return type.indexOf('pdf') !== -1 || /\.pdf$/i.test(name);
+  }
+
+  function isImageLike(file) {
+    var type = String(file && file.type || '').toLowerCase();
+    var name = String(file && file.name || '').toLowerCase();
+    return type.indexOf('image/') === 0 || /\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif|heic|heif)$/i.test(name);
   }
 
   function isDocxLike(file) {
@@ -1523,6 +1851,472 @@
     }
   }
 
+
+
+  function briefNormalizeValue(value) {
+    return String(value || '').trim();
+  }
+
+  function briefToSummaryText(value) {
+    return briefNormalizeValue(value) || '';
+  }
+
+  function readBriefFileAsText(file) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('Не удалось прочитать текст файла.')); };
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  function readBriefBlobAsDataUrl(blob) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('Не удалось преобразовать файл в base64.')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function ensureBriefXlsxLoaded() {
+    if (window.XLSX) return window.XLSX;
+    await new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = function() { reject(new Error('Не удалось загрузить XLSX библиотеку.')); };
+      document.head.appendChild(script);
+    });
+    if (!window.XLSX) throw new Error('XLSX библиотека не инициализирована.');
+    return window.XLSX;
+  }
+
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib) {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) {
+      return briefPdfJsLoader;
+    }
+    var sources = [
+      { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
+      { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+      { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' }
+    ];
+    briefPdfJsLoader = new Promise(function(resolve, reject) {
+      var index = 0;
+      function tryNext() {
+        if (typeof window !== 'undefined' && window.pdfjsLib) {
+          window.__briefPdfWorkerSrc = sources[Math.max(0, index - 1)].worker;
+          resolve(window.pdfjsLib);
+          return;
+        }
+        if (index >= sources.length) {
+          reject(new Error('Не удалось загрузить PDF библиотеку. Проверьте интернет или доступ к /pdf/pdf.min.js'));
+          return;
+        }
+        var source = sources[index];
+        index += 1;
+        var script = document.createElement('script');
+        script.src = source.script;
+        script.onload = function() {
+          if (typeof window !== 'undefined' && window.pdfjsLib) {
+            window.__briefPdfWorkerSrc = source.worker;
+            resolve(window.pdfjsLib);
+            return;
+          }
+          tryNext();
+        };
+        script.onerror = function() { tryNext(); };
+        document.head.appendChild(script);
+      }
+      tryNext();
+    }).catch(function(error) {
+      briefPdfJsLoader = null;
+      throw error;
+    });
+    return briefPdfJsLoader;
+  }
+
+  async function buildBriefVisionPayloadFromFile(file, onProgress) {
+    if (!(file instanceof File)) {
+      throw new Error('Файл не выбран.');
+    }
+    var mime = String(file.type || '').toLowerCase();
+    var name = String(file.name || 'document').toLowerCase();
+    var isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
+    var isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
+    var isText = /\.(txt|json|csv|md)$/i.test(name);
+    var isDocx = /\.docx$/i.test(name);
+    var isXlsx = /\.xlsx$/i.test(name);
+
+    if (isImage) {
+      onProgress('Подготавливаю изображение...', 100);
+      var imageDataUrl = await readBriefBlobAsDataUrl(file);
+      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого файла', images: [{ dataUrl: imageDataUrl, fileName: file.name || 'image.jpg', mime: mime || 'image/jpeg' }] };
+    }
+    if (isPdf) {
+      onProgress('Открываю PDF...', 5);
+      var pdfjsLib = await ensureBriefPdfJsLoaded();
+      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
+      }
+      var bytes = await file.arrayBuffer();
+      var loadingTask = pdfjsLib.getDocument({ data: bytes });
+      var pdf = await loadingTask.promise;
+      var totalPages = Number(pdf.numPages || 0);
+      if (!totalPages) throw new Error('PDF повреждён или пустой.');
+      var images = [];
+      for (var pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+        onProgress('Рендер страницы ' + pageNumber + '/' + totalPages + '...', Math.round((pageNumber / totalPages) * 90));
+        var page = await pdf.getPage(pageNumber);
+        var viewport = page.getViewport({ scale: 1.25 });
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        var ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Не удалось инициализировать canvas для PDF.');
+        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+        var blob = await new Promise(function(resolve) { canvas.toBlob(function(nextBlob) { resolve(nextBlob); }, 'image/jpeg', 0.82); });
+        if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
+        var dataUrl = await readBriefBlobAsDataUrl(blob);
+        images.push({ dataUrl: dataUrl, fileName: (file.name || 'scan').replace(/\.pdf$/i, '') + '-p' + pageNumber + '.jpg', mime: 'image/jpeg' });
+      }
+      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images: images };
+    }
+    if (isText) {
+      onProgress('Читаю текстовый файл...', 100);
+      var text = await readBriefFileAsText(file);
+      return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
+    }
+    if (isDocx) {
+      onProgress('Извлекаю текст из DOCX...', 35);
+      var mammoth = await ensureMammothLoaded();
+      var arrayBuffer = await file.arrayBuffer();
+      var result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+      return { kind: 'text', extractedText: String(result && result.value || '').trim(), fileName: file.name || 'document.docx', warning: 'Изображения внутри DOCX не анализируются в Vision режиме.' };
+    }
+    if (isXlsx) {
+      onProgress('Извлекаю таблицы из XLSX...', 35);
+      var XLSX = await ensureBriefXlsxLoaded();
+      var xbuffer = await file.arrayBuffer();
+      var workbook = XLSX.read(xbuffer, { type: 'array' });
+      var sheetTexts = (workbook && workbook.SheetNames || []).map(function(sheetName) {
+        var sheet = workbook.Sheets[sheetName];
+        var csv = XLSX.utils.sheet_to_csv(sheet);
+        return '# Лист: ' + sheetName + '\\n' + csv;
+      });
+      return { kind: 'text', extractedText: sheetTexts.join('\\n\\n').trim(), fileName: file.name || 'table.xlsx' };
+    }
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+  }
+
+  async function postBriefGroqPaidWithFallback(createFormData) {
+    var lastError = null;
+    for (var index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
+      var endpoint = GROQ_PAID_ENDPOINTS[index];
+      var controller = typeof AbortController === 'function' ? new AbortController() : null;
+      var timeoutId = controller ? setTimeout(function() { controller.abort(); }, BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
+      try {
+        var response = await fetch(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          body: createFormData(),
+          signal: controller ? controller.signal : undefined
+        });
+        if (response.status === 404 || response.status === 405) {
+          continue;
+        }
+        var payload = await response.json().catch(function() { return null; });
+        return { endpoint: endpoint, response: response, payload: payload };
+      } catch (error) {
+        lastError = error && error.name === 'AbortError'
+          ? new Error('Сервер Платного ИИ не ответил за 90 сек. Повторите попытку.')
+          : error;
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    }
+    throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
+  }
+
+  async function postBriefDocsOcrWithFallback(createFormData) {
+    var endpoints = DOCS_AI_FALLBACK_ENDPOINTS.slice();
+    var lastResult = null;
+    for (var index = 0; index < endpoints.length; index += 1) {
+      var endpoint = endpoints[index];
+      var response = null;
+      var payload = null;
+      var controller = typeof AbortController === 'function' ? new AbortController() : null;
+      var timeoutId = controller ? setTimeout(function() { controller.abort(); }, BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
+      try {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          body: createFormData(),
+          signal: controller ? controller.signal : undefined
+        });
+        payload = await response.json().catch(function() { return null; });
+      } catch (error) {
+        var timeoutError = error && error.name === 'AbortError'
+          ? new Error('OCR превысил лимит ожидания (90 сек). Попробуйте файл меньшего размера.')
+          : error;
+        lastResult = { endpoint: endpoint, error: timeoutError, response: response, payload: payload };
+        continue;
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+      var shouldTryNext = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+      if (shouldTryNext && index < endpoints.length - 1) {
+        lastResult = { endpoint: endpoint, response: response, payload: payload };
+        continue;
+      }
+      return { endpoint: endpoint, response: response, payload: payload };
+    }
+    if (lastResult) {
+      return lastResult;
+    }
+    throw new Error('OCR временно недоступен.');
+  }
+
+  async function requestBriefOcrByFile(fileOrBlob, fileName) {
+    var normalizedName = String(fileName || (fileOrBlob && fileOrBlob.name) || 'ocr-file').trim() || 'ocr-file';
+    var request = await postBriefDocsOcrWithFallback(function() {
+      var formData = new FormData();
+      formData.append('action', 'ocr_extract');
+      formData.append('language', 'rus');
+      formData.append('file', fileOrBlob, normalizedName);
+      return formData;
+    });
+    var response = request && request.response;
+    var payload = request && request.payload;
+    if (!response || !response.ok || !payload || payload.ok !== true) {
+      throw new Error((payload && payload.error) || 'OCR временно недоступен');
+    }
+    var text = payload && payload.text ? String(payload.text).trim() : '';
+    if (!text) {
+      throw new Error('OCR не вернул текст');
+    }
+    return text;
+  }
+
+  async function requestBriefVisionByFile(source, setStatus) {
+    var file = source && source.fileObject instanceof File ? source.fileObject : null;
+    var fileName = briefNormalizeValue(source && source.label) || 'vision-file';
+    var fileUrl = briefNormalizeValue(source && source.url);
+    if (!file) {
+      if (!fileUrl) throw new Error('Не найден файл для Vision режима.');
+      setStatus('Загружаю файл...', 'loading');
+      var response = await fetch(fileUrl, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Не удалось загрузить файл (' + response.status + ').');
+      var blob = await response.blob();
+      file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+    }
+
+    var prepared = await buildBriefVisionPayloadFromFile(file, function(message) { setStatus(message, 'loading'); });
+    var prompt = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
+
+    if (prepared.kind === 'text') {
+      var text = briefNormalizeValue(prepared.extractedText);
+      if (!text) throw new Error('Не удалось извлечь текст из файла.');
+      var textRequest = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        formData.append('extractedTexts', JSON.stringify([{ name: prepared.fileName || fileName, type: file.type || 'text/plain', text: text.slice(0, 60000) }]));
+        return formData;
+      });
+      var textPayload = textRequest && textRequest.payload;
+      if (!textRequest.response.ok || !textPayload || textPayload.ok !== true) {
+        throw new Error((textPayload && textPayload.error) || 'Ошибка запроса Vision режима.');
+      }
+      return { summary: briefToSummaryText(textPayload.summary || textPayload.response), model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
+    }
+
+    var images = Array.isArray(prepared.images) ? prepared.images : [];
+    var imageBatches = chunkItems(images, 5);
+    var partialAnswers = [];
+    var startedAt = Date.now();
+    var ocrText = '';
+
+    try {
+      setStatus('Распознаю текст (OCR) из файла...', 'loading');
+      ocrText = await requestBriefOcrByFile(file, file.name || fileName);
+    } catch (_) {
+      ocrText = '';
+    }
+
+    if (!imageBatches.length && ocrText) {
+      var fallbackRequest = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        formData.append('extractedTexts', JSON.stringify([{
+          name: file.name || fileName,
+          type: file.type || 'text/plain',
+          text: String(ocrText).slice(0, 70000)
+        }]));
+        return formData;
+      });
+      var fallbackPayload = fallbackRequest && fallbackRequest.payload;
+      if (!fallbackRequest.response.ok || !fallbackPayload || fallbackPayload.ok !== true) {
+        throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
+      }
+      return {
+        summary: briefToSummaryText(fallbackPayload.summary || fallbackPayload.response),
+        model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
+        warning: ''
+      };
+    }
+
+    for (var batchIndex = 0; batchIndex < imageBatches.length; batchIndex += 1) {
+      var currentBatch = imageBatches[batchIndex];
+      setStatus('Vision: анализ блока ' + (batchIndex + 1) + '/' + imageBatches.length + ' (' + currentBatch.length + ' стр.)...', 'loading');
+      var request = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'analyze_paid');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
+        if (ocrText && batchIndex === 0) {
+          formData.append('extractedTexts', JSON.stringify([{
+            name: file.name || fileName,
+            type: file.type || 'text/plain',
+            text: String(ocrText).slice(0, 70000)
+          }]));
+        }
+        formData.append('vision_payload', JSON.stringify({
+          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          max_tokens: 1000,
+          temperature: 0.7,
+          messages: [{ role: 'user', content: [{ type: 'text', text: (prepared.messageText || 'Проанализируй содержимое этого файла') + '\\n\\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }].concat(currentBatch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; })) }]
+        }));
+        currentBatch.forEach(function(item, index) {
+          var data = String(item.dataUrl || '');
+          var base64 = data.indexOf(',') >= 0 ? data.split(',')[1] : data;
+          var mimeType = item.mime || 'image/jpeg';
+          var blob = new Blob([Uint8Array.from(atob(base64), function(ch) { return ch.charCodeAt(0); })], { type: mimeType });
+          formData.append('files', blob, item.fileName || ('vision-' + (batchIndex + 1) + '-' + (index + 1) + '.jpg'));
+        });
+        return formData;
+      });
+      var payload = request && request.payload;
+      if (!request.response.ok || !payload || payload.ok !== true) {
+        throw new Error((payload && payload.error) || ('Ошибка Vision запроса (блок ' + (batchIndex + 1) + ').'));
+      }
+      partialAnswers.push(briefToSummaryText(payload.response || payload.summary));
+    }
+
+    var finalSummary = briefToSummaryText(partialAnswers.join('\\n\\n').trim());
+    if (partialAnswers.length > 1) {
+      setStatus('Vision: объединяю результаты всех блоков...', 'loading');
+      var mergeRequest = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', prompt);
+        formData.append('extractedTexts', JSON.stringify([{ name: file.name || fileName, type: 'text/plain', text: partialAnswers.map(function(item, idx) { return 'Блок ' + (idx + 1) + '/' + partialAnswers.length + ':\\n' + item; }).join('\\n\\n') }]));
+        return formData;
+      });
+      var mergePayload = mergeRequest && mergeRequest.payload;
+      if (mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
+        finalSummary = briefToSummaryText(mergePayload.summary || mergePayload.response) || finalSummary;
+      }
+    }
+    if (!finalSummary) throw new Error('Vision не вернул итоговый текст.');
+    return { summary: finalSummary, model: 'meta-llama/llama-4-scout-17b-16e-instruct', timeMs: Date.now() - startedAt };
+  }
+
+  function ensureBriefModalStyle() {
+    if (document.getElementById('documents-brief-style-v4')) return;
+    var style = document.createElement('style');
+    style.id = 'documents-brief-style-v4';
+    style.textContent = '.documents-brief-modal{position:fixed;inset:0;z-index:1700;background:linear-gradient(180deg, rgba(148,163,184,0.24), rgba(148,163,184,0.3));backdrop-filter:blur(12px);display:flex;justify-content:center;align-items:center;padding:16px;box-sizing:border-box;}.documents-brief-panel{width:min(980px,100%);max-height:min(90vh,920px);background:linear-gradient(165deg, rgba(255,255,255,0.97), rgba(255,255,255,0.9));border:1px solid rgba(255,255,255,0.95);border-radius:24px;box-shadow:0 30px 60px rgba(15,23,42,0.2);display:flex;flex-direction:column;overflow:hidden;}.documents-brief-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;border-bottom:1px solid rgba(226,232,240,0.95);}.documents-brief-body{display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);gap:14px;padding:14px;min-height:0;flex:1;}.documents-brief-list{display:flex;flex-direction:column;gap:8px;overflow:auto;}.documents-brief-item{border:1px solid rgba(203,213,225,0.95);background:rgba(255,255,255,0.96);border-radius:14px;padding:11px 12px;text-align:left;}.documents-brief-item.is-active{border-color:rgba(37,99,235,0.52);background:rgba(239,246,255,0.96);}.documents-brief-preview{border:1px solid rgba(203,213,225,0.9);border-radius:18px;background:rgba(255,255,255,0.98);padding:16px;font-size:13px;line-height:1.58;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto;}.documents-brief-toggle{display:inline-flex;align-items:center;gap:8px;margin-top:8px;padding:7px 10px;border:1px solid rgba(148,163,184,0.35);border-radius:12px;background:rgba(255,255,255,0.75);font-size:12px;color:#334155;font-weight:600;}@media (max-width:768px){.documents-brief-modal{padding:8px;align-items:flex-end;}.documents-brief-panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;}.documents-brief-body{grid-template-columns:1fr;padding:12px;}}';
+    document.head.appendChild(style);
+  }
+
+  function openDocumentsAiBriefSummaryModal(config) {
+    ensureBriefModalStyle();
+    var options = config && typeof config === 'object' ? config : {};
+    var linkedFiles = Array.isArray(options.linkedFiles) ? options.linkedFiles : [];
+    var pendingFiles = Array.isArray(options.pendingFiles) ? options.pendingFiles : [];
+    var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : function() {};
+    var modal = createElement('div', 'documents-brief-modal');
+    var panel = createElement('div', 'documents-brief-panel');
+    var header = createElement('div', 'documents-brief-header');
+    var titleWrap = createElement('div', '');
+    titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для краткого вывода (Vision режим).'));
+    var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+    var body = createElement('div', 'documents-brief-body');
+    var list = createElement('div', 'documents-brief-list');
+    var preview = createElement('pre', 'documents-brief-preview', 'Выберите файл для анализа.');
+    var metaCompact = createElement('div', 'documents-brief-item-meta', '');
+    metaCompact.style.padding = '0 14px 8px';
+
+    var sources = [];
+    linkedFiles.forEach(function(file, index) { sources.push({ id: 'linked_' + index, label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)), url: file && file.url ? String(file.url) : '' }); });
+    pendingFiles.forEach(function(file, index) { sources.push({ id: 'pending_' + index, label: file && file.name ? String(file.name) : ('Новый файл ' + (index + 1)), fileObject: file }); });
+
+    function makeActive(button) {
+      Array.from(list.querySelectorAll('.documents-brief-item')).forEach(function(item) { item.classList.remove('is-active'); });
+      button.classList.add('is-active');
+    }
+
+    sources.forEach(function(source) {
+      var button = createElement('button', 'documents-brief-item');
+      button.type = 'button';
+      button.appendChild(createElement('span', 'documents-brief-item-name', source.label));
+      button.appendChild(createElement('span', 'documents-brief-item-meta', source.fileObject ? 'Новый файл (локально)' : 'Файл из задачи'));
+      button.addEventListener('click', function() {
+        makeActive(button);
+        button.disabled = true;
+        preview.textContent = '⏳ Обрабатываю файл...';
+        var startedAt = Date.now();
+        requestBriefVisionByFile(source, function(message) { preview.textContent = message || '⏳ Обрабатываю файл...'; })
+          .then(function(aiPayload) {
+          var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
+          preview.textContent = summaryText || 'Пустой ответ от ИИ.';
+          var elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+          metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Время: ' + elapsed + ' сек';
+          })
+          .catch(function(error) {
+          preview.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+          metaCompact.textContent = '';
+          showStatusMessage('warning', 'Не удалось обработать файл «' + source.label + '».');
+          })
+          .finally(function() { button.disabled = false; });
+      });
+      list.appendChild(button);
+    });
+
+    if (!sources.length) list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', function() { modal.remove(); });
+    modal.addEventListener('click', function(event) { if (event.target === modal) modal.remove(); });
+
+    header.appendChild(titleWrap);
+    header.appendChild(closeButton);
+    panel.appendChild(header);
+    panel.appendChild(metaCompact);
+    body.appendChild(list);
+    body.appendChild(preview);
+    panel.appendChild(body);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+  }
   function openDocumentsAiResponseModal(options) {
     ensureStyles();
 
@@ -1538,6 +2332,7 @@
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
       aiMode: 'free',
+      visionMode: false,
       responseStyle: STYLE_OPTIONS[0].value,
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
@@ -1560,6 +2355,8 @@
       lastErrorFingerprint: '',
       lastErrorTs: 0
     };
+    state.aiMode = 'paid';
+    state.visionMode = true;
 
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'ai-chat-modal__panel');
@@ -1611,7 +2408,19 @@
     if (state.contextDetail === 'brief') {
       state.aiMode = 'paid';
     }
+    state.aiMode = 'paid';
     modeSelect.value = state.aiMode;
+    var visionField = createElement('label', 'ai-chat-modal__field');
+    visionField.appendChild(createElement('span', '', 'Vision'));
+    var visionCheckbox = document.createElement('input');
+    visionCheckbox.type = 'checkbox';
+    visionCheckbox.className = 'ai-chat-modal__select';
+    visionCheckbox.style.height = '40px';
+    visionCheckbox.style.width = '100%';
+    visionCheckbox.style.accentColor = '#2563eb';
+    visionCheckbox.checked = true;
+    visionCheckbox.disabled = true;
+    visionField.appendChild(visionCheckbox);
 
     var styleField = createElement('label', 'ai-chat-modal__field');
     styleField.appendChild(createElement('span', '', 'Стиль'));
@@ -1653,6 +2462,7 @@
     sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
     templateButton.type = 'button';
+    templateButton.style.display = 'none';
     var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'Текст к отправке: 0 символов');
     contextUsageHint.style.margin = '6px 0 0';
     contextUsageHint.style.fontSize = '11px';
@@ -2443,6 +3253,10 @@
 
     function refreshSendButtonLabel() {
       var requestMode = resolveRequestMode(state);
+      if (requestMode === 'paid' && state.visionMode) {
+        sendButton.textContent = 'Vision анализ';
+        return;
+      }
       sendButton.textContent = requestMode === 'paid' ? 'Получить ответ' : 'Отправить в ИИ';
     }
 
@@ -2451,6 +3265,7 @@
       textarea.disabled = loading;
       sendButton.disabled = loading;
       templateButton.disabled = loading;
+      visionCheckbox.disabled = loading;
       if (loading) {
         sendButton.innerHTML = '<span class="ai-chat-spinner"></span>Отправка';
       } else {
@@ -2490,36 +3305,32 @@
           }
         }
         if (!hasUsefulExtractedText(extractedText)) {
-          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-          var formData = new FormData();
-          formData.append('action', 'ocr_extract');
-          formData.append('language', 'rus');
-          if (fileEntry.fileObject) {
-            var uploadName = String(fileLabel || (fileEntry.fileObject && fileEntry.fileObject.name) || 'document').trim() || 'document';
-            if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
-              var fileType = String(fileEntry.fileObject && fileEntry.fileObject.type || '').toLowerCase();
-              if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
-              else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
-              else if (fileType.indexOf('png') >= 0) uploadName += '.png';
-              else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+          var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/api-docs.php';
+          var request = await postDocsAiWithFallback(function () {
+            var formData = new FormData();
+            formData.append('action', 'ocr_extract');
+            formData.append('language', 'rus');
+            if (fileEntry.fileObject) {
+              var uploadName = String(fileLabel || (fileEntry.fileObject && fileEntry.fileObject.name) || 'document').trim() || 'document';
+              if (!/\.[a-z0-9]{2,8}$/i.test(uploadName)) {
+                var fileType = String(fileEntry.fileObject && fileEntry.fileObject.type || '').toLowerCase();
+                if (fileType.indexOf('pdf') >= 0) uploadName += '.pdf';
+                else if (fileType.indexOf('jpeg') >= 0 || fileType.indexOf('jpg') >= 0) uploadName += '.jpg';
+                else if (fileType.indexOf('png') >= 0) uploadName += '.png';
+                else if (fileType.indexOf('webp') >= 0) uploadName += '.webp';
+              }
+              formData.append('file', fileEntry.fileObject, uploadName);
+            } else if (fileEntry.url) {
+              formData.append('file_url', String(fileEntry.url));
+            } else {
+              throw new Error('Файл недоступен для чтения');
             }
-            formData.append('file', fileEntry.fileObject, uploadName);
-          } else if (fileEntry.url) {
-            formData.append('file_url', String(fileEntry.url));
-          } else {
-            throw new Error('Файл недоступен для чтения');
-          }
-          var response = await fetch(apiUrl + '?action=ocr_extract', {
-            method: 'POST',
-            credentials: 'same-origin',
-            body: formData
-          });
-          var rawResponseText = await response.text();
-          var payload = null;
-          try {
-            payload = rawResponseText ? JSON.parse(rawResponseText) : null;
-          } catch (parseError) {
-            throw new Error('Сервис извлечения текста временно недоступен (неверный формат ответа).');
+            return formData;
+          }, apiUrl, 'OCR');
+          var response = request && request.response;
+          var payload = request && request.payload;
+          if (!response) {
+            throw new Error('Сервис извлечения текста временно недоступен.');
           }
           if (!response.ok || !payload || payload.ok !== true) {
             throw new Error(payload && payload.error ? payload.error : ('Ошибка извлечения текста (' + response.status + ')'));
@@ -2620,10 +3431,12 @@
       if (state.isLoading) {
         return;
       }
+      var requestMode = resolveRequestMode(state);
+      var isVisionPaid = requestMode === 'paid' && Boolean(state.visionMode);
       var hasFileContent = state.files.some(function (file) {
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       });
-      if (!value && !hasFileContent) {
+      if (!value && !hasFileContent && !isVisionPaid) {
         messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст из файла.', true));
         messages.scrollTop = messages.scrollHeight;
         return;
@@ -2649,11 +3462,30 @@
       var requestStartedAt = Date.now();
 
       try {
-        await hydrateFileContents(state);
+        if (!isVisionPaid) {
+          var pendingOcrFiles = state.files.filter(function (file) {
+            return file && !hasUsefulExtractedText(file.content);
+          });
+          for (var i = 0; i < pendingOcrFiles.length; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await extractSingleFile(pendingOcrFiles[i], { silent: true });
+          }
+          await hydrateFileContents(state);
+          var missingContextFiles = state.files.filter(function (file) {
+            return file && !hasUsefulExtractedText(file.content);
+          });
+          if (state.files.length && missingContextFiles.length) {
+            var missingNames = missingContextFiles
+              .slice(0, 4)
+              .map(function (file) { return file && file.name ? file.name : 'Файл'; })
+              .join(', ');
+            var suffix = missingContextFiles.length > 4 ? ' и ещё ' + String(missingContextFiles.length - 4) : '';
+            throw new Error('Не удалось извлечь текст из всех файлов. Проблемные: ' + missingNames + suffix + '. Нажмите «📄 Текст» и повторите.');
+          }
+        }
         var timeoutMs = calculateAiTimeoutMs(effectivePrompt, state);
-        var requestMode = resolveRequestMode(state);
         var response = null;
-        if (requestMode === 'paid' && state.contextDetail !== 'brief') {
+        if (requestMode === 'paid') {
           response = await postGroqPaidWithFallback(effectivePrompt, state, config, timeoutMs);
         } else {
           var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
@@ -2721,7 +3553,7 @@
           try {
             var secondMode = resolveRequestMode(state);
             var secondResponse = null;
-            if (secondMode === 'paid' && state.contextDetail !== 'brief') {
+            if (secondMode === 'paid') {
               secondResponse = await postGroqPaidWithFallback(effectivePrompt, state, config, calculateAiTimeoutMs(effectivePrompt, state));
             } else {
               secondResponse = await fetchWithTimeout((config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php') + '?action=ai_response_analyze', {
@@ -2788,8 +3620,21 @@
     });
     modeSelect.addEventListener('change', function () {
       state.aiMode = modeSelect.value === 'paid' ? 'paid' : 'free';
+      if (state.aiMode !== 'paid' && state.visionMode) {
+        state.visionMode = false;
+        visionCheckbox.checked = false;
+      }
       if (state.contextDetail === 'brief' && state.aiMode !== 'paid') {
         appendAssistantErrorOnce('Режим «Кратко» работает через VIP модель.');
+      }
+      refreshSendButtonLabel();
+    });
+    visionCheckbox.addEventListener('change', function () {
+      state.visionMode = Boolean(visionCheckbox.checked);
+      if (state.visionMode) {
+        state.aiMode = 'paid';
+        modeSelect.value = 'paid';
+        appendAssistantErrorOnce('Vision активирован: анализ изображений/PDF пойдёт через VIP ИИ.');
       }
       refreshSendButtonLabel();
     });
@@ -2915,14 +3760,9 @@
     modeField.appendChild(modeSelect);
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
-    topBar.appendChild(modeField);
-    topBar.appendChild(modelField);
-    topBar.appendChild(styleField);
-    topBar.appendChild(settingsButton);
 
     composer.appendChild(textarea);
     composer.appendChild(sendButton);
-    composer.appendChild(templateButton);
 
     content.appendChild(topBar);
     content.appendChild(messages);
@@ -2965,5 +3805,6 @@
 
   if (typeof window !== 'undefined') {
     window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
+    window.openDocumentsAiBriefSummaryModal = openDocumentsAiBriefSummaryModal;
   }
 })();
