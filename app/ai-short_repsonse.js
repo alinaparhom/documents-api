@@ -5,6 +5,7 @@ const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
 const BRIEF_MAX_EXTRACT_TEXT_CHARS = 500000;
 const BRIEF_EXTRACT_ENTRY_MAX_BYTES = 1024 * 1024;
 const BRIEF_EXTRACT_ENTRY_SAFE_BYTES = Math.floor(BRIEF_EXTRACT_ENTRY_MAX_BYTES * 0.9);
+const BRIEF_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -13,6 +14,8 @@ export function createTelegramBriefAi(deps = {}) {
     getAttachmentName = (_, index) => `Файл ${index}`,
     resolveFileFetchUrl = () => '',
   } = deps;
+  let briefPdfJsLoader = null;
+  let briefMammothLoader = null;
 
   async function postGroqPaidWithFallback(createFormData) {
     let lastError = null;
@@ -83,6 +86,151 @@ export function createTelegramBriefAi(deps = {}) {
     const hasActions = Array.isArray(block.required_actions) && block.required_actions.some((item) => normalizeValue(item).length >= 4);
     const hasRequirements = Array.isArray(block.requirements) && block.requirements.some((item) => normalizeValue(item).length >= 4);
     return Boolean(summary || analysis || responseText || hasActions || hasRequirements);
+  }
+
+  function isTextLikeFile(fileName = '', mimeType = '') {
+    const type = String(mimeType || '').toLowerCase();
+    const name = String(fileName || '').toLowerCase();
+    return type.includes('text')
+      || /(json|xml|csv|html|javascript|markdown|x-yaml|yaml)/i.test(type)
+      || /\.(txt|md|json|csv|xml|html|css|js|ts|php|py|java|sql|log|ini|yml|yaml|rtf)$/i.test(name);
+  }
+
+  function isPdfLikeFile(fileName = '', mimeType = '') {
+    const type = String(mimeType || '').toLowerCase();
+    const name = String(fileName || '').toLowerCase();
+    return type.includes('pdf') || /\.pdf$/i.test(name);
+  }
+
+  function isDocxLikeFile(fileName = '', mimeType = '') {
+    const type = String(mimeType || '').toLowerCase();
+    const name = String(fileName || '').toLowerCase();
+    return type.includes('wordprocessingml.document') || /\.docx$/i.test(name) || /\.docm$/i.test(name);
+  }
+
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function') {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) return briefPdfJsLoader;
+    briefPdfJsLoader = new Promise((resolve, reject) => {
+      const candidates = ['/js/documents/pdf/pdf.min.js', '/pdf/pdf.min.js'];
+      const tryLoad = (index) => {
+        if (index >= candidates.length) {
+          reject(new Error('pdfjs_load_failed'));
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = candidates[index];
+        script.async = true;
+        script.onload = () => {
+          if (!window.pdfjsLib || typeof window.pdfjsLib.getDocument !== 'function') {
+            tryLoad(index + 1);
+            return;
+          }
+          if (window.pdfjsLib.GlobalWorkerOptions) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+          }
+          resolve(window.pdfjsLib);
+        };
+        script.onerror = () => tryLoad(index + 1);
+        document.head.appendChild(script);
+      };
+      tryLoad(0);
+    });
+    return briefPdfJsLoader;
+  }
+
+  async function extractPdfTextFromSource(source) {
+    try {
+      const pdfjsLib = await ensureBriefPdfJsLoaded();
+      const pdf = await pdfjsLib.getDocument({ data: source }).promise;
+      const parts = [];
+      for (let pageNum = 1; pageNum <= (pdf.numPages || 0); pageNum += 1) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const line = (textContent.items || []).map((item) => (item && item.str ? item.str : '')).join(' ').replace(/\s+/g, ' ').trim();
+        if (line) parts.push(`Страница ${pageNum}: ${line}`);
+        if (parts.join('\n').length >= BRIEF_MAX_EXTRACT_TEXT_CHARS) break;
+      }
+      return parts.join('\n').slice(0, BRIEF_MAX_EXTRACT_TEXT_CHARS);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function ensureBriefMammothLoaded() {
+    if (typeof window !== 'undefined' && window.mammoth && typeof window.mammoth.extractRawText === 'function') {
+      return Promise.resolve(window.mammoth);
+    }
+    if (briefMammothLoader) return briefMammothLoader;
+    briefMammothLoader = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js';
+      script.async = true;
+      script.onload = () => {
+        if (window.mammoth && typeof window.mammoth.extractRawText === 'function') resolve(window.mammoth);
+        else reject(new Error('mammoth_missing'));
+      };
+      script.onerror = () => reject(new Error('mammoth_load_failed'));
+      document.head.appendChild(script);
+    });
+    return briefMammothLoader;
+  }
+
+  async function extractDocxTextFromFile(file) {
+    if (!file || typeof file.arrayBuffer !== 'function') return '';
+    try {
+      const mammoth = await ensureBriefMammothLoaded();
+      const buffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+      return String(result && result.value ? result.value : '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+        .slice(0, BRIEF_MAX_EXTRACT_TEXT_CHARS);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  async function extractTextLocallyFromFile(file) {
+    if (!file) return '';
+    const fileName = String(file.name || '');
+    const mimeType = String(file.type || '');
+    if ((file.size || 0) > BRIEF_MAX_FILE_SIZE_BYTES) return '';
+    if (isPdfLikeFile(fileName, mimeType)) {
+      const bytes = await file.arrayBuffer();
+      return extractPdfTextFromSource(bytes);
+    }
+    if (isDocxLikeFile(fileName, mimeType)) {
+      return extractDocxTextFromFile(file);
+    }
+    if (isTextLikeFile(fileName, mimeType) && typeof file.text === 'function') {
+      return (await file.text()).slice(0, BRIEF_MAX_EXTRACT_TEXT_CHARS);
+    }
+    return '';
+  }
+
+  async function fetchExternalFileContent(fileUrl, fileName = '') {
+    const normalizedUrl = normalizeValue(fileUrl);
+    if (!normalizedUrl) return '';
+    try {
+      const response = await fetch(normalizedUrl, { credentials: 'same-origin' });
+      if (!response.ok) return '';
+      const contentType = String(response.headers.get('content-type') || '');
+      if (isPdfLikeFile(fileName, contentType)) {
+        const buffer = await response.arrayBuffer();
+        return extractPdfTextFromSource(buffer);
+      }
+      if (isTextLikeFile(fileName, contentType)) {
+        const text = await response.text();
+        return String(text || '').slice(0, BRIEF_MAX_EXTRACT_TEXT_CHARS);
+      }
+      return '';
+    } catch (_) {
+      return '';
+    }
   }
 
   function chunkTextByByteLimit(text, maxBytesPerChunk) {
@@ -218,6 +366,27 @@ export function createTelegramBriefAi(deps = {}) {
     }
     if (!fileForVip && !fileUrl) {
       throw new Error('Не найден файл или URL для VIP режима.');
+    }
+
+    const localExtractedText = fileForVip
+      ? await extractTextLocallyFromFile(fileForVip)
+      : await fetchExternalFileContent(fileUrl, fileName);
+    if (String(localExtractedText || '').trim()) {
+      const localPayload = buildExtractedTextsPayload(fileName, localExtractedText);
+      if (localPayload.length) {
+        const localRequest = await postGroqPaidWithFallback(() => {
+          const formData = new FormData();
+          formData.append('action', 'generate_summary');
+          formData.append('mode', 'paid');
+          formData.append('extractedTexts', JSON.stringify(localPayload));
+          return formData;
+        });
+        const localResponse = localRequest && localRequest.response;
+        const localResult = localRequest && localRequest.payload;
+        if (localResponse && localResponse.ok && localResult && localResult.ok === true && hasMeaningfulTelegramBriefPayload(localResult)) {
+          return localResult;
+        }
+      }
     }
 
     if (fileUrl) {
