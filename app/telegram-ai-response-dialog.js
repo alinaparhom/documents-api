@@ -63,6 +63,46 @@
     return base;
   }
 
+  function toAbsoluteUrl(value) {
+    const raw = normalize(value);
+    if (!raw) return '';
+    if (raw.startsWith('blob:') || raw.startsWith('data:')) return raw;
+    try {
+      if (typeof window === 'undefined' || !window.location) {
+        return raw.startsWith('/') ? raw : `/${raw.replace(/^\/+/, '')}`;
+      }
+      return new URL(raw, window.location.origin).toString();
+    } catch (error) {
+      return raw.startsWith('/') ? raw : `/${raw.replace(/^\/+/, '')}`;
+    }
+  }
+
+  function buildFileUrlCandidates(file) {
+    const sourceValues = [
+      file && file.resolvedUrl,
+      file && file.previewUrl,
+      file && file.url,
+      file && file.downloadUrl,
+      file && file.fileUrl,
+      file && file.file,
+      file && file.path,
+      file && file.storedName,
+    ];
+    const candidates = [];
+    sourceValues.forEach((value) => {
+      const normalized = normalize(value);
+      if (!normalized) return;
+      candidates.push(toAbsoluteUrl(normalized));
+      if (!/^(https?:|blob:|data:|\/)/i.test(normalized)) {
+        candidates.push(toAbsoluteUrl(`/${normalized}`));
+        candidates.push(toAbsoluteUrl(`/uploads/${normalized}`));
+        candidates.push(toAbsoluteUrl(`/app/uploads/${normalized}`));
+        candidates.push(toAbsoluteUrl(`/js/documents/uploads/${normalized}`));
+      }
+    });
+    return Array.from(new Set(candidates.filter(Boolean)));
+  }
+
   async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
     const request = await postDocsAiWithFallback(() => {
       const formData = new FormData();
@@ -83,21 +123,55 @@
     return text;
   }
 
+  async function requestTelegramAiResponse(payload = {}) {
+    const request = await postDocsAiWithFallback(() => {
+      const formData = new FormData();
+      formData.append('action', 'ai_response_analyze');
+      formData.append('prompt', normalize(payload.prompt) || 'Сделай краткий вывод и решение по выбранным файлам.');
+      formData.append('documentTitle', normalize(payload.documentTitle) || 'Задача Telegram');
+      formData.append('context', JSON.stringify(payload.context || {}));
+      formData.append('extractedTexts', JSON.stringify(Array.isArray(payload.extractedTexts) ? payload.extractedTexts : []));
+      return formData;
+    });
+
+    const response = request && request.response;
+    const result = request && request.payload;
+    if (!response || !response.ok || !result || result.ok !== true) {
+      throw new Error((result && result.error) || 'Не удалось получить ответ ИИ');
+    }
+    const answer = normalize(result.response || result.analysis || result.message);
+    if (!answer) {
+      throw new Error('ИИ вернул пустой ответ');
+    }
+    return answer;
+  }
+
   async function loadSelectedFileAsBlob(file) {
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
     }
-    const url = normalize(file && (file.resolvedUrl || file.url || file.previewUrl));
-    if (!url) {
+    const candidates = buildFileUrlCandidates(file);
+    if (!candidates.length) {
       throw new Error('Не найден URL файла.');
     }
-    const response = await fetch(url, { credentials: 'same-origin' });
-    if (!response.ok) {
-      throw new Error(`Не удалось загрузить файл (${response.status})`);
+    let lastStatus = 0;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const url = candidates[index];
+      let response = null;
+      try {
+        response = await fetch(url, { credentials: 'include', cache: 'no-store' });
+      } catch (error) {
+        continue;
+      }
+      if (!response || !response.ok) {
+        lastStatus = Number(response && response.status) || lastStatus;
+        continue;
+      }
+      const blob = await response.blob();
+      const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
+      return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
     }
-    const blob = await response.blob();
-    const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
-    return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+    throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
   }
 
   function ensureStyles() {
@@ -129,6 +203,14 @@
       .tg-ai-chat__file input{accent-color:#2563eb}
       .tg-ai-chat__meta{display:flex;flex-wrap:wrap;gap:7px;padding:7px 12px;border-top:1px solid rgba(226,232,240,.7);background:rgba(255,255,255,.88)}
       .tg-ai-chat__chip{padding:4px 8px;border:1px solid rgba(203,213,225,.95);border-radius:999px;background:#fff;font-size:12px;color:#334155}
+      .tg-ai-chat__loading{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid rgba(148,163,184,.3);border-radius:13px;background:rgba(255,255,255,.86);backdrop-filter:blur(8px);color:#334155;font-size:12px}
+      .tg-ai-chat__spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(14,165,233,.25);border-top-color:#0ea5e9;animation:tg-ai-spin .9s linear infinite}
+      .tg-ai-chat__dots{display:inline-flex;align-items:center;gap:3px}
+      .tg-ai-chat__dots span{width:5px;height:5px;border-radius:50%;background:#0ea5e9;opacity:.35;animation:tg-ai-pulse 1.1s infinite}
+      .tg-ai-chat__dots span:nth-child(2){animation-delay:.16s}
+      .tg-ai-chat__dots span:nth-child(3){animation-delay:.32s}
+      @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
+      @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr 1fr}.tg-ai-chat__toggle{grid-column:1/-1}.tg-ai-chat__input{grid-column:1/-1}.tg-ai-chat__send{grid-column:1/-1}}
     `;
     document.head.appendChild(style);
@@ -142,6 +224,19 @@
     container.scrollTop = container.scrollHeight;
   }
 
+  function createLoadingBubble(container, text = 'Обрабатываем файлы и формируем ответ') {
+    const bubble = document.createElement('div');
+    bubble.className = 'tg-ai-chat__loading';
+    bubble.innerHTML = `
+      <span class="tg-ai-chat__spinner" aria-hidden="true"></span>
+      <span>${escapeHtml(text)}</span>
+      <span class="tg-ai-chat__dots" aria-hidden="true"><span></span><span></span><span></span></span>
+    `;
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+    return bubble;
+  }
+
   function renderFiles(container, files) {
     if (!container) return;
     if (!files.length) {
@@ -150,7 +245,7 @@
     }
     container.innerHTML = files.map((file, index) => {
       const name = normalize(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
-      const hasUrl = normalize(file && (file.resolvedUrl || file.url || file.previewUrl));
+      const hasUrl = buildFileUrlCandidates(file).length > 0;
       const disabled = hasUrl ? '' : 'disabled';
       return `<label class="tg-ai-chat__file"><input type="checkbox" data-file-index="${index}" ${disabled}><span>${escapeHtml(name)}</span></label>`;
     }).join('');
@@ -239,6 +334,7 @@
       createBubble(messages, prompt || 'Сделай краткий вывод и решение по выбранным файлам.', 'user');
       status.textContent = 'Готовим файлы...';
       const startedAt = Date.now();
+      const loadingBubble = createLoadingBubble(messages);
 
       try {
         const extractedTexts = [];
@@ -266,15 +362,21 @@
           task,
           sentAt: new Date().toISOString(),
         };
-
-        if (typeof context.onSubmit === 'function') {
-          const result = await context.onSubmit(submitPayload);
-          const answer = normalize(result && (result.response || result.summary || result.analysis || result.message));
-          createBubble(messages, answer || 'Файлы и вопрос переданы в обработчик.', 'assistant');
-        } else {
-          window.dispatchEvent(new CustomEvent('telegram-ai-dialog-submit', { detail: submitPayload }));
-          createBubble(messages, 'Файлы и вопрос переданы. Дальнейшая логика обрабатывается отдельно.', 'assistant');
-        }
+        const answer = await requestTelegramAiResponse({
+          prompt,
+          documentTitle: normalize(task && (task.title || task.documentTitle || task.subject)) || 'Задача Telegram',
+          extractedTexts,
+          context: {
+            source: 'telegram-ai-response-dialog',
+            task,
+            selectedFiles: selectedFiles.map((item) => ({
+              name: normalize(item && (item.originalName || item.name || item.storedName)),
+              url: buildFileUrlCandidates(item)[0] || '',
+            })),
+          },
+        });
+        if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
+        createBubble(messages, answer, 'assistant');
 
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
@@ -285,6 +387,7 @@
         status.textContent = 'Данные переданы.';
         if (input) input.value = '';
       } catch (error) {
+        if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
         status.textContent = 'Ошибка передачи.';
       } finally {
