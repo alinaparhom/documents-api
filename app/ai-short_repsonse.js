@@ -1,5 +1,5 @@
 const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
-const DOCS_AI_OCR_ENDPOINT = '/api-docs.php';
+const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
 
@@ -10,6 +10,8 @@ export function createTelegramBriefAi(deps = {}) {
     getAttachmentName = (_, index) => `Файл ${index}`,
     resolveFileFetchUrl = () => '',
   } = deps;
+
+  let briefPdfJsLoader = null;
 
   async function postGroqPaidWithFallback(createFormData) {
     let lastError = null;
@@ -71,6 +73,61 @@ export function createTelegramBriefAi(deps = {}) {
     document.head.appendChild(style);
   }
 
+  function ensureBriefPdfJsLoaded() {
+    if (typeof window !== 'undefined' && window.pdfjsLib) {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (briefPdfJsLoader) {
+      return briefPdfJsLoader;
+    }
+    briefPdfJsLoader = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/pdf/pdf.min.js';
+      script.onload = () => {
+        if (window.pdfjsLib) {
+          resolve(window.pdfjsLib);
+        } else {
+          reject(new Error('pdfjsLib не найден'));
+        }
+      };
+      script.onerror = () => reject(new Error('Не удалось загрузить PDF библиотеку'));
+      document.head.appendChild(script);
+    });
+    return briefPdfJsLoader;
+  }
+
+  async function convertPdfToImageFileForBrief(file, fallbackName) {
+    const fileName = String(fallbackName || (file && file.name) || 'brief-file');
+    const isPdf = file && ((file.type && String(file.type).toLowerCase() === 'application/pdf') || /\.pdf$/i.test(fileName));
+    if (!isPdf || !file) {
+      return file;
+    }
+    try {
+      const pdfjsLib = await ensureBriefPdfJsLoaded();
+      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+      }
+      const bytes = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: bytes });
+      const pdf = await loadingTask.promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return file;
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const blob = await new Promise((resolve) => {
+        canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.9);
+      });
+      if (!blob) return file;
+      return new File([blob], fileName.replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
+    } catch (_) {
+      return file;
+    }
+  }
+
   function hasMeaningfulTelegramBriefPayload(payload) {
     if (!payload || typeof payload !== 'object') return false;
     const summary = normalizeValue(payload.summary);
@@ -83,7 +140,7 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
-    const request = await postDocsOcrSingle(() => {
+    const request = await postDocsOcrWithFallback(() => {
       const formData = new FormData();
       formData.append('action', 'ocr_extract');
       formData.append('language', 'rus');
@@ -114,27 +171,40 @@ export function createTelegramBriefAi(deps = {}) {
     return text;
   }
 
-  async function postDocsOcrSingle(createFormData) {
-    const endpoint = DOCS_AI_OCR_ENDPOINT;
-    const controller = typeof AbortController === 'function' ? new AbortController() : null;
-    const timeoutId = controller ? setTimeout(() => controller.abort(), BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: createFormData(),
-        signal: controller ? controller.signal : undefined,
-      });
-      const payload = await response.json().catch(() => null);
-      return { endpoint, response, payload };
-    } catch (error) {
-      if (error && error.name === 'AbortError') {
-        throw new Error('OCR превысил лимит ожидания (90 сек). Попробуйте файл меньшего размера.');
+  async function postDocsOcrWithFallback(createFormData) {
+    let lastResult = null;
+    for (let index = 0; index < DOCS_AI_FALLBACK_ENDPOINTS.length; index += 1) {
+      const endpoint = DOCS_AI_FALLBACK_ENDPOINTS[index];
+      let response = null;
+      let payload = null;
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), BRIEF_AI_REQUEST_TIMEOUT_MS) : null;
+      try {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          body: createFormData(),
+          signal: controller ? controller.signal : undefined,
+        });
+        payload = await response.json().catch(() => null);
+      } catch (error) {
+        const timeoutError = error && error.name === 'AbortError'
+          ? new Error('OCR превысил лимит ожидания (90 сек). Попробуйте файл меньшего размера.')
+          : error;
+        lastResult = { endpoint, error: timeoutError, response, payload };
+        continue;
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
       }
-      throw error;
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
+      const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
+      if (shouldTryNextEndpoint && index < DOCS_AI_FALLBACK_ENDPOINTS.length - 1) {
+        lastResult = { endpoint, response, payload };
+        continue;
+      }
+      return { endpoint, response, payload };
     }
+    if (lastResult) return lastResult;
+    throw new Error('OCR временно недоступен.');
   }
 
   async function requestTelegramBriefAiDirectWithAttachment(source) {
@@ -158,10 +228,12 @@ export function createTelegramBriefAi(deps = {}) {
     if (!String(extractedText || '').trim()) {
       throw new Error('OCR не вернул текст для выбранного файла.');
     }
+    fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
     const request = await postGroqPaidWithFallback(() => {
       const formData = new FormData();
       formData.append('action', 'generate_summary');
       formData.append('mode', 'paid');
+      formData.append('files', fileForVip, fileForVip.name || fileName);
       formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 16000) }]));
       return formData;
     });
