@@ -2355,6 +2355,8 @@
       lastErrorFingerprint: '',
       lastErrorTs: 0
     };
+    state.aiMode = 'paid';
+    state.visionMode = true;
 
     var root = createElement('div', ROOT_CLASS);
     var panel = createElement('div', 'ai-chat-modal__panel');
@@ -2406,6 +2408,7 @@
     if (state.contextDetail === 'brief') {
       state.aiMode = 'paid';
     }
+    state.aiMode = 'paid';
     modeSelect.value = state.aiMode;
     var visionField = createElement('label', 'ai-chat-modal__field');
     visionField.appendChild(createElement('span', '', 'Vision'));
@@ -2415,6 +2418,8 @@
     visionCheckbox.style.height = '40px';
     visionCheckbox.style.width = '100%';
     visionCheckbox.style.accentColor = '#2563eb';
+    visionCheckbox.checked = true;
+    visionCheckbox.disabled = true;
     visionField.appendChild(visionCheckbox);
 
     var styleField = createElement('label', 'ai-chat-modal__field');
@@ -2457,6 +2462,7 @@
     sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
     templateButton.type = 'button';
+    templateButton.style.display = 'none';
     var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'Текст к отправке: 0 символов');
     contextUsageHint.style.margin = '6px 0 0';
     contextUsageHint.style.fontSize = '11px';
@@ -3754,15 +3760,9 @@
     modeField.appendChild(modeSelect);
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
-    topBar.appendChild(modeField);
-    topBar.appendChild(visionField);
-    topBar.appendChild(modelField);
-    topBar.appendChild(styleField);
-    topBar.appendChild(settingsButton);
 
     composer.appendChild(textarea);
     composer.appendChild(sendButton);
-    composer.appendChild(templateButton);
 
     content.appendChild(topBar);
     content.appendChild(messages);
