@@ -3,6 +3,7 @@
 
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+  const REQUEST_TIMEOUT_MS = 45000;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -23,6 +24,19 @@
     return Array.from(new Set(endpoints.filter(Boolean)));
   }
 
+  async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    if (typeof AbortController === 'undefined') {
+      return fetch(url, options);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function postDocsAiWithFallback(createFormData) {
     const endpoints = getDocsAiEndpoints();
     let lastResult = null;
@@ -31,9 +45,22 @@
       let response = null;
       let payload = null;
       try {
-        response = await fetch(endpoint, { method: 'POST', credentials: 'include', body: createFormData() });
+        response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          body: createFormData(),
+        });
         payload = await response.json().catch(() => null);
       } catch (error) {
+        if (error && error.name === 'AbortError') {
+          lastResult = {
+            endpoint,
+            error: new Error('Превышено время ожидания OCR/ИИ. Попробуйте ещё раз.'),
+            response,
+            payload,
+          };
+          continue;
+        }
         lastResult = { endpoint, error, response, payload };
         continue;
       }
@@ -113,6 +140,9 @@
     });
     const response = request && request.response;
     const payload = request && request.payload;
+    if (!response && request && request.error) {
+      throw request.error;
+    }
     if (!response || !response.ok || !payload || payload.ok !== true) {
       throw new Error((payload && payload.error) || 'OCR временно недоступен');
     }
@@ -137,6 +167,9 @@
     });
     const response = request && request.response;
     const payload = request && request.payload;
+    if (!response && request && request.error) {
+      throw request.error;
+    }
     if (!response || !response.ok || !payload || payload.ok !== true) {
       throw new Error((payload && payload.error) || 'OCR временно недоступен');
     }
@@ -161,6 +194,9 @@
 
     const response = request && request.response;
     const result = request && request.payload;
+    if (!response && request && request.error) {
+      throw request.error;
+    }
     if (!response || !response.ok || !result || result.ok !== true) {
       throw new Error((result && result.error) || 'Не удалось получить ответ ИИ');
     }
@@ -184,7 +220,7 @@
       const url = candidates[index];
       let response = null;
       try {
-        response = await fetch(url, { credentials: 'include', cache: 'no-store' });
+        response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, 25000);
       } catch (error) {
         continue;
       }
