@@ -10,6 +10,10 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
+@ini_set('upload_max_filesize', '64M');
+@ini_set('post_max_size', '64M');
+@ini_set('memory_limit', '512M');
+
 const MAX_TOTAL_UPLOAD_BYTES = 0; // 0 = без ограничения
 const MAX_TEXT_CHARS = 0; // 0 = без обрезки
 const MAX_TEXT_CHARS_PER_CHUNK = 12000;
@@ -118,6 +122,59 @@ function normalizeUploadedFiles(string $field): array
     }
 
     return $out;
+}
+
+function describeUploadErrorCode(int $errorCode): string
+{
+    return match ($errorCode) {
+        UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Размер файла превышает лимит загрузки сервера.',
+        UPLOAD_ERR_PARTIAL => 'Файл загружен не полностью. Повторите попытку.',
+        UPLOAD_ERR_NO_TMP_DIR => 'На сервере отсутствует временная папка для загрузки файлов.',
+        UPLOAD_ERR_CANT_WRITE => 'Сервер не смог записать файл на диск.',
+        UPLOAD_ERR_EXTENSION => 'Загрузка файла остановлена расширением PHP.',
+        default => 'Ошибка загрузки файла.',
+    };
+}
+
+function collectUploadErrors(array $fields): array
+{
+    $errors = [];
+    foreach ($fields as $field) {
+        if (!isset($_FILES[$field]) || !is_array($_FILES[$field])) {
+            continue;
+        }
+        $raw = $_FILES[$field];
+        $rawErrors = $raw['error'] ?? null;
+        $rawNames = $raw['name'] ?? null;
+        if (is_array($rawErrors)) {
+            foreach ($rawErrors as $index => $code) {
+                $errorCode = (int)$code;
+                if ($errorCode === UPLOAD_ERR_OK || $errorCode === UPLOAD_ERR_NO_FILE) {
+                    continue;
+                }
+                $name = is_array($rawNames) ? (string)($rawNames[$index] ?? '') : '';
+                $errors[] = [
+                    'field' => (string)$field,
+                    'file' => $name,
+                    'code' => $errorCode,
+                    'message' => describeUploadErrorCode($errorCode),
+                ];
+            }
+            continue;
+        }
+        $errorCode = (int)$rawErrors;
+        if ($errorCode === UPLOAD_ERR_OK || $errorCode === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+        $name = is_string($rawNames) ? $rawNames : '';
+        $errors[] = [
+            'field' => (string)$field,
+            'file' => $name,
+            'code' => $errorCode,
+            'message' => describeUploadErrorCode($errorCode),
+        ];
+    }
+    return $errors;
 }
 
 function normalizeRemoteFilesFromPost(): array
@@ -567,6 +624,15 @@ function buildExtractedTextsFromFiles(array $files): array
 function handleAnalyzePaidAction(array $env): void
 {
     $files = normalizeUploadedFiles('files');
+    $uploadErrors = collectUploadErrors(['files']);
+    if (!$files && $uploadErrors) {
+        $firstError = $uploadErrors[0];
+        respond(413, [
+            'ok' => false,
+            'error' => (string)($firstError['message'] ?? 'Ошибка загрузки файла.'),
+            'uploadErrors' => $uploadErrors,
+        ]);
+    }
     if (!$files) {
         $remoteFiles = normalizeRemoteFilesFromPost();
         if ($remoteFiles) {

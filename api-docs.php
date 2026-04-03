@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
+@ini_set('upload_max_filesize', '64M');
+@ini_set('post_max_size', '64M');
+@ini_set('memory_limit', '512M');
+
 function jsonResponse(int $status, array $payload): void
 {
     http_response_code($status);
@@ -169,6 +173,59 @@ function normalizeUploadedFiles(string $field): array
     }
 
     return $files;
+}
+
+function describeUploadErrorCode(int $errorCode): string
+{
+    return match ($errorCode) {
+        UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Размер файла превышает лимит загрузки сервера.',
+        UPLOAD_ERR_PARTIAL => 'Файл загружен не полностью. Повторите попытку.',
+        UPLOAD_ERR_NO_TMP_DIR => 'На сервере отсутствует временная папка для загрузки файлов.',
+        UPLOAD_ERR_CANT_WRITE => 'Сервер не смог записать файл на диск.',
+        UPLOAD_ERR_EXTENSION => 'Загрузка файла остановлена расширением PHP.',
+        default => 'Ошибка загрузки файла.',
+    };
+}
+
+function collectUploadErrors(array $fields): array
+{
+    $errors = [];
+    foreach ($fields as $field) {
+        if (!isset($_FILES[$field]) || !is_array($_FILES[$field])) {
+            continue;
+        }
+        $raw = $_FILES[$field];
+        $rawErrors = $raw['error'] ?? null;
+        $rawNames = $raw['name'] ?? null;
+        if (is_array($rawErrors)) {
+            foreach ($rawErrors as $index => $code) {
+                $errorCode = (int)$code;
+                if ($errorCode === UPLOAD_ERR_OK || $errorCode === UPLOAD_ERR_NO_FILE) {
+                    continue;
+                }
+                $name = is_array($rawNames) ? (string)($rawNames[$index] ?? '') : '';
+                $errors[] = [
+                    'field' => (string)$field,
+                    'file' => $name,
+                    'code' => $errorCode,
+                    'message' => describeUploadErrorCode($errorCode),
+                ];
+            }
+            continue;
+        }
+        $errorCode = (int)$rawErrors;
+        if ($errorCode === UPLOAD_ERR_OK || $errorCode === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+        $name = is_string($rawNames) ? $rawNames : '';
+        $errors[] = [
+            'field' => (string)$field,
+            'file' => $name,
+            'code' => $errorCode,
+            'message' => describeUploadErrorCode($errorCode),
+        ];
+    }
+    return $errors;
 }
 
 function safeJsonDecode(?string $value): array
@@ -465,6 +522,91 @@ function extractTextWithoutOcr(array $file): string
     }
 
     return '';
+}
+
+function optimizeImageForOcr(array $file, int $maxBytes = 950000): ?array
+{
+    $tmpName = (string)($file['tmp_name'] ?? '');
+    if ($tmpName === '' || !is_file($tmpName)) {
+        return null;
+    }
+
+    if (!function_exists('imagecreatefromstring') || !function_exists('imagejpeg')) {
+        return null;
+    }
+
+    $raw = @file_get_contents($tmpName);
+    if (!is_string($raw) || $raw === '') {
+        return null;
+    }
+
+    $source = @imagecreatefromstring($raw);
+    if (!$source) {
+        return null;
+    }
+
+    $width = imagesx($source);
+    $height = imagesy($source);
+    if ($width <= 0 || $height <= 0) {
+        imagedestroy($source);
+        return null;
+    }
+
+    $maxEdge = 2200;
+    $scale = min(1.0, $maxEdge / max($width, $height));
+    $targetWidth = max(1, (int)round($width * $scale));
+    $targetHeight = max(1, (int)round($height * $scale));
+
+    $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
+    if (!$canvas) {
+        imagedestroy($source);
+        return null;
+    }
+    $white = imagecolorallocate($canvas, 255, 255, 255);
+    imagefill($canvas, 0, 0, $white);
+    imagecopyresampled($canvas, $source, 0, 0, 0, 0, $targetWidth, $targetHeight, $width, $height);
+    imagedestroy($source);
+
+    $optimizedPath = tempnam(sys_get_temp_dir(), 'ocr_img_');
+    if (!is_string($optimizedPath) || $optimizedPath === '') {
+        imagedestroy($canvas);
+        return null;
+    }
+
+    $written = false;
+    $size = 0;
+    foreach ([82, 76, 70, 64, 58, 52, 46, 40] as $quality) {
+        if (!@imagejpeg($canvas, $optimizedPath, $quality)) {
+            continue;
+        }
+        $size = (int)@filesize($optimizedPath);
+        if ($size > 0) {
+            $written = true;
+            if ($size <= $maxBytes) {
+                break;
+            }
+        }
+    }
+    imagedestroy($canvas);
+
+    if (!$written || $size <= 0) {
+        @unlink($optimizedPath);
+        return null;
+    }
+
+    $baseName = trim((string)($file['name'] ?? 'image'));
+    if ($baseName === '') {
+        $baseName = 'image';
+    }
+    $baseName = preg_replace('/\.[a-z0-9]{2,8}$/iu', '', $baseName) ?: 'image';
+
+    return [
+        'name' => ensureFileNameWithExtension($baseName . '-ocr', 'jpg'),
+        'tmp_name' => $optimizedPath,
+        'type' => 'image/jpeg',
+        'size' => $size,
+        '_optimized_tmp' => true,
+    ];
 }
 
 function performOcrRequest(string $endpoint, string $apiKey, array $file, string $language = 'rus', ?string $fileUrl = null): array
@@ -1463,6 +1605,17 @@ $attachments = normalizeUploadedFiles('attachments');
 $singleAttachment = normalizeUploadedFiles('attachment');
 $ocrFile = normalizeUploadedFiles('file');
 $files = array_merge($attachments, $singleAttachment, $ocrFile);
+$uploadErrors = collectUploadErrors(['attachments', 'attachment', 'file', 'files']);
+
+if (!$files && $uploadErrors) {
+    $firstError = $uploadErrors[0];
+    $message = (string)($firstError['message'] ?? 'Ошибка загрузки файла.');
+    jsonResponse(413, [
+        'ok' => false,
+        'error' => $message,
+        'uploadErrors' => $uploadErrors,
+    ]);
+}
 
 if ($action === 'ocr_extract') {
     $ocrApiKey = trim((string)($env['OCR_API_KEY'] ?? ''));
@@ -1519,6 +1672,19 @@ if ($action === 'ocr_extract') {
         }
     };
 
+    $mime = $ocrUploadFile ? detectMimeType($ocrUploadFile) : '';
+    if ($ocrUploadFile && $ocrUrlUsed === '' && $mime !== '' && str_starts_with($mime, 'image/') && (int)($ocrUploadFile['size'] ?? 0) > 1024 * 1024) {
+        $optimizedFile = optimizeImageForOcr($ocrUploadFile);
+        if (is_array($optimizedFile)) {
+            $ocrUploadFile = $optimizedFile;
+            logApiDocs('info', 'OCR image was optimized before upload', [
+                'name' => (string)($optimizedFile['name'] ?? ''),
+                'size' => (int)($optimizedFile['size'] ?? 0),
+                'mime' => (string)($optimizedFile['type'] ?? ''),
+            ]);
+        }
+    }
+
     $ocrResult = performOcrRequest($ocrBaseUrl, $ocrApiKey, $ocrUploadFile, $ocrLanguage !== '' ? $ocrLanguage : 'rus', $ocrUrlUsed !== '' ? $ocrUrlUsed : null);
     $ocrResponseBody = $ocrResult['body'];
     $ocrCurlError = (string)$ocrResult['curl_error'];
@@ -1566,6 +1732,12 @@ if ($action === 'ocr_extract') {
 
     $ocrText = trim(implode("\n\n", $parts));
     $cleanupRemoteOcrTemp();
+    if (is_array($ocrUploadFile) && (($ocrUploadFile['_optimized_tmp'] ?? false) === true)) {
+        $tmpOptimizedFile = (string)($ocrUploadFile['tmp_name'] ?? '');
+        if ($tmpOptimizedFile !== '') {
+            @unlink($tmpOptimizedFile);
+        }
+    }
     jsonResponse(200, [
         'ok' => true,
         'text' => $ocrText,
