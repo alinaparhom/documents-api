@@ -148,10 +148,11 @@
   }
 
   async function requestTelegramAiResponse(payload = {}) {
+    const defaultPrompt = 'Проанализируй текст из выбранных файлов и дай готовое решение по задаче с четкими шагами.';
     const request = await postDocsAiWithFallback(() => {
       const formData = new FormData();
       formData.append('action', 'ai_response_analyze');
-      formData.append('prompt', normalize(payload.prompt) || 'Сделай краткий вывод и решение по выбранным файлам.');
+      formData.append('prompt', normalize(payload.prompt) || defaultPrompt);
       formData.append('documentTitle', normalize(payload.documentTitle) || 'Задача Telegram');
       formData.append('context', JSON.stringify(payload.context || {}));
       formData.append('extractedTexts', JSON.stringify(Array.isArray(payload.extractedTexts) ? payload.extractedTexts : []));
@@ -293,12 +294,12 @@
           <button type="button" class="tg-ai-chat__close" data-close>✕</button>
         </div>
         <div class="tg-ai-chat__messages" data-messages>
-          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Отметьте файлы внизу и напишите вопрос.</div>
+          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите файлы и отправьте запрос — подготовлю готовое решение по документам.</div>
         </div>
         <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
-          <textarea class="tg-ai-chat__input" data-input placeholder="Например: сделай краткий вывод по выбранным файлам"></textarea>
+          <textarea class="tg-ai-chat__input" data-input placeholder="Например: реши задачу по выбранным файлам"></textarea>
           <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
         </div>
         <div class="tg-ai-chat__files" data-files hidden>
@@ -355,7 +356,7 @@
 
       sendButton.disabled = true;
       meta.innerHTML = '';
-      createBubble(messages, prompt || 'Сделай краткий вывод и решение по выбранным файлам.', 'user');
+      createBubble(messages, prompt || 'Реши задачу по выбранным файлам и дай готовый ответ.', 'user');
       status.textContent = 'Готовим файлы...';
       const startedAt = Date.now();
       const loadingBubble = createLoadingBubble(messages);
