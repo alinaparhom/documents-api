@@ -59,7 +59,7 @@
           const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || runtimeNonce).toString();
           const stylesheet = document.createElement('link');
           stylesheet.rel = 'stylesheet';
-          stylesheet.href = '/css/telegram-appdosc.css?v=' + encodeURIComponent(version);
+          stylesheet.href = './telegram-appdosc.css?v=' + encodeURIComponent(version);
           document.head.appendChild(stylesheet);
         };
 
@@ -67,7 +67,13 @@
           const version = (window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || runtimeNonce).toString();
           const moduleScript = document.createElement('script');
           moduleScript.type = 'module';
-          moduleScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
+          moduleScript.src = './telegram-appdosc.js?v=' + encodeURIComponent(version);
+          moduleScript.onerror = function() {
+            const fallbackScript = document.createElement('script');
+            fallbackScript.type = 'module';
+            fallbackScript.src = '/js/documents/app/telegram-appdosc.js?v=' + encodeURIComponent(version);
+            document.body.appendChild(fallbackScript);
+          };
           document.body.appendChild(moduleScript);
         };
 
@@ -95,7 +101,7 @@
       })();
     </script>
     <noscript>
-      <link rel="stylesheet" href="/css/telegram-appdosc.css" />
+      <link rel="stylesheet" href="./telegram-appdosc.css" />
     </noscript>
   </head>
   <body>
