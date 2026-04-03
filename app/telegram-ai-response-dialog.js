@@ -2,7 +2,6 @@
   if (!globalScope || typeof document === 'undefined') return;
 
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
-  const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
   const VISION_BATCH_SIZE = 5;
@@ -181,12 +180,6 @@
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
   }
 
-  function getDocsAiEndpoints() {
-    const configured = normalize(globalScope && globalScope.DOCUMENTS_AI_API_URL);
-    const endpoints = configured ? [configured, ...DOCS_AI_FALLBACK_ENDPOINTS] : DOCS_AI_FALLBACK_ENDPOINTS.slice();
-    return Array.from(new Set(endpoints.filter(Boolean)));
-  }
-
   function getGroqResponseEndpoints() {
     const configured = normalize(globalScope && (globalScope.GROQ_PAID_API_URL || globalScope.TELEGRAM_GROQ_API_URL));
     const endpoints = configured ? [configured, ...GROQ_RESPONSE_FALLBACK_ENDPOINTS] : GROQ_RESPONSE_FALLBACK_ENDPOINTS.slice();
@@ -204,44 +197,6 @@
     } finally {
       clearTimeout(timer);
     }
-  }
-
-  async function postDocsAiWithFallback(createFormData) {
-    const endpoints = getDocsAiEndpoints();
-    let lastResult = null;
-    for (let index = 0; index < endpoints.length; index += 1) {
-      const endpoint = endpoints[index];
-      let response = null;
-      let payload = null;
-      try {
-        response = await fetchWithTimeout(endpoint, {
-          method: 'POST',
-          credentials: 'include',
-          body: createFormData(),
-        });
-        payload = await response.json().catch(() => null);
-      } catch (error) {
-        if (error && error.name === 'AbortError') {
-          lastResult = {
-            endpoint,
-            error: new Error('Превышено время ожидания OCR/ИИ. Попробуйте ещё раз.'),
-            response,
-            payload,
-          };
-          continue;
-        }
-        lastResult = { endpoint, error, response, payload };
-        continue;
-      }
-      const shouldTryNextEndpoint = !response.ok && (response.status === 404 || response.status === 405 || !payload);
-      if (shouldTryNextEndpoint && index < endpoints.length - 1) {
-        lastResult = { endpoint, response, payload };
-        continue;
-      }
-      return { endpoint, response, payload };
-    }
-    if (lastResult) return lastResult;
-    throw new Error('OCR временно недоступен.');
   }
 
   async function postGroqResponseWithFallback(createFormData) {
@@ -282,21 +237,6 @@
     throw new Error('Сервис ответа ИИ временно недоступен.');
   }
 
-  function buildOcrFileName(fileOrBlob, fileName) {
-    const base = normalize(fileName || (fileOrBlob && fileOrBlob.name) || 'ocr-file') || 'ocr-file';
-    if (/\.[a-z0-9]{2,8}$/i.test(base)) return base;
-    const type = normalize(fileOrBlob && fileOrBlob.type).toLowerCase();
-    if (type.includes('pdf')) return `${base}.pdf`;
-    if (type.includes('jpeg') || type.includes('jpg')) return `${base}.jpg`;
-    if (type.includes('png')) return `${base}.png`;
-    if (type.includes('webp')) return `${base}.webp`;
-    if (type.includes('gif')) return `${base}.gif`;
-    if (type.includes('bmp')) return `${base}.bmp`;
-    if (type.includes('tiff') || type.includes('tif')) return `${base}.tiff`;
-    if (type.includes('wordprocessingml.document')) return `${base}.docx`;
-    return base;
-  }
-
   function toAbsoluteUrl(value) {
     const raw = normalize(value);
     if (!raw) return '';
@@ -335,83 +275,6 @@
       }
     });
     return Array.from(new Set(candidates.filter(Boolean)));
-  }
-
-  async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
-    const request = await postDocsAiWithFallback(() => {
-      const formData = new FormData();
-      formData.append('action', 'ocr_extract');
-      formData.append('language', 'rus');
-      formData.append('file', fileOrBlob, buildOcrFileName(fileOrBlob, fileName));
-      return formData;
-    });
-    const response = request && request.response;
-    const payload = request && request.payload;
-    if (!response && request && request.error) {
-      throw request.error;
-    }
-    if (!response || !response.ok || !payload || payload.ok !== true) {
-      throw new Error((payload && payload.error) || 'OCR временно недоступен');
-    }
-    const text = normalize(payload && payload.text);
-    if (!text) {
-      throw new Error('OCR не вернул текст');
-    }
-    return text;
-  }
-
-  async function requestTelegramOcrByUrl(fileUrl) {
-    const normalizedUrl = normalize(fileUrl);
-    if (!normalizedUrl) {
-      throw new Error('URL файла для OCR не найден');
-    }
-    const request = await postDocsAiWithFallback(() => {
-      const formData = new FormData();
-      formData.append('action', 'ocr_extract');
-      formData.append('language', 'rus');
-      formData.append('file_url', normalizedUrl);
-      return formData;
-    });
-    const response = request && request.response;
-    const payload = request && request.payload;
-    if (!response && request && request.error) {
-      throw request.error;
-    }
-    if (!response || !response.ok || !payload || payload.ok !== true) {
-      throw new Error((payload && payload.error) || 'OCR временно недоступен');
-    }
-    const text = normalize(payload && payload.text);
-    if (!text) {
-      throw new Error('OCR не вернул текст');
-    }
-    return text;
-  }
-
-  async function requestTelegramAiResponse(payload = {}) {
-    const defaultPrompt = 'Проанализируй текст из выбранных файлов и дай готовое решение по задаче с четкими шагами.';
-    const request = await postGroqResponseWithFallback(() => {
-      const formData = new FormData();
-      formData.append('action', 'generate_response');
-      formData.append('prompt', normalize(payload.prompt) || defaultPrompt);
-      formData.append('documentTitle', normalize(payload.documentTitle) || 'Задача Telegram');
-      formData.append('context', JSON.stringify({ ...(payload.context || {}), responseMode: 'full_response' }));
-      formData.append('extractedTexts', JSON.stringify(Array.isArray(payload.extractedTexts) ? payload.extractedTexts : []));
-      return formData;
-    });
-
-    const response = request && request.response;
-    const result = request && request.payload;
-    if (!response && request && request.error) {
-      throw request.error;
-    }
-    if (!response || !response.ok || !result || result.ok !== true) {
-      throw new Error((result && result.error) || 'Не удалось получить ответ ИИ');
-    }
-    const answer = normalize(result.response || result.message);
-    if (!answer) {
-      throw new Error('ИИ вернул пустой ответ');
-    }
-    return answer;
   }
 
   function isImageLike(name, type) {
@@ -858,7 +721,6 @@
         <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
-          <button type="button" class="tg-ai-chat__toggle" data-vision-toggle>👁 Vision: OFF</button>
           <button type="button" class="tg-ai-chat__toggle" data-style-toggle>🎯 Стиль: Нейтральный</button>
           <textarea class="tg-ai-chat__input" data-input placeholder="Например: реши задачу по выбранным файлам"></textarea>
           <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
@@ -879,9 +741,7 @@
     const filesList = overlay.querySelector('[data-files-list]');
     const input = overlay.querySelector('[data-input]');
     const meta = overlay.querySelector('[data-meta]');
-    const visionToggle = overlay.querySelector('[data-vision-toggle]');
     const styleToggle = overlay.querySelector('[data-style-toggle]');
-    let visionMode = false;
     let styleIndex = 0;
 
     renderFiles(filesList, files);
@@ -894,13 +754,6 @@
 
     overlay.querySelector('[data-files-toggle]')?.addEventListener('click', () => {
       filesPanel.hidden = !filesPanel.hidden;
-    });
-    visionToggle?.addEventListener('click', () => {
-      visionMode = !visionMode;
-      visionToggle.textContent = visionMode ? '👁 Vision: ON' : '👁 Vision: OFF';
-      status.textContent = visionMode
-        ? 'Vision включён: анализ изображений/PDF через VIP ИИ.'
-        : 'Vision выключен: обычный OCR + текстовый ответ.';
     });
     styleToggle?.addEventListener('click', () => {
       styleIndex = (styleIndex + 1) % RESPONSE_STYLE_OPTIONS.length;
@@ -937,68 +790,23 @@
       sendButton.disabled = true;
       meta.innerHTML = '';
       createBubble(messages, prompt || 'Реши задачу по выбранным файлам и дай готовый ответ.', 'user');
-      status.textContent = 'Готовим файлы...';
+      status.textContent = 'Vision: готовим файлы...';
       const startedAt = Date.now();
       const loadingBubble = createLoadingBubble(messages);
 
       try {
-        const extractedTexts = [];
-        let answer = '';
-        if (visionMode) {
-          answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: styleMeta.prompt, selectedFiles }, (message) => {
-            status.textContent = message;
-          });
-        } else {
-          for (let index = 0; index < selectedFiles.length; index += 1) {
-            const currentFile = selectedFiles[index];
-            const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-            status.textContent = `OCR ${index + 1}/${selectedFiles.length}: ${fileLabel}`;
-            let extractedText = '';
-            try {
-              const fileBlob = await loadSelectedFileAsBlob(currentFile);
-              extractedText = await requestTelegramOcrByFile(fileBlob, fileBlob && fileBlob.name ? fileBlob.name : fileLabel);
-            } catch (blobError) {
-              const fallbackUrl = buildFileUrlCandidates(currentFile)[0] || '';
-              if (!fallbackUrl) {
-                throw blobError;
-              }
-              extractedText = await requestTelegramOcrByUrl(fallbackUrl);
-            }
-            if (!normalize(extractedText)) {
-              throw new Error(`OCR не вернул текст для файла: ${fileLabel}`);
-            }
-            extractedTexts.push({
-              name: fileLabel,
-              type: 'text/plain',
-              text: String(extractedText).slice(0, 16000),
-            });
-          }
-
-          status.textContent = 'Отправляем запрос в ИИ...';
-          answer = await requestTelegramAiResponse({
-            prompt: effectivePrompt,
-            documentTitle: normalize(task && (task.title || task.documentTitle || task.subject)) || 'Задача Telegram',
-            extractedTexts,
-            context: {
-              source: 'telegram-ai-response-dialog',
-              responseStyle: styleMeta.value,
-              task,
-              selectedFiles: selectedFiles.map((item) => ({
-                name: normalize(item && (item.originalName || item.name || item.storedName)),
-                url: buildFileUrlCandidates(item)[0] || '',
-              })),
-            },
-          });
-        }
+        const answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: styleMeta.prompt, selectedFiles }, (message) => {
+          status.textContent = message;
+        });
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
 
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
-          <span class="tg-ai-chat__chip">Режим: ${visionMode ? 'vision' : 'generate_response'}</span>
+          <span class="tg-ai-chat__chip">Режим: vision</span>
           <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
-          <span class="tg-ai-chat__chip">OCR: ${extractedTexts.length}</span>
+          <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
         `;
         status.textContent = 'Данные переданы.';
