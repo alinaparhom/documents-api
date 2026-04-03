@@ -2294,11 +2294,44 @@
     var formData = new FormData();
     formData.append('action', 'ocr_extract');
     formData.append('language', 'rus');
+    var MAX_LOCAL_TEXT_CHARS = 500000;
 
-    var prepareSource = Promise.resolve();
+    function getExtension(fileName) {
+      var match = String(fileName || '').trim().toLowerCase().match(/\.([a-z0-9]{1,10})$/i);
+      return match ? match[1] : '';
+    }
+
+    function isTextLikeBlob(blob, fallbackName) {
+      var mime = String(blob && blob.type || '').toLowerCase();
+      var ext = getExtension(fallbackName || '');
+      if (mime.indexOf('text/') === 0) return true;
+      if (mime.indexOf('json') >= 0 || mime.indexOf('xml') >= 0 || mime.indexOf('csv') >= 0) return true;
+      return ['txt', 'md', 'csv', 'json', 'xml', 'log', 'rtf', 'html', 'htm'].indexOf(ext) >= 0;
+    }
+
+    function tryExtractLocalText(blob, fallbackName) {
+      if (!blob || typeof blob.text !== 'function') {
+        return Promise.resolve('');
+      }
+      if (!isTextLikeBlob(blob, fallbackName)) {
+        return Promise.resolve('');
+      }
+      return blob.text().then(function(text) {
+        return String(text || '').slice(0, MAX_LOCAL_TEXT_CHARS).trim();
+      }).catch(function() {
+        return '';
+      });
+    }
+
+    var prepareSource = Promise.resolve('');
     if (source && source.fileObject) {
       var localName = ensureUploadFileName(source.fileObject.name, source.fileObject.type, source && source.label ? source.label : 'ocr-file');
-      formData.append('file', source.fileObject, localName);
+      prepareSource = tryExtractLocalText(source.fileObject, localName).then(function(localText) {
+        if (!localText) {
+          formData.append('file', source.fileObject, localName);
+        }
+        return localText;
+      });
     } else if (source && source.url) {
       prepareSource = fetch(String(source.url), { credentials: 'same-origin' })
         .then(function(fileResponse) {
@@ -2313,19 +2346,30 @@
             fileBlob.type,
             'ocr-file'
           );
-          formData.append('file', new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' }), fileName);
+          return tryExtractLocalText(fileBlob, fileName).then(function(localText) {
+            if (!localText) {
+              formData.append('file', new File([fileBlob], fileName, { type: fileBlob.type || 'application/octet-stream' }), fileName);
+            }
+            return localText;
+          });
         });
     } else {
       return Promise.reject(new Error('Источник для OCR не найден.'));
     }
 
-    return prepareSource.then(function() {
+    return prepareSource.then(function(localText) {
+      if (localText) {
+        return localText;
+      }
       return fetch(endpoint, {
         method: 'POST',
         credentials: 'same-origin',
         body: formData
       });
     }).then(function(response) {
+      if (typeof response === 'string') {
+        return response;
+      }
       return response.json().catch(function() { return null; }).then(function(payload) {
         if (!response.ok || !payload || payload.ok !== true) {
           throw new Error(payload && payload.error ? payload.error : ('Ошибка OCR (' + response.status + ')'));

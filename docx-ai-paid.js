@@ -53,6 +53,24 @@
     if (!localFile) {
       return '';
     }
+    var normalizedName = String(fileName || localFile.name || '').trim();
+    var extMatch = normalizedName.toLowerCase().match(/\.([a-z0-9]{1,10})$/i);
+    var ext = extMatch ? extMatch[1] : '';
+    var mime = String(localFile.type || '').toLowerCase();
+    var isTextLike = mime.indexOf('text/') === 0
+      || mime.indexOf('json') >= 0
+      || mime.indexOf('xml') >= 0
+      || mime.indexOf('csv') >= 0
+      || ['txt', 'md', 'csv', 'json', 'xml', 'log', 'rtf', 'html', 'htm'].indexOf(ext) >= 0;
+    if (isTextLike && typeof localFile.text === 'function') {
+      try {
+        var plainText = await localFile.text();
+        plainText = String(plainText || '').slice(0, 500000).trim();
+        if (plainText) {
+          return plainText;
+        }
+      } catch (_) {}
+    }
     ocrFormData.append('file', localFile, fileName || 'document');
     try {
       var response = await fetch(ocrApiUrl + '?action=ocr_extract', {
