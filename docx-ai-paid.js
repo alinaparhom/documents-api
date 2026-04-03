@@ -126,7 +126,6 @@
 
   async function buildVipRequestFormData(options, promptText, selectedLinked, selectedPending, requestContext) {
     var formData = new FormData();
-    formData.append('prompt', promptText);
     formData.append('responseStyle', 'neutral');
     var appendResult = await appendSourceFilesToFormData(options, formData, selectedLinked, selectedPending);
     var appendedCount = appendResult && appendResult.appendedCount ? appendResult.appendedCount : 0;
@@ -138,6 +137,11 @@
     payloadContext.ocrSummary = (payloadContext.ocrFiles || []).map(function(item) {
       return 'Файл: ' + (item.name || 'Без имени') + '\nOCR:\n' + (item.ocrText || '');
     }).join('\n\n---\n\n').slice(0, 50000);
+    var finalPrompt = String(promptText || '');
+    if (payloadContext.ocrSummary) {
+      finalPrompt += '\n\nOCR контекст по каждому файлу:\n' + payloadContext.ocrSummary;
+    }
+    formData.append('prompt', finalPrompt.slice(0, 70000));
     formData.append('context', JSON.stringify(payloadContext));
     return formData;
   }
