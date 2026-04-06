@@ -2864,6 +2864,25 @@ function resolveEntryTaskIdFromQuery(params, hashParams) {
 function readQueryContext() {
   const params = new URLSearchParams(window.location.search);
   const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const initDataFromQuery = params.get('tgWebAppData')
+    || params.get('tgwebappdata')
+    || params.get('init_data')
+    || hashParams.get('tgWebAppData')
+    || hashParams.get('tgwebappdata')
+    || hashParams.get('init_data');
+  if (!state.telegram.initData && initDataFromQuery) {
+    let normalizedInitData = '';
+    try {
+      normalizedInitData = decodeURIComponent(String(initDataFromQuery));
+    } catch (error) {
+      normalizedInitData = String(initDataFromQuery);
+    }
+    normalizedInitData = normalizedInitData.trim();
+    if (normalizedInitData) {
+      state.telegram.initData = normalizedInitData;
+      hydrateTelegramFromInitData(normalizedInitData);
+    }
+  }
   const viewerDebugParam = params.get('viewerDebug');
   const normalizeDebugFlag = (value) => {
     if (value === null || value === undefined) {

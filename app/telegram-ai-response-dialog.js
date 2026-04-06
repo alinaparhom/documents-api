@@ -692,11 +692,9 @@
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
       .tg-ai-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
       .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
-      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto auto auto 1fr auto;gap:8px;background:rgba(255,255,255,.93)}
+      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto auto;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
-      .tg-ai-chat__input{min-height:42px;max-height:120px;resize:none;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.98);border-radius:12px;padding:9px;font-size:13px;color:#0f172a}
-      .tg-ai-chat__send{min-height:42px;border:none;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#14b8a6);color:#fff;font-weight:700}
-      .tg-ai-chat__send:disabled{opacity:.6}
+      .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
       .tg-ai-chat__files{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.97);padding:9px 12px calc(9px + env(safe-area-inset-bottom,0px))}
       .tg-ai-chat__files[hidden]{display:none}
       .tg-ai-chat__files-title{font-size:12px;color:#64748b;margin:0 0 8px}
@@ -713,7 +711,7 @@
       .tg-ai-chat__dots span:nth-child(3){animation-delay:.32s}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr 1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-chat__input{grid-column:1/-1}.tg-ai-chat__send{grid-column:1/-1}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}}
     `;
     document.head.appendChild(style);
   }
@@ -767,19 +765,20 @@
         <div class="tg-ai-chat__head">
           <div>
             <div class="tg-ai-chat__title">Ответ с помощью ИИ</div>
-            <div class="tg-ai-chat__sub">Выберите файлы и задайте вопрос по задаче</div>
+            <div class="tg-ai-chat__sub">Выберите файлы, затем режим ответа в списке</div>
           </div>
           <button type="button" class="tg-ai-chat__close" data-close>✕</button>
         </div>
         <div class="tg-ai-chat__messages" data-messages>
-          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите файлы и отправьте запрос — подготовлю готовое решение по документам.</div>
+          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите файлы и режим ответа в выпадающем списке «Выберите режим».</div>
         </div>
-        <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
+        <div class="tg-ai-chat__status" data-status>Выберите режим ответа.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
-          <button type="button" class="tg-ai-chat__toggle" data-style-toggle>🎯 Стиль: Нейтральный</button>
-          <textarea class="tg-ai-chat__input" data-input placeholder="Например: реши задачу по выбранным файлам"></textarea>
-          <button type="button" class="tg-ai-chat__send" data-send>Отправить</button>
+          <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
+            <option value="" selected>🎯 Выберите режим</option>
+            ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${escapeHtml(item.value)}">🎯 ${escapeHtml(item.label)}</option>`).join('')}
+          </select>
         </div>
         <div class="tg-ai-chat__files" data-files hidden>
           <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
@@ -795,43 +794,32 @@
     const status = overlay.querySelector('[data-status]');
     const filesPanel = overlay.querySelector('[data-files]');
     const filesList = overlay.querySelector('[data-files-list]');
-    const input = overlay.querySelector('[data-input]');
     const meta = overlay.querySelector('[data-meta]');
-    const styleToggle = overlay.querySelector('[data-style-toggle]');
+    const styleSelect = overlay.querySelector('[data-style-select]');
     let styleIndex = 0;
+    let isSending = false;
 
     renderFiles(filesList, files);
 
     const close = () => overlay.remove();
     overlay.querySelector('[data-close]')?.addEventListener('click', close);
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) close();
-    });
 
     overlay.querySelector('[data-files-toggle]')?.addEventListener('click', () => {
       filesPanel.hidden = !filesPanel.hidden;
     });
-    styleToggle?.addEventListener('click', () => {
-      styleIndex = (styleIndex + 1) % RESPONSE_STYLE_OPTIONS.length;
-      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex];
-      styleToggle.textContent = `🎯 Стиль: ${styleMeta.label}`;
-      status.textContent = `Стиль ответа: ${styleMeta.label}.`;
-    });
-
-    filesList?.addEventListener('change', (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
-      const key = normalize(target.dataset.fileIndex);
-      if (!key) return;
-      if (target.checked) selected.add(key);
-      else selected.delete(key);
-      status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
-    });
-
-    overlay.querySelector('[data-send]')?.addEventListener('click', async (event) => {
-      const sendButton = event.currentTarget;
-      const prompt = normalize(input && input.value);
+    async function sendByCurrentStyle() {
+      if (isSending) return;
+      const selectedStyleValue = normalize(styleSelect && styleSelect.value);
+      if (!selectedStyleValue) {
+        status.textContent = 'Выберите режим ответа.';
+        return;
+      }
+      const styleIndexFromSelect = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
+      if (styleIndexFromSelect >= 0) {
+        styleIndex = styleIndexFromSelect;
+      }
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
+      const prompt = 'Реши задачу по выбранным файлам и дай готовый ответ.';
       const effectivePrompt = [prompt, styleMeta.prompt, RESPONSE_OUTPUT_DIRECTIVE].filter(Boolean).join('\n\n');
       const selectedFiles = Array.from(selected)
         .map((key) => files[Number(key)])
@@ -843,9 +831,9 @@
         return;
       }
 
-      sendButton.disabled = true;
+      isSending = true;
       meta.innerHTML = '';
-      createBubble(messages, prompt || 'Реши задачу по выбранным файлам и дай готовый ответ.', 'user');
+      createBubble(messages, `Стиль: ${styleMeta.label}. Подготовь готовый ответ по документам.`, 'user');
       status.textContent = 'Vision: готовим файлы...';
       const startedAt = Date.now();
       const loadingBubble = createLoadingBubble(messages);
@@ -866,14 +854,37 @@
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
         `;
         status.textContent = 'Данные переданы.';
-        if (input) input.value = '';
       } catch (error) {
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
         status.textContent = 'Ошибка передачи.';
       } finally {
-        sendButton.disabled = false;
+        isSending = false;
       }
+    }
+
+    styleSelect?.addEventListener('change', () => {
+      const selectedStyleValue = normalize(styleSelect.value);
+      if (!selectedStyleValue) {
+        status.textContent = 'Выберите режим ответа.';
+        return;
+      }
+      const nextIndex = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
+      styleIndex = nextIndex >= 0 ? nextIndex : 0;
+      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
+      status.textContent = `Стиль ответа: ${styleMeta.label}.`;
+      sendByCurrentStyle();
     });
+
+    filesList?.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+      const key = normalize(target.dataset.fileIndex);
+      if (!key) return;
+      if (target.checked) selected.add(key);
+      else selected.delete(key);
+      status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
+    });
+
   };
 }(typeof window !== 'undefined' ? window : globalThis));
