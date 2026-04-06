@@ -3597,7 +3597,7 @@
 
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
-      if (resolveRequestMode(state) === 'paid' && !state.isLoading) {
+      if (!state.isLoading) {
         sendMessage();
       }
     });
