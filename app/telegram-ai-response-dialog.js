@@ -694,6 +694,7 @@
       .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto auto;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
+      .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
       .tg-ai-chat__files{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.97);padding:9px 12px calc(9px + env(safe-area-inset-bottom,0px))}
       .tg-ai-chat__files[hidden]{display:none}
       .tg-ai-chat__files-title{font-size:12px;color:#64748b;margin:0 0 8px}
@@ -774,7 +775,9 @@
         <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
-          <button type="button" class="tg-ai-chat__toggle" data-style-toggle>🎯 Стиль: Нейтральный</button>
+          <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
+            ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${escapeHtml(item.value)}">🎯 ${escapeHtml(item.label)}</option>`).join('')}
+          </select>
         </div>
         <div class="tg-ai-chat__files" data-files hidden>
           <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
@@ -791,7 +794,7 @@
     const filesPanel = overlay.querySelector('[data-files]');
     const filesList = overlay.querySelector('[data-files-list]');
     const meta = overlay.querySelector('[data-meta]');
-    const styleToggle = overlay.querySelector('[data-style-toggle]');
+    const styleSelect = overlay.querySelector('[data-style-select]');
     let styleIndex = 0;
     let isSending = false;
 
@@ -805,6 +808,11 @@
     });
     async function sendByCurrentStyle() {
       if (isSending) return;
+      const selectedStyleValue = normalize(styleSelect && styleSelect.value);
+      const styleIndexFromSelect = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
+      if (styleIndexFromSelect >= 0) {
+        styleIndex = styleIndexFromSelect;
+      }
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
       const prompt = 'Реши задачу по выбранным файлам и дай готовый ответ.';
       const effectivePrompt = [prompt, styleMeta.prompt, RESPONSE_OUTPUT_DIRECTIVE].filter(Boolean).join('\n\n');
@@ -850,10 +858,11 @@
       }
     }
 
-    styleToggle?.addEventListener('click', () => {
-      styleIndex = (styleIndex + 1) % RESPONSE_STYLE_OPTIONS.length;
-      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex];
-      styleToggle.textContent = `🎯 Стиль: ${styleMeta.label}`;
+    styleSelect?.addEventListener('change', () => {
+      const selectedStyleValue = normalize(styleSelect.value);
+      const nextIndex = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
+      styleIndex = nextIndex >= 0 ? nextIndex : 0;
+      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
       status.textContent = `Стиль ответа: ${styleMeta.label}.`;
       sendByCurrentStyle();
     });
