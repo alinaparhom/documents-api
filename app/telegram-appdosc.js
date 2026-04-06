@@ -501,31 +501,24 @@ function ensureAiDialogScriptLoaded() {
 
   if (!aiDialogLoader) {
     aiDialogLoader = (async () => {
-      try {
-        await import('./telegram-ai-response-dialog.js');
-        if (typeof window.openAiResponseDialog === 'function') {
-          return window.openAiResponseDialog;
-        }
-      } catch (_) {
-        // fallback ниже
-      }
-
       const scriptSources = [
         '/js/documents/app/telegram-ai-response-dialog.js',
         '/app/telegram-ai-response-dialog.js',
       ];
-      const version = encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
+      const version = encodeURIComponent(String(window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()));
+      const loadScript = (src) => new Promise((resolve) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.defer = true;
+        script.dataset.aiDialogScript = 'true';
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+      });
+
       for (let index = 0; index < scriptSources.length; index += 1) {
         const src = `${scriptSources[index]}?v=${version}`;
-        const loaded = await new Promise((resolve) => {
-          const script = document.createElement('script');
-          script.src = src;
-          script.defer = true;
-          script.dataset.aiDialogScript = 'true';
-          script.onload = () => resolve(true);
-          script.onerror = () => resolve(false);
-          document.head.appendChild(script);
-        });
+        const loaded = await loadScript(src);
         if (loaded && typeof window.openAiResponseDialog === 'function') {
           return window.openAiResponseDialog;
         }

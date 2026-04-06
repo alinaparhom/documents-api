@@ -5,6 +5,13 @@
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
   const VISION_BATCH_SIZE = 5;
+  const PDF_RENDER_SCALE = 1.25;
+  const PDF_JPEG_QUALITY = 0.82;
+  const PDF_WORKER_CANDIDATES = [
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+    '/pdf/pdf.worker.min.js',
+  ];
   let briefPdfJsLoader = null;
   const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
 Запрещено начинать с "Анализ письма", "Разбор", "Рекомендации".
@@ -314,7 +321,9 @@
       let index = 0;
       const tryNext = () => {
         if (typeof window !== 'undefined' && window.pdfjsLib) {
-          window.__briefPdfWorkerSrc = sources[Math.max(0, index - 1)].worker;
+          const loadedWorker = sources[Math.max(0, index - 1)].worker;
+          window.__briefPdfWorkerCandidates = Array.from(new Set([loadedWorker, ...PDF_WORKER_CANDIDATES]));
+          window.__briefPdfWorkerSrc = window.__briefPdfWorkerCandidates[0] || loadedWorker;
           resolve(window.pdfjsLib);
           return;
         }
@@ -328,7 +337,8 @@
         script.src = source.script;
         script.onload = () => {
           if (typeof window !== 'undefined' && window.pdfjsLib) {
-            window.__briefPdfWorkerSrc = source.worker;
+            window.__briefPdfWorkerCandidates = Array.from(new Set([source.worker, ...PDF_WORKER_CANDIDATES]));
+            window.__briefPdfWorkerSrc = window.__briefPdfWorkerCandidates[0] || source.worker;
             resolve(window.pdfjsLib);
             return;
           }
@@ -391,6 +401,35 @@
     return chunks;
   }
 
+  function getPdfWorkerCandidates() {
+    const runtimeCandidates = Array.isArray(window.__briefPdfWorkerCandidates) ? window.__briefPdfWorkerCandidates : [];
+    const merged = runtimeCandidates.concat(PDF_WORKER_CANDIDATES);
+    return Array.from(new Set(merged.map((item) => normalize(item)).filter(Boolean)));
+  }
+
+  async function openPdfDocumentWithWorkerFallback(pdfjsLib, bytes) {
+    const candidates = getPdfWorkerCandidates();
+    let lastError = null;
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const workerSrc = candidates[index];
+      try {
+        if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+        }
+        const loadingTask = pdfjsLib.getDocument({ data: bytes });
+        // eslint-disable-next-line no-await-in-loop
+        const pdf = await loadingTask.promise;
+        window.__briefPdfWorkerSrc = workerSrc;
+        return pdf;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('Не удалось инициализировать PDF worker.');
+  }
+
   async function buildVisionPayloadFromFile(file, onProgress) {
     if (!(file instanceof File)) {
       throw new Error('Файл не выбран.');
@@ -416,12 +455,8 @@
     if (isPdf) {
       onProgress('Открываю PDF...', 5);
       const pdfjsLib = await ensureBriefPdfJsLoaded();
-      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
-      }
       const bytes = await file.arrayBuffer();
-      const loadingTask = pdfjsLib.getDocument({ data: bytes });
-      const pdf = await loadingTask.promise;
+      const pdf = await openPdfDocumentWithWorkerFallback(pdfjsLib, bytes);
       const totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
       const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -431,7 +466,7 @@
         onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 90));
         // eslint-disable-next-line no-await-in-loop
         const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1.25 });
+        const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.floor(viewport.width));
         canvas.height = Math.max(1, Math.floor(viewport.height));
@@ -440,7 +475,7 @@
         // eslint-disable-next-line no-await-in-loop
         await page.render({ canvasContext: ctx, viewport }).promise;
         // eslint-disable-next-line no-await-in-loop
-        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.82));
+        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', PDF_JPEG_QUALITY));
         if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
         // eslint-disable-next-line no-await-in-loop
         const dataUrl = await readBlobAsDataUrl(blob);
@@ -720,6 +755,7 @@
 
   globalScope.openAiResponseDialog = function openAiResponseDialog(context = {}) {
     ensureStyles();
+    ensureBriefPdfJsLoaded().catch(() => {});
 
     const task = context && context.task ? context.task : {};
     const files = Array.isArray(task && task.files) ? task.files : [];
@@ -841,5 +877,3 @@
     });
   };
 }(typeof window !== 'undefined' ? window : globalThis));
-
-export {};
