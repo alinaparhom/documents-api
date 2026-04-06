@@ -4,7 +4,10 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
-  const VISION_BATCH_SIZE = 5;
+  const VISION_BATCH_SIZE = 8;
+  const VISION_REQUEST_CONCURRENCY = 2;
+  const PDF_RENDER_SCALE = 1;
+  const PDF_JPEG_QUALITY = 0.68;
   const FILE_PREPARE_CONCURRENCY = 2;
   let briefPdfJsLoader = null;
   const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
@@ -452,7 +455,7 @@
         onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 90));
         // eslint-disable-next-line no-await-in-loop
         const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1.25 });
+        const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.floor(viewport.width));
         canvas.height = Math.max(1, Math.floor(viewport.height));
@@ -461,7 +464,7 @@
         // eslint-disable-next-line no-await-in-loop
         await page.render({ canvasContext: ctx, viewport }).promise;
         // eslint-disable-next-line no-await-in-loop
-        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', 0.82));
+        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', PDF_JPEG_QUALITY));
         if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
         // eslint-disable-next-line no-await-in-loop
         const dataUrl = await readBlobAsDataUrl(blob);
@@ -566,13 +569,13 @@
     }
 
     const batches = chunkItems(images, VISION_BATCH_SIZE);
-    const partialAnswers = [];
-
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-      const currentBatch = batches[batchIndex];
-      onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
-      // eslint-disable-next-line no-await-in-loop
-      const request = await postGroqResponseWithFallback(() => {
+    onStatus(`Vision: запускаю анализ ${batches.length} блоков (до ${VISION_REQUEST_CONCURRENCY} параллельно)...`, 'loading');
+    const partialAnswers = await mapWithConcurrency(
+      batches,
+      VISION_REQUEST_CONCURRENCY,
+      async (currentBatch, batchIndex) => {
+        onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
+        const request = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'analyze_paid');
         formData.append('mode', 'paid');
@@ -605,13 +608,14 @@
         });
         return formData;
       });
-      const response = request && request.response;
-      const result = request && request.payload;
-      if (!response || !response.ok || !result || result.ok !== true) {
-        throw new Error((result && result.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
+        const response = request && request.response;
+        const result = request && request.payload;
+        if (!response || !response.ok || !result || result.ok !== true) {
+          throw new Error((result && result.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
+        }
+        return normalize(result.response || result.summary);
       }
-      partialAnswers.push(normalize(result.response || result.summary));
-    }
+    );
 
     let finalSummary = partialAnswers.join('\n\n').trim();
     if (partialAnswers.length > 1) {
