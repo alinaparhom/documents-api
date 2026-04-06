@@ -681,8 +681,9 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px)}
-      .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(241,245,249,.92));box-shadow:0 20px 50px rgba(15,23,42,.22)}
+      .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(12px)}
+      .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(155deg,rgba(255,255,255,.98),rgba(241,245,249,.94));box-shadow:0 24px 54px rgba(15,23,42,.24);transition:transform .2s ease, box-shadow .2s ease}
+      .tg-ai-chat__card.is-loading{box-shadow:0 30px 62px rgba(37,99,235,.22)}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
       .tg-ai-chat__title{font-size:16px;font-weight:800;color:#0f172a}
       .tg-ai-chat__sub{font-size:12px;color:#64748b;margin-top:2px}
@@ -692,8 +693,11 @@
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
       .tg-ai-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
       .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
+      .tg-ai-chat__hint{margin:8px 12px 0;padding:8px 10px;border:1px solid rgba(191,219,254,.9);background:rgba(239,246,255,.8);border-radius:12px;font-size:12px;color:#1e3a8a;line-height:1.35}
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;background:rgba(255,255,255,.93)}
-      .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
+      .tg-ai-chat__toggle{min-height:42px;border:1px solid rgba(147,197,253,.7);padding:0 12px;border-radius:12px;background:rgba(239,246,255,.95);color:#1e3a8a;font-weight:700}
+      .tg-ai-chat__toggle[data-style-toggle]{background:linear-gradient(135deg,rgba(219,234,254,.95),rgba(224,231,255,.95))}
+      .tg-ai-chat__toggle.is-active{border-color:rgba(37,99,235,.55);box-shadow:0 0 0 2px rgba(37,99,235,.12) inset}
       .tg-ai-chat__files{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.97);padding:9px 12px calc(9px + env(safe-area-inset-bottom,0px))}
       .tg-ai-chat__files[hidden]{display:none}
       .tg-ai-chat__files-title{font-size:12px;color:#64748b;margin:0 0 8px}
@@ -772,6 +776,7 @@
           <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите режим ответа — подготовлю готовое решение по документам.</div>
         </div>
         <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
+        <div class="tg-ai-chat__hint">💡 Нажмите «🎯 Стиль», чтобы сразу получить готовый ответ ИИ по файлам задачи.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
           <button type="button" class="tg-ai-chat__toggle" data-style-toggle>🎯 Стиль: Нейтральный</button>
@@ -788,6 +793,7 @@
     const selected = new Set();
     const messages = overlay.querySelector('[data-messages]');
     const status = overlay.querySelector('[data-status]');
+    const card = overlay.querySelector('.tg-ai-chat__card');
     const filesPanel = overlay.querySelector('[data-files]');
     const filesList = overlay.querySelector('[data-files-list]');
     const meta = overlay.querySelector('[data-meta]');
@@ -817,6 +823,7 @@
       }
 
       isSending = true;
+      card?.classList.add('is-loading');
       meta.innerHTML = '';
       status.textContent = 'Vision: готовим файлы...';
       const startedAt = Date.now();
@@ -843,6 +850,7 @@
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
         status.textContent = 'Ошибка передачи.';
       } finally {
+        card?.classList.remove('is-loading');
         isSending = false;
       }
     }
@@ -851,6 +859,7 @@
       styleIndex = (styleIndex + 1) % RESPONSE_STYLE_OPTIONS.length;
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex];
       styleToggle.textContent = `🎯 Стиль: ${styleMeta.label}`;
+      styleToggle.classList.add('is-active');
       status.textContent = `Стиль ответа: ${styleMeta.label}. Формирую ответ...`;
       sendAutoResponse();
     });

@@ -1175,6 +1175,7 @@
       '.ai-chat-modal__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid rgba(226,232,240,.7);background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(248,250,252,.64));}' +
       '.ai-chat-modal__title{font-size:14px;font-weight:700;color:#0f172a;}' +
       '.ai-chat-modal__subtitle{margin-top:1px;font-size:11px;color:#64748b;}' +
+      '.ai-chat-modal__auto-note{margin:0 0 8px;padding:8px 10px;border-radius:10px;border:1px solid rgba(147,197,253,.55);background:rgba(239,246,255,.8);font-size:11px;color:#1e3a8a;line-height:1.35;}' +
       '.ai-chat-modal__close{border:none;background:rgba(148,163,184,.18);width:32px;height:32px;border-radius:999px;font-size:18px;line-height:1;cursor:pointer;}' +
       '.ai-chat-modal__content{display:flex;flex-direction:column;gap:10px;padding:12px;min-height:0;flex:1;}' +
       '.ai-chat-modal__context{border:1px solid rgba(226,232,240,.88);border-radius:12px;padding:8px;background:rgba(255,255,255,.72);backdrop-filter:blur(2px);}' +
@@ -2450,6 +2451,7 @@
     messages.appendChild(createMessage('assistant', 'Привет! Выберите режим ответа — я подготовлю ответ автоматически.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
+    var autoModeHint = createElement('div', 'ai-chat-modal__auto-note', '💡 Поле ручного ввода отключено. Выберите режим/стиль — ответ сформируется автоматически.');
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
     templateButton.type = 'button';
     templateButton.style.display = 'none';
@@ -3716,6 +3718,7 @@
     topBar.appendChild(filesBox);
 
     content.appendChild(topBar);
+    content.appendChild(autoModeHint);
     content.appendChild(messages);
     if (composer.childNodes.length > 0) {
       content.appendChild(composer);
