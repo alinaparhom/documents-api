@@ -3,6 +3,13 @@ const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
 const BRIEF_SUMMARY_PROMPT = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
+const BRIEF_PDF_SOURCES = [
+  { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
+  { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
+  { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+  { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
+];
+const BRIEF_DEFAULT_PDF_WORKER_SRC = BRIEF_PDF_SOURCES[0].worker;
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -81,16 +88,16 @@ export function createTelegramBriefAi(deps = {}) {
 
   function ensureBriefPdfJsLoaded() {
     if (typeof window !== 'undefined' && window.pdfjsLib) {
+      if (window.pdfjsLib.GlobalWorkerOptions) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = BRIEF_DEFAULT_PDF_WORKER_SRC;
+      }
+      window.__briefPdfWorkerSrc = BRIEF_DEFAULT_PDF_WORKER_SRC;
       return Promise.resolve(window.pdfjsLib);
     }
     if (briefPdfJsLoader) {
       return briefPdfJsLoader;
     }
-    const sources = [
-      { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
-      { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
-      { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
-    ];
+    const sources = BRIEF_PDF_SOURCES;
     briefPdfJsLoader = new Promise((resolve, reject) => {
       let index = 0;
       const tryNext = () => {
@@ -135,7 +142,7 @@ export function createTelegramBriefAi(deps = {}) {
     try {
       const pdfjsLib = await ensureBriefPdfJsLoaded();
       if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || BRIEF_DEFAULT_PDF_WORKER_SRC;
       }
       const bytes = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: bytes });
@@ -262,7 +269,7 @@ export function createTelegramBriefAi(deps = {}) {
       onProgress('Открываю PDF...', 5);
       const pdfjsLib = await ensureBriefPdfJsLoaded();
       if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || BRIEF_DEFAULT_PDF_WORKER_SRC;
       }
       const bytes = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: bytes });
