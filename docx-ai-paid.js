@@ -624,7 +624,7 @@
     var payload = options.payload || {};
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__input" data-style></select><textarea class="documents-vip-ai__input" data-prompt placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button" data-send>Отправить</button></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__input" data-style></select></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -632,8 +632,6 @@
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
     var styleNode = panel.querySelector('[data-style]');
-    var inputNode = panel.querySelector('[data-prompt]');
-    var sendButton = panel.querySelector('[data-send]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
     var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
@@ -641,7 +639,6 @@
     var pendingEntries = pending.map(function(item, index) { return { key: 'pending_' + index, file: item, source: 'pending' }; });
     var fileEntries = linkedEntries.concat(pendingEntries);
     var selectedFiles = {};
-    var visionMode = true;
     fileEntries.forEach(function(entry) {
       selectedFiles[entry.key] = true;
     });
@@ -667,11 +664,6 @@
     }
 
     closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
-    overlay.addEventListener('click', function(event) {
-      if (event.target === overlay) {
-        closeModal(overlay);
-      }
-    });
 
     var chatHistory = [];
     function pushChat(role, text) {
@@ -680,16 +672,18 @@
       chatNode.scrollTop = chatNode.scrollHeight;
     }
 
-    pushChat('assistant', 'Готов. Я учту все приложенные файлы (включая сканы) и подготовлю решение.');
+    pushChat('assistant', 'Готов. Выберите стиль ответа — и я сразу отправлю запрос.');
 
-    sendButton.addEventListener('click', function() {
-      var promptText = String(inputNode.value || '').trim();
-      var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
-      if (!promptText) {
+    var isSending = false;
+
+    function sendByCurrentStyle() {
+      if (isSending) {
         return;
       }
-      sendButton.disabled = true;
-      pushChat('user', promptText);
+      var promptText = 'Подготовь готовый ответ по выбранным файлам в деловом стиле.';
+      var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
+      isSending = true;
+      pushChat('user', 'Стиль: ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный') + '. Подготовь готовый ответ.');
       pushChat('assistant', '⏳ Обрабатываю запрос...');
       metaNode.innerHTML = '';
       var startedAt = Date.now();
@@ -711,15 +705,18 @@
           var tokens = data && data.tokensUsed ? data.tokensUsed : '—';
           var mode = data && data.mode ? String(data.mode) : 'vision';
           metaNode.innerHTML = '<span class="documents-vip-ai__chip">Режим: ' + escapeHtmlText(mode) + '</span><span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>';
-          inputNode.value = '';
         })
         .catch(function(error) {
           pushChat('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Неизвестная ошибка'));
         })
         .finally(function() {
-          sendButton.disabled = false;
+          isSending = false;
         });
-    });
+    }
+
+    if (styleNode) {
+      styleNode.addEventListener('change', sendByCurrentStyle);
+    }
   }
 
   window.openDocumentsVipAiPaidModal = openDocumentsVipAiPaidModal;

@@ -2305,7 +2305,6 @@
     if (!sources.length) list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() { modal.remove(); });
-    modal.addEventListener('click', function(event) { if (event.target === modal) modal.remove(); });
 
     header.appendChild(titleWrap);
     header.appendChild(closeButton);
@@ -2453,11 +2452,9 @@
       state.lastErrorTs = now;
       messages.appendChild(createMessage('assistant', normalized, true));
     }
-    messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
+    messages.appendChild(createMessage('assistant', 'Привет! Выберите стиль ответа — и я сразу подготовлю вариант.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
-    var textarea = createElement('textarea', 'ai-chat-modal__textarea');
-    textarea.placeholder = 'Введите запрос (можно пусто — отправим текст вложений)';
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
     sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
@@ -2555,11 +2552,6 @@
       function closeOverlay() {
         closeWithAnimation(overlay);
       }
-      overlay.addEventListener('click', function (event) {
-        if (event.target === overlay) {
-          closeOverlay();
-        }
-      });
       modalClose.addEventListener('click', closeOverlay);
       return { overlay: overlay, content: modalContent, close: closeOverlay };
     }
@@ -3262,7 +3254,6 @@
 
     function setLoading(loading) {
       state.isLoading = loading;
-      textarea.disabled = loading;
       sendButton.disabled = loading;
       templateButton.disabled = loading;
       visionCheckbox.disabled = loading;
@@ -3384,7 +3375,6 @@
     }
 
     function closeModal() {
-      document.removeEventListener('keydown', onEsc);
       clearRetryCountdown();
       hiddenInput.value = '';
       if (templateState && templateState.customTemplateObjectUrl) {
@@ -3393,12 +3383,6 @@
       }
       document.body.style.overflow = previousBodyOverflow;
       closeWithAnimation(root);
-    }
-
-    function onEsc(event) {
-      if (event.key === 'Escape') {
-        closeModal();
-      }
     }
 
     var retryCountdownTimer = null;
@@ -3427,7 +3411,7 @@
 
 
     async function sendMessage() {
-      var value = String(textarea.value || '').trim();
+      var value = '';
       if (state.isLoading) {
         return;
       }
@@ -3543,8 +3527,6 @@
         var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload.tokensUsed) : 0;
         messages.appendChild(createMessage('assistant', 'ℹ️ Режим: ' + (responseMode === 'paid' ? 'VIP' : 'Free') + ' • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—')));
         state.lastAssistantMessage = String(finalResponse || '');
-        textarea.value = '';
-        autoHeight(textarea);
       } catch (error) {
         logAiError(error, { model: state.model, responseStyle: state.responseStyle });
         if (error && (error.code === 'AI_TIMEOUT' || error.code === 'NETWORK_ERROR' || error.code === 'AI_TEMPORARY')) {
@@ -3574,8 +3556,6 @@
             var retryTokens = Number(secondPayload && secondPayload.tokensUsed) > 0 ? Number(secondPayload.tokensUsed) : 0;
             messages.appendChild(createMessage('assistant', 'ℹ️ Режим: ' + (retryMode === 'paid' ? 'VIP' : 'Free') + ' • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—')));
             state.lastAssistantMessage = String(retryText || '');
-            textarea.value = '';
-            autoHeight(textarea);
             setLoading(false);
             messages.scrollTop = messages.scrollHeight;
             return;
@@ -3617,6 +3597,9 @@
 
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
+      if (resolveRequestMode(state) === 'paid' && !state.isLoading) {
+        sendMessage();
+      }
     });
     modeSelect.addEventListener('change', function () {
       state.aiMode = modeSelect.value === 'paid' ? 'paid' : 'free';
@@ -3646,17 +3629,6 @@
       }
       updateContextUsageHint();
       refreshSendButtonLabel();
-    });
-
-    textarea.addEventListener('input', function () {
-      autoHeight(textarea);
-    });
-
-    textarea.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        sendMessage();
-      }
     });
 
     sendButton.addEventListener('click', sendMessage);
@@ -3741,11 +3713,6 @@
       autoExtractFiles(newFiles);
     });
 
-    root.addEventListener('click', function (event) {
-      if (event.target === root) {
-        closeModal();
-      }
-    });
 
     header.appendChild(titleWrap);
     header.appendChild(closeButton);
@@ -3761,7 +3728,6 @@
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
 
-    composer.appendChild(textarea);
     composer.appendChild(sendButton);
 
     content.appendChild(topBar);
@@ -3796,10 +3762,8 @@
       renderModelOptions();
     });
 
-    autoHeight(textarea);
-    document.addEventListener('keydown', onEsc);
     setTimeout(function () {
-      textarea.focus();
+      styleSelect.focus();
     }, 0);
   }
 
