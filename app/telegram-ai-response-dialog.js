@@ -4,16 +4,14 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
-  const VISION_BATCH_SIZE = 6;
-  const VISION_REQUEST_CONCURRENCY = 2;
-  const PDF_RENDER_SCALE = 1.3;
-  const PDF_JPEG_QUALITY = 0.86;
+  const VISION_BATCH_SIZE = 5;
+  const PDF_RENDER_SCALE = 1.25;
+  const PDF_JPEG_QUALITY = 0.82;
   const PDF_WORKER_CANDIDATES = [
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
     'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
     '/pdf/pdf.worker.min.js',
   ];
-  const FILE_PREPARE_CONCURRENCY = 2;
   let briefPdfJsLoader = null;
   const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
 Запрещено начинать с "Анализ письма", "Разбор", "Рекомендации".
@@ -432,26 +430,6 @@
     throw lastError || new Error('Не удалось инициализировать PDF worker.');
   }
 
-  async function mapWithConcurrency(items, concurrency, worker) {
-    const list = Array.isArray(items) ? items : [];
-    const limit = Math.max(1, Number(concurrency) || 1);
-    const results = new Array(list.length);
-    let cursor = 0;
-
-    async function runner() {
-      while (cursor < list.length) {
-        const currentIndex = cursor;
-        cursor += 1;
-        // eslint-disable-next-line no-await-in-loop
-        results[currentIndex] = await worker(list[currentIndex], currentIndex);
-      }
-    }
-
-    const runners = Array.from({ length: Math.min(limit, list.length) }, () => runner());
-    await Promise.all(runners);
-    return results;
-  }
-
   async function buildVisionPayloadFromFile(file, onProgress) {
     if (!(file instanceof File)) {
       throw new Error('Файл не выбран.');
@@ -548,34 +526,28 @@
     const images = [];
     const extractedTexts = [];
 
-    const preparedResults = await mapWithConcurrency(selectedFiles, FILE_PREPARE_CONCURRENCY, async (currentFile, index) => {
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      const currentFile = selectedFiles[index];
       const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
       onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
+      // eslint-disable-next-line no-await-in-loop
       const blobFile = await loadSelectedFileAsBlob(currentFile);
       const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
+      // eslint-disable-next-line no-await-in-loop
       const prepared = await buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading'));
-      return { prepared, sourceFile, fileLabel };
-    });
-
-    preparedResults.forEach((item) => {
-      if (!item || !item.prepared) {
-        return;
-      }
-      if (item.prepared.kind === 'multimodal') {
-        images.push(...(Array.isArray(item.prepared.images) ? item.prepared.images : []));
-        return;
-      }
-      if (item.prepared.kind === 'text') {
-        const text = normalize(item.prepared.extractedText);
+      if (prepared.kind === 'multimodal') {
+        images.push(...(Array.isArray(prepared.images) ? prepared.images : []));
+      } else if (prepared.kind === 'text') {
+        const text = normalize(prepared.extractedText);
         if (text) {
           extractedTexts.push({
-            name: item.prepared.fileName || item.fileLabel,
-            type: (item.sourceFile && item.sourceFile.type) || 'text/plain',
+            name: prepared.fileName || fileLabel,
+            type: sourceFile.type || 'text/plain',
             text: text.slice(0, 60000),
           });
         }
       }
-    });
+    }
 
     if (!images.length) {
       if (!extractedTexts.length) {
@@ -602,13 +574,13 @@
     }
 
     const batches = chunkItems(images, VISION_BATCH_SIZE);
-    onStatus(`Vision: запускаю анализ ${batches.length} блоков (до ${VISION_REQUEST_CONCURRENCY} параллельно)...`, 'loading');
-    const partialAnswers = await mapWithConcurrency(
-      batches,
-      VISION_REQUEST_CONCURRENCY,
-      async (currentBatch, batchIndex) => {
-        onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
-        const request = await postGroqResponseWithFallback(() => {
+    const partialAnswers = [];
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const currentBatch = batches[batchIndex];
+      onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
+      // eslint-disable-next-line no-await-in-loop
+      const request = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'analyze_paid');
         formData.append('mode', 'paid');
@@ -619,7 +591,7 @@
         }
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-          max_tokens: 1600,
+          max_tokens: 1200,
           temperature: 0.6,
           messages: [{
             role: 'system',
@@ -641,14 +613,13 @@
         });
         return formData;
       });
-        const response = request && request.response;
-        const result = request && request.payload;
-        if (!response || !response.ok || !result || result.ok !== true) {
-          throw new Error((result && result.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
-        }
-        return normalize(result.response || result.summary);
+      const response = request && request.response;
+      const result = request && request.payload;
+      if (!response || !response.ok || !result || result.ok !== true) {
+        throw new Error((result && result.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
       }
-    );
+      partialAnswers.push(normalize(result.response || result.summary));
+    }
 
     let finalSummary = partialAnswers.join('\n\n').trim();
     if (partialAnswers.length > 1) {
