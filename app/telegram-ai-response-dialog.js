@@ -797,6 +797,15 @@
     let isRequestInFlight = false;
 
     renderFiles(filesList, files);
+    filesList?.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+      if (!(checkbox instanceof HTMLInputElement) || checkbox.disabled) return;
+      checkbox.checked = true;
+      const key = normalize(checkbox.dataset.fileIndex);
+      if (key) selected.add(key);
+    });
+    if (selected.size) {
+      status.textContent = `Выбрано файлов: ${selected.size}`;
+    }
 
     const close = () => overlay.remove();
     overlay.querySelector('[data-close]')?.addEventListener('click', close);
@@ -825,7 +834,10 @@
     async function runResponseGeneration() {
       if (isRequestInFlight) return;
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
-      const effectivePrompt = [styleMeta.prompt, RESPONSE_OUTPUT_DIRECTIVE].filter(Boolean).join('\n\n');
+      const effectivePrompt = [
+        'Проанализируй выбранные файлы и подготовь готовый итоговый ответ по задаче.',
+        RESPONSE_OUTPUT_DIRECTIVE
+      ].filter(Boolean).join('\n\n');
       const selectedFiles = Array.from(selected)
         .map((key) => files[Number(key)])
         .filter(Boolean);
