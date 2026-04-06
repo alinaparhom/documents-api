@@ -1429,11 +1429,6 @@
       });
   }
 
-  function autoHeight(textarea) {
-    textarea.style.height = 'auto';
-    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
-  }
-
   function createMessage(role, text, isError) {
     var msg = createElement('div', 'ai-chat-msg ai-chat-msg--' + role + (isError ? ' ai-chat-msg--error' : ''));
     msg.textContent = String(text || '');
@@ -2452,13 +2447,9 @@
       state.lastErrorTs = now;
       messages.appendChild(createMessage('assistant', normalized, true));
     }
-    messages.appendChild(createMessage('assistant', 'Привет! Напишите запрос — я подготовлю ответ.'));
+    messages.appendChild(createMessage('assistant', 'Привет! Выберите режим ответа — я подготовлю ответ автоматически.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
-    var textarea = createElement('textarea', 'ai-chat-modal__textarea');
-    textarea.placeholder = 'Введите запрос (можно пусто — отправим текст вложений)';
-    var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
-    sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
     templateButton.type = 'button';
     templateButton.style.display = 'none';
@@ -3246,25 +3237,14 @@
     }
 
     function refreshSendButtonLabel() {
-      var requestMode = resolveRequestMode(state);
-      if (requestMode === 'paid' && state.visionMode) {
-        sendButton.textContent = 'Vision анализ';
-        return;
-      }
-      sendButton.textContent = requestMode === 'paid' ? 'Получить ответ' : 'Отправить в ИИ';
+      return resolveRequestMode(state);
     }
 
     function setLoading(loading) {
       state.isLoading = loading;
-      textarea.disabled = loading;
-      sendButton.disabled = loading;
       templateButton.disabled = loading;
       visionCheckbox.disabled = loading;
-      if (loading) {
-        sendButton.innerHTML = '<span class="ai-chat-spinner"></span>Отправка';
-      } else {
-        refreshSendButtonLabel();
-      }
+      refreshSendButtonLabel();
     }
 
     async function extractSingleFile(fileEntry, options) {
@@ -3421,7 +3401,6 @@
 
 
     async function sendMessage() {
-      var value = String(textarea.value || '').trim();
       if (state.isLoading) {
         return;
       }
@@ -3430,12 +3409,12 @@
       var hasFileContent = state.files.some(function (file) {
         return file && typeof file.content === 'string' && file.content.trim() !== '';
       });
-      if (!value && !hasFileContent && !isVisionPaid) {
-        messages.appendChild(createMessage('assistant', 'Добавьте текст запроса или извлеките текст из файла.', true));
+      if (!hasFileContent && !isVisionPaid) {
+        messages.appendChild(createMessage('assistant', 'Нет текста для анализа. Добавьте файл и нажмите «📄 Текст».', true));
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      var effectivePrompt = value || 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
+      var effectivePrompt = 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
 
       state.model = modelSelect.value;
       var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
@@ -3447,7 +3426,6 @@
       state.responseStyle = styleSelect.value;
       state.aiBehavior = String(settingsInput.value || '').trim();
 
-      messages.appendChild(createMessage('user', effectivePrompt));
       var pending = createElement('div', 'ai-chat-msg ai-chat-msg--assistant');
       pending.innerHTML = '<span class="ai-chat-spinner"></span>Готовим ответ...';
       messages.appendChild(pending);
@@ -3537,8 +3515,6 @@
         var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload.tokensUsed) : 0;
         messages.appendChild(createMessage('assistant', 'ℹ️ Режим: ' + (responseMode === 'paid' ? 'VIP' : 'Free') + ' • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—')));
         state.lastAssistantMessage = String(finalResponse || '');
-        textarea.value = '';
-        autoHeight(textarea);
       } catch (error) {
         logAiError(error, { model: state.model, responseStyle: state.responseStyle });
         if (error && (error.code === 'AI_TIMEOUT' || error.code === 'NETWORK_ERROR' || error.code === 'AI_TEMPORARY')) {
@@ -3568,8 +3544,6 @@
             var retryTokens = Number(secondPayload && secondPayload.tokensUsed) > 0 ? Number(secondPayload.tokensUsed) : 0;
             messages.appendChild(createMessage('assistant', 'ℹ️ Режим: ' + (retryMode === 'paid' ? 'VIP' : 'Free') + ' • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—')));
             state.lastAssistantMessage = String(retryText || '');
-            textarea.value = '';
-            autoHeight(textarea);
             setLoading(false);
             messages.scrollTop = messages.scrollHeight;
             return;
@@ -3611,6 +3585,7 @@
 
     styleSelect.addEventListener('change', function () {
       state.responseStyle = styleSelect.value;
+      sendMessage();
     });
     modeSelect.addEventListener('change', function () {
       state.aiMode = modeSelect.value === 'paid' ? 'paid' : 'free';
@@ -3622,6 +3597,7 @@
         appendAssistantErrorOnce('Режим «Кратко» работает через VIP модель.');
       }
       refreshSendButtonLabel();
+      sendMessage();
     });
     visionCheckbox.addEventListener('change', function () {
       state.visionMode = Boolean(visionCheckbox.checked);
@@ -3631,6 +3607,7 @@
         appendAssistantErrorOnce('Vision активирован: анализ изображений/PDF пойдёт через VIP ИИ.');
       }
       refreshSendButtonLabel();
+      sendMessage();
     });
     contextDetailSelect.addEventListener('change', function () {
       state.contextDetail = contextDetailSelect.value === 'brief' ? 'brief' : 'detailed';
@@ -3640,20 +3617,9 @@
       }
       updateContextUsageHint();
       refreshSendButtonLabel();
+      sendMessage();
     });
 
-    textarea.addEventListener('input', function () {
-      autoHeight(textarea);
-    });
-
-    textarea.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        sendMessage();
-      }
-    });
-
-    sendButton.addEventListener('click', sendMessage);
     closeButton.addEventListener('click', closeModal);
     settingsButton.addEventListener('click', function () {
       settingsInput.value = state.aiBehavior;
@@ -3749,12 +3715,11 @@
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
 
-    composer.appendChild(textarea);
-    composer.appendChild(sendButton);
-
     content.appendChild(topBar);
     content.appendChild(messages);
-    content.appendChild(composer);
+    if (composer.childNodes.length > 0) {
+      content.appendChild(composer);
+    }
 
     panel.appendChild(header);
     panel.appendChild(content);
@@ -3784,10 +3749,9 @@
       renderModelOptions();
     });
 
-    autoHeight(textarea);
     document.addEventListener('keydown', onEsc);
     setTimeout(function () {
-      textarea.focus();
+      closeButton.focus();
     }, 0);
   }
 
