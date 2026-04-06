@@ -765,17 +765,18 @@
         <div class="tg-ai-chat__head">
           <div>
             <div class="tg-ai-chat__title">Ответ с помощью ИИ</div>
-            <div class="tg-ai-chat__sub">Выберите файлы и стиль ответа — запрос отправится автоматически</div>
+            <div class="tg-ai-chat__sub">Выберите файлы, затем режим ответа в списке</div>
           </div>
           <button type="button" class="tg-ai-chat__close" data-close>✕</button>
         </div>
         <div class="tg-ai-chat__messages" data-messages>
-          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите файлы и стиль — сразу подготовлю готовый ответ.</div>
+          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите файлы и режим ответа в выпадающем списке «Выберите режим».</div>
         </div>
-        <div class="tg-ai-chat__status" data-status>Готов к работе.</div>
+        <div class="tg-ai-chat__status" data-status>Выберите режим ответа.</div>
         <div class="tg-ai-chat__composer">
           <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
           <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
+            <option value="" selected>🎯 Выберите режим</option>
             ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${escapeHtml(item.value)}">🎯 ${escapeHtml(item.label)}</option>`).join('')}
           </select>
         </div>
@@ -809,6 +810,10 @@
     async function sendByCurrentStyle() {
       if (isSending) return;
       const selectedStyleValue = normalize(styleSelect && styleSelect.value);
+      if (!selectedStyleValue) {
+        status.textContent = 'Выберите режим ответа.';
+        return;
+      }
       const styleIndexFromSelect = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
       if (styleIndexFromSelect >= 0) {
         styleIndex = styleIndexFromSelect;
@@ -860,6 +865,10 @@
 
     styleSelect?.addEventListener('change', () => {
       const selectedStyleValue = normalize(styleSelect.value);
+      if (!selectedStyleValue) {
+        status.textContent = 'Выберите режим ответа.';
+        return;
+      }
       const nextIndex = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
       styleIndex = nextIndex >= 0 ? nextIndex : 0;
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];

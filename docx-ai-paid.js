@@ -643,7 +643,7 @@
       selectedFiles[entry.key] = true;
     });
     if (styleNode) {
-      styleNode.innerHTML = VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
+      styleNode.innerHTML = '<option value="" selected>Выберите режим</option>' + VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
         return '<option value="' + escapeHtmlText(item.value) + '">' + escapeHtmlText('Стиль: ' + item.label) + '</option>';
       }).join('');
     }
@@ -672,12 +672,16 @@
       chatNode.scrollTop = chatNode.scrollHeight;
     }
 
-    pushChat('assistant', 'Готов. Выберите стиль ответа — и я сразу отправлю запрос.');
+    pushChat('assistant', 'Готов. Выберите режим в выпадающем списке, и после этого запрос отправится автоматически.');
 
     var isSending = false;
 
     function sendByCurrentStyle() {
       if (isSending) {
+        return;
+      }
+      if (!styleNode || !String(styleNode.value || '').trim()) {
+        pushChat('assistant', 'Пожалуйста, выберите режим.');
         return;
       }
       var promptText = 'Подготовь готовый ответ по выбранным файлам в деловом стиле.';
@@ -715,7 +719,13 @@
     }
 
     if (styleNode) {
-      styleNode.addEventListener('change', sendByCurrentStyle);
+      styleNode.addEventListener('change', function() {
+        if (!String(styleNode.value || '').trim()) {
+          pushChat('assistant', 'Выберите режим.');
+          return;
+        }
+        sendByCurrentStyle();
+      });
     }
   }
 
