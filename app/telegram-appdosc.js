@@ -501,8 +501,9 @@ function ensureAiDialogScriptLoaded() {
 
   if (!aiDialogLoader) {
     aiDialogLoader = (async () => {
+      const moduleVersion = encodeURIComponent(String(window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()));
       try {
-        await import('./telegram-ai-response-dialog.js');
+        await import(`./telegram-ai-response-dialog.js?v=${moduleVersion}`);
         if (typeof window.openAiResponseDialog === 'function') {
           return window.openAiResponseDialog;
         }
@@ -519,6 +520,7 @@ function ensureAiDialogScriptLoaded() {
         const src = `${scriptSources[index]}?v=${version}`;
         const loaded = await new Promise((resolve) => {
           const script = document.createElement('script');
+          script.type = 'module';
           script.src = src;
           script.defer = true;
           script.dataset.aiDialogScript = 'true';

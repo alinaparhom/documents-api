@@ -5,6 +5,7 @@
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
   const VISION_BATCH_SIZE = 5;
+  const FILE_PREPARE_CONCURRENCY = 2;
   let briefPdfJsLoader = null;
   const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
 Запрещено начинать с "Анализ письма", "Разбор", "Рекомендации".
@@ -391,6 +392,26 @@
     return chunks;
   }
 
+  async function mapWithConcurrency(items, concurrency, worker) {
+    const list = Array.isArray(items) ? items : [];
+    const limit = Math.max(1, Number(concurrency) || 1);
+    const results = new Array(list.length);
+    let cursor = 0;
+
+    async function runner() {
+      while (cursor < list.length) {
+        const currentIndex = cursor;
+        cursor += 1;
+        // eslint-disable-next-line no-await-in-loop
+        results[currentIndex] = await worker(list[currentIndex], currentIndex);
+      }
+    }
+
+    const runners = Array.from({ length: Math.min(limit, list.length) }, () => runner());
+    await Promise.all(runners);
+    return results;
+  }
+
   async function buildVisionPayloadFromFile(file, onProgress) {
     if (!(file instanceof File)) {
       throw new Error('Файл не выбран.');
@@ -491,28 +512,34 @@
     const images = [];
     const extractedTexts = [];
 
-    for (let index = 0; index < selectedFiles.length; index += 1) {
-      const currentFile = selectedFiles[index];
+    const preparedResults = await mapWithConcurrency(selectedFiles, FILE_PREPARE_CONCURRENCY, async (currentFile, index) => {
       const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
       onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
-      // eslint-disable-next-line no-await-in-loop
       const blobFile = await loadSelectedFileAsBlob(currentFile);
       const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
-      // eslint-disable-next-line no-await-in-loop
       const prepared = await buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading'));
-      if (prepared.kind === 'multimodal') {
-        images.push(...(Array.isArray(prepared.images) ? prepared.images : []));
-      } else if (prepared.kind === 'text') {
-        const text = normalize(prepared.extractedText);
+      return { prepared, sourceFile, fileLabel };
+    });
+
+    preparedResults.forEach((item) => {
+      if (!item || !item.prepared) {
+        return;
+      }
+      if (item.prepared.kind === 'multimodal') {
+        images.push(...(Array.isArray(item.prepared.images) ? item.prepared.images : []));
+        return;
+      }
+      if (item.prepared.kind === 'text') {
+        const text = normalize(item.prepared.extractedText);
         if (text) {
           extractedTexts.push({
-            name: prepared.fileName || fileLabel,
-            type: sourceFile.type || 'text/plain',
+            name: item.prepared.fileName || item.fileLabel,
+            type: (item.sourceFile && item.sourceFile.type) || 'text/plain',
             text: text.slice(0, 60000),
           });
         }
       }
-    }
+    });
 
     if (!images.length) {
       if (!extractedTexts.length) {
@@ -720,6 +747,7 @@
 
   globalScope.openAiResponseDialog = function openAiResponseDialog(context = {}) {
     ensureStyles();
+    ensureBriefPdfJsLoaded().catch(() => {});
 
     const task = context && context.task ? context.task : {};
     const files = Array.isArray(task && task.files) ? task.files : [];
