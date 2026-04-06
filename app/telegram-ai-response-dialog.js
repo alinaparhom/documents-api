@@ -4,10 +4,10 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
-  const VISION_BATCH_SIZE = 8;
+  const VISION_BATCH_SIZE = 6;
   const VISION_REQUEST_CONCURRENCY = 2;
-  const PDF_RENDER_SCALE = 1;
-  const PDF_JPEG_QUALITY = 0.68;
+  const PDF_RENDER_SCALE = 1.3;
+  const PDF_JPEG_QUALITY = 0.86;
   const FILE_PREPARE_CONCURRENCY = 2;
   let briefPdfJsLoader = null;
   const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
@@ -586,7 +586,7 @@
         }
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-          max_tokens: 1200,
+          max_tokens: 1600,
           temperature: 0.6,
           messages: [{
             role: 'system',
