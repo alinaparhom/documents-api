@@ -515,19 +515,29 @@ function ensureAiDialogScriptLoaded() {
         '/js/documents/app/telegram-ai-response-dialog.js',
         '/app/telegram-ai-response-dialog.js',
       ];
-      const version = encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
+      const version = encodeURIComponent(String(window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()));
+      const loadScript = (src, isModule) => new Promise((resolve) => {
+        const script = document.createElement('script');
+        if (isModule) {
+          script.type = 'module';
+        }
+        script.src = src;
+        script.defer = true;
+        script.dataset.aiDialogScript = 'true';
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+      });
+
       for (let index = 0; index < scriptSources.length; index += 1) {
         const src = `${scriptSources[index]}?v=${version}`;
-        const loaded = await new Promise((resolve) => {
-          const script = document.createElement('script');
-          script.type = 'module';
-          script.src = src;
-          script.defer = true;
-          script.dataset.aiDialogScript = 'true';
-          script.onload = () => resolve(true);
-          script.onerror = () => resolve(false);
-          document.head.appendChild(script);
-        });
+        // 1) пытаемся как модуль
+        let loaded = await loadScript(src, true);
+        if (loaded && typeof window.openAiResponseDialog === 'function') {
+          return window.openAiResponseDialog;
+        }
+        // 2) fallback для старых webview (без module)
+        loaded = await loadScript(src, false);
         if (loaded && typeof window.openAiResponseDialog === 'function') {
           return window.openAiResponseDialog;
         }

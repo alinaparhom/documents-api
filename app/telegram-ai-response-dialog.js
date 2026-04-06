@@ -869,5 +869,3 @@
     });
   };
 }(typeof window !== 'undefined' ? window : globalThis));
-
-export {};
