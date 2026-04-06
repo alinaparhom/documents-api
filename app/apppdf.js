@@ -162,6 +162,10 @@ function applyBodyLock(active) {
   }
 }
 
+export function preloadPdfjs() {
+  return ensurePdfjs().catch(() => {});
+}
+
 export function createPdfViewer(root = document) {
   if (!root || typeof root.querySelector !== 'function') {
     return {
@@ -176,6 +180,9 @@ export function createPdfViewer(root = document) {
       close() {},
       isReady() {
         return false;
+      },
+      preload() {
+        return ensurePdfjs().catch(() => {});
       },
     };
   }
@@ -192,6 +199,7 @@ export function createPdfViewer(root = document) {
     zoom: root.querySelector('[data-viewer-zoom]'),
     pdf: root.querySelector('[data-viewer-pdf]'),
     pdfCanvas: root.querySelector('[data-viewer-pdf-canvas]'),
+    html: root.querySelector('[data-viewer-html]'),
     zoomIn: root.querySelector('[data-viewer-zoom-in]'),
     zoomOut: root.querySelector('[data-viewer-zoom-out]'),
     fit: root.querySelector('[data-viewer-fit]'),
@@ -223,6 +231,9 @@ export function createPdfViewer(root = document) {
       close() {},
       isReady() {
         return false;
+      },
+      preload() {
+        return ensurePdfjs().catch(() => {});
       },
     };
   }
@@ -511,6 +522,7 @@ export function createPdfViewer(root = document) {
     renderedPages: 0,
     totalPages: 0,
     renderStatus: 'idle',
+    loadPromise: null,
   };
   const supportsPointerEvents = typeof window !== 'undefined' && 'PointerEvent' in window;
   if (!supportsPointerEvents && !pointerWarningLogged && typeof console !== 'undefined') {
@@ -875,18 +887,20 @@ export function createPdfViewer(root = document) {
     const useImage = mode === 'image' && elements.image;
     const useVideo = mode === 'video' && elements.video;
     const usePdf = mode === 'pdf' && elements.pdf && elements.pdfCanvas;
+    const useHtml = mode === 'html' && elements.html;
     zoomState.enabled = Boolean(useImage || mode === 'frame');
     if (elements.container) {
-      elements.container.classList.toggle('appdosc-viewer--frame', !useImage && !usePdf && !useVideo);
+      elements.container.classList.toggle('appdosc-viewer--frame', !useImage && !usePdf && !useVideo && !useHtml);
       elements.container.classList.toggle('appdosc-viewer--pdf', usePdf);
+      elements.container.classList.toggle('appdosc-viewer--html', useHtml);
       elements.container.setAttribute('data-viewer-mode', mode);
     }
     if (elements.content) {
-      elements.content.classList.toggle('appdosc-viewer__content--frame', !useImage && !usePdf && !useVideo);
+      elements.content.classList.toggle('appdosc-viewer__content--frame', !useImage && !usePdf && !useVideo && !useHtml);
     }
     if (elements.frame) {
-      elements.frame.hidden = Boolean(useImage || usePdf || useVideo);
-      elements.frame.classList.toggle('is-active', !useImage && !usePdf && !useVideo);
+      elements.frame.hidden = Boolean(useImage || usePdf || useVideo || useHtml);
+      elements.frame.classList.toggle('is-active', !useImage && !usePdf && !useVideo && !useHtml);
     }
     if (elements.image) {
       elements.image.hidden = !useImage;
@@ -899,8 +913,11 @@ export function createPdfViewer(root = document) {
     if (elements.pdf) {
       elements.pdf.hidden = !usePdf;
     }
+    if (elements.html) {
+      elements.html.hidden = !useHtml;
+    }
     if (elements.zoom) {
-      elements.zoom.hidden = Boolean(usePdf);
+      elements.zoom.hidden = Boolean(usePdf || useHtml);
     }
     if (mode === 'frame') {
       resetFrameTransform();
@@ -1013,6 +1030,7 @@ export function createPdfViewer(root = document) {
     pdfRenderState.loadToken += 1;
     pdfRenderState.loading = false;
     pdfRenderState.lastUrl = '';
+    pdfRenderState.loadPromise = null;
     destroyPdfDocument();
     clearPdfCanvas();
     if (elements.frame) {
@@ -1030,6 +1048,10 @@ export function createPdfViewer(root = document) {
       elements.video.classList.remove('is-active');
       elements.video.hidden = true;
       elements.video.load();
+    }
+    if (elements.html) {
+      elements.html.innerHTML = '';
+      elements.html.hidden = true;
     }
   }
 
@@ -1096,7 +1118,7 @@ export function createPdfViewer(root = document) {
     });
   }
 
-  async function waitForPdfLayout(maxAttempts = 4) {
+  async function waitForPdfLayout(maxAttempts = 24) {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       if (isPdfLayoutReady()) {
         return true;
@@ -1200,7 +1222,19 @@ export function createPdfViewer(root = document) {
     setScrollTop(state.scrollTop);
   }
 
-  async function renderPdfPages() {
+  function detectMobilePlatform() {
+    if (typeof navigator === 'undefined') {
+      return { isMobile: false, isIos: false };
+    }
+    const ua = navigator.userAgent || '';
+    const maxTouch = typeof navigator.maxTouchPoints === 'number' ? navigator.maxTouchPoints : 0;
+    const isIos = /iPad|iPhone|iPod/i.test(ua) || (/Macintosh/i.test(ua) && maxTouch > 1);
+    const isAndroid = /Android/i.test(ua);
+    const isMobile = isIos || isAndroid || maxTouch > 1;
+    return { isMobile, isIos };
+  }
+
+  async function renderPdfPagesInternal(forcePixelRatio) {
     if (!elements.pdfCanvas || !pdfRenderState.doc) {
       pdfRenderState.renderedPages = 0;
       pdfRenderState.totalPages = 0;
@@ -1221,18 +1255,73 @@ export function createPdfViewer(root = document) {
       ? Math.max(1, window.devicePixelRatio)
       : 1;
     const zoomBoost = pdfZoomState.fit ? 1 : clamp(pdfZoomState.zoom / 100, 1, 2);
-    const pixelRatio = basePixelRatio * zoomBoost;
+    const pixelRatio = typeof forcePixelRatio === 'number' && forcePixelRatio > 0
+      ? forcePixelRatio
+      : basePixelRatio * zoomBoost;
+
+    const { isMobile, isIos } = detectMobilePlatform();
+
+    // На мобильных устройствах браузеры (особенно iOS Safari) имеют жёсткий лимит на общую
+    // память canvas. Снижаем бюджет для надёжного отображения ВСЕХ страниц.
+    const MAX_TOTAL_CANVAS_PIXELS_DESKTOP = 48 * 1024 * 1024;
+    const MAX_TOTAL_CANVAS_PIXELS_IOS = 12 * 1024 * 1024;
+    const MAX_TOTAL_CANVAS_PIXELS_MOBILE = 20 * 1024 * 1024;
+    const MAX_TOTAL_CANVAS_PIXELS = isIos
+      ? MAX_TOTAL_CANVAS_PIXELS_IOS
+      : (isMobile ? MAX_TOTAL_CANVAS_PIXELS_MOBILE : MAX_TOTAL_CANVAS_PIXELS_DESKTOP);
+
+    // Максимальная площадь одного canvas (~16M пикселей — безопасный порог для всех браузеров).
+    const MAX_SINGLE_CANVAS_PIXELS = isIos ? 4 * 1024 * 1024 : 16 * 1024 * 1024;
+    // Минимальный pixelRatio — ниже этого значения не снижаем (страницы будут размытыми, но видимыми).
+    const MIN_PIXEL_RATIO = 0.35;
+    let usedCanvasPixels = 0;
+
+    // Предварительная оценка: если страниц много, снижаем pixelRatio заранее,
+    // чтобы гарантировать отображение всех страниц.
+    let adjustedPixelRatio = pixelRatio;
+    if (doc.numPages > 1) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const samplePage = await doc.getPage(1);
+        const sampleFitScale = getPdfFitScale(samplePage);
+        const sampleZoomScale = pdfZoomState.fit ? 1 : pdfZoomState.zoom / 100;
+        const sampleViewport = samplePage.getViewport({ scale: sampleFitScale * sampleZoomScale });
+        const estimatedPerPage = sampleViewport.width * sampleViewport.height * pixelRatio * pixelRatio;
+        const estimatedTotal = estimatedPerPage * doc.numPages;
+        if (estimatedTotal > MAX_TOTAL_CANVAS_PIXELS) {
+          const reduction = Math.sqrt(MAX_TOTAL_CANVAS_PIXELS / estimatedTotal);
+          adjustedPixelRatio = Math.max(MIN_PIXEL_RATIO, pixelRatio * reduction);
+          logPdfEvent('рендер:предварительное_снижение', {
+            originalPixelRatio: pixelRatio,
+            adjustedPixelRatio,
+            pages: doc.numPages,
+            estimatedTotal,
+            budget: MAX_TOTAL_CANVAS_PIXELS,
+            isMobile,
+            isIos,
+          });
+        }
+      } catch (_e) {
+        // ошибка оценки не критична
+      }
+    }
 
     logPdfEvent('рендер', {
       pages: doc.numPages,
       zoom: pdfZoomState.zoom,
       fit: pdfZoomState.fit,
-      pixelRatio,
+      pixelRatio: adjustedPixelRatio,
+      originalPixelRatio: pixelRatio,
+      canvasBudget: MAX_TOTAL_CANVAS_PIXELS,
+      isMobile,
+      isIos,
+      forced: typeof forcePixelRatio === 'number',
     });
 
     const scrollState = capturePdfScrollState();
     clearPdfCanvas();
 
+    let failedPages = 0;
     for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
       if (currentToken !== pdfRenderState.renderToken) {
         pdfRenderState.renderedPages = renderedPages;
@@ -1240,6 +1329,7 @@ export function createPdfViewer(root = document) {
         pdfRenderState.renderStatus = 'canceled';
         return false;
       }
+      let pageWrapper = null;
       try {
         // eslint-disable-next-line no-await-in-loop
         const page = await doc.getPage(pageNumber);
@@ -1247,7 +1337,66 @@ export function createPdfViewer(root = document) {
         const zoomScale = pdfZoomState.fit ? 1 : pdfZoomState.zoom / 100;
         const renderScale = fitScale * zoomScale;
         const viewport = page.getViewport({ scale: renderScale });
-        const scaledViewport = page.getViewport({ scale: renderScale * pixelRatio });
+
+        // Рассчитываем эффективный pixelRatio с учётом лимитов canvas
+        let effectivePixelRatio = adjustedPixelRatio;
+        let scaledW = Math.ceil(viewport.width * effectivePixelRatio);
+        let scaledH = Math.ceil(viewport.height * effectivePixelRatio);
+        let canvasPixels = scaledW * scaledH;
+
+        // Если один canvas превышает лимит — снижаем pixelRatio для этой страницы
+        if (canvasPixels > MAX_SINGLE_CANVAS_PIXELS) {
+          const reductionFactor = Math.sqrt(MAX_SINGLE_CANVAS_PIXELS / canvasPixels);
+          effectivePixelRatio = effectivePixelRatio * reductionFactor;
+          scaledW = Math.ceil(viewport.width * effectivePixelRatio);
+          scaledH = Math.ceil(viewport.height * effectivePixelRatio);
+          canvasPixels = scaledW * scaledH;
+          logPdfEvent('рендер:масштаб_снижен', {
+            page: pageNumber,
+            originalPixelRatio: adjustedPixelRatio,
+            effectivePixelRatio,
+            reason: 'single_canvas_limit',
+          });
+        }
+
+        // Если общий бюджет будет превышен — снижаем pixelRatio (вплоть до MIN_PIXEL_RATIO)
+        if (usedCanvasPixels + canvasPixels > MAX_TOTAL_CANVAS_PIXELS) {
+          const remainingBudget = MAX_TOTAL_CANVAS_PIXELS - usedCanvasPixels;
+          if (remainingBudget <= 0) {
+            // Бюджет полностью исчерпан — используем MIN_PIXEL_RATIO
+            effectivePixelRatio = MIN_PIXEL_RATIO;
+          } else if (effectivePixelRatio > MIN_PIXEL_RATIO) {
+            const reductionFactor = Math.sqrt(remainingBudget / canvasPixels);
+            effectivePixelRatio = Math.max(MIN_PIXEL_RATIO, effectivePixelRatio * reductionFactor);
+          }
+          scaledW = Math.ceil(viewport.width * effectivePixelRatio);
+          scaledH = Math.ceil(viewport.height * effectivePixelRatio);
+          canvasPixels = scaledW * scaledH;
+          // Жёсткий лимит: если даже при MIN_PIXEL_RATIO бюджет превышен более чем в 1.5 раза,
+          // пропускаем страницу — браузер может убить все canvas из-за нехватки памяти
+          if (usedCanvasPixels + canvasPixels > MAX_TOTAL_CANVAS_PIXELS * 1.5) {
+            logPdfEvent('рендер:страница_пропущена', {
+              page: pageNumber,
+              totalPages: doc.numPages,
+              usedCanvasPixels,
+              canvasPixels,
+              budget: MAX_TOTAL_CANVAS_PIXELS,
+              reason: 'hard_budget_limit',
+            });
+            failedPages += 1;
+            continue;
+          }
+          logPdfEvent('рендер:масштаб_снижен', {
+            page: pageNumber,
+            originalPixelRatio: adjustedPixelRatio,
+            effectivePixelRatio,
+            reason: 'total_budget_limit',
+            usedCanvasPixels,
+            remainingBudget,
+          });
+        }
+
+        const scaledViewport = page.getViewport({ scale: renderScale * effectivePixelRatio });
 
         const canvas = document.createElement('canvas');
         canvas.width = scaledViewport.width;
@@ -1255,25 +1404,54 @@ export function createPdfViewer(root = document) {
         canvas.style.width = `${viewport.width}px`;
         canvas.style.height = `${viewport.height}px`;
 
-        const wrapper = document.createElement('div');
-        wrapper.className = 'appdosc-pdf-viewer__page';
-        wrapper.appendChild(canvas);
-        elements.pdfCanvas.appendChild(wrapper);
+        pageWrapper = document.createElement('div');
+        pageWrapper.className = 'appdosc-pdf-viewer__page';
+        pageWrapper.appendChild(canvas);
+        elements.pdfCanvas.appendChild(pageWrapper);
 
         const context = canvas.getContext('2d', { alpha: false });
         if (!context) {
+          logPdfEvent('рендер:нет_контекста', { page: pageNumber, canvasW: canvas.width, canvasH: canvas.height, usedCanvasPixels });
+          // Удаляем пустой wrapper, чтобы не показывать пустую страницу
+          if (pageWrapper.parentNode) {
+            pageWrapper.parentNode.removeChild(pageWrapper);
+          }
+          pageWrapper = null;
+          failedPages += 1;
           continue;
         }
         // eslint-disable-next-line no-await-in-loop
         await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
+        usedCanvasPixels += canvas.width * canvas.height;
         renderedPages += 1;
+        pageWrapper = null;
       } catch (error) {
         logPdfEvent('рендер:ошибка', {
           page: pageNumber,
+          totalPages: doc.numPages,
+          renderedSoFar: renderedPages,
+          usedCanvasPixels,
           message: error && error.message ? error.message : String(error),
         });
-        break;
+        // Удаляем wrapper с битым canvas, чтобы не показывать пустую страницу
+        try {
+          if (pageWrapper && pageWrapper.parentNode) {
+            pageWrapper.parentNode.removeChild(pageWrapper);
+          }
+        } catch (_removeErr) { /* не критично */ }
+        pageWrapper = null;
+        failedPages += 1;
+        // Продолжаем рендеринг остальных страниц вместо остановки
+        continue;
       }
+    }
+    if (failedPages > 0) {
+      logPdfEvent('рендер:пропущенные_страницы', {
+        failedPages,
+        renderedPages,
+        totalPages: doc.numPages,
+        usedCanvasPixels,
+      });
     }
 
     const firstCanvas = elements.pdfCanvas.querySelector('canvas');
@@ -1302,11 +1480,42 @@ export function createPdfViewer(root = document) {
       logPdfEvent('рендер:неполный', {
         renderedPages,
         totalPages: doc.numPages,
+        usedCanvasPixels,
+        failedPages,
+        adjustedPixelRatio,
+        budget: MAX_TOTAL_CANVAS_PIXELS,
       });
     }
     await waitForNextFrame();
     restorePdfScrollState(scrollState);
     return isComplete;
+  }
+
+  async function renderPdfPages() {
+    const result = await renderPdfPagesInternal();
+    if (result) {
+      return true;
+    }
+    // Если рендер неполный (частичный) — пробуем повторно с минимальным pixelRatio
+    if (pdfRenderState.renderStatus === 'partial' && pdfRenderState.doc) {
+      logPdfEvent('рендер:повтор_с_минимальным_качеством', {
+        renderedPages: pdfRenderState.renderedPages,
+        totalPages: pdfRenderState.totalPages,
+      });
+      const retryResult = await renderPdfPagesInternal(0.5);
+      if (retryResult) {
+        return true;
+      }
+      // Ещё одна попытка с ещё более низким качеством
+      if (pdfRenderState.renderStatus === 'partial' && pdfRenderState.doc) {
+        logPdfEvent('рендер:повтор_ультра_низкое_качество', {
+          renderedPages: pdfRenderState.renderedPages,
+          totalPages: pdfRenderState.totalPages,
+        });
+        return renderPdfPagesInternal(0.35);
+      }
+    }
+    return result;
   }
 
   async function loadPdfDocument(url, data) {
@@ -1360,7 +1569,8 @@ export function createPdfViewer(root = document) {
         return task;
       };
 
-      const baseOptions = data ? { data, withCredentials: true } : { url, withCredentials: true };
+      const safeData = data && typeof data.slice === 'function' ? data.slice(0) : data;
+      const baseOptions = safeData ? { data: safeData, withCredentials: true } : { url, withCredentials: true };
       if (shouldDisableWorker) {
         baseOptions.disableWorker = true;
       }
@@ -1400,10 +1610,18 @@ export function createPdfViewer(root = document) {
       if (currentLoadToken !== pdfRenderState.loadToken) {
         return false;
       }
-      pdfZoomState.useCanvas = rendered;
+      const hasVisibleContent = rendered || (pdfRenderState.renderedPages > 0);
+      pdfZoomState.useCanvas = hasVisibleContent;
       updateZoomControls();
-      logPdfEvent('загрузка:успех', { url, pages: doc.numPages, rendered, hasData: Boolean(data) });
-      return rendered;
+      logPdfEvent('загрузка:успех', {
+        url,
+        pages: doc.numPages,
+        rendered,
+        renderedPages: pdfRenderState.renderedPages,
+        hasVisibleContent,
+        hasData: Boolean(data),
+      });
+      return hasVisibleContent;
     } catch (error) {
       pdfRenderState.loading = false;
       pdfZoomState.useCanvas = false;
@@ -1800,15 +2018,9 @@ export function createPdfViewer(root = document) {
           },
         });
       } else {
-        loadPdfDocument(resolvedUrl, data).then((loaded) => {
-          if (loaded) {
-            return;
-          }
+        const fallbackToMessage = () => {
           pdfZoomState.useCanvas = false;
           updateZoomControls();
-          if (activateFrameFallback(resolvedUrl, 'render_failed')) {
-            return;
-          }
           setPdfCanvasMessage('Не удалось отрисовать PDF. Откройте файл в новой вкладке.', {
             variant: 'message',
             actionLabel: 'Открыть в новой вкладке',
@@ -1816,6 +2028,22 @@ export function createPdfViewer(root = document) {
               window.open(resolvedUrl, '_blank', 'noopener');
             },
           });
+        };
+        pdfRenderState.loadPromise = loadPdfDocument(resolvedUrl, data).then(async (loaded) => {
+          if (loaded) {
+            return true;
+          }
+          const retryUrl = `${resolvedUrl}${resolvedUrl.includes('?') ? '&' : '?'}retry=${Date.now()}`;
+          logPdfEvent('загрузка:повтор', { url: retryUrl });
+          const retried = await loadPdfDocument(retryUrl, data);
+          if (retried) {
+            return true;
+          }
+          fallbackToMessage();
+          return false;
+        }).catch(() => {
+          fallbackToMessage();
+          return false;
         });
       }
     } else {
@@ -2985,11 +3213,34 @@ export function createPdfViewer(root = document) {
       }
       return false;
     },
+    openHtml(htmlContent, title) {
+      if (!elements.container || !elements.html) {
+        return false;
+      }
+      resetViewerContent();
+      lastInputConsoleAt = 0;
+      lastActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      elements.container.hidden = false;
+      elements.container.setAttribute(ACTIVE_ATTR, 'true');
+      applyBodyLock(true);
+      if (elements.title) {
+        const label = title && String(title).trim() ? String(title).trim() : 'Документ';
+        elements.title.textContent = label;
+      }
+      pdfZoomState.active = false;
+      elements.html.innerHTML = htmlContent;
+      setViewerMode('html');
+      updateZoomControls();
+      return 'inline';
+    },
     close() {
       hideViewer();
     },
     isReady() {
       return Boolean(elements.container && elements.frame);
+    },
+    preload() {
+      return ensurePdfjs().catch(() => {});
     },
     getPdfRenderStatus() {
       return {
@@ -2999,6 +3250,102 @@ export function createPdfViewer(root = document) {
         url: pdfRenderState.lastUrl,
         usingCanvas: pdfZoomState.useCanvas,
       };
+    },
+    getPageCount() {
+      if (pdfRenderState.totalPages > 0) {
+        return pdfRenderState.totalPages;
+      }
+      if (pdfRenderState.doc && typeof pdfRenderState.doc.numPages === 'number') {
+        return pdfRenderState.doc.numPages;
+      }
+      return 0;
+    },
+    getPdfLoadPromise() {
+      return pdfRenderState.loadPromise;
+    },
+    captureRenderedContent() {
+      if (!elements.container || !isViewerActive()) {
+        return null;
+      }
+      if (viewerMode === 'pdf' && elements.pdfCanvas && elements.pdfCanvas.children.length > 0) {
+        const fragment = document.createDocumentFragment();
+        while (elements.pdfCanvas.firstChild) {
+          fragment.appendChild(elements.pdfCanvas.firstChild);
+        }
+        const doc = pdfRenderState.doc;
+        pdfRenderState.doc = null;
+        return {
+          mode: 'pdf',
+          fragment,
+          doc,
+          renderStatus: pdfRenderState.renderStatus,
+          renderedPages: pdfRenderState.renderedPages,
+          totalPages: pdfRenderState.totalPages,
+          lastUrl: pdfRenderState.lastUrl,
+          useCanvas: pdfZoomState.useCanvas,
+          zoom: pdfZoomState.zoom,
+          fit: pdfZoomState.fit,
+        };
+      }
+      if (viewerMode === 'html' && elements.html) {
+        return { mode: 'html', htmlContent: elements.html.innerHTML };
+      }
+      if (viewerMode === 'frame' && elements.frame && elements.frame.src) {
+        return { mode: 'frame', src: elements.frame.src };
+      }
+      return null;
+    },
+    restoreRenderedContent(snapshot, title) {
+      if (!snapshot || !snapshot.mode || !elements.container) {
+        return false;
+      }
+      resetViewerContent();
+      lastInputConsoleAt = 0;
+      lastActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      elements.container.hidden = false;
+      elements.container.setAttribute(ACTIVE_ATTR, 'true');
+      applyBodyLock(true);
+      if (elements.title) {
+        const label = title && String(title).trim() ? String(title).trim() : 'Документ';
+        elements.title.textContent = label;
+      }
+      if (snapshot.mode === 'pdf' && elements.pdfCanvas && elements.pdf) {
+        pdfZoomState.active = true;
+        pdfZoomState.useCanvas = Boolean(snapshot.useCanvas);
+        pdfZoomState.zoom = snapshot.zoom || 100;
+        pdfZoomState.fit = snapshot.fit !== false;
+        pdfRenderState.doc = snapshot.doc || null;
+        pdfRenderState.lastUrl = snapshot.lastUrl || '';
+        pdfRenderState.renderStatus = snapshot.renderStatus || 'complete';
+        pdfRenderState.renderedPages = snapshot.renderedPages || 0;
+        pdfRenderState.totalPages = snapshot.totalPages || 0;
+        pdfRenderState.loading = false;
+        pdfRenderState.loadPromise = Promise.resolve(true);
+        elements.pdfCanvas.appendChild(snapshot.fragment);
+        setViewerMode('pdf');
+        updateZoomControls();
+        setupPdfResizeObserver();
+        return true;
+      }
+      if (snapshot.mode === 'html' && elements.html) {
+        pdfZoomState.active = false;
+        elements.html.innerHTML = snapshot.htmlContent;
+        setViewerMode('html');
+        updateZoomControls();
+        return true;
+      }
+      if (snapshot.mode === 'frame' && elements.frame && snapshot.src) {
+        pdfZoomState.active = false;
+        pdfZoomState.useCanvas = false;
+        elements.frame.setAttribute('src', snapshot.src);
+        setViewerMode('frame');
+        updateZoomControls();
+        return true;
+      }
+      return false;
+    },
+    get _viewerMode() {
+      return viewerMode;
     },
   };
 }
