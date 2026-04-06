@@ -8,6 +8,11 @@
   const VISION_REQUEST_CONCURRENCY = 2;
   const PDF_RENDER_SCALE = 1.3;
   const PDF_JPEG_QUALITY = 0.86;
+  const PDF_WORKER_CANDIDATES = [
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+    '/pdf/pdf.worker.min.js',
+  ];
   const FILE_PREPARE_CONCURRENCY = 2;
   let briefPdfJsLoader = null;
   const RESPONSE_OUTPUT_DIRECTIVE = `ВЕРНИ ИТОГОВЫЙ ГОТОВЫЙ ОТВЕТ НА ПИСЬМО, А НЕ АНАЛИЗ.
@@ -318,7 +323,9 @@
       let index = 0;
       const tryNext = () => {
         if (typeof window !== 'undefined' && window.pdfjsLib) {
-          window.__briefPdfWorkerSrc = sources[Math.max(0, index - 1)].worker;
+          const loadedWorker = sources[Math.max(0, index - 1)].worker;
+          window.__briefPdfWorkerCandidates = Array.from(new Set([loadedWorker, ...PDF_WORKER_CANDIDATES]));
+          window.__briefPdfWorkerSrc = window.__briefPdfWorkerCandidates[0] || loadedWorker;
           resolve(window.pdfjsLib);
           return;
         }
@@ -332,7 +339,8 @@
         script.src = source.script;
         script.onload = () => {
           if (typeof window !== 'undefined' && window.pdfjsLib) {
-            window.__briefPdfWorkerSrc = source.worker;
+            window.__briefPdfWorkerCandidates = Array.from(new Set([source.worker, ...PDF_WORKER_CANDIDATES]));
+            window.__briefPdfWorkerSrc = window.__briefPdfWorkerCandidates[0] || source.worker;
             resolve(window.pdfjsLib);
             return;
           }
@@ -395,6 +403,35 @@
     return chunks;
   }
 
+  function getPdfWorkerCandidates() {
+    const runtimeCandidates = Array.isArray(window.__briefPdfWorkerCandidates) ? window.__briefPdfWorkerCandidates : [];
+    const merged = runtimeCandidates.concat(PDF_WORKER_CANDIDATES);
+    return Array.from(new Set(merged.map((item) => normalize(item)).filter(Boolean)));
+  }
+
+  async function openPdfDocumentWithWorkerFallback(pdfjsLib, bytes) {
+    const candidates = getPdfWorkerCandidates();
+    let lastError = null;
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const workerSrc = candidates[index];
+      try {
+        if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+        }
+        const loadingTask = pdfjsLib.getDocument({ data: bytes });
+        // eslint-disable-next-line no-await-in-loop
+        const pdf = await loadingTask.promise;
+        window.__briefPdfWorkerSrc = workerSrc;
+        return pdf;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('Не удалось инициализировать PDF worker.');
+  }
+
   async function mapWithConcurrency(items, concurrency, worker) {
     const list = Array.isArray(items) ? items : [];
     const limit = Math.max(1, Number(concurrency) || 1);
@@ -440,12 +477,8 @@
     if (isPdf) {
       onProgress('Открываю PDF...', 5);
       const pdfjsLib = await ensureBriefPdfJsLoaded();
-      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
-      }
       const bytes = await file.arrayBuffer();
-      const loadingTask = pdfjsLib.getDocument({ data: bytes });
-      const pdf = await loadingTask.promise;
+      const pdf = await openPdfDocumentWithWorkerFallback(pdfjsLib, bytes);
       const totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
       const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
