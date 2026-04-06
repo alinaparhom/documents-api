@@ -1900,16 +1900,6 @@ export function createPdfViewer(root = document) {
     }
   }
 
-  function handleBackdrop(event) {
-    if (!elements.dialog) {
-      hideViewer();
-      return;
-    }
-    if (!elements.dialog.contains(event.target)) {
-      hideViewer();
-    }
-  }
-
   function getPointerPosition(event) {
     return { x: event.clientX, y: event.clientY };
   }
@@ -2818,12 +2808,7 @@ export function createPdfViewer(root = document) {
     });
   }
 
-  if (elements.backdrop) {
-    elements.backdrop.addEventListener('click', hideViewer);
-  }
-
   if (elements.container) {
-    elements.container.addEventListener('click', handleBackdrop);
     elements.container.addEventListener('gesturestart', stopNativeZoom);
     elements.container.addEventListener('gesturechange', stopNativeZoom);
     elements.container.addEventListener('gestureend', stopNativeZoom);

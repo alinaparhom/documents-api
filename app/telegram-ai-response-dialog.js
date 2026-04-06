@@ -804,9 +804,6 @@
 
     const close = () => overlay.remove();
     overlay.querySelector('[data-close]')?.addEventListener('click', close);
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) close();
-    });
 
     overlay.querySelector('[data-files-toggle]')?.addEventListener('click', () => {
       filesPanel.hidden = !filesPanel.hidden;

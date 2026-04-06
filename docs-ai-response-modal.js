@@ -2305,7 +2305,6 @@
     if (!sources.length) list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() { modal.remove(); });
-    modal.addEventListener('click', function(event) { if (event.target === modal) modal.remove(); });
 
     header.appendChild(titleWrap);
     header.appendChild(closeButton);
@@ -2555,11 +2554,6 @@
       function closeOverlay() {
         closeWithAnimation(overlay);
       }
-      overlay.addEventListener('click', function (event) {
-        if (event.target === overlay) {
-          closeOverlay();
-        }
-      });
       modalClose.addEventListener('click', closeOverlay);
       return { overlay: overlay, content: modalContent, close: closeOverlay };
     }
@@ -3739,12 +3733,6 @@
       hiddenInput.value = '';
       renderFiles();
       autoExtractFiles(newFiles);
-    });
-
-    root.addEventListener('click', function (event) {
-      if (event.target === root) {
-        closeModal();
-      }
     });
 
     header.appendChild(titleWrap);
