@@ -189,10 +189,11 @@
   }
 
   function fetchTemplateDocxBlob() {
-    return fetch('/app/templates/template.docx', { credentials: 'same-origin' })
+    var templateUrl = 'https://bimmax.pro/js/documents/app/templates/template.docx';
+    return fetch(templateUrl, { credentials: 'include' })
       .then(function(response) {
         if (!response.ok) {
-          throw new Error('Не найден template.docx по пути /app/templates/template.docx');
+          throw new Error('Не найден template.docx по пути ' + templateUrl);
         }
         return response.blob();
       });
