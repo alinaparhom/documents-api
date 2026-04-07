@@ -298,7 +298,9 @@
     var name = String(file && file.name || 'document').toLowerCase();
     var isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     var isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
-    var isText = mime.indexOf('text/') === 0 || /\.(txt|md|csv|json|xml|html?)$/i.test(name);
+    var isTextMime = mime.indexOf('text/') === 0 || mime === 'application/json' || mime === 'application/xml' || mime === 'application/x-yaml';
+    var isTextExt = /\.(txt|text|md|markdown|csv|tsv|json|xml|ya?ml|ini|cfg|conf|log|rtf|html?)$/i.test(name);
+    var isText = isTextMime || isTextExt;
     var isDocx = mime.indexOf('wordprocessingml.document') >= 0 || /\.docx$/i.test(name);
     var isXlsx = mime.indexOf('spreadsheetml') >= 0 || /\.xlsx$/i.test(name);
 
@@ -372,7 +374,7 @@
         });
       });
     }
-    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX'));
+    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, текстовые файлы, DOCX, XLSX'));
   }
 
   function loadEntryAsFile(entry) {
@@ -410,7 +412,30 @@
         });
       });
     }, Promise.resolve()).then(function() {
-      if (!images.length) throw new Error('Vision режим требует изображения или PDF.');
+      if (!images.length) {
+        if (!extractedTexts.length) {
+          throw new Error('Vision режим поддерживает изображения, PDF, DOCX, XLSX и текстовые документы.');
+        }
+        if (updateStatus) updateStatus('Vision: отправляю извлечённый текст в ИИ...');
+        return postWithFallback(function() {
+          var formData = new FormData();
+          formData.append('action', 'generate_response');
+          formData.append('mode', 'paid');
+          formData.append('vision_mode', '1');
+          formData.append('prompt', preparedPrompt);
+          formData.append('extractedTexts', JSON.stringify(extractedTexts));
+          return formData;
+        }, 0).then(function(result) {
+          if (!result.response || !result.response.ok || !result.payload || result.payload.ok !== true) {
+            throw new Error((result.payload && result.payload.error) || 'Не удалось обработать текстовые документы через Vision pipeline.');
+          }
+          var textOnlyAnswer = String(result.payload.response || result.payload.summary || '').trim();
+          if (!textOnlyAnswer) {
+            throw new Error('ИИ не вернул ответ для текстовых документов.');
+          }
+          return { ok: true, response: textOnlyAnswer, mode: 'vision-text', model: result.payload.model || '' };
+        });
+      }
       var batches = chunkItems(images, VISION_BATCH_SIZE);
       var partialAnswers = [];
       var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
