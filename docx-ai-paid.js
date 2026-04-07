@@ -156,6 +156,8 @@
     }
   };
   var VIP_RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
+  var templateDocxDepsPromise = null;
+  var templateDocxBlobPromise = null;
 
   function resolveVipStyle(styleValue) {
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
@@ -167,8 +169,97 @@
     }
     var style = document.createElement('style');
     style.id = 'documents-vip-ai-modal-style';
-    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:linear-gradient(180deg,rgba(226,232,240,.34),rgba(148,163,184,.28));backdrop-filter:blur(10px);z-index:4100;display:flex;align-items:stretch;justify-content:center;padding:4px}.documents-vip-ai__panel{width:100%;height:100%;max-height:none;overflow:auto;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.92);box-shadow:0 18px 44px rgba(15,23,42,.16)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9);position:sticky;top:0;background:rgba(255,255,255,.78);backdrop-filter:blur(8px);z-index:2}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:20dvh;overflow:auto}.documents-vip-ai__chat{height:min(50dvh,520px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__select{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{border-radius:0}.documents-vip-ai__body{padding:12px}.documents-vip-ai__chat{height:52dvh}.documents-vip-ai__composer{flex-direction:column}}';
+    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:linear-gradient(180deg,rgba(226,232,240,.34),rgba(148,163,184,.28));backdrop-filter:blur(10px);z-index:4100;display:flex;align-items:stretch;justify-content:center;padding:4px}.documents-vip-ai__panel{width:100%;height:100%;max-height:none;overflow:auto;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.92);box-shadow:0 18px 44px rgba(15,23,42,.16)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9);position:sticky;top:0;background:rgba(255,255,255,.78);backdrop-filter:blur(8px);z-index:2}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:20dvh;overflow:auto}.documents-vip-ai__chat{height:min(50dvh,520px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px;flex-wrap:wrap}.documents-vip-ai__select{flex:1;min-width:210px;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__btn{border:1px solid rgba(148,163,184,.45);background:rgba(255,255,255,.88);color:#0f172a;border-radius:12px;padding:0 14px;min-height:44px;font-size:13px;font-weight:600;cursor:pointer}.documents-vip-ai__btn--accent{background:linear-gradient(135deg,rgba(219,234,254,.95),rgba(191,219,254,.85));border-color:rgba(96,165,250,.52)}.documents-vip-ai__template{position:fixed;inset:0;background:rgba(15,23,42,.38);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;padding:10px;z-index:4200}.documents-vip-ai__template-panel{width:min(760px,100%);max-height:95dvh;background:rgba(255,255,255,.95);border-radius:18px 18px 14px 14px;border:1px solid rgba(226,232,240,.95);box-shadow:0 22px 44px rgba(15,23,42,.2);display:grid;grid-template-rows:auto 1fr auto}.documents-vip-ai__template-head{padding:14px 14px 8px;font-size:16px;font-weight:700;color:#0f172a}.documents-vip-ai__template-body{padding:0 14px 12px}.documents-vip-ai__template-text{width:100%;min-height:34dvh;max-height:48dvh;resize:vertical;border:1px solid rgba(203,213,225,.95);border-radius:12px;padding:12px;font-size:14px;line-height:1.45;color:#0f172a;background:rgba(248,250,252,.92)}.documents-vip-ai__template-actions{padding:10px 14px 14px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{border-radius:0}.documents-vip-ai__body{padding:12px}.documents-vip-ai__chat{height:52dvh}.documents-vip-ai__composer{flex-direction:column}.documents-vip-ai__select,.documents-vip-ai__btn{width:100%}.documents-vip-ai__template{padding:0}.documents-vip-ai__template-panel{width:100%;max-height:100dvh;border-radius:14px 14px 0 0}.documents-vip-ai__template-text{min-height:42dvh;max-height:62dvh}}';
     document.head.appendChild(style);
+  }
+
+  function ensureDocxTemplateDepsLoaded() {
+    if (window.PizZip && window.docxtemplater && window.docx) {
+      return Promise.resolve();
+    }
+    if (templateDocxDepsPromise) return templateDocxDepsPromise;
+    templateDocxDepsPromise = loadBriefScript('https://cdn.jsdelivr.net/npm/pizzip@3.1.7/dist/pizzip.min.js', function() { return Boolean(window.PizZip); })
+      .then(function() {
+        return loadBriefScript('https://cdn.jsdelivr.net/npm/docxtemplater@3.49.1/build/docxtemplater.js', function() { return Boolean(window.docxtemplater); });
+      })
+      .then(function() {
+        return loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', function() { return Boolean(window.docx && window.docx.renderAsync); });
+      })
+      .catch(function(error) {
+        templateDocxDepsPromise = null;
+        throw error;
+      });
+    return templateDocxDepsPromise;
+  }
+
+  function fetchTemplateDocxBlob() {
+    if (templateDocxBlobPromise) return templateDocxBlobPromise;
+    var candidates = ['/app/templates/template.docx', '/js/documents/app/templates/template.docx', './app/templates/template.docx'];
+    templateDocxBlobPromise = candidates.reduce(function(chain, url) {
+      return chain.catch(function() {
+        return fetch(url, { credentials: 'same-origin' }).then(function(response) {
+          if (!response.ok) throw new Error('Шаблон не найден: ' + url);
+          return response.blob();
+        });
+      });
+    }, Promise.reject(new Error('Шаблон template.docx не найден.')))
+      .catch(function(error) {
+        templateDocxBlobPromise = null;
+        throw error;
+      });
+    return templateDocxBlobPromise;
+  }
+
+  function escapeXml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  function createDocxFromTemplate(answerText) {
+    return Promise.all([ensureDocxTemplateDepsLoaded(), fetchTemplateDocxBlob()])
+      .then(function(results) { return results[1].arrayBuffer(); })
+      .then(function(buffer) {
+        var zip = new window.PizZip(buffer);
+        var xmlPath = 'word/document.xml';
+        var xmlContent = zip.file(xmlPath) ? zip.file(xmlPath).asText() : '';
+        if (!xmlContent) {
+          throw new Error('Шаблон повреждён: document.xml не найден.');
+        }
+        var escapedText = escapeXml(answerText).replace(/\r?\n/g, '</w:t><w:br/><w:t>');
+        var replaced = xmlContent.replace(/\[ОТВЕТ ИИ\]/g, escapedText);
+        if (replaced === xmlContent && window.docxtemplater) {
+          var doc = new window.docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+          doc.render({ AI_ANSWER: String(answerText || '') });
+          return doc.getZip().generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        }
+        zip.file(xmlPath, replaced);
+        var output = zip.generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        return output;
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : 'Ошибка при формировании шаблона.';
+        throw new Error(message + ' Проверьте, что в template.docx есть метка [ОТВЕТ ИИ].');
+      });
+  }
+
+  function openDocxPreviewWindow(blob) {
+    return ensureDocxTemplateDepsLoaded().then(function() {
+      var previewWindow = window.open('', '_blank', 'noopener,noreferrer');
+      if (!previewWindow) {
+        throw new Error('Не удалось открыть окно превью. Разрешите всплывающие окна.');
+      }
+      previewWindow.document.write('<!doctype html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Превью шаблона</title><style>body{margin:0;background:#f8fafc;font-family:Inter,Arial,sans-serif}#docx-preview{padding:10px;max-width:100%;overflow:auto} .docx-wrapper{background:transparent!important;padding:0!important;box-shadow:none!important}</style></head><body><div id="docx-preview"></div></body></html>');
+      previewWindow.document.close();
+      var container = previewWindow.document.getElementById('docx-preview');
+      if (!container || !window.docx || !window.docx.renderAsync) {
+        throw new Error('Превью недоступно в этом браузере.');
+      }
+      return window.docx.renderAsync(blob, container, null, { className: 'docx-preview' });
+    });
   }
 
   function resolveLinkedFileUrl(file) {
@@ -651,7 +742,7 @@
     var payload = options.payload || {};
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button type="button" class="documents-vip-ai__btn documents-vip-ai__btn--accent" data-template-open>Шаблон</button></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -660,6 +751,7 @@
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
     var styleNode = panel.querySelector('[data-style]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
+    var templateButton = panel.querySelector('[data-template-open]');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
     var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
     var linkedEntries = linked.map(function(item, index) { return { key: 'linked_' + index, file: item, source: 'linked' }; });
@@ -691,6 +783,11 @@
     }
 
     closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
+    if (templateButton) {
+      templateButton.addEventListener('click', function() {
+        openTemplateEditor();
+      });
+    }
 
     var chatHistory = [];
     function pushChat(role, text) {
@@ -702,6 +799,53 @@
     pushChat('assistant', 'Готов. Выберите режим в выпадающем списке, и после этого запрос отправится автоматически.');
 
     var isSending = false;
+    var latestAiAnswer = '';
+
+    function openTemplateEditor() {
+      var templateOverlay = createElement('div', 'documents-vip-ai__template');
+      var templatePanel = createElement('div', 'documents-vip-ai__template-panel');
+      templatePanel.innerHTML = '<div class="documents-vip-ai__template-head">Шаблон документа</div><div class="documents-vip-ai__template-body"><textarea class="documents-vip-ai__template-text" placeholder="Введите текст для вставки в шаблон..."></textarea></div><div class="documents-vip-ai__template-actions"><button type="button" class="documents-vip-ai__btn" data-template-close>Закрыть</button><button type="button" class="documents-vip-ai__btn documents-vip-ai__btn--accent" data-template-preview>Превью</button></div>';
+      templateOverlay.appendChild(templatePanel);
+      document.body.appendChild(templateOverlay);
+      var textNode = templatePanel.querySelector('.documents-vip-ai__template-text');
+      var closeBtn = templatePanel.querySelector('[data-template-close]');
+      var previewBtn = templatePanel.querySelector('[data-template-preview]');
+      if (textNode) {
+        textNode.value = latestAiAnswer || '';
+        setTimeout(function() { textNode.focus(); }, 0);
+      }
+      function closeTemplate() {
+        if (templateOverlay && templateOverlay.parentNode) {
+          templateOverlay.parentNode.removeChild(templateOverlay);
+        }
+      }
+      closeBtn.addEventListener('click', closeTemplate);
+      templateOverlay.addEventListener('click', function(event) {
+        if (event.target === templateOverlay) closeTemplate();
+      });
+      previewBtn.addEventListener('click', function() {
+        var userText = textNode ? String(textNode.value || '').trim() : '';
+        if (!userText) {
+          pushChat('assistant', 'Введите текст для шаблона.');
+          return;
+        }
+        previewBtn.disabled = true;
+        previewBtn.textContent = 'Готовим...';
+        createDocxFromTemplate(userText)
+          .then(function(blob) { return openDocxPreviewWindow(blob); })
+          .then(function() {
+            pushChat('assistant', 'Превью документа открыто в новом окне.');
+            closeTemplate();
+          })
+          .catch(function(error) {
+            pushChat('assistant', 'Ошибка шаблона: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
+          })
+          .finally(function() {
+            previewBtn.disabled = false;
+            previewBtn.textContent = 'Превью';
+          });
+      });
+    }
 
     function sendByCurrentStyle() {
       if (isSending) {
@@ -730,6 +874,7 @@
         })
         .then(function(data) {
           var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
+          latestAiAnswer = aiText;
           pushChat('assistant', aiText);
           chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
           var elapsed = Date.now() - startedAt;
