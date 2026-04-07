@@ -756,5 +756,138 @@
     }
   }
 
+  function collectTargetContainers() {
+    var selectors = [
+      '[contenteditable="true"]',
+      '.docs-editor__content',
+      '.docx-editor',
+      '.document-editor',
+      '.js-docx-editor',
+      '[data-docx-editor]',
+      '[data-template-container]'
+    ];
+    var seen = [];
+    selectors.forEach(function(selector) {
+      var nodes = document.querySelectorAll(selector);
+      Array.prototype.forEach.call(nodes, function(node) {
+        if (node && seen.indexOf(node) === -1) {
+          seen.push(node);
+        }
+      });
+    });
+    if (!seen.length && document.body) {
+      seen.push(document.body);
+    }
+    return seen;
+  }
+
+  function replaceMarkerInContainer(container, markerText, replacementText) {
+    if (!container || !markerText) return 0;
+    var textNodes = [];
+    var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node) {
+        if (!node || !node.nodeValue || node.nodeValue.indexOf(markerText) === -1 && node.nodeValue.trim() === '') {
+          return NodeFilter.FILTER_SKIP;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var currentNode = walker.nextNode();
+    while (currentNode) {
+      textNodes.push(currentNode);
+      currentNode = walker.nextNode();
+    }
+    if (!textNodes.length) return 0;
+
+    var fullText = '';
+    var map = [];
+    textNodes.forEach(function(node) {
+      var start = fullText.length;
+      var value = String(node.nodeValue || '');
+      fullText += value;
+      map.push({ node: node, start: start, end: fullText.length });
+    });
+
+    var matches = [];
+    var cursor = 0;
+    while (cursor < fullText.length) {
+      var index = fullText.indexOf(markerText, cursor);
+      if (index < 0) break;
+      matches.push({ start: index, end: index + markerText.length });
+      cursor = index + markerText.length;
+    }
+    if (!matches.length) return 0;
+
+    function resolvePosition(position) {
+      for (var i = 0; i < map.length; i += 1) {
+        var item = map[i];
+        if (position >= item.start && position <= item.end) {
+          return { node: item.node, offset: Math.max(0, position - item.start) };
+        }
+      }
+      var last = map[map.length - 1];
+      return { node: last.node, offset: String(last.node.nodeValue || '').length };
+    }
+
+    for (var m = matches.length - 1; m >= 0; m -= 1) {
+      var match = matches[m];
+      var startPos = resolvePosition(match.start);
+      var endPos = resolvePosition(match.end);
+      var range = document.createRange();
+      range.setStart(startPos.node, startPos.offset);
+      range.setEnd(endPos.node, endPos.offset);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(replacementText));
+      range.detach();
+    }
+    return matches.length;
+  }
+
+  function replaceAiMarkerInDocument(replacementText, markerText) {
+    var marker = String(markerText || '[ОТВЕТ ИИ]');
+    var replacement = String(replacementText || 'Сгенерированный ответ ИИ — здесь может быть любой контент');
+    var containers = collectTargetContainers();
+    var replacedCount = 0;
+    containers.forEach(function(container) {
+      replacedCount += replaceMarkerInContainer(container, marker, replacement);
+    });
+    return replacedCount;
+  }
+
+  function ensureTemplateInsertButton() {
+    if (typeof document === 'undefined' || !document.body) return;
+    if (document.getElementById('docx-template-insert-btn')) return;
+
+    var style = document.createElement('style');
+    style.id = 'docx-template-insert-style';
+    style.textContent = '#docx-template-insert-btn{position:fixed;right:12px;bottom:12px;z-index:4200;border:1px solid rgba(255,255,255,.85);background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(241,245,249,.88));backdrop-filter:blur(10px);color:#0f172a;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.14);max-width:calc(100vw - 24px)}#docx-template-insert-btn:active{transform:translateY(1px)}@media (max-width:768px){#docx-template-insert-btn{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;padding:12px 14px;font-size:14px;border-radius:14px}}';
+    document.head.appendChild(style);
+
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'docx-template-insert-btn';
+    button.textContent = 'Шаблон Тест';
+    button.setAttribute('aria-label', 'Вставить текст в маркер [ОТВЕТ ИИ]');
+    button.addEventListener('click', function() {
+      var inserted = replaceAiMarkerInDocument('Сгенерированный ответ ИИ — здесь может быть любой контент', '[ОТВЕТ ИИ]');
+      if (inserted > 0) {
+        button.textContent = 'Готово: ' + inserted;
+      } else {
+        button.textContent = 'Маркер не найден';
+      }
+      setTimeout(function() {
+        button.textContent = 'Шаблон Тест';
+      }, 1800);
+    });
+    document.body.appendChild(button);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ensureTemplateInsertButton);
+  } else {
+    ensureTemplateInsertButton();
+  }
+
   window.openDocumentsVipAiPaidModal = openDocumentsVipAiPaidModal;
+  window.replaceAiMarkerInDocument = replaceAiMarkerInDocument;
 })();
