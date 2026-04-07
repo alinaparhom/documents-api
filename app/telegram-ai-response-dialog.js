@@ -259,27 +259,35 @@
     }
   }
 
-  function openTemplateDocument(statusNode) {
+  async function buildTemplatePreviewHtml() {
     const templateUrl = toAbsoluteUrl(TEMPLATE_DOC_PATH);
-    if (!templateUrl) {
-      if (statusNode) statusNode.textContent = 'Не удалось определить путь к шаблону.';
-      return;
+    const response = await fetchWithTimeout(templateUrl, { credentials: 'include', cache: 'no-store' }, 25000);
+    if (!response || !response.ok) {
+      throw new Error('Не удалось загрузить template.docx');
     }
-    let opened = null;
-    try {
-      opened = window.open(templateUrl, '_blank', 'noopener,noreferrer');
-    } catch (error) {
-      opened = null;
-    }
-    if (!opened) {
-      try {
-        window.location.href = templateUrl;
-      } catch (error) {
-        if (statusNode) statusNode.textContent = 'Не удалось открыть шаблон.';
-        return;
-      }
-    }
-    if (statusNode) statusNode.textContent = 'Шаблон открыт: template.docx';
+    const arrayBuffer = await response.arrayBuffer();
+    const mammoth = await ensureMammothLoaded();
+    const result = await mammoth.convertToHtml({ arrayBuffer });
+    return normalize(result && result.value) || '<p>Шаблон пуст.</p>';
+  }
+
+  function openTemplatePreviewModal(html) {
+    const preview = document.createElement('div');
+    preview.className = 'tg-ai-template-preview';
+    preview.innerHTML = `
+      <div class="tg-ai-template-preview__card">
+        <div class="tg-ai-template-preview__head">
+          <div class="tg-ai-template-preview__title">Просмотр template.docx</div>
+          <button type="button" class="tg-ai-template-preview__close" data-close>✕</button>
+        </div>
+        <div class="tg-ai-template-preview__body">${html}</div>
+      </div>
+    `;
+    preview.querySelector('[data-close]')?.addEventListener('click', () => preview.remove());
+    preview.addEventListener('click', (event) => {
+      if (event.target === preview) preview.remove();
+    });
+    document.body.appendChild(preview);
   }
 
   function buildFileUrlCandidates(file) {
@@ -733,9 +741,16 @@
       .tg-ai-chat__dots span{width:5px;height:5px;border-radius:50%;background:#0ea5e9;opacity:.35;animation:tg-ai-pulse 1.1s infinite}
       .tg-ai-chat__dots span:nth-child(2){animation-delay:.16s}
       .tg-ai-chat__dots span:nth-child(3){animation-delay:.32s}
+      .tg-ai-template-preview{position:fixed;inset:0;z-index:3800;background:rgba(15,23,42,.42);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:10px}
+      .tg-ai-template-preview__card{width:min(920px,100%);height:min(100dvh - 20px,860px);display:flex;flex-direction:column;border-radius:22px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(241,245,249,.94));box-shadow:0 18px 44px rgba(15,23,42,.24);overflow:hidden}
+      .tg-ai-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid rgba(203,213,225,.8)}
+      .tg-ai-template-preview__title{font-size:15px;font-weight:800;color:#0f172a}
+      .tg-ai-template-preview__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);border-radius:10px;padding:6px 11px;min-height:34px}
+      .tg-ai-template-preview__body{flex:1;overflow:auto;padding:14px;color:#0f172a;line-height:1.58;font-size:14px;background:rgba(255,255,255,.88)}
+      .tg-ai-template-preview__body p{margin:0 0 10px}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-template-preview__body{padding:12px}}
     `;
     document.head.appendChild(style);
   }
@@ -919,8 +934,16 @@
       status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
     });
 
-    templateButton?.addEventListener('click', () => {
-      openTemplateDocument(status);
+    templateButton?.addEventListener('click', async () => {
+      if (isSending) return;
+      status.textContent = 'Готовлю просмотр шаблона...';
+      try {
+        const html = await buildTemplatePreviewHtml();
+        openTemplatePreviewModal(html);
+        status.textContent = 'Шаблон открыт в режиме просмотра.';
+      } catch (error) {
+        status.textContent = (error && error.message) || 'Не удалось открыть просмотр шаблона.';
+      }
     });
 
   };
