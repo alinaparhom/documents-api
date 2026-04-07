@@ -869,17 +869,62 @@
     button.textContent = 'Шаблон Тест';
     button.setAttribute('aria-label', 'Вставить текст в маркер [ОТВЕТ ИИ]');
     button.addEventListener('click', function() {
-      var inserted = replaceAiMarkerInDocument('Сгенерированный ответ ИИ — здесь может быть любой контент', '[ОТВЕТ ИИ]');
+      var aiText = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
+      var inserted = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
       if (inserted > 0) {
         button.textContent = 'Готово: ' + inserted;
-      } else {
-        button.textContent = 'Маркер не найден';
+        setTimeout(function() {
+          button.textContent = 'Шаблон Тест';
+        }, 1800);
+        return;
       }
-      setTimeout(function() {
-        button.textContent = 'Шаблон Тест';
-      }, 1800);
+      button.disabled = true;
+      button.textContent = 'Генерация DOCX...';
+      generateDocxFromTemplateViaApi(aiText)
+        .then(function(downloaded) {
+          button.textContent = downloaded ? 'DOCX скачан' : 'Маркер не найден';
+        })
+        .catch(function() {
+          button.textContent = 'Ошибка API';
+        })
+        .finally(function() {
+          button.disabled = false;
+          setTimeout(function() {
+            button.textContent = 'Шаблон Тест';
+          }, 1800);
+        });
     });
     document.body.appendChild(button);
+  }
+
+  async function generateDocxFromTemplateViaApi(answerText) {
+    var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var formData = new FormData();
+    formData.append('action', 'generate_document');
+    formData.append('format', 'docx');
+    formData.append('answer', String(answerText || '').trim());
+    formData.append('documentTitle', 'Ответ ИИ');
+    var response = await fetch(apiUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    });
+    if (!response.ok) {
+      throw new Error('Ошибка генерации шаблона (' + response.status + ')');
+    }
+    var blob = await response.blob();
+    if (!blob || !blob.size) {
+      return false;
+    }
+    var downloadUrl = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = 'template-answer.docx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(downloadUrl);
+    return true;
   }
 
   if (document.readyState === 'loading') {

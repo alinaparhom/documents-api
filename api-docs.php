@@ -921,10 +921,13 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
     }
 
-    if (!$replacedAny && isset($replacements['[ОТВЕТ_ИИ]'])) {
+    $fallbackAnswer = isset($replacements['[ОТВЕТ_ИИ]'])
+        ? (string)$replacements['[ОТВЕТ_ИИ]']
+        : (isset($replacements['[ОТВЕТ ИИ]']) ? (string)$replacements['[ОТВЕТ ИИ]'] : '');
+    if (!$replacedAny && $fallbackAnswer !== '') {
         $docXml = $zip->getFromName('word/document.xml');
         if (is_string($docXml) && $docXml !== '' && str_contains($docXml, '</w:body>')) {
-            $appendXml = textToWordParagraphsXml((string)$replacements['[ОТВЕТ_ИИ]']);
+            $appendXml = textToWordParagraphsXml($fallbackAnswer);
             $docXml = str_replace('</w:body>', $appendXml . '</w:body>', $docXml);
             $zip->addFromString('word/document.xml', $docXml);
         }
@@ -1364,6 +1367,7 @@ if ($action === 'generate_document') {
         }
         if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
             '[ОТВЕТ_ИИ]' => $answerText,
+            '[ОТВЕТ ИИ]' => $answerText,
             '[DOCUMENT_TITLE]' => $documentTitle,
         ])) {
             @unlink($tmpFile);
