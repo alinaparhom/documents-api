@@ -4,6 +4,7 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
+  const TEMPLATE_DOC_PATH = '/js/documents/app/templates/template.docx';
   const VISION_BATCH_SIZE = 5;
   const PDF_RENDER_SCALE = 1.25;
   const PDF_JPEG_QUALITY = 0.82;
@@ -256,6 +257,29 @@
     } catch (error) {
       return raw.startsWith('/') ? raw : `/${raw.replace(/^\/+/, '')}`;
     }
+  }
+
+  function openTemplateDocument(statusNode) {
+    const templateUrl = toAbsoluteUrl(TEMPLATE_DOC_PATH);
+    if (!templateUrl) {
+      if (statusNode) statusNode.textContent = 'Не удалось определить путь к шаблону.';
+      return;
+    }
+    let opened = null;
+    try {
+      opened = window.open(templateUrl, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      opened = null;
+    }
+    if (!opened) {
+      try {
+        window.location.href = templateUrl;
+      } catch (error) {
+        if (statusNode) statusNode.textContent = 'Не удалось открыть шаблон.';
+        return;
+      }
+    }
+    if (statusNode) statusNode.textContent = 'Шаблон открыт: template.docx';
   }
 
   function buildFileUrlCandidates(file) {
@@ -893,6 +917,10 @@
       if (target.checked) selected.add(key);
       else selected.delete(key);
       status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
+    });
+
+    templateButton?.addEventListener('click', () => {
+      openTemplateDocument(status);
     });
 
   };
