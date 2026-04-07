@@ -259,19 +259,25 @@
     }
   }
 
-  async function buildTemplatePreviewHtml() {
+  async function ensureDocxPreviewLoaded() {
+    if (window.docx && typeof window.docx.renderAsync === 'function') return window.docx;
+    if (!window.JSZip) {
+      await loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', () => Boolean(window.JSZip));
+    }
+    await loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', () => Boolean(window.docx && typeof window.docx.renderAsync === 'function'));
+    return window.docx;
+  }
+
+  async function buildTemplatePreviewBuffer() {
     const templateUrl = toAbsoluteUrl(TEMPLATE_DOC_PATH);
     const response = await fetchWithTimeout(templateUrl, { credentials: 'include', cache: 'no-store' }, 25000);
     if (!response || !response.ok) {
       throw new Error('Не удалось загрузить template.docx');
     }
-    const arrayBuffer = await response.arrayBuffer();
-    const mammoth = await ensureMammothLoaded();
-    const result = await mammoth.convertToHtml({ arrayBuffer });
-    return normalize(result && result.value) || '<p>Шаблон пуст.</p>';
+    return response.arrayBuffer();
   }
 
-  function openTemplatePreviewModal(html) {
+  function openTemplatePreviewModal() {
     const preview = document.createElement('div');
     preview.className = 'tg-ai-template-preview';
     preview.innerHTML = `
@@ -280,7 +286,9 @@
           <div class="tg-ai-template-preview__title">Просмотр template.docx</div>
           <button type="button" class="tg-ai-template-preview__close" data-close>✕</button>
         </div>
-        <div class="tg-ai-template-preview__body">${html}</div>
+        <div class="tg-ai-template-preview__body" data-preview-body>
+          <div class="tg-ai-template-preview__loading">Подготавливаем точный рендер документа…</div>
+        </div>
       </div>
     `;
     preview.querySelector('[data-close]')?.addEventListener('click', () => preview.remove());
@@ -288,6 +296,10 @@
       if (event.target === preview) preview.remove();
     });
     document.body.appendChild(preview);
+    return {
+      root: preview,
+      body: preview.querySelector('[data-preview-body]'),
+    };
   }
 
   function buildFileUrlCandidates(file) {
@@ -746,8 +758,10 @@
       .tg-ai-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid rgba(203,213,225,.8)}
       .tg-ai-template-preview__title{font-size:15px;font-weight:800;color:#0f172a}
       .tg-ai-template-preview__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);border-radius:10px;padding:6px 11px;min-height:34px}
-      .tg-ai-template-preview__body{flex:1;overflow:auto;padding:14px;color:#0f172a;line-height:1.58;font-size:14px;background:rgba(255,255,255,.88)}
-      .tg-ai-template-preview__body p{margin:0 0 10px}
+      .tg-ai-template-preview__body{flex:1;overflow:auto;padding:10px;background:#f8fafc}
+      .tg-ai-template-preview__loading{height:100%;min-height:180px;display:flex;align-items:center;justify-content:center;text-align:center;padding:18px;color:#334155;font-size:14px}
+      .tg-ai-template-preview__body .docx-wrapper{background:transparent;padding:0}
+      .tg-ai-template-preview__body .docx{margin:0 auto;box-shadow:0 12px 32px rgba(15,23,42,.16)}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-template-preview__body{padding:12px}}
@@ -938,8 +952,21 @@
       if (isSending) return;
       status.textContent = 'Готовлю просмотр шаблона...';
       try {
-        const html = await buildTemplatePreviewHtml();
-        openTemplatePreviewModal(html);
+        const preview = openTemplatePreviewModal();
+        const body = preview && preview.body;
+        if (!body) throw new Error('Не удалось открыть окно предпросмотра.');
+        const docx = await ensureDocxPreviewLoaded();
+        const fileBuffer = await buildTemplatePreviewBuffer();
+        body.innerHTML = '';
+        await docx.renderAsync(fileBuffer, body, null, {
+          className: 'docx',
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+          useBase64URL: true,
+        });
         status.textContent = 'Шаблон открыт в режиме просмотра.';
       } catch (error) {
         status.textContent = (error && error.message) || 'Не удалось открыть просмотр шаблона.';
