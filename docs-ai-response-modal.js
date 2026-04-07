@@ -2485,17 +2485,16 @@
     }
 
     function exportDocument(format, editorHtml, answerText) {
-      var preparedHtml = normalizeEditorHtml(editorHtml, answerText);
-      if (!preparedHtml) {
+      var aiText = String(answerText || '').trim();
+      if (!aiText) {
         alert('Нет текста для экспорта. Сначала получите ответ от ИИ.');
         return;
       }
       var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
       var formData = new FormData();
       formData.append('action', 'generate_document');
-      formData.append('format', format);
-      formData.append('html', preparedHtml);
-      formData.append('documentTitle', config.documentTitle || '');
+      formData.append('format', 'docx');
+      formData.append('answer', aiText);
       if (state.templateFile && state.templateFile.fileObject) {
         formData.append('templateFile', state.templateFile.fileObject, state.templateFile.fileObject.name || 'template.docx');
       }
@@ -2516,14 +2515,19 @@
           return response.blob();
         })
         .then(function (blob) {
-          var url = URL.createObjectURL(blob);
-          var a = document.createElement('a');
-          a.href = url;
-          a.download = 'response.' + format;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+          var docxBlob = new Blob([blob], {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          });
+          var objectUrl = URL.createObjectURL(docxBlob);
+          var officePreviewUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(objectUrl);
+          var previewWindow = window.open('', '_blank', 'noopener');
+          if (previewWindow && previewWindow.document) {
+            previewWindow.document.write('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Предпросмотр DOCX</title><style>html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;background:#f7f9fc;}</style></head><body><iframe src="' + officePreviewUrl + '" allowfullscreen></iframe></body></html>');
+            previewWindow.document.close();
+          } else {
+            window.open(officePreviewUrl, '_blank', 'noopener');
+          }
+          setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 120000);
         })
         .catch(function (error) {
           alert('Ошибка при генерации документа: ' + (error && error.message ? error.message : 'Неизвестная ошибка'));
@@ -3682,7 +3686,7 @@
     });
     editPdf.addEventListener('click', function () {
       var rawText = String(editEditor.getText() || '').trim();
-      exportDocument('pdf', normalizeEditorHtml(editEditor.getHTML(), rawText), rawText);
+      exportDocument('docx', normalizeEditorHtml(editEditor.getHTML(), rawText), rawText);
     });
     editCopy.addEventListener('click', function () {
       var text = String(editEditor.getText() || '').trim();

@@ -1324,7 +1324,6 @@ if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extr
 if ($action === 'generate_document') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
-    $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 
     if ($answerText === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
@@ -1334,6 +1333,16 @@ if ($action === 'generate_document') {
     }
     if ($format !== 'docx' && $format !== 'pdf') {
         jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
+    }
+
+    $uploadedTemplatePath = '';
+    $uploadedTemplates = normalizeUploadedFiles('templateFile');
+    if ($uploadedTemplates) {
+        $firstTemplate = $uploadedTemplates[0];
+        $tmpTemplate = (string)($firstTemplate['tmp_name'] ?? '');
+        if (is_file($tmpTemplate)) {
+            $uploadedTemplatePath = $tmpTemplate;
+        }
     }
 
     $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? $_POST['templatePath'] ?? ''));
@@ -1346,7 +1355,7 @@ if ($action === 'generate_document') {
         return is_string($value) && $value !== '';
     });
 
-    $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
+    $templateDocxPath = $uploadedTemplatePath !== '' ? $uploadedTemplatePath : resolveTemplatePath('template.docx', $extraTemplateDirs);
     $templatePdfPath = resolveTemplatePath('template.pdf', $extraTemplateDirs);
     if (!is_file($templateDocxPath) && !is_file($templatePdfPath)) {
         jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
@@ -1364,7 +1373,6 @@ if ($action === 'generate_document') {
         }
         if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
             '[ОТВЕТ_ИИ]' => $answerText,
-            '[DOCUMENT_TITLE]' => $documentTitle,
         ])) {
             @unlink($tmpFile);
             jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX на основе шаблона']);
@@ -1379,7 +1387,7 @@ if ($action === 'generate_document') {
             if (is_file(__DIR__ . '/vendor/autoload.php')) {
                 require_once __DIR__ . '/vendor/autoload.php';
             }
-            if (!createPdfFromText($tmpFile, $documentTitle, $answerText)) {
+            if (!createPdfFromText($tmpFile, '', $answerText)) {
                 @unlink($tmpFile);
                 jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или добавьте template.pdf в директорию шаблонов']);
             }
