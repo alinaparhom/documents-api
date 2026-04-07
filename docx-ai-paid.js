@@ -167,7 +167,7 @@
     }
     var style = document.createElement('style');
     style.id = 'documents-vip-ai-modal-style';
-    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(8px);z-index:4100;display:flex;align-items:center;justify-content:center;padding:10px}.documents-vip-ai__panel{width:min(860px,100%);max-height:calc(100dvh - 20px);overflow:auto;border-radius:24px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(241,245,249,.9));border:1px solid rgba(255,255,255,.95);box-shadow:0 24px 56px rgba(15,23,42,.24)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9)}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:110px;overflow:auto}.documents-vip-ai__chat{height:min(44dvh,360px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__select{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{max-height:100dvh;border-radius:0}.documents-vip-ai__composer{flex-direction:column}}';
+    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(8px);z-index:4100;display:flex;align-items:center;justify-content:center;padding:10px}.documents-vip-ai__panel{width:min(860px,100%);max-height:calc(100dvh - 20px);overflow:auto;border-radius:24px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(241,245,249,.9));border:1px solid rgba(255,255,255,.95);box-shadow:0 24px 56px rgba(15,23,42,.24)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9)}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:110px;overflow:auto}.documents-vip-ai__chat{height:min(44dvh,360px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__select{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__template{display:grid;gap:8px}.documents-vip-ai__template-actions{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__btn{border:1px solid rgba(191,219,254,.9);background:rgba(219,234,254,.72);color:#1e3a8a;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700}.documents-vip-ai__preview{font-size:13px;line-height:1.5;max-height:160px;overflow:auto;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);border-radius:12px;padding:10px;color:#0f172a}.documents-vip-ai__preview--empty{color:#64748b}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{max-height:100dvh;border-radius:0}.documents-vip-ai__composer{flex-direction:column}.documents-vip-ai__template-actions{flex-direction:column}}';
     document.head.appendChild(style);
   }
 
@@ -624,7 +624,7 @@
     var payload = options.payload || {};
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__block documents-vip-ai__template"><div class="documents-vip-ai__label">Шаблон DOCX: app/templates/template.docx (маркер [ОТВЕТ ИИ])</div><div class="documents-vip-ai__template-actions"><button class="documents-vip-ai__btn" data-template-preview type="button">👁 Предпросмотр</button><button class="documents-vip-ai__btn" data-template-download type="button">⬇ Скачать DOCX</button></div><div class="documents-vip-ai__preview documents-vip-ai__preview--empty" data-template-preview-text>После ответа ИИ здесь появится текст для подстановки в шаблон.</div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -632,6 +632,9 @@
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
     var styleNode = panel.querySelector('[data-style]');
+    var previewTemplateButton = panel.querySelector('[data-template-preview]');
+    var downloadTemplateButton = panel.querySelector('[data-template-download]');
+    var templatePreviewNode = panel.querySelector('[data-template-preview-text]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
     var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
@@ -664,6 +667,85 @@
     }
 
     closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
+
+    function escapeForNode(value) {
+      return escapeHtmlText(String(value || ''));
+    }
+
+    var latestAiAnswer = '';
+    var isTemplateExporting = false;
+
+    function updateTemplatePreview(value) {
+      latestAiAnswer = String(value || '').trim();
+      if (!templatePreviewNode) {
+        return;
+      }
+      if (!latestAiAnswer) {
+        templatePreviewNode.classList.add('documents-vip-ai__preview--empty');
+        templatePreviewNode.innerHTML = 'После ответа ИИ здесь появится текст для подстановки в шаблон.';
+        return;
+      }
+      templatePreviewNode.classList.remove('documents-vip-ai__preview--empty');
+      templatePreviewNode.innerHTML = escapeForNode(latestAiAnswer).replace(/\n/g, '<br>');
+    }
+
+    function triggerBlobDownload(blob, fileName) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = fileName || 'answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function() { URL.revokeObjectURL(url); }, 1500);
+    }
+
+    function exportAiAnswerToTemplateDocx() {
+      if (isTemplateExporting) {
+        return Promise.resolve();
+      }
+      if (!latestAiAnswer) {
+        pushChat('assistant', 'Сначала получите ответ ИИ, затем экспортируйте в DOCX.');
+        return Promise.resolve();
+      }
+      isTemplateExporting = true;
+      if (downloadTemplateButton) {
+        downloadTemplateButton.disabled = true;
+        downloadTemplateButton.textContent = '⏳ Подготовка...';
+      }
+      return fetch('/js/documents/api-docs.php', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: (function() {
+          var formData = new FormData();
+          formData.append('action', 'generate_document');
+          formData.append('format', 'docx');
+          formData.append('answer', latestAiAnswer);
+          formData.append('documentTitle', 'Ответ ИИ');
+          return formData;
+        })()
+      })
+        .then(function(response) {
+          if (!response.ok) {
+            throw new Error('Ошибка экспорта DOCX (' + response.status + ')');
+          }
+          return response.blob();
+        })
+        .then(function(blob) {
+          triggerBlobDownload(blob, 'answer-template.docx');
+          pushChat('assistant', 'Готово: ответ вставлен в шаблон и отправлен на скачивание.');
+        })
+        .catch(function(error) {
+          pushChat('assistant', 'Ошибка экспорта шаблона: ' + (error && error.message ? error.message : 'неизвестно'));
+        })
+        .finally(function() {
+          isTemplateExporting = false;
+          if (downloadTemplateButton) {
+            downloadTemplateButton.disabled = false;
+            downloadTemplateButton.textContent = '⬇ Скачать DOCX';
+          }
+        });
+    }
 
     var chatHistory = [];
     function pushChat(role, text) {
@@ -704,6 +786,7 @@
         .then(function(data) {
           var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
           pushChat('assistant', aiText);
+          updateTemplatePreview(aiText);
           chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
           var elapsed = Date.now() - startedAt;
           var tokens = data && data.tokensUsed ? data.tokensUsed : '—';
@@ -725,6 +808,21 @@
           return;
         }
         sendByCurrentStyle();
+      });
+    }
+    if (previewTemplateButton) {
+      previewTemplateButton.addEventListener('click', function() {
+        if (!latestAiAnswer) {
+          pushChat('assistant', 'Пока нет ответа ИИ для предпросмотра.');
+          return;
+        }
+        pushChat('assistant', 'Предпросмотр готов. Если всё ок, нажмите «Скачать DOCX».');
+        updateTemplatePreview(latestAiAnswer);
+      });
+    }
+    if (downloadTemplateButton) {
+      downloadTemplateButton.addEventListener('click', function() {
+        exportAiAnswerToTemplateDocx();
       });
     }
   }
