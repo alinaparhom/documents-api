@@ -248,17 +248,23 @@
 
   function openDocxPreviewWindow(blob) {
     return ensureDocxTemplateDepsLoaded().then(function() {
-      var previewWindow = window.open('', '_blank', 'noopener,noreferrer');
+      var previewWindow = window.open('', '_blank');
       if (!previewWindow) {
         throw new Error('Не удалось открыть окно превью. Разрешите всплывающие окна.');
       }
-      previewWindow.document.write('<!doctype html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Превью шаблона</title><style>body{margin:0;background:#f8fafc;font-family:Inter,Arial,sans-serif}#docx-preview{padding:10px;max-width:100%;overflow:auto} .docx-wrapper{background:transparent!important;padding:0!important;box-shadow:none!important}</style></head><body><div id="docx-preview"></div></body></html>');
+      previewWindow.document.open();
+      previewWindow.document.write('<!doctype html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Превью шаблона</title><style>body{margin:0;background:#f8fafc;font-family:Inter,Arial,sans-serif}#docx-preview{padding:12px;max-width:100%;overflow:auto} .docx-wrapper{background:transparent!important;padding:0!important;box-shadow:none!important}</style></head><body><div id="docx-preview">Загрузка превью…</div></body></html>');
       previewWindow.document.close();
       var container = previewWindow.document.getElementById('docx-preview');
-      if (!container || !window.docx || !window.docx.renderAsync) {
+      if (!container || !window.docx || typeof window.docx.renderAsync !== 'function') {
         throw new Error('Превью недоступно в этом браузере.');
       }
-      return window.docx.renderAsync(blob, container, null, { className: 'docx-preview' });
+      container.textContent = '';
+      return window.docx.renderAsync(blob, container, null, {
+        className: 'docx-preview',
+        ignoreWidth: false,
+        breakPages: true
+      });
     });
   }
 
@@ -804,12 +810,25 @@
     function openTemplateEditor() {
       var templateOverlay = createElement('div', 'documents-vip-ai__template');
       var templatePanel = createElement('div', 'documents-vip-ai__template-panel');
-      templatePanel.innerHTML = '<div class="documents-vip-ai__template-head">Шаблон документа</div><div class="documents-vip-ai__template-body"><textarea class="documents-vip-ai__template-text" placeholder="Введите текст для вставки в шаблон..."></textarea></div><div class="documents-vip-ai__template-actions"><button type="button" class="documents-vip-ai__btn" data-template-close>Закрыть</button><button type="button" class="documents-vip-ai__btn documents-vip-ai__btn--accent" data-template-preview>Превью</button></div>';
+      templatePanel.innerHTML = '<div class="documents-vip-ai__template-head">Шаблон документа<div style="margin-top:4px;font-size:12px;font-weight:500;color:#64748b">Вставьте текст, который должен попасть в template.docx</div></div><div class="documents-vip-ai__template-body"><textarea class="documents-vip-ai__template-text" placeholder="Введите текст для вставки в шаблон..."></textarea></div><div class="documents-vip-ai__template-actions"><button type="button" class="documents-vip-ai__btn" data-template-close>Закрыть</button><button type="button" class="documents-vip-ai__btn documents-vip-ai__btn--accent" data-template-preview>Превью</button></div>';
       templateOverlay.appendChild(templatePanel);
       document.body.appendChild(templateOverlay);
       var textNode = templatePanel.querySelector('.documents-vip-ai__template-text');
       var closeBtn = templatePanel.querySelector('[data-template-close]');
       var previewBtn = templatePanel.querySelector('[data-template-preview]');
+      var isMobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+      templateOverlay.style.alignItems = isMobile ? 'flex-end' : 'center';
+      templateOverlay.style.justifyContent = 'center';
+      templateOverlay.style.padding = isMobile ? '0' : '16px';
+      templatePanel.style.width = isMobile ? '100%' : 'min(780px, 96vw)';
+      templatePanel.style.maxHeight = isMobile ? '95dvh' : '88dvh';
+      templatePanel.style.borderRadius = isMobile ? '16px 16px 0 0' : '18px';
+      templatePanel.style.display = 'grid';
+      templatePanel.style.gridTemplateRows = 'auto 1fr auto';
+      if (textNode) {
+        textNode.style.minHeight = isMobile ? '42dvh' : '34dvh';
+        textNode.style.maxHeight = isMobile ? '58dvh' : '48dvh';
+      }
       if (textNode) {
         textNode.value = latestAiAnswer || '';
         setTimeout(function() { textNode.focus(); }, 0);
@@ -819,10 +838,15 @@
           templateOverlay.parentNode.removeChild(templateOverlay);
         }
       }
-      closeBtn.addEventListener('click', closeTemplate);
+      if (closeBtn) {
+        closeBtn.addEventListener('click', closeTemplate);
+      }
       templateOverlay.addEventListener('click', function(event) {
         if (event.target === templateOverlay) closeTemplate();
       });
+      if (!previewBtn) {
+        return;
+      }
       previewBtn.addEventListener('click', function() {
         var userText = textNode ? String(textNode.value || '').trim() : '';
         if (!userText) {
