@@ -779,6 +779,7 @@
             <option value="" selected>🎯 Выберите режим</option>
             ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${escapeHtml(item.value)}">🎯 ${escapeHtml(item.label)}</option>`).join('')}
           </select>
+          <button type="button" class="tg-ai-chat__toggle" data-template-btn hidden>Шаблон</button>
         </div>
         <div class="tg-ai-chat__files" data-files hidden>
           <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
@@ -796,8 +797,10 @@
     const filesList = overlay.querySelector('[data-files-list]');
     const meta = overlay.querySelector('[data-meta]');
     const styleSelect = overlay.querySelector('[data-style-select]');
+    const templateButton = overlay.querySelector('[data-template-btn]');
     let styleIndex = 0;
     let isSending = false;
+    let lastAiAnswer = '';
 
     renderFiles(filesList, files);
 
@@ -832,6 +835,8 @@
       }
 
       isSending = true;
+      lastAiAnswer = '';
+      if (templateButton) templateButton.hidden = true;
       meta.innerHTML = '';
       createBubble(messages, `Стиль: ${styleMeta.label}. Подготовь готовый ответ по документам.`, 'user');
       status.textContent = 'Vision: готовим файлы...';
@@ -842,6 +847,8 @@
         const answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: styleMeta.prompt, selectedFiles }, (message) => {
           status.textContent = message;
         });
+        lastAiAnswer = answer;
+        if (templateButton) templateButton.hidden = false;
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
 
@@ -855,6 +862,8 @@
         `;
         status.textContent = 'Данные переданы.';
       } catch (error) {
+        lastAiAnswer = '';
+        if (templateButton) templateButton.hidden = true;
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
         status.textContent = 'Ошибка передачи.';
