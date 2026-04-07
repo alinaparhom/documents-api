@@ -167,7 +167,7 @@
     }
     var style = document.createElement('style');
     style.id = 'documents-vip-ai-modal-style';
-    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(8px);z-index:4100;display:flex;align-items:center;justify-content:center;padding:10px}.documents-vip-ai__panel{width:min(860px,100%);max-height:calc(100dvh - 20px);overflow:auto;border-radius:24px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(241,245,249,.9));border:1px solid rgba(255,255,255,.95);box-shadow:0 24px 56px rgba(15,23,42,.24)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9)}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:110px;overflow:auto}.documents-vip-ai__chat{height:min(44dvh,360px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__select{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{max-height:100dvh;border-radius:0}.documents-vip-ai__composer{flex-direction:column}}';
+    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:linear-gradient(180deg,rgba(226,232,240,.34),rgba(148,163,184,.28));backdrop-filter:blur(10px);z-index:4100;display:flex;align-items:stretch;justify-content:center;padding:4px}.documents-vip-ai__panel{width:100%;height:100%;max-height:none;overflow:auto;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.92);box-shadow:0 18px 44px rgba(15,23,42,.16)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9);position:sticky;top:0;background:rgba(255,255,255,.78);backdrop-filter:blur(8px);z-index:2}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:20dvh;overflow:auto}.documents-vip-ai__chat{height:min(50dvh,520px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__select{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{border-radius:0}.documents-vip-ai__body{padding:12px}.documents-vip-ai__chat{height:52dvh}.documents-vip-ai__composer{flex-direction:column}}';
     document.head.appendChild(style);
   }
 
@@ -298,7 +298,9 @@
     var name = String(file && file.name || 'document').toLowerCase();
     var isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     var isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
-    var isText = mime.indexOf('text/') === 0 || /\.(txt|md|csv|json|xml|html?)$/i.test(name);
+    var isTextMime = mime.indexOf('text/') === 0 || mime === 'application/json' || mime === 'application/xml' || mime === 'application/x-yaml';
+    var isTextExt = /\.(txt|text|md|markdown|csv|tsv|json|xml|ya?ml|ini|cfg|conf|log|rtf|html?)$/i.test(name);
+    var isText = isTextMime || isTextExt;
     var isDocx = mime.indexOf('wordprocessingml.document') >= 0 || /\.docx$/i.test(name);
     var isXlsx = mime.indexOf('spreadsheetml') >= 0 || /\.xlsx$/i.test(name);
 
@@ -372,7 +374,7 @@
         });
       });
     }
-    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX'));
+    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, текстовые файлы, DOCX, XLSX'));
   }
 
   function loadEntryAsFile(entry) {
@@ -390,15 +392,29 @@
   }
 
   function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus) {
+    var entries = Array.isArray(selectedEntries) ? selectedEntries : [];
     var styleMeta = resolveVipStyle(selectedStyle);
     var preparedPrompt = [promptText, styleMeta && styleMeta.prompt ? styleMeta.prompt : '', VISION_QUALITY_DIRECTIVE, 'Верни готовый ответ на письмо. Не пиши анализ.']
       .filter(Boolean)
       .join('\n\n');
     var images = [];
     var extractedTexts = [];
-    return selectedEntries.reduce(function(chain, entry, index) {
+    var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+
+    function postWithFallback(createFormData, endpointIndex) {
+      if (endpointIndex >= paidEndpoints.length) return Promise.reject(new Error('Не удалось подключиться к VIP API.'));
+      return fetch(paidEndpoints[endpointIndex], { method: 'POST', body: createFormData(), credentials: 'same-origin' })
+        .then(function(response) {
+          if ((response.status === 404 || response.status === 405) && endpointIndex < paidEndpoints.length - 1) {
+            return postWithFallback(createFormData, endpointIndex + 1);
+          }
+          return response.json().then(function(payload) { return { response: response, payload: payload }; });
+        });
+    }
+
+    return entries.reduce(function(chain, entry, index) {
       return chain.then(function() {
-        if (updateStatus) updateStatus('Vision: готовлю файл ' + (index + 1) + '/' + selectedEntries.length + '...');
+        if (updateStatus) updateStatus('Vision: готовлю файл ' + (index + 1) + '/' + entries.length + '...');
         return loadEntryAsFile(entry).then(function(file) {
           return buildVisionPayloadFromFile(file, updateStatus).then(function(prepared) {
             if (prepared.kind === 'multimodal') {
@@ -410,21 +426,32 @@
         });
       });
     }, Promise.resolve()).then(function() {
-      if (!images.length) throw new Error('Vision режим требует изображения или PDF.');
+      if (!images.length) {
+        if (!extractedTexts.length) {
+          throw new Error('Vision режим поддерживает изображения, PDF, DOCX, XLSX и текстовые документы.');
+        }
+        if (updateStatus) updateStatus('Vision: отправляю извлечённый текст в ИИ...');
+        return postWithFallback(function() {
+          var formData = new FormData();
+          formData.append('action', 'generate_response');
+          formData.append('mode', 'paid');
+          formData.append('vision_mode', '1');
+          formData.append('prompt', preparedPrompt);
+          formData.append('extractedTexts', JSON.stringify(extractedTexts));
+          return formData;
+        }, 0).then(function(result) {
+          if (!result.response || !result.response.ok || !result.payload || result.payload.ok !== true) {
+            throw new Error((result.payload && result.payload.error) || 'Не удалось обработать текстовые документы через Vision pipeline.');
+          }
+          var textOnlyAnswer = String(result.payload.response || result.payload.summary || '').trim();
+          if (!textOnlyAnswer) {
+            throw new Error('ИИ не вернул ответ для текстовых документов.');
+          }
+          return { ok: true, response: textOnlyAnswer, mode: 'vision-text', model: result.payload.model || '' };
+        });
+      }
       var batches = chunkItems(images, VISION_BATCH_SIZE);
       var partialAnswers = [];
-      var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
-
-      function postWithFallback(createFormData, endpointIndex) {
-        if (endpointIndex >= paidEndpoints.length) return Promise.reject(new Error('Не удалось подключиться к VIP API.'));
-        return fetch(paidEndpoints[endpointIndex], { method: 'POST', body: createFormData(), credentials: 'same-origin' })
-          .then(function(response) {
-            if ((response.status === 404 || response.status === 405) && endpointIndex < paidEndpoints.length - 1) {
-              return postWithFallback(createFormData, endpointIndex + 1);
-            }
-            return response.json().then(function(payload) { return { response: response, payload: payload }; });
-          });
-      }
 
       return batches.reduce(function(chain, batch, batchIndex) {
         return chain.then(function() {
