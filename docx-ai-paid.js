@@ -891,17 +891,28 @@
     document.body.appendChild(button);
   }
 
+  function blobToDataUrl(blob) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('blob_to_dataurl_failed')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
   function openDocxRenderPreviewPage(blob) {
-    var previewUrl = URL.createObjectURL(blob);
     var previewWindow = window.open('', '_blank');
     if (!previewWindow) {
-      URL.revokeObjectURL(previewUrl);
       throw new Error('preview_window_blocked');
     }
-    var html = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Превью DOCX</title><style>body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(160deg,#e2e8f0,#f8fafc);color:#0f172a} .top{position:sticky;top:0;display:flex;gap:8px;padding:10px;background:rgba(255,255,255,.75);backdrop-filter:blur(8px);border-bottom:1px solid rgba(203,213,225,.9)} .btn{border:1px solid rgba(148,163,184,.6);background:#fff;border-radius:10px;padding:10px 12px;font-weight:700} .btn.primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe} #preview{padding:12px;max-width:980px;margin:0 auto} .docx-wrapper{background:#fff;border-radius:14px;box-shadow:0 10px 26px rgba(15,23,42,.16);padding:12px}</style><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div class=\"top\"><button id=\"download\" class=\"btn primary\">Скачать</button><button id=\"close\" class=\"btn\">Закрыть</button></div><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><script>(async function(){var blobUrl=' + JSON.stringify(previewUrl) + ';var container=document.getElementById(\"docx\");var response=await fetch(blobUrl);var arrayBuffer=await response.arrayBuffer();if(window.docx&&typeof window.docx.renderAsync===\"function\"){await window.docx.renderAsync(arrayBuffer,container,null,{inWrapper:false,breakPages:true});}document.getElementById(\"download\").addEventListener(\"click\",function(){var a=document.createElement(\"a\");a.href=blobUrl;a.download=\"template-answer.docx\";document.body.appendChild(a);a.click();document.body.removeChild(a);});document.getElementById(\"close\").addEventListener(\"click\",function(){window.close();});window.addEventListener(\"beforeunload\",function(){try{URL.revokeObjectURL(blobUrl);}catch(_){}});})();<\/script></body></html>';
-    previewWindow.document.open();
-    previewWindow.document.write(html);
-    previewWindow.document.close();
+    blobToDataUrl(blob).then(function(dataUrl) {
+      var html = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Превью DOCX</title><style>body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(160deg,#e2e8f0,#f8fafc);color:#0f172a} .top{position:sticky;top:0;display:flex;gap:8px;padding:10px;background:rgba(255,255,255,.75);backdrop-filter:blur(8px);border-bottom:1px solid rgba(203,213,225,.9)} .btn{border:1px solid rgba(148,163,184,.6);background:#fff;border-radius:10px;padding:10px 12px;font-weight:700} .btn.primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe} #preview{padding:12px;max-width:980px;margin:0 auto} .docx-wrapper{background:#fff;border-radius:14px;box-shadow:0 10px 26px rgba(15,23,42,.16);padding:12px;min-height:120px} .err{margin:12px auto;max-width:980px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:12px;padding:10px 12px;font-size:13px}</style><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div class=\"top\"><button id=\"download\" class=\"btn primary\">Скачать</button><button id=\"close\" class=\"btn\">Закрыть</button></div><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");if(window.docx&&typeof window.docx.renderAsync===\"function\"){await window.docx.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:false});}else{throw new Error(\"docx_preview_not_loaded\");}document.getElementById(\"download\").addEventListener(\"click\",function(){var a=document.createElement(\"a\");a.href=dataUrl;a.download=\"template-answer.docx\";document.body.appendChild(a);a.click();document.body.removeChild(a);});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();document.getElementById(\"close\").addEventListener(\"click\",function(){window.close();});<\/script></body></html>';
+      previewWindow.document.open();
+      previewWindow.document.write(html);
+      previewWindow.document.close();
+    }).catch(function() {
+      previewWindow.document.body.innerHTML = '<div style="padding:16px;font-family:Arial,sans-serif">Не удалось подготовить превью DOCX.</div>';
+    });
   }
 
   async function generateDocxFromTemplateViaApi(answerText) {
