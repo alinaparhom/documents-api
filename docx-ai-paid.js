@@ -157,7 +157,6 @@
   };
   var VIP_RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
   var templateDocxDepsPromise = null;
-  var templateDocxBlobPromise = null;
 
   function resolveVipStyle(styleValue) {
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
@@ -174,14 +173,11 @@
   }
 
   function ensureDocxTemplateDepsLoaded() {
-    if (window.PizZip && window.docxtemplater && window.docx) {
+    if (window.PizZip && window.docx && window.docx.renderAsync) {
       return Promise.resolve();
     }
     if (templateDocxDepsPromise) return templateDocxDepsPromise;
     templateDocxDepsPromise = loadBriefScript('https://cdn.jsdelivr.net/npm/pizzip@3.1.7/dist/pizzip.min.js', function() { return Boolean(window.PizZip); })
-      .then(function() {
-        return loadBriefScript('https://cdn.jsdelivr.net/npm/docxtemplater@3.49.1/build/docxtemplater.js', function() { return Boolean(window.docxtemplater); });
-      })
       .then(function() {
         return loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', function() { return Boolean(window.docx && window.docx.renderAsync); });
       })
@@ -193,21 +189,13 @@
   }
 
   function fetchTemplateDocxBlob() {
-    if (templateDocxBlobPromise) return templateDocxBlobPromise;
-    var candidates = ['/app/templates/template.docx', '/js/documents/app/templates/template.docx', './app/templates/template.docx'];
-    templateDocxBlobPromise = candidates.reduce(function(chain, url) {
-      return chain.catch(function() {
-        return fetch(url, { credentials: 'same-origin' }).then(function(response) {
-          if (!response.ok) throw new Error('Шаблон не найден: ' + url);
-          return response.blob();
-        });
+    return fetch('/app/templates/template.docx', { credentials: 'same-origin' })
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error('Не найден template.docx по пути /app/templates/template.docx');
+        }
+        return response.blob();
       });
-    }, Promise.reject(new Error('Шаблон template.docx не найден.')))
-      .catch(function(error) {
-        templateDocxBlobPromise = null;
-        throw error;
-      });
-    return templateDocxBlobPromise;
   }
 
   function escapeXml(value) {
@@ -231,10 +219,8 @@
         }
         var escapedText = escapeXml(answerText).replace(/\r?\n/g, '</w:t><w:br/><w:t>');
         var replaced = xmlContent.replace(/\[ОТВЕТ ИИ\]/g, escapedText);
-        if (replaced === xmlContent && window.docxtemplater) {
-          var doc = new window.docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
-          doc.render({ AI_ANSWER: String(answerText || '') });
-          return doc.getZip().generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        if (replaced === xmlContent) {
+          throw new Error('В template.docx нет метки [ОТВЕТ ИИ].');
         }
         zip.file(xmlPath, replaced);
         var output = zip.generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
