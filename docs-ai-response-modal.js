@@ -2636,12 +2636,14 @@
     var templateTopActions = createElement('div', 'ai-chat-template-actions');
     var templateUploadButton = createElement('button', 'ai-chat-modal__send', 'Открыть мой шаблон DOCX');
     var insertAiTextButton = createElement('button', 'ai-chat-modal__export-btn', 'Вставить текст ИИ');
+    var templateTestButton = createElement('button', 'ai-chat-modal__export-btn', 'Тест');
     var fullPreviewButton = createElement('button', 'ai-chat-modal__export-btn', 'Полный предпросмотр');
     var templateMarkerInput = createElement('input', 'ai-chat-modal__input');
     var templateFileMeta = createElement('div', 'ai-chat-template-file-meta', 'Шаблон: по умолчанию');
     var templateFileInput = document.createElement('input');
     templateUploadButton.type = 'button';
     insertAiTextButton.type = 'button';
+    templateTestButton.type = 'button';
     fullPreviewButton.type = 'button';
     templateMarkerInput.type = 'text';
     templateMarkerInput.value = 'Текст';
@@ -2651,6 +2653,7 @@
     templateFileInput.style.display = 'none';
     templateTopActions.appendChild(templateUploadButton);
     templateTopActions.appendChild(insertAiTextButton);
+    templateTopActions.appendChild(templateTestButton);
     templateTopActions.appendChild(fullPreviewButton);
     templateTopActions.appendChild(templateFileMeta);
     templateTopActions.appendChild(templateMarkerInput);
@@ -2710,12 +2713,39 @@
     templatePreviewWrap.appendChild(templatePreview);
     templatePreviewWrap.hidden = true;
 
+    var templateTestPanel = createElement('div', 'ai-chat-template-test');
+    templateTestPanel.style.display = 'none';
+    templateTestPanel.style.marginTop = '8px';
+    templateTestPanel.style.padding = '10px';
+    templateTestPanel.style.border = '1px solid rgba(203,213,225,.9)';
+    templateTestPanel.style.borderRadius = '12px';
+    templateTestPanel.style.background = 'rgba(255,255,255,.82)';
+    var templateTestInput = createElement('textarea', 'ai-chat-modal__textarea');
+    templateTestInput.rows = 4;
+    templateTestInput.placeholder = 'Введите текст для подстановки вместо слова «Текст»';
+    templateTestInput.style.minHeight = '96px';
+    templateTestInput.style.maxHeight = '180px';
+    var templateTestActions = createElement('div', 'ai-chat-modal__export-buttons');
+    var templateTestGenerateButton = createElement('button', 'ai-chat-modal__send', 'Сгенерировать');
+    var templateTestDownloadButton = createElement('button', 'ai-chat-modal__export-btn', 'Скачать файл');
+    templateTestGenerateButton.type = 'button';
+    templateTestDownloadButton.type = 'button';
+    templateTestDownloadButton.disabled = true;
+    templateTestActions.appendChild(templateTestGenerateButton);
+    templateTestActions.appendChild(templateTestDownloadButton);
+    var templateTestResult = createElement('div', 'ai-chat-template-editor-preview', 'Результат появится после генерации.');
+    templateTestResult.style.marginTop = '10px';
+    templateTestPanel.appendChild(templateTestInput);
+    templateTestPanel.appendChild(templateTestActions);
+    templateTestPanel.appendChild(templateTestResult);
+
     templateViewer.appendChild(templateInfo);
     templateViewer.appendChild(templateTopActions);
     templateViewer.appendChild(templateTabs);
     templateViewer.appendChild(templateEditor);
     templateViewer.appendChild(templateSurfaceWrap);
     templateViewer.appendChild(templatePreviewWrap);
+    templateViewer.appendChild(templateTestPanel);
     templateModal.content.appendChild(templateViewer);
 
     var templateState = {
@@ -2725,7 +2755,8 @@
       docxUrl: '',
       pdfUrl: '',
       editedText: '',
-      customTemplateObjectUrl: ''
+      customTemplateObjectUrl: '',
+      testDocxObjectUrl: ''
     };
     window.templateEditorInstance = templateEditorInstance;
     var templateDocxCandidates = [
@@ -3080,6 +3111,29 @@
       }
     }
 
+    async function generateTemplateDocxBlob(structuredHtml) {
+      var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+      var markerValue = String(templateMarkerInput.value || 'Текст').trim() || 'Текст';
+      var formData = new FormData();
+      formData.append('action', 'generate_from_html');
+      formData.append('format', 'docx');
+      formData.append('html', structuredHtml);
+      formData.append('documentTitle', config.documentTitle || 'template');
+      formData.append('placeholders', JSON.stringify([markerValue, 'Текст', '{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']));
+      if (state.templateFile && state.templateFile.fileObject) {
+        formData.append('templateFile', state.templateFile.fileObject, state.templateFile.fileObject.name || 'template.docx');
+      }
+      var response = await fetch(apiUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData
+      });
+      if (!response.ok) {
+        throw new Error('Ошибка генерации (' + response.status + ')');
+      }
+      return response.blob();
+    }
+
     applyTemplateTextButton.addEventListener('click', function () {
       templateState.editedText = String(templateEditorInstance.getText() || '').trim();
       if (!templateState.editedText) {
@@ -3129,6 +3183,59 @@
       templateState.editedText = aiText;
       templatePreview.innerHTML = normalizeEditorHtml(templateEditorInstance.getHTML(), aiText);
       templateInfo.textContent = 'Текст ИИ вставлен в редактор. Нажмите «Применить» или сразу экспортируйте.';
+    });
+    templateTestButton.addEventListener('click', function () {
+      var isOpen = templateTestPanel.style.display !== 'none';
+      templateTestPanel.style.display = isOpen ? 'none' : 'block';
+      templateTestButton.className = isOpen ? 'ai-chat-modal__export-btn' : 'ai-chat-modal__send';
+      if (!isOpen) {
+        templateTestInput.focus();
+      }
+    });
+    templateTestGenerateButton.addEventListener('click', async function () {
+      var testText = String(templateTestInput.value || '').trim();
+      if (!testText) {
+        templateInfo.textContent = 'Введите текст для тестовой генерации.';
+        return;
+      }
+      var oldLabel = templateTestGenerateButton.textContent;
+      templateTestGenerateButton.disabled = true;
+      templateTestGenerateButton.textContent = 'Генерация...';
+      try {
+        var html = normalizeEditorHtml('', testText);
+        var blob = await generateTemplateDocxBlob(html);
+        if (templateState.testDocxObjectUrl) {
+          URL.revokeObjectURL(templateState.testDocxObjectUrl);
+          templateState.testDocxObjectUrl = '';
+        }
+        templateState.testDocxObjectUrl = URL.createObjectURL(blob);
+        templateTestDownloadButton.disabled = false;
+        var mammoth = await ensureMammothLoaded();
+        var buffer = await blob.arrayBuffer();
+        var renderResult = await mammoth.convertToHtml({ arrayBuffer: buffer });
+        templateTestResult.innerHTML = sanitizeHtml(String((renderResult && renderResult.value) || ''));
+        if (!String(templateTestResult.textContent || '').trim()) {
+          templateTestResult.textContent = 'Файл создан, но визуальный рендер пуст. Скачайте DOCX для проверки.';
+        }
+        templateInfo.textContent = 'Готово: текст подставлен в шаблон вместо «Текст».';
+      } catch (error) {
+        templateTestResult.textContent = 'Ошибка рендера: ' + (error && error.message ? error.message : 'неизвестно');
+        templateInfo.textContent = 'Не удалось создать тестовый документ.';
+      } finally {
+        templateTestGenerateButton.disabled = false;
+        templateTestGenerateButton.textContent = oldLabel;
+      }
+    });
+    templateTestDownloadButton.addEventListener('click', function () {
+      if (!templateState.testDocxObjectUrl) {
+        return;
+      }
+      var a = document.createElement('a');
+      a.href = templateState.testDocxObjectUrl;
+      a.download = 'template-test.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     });
     templateEditorInstance.surface.addEventListener('input', function () {
       templateState.editedText = String(templateEditorInstance.getText() || '');
