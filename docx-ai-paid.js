@@ -756,5 +756,95 @@
     }
   }
 
+  function ensureAiTemplateStyles() {
+    if (document.getElementById('docx-ai-template-style')) return;
+    var style = document.createElement('style');
+    style.id = 'docx-ai-template-style';
+    style.textContent = '.docx-ai-template{max-width:980px;margin:18px auto;padding:14px;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.92),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.94);box-shadow:0 12px 36px rgba(15,23,42,.12);backdrop-filter:blur(10px)}.docx-ai-template__head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}.docx-ai-template__title{font-size:18px;font-weight:800;color:#0f172a}.docx-ai-template__sub{font-size:12px;color:#64748b}.docx-ai-template__controls{display:grid;grid-template-columns:1fr auto auto;gap:8px;margin-bottom:10px}.docx-ai-template__input{min-height:44px;border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.95);border-radius:12px;padding:10px 12px;font-size:14px;color:#0f172a}.docx-ai-template__btn{border:none;border-radius:12px;padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff}.docx-ai-template__btn--secondary{background:rgba(241,245,249,.95);color:#0f172a;border:1px solid rgba(203,213,225,.95)}.docx-ai-template__status{font-size:12px;color:#334155;min-height:18px;margin-bottom:8px}.docx-ai-template__doc{border:1px solid rgba(203,213,225,.95);border-radius:14px;padding:14px;background:#fff;line-height:1.55;color:#0f172a}.docx-ai-template__doc h3{margin:0 0 8px}.docx-ai-template__doc p{margin:8px 0}@media (max-width:768px){.docx-ai-template{margin:10px;padding:12px;border-radius:16px}.docx-ai-template__controls{grid-template-columns:1fr}.docx-ai-template__btn{width:100%}}';
+    document.head.appendChild(style);
+  }
+
+  function replaceMarkerInTextNodes(rootNode, markerText, replacementText) {
+    if (!rootNode || !markerText) return { replacedCount: 0, changes: [] };
+    var walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node) {
+        if (!node || !node.parentElement) return NodeFilter.FILTER_REJECT;
+        var tag = node.parentElement.tagName;
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA') return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var changedNodes = [];
+    var total = 0;
+    var current;
+    while ((current = walker.nextNode())) {
+      var source = String(current.nodeValue || '');
+      if (!source || source.indexOf(markerText) === -1) continue;
+      var updated = source.split(markerText).join(replacementText);
+      if (updated === source) continue;
+      changedNodes.push({ node: current, from: source, to: updated });
+      total += (source.match(new RegExp(markerText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+    }
+    changedNodes.forEach(function(item) {
+      if (item.node && item.node.nodeValue !== undefined) item.node.nodeValue = item.to;
+    });
+    return { replacedCount: total, changes: changedNodes };
+  }
+
+  function createAiTemplateDocumentCard() {
+    if (!document.body || document.getElementById('docx-ai-template-card')) return;
+    ensureAiTemplateStyles();
+    var card = document.createElement('section');
+    card.id = 'docx-ai-template-card';
+    card.className = 'docx-ai-template';
+    card.innerHTML = '<div class="docx-ai-template__head"><div><div class="docx-ai-template__title">Шаблон документа</div><div class="docx-ai-template__sub">Безопасная замена маркера [ОТВЕТ ИИ] без поломки форматирования</div></div></div><div class="docx-ai-template__controls"><input class="docx-ai-template__input" data-ai-value value="Сгенерированный ответ ИИ — здесь может быть любой контент" aria-label="Текст для вставки"><button class="docx-ai-template__btn" data-ai-replace>Вставить текст</button><button class="docx-ai-template__btn docx-ai-template__btn--secondary" data-ai-undo disabled>Отменить</button></div><div class="docx-ai-template__status" data-ai-status>Готово к замене.</div><article class="docx-ai-template__doc" data-ai-document-root contenteditable="true"><h3>Коммерческое предложение</h3><p>Здравствуйте, <strong>[ОТВЕТ ИИ]</strong>!</p><p>Ниже список преимуществ:</p><ul><li><em>Быстрый запуск</em> без сложной настройки.</li><li>Поддержка ссылок: <a href=\"#\">подробнее</a>.</li></ul><p>С уважением,<br>Команда проекта</p></article>';
+    document.body.appendChild(card);
+
+    var replaceButton = card.querySelector('[data-ai-replace]');
+    var undoButton = card.querySelector('[data-ai-undo]');
+    var input = card.querySelector('[data-ai-value]');
+    var status = card.querySelector('[data-ai-status]');
+    var history = [];
+
+    replaceButton.addEventListener('click', function() {
+      var target = card.querySelector('[data-ai-document-root]') || card;
+      var replacement = String(input && input.value || '').trim();
+      if (!replacement) {
+        status.textContent = 'Введите текст для замены.';
+        return;
+      }
+      var result = replaceMarkerInTextNodes(target, '[ОТВЕТ ИИ]', replacement);
+      if (!result.replacedCount) {
+        status.textContent = 'Маркер [ОТВЕТ ИИ] не найден.';
+        return;
+      }
+      history.push(result.changes);
+      undoButton.disabled = history.length === 0;
+      status.textContent = 'Заменено вхождений: ' + result.replacedCount + '. Форматирование сохранено.';
+    });
+
+    undoButton.addEventListener('click', function() {
+      var last = history.pop();
+      if (!last || !last.length) {
+        status.textContent = 'Нет действий для отмены.';
+        undoButton.disabled = true;
+        return;
+      }
+      last.forEach(function(change) {
+        if (change && change.node && change.node.isConnected) {
+          change.node.nodeValue = change.from;
+        }
+      });
+      undoButton.disabled = history.length === 0;
+      status.textContent = 'Последняя замена отменена.';
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', createAiTemplateDocumentCard, { once: true });
+  } else {
+    createAiTemplateDocumentCard();
+  }
+
   window.openDocumentsVipAiPaidModal = openDocumentsVipAiPaidModal;
 })();
