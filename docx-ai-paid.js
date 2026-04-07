@@ -860,7 +860,7 @@
 
     var style = document.createElement('style');
     style.id = 'docx-template-insert-style';
-    style.textContent = '#docx-template-insert-btn{position:fixed;right:12px;bottom:12px;z-index:4200;border:1px solid rgba(255,255,255,.85);background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(241,245,249,.88));backdrop-filter:blur(10px);color:#0f172a;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.14);max-width:calc(100vw - 24px)}#docx-template-insert-btn:active{transform:translateY(1px)}@media (max-width:768px){#docx-template-insert-btn{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;padding:12px 14px;font-size:14px;border-radius:14px}}';
+    style.textContent = '#docx-template-insert-btn{position:fixed;right:12px;bottom:12px;z-index:4200;border:1px solid rgba(255,255,255,.85);background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(241,245,249,.88));backdrop-filter:blur(10px);color:#0f172a;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.14);max-width:calc(100vw - 24px)}#docx-template-insert-btn:active{transform:translateY(1px)}.docx-template-preview{position:fixed;inset:0;z-index:4300;background:rgba(15,23,42,.22);backdrop-filter:blur(6px);display:flex;align-items:flex-end;justify-content:center;padding:10px}.docx-template-preview__card{width:min(680px,100%);max-height:88vh;overflow:auto;background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(248,250,252,.92));border:1px solid rgba(255,255,255,.9);border-radius:16px;box-shadow:0 14px 38px rgba(15,23,42,.22);padding:12px}.docx-template-preview__title{font-size:15px;font-weight:800;color:#0f172a;margin-bottom:8px}.docx-template-preview__text{font-size:13px;line-height:1.5;color:#334155;white-space:pre-wrap;background:rgba(255,255,255,.8);border:1px solid rgba(203,213,225,.9);border-radius:12px;padding:10px;min-height:96px}.docx-template-preview__row{display:flex;gap:8px;margin-top:10px}.docx-template-preview__btn{flex:1;border:1px solid rgba(203,213,225,.9);background:#fff;color:#0f172a;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700}.docx-template-preview__btn--primary{background:#dbeafe;border-color:#bfdbfe;color:#1d4ed8}@media (max-width:768px){#docx-template-insert-btn{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;padding:12px 14px;font-size:14px;border-radius:14px}.docx-template-preview{padding:0}.docx-template-preview__card{width:100%;max-height:100vh;border-radius:16px 16px 0 0;padding:12px}}';
     document.head.appendChild(style);
 
     var button = document.createElement('button');
@@ -870,31 +870,92 @@
     button.setAttribute('aria-label', 'Вставить текст в маркер [ОТВЕТ ИИ]');
     button.addEventListener('click', function() {
       var aiText = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
-      var inserted = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      var formattedAiText = '\n' + aiText;
+      var inserted = replaceAiMarkerInDocument(formattedAiText, '[ОТВЕТ ИИ]');
       if (inserted > 0) {
-        button.textContent = 'Готово: ' + inserted;
-        setTimeout(function() {
-          button.textContent = 'Шаблон Тест';
-        }, 1800);
+        openTemplatePreviewModal({
+          title: 'Превью вставки',
+          text: formattedAiText,
+          status: 'Текст вставлен в редактор: ' + inserted + ' шт.',
+          blob: null
+        });
         return;
       }
       button.disabled = true;
-      button.textContent = 'Генерация DOCX...';
-      generateDocxFromTemplateViaApi(aiText)
-        .then(function(downloaded) {
-          button.textContent = downloaded ? 'DOCX скачан' : 'Маркер не найден';
+      button.textContent = 'Подготовка превью...';
+      generateDocxFromTemplateViaApi(formattedAiText)
+        .then(function(blob) {
+          openTemplatePreviewModal({
+            title: 'Превью DOCX шаблона',
+            text: formattedAiText,
+            status: blob ? 'Шаблон готов. Нажмите «Скачать».' : 'Не удалось собрать DOCX.',
+            blob: blob
+          });
         })
         .catch(function() {
-          button.textContent = 'Ошибка API';
+          openTemplatePreviewModal({
+            title: 'Превью DOCX шаблона',
+            text: formattedAiText,
+            status: 'Ошибка API генерации.',
+            blob: null
+          });
         })
         .finally(function() {
           button.disabled = false;
-          setTimeout(function() {
-            button.textContent = 'Шаблон Тест';
-          }, 1800);
+          button.textContent = 'Шаблон Тест';
         });
     });
     document.body.appendChild(button);
+  }
+
+  function openTemplatePreviewModal(payload) {
+    var data = payload && typeof payload === 'object' ? payload : {};
+    var overlay = document.createElement('div');
+    overlay.className = 'docx-template-preview';
+    var card = document.createElement('div');
+    card.className = 'docx-template-preview__card';
+    var title = document.createElement('div');
+    title.className = 'docx-template-preview__title';
+    title.textContent = data.title || 'Превью';
+    var text = document.createElement('div');
+    text.className = 'docx-template-preview__text';
+    text.textContent = data.text || '';
+    var status = document.createElement('div');
+    status.style.cssText = 'font-size:12px;color:#64748b;margin-top:8px';
+    status.textContent = data.status || '';
+    var row = document.createElement('div');
+    row.className = 'docx-template-preview__row';
+    var downloadBtn = document.createElement('button');
+    downloadBtn.type = 'button';
+    downloadBtn.className = 'docx-template-preview__btn docx-template-preview__btn--primary';
+    downloadBtn.textContent = 'Скачать';
+    downloadBtn.disabled = !data.blob;
+    downloadBtn.addEventListener('click', function() {
+      if (!data.blob) return;
+      var url = URL.createObjectURL(data.blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'docx-template-preview__btn';
+    closeBtn.textContent = 'Закрыть';
+    closeBtn.addEventListener('click', function() {
+      if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    });
+    row.appendChild(downloadBtn);
+    row.appendChild(closeBtn);
+    card.appendChild(title);
+    card.appendChild(text);
+    card.appendChild(status);
+    card.appendChild(row);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
   }
 
   async function generateDocxFromTemplateViaApi(answerText) {
@@ -914,17 +975,9 @@
     }
     var blob = await response.blob();
     if (!blob || !blob.size) {
-      return false;
+      return null;
     }
-    var downloadUrl = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = 'template-answer.docx';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(downloadUrl);
-    return true;
+    return blob;
   }
 
   if (document.readyState === 'loading') {
