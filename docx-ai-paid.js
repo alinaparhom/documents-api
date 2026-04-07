@@ -167,7 +167,7 @@
     }
     var style = document.createElement('style');
     style.id = 'documents-vip-ai-modal-style';
-    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(8px);z-index:4100;display:flex;align-items:center;justify-content:center;padding:10px}.documents-vip-ai__panel{width:min(860px,100%);max-height:calc(100dvh - 20px);overflow:auto;border-radius:24px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(241,245,249,.9));border:1px solid rgba(255,255,255,.95);box-shadow:0 24px 56px rgba(15,23,42,.24)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9)}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:110px;overflow:auto}.documents-vip-ai__chat{height:min(44dvh,360px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__select{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{max-height:100dvh;border-radius:0}.documents-vip-ai__composer{flex-direction:column}}';
+    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(8px);z-index:4100;display:flex;align-items:center;justify-content:center;padding:10px}.documents-vip-ai__panel{width:min(860px,100%);max-height:calc(100dvh - 20px);overflow:auto;border-radius:24px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(241,245,249,.9));border:1px solid rgba(255,255,255,.95);box-shadow:0 24px 56px rgba(15,23,42,.24)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9)}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:110px;overflow:auto}.documents-vip-ai__chat{height:min(44dvh,360px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__actions{display:flex;gap:8px;flex-wrap:wrap}.documents-vip-ai__btn{border:none;border-radius:12px;min-height:42px;padding:0 14px;background:rgba(255,255,255,.95);border:1px solid rgba(203,213,225,.95);color:#0f172a;font-size:13px;font-weight:700}.documents-vip-ai__btn--primary{background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1e3a8a}.documents-vip-ai__select{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{max-height:100dvh;border-radius:0}.documents-vip-ai__composer{flex-direction:column}.documents-vip-ai__actions{display:grid;grid-template-columns:1fr}}';
     document.head.appendChild(style);
   }
 
@@ -611,6 +611,47 @@
     return formData;
   }
 
+
+
+  function absoluteUrl(path) {
+    try {
+      return new URL(String(path || ''), window.location.origin).toString();
+    } catch (_) {
+      return String(path || '');
+    }
+  }
+
+  async function resolveFirstAvailableTemplateUrl(candidates) {
+    var list = Array.isArray(candidates) ? candidates : [];
+    for (var i = 0; i < list.length; i += 1) {
+      var current = String(list[i] || '').trim();
+      if (!current) continue;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        var response = await fetch(current, { method: 'HEAD', credentials: 'same-origin' });
+        if (response.ok) {
+          return current;
+        }
+      } catch (_) {}
+    }
+    return '';
+  }
+
+  async function openTemplatePreviewFromVip() {
+    var templateCandidates = [
+      '/js/documents/app/templates/template.docx',
+      '/app/templates/template.docx',
+      '/templates/template.docx',
+      '/template.docx'
+    ];
+    var templateUrl = await resolveFirstAvailableTemplateUrl(templateCandidates);
+    if (!templateUrl) {
+      throw new Error('Не найден template.docx');
+    }
+    var officeUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(absoluteUrl(templateUrl));
+    window.open(officeUrl, '_blank', 'noopener');
+  }
+
   function openDocumentsVipAiPaidModal(config) {
     ensureVipAiModalStyles();
     var options = config && typeof config === 'object' ? config : {};
@@ -624,7 +665,7 @@
     var payload = options.payload || {};
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div><div class="documents-vip-ai__actions"><button type="button" class="documents-vip-ai__btn documents-vip-ai__btn--primary" data-open-template>Открыть шаблон DOCX</button></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -632,6 +673,7 @@
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
     var styleNode = panel.querySelector('[data-style]');
+    var openTemplateButton = panel.querySelector('[data-open-template]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
     var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
@@ -673,6 +715,22 @@
     }
 
     pushChat('assistant', 'Готов. Выберите режим в выпадающем списке, и после этого запрос отправится автоматически.');
+
+    if (openTemplateButton) {
+      openTemplateButton.addEventListener('click', function() {
+        openTemplateButton.disabled = true;
+        var initialText = openTemplateButton.textContent;
+        openTemplateButton.textContent = 'Открываю...';
+        openTemplatePreviewFromVip()
+          .catch(function(error) {
+            pushChat('assistant', 'Шаблон не открылся: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
+          })
+          .finally(function() {
+            openTemplateButton.disabled = false;
+            openTemplateButton.textContent = initialText;
+          });
+      });
+    }
 
     var isSending = false;
 
