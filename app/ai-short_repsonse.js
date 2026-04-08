@@ -675,6 +675,7 @@ export function createTelegramBriefAi(deps = {}) {
             <div class="appdosc-brief-ai__title">Кратко ИИ</div>
             <div class="appdosc-brief-ai__sub">Файл → OCR → api-groq-paid.php → краткий вывод</div>
             <div class="appdosc-brief-ai__hint">Vision режим активен: 1) Нажмите файл → 2) Получите краткое решение.</div>
+            <div class="appdosc-brief-ai__hint">ℹ️ Анализ только первых 5 страниц.</div>
           </div>
           <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
         </div>

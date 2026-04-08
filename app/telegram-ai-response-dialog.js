@@ -894,6 +894,7 @@
           <div>
             <div class="tg-ai-chat__title">Ответ с помощью ИИ</div>
             <div class="tg-ai-chat__sub">Выберите файлы, затем режим ответа в списке</div>
+            <div class="tg-ai-chat__sub">ℹ️ Анализ только первых 5 страниц.</div>
           </div>
           <button type="button" class="tg-ai-chat__close" data-close>✕</button>
         </div>
