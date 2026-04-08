@@ -1044,7 +1044,10 @@
         .then(function(blob) {
           if (!blob) throw new Error('empty_blob');
           closeEditor();
-          openDocxRenderPreviewPage(blob);
+          var opened = openGeneratedDocxPreview(blob);
+          if (!opened) {
+            openDocxRenderPreviewPage(blob);
+          }
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -1070,6 +1073,100 @@
       }
       return renderer;
     });
+  }
+
+  function buildGeneratedDocxPreviewUrl(rawUrl, fileName) {
+    var normalizedUrl = String(rawUrl || '').trim();
+    if (!normalizedUrl) return '';
+    if (/^blob:/i.test(normalizedUrl) || /^data:/i.test(normalizedUrl)) return normalizedUrl;
+    var lowerName = String(fileName || normalizedUrl).toLowerCase();
+    var isOffice = /\.(doc|docx|xls|xlsx|ppt|pptx|odt|ods)(\?|#|$)/i.test(lowerName);
+    if (!isOffice) return normalizedUrl;
+    try {
+      return 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(normalizedUrl);
+    } catch (_) {
+      return normalizedUrl;
+    }
+  }
+
+  function openGeneratedDocxExternal(url) {
+    if (!url || typeof window === 'undefined') return null;
+    var webApp = window.Telegram && window.Telegram.WebApp;
+    if (webApp && typeof webApp.openLink === 'function') {
+      try {
+        webApp.openLink(url);
+        return 'telegram';
+      } catch (_) {}
+    }
+    if (typeof window.open === 'function') {
+      window.open(url, '_blank', 'noopener');
+      return 'window';
+    }
+    return null;
+  }
+
+  function openGeneratedDocxInlineFrame(previewUrl, fileName) {
+    if (!previewUrl || typeof document === 'undefined' || !document.body) return null;
+    var existing = document.querySelector('.docx-template-preview');
+    if (existing) existing.remove();
+    var overlay = document.createElement('div');
+    overlay.className = 'docx-template-preview';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Telegram Office-логика с fallback</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть внешне</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><iframe class="docx-template-preview__doc" data-preview-frame title="DOCX preview" loading="lazy" referrerpolicy="no-referrer-when-downgrade" style="width:100%;min-height:100%;border:0"></iframe></div><div class="docx-template-preview__status" data-preview-status>Загрузка предпросмотра…</div></div>';
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    var frame = overlay.querySelector('[data-preview-frame]');
+    var statusNode = overlay.querySelector('[data-preview-status]');
+    var closeBtn = overlay.querySelector('[data-preview-close]');
+    var downloadBtn = overlay.querySelector('[data-preview-download]');
+    var openBtn = overlay.querySelector('[data-preview-open]');
+    function closeModal() {
+      document.body.style.overflow = '';
+      if (/^blob:/i.test(previewUrl)) {
+        try { URL.revokeObjectURL(previewUrl); } catch (_) {}
+      }
+      overlay.remove();
+    }
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) closeModal();
+    });
+    downloadBtn.addEventListener('click', function() {
+      var a = document.createElement('a');
+      a.href = previewUrl;
+      a.download = fileName || 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+    openBtn.addEventListener('click', function() {
+      openGeneratedDocxExternal(previewUrl);
+    });
+    var loaded = false;
+    frame.addEventListener('load', function() {
+      loaded = true;
+      statusNode.textContent = 'Готово: документ открыт во встроенном окне.';
+    }, { once: true });
+    frame.src = previewUrl;
+    setTimeout(function() {
+      if (!loaded && statusNode && document.body.contains(overlay)) {
+        statusNode.textContent = 'Встроенный просмотр недоступен. Нажмите «Открыть внешне».';
+      }
+    }, 2200);
+    return 'inline_frame';
+  }
+
+  function openGeneratedDocxPreview(blob) {
+    if (!blob) return false;
+    ensureTemplatePreviewStyles();
+    var blobUrl = URL.createObjectURL(blob);
+    var fileName = 'template-answer.docx';
+    var previewUrl = buildGeneratedDocxPreviewUrl(blobUrl, fileName);
+    var inlineMode = openGeneratedDocxInlineFrame(previewUrl, fileName);
+    if (inlineMode) return true;
+    var externalMode = openGeneratedDocxExternal(previewUrl);
+    if (externalMode) return true;
+    try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+    return false;
   }
 
   function openDocxRenderPreviewPage(blob) {
