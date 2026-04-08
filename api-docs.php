@@ -873,6 +873,44 @@ function normalizeDocText(string $value): string
     return trim($normalized);
 }
 
+function buildDocxPlaceholderVariants(string $placeholder): array
+{
+    $value = trim($placeholder);
+    if ($value === '') {
+        return [];
+    }
+
+    $variants = [$value];
+    $spaceVariants = [' ', "\u{00A0}", "\u{202F}"];
+    $sources = [$value];
+    if (preg_match('/^\\[(.+)\\]$/u', $value, $match) === 1) {
+        $sources[] = (string)$match[1];
+    }
+
+    foreach ($sources as $source) {
+        $base = trim((string)$source);
+        if ($base === '') {
+            continue;
+        }
+        $parts = preg_split('/[\\s_]+/u', $base);
+        if (!is_array($parts) || !$parts) {
+            continue;
+        }
+        $parts = array_values(array_filter(array_map('trim', $parts), static fn ($part): bool => $part !== ''));
+        if (!$parts) {
+            continue;
+        }
+        foreach ($spaceVariants as $separator) {
+            $inner = implode($separator, $parts);
+            $variants[] = '[' . $inner . ']';
+            $variants[] = $inner;
+        }
+        $variants[] = '[' . implode('_', $parts) . ']';
+    }
+
+    return array_values(array_unique($variants));
+}
+
 function textToWordParagraphsXml(string $text): string
 {
     $lines = explode("\n", normalizeDocText($text));
@@ -910,16 +948,26 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
         $updated = $content;
         foreach ($replacements as $search => $replace) {
-            $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape($replace));
-            if (strpos($updated, $search) !== false) {
-                $updated = str_replace($search, $escaped, $updated);
-                $replacedAny = true;
-                continue;
+            $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape((string)$replace));
+            $searchVariants = buildDocxPlaceholderVariants((string)$search);
+            if (!$searchVariants) {
+                $searchVariants = [(string)$search];
             }
-            $crossRunResult = replacePlaceholderAcrossWordTextRuns($updated, (string)$search, (string)$replace);
-            if (is_array($crossRunResult) && !empty($crossRunResult['replaced']) && isset($crossRunResult['xml'])) {
-                $updated = (string)$crossRunResult['xml'];
-                $replacedAny = true;
+
+            foreach ($searchVariants as $searchVariant) {
+                if ($searchVariant === '') {
+                    continue;
+                }
+                if (strpos($updated, $searchVariant) !== false) {
+                    $updated = str_replace($searchVariant, $escaped, $updated);
+                    $replacedAny = true;
+                    continue;
+                }
+                $crossRunResult = replacePlaceholderAcrossWordTextRuns($updated, (string)$searchVariant, (string)$replace);
+                if (is_array($crossRunResult) && !empty($crossRunResult['replaced']) && isset($crossRunResult['xml'])) {
+                    $updated = (string)$crossRunResult['xml'];
+                    $replacedAny = true;
+                }
             }
         }
         if ($updated !== $content) {
