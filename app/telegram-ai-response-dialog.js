@@ -5,6 +5,7 @@
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
   const VISION_BATCH_SIZE = 5;
+  const AI_PDF_PAGE_LIMIT = 5;
   const PDF_RENDER_SCALE = 1.25;
   const PDF_JPEG_QUALITY = 0.82;
   const PDF_WORKER_CANDIDATES = [
@@ -498,11 +499,12 @@
       const pdf = await openPdfDocumentWithWorkerFallback(pdfjsLib, bytes);
       const totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
-      const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+      const pages = Array.from({ length: Math.min(totalPages, AI_PDF_PAGE_LIMIT) }, (_, i) => i + 1);
+      const pagesLabel = `${pages.length}/${totalPages}`;
       const images = [];
       for (let index = 0; index < pages.length; index += 1) {
         const pageNumber = pages[index];
-        onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 90));
+        onProgress(`Рендер страницы ${pageNumber} (первые ${pagesLabel})...`, Math.round(((index + 1) / pages.length) * 90));
         // eslint-disable-next-line no-await-in-loop
         const page = await pdf.getPage(pageNumber);
         const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
@@ -520,7 +522,7 @@
         const dataUrl = await readBlobAsDataUrl(blob);
         images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
       }
-      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images, totalPages, selectedPages: pages };
+      return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images, totalPages, selectedPages: pages };
     }
 
     if (isText) {

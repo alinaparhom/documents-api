@@ -10,6 +10,7 @@ const BRIEF_PDF_SOURCES = [
   { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
 ];
 const BRIEF_DEFAULT_PDF_WORKER_SRC = BRIEF_PDF_SOURCES[0].worker;
+const BRIEF_PDF_PAGE_LIMIT = 5;
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -203,7 +204,7 @@ export function createTelegramBriefAi(deps = {}) {
         pages.add(single);
       }
     });
-    return Array.from(pages).slice(0, 3);
+    return Array.from(pages).slice(0, BRIEF_PDF_PAGE_LIMIT);
   }
 
   function chunkItems(items, size) {
@@ -276,11 +277,12 @@ export function createTelegramBriefAi(deps = {}) {
       const pdf = await loadingTask.promise;
       const totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
-      const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+      const pages = Array.from({ length: Math.min(totalPages, BRIEF_PDF_PAGE_LIMIT) }, (_, i) => i + 1);
+      const pagesLabel = `${pages.length}/${totalPages}`;
       const images = [];
       for (let index = 0; index < pages.length; index += 1) {
         const pageNumber = pages[index];
-        onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 90));
+        onProgress(`Рендер страницы ${pageNumber} (первые ${pagesLabel})...`, Math.round(((index + 1) / pages.length) * 90));
         // eslint-disable-next-line no-await-in-loop
         const page = await pdf.getPage(pageNumber);
         const viewport = page.getViewport({ scale: 1.25 });
@@ -298,7 +300,7 @@ export function createTelegramBriefAi(deps = {}) {
         const dataUrl = await readBlobAsDataUrl(blob);
         images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
       }
-      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images, totalPages, selectedPages: pages };
+      return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images, totalPages, selectedPages: pages };
     }
 
     if (isText) {

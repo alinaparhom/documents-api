@@ -84,6 +84,7 @@
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
   var VISION_BATCH_SIZE = 4;
+  var AI_PDF_PAGE_LIMIT = 5;
   var BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
   var briefPdfJsLoader = null;
 
@@ -340,7 +341,7 @@
       var buffer = await pdfBlob.arrayBuffer();
       var loadingTask = pdfjsLib.getDocument({ data: buffer });
       var pdf = await loadingTask.promise;
-      var maxPages = Math.min(3, Math.max(Number(pdf && pdf.numPages) || 1, 1));
+      var maxPages = Math.min(AI_PDF_PAGE_LIMIT, Math.max(Number(pdf && pdf.numPages) || 1, 1));
       var images = [];
       for (var pageIndex = 1; pageIndex <= maxPages; pageIndex += 1) {
         // eslint-disable-next-line no-await-in-loop
@@ -481,7 +482,7 @@
     var loadingTask = pdfjsLib.getDocument({ data: bytes });
     var pdf = await loadingTask.promise;
     var totalPages = Number(pdf && pdf.numPages || 0);
-    var pagesToProcess = Math.max(1, totalPages);
+    var pagesToProcess = Math.min(AI_PDF_PAGE_LIMIT, Math.max(1, totalPages));
     var images = [];
     for (var pageIndex = 1; pageIndex <= pagesToProcess; pageIndex += 1) {
       // eslint-disable-next-line no-await-in-loop
@@ -1699,7 +1700,7 @@
       var pdfjsLib = await ensurePdfJsLoaded();
       var loadingTask = pdfjsLib.getDocument({ data: source });
       var pdf = await loadingTask.promise;
-      var maxPages = Math.max(pdf.numPages || 0, 0);
+      var maxPages = Math.min(AI_PDF_PAGE_LIMIT, Math.max(pdf.numPages || 0, 0));
       var parts = [];
       for (var pageNum = 1; pageNum <= maxPages; pageNum += 1) {
         // eslint-disable-next-line no-await-in-loop
@@ -1969,8 +1970,9 @@
       var totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
       var images = [];
-      for (var pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
-        onProgress('Рендер страницы ' + pageNumber + '/' + totalPages + '...', Math.round((pageNumber / totalPages) * 90));
+      var pagesToRender = Math.min(AI_PDF_PAGE_LIMIT, totalPages);
+      for (var pageNumber = 1; pageNumber <= pagesToRender; pageNumber += 1) {
+        onProgress('Рендер страницы ' + pageNumber + ' (первые ' + pagesToRender + '/' + totalPages + ')...', Math.round((pageNumber / pagesToRender) * 90));
         var page = await pdf.getPage(pageNumber);
         var viewport = page.getViewport({ scale: 1.25 });
         var canvas = document.createElement('canvas');
@@ -1984,7 +1986,7 @@
         var dataUrl = await readBriefBlobAsDataUrl(blob);
         images.push({ dataUrl: dataUrl, fileName: (file.name || 'scan').replace(/\.pdf$/i, '') + '-p' + pageNumber + '.jpg', mime: 'image/jpeg' });
       }
-      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images: images };
+      return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images: images };
     }
     if (isText) {
       onProgress('Читаю текстовый файл...', 100);
