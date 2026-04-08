@@ -962,11 +962,18 @@
         renderError('Не найдена метка [ОТВЕТ ИИ] в документе.');
       }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
-      generateDocxFromTemplateViaApi(aiText)
-        .then(function(blob) {
-          if (!blob) throw new Error('empty_blob');
+      generateDocumentFromTemplateViaApi(aiText, 'docx')
+        .then(function(docxBlob) {
+          if (!docxBlob) throw new Error('empty_docx_blob');
+          return generateDocumentFromTemplateViaApi(aiText, 'pdf')
+            .catch(function() { return null; })
+            .then(function(pdfBlob) {
+              return { docxBlob: docxBlob, pdfBlob: pdfBlob };
+            });
+        })
+        .then(function(result) {
           closeEditor();
-          openDocxRenderPreviewPage(blob);
+          openDocxRenderPreviewPage(result.docxBlob, result.pdfBlob);
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -978,35 +985,34 @@
     });
   }
 
-  function blobToDataUrl(blob) {
-    return new Promise(function(resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function() { resolve(String(reader.result || '')); };
-      reader.onerror = function() { reject(new Error('blob_to_dataurl_failed')); };
-      reader.readAsDataURL(blob);
-    });
-  }
-
-  function openDocxRenderPreviewPage(blob) {
+  function openDocxRenderPreviewPage(docxBlob, pdfBlob) {
     ensureTemplatePreviewStyles();
-    if (!blob) throw new Error('empty_blob');
+    if (!docxBlob) throw new Error('empty_blob');
+    var hasPdfPreview = !!(pdfBlob && pdfBlob.size);
     var existing = document.querySelector('.docx-template-preview');
     if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть как «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><iframe class="docx-template-preview__frame" title="DOCX preview" data-preview-frame></iframe></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">PDF предпросмотр + скачивание PDF/DOCX</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть в «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download-pdf>Скачать PDF</button><button type="button" class="docx-template-preview__btn" data-preview-download-docx>Скачать Word</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><iframe class="docx-template-preview__frame" title="PDF preview" data-preview-frame></iframe></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
     var frame = overlay.querySelector('[data-preview-frame]');
     var statusNode = overlay.querySelector('[data-preview-status]');
-    var downloadBtn = overlay.querySelector('[data-preview-download]');
+    var downloadPdfBtn = overlay.querySelector('[data-preview-download-pdf]');
+    var downloadDocxBtn = overlay.querySelector('[data-preview-download-docx]');
     var openBtn = overlay.querySelector('[data-preview-open]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
-    var blobUrl = URL.createObjectURL(blob);
+    var docxBlobUrl = URL.createObjectURL(docxBlob);
+    var pdfBlobUrl = hasPdfPreview ? URL.createObjectURL(pdfBlob) : '';
+    if (!hasPdfPreview && downloadPdfBtn) {
+      downloadPdfBtn.disabled = true;
+      downloadPdfBtn.title = 'PDF недоступен на сервере';
+    }
 
     function closeModal() {
       document.body.style.overflow = '';
-      URL.revokeObjectURL(blobUrl);
+      URL.revokeObjectURL(docxBlobUrl);
+      if (pdfBlobUrl) URL.revokeObjectURL(pdfBlobUrl);
       overlay.remove();
     }
 
@@ -1014,9 +1020,21 @@
     overlay.addEventListener('click', function(event) {
       if (event.target === overlay) closeModal();
     });
-    downloadBtn.addEventListener('click', function() {
+    downloadPdfBtn.addEventListener('click', function() {
+      if (!pdfBlobUrl) {
+        statusNode.textContent = 'PDF недоступен на сервере. Скачайте Word или добавьте template.pdf / TCPDF.';
+        return;
+      }
       var a = document.createElement('a');
-      a.href = blobUrl;
+      a.href = pdfBlobUrl;
+      a.download = 'template-answer.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+    downloadDocxBtn.addEventListener('click', function() {
+      var a = document.createElement('a');
+      a.href = docxBlobUrl;
       a.download = 'template-answer.docx';
       document.body.appendChild(a);
       a.click();
@@ -1031,29 +1049,35 @@
         statusNode.textContent = 'Просмотрщик «Просмотреть» сейчас недоступен.';
         return;
       }
-      statusNode.textContent = 'Открываю через логику «Просмотреть»...';
-      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: blobUrl, resolvedUrl: blobUrl, previewUrl: blobUrl, fileUrl: blobUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
+      var isPdf = !!pdfBlobUrl;
+      statusNode.textContent = isPdf ? 'Открываю PDF через логику «Просмотреть»...' : 'PDF недоступен, открываю Word через «Просмотреть»...';
+      var targetUrl = isPdf ? pdfBlobUrl : docxBlobUrl;
+      var targetName = isPdf ? 'template-answer.pdf' : 'template-answer.docx';
+      var targetMime = isPdf ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      Promise.resolve(openExternalViewer([{ name: targetName, originalName: targetName, storedName: targetName, url: targetUrl, resolvedUrl: targetUrl, previewUrl: targetUrl, fileUrl: targetUrl, mimeType: targetMime }], {}, { notify: true, hasMultiple: false }))
         .then(function() {
-          statusNode.textContent = 'Файл открыт через «Просмотреть».';
+          statusNode.textContent = isPdf ? 'PDF открыт через «Просмотреть».' : 'Word открыт через «Просмотреть».';
         })
         .catch(function(error) {
           statusNode.textContent = (error && error.message) ? error.message : 'Не удалось открыть через «Просмотреть».';
         });
     });
 
-    blobToDataUrl(blob).then(function(dataUrl) {
-      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;background:#eef2ff;font-family:Inter,system-ui,sans-serif;overflow:auto}#preview{padding:12px;max-width:100%;margin:0 auto;overflow:auto}.docx-wrapper{background:#fff;border:1px solid rgba(203,213,225,.8);border-radius:14px;box-shadow:0 10px 30px rgba(15,23,42,.12);padding:10px;min-height:120px;overflow:auto}.docx-wrapper *{max-width:100% !important;box-sizing:border-box}.err{margin:12px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:10px;font-size:13px}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(!renderer||typeof renderer.renderAsync!==\"function\"){throw new Error(\"docx_preview_not_loaded\");}await renderer.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:true});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();<\/script></body></html>';
-      statusNode.textContent = 'Готово: документ открыт в предпросмотре.';
-    }).catch(function(error) {
-      statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
-    });
+    if (pdfBlobUrl) {
+      frame.src = pdfBlobUrl;
+      statusNode.textContent = 'Готово: PDF открыт в предпросмотре.';
+    } else {
+      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(145deg,#f8fafc,#e2e8f0);font-family:Inter,system-ui,sans-serif;color:#0f172a;padding:16px;box-sizing:border-box}.card{width:min(560px,100%);background:rgba(255,255,255,.86);border:1px solid rgba(203,213,225,.9);border-radius:16px;padding:16px;box-shadow:0 10px 28px rgba(15,23,42,.12)}.title{font-weight:800;font-size:16px;margin:0 0 8px}.text{font-size:13px;line-height:1.5;color:#334155}</style></head><body><div class="card"><p class="title">PDF предпросмотр временно недоступен</p><p class="text">Сервер вернул ошибку при генерации PDF (часто из-за отсутствия <b>template.pdf</b> или библиотеки <b>TCPDF</b>). Вы можете скачать Word-файл сейчас.</p></div></body></html>';
+      statusNode.textContent = 'PDF не сформирован на сервере. Доступно скачивание Word.';
+    }
   }
 
-  async function generateDocxFromTemplateViaApi(answerText) {
+  async function generateDocumentFromTemplateViaApi(answerText, format) {
     var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var normalizedFormat = String(format || 'docx').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
     var formData = new FormData();
     formData.append('action', 'generate_document');
-    formData.append('format', 'docx');
+    formData.append('format', normalizedFormat);
     formData.append('answer', String(answerText || ''));
     formData.append('documentTitle', 'Ответ ИИ');
     var response = await fetch(apiUrl, {
@@ -1062,7 +1086,7 @@
       body: formData
     });
     if (!response.ok) {
-      throw new Error('Ошибка генерации шаблона (' + response.status + ')');
+      throw new Error('Ошибка генерации ' + normalizedFormat.toUpperCase() + ' (' + response.status + ')');
     }
     var blob = await response.blob();
     if (!blob || !blob.size) {
