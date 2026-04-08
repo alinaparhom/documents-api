@@ -994,6 +994,46 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
     }
 
     $replaceText = str_replace(["\r\n", "\r"], "\n", $replace);
+
+    $setWordTextWithLineBreaks = static function (DOMElement $textNode, string $value): void {
+        $normalized = str_replace(["\r\n", "\r"], "\n", $value);
+        $parts = explode("\n", $normalized);
+        $run = $textNode->parentNode;
+        if (!$run instanceof DOMElement) {
+            $textNode->nodeValue = $normalized;
+            return;
+        }
+        $doc = $textNode->ownerDocument;
+        if (!$doc instanceof DOMDocument) {
+            $textNode->nodeValue = $normalized;
+            return;
+        }
+
+        while ($textNode->nextSibling) {
+            $run->removeChild($textNode->nextSibling);
+        }
+        $textNode->nodeValue = (string)($parts[0] ?? '');
+        $textNode->setAttribute('xml:space', 'preserve');
+        $insertAfter = $textNode;
+        for ($lineIndex = 1; $lineIndex < count($parts); $lineIndex += 1) {
+            $br = $doc->createElementNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'w:br');
+            if ($insertAfter->nextSibling) {
+                $run->insertBefore($br, $insertAfter->nextSibling);
+            } else {
+                $run->appendChild($br);
+            }
+            $text = $doc->createElementNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'w:t');
+            $text->setAttribute('xml:space', 'preserve');
+            $text->appendChild($doc->createTextNode($parts[$lineIndex]));
+            if ($br->nextSibling) {
+                $run->insertBefore($text, $br->nextSibling);
+            } else {
+                $run->appendChild($text);
+            }
+            $insertAfter = $text;
+        }
+    };
+
     for ($m = count($matches) - 1; $m >= 0; $m -= 1) {
         $match = $matches[$m];
         $startInfo = null;
@@ -1023,11 +1063,11 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
         $endSuffix = mb_substr($endValue, $endOffset, null, 'UTF-8');
 
         if ($startNode->isSameNode($endNode)) {
-            $startNode->nodeValue = $startPrefix . $replaceText . $endSuffix;
+            $setWordTextWithLineBreaks($startNode, $startPrefix . $replaceText . $endSuffix);
             continue;
         }
 
-        $startNode->nodeValue = $startPrefix . $replaceText;
+        $setWordTextWithLineBreaks($startNode, $startPrefix . $replaceText);
         $passedStart = false;
         foreach ($map as $item) {
             $node = $item['node'];
