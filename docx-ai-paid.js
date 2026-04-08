@@ -860,33 +860,53 @@
 
     var style = document.createElement('style');
     style.id = 'docx-template-insert-style';
-    style.textContent = '#docx-template-insert-btn{position:fixed;right:12px;bottom:12px;z-index:4200;border:1px solid rgba(255,255,255,.85);background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(241,245,249,.88));backdrop-filter:blur(10px);color:#0f172a;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.14);max-width:calc(100vw - 24px)}#docx-template-insert-btn:active{transform:translateY(1px)}@media (max-width:768px){#docx-template-insert-btn{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;padding:12px 14px;font-size:14px;border-radius:14px}}';
+    style.textContent = '#docx-template-insert-btn{position:fixed;right:12px;bottom:12px;z-index:4200;border:1px solid rgba(255,255,255,.85);background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(241,245,249,.88));backdrop-filter:blur(10px);color:#0f172a;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.14);max-width:calc(100vw - 24px)}#docx-template-insert-btn:active{transform:translateY(1px)}.docx-template-modal{position:fixed;inset:0;z-index:4300;background:rgba(226,232,240,.42);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;padding:12px}.docx-template-modal__panel{width:min(560px,100%);background:linear-gradient(160deg,rgba(255,255,255,.95),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.9);box-shadow:0 14px 30px rgba(15,23,42,.16);border-radius:16px;padding:14px;display:grid;gap:10px}.docx-template-modal__title{font-size:16px;font-weight:800;color:#0f172a}.docx-template-modal__hint{font-size:12px;color:#64748b}.docx-template-modal__textarea{width:100%;min-height:120px;max-height:34dvh;border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.9);border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.45;color:#0f172a;resize:vertical;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.25)}.docx-template-modal__actions{display:flex;gap:8px;justify-content:flex-end}.docx-template-modal__btn{border:1px solid rgba(203,213,225,.95);background:#fff;color:#0f172a;border-radius:10px;padding:10px 12px;font-size:13px;font-weight:700}.docx-template-modal__btn--primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}@media (max-width:768px){#docx-template-insert-btn{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;padding:12px 14px;font-size:14px;border-radius:14px}.docx-template-modal{align-items:flex-end;padding:10px}.docx-template-modal__panel{border-radius:14px;padding:12px}.docx-template-modal__textarea{min-height:140px;font-size:16px}.docx-template-modal__actions{flex-direction:column}.docx-template-modal__btn{width:100%;padding:12px;font-size:14px}}';
     document.head.appendChild(style);
+
+    function openTemplateInputModal() {
+      var overlay = document.createElement('div');
+      overlay.className = 'docx-template-modal';
+      overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Вставить текст в шаблон"><div class="docx-template-modal__title">Шаблон</div><div class="docx-template-modal__hint">Введите текст, и он заменит маркер [ОТВЕТ ИИ].</div><textarea class="docx-template-modal__textarea" placeholder="Введите ваш текст..."></textarea><div class="docx-template-modal__actions"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="insert">Вставить</button></div></div>';
+
+      var textarea = overlay.querySelector('.docx-template-modal__textarea');
+      function closeModal() {
+        if (overlay && overlay.parentNode) {
+          overlay.parentNode.removeChild(overlay);
+        }
+      }
+
+      overlay.addEventListener('click', function(event) {
+        if (event.target === overlay) {
+          closeModal();
+        }
+      });
+      overlay.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+          closeModal();
+        }
+      });
+      overlay.querySelector('[data-action="cancel"]').addEventListener('click', closeModal);
+      overlay.querySelector('[data-action="insert"]').addEventListener('click', function() {
+        var userText = String(textarea && textarea.value ? textarea.value : '').trim();
+        if (!userText) {
+          if (textarea) textarea.focus();
+          return;
+        }
+        replaceAiMarkerInDocument(userText, '[ОТВЕТ ИИ]');
+        closeModal();
+      });
+
+      document.body.appendChild(overlay);
+      if (textarea) textarea.focus();
+    }
 
     var button = document.createElement('button');
     button.type = 'button';
     button.id = 'docx-template-insert-btn';
-    button.textContent = 'Шаблон Тест';
+    button.textContent = 'Шаблон';
     button.setAttribute('aria-label', 'Вставить текст в маркер [ОТВЕТ ИИ]');
     button.addEventListener('click', function() {
-      var aiText = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
-      replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
-      button.disabled = true;
-      button.textContent = 'Подготовка превью...';
-      generateDocxFromTemplateViaApi(aiText)
-        .then(function(blob) {
-          if (!blob) throw new Error('empty_blob');
-          openDocxRenderPreviewPage(blob);
-        })
-        .catch(function() {
-          button.textContent = 'Ошибка превью';
-        })
-        .finally(function() {
-          button.disabled = false;
-          setTimeout(function() {
-            button.textContent = 'Шаблон Тест';
-          }, 1200);
-        });
+      openTemplateInputModal();
     });
     document.body.appendChild(button);
   }
