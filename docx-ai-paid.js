@@ -1079,13 +1079,12 @@
     if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть как «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
     var docPreviewNode = overlay.querySelector('[data-preview-doc]');
     var statusNode = overlay.querySelector('[data-preview-status]');
     var downloadBtn = overlay.querySelector('[data-preview-download]');
-    var openBtn = overlay.querySelector('[data-preview-open]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var blobUrl = URL.createObjectURL(blob);
 
@@ -1106,24 +1105,6 @@
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-    });
-
-    var openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
-    openBtn.addEventListener('click', function() {
-      if (!openExternalViewer) {
-        statusNode.textContent = 'Просмотрщик «Просмотреть» сейчас недоступен.';
-        return;
-      }
-      statusNode.textContent = 'Открываю через логику «Просмотреть»...';
-      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: blobUrl, resolvedUrl: blobUrl, previewUrl: blobUrl, fileUrl: blobUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
-        .then(function() {
-          statusNode.textContent = 'Файл открыт через «Просмотреть».';
-        })
-        .catch(function(error) {
-          statusNode.textContent = (error && error.message) ? error.message : 'Не удалось открыть через «Просмотреть».';
-        });
     });
 
     ensureDocxPreviewLibrariesLoaded().then(function(renderer) {
