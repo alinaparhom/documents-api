@@ -2461,7 +2461,6 @@
     sendButton.type = 'button';
     var templateButton = createElement('button', 'ai-chat-modal__send ai-chat-modal__template-btn', 'Шаблон');
     templateButton.type = 'button';
-    templateButton.style.display = 'none';
     var contextUsageHint = createElement('div', 'ai-chat-modal__empty', 'Текст к отправке: 0 символов');
     contextUsageHint.style.margin = '6px 0 0';
     contextUsageHint.style.fontSize = '11px';
@@ -2627,10 +2626,26 @@
     templatePreviewModal.content.style.height = '100%';
     templatePreviewModal.content.style.minHeight = '0';
     templatePreviewModal.content.style.padding = '0';
+    templatePreviewModal.content.style.display = 'flex';
+    templatePreviewModal.content.style.flexDirection = 'column';
+    var templatePreviewTopBar = createElement('div', 'ai-chat-template-actions');
+    templatePreviewTopBar.style.padding = '10px 12px';
+    templatePreviewTopBar.style.borderBottom = '1px solid rgba(226,232,240,0.95)';
+    templatePreviewTopBar.style.background = 'rgba(255,255,255,0.88)';
+    templatePreviewTopBar.style.backdropFilter = 'blur(8px)';
+    var templatePreviewFileName = createElement('div', 'ai-chat-template-file-meta', 'Файл: template.docx');
+    templatePreviewFileName.style.flex = '1 1 auto';
+    templatePreviewFileName.style.minWidth = '0';
+    var openExternalPreviewButton = createElement('button', 'ai-chat-modal__export-btn', 'Открыть отдельно');
+    openExternalPreviewButton.type = 'button';
     var templatePreviewFrameFull = document.createElement('iframe');
     templatePreviewFrameFull.className = 'ai-chat-template-frame';
     templatePreviewFrameFull.title = 'Полный предпросмотр DOCX шаблона';
     templatePreviewFrameFull.style.height = '100%';
+    templatePreviewFrameFull.style.flex = '1 1 auto';
+    templatePreviewTopBar.appendChild(templatePreviewFileName);
+    templatePreviewTopBar.appendChild(openExternalPreviewButton);
+    templatePreviewModal.content.appendChild(templatePreviewTopBar);
     templatePreviewModal.content.appendChild(templatePreviewFrameFull);
 
     var templateViewer = createElement('div', 'ai-chat-template-viewer');
@@ -3012,6 +3027,8 @@
       }
       var srcAbsolute = absoluteUrl(templateState.docxUrl);
       templateDocxFrame.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(srcAbsolute);
+      templatePreviewFrameFull.src = templateDocxFrame.src;
+      templatePreviewFileName.textContent = 'Файл: ' + (state.templateFile && state.templateFile.name ? state.templateFile.name : 'template.docx');
       templateInfo.textContent = 'Шаблон загружен. Ответ ИИ будет вставлен в поле «Текст».';
       if (!templateState.customTemplateObjectUrl) {
         templateFileMeta.textContent = 'Шаблон: по умолчанию';
@@ -3101,6 +3118,13 @@
         templatePreviewFrameFull.src = templateDocxFrame.src;
       }
       openOverlay(templatePreviewModal);
+    });
+    openExternalPreviewButton.addEventListener('click', function () {
+      var currentSrc = String(templatePreviewFrameFull.src || templateDocxFrame.src || '').trim();
+      if (!currentSrc) {
+        return;
+      }
+      window.open(currentSrc, '_blank', 'noopener');
     });
     templateFileInput.addEventListener('change', function (event) {
       var selectedFile = event && event.target && event.target.files ? event.target.files[0] : null;
@@ -3651,9 +3675,12 @@
 
     templateButton.addEventListener('click', async function () {
       setTemplateTab('docx');
-      openOverlay(templateModal);
       await loadTemplateDocx();
-      await loadTemplatePdf();
+      if (templateDocxFrame && templateDocxFrame.src) {
+        templatePreviewFrameFull.src = templateDocxFrame.src;
+      }
+      openOverlay(templatePreviewModal);
+      loadTemplatePdf();
     });
     templateDocxTab.addEventListener('click', function () {
       setTemplateTab('docx');
