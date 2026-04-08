@@ -2689,13 +2689,31 @@
     var templateSurfaceSummary = document.createElement('summary');
     templateSurfaceSummary.textContent = 'Просмотр шаблона';
     var templateSurface = createElement('div', 'ai-chat-template-surface');
+    var templateDocxCanvas = createElement('div', 'ai-chat-template-docx-canvas');
+    templateDocxCanvas.style.width = '100%';
+    templateDocxCanvas.style.height = '100%';
+    templateDocxCanvas.style.overflow = 'auto';
+    templateDocxCanvas.style.webkitOverflowScrolling = 'touch';
+    templateDocxCanvas.style.padding = '8px';
+    templateDocxCanvas.style.boxSizing = 'border-box';
+    var templatePdfCanvas = createElement('div', 'ai-chat-template-pdf-canvas');
+    templatePdfCanvas.style.width = '100%';
+    templatePdfCanvas.style.height = '100%';
+    templatePdfCanvas.style.overflow = 'auto';
+    templatePdfCanvas.style.webkitOverflowScrolling = 'touch';
+    templatePdfCanvas.style.padding = '8px';
+    templatePdfCanvas.style.boxSizing = 'border-box';
+    templatePdfCanvas.hidden = true;
     var templateDocxFrame = document.createElement('iframe');
     templateDocxFrame.className = 'ai-chat-template-frame';
     templateDocxFrame.title = 'Просмотр DOCX шаблона';
+    templateDocxFrame.hidden = true;
     var templatePdfFrame = document.createElement('iframe');
     templatePdfFrame.className = 'ai-chat-template-frame';
     templatePdfFrame.title = 'Просмотр PDF шаблона';
     templatePdfFrame.hidden = true;
+    templateSurface.appendChild(templateDocxCanvas);
+    templateSurface.appendChild(templatePdfCanvas);
     templateSurface.appendChild(templateDocxFrame);
     templateSurface.appendChild(templatePdfFrame);
     templateSurfaceWrap.appendChild(templateSurfaceSummary);
@@ -2725,7 +2743,9 @@
       docxUrl: '',
       pdfUrl: '',
       editedText: '',
-      customTemplateObjectUrl: ''
+      customTemplateObjectUrl: '',
+      docxRenderMode: '',
+      pdfRenderMode: ''
     };
     window.templateEditorInstance = templateEditorInstance;
     var templateDocxCandidates = [
@@ -2991,10 +3011,105 @@
     function setTemplateTab(tabName) {
       templateState.activeTab = tabName === 'pdf' ? 'pdf' : 'docx';
       var isDocx = templateState.activeTab === 'docx';
-      templateDocxFrame.hidden = !isDocx;
-      templatePdfFrame.hidden = isDocx;
+      templateDocxCanvas.hidden = !isDocx;
+      templatePdfCanvas.hidden = isDocx;
+      templateDocxFrame.hidden = !isDocx || templateState.docxRenderMode !== 'iframe';
+      templatePdfFrame.hidden = isDocx || templateState.pdfRenderMode !== 'iframe';
       templateDocxTab.className = isDocx ? 'ai-chat-modal__send' : 'ai-chat-modal__export-btn';
       templatePdfTab.className = isDocx ? 'ai-chat-modal__export-btn' : 'ai-chat-modal__send';
+    }
+
+    function ensureExternalScript(scriptId, candidates, validator) {
+      if (typeof validator === 'function' && validator()) {
+        return Promise.resolve(true);
+      }
+      var sourceList = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+      return new Promise(function (resolve, reject) {
+        function tryLoad(index) {
+          if (index >= sourceList.length) {
+            reject(new Error('script_load_failed'));
+            return;
+          }
+          var src = sourceList[index];
+          var script = document.createElement('script');
+          script.async = true;
+          script.src = src;
+          script.setAttribute('data-template-script-id', scriptId);
+          script.onload = function () {
+            if (typeof validator === 'function' && !validator()) {
+              tryLoad(index + 1);
+              return;
+            }
+            resolve(true);
+          };
+          script.onerror = function () {
+            if (script.parentNode) {
+              script.parentNode.removeChild(script);
+            }
+            tryLoad(index + 1);
+          };
+          document.head.appendChild(script);
+        }
+        tryLoad(0);
+      });
+    }
+
+    function ensureDocxPreviewLibraries() {
+      return ensureExternalScript(
+        'template-jszip',
+        ['https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js'],
+        function () { return Boolean(window.JSZip); }
+      ).then(function () {
+        return ensureExternalScript(
+          'template-docx-preview',
+          ['https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js'],
+          function () {
+            return Boolean(
+              (window.docx && typeof window.docx.renderAsync === 'function')
+              || (window.docxPreview && typeof window.docxPreview.renderAsync === 'function')
+            );
+          }
+        );
+      });
+    }
+
+    async function renderTemplateDocxWithLibrary(templateUrl) {
+      await ensureDocxPreviewLibraries();
+      var renderer = (window.docx && typeof window.docx.renderAsync === 'function')
+        ? window.docx
+        : ((window.docxPreview && typeof window.docxPreview.renderAsync === 'function')
+          ? window.docxPreview
+          : null);
+      if (!renderer) {
+        throw new Error('docx_preview_not_ready');
+      }
+      var response = await fetch(templateUrl, { credentials: 'same-origin' });
+      if (!response || !response.ok) {
+        throw new Error('docx_fetch_failed');
+      }
+      var arrayBuffer = await response.arrayBuffer();
+      templateDocxCanvas.innerHTML = '';
+      await renderer.renderAsync(arrayBuffer, templateDocxCanvas, null, {
+        inWrapper: true,
+        breakPages: true,
+        ignoreWidth: false,
+        ignoreHeight: false,
+        useBase64URL: true
+      });
+      templateState.docxRenderMode = 'library';
+      templateDocxFrame.hidden = true;
+    }
+
+    function setTemplateViewerMode(isViewOnly) {
+      var viewOnly = Boolean(isViewOnly);
+      templateTabs.hidden = false;
+      templateSurfaceWrap.hidden = false;
+      templateSurfaceWrap.open = true;
+      templateEditor.hidden = viewOnly;
+      templatePreviewWrap.hidden = viewOnly;
+      if (viewOnly) {
+        templateInfo.textContent = 'Режим просмотра шаблона: выберите DOCX или PDF.';
+      }
     }
 
     async function loadTemplateDocx() {
@@ -3009,8 +3124,15 @@
         return;
       }
       var srcAbsolute = absoluteUrl(templateState.docxUrl);
-      templateDocxFrame.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(srcAbsolute);
-      templateInfo.textContent = 'Шаблон загружен. Ответ ИИ будет вставлен в поле «Текст».';
+      try {
+        await renderTemplateDocxWithLibrary(srcAbsolute);
+        templateInfo.textContent = 'DOCX открыт через библиотеку docx-preview.';
+      } catch (error) {
+        templateDocxFrame.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(srcAbsolute);
+        templateState.docxRenderMode = 'iframe';
+        templateDocxFrame.hidden = false;
+        templateInfo.textContent = 'DOCX открыт через Office Viewer (резервный режим).';
+      }
       if (!templateState.customTemplateObjectUrl) {
         templateFileMeta.textContent = 'Шаблон: по умолчанию';
       }
@@ -3028,8 +3150,52 @@
         templateInfo.textContent = 'Ошибка PDF: не найден путь к template.pdf';
         return;
       }
-      templatePdfFrame.src = templateState.pdfUrl;
-      templateInfo.textContent = 'PDF загружен: ' + templateState.pdfUrl;
+      try {
+        var pdfjsLib = await ensurePdfJsLoaded();
+        if (pdfjsLib && pdfjsLib.GlobalWorkerOptions && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
+        }
+        var pdfResponse = await fetch(templateState.pdfUrl, { credentials: 'same-origin' });
+        if (!pdfResponse || !pdfResponse.ok) {
+          throw new Error('pdf_fetch_failed');
+        }
+        var pdfBytes = await pdfResponse.arrayBuffer();
+        var loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
+        var pdfDoc = await loadingTask.promise;
+        templatePdfCanvas.innerHTML = '';
+        for (var pageIndex = 1; pageIndex <= pdfDoc.numPages; pageIndex += 1) {
+          var page = await pdfDoc.getPage(pageIndex);
+          var viewport = page.getViewport({ scale: 1 });
+          var wrap = createElement('div', '');
+          wrap.style.margin = '0 auto 10px';
+          wrap.style.background = '#fff';
+          wrap.style.borderRadius = '12px';
+          wrap.style.boxShadow = '0 6px 18px rgba(15,23,42,.08)';
+          wrap.style.padding = '8px';
+          var canvas = document.createElement('canvas');
+          var targetWidth = Math.max(320, Math.min(templatePdfCanvas.clientWidth - 24, 820));
+          var scale = targetWidth / Math.max(1, viewport.width);
+          var scaledViewport = page.getViewport({ scale: scale });
+          canvas.width = Math.floor(scaledViewport.width);
+          canvas.height = Math.floor(scaledViewport.height);
+          canvas.style.width = '100%';
+          canvas.style.height = 'auto';
+          wrap.appendChild(canvas);
+          templatePdfCanvas.appendChild(wrap);
+          await page.render({
+            canvasContext: canvas.getContext('2d'),
+            viewport: scaledViewport
+          }).promise;
+        }
+        templateState.pdfRenderMode = 'library';
+        templatePdfFrame.hidden = true;
+        templateInfo.textContent = 'PDF открыт через библиотеку pdf.js.';
+      } catch (error) {
+        templatePdfFrame.src = templateState.pdfUrl;
+        templateState.pdfRenderMode = 'iframe';
+        templatePdfFrame.hidden = false;
+        templateInfo.textContent = 'PDF открыт во встроенном iframe (резервный режим).';
+      }
       templateState.pdfLoaded = true;
     }
 
@@ -3648,13 +3814,14 @@
     });
 
     templateButton.addEventListener('click', async function () {
+      setTemplateViewerMode(true);
       setTemplateTab('docx');
       openOverlay(templateModal);
       await loadTemplateDocx();
-      await loadTemplatePdf();
     });
     templateDocxTab.addEventListener('click', function () {
       setTemplateTab('docx');
+      loadTemplateDocx();
     });
     templatePdfTab.addEventListener('click', function () {
       setTemplateTab('pdf');
