@@ -993,7 +993,12 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
         return ['xml' => $xml, 'replaced' => false];
     }
 
+    $lineBreakToken = '__DOCX_LINE_BREAK__';
+    while (mb_strpos($replace, $lineBreakToken, 0, 'UTF-8') !== false) {
+        $lineBreakToken .= '_X';
+    }
     $replaceText = str_replace(["\r\n", "\r"], "\n", $replace);
+    $replaceText = str_replace("\n", $lineBreakToken, $replaceText);
     for ($m = count($matches) - 1; $m >= 0; $m -= 1) {
         $match = $matches[$m];
         $startInfo = null;
@@ -1047,7 +1052,19 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
     }
 
     $newXml = $dom->saveXML($dom->documentElement);
-    return ['xml' => is_string($newXml) ? $newXml : $xml, 'replaced' => true];
+    if (!is_string($newXml)) {
+        return ['xml' => $xml, 'replaced' => true];
+    }
+
+    if (str_contains($newXml, $lineBreakToken)) {
+        $newXml = str_replace(
+            $lineBreakToken,
+            '</w:t><w:br/><w:t xml:space="preserve">',
+            $newXml
+        );
+    }
+
+    return ['xml' => $newXml, 'replaced' => true];
 }
 
 function createPdfFromText(string $outputPath, string $documentTitle, string $answerText): bool
