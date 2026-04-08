@@ -927,18 +927,10 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
     }
 
-    $fallbackAnswer = isset($replacements['[ОТВЕТ_ИИ]'])
-        ? (string)$replacements['[ОТВЕТ_ИИ]']
-        : (isset($replacements['[ОТВЕТ ИИ]'])
-            ? (string)$replacements['[ОТВЕТ ИИ]']
-            : (isset($replacements['[ОВТЕТ ИИ]']) ? (string)$replacements['[ОВТЕТ ИИ]'] : ''));
+    $fallbackAnswer = isset($replacements['[ОТВЕТ ИИ]']) ? (string)$replacements['[ОТВЕТ ИИ]'] : '';
     if (!$replacedAny && $fallbackAnswer !== '') {
-        $docXml = $zip->getFromName('word/document.xml');
-        if (is_string($docXml) && $docXml !== '' && str_contains($docXml, '</w:body>')) {
-            $appendXml = textToWordParagraphsXml($fallbackAnswer);
-            $docXml = str_replace('</w:body>', $appendXml . '</w:body>', $docXml);
-            $zip->addFromString('word/document.xml', $docXml);
-        }
+        $zip->close();
+        return false;
     }
 
     return $zip->close();
@@ -1499,14 +1491,11 @@ if ($action === 'generate_document') {
             jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/app/templates/, /js/documents/templates/ или укажите DOCUMENT_TEMPLATE_DIR']);
         }
         if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
-            '[ОТВЕТ_ИИ]' => $answerText,
             '[ОТВЕТ ИИ]' => $answerText,
-            '[ОВТЕТ ИИ]' => $answerText,
-            '[ОВТЕТ_ИИ]' => $answerText,
             '[DOCUMENT_TITLE]' => $documentTitle,
         ])) {
             @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX на основе шаблона']);
+            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
