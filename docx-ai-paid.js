@@ -6,7 +6,7 @@
     'Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".',
     'Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.',
     'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.',
-    'Пиши только основной текст: без шапки, без подписи, без блоков "С уважением" и без реквизитов.'
+    'Пиши только основной текст: без шапки, без приветствий и представлений, без подписи, без блоков "С уважением" и без реквизитов.'
   ].join('\n');
   var briefPdfJsLoader = null;
   var SYSTEM_TONE_PROMPTS = {
@@ -792,7 +792,7 @@
         pushChat('assistant', 'Пожалуйста, выберите режим.');
         return;
       }
-      var promptText = 'Подготовь готовый текст для вставки в шаблон: только основная часть, без шапки, без подписи и без служебных приписок.';
+      var promptText = 'Подготовь готовый текст для вставки в шаблон: только основная часть по сути, без шапки, без приветствий и представлений, без подписи, без реквизитов и без служебных приписок.';
       var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
       isSending = true;
       pushChat('user', 'Стиль: ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный') + '. Подготовь готовый ответ.');
@@ -942,8 +942,11 @@
 
     var style = document.createElement('style');
     style.id = 'docx-template-insert-style';
-    style.textContent = '#docx-template-insert-btn{position:fixed;right:12px;bottom:12px;z-index:4200;border:1px solid rgba(255,255,255,.88);background:linear-gradient(135deg,rgba(255,255,255,.95),rgba(241,245,249,.9));backdrop-filter:blur(12px);color:#0f172a;padding:11px 13px;border-radius:13px;font-size:13px;font-weight:700;box-shadow:0 10px 28px rgba(15,23,42,.16);max-width:calc(100vw - 24px)}#docx-template-insert-btn:active{transform:translateY(1px)}.docx-template-modal{position:fixed;inset:0;z-index:4300;background:linear-gradient(180deg,rgba(226,232,240,.52),rgba(148,163,184,.38));backdrop-filter:blur(12px);display:flex;align-items:stretch;justify-content:center;padding:10px}.docx-template-modal__panel{width:min(960px,100%);height:100%;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.92));border:1px solid rgba(255,255,255,.9);border-radius:22px;box-shadow:0 20px 50px rgba(15,23,42,.18);display:flex;flex-direction:column;overflow:hidden}.docx-template-modal__head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.72);backdrop-filter:blur(8px)}.docx-template-modal__title{font-size:18px;font-weight:800;color:#0f172a}.docx-template-modal__sub{font-size:12px;color:#64748b;margin-top:3px}.docx-template-modal__close{width:36px;height:36px;border:none;border-radius:11px;background:#fff;color:#475569;font-size:21px}.docx-template-modal__body{padding:14px;display:grid;gap:10px;flex:1;min-height:0}.docx-template-modal__hint{font-size:12px;color:#475569;background:rgba(219,234,254,.5);border:1px solid rgba(191,219,254,.9);border-radius:12px;padding:9px 10px}.docx-template-modal__textarea{width:100%;height:100%;min-height:44dvh;max-height:100%;resize:none;border:1px solid rgba(203,213,225,.95);border-radius:14px;background:rgba(255,255,255,.9);padding:12px 13px;font-size:14px;line-height:1.55;color:#0f172a;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 14px;border-top:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.78)}.docx-template-modal__btn{border:1px solid rgba(148,163,184,.45);background:#fff;color:#334155;border-radius:12px;padding:10px 14px;font-weight:700;min-height:42px}.docx-template-modal__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-modal__btn[disabled]{opacity:.6}.docx-template-modal__error{font-size:12px;color:#b91c1c;min-height:16px}@media (max-width:768px){#docx-template-insert-btn{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;padding:12px 14px;font-size:14px;border-radius:14px}.docx-template-modal{padding:0}.docx-template-modal__panel{border-radius:0}.docx-template-modal__head{padding:12px}.docx-template-modal__body{padding:12px}.docx-template-modal__textarea{min-height:54dvh;font-size:16px}.docx-template-modal__foot{padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));flex-direction:column}.docx-template-modal__btn{width:100%}}';
+    style.textContent = '#docx-template-insert-actions{position:fixed;right:12px;bottom:12px;z-index:4200;display:flex;gap:8px;max-width:calc(100vw - 24px)}#docx-template-insert-btn,#docx-template-test-btn{border:1px solid rgba(255,255,255,.88);background:linear-gradient(135deg,rgba(255,255,255,.95),rgba(241,245,249,.9));backdrop-filter:blur(12px);color:#0f172a;padding:11px 13px;border-radius:13px;font-size:13px;font-weight:700;box-shadow:0 10px 28px rgba(15,23,42,.16)}#docx-template-insert-btn:active,#docx-template-test-btn:active{transform:translateY(1px)}.docx-template-modal{position:fixed;inset:0;z-index:4300;background:linear-gradient(180deg,rgba(226,232,240,.52),rgba(148,163,184,.38));backdrop-filter:blur(12px);display:flex;align-items:stretch;justify-content:center;padding:10px}.docx-template-modal__panel{width:min(960px,100%);height:100%;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.92));border:1px solid rgba(255,255,255,.9);border-radius:22px;box-shadow:0 20px 50px rgba(15,23,42,.18);display:flex;flex-direction:column;overflow:hidden}.docx-template-modal__head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.72);backdrop-filter:blur(8px)}.docx-template-modal__title{font-size:18px;font-weight:800;color:#0f172a}.docx-template-modal__sub{font-size:12px;color:#64748b;margin-top:3px}.docx-template-modal__close{width:36px;height:36px;border:none;border-radius:11px;background:#fff;color:#475569;font-size:21px}.docx-template-modal__body{padding:14px;display:grid;gap:10px;flex:1;min-height:0}.docx-template-modal__hint{font-size:12px;color:#475569;background:rgba(219,234,254,.5);border:1px solid rgba(191,219,254,.9);border-radius:12px;padding:9px 10px}.docx-template-modal__textarea{width:100%;height:100%;min-height:44dvh;max-height:100%;resize:none;border:1px solid rgba(203,213,225,.95);border-radius:14px;background:rgba(255,255,255,.9);padding:12px 13px;font-size:14px;line-height:1.55;color:#0f172a;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 14px;border-top:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.78)}.docx-template-modal__btn{border:1px solid rgba(148,163,184,.45);background:#fff;color:#334155;border-radius:12px;padding:10px 14px;font-weight:700;min-height:42px}.docx-template-modal__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-modal__btn[disabled]{opacity:.6}.docx-template-modal__error{font-size:12px;color:#b91c1c;min-height:16px}.docx-template-office-viewer{position:fixed;inset:0;z-index:4450;background:rgba(2,6,23,.62);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:8px}.docx-template-office-viewer__card{width:100%;height:100%;background:linear-gradient(145deg,rgba(255,255,255,.98),rgba(241,245,249,.94));border-radius:20px;border:1px solid rgba(255,255,255,.9);box-shadow:0 22px 56px rgba(15,23,42,.28);display:flex;flex-direction:column;overflow:hidden}.docx-template-office-viewer__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-office-viewer__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-office-viewer__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:8px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-office-viewer__body{flex:1;min-height:0;background:#e2e8f0}.docx-template-office-viewer__frame{width:100%;height:100%;border:0;background:#fff}.docx-template-office-viewer__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}@media (max-width:768px){#docx-template-insert-actions{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));max-width:none}#docx-template-insert-btn,#docx-template-test-btn{flex:1;width:auto;padding:12px 14px;font-size:14px;border-radius:14px}.docx-template-modal{padding:0}.docx-template-modal__panel{border-radius:0}.docx-template-modal__head{padding:12px}.docx-template-modal__body{padding:12px}.docx-template-modal__textarea{min-height:54dvh;font-size:16px}.docx-template-modal__foot{padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));flex-direction:column}.docx-template-modal__btn{width:100%}.docx-template-office-viewer{padding:0}.docx-template-office-viewer__card{border-radius:0}}';
     document.head.appendChild(style);
+
+    var actionsWrap = document.createElement('div');
+    actionsWrap.id = 'docx-template-insert-actions';
 
     var button = document.createElement('button');
     button.type = 'button';
@@ -953,7 +956,49 @@
     button.addEventListener('click', function() {
       openTemplateAnswerEditor(button);
     });
-    document.body.appendChild(button);
+    actionsWrap.appendChild(button);
+
+    var testButton = document.createElement('button');
+    testButton.type = 'button';
+    testButton.id = 'docx-template-test-btn';
+    testButton.textContent = 'Тест';
+    testButton.setAttribute('aria-label', 'Открыть template.docx в Office Viewer');
+    testButton.addEventListener('click', function() {
+      openTemplateOfficeViewerModal();
+    });
+    actionsWrap.appendChild(testButton);
+    document.body.appendChild(actionsWrap);
+  }
+
+  function openTemplateOfficeViewerModal() {
+    if (document.querySelector('.docx-template-office-viewer')) return;
+    var rawTemplateUrl = '/app/templates/template.docx';
+    var absoluteTemplateUrl = new URL(rawTemplateUrl, window.location.origin).toString();
+    var officeViewerUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(absoluteTemplateUrl);
+    var overlay = document.createElement('div');
+    overlay.className = 'docx-template-office-viewer';
+    overlay.innerHTML = '<div class="docx-template-office-viewer__card" role="dialog" aria-modal="true" aria-label="Просмотр template.docx в Office Viewer"><div class="docx-template-office-viewer__head"><div class="docx-template-office-viewer__title">Тест просмотра template.docx</div><button type="button" class="docx-template-office-viewer__btn" data-office-close>Закрыть</button></div><div class="docx-template-office-viewer__body"><iframe class="docx-template-office-viewer__frame" src="' + officeViewerUrl + '" title="Office Viewer template.docx" loading="lazy" referrerpolicy="no-referrer"></iframe></div><div class="docx-template-office-viewer__status">Office Viewer открыт в режиме просмотра.</div></div>';
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    var closeBtn = overlay.querySelector('[data-office-close]');
+    function closeModal() {
+      document.body.style.overflow = '';
+      overlay.remove();
+    }
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) closeModal();
+    });
+    document.addEventListener('keydown', function escListener(event) {
+      if (!document.body.contains(overlay)) {
+        document.removeEventListener('keydown', escListener);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeModal();
+      }
+    });
   }
 
   function ensureTemplatePreviewStyles() {
