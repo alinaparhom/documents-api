@@ -784,12 +784,6 @@
       '/templates/template.docx',
       '/template.docx',
     ];
-    const templatePdfCandidates = [
-      '/js/documents/app/templates/template.pdf',
-      '/app/templates/template.pdf',
-      '/templates/template.pdf',
-      '/template.pdf',
-    ];
 
     const modal = document.createElement('div');
     modal.className = 'tg-ai-template-preview';
@@ -798,7 +792,7 @@
         <div class="tg-ai-template-preview__head">
           <div>
             <div class="tg-ai-template-preview__title">Шаблон</div>
-            <div class="tg-ai-template-preview__hint">Открываем template.docx в режиме предпросмотра PDF</div>
+            <div class="tg-ai-template-preview__hint">Открываем template.docx в режиме предпросмотра</div>
           </div>
           <button type="button" class="tg-ai-template-preview__close" data-template-close>Закрыть</button>
         </div>
@@ -819,19 +813,11 @@
     });
 
     try {
-      const [pdfUrl, docxUrl] = await Promise.all([
-        resolveFirstAvailableUrl(templatePdfCandidates),
-        resolveFirstAvailableUrl(templateDocxCandidates),
-      ]);
-      if (pdfUrl) {
-        frame.src = toAbsoluteUrl(pdfUrl);
-        status.textContent = 'Готово: открыт PDF-просмотр шаблона.';
-        return;
-      }
+      const docxUrl = await resolveFirstAvailableUrl(templateDocxCandidates);
       if (docxUrl) {
         const absoluteDocx = toAbsoluteUrl(docxUrl);
-        frame.src = `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(absoluteDocx)}`;
-        status.textContent = 'PDF-файл шаблона не найден. Открыт DOCX в режиме просмотрщика.';
+        frame.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absoluteDocx)}`;
+        status.textContent = 'Готово: template.docx открыт.';
         return;
       }
       status.textContent = 'Не удалось найти template.docx.';
