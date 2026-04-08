@@ -258,6 +258,23 @@
     }
   }
 
+  async function resolveFirstAvailableUrl(candidates) {
+    const list = Array.isArray(candidates) ? candidates : [];
+    for (let index = 0; index < list.length; index += 1) {
+      const rawUrl = normalize(list[index]);
+      if (!rawUrl) continue;
+      try {
+        const response = await fetchWithTimeout(rawUrl, { credentials: 'include', cache: 'no-store' }, 12000);
+        if (response && response.ok) {
+          return rawUrl;
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+    return '';
+  }
+
   function buildFileUrlCandidates(file) {
     const sourceValues = [
       file && file.resolvedUrl,
@@ -709,9 +726,18 @@
       .tg-ai-chat__dots span{width:5px;height:5px;border-radius:50%;background:#0ea5e9;opacity:.35;animation:tg-ai-pulse 1.1s infinite}
       .tg-ai-chat__dots span:nth-child(2){animation-delay:.16s}
       .tg-ai-chat__dots span:nth-child(3){animation-delay:.32s}
+      .tg-ai-template-preview{position:fixed;inset:0;z-index:3800;background:rgba(2,6,23,.65);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:12px}
+      .tg-ai-template-preview__card{width:min(980px,100%);height:min(100dvh - 16px,900px);display:flex;flex-direction:column;overflow:hidden;border-radius:20px;border:1px solid rgba(255,255,255,.8);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 20px 50px rgba(15,23,42,.35)}
+      .tg-ai-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.8)}
+      .tg-ai-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}
+      .tg-ai-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
+      .tg-ai-template-preview__close{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:34px;font-weight:700;color:#0f172a}
+      .tg-ai-template-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}
+      .tg-ai-template-preview__body{flex:1;min-height:0}
+      .tg-ai-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.8);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}}
     `;
     document.head.appendChild(style);
   }
@@ -749,6 +775,69 @@
       const disabled = hasUrl ? '' : 'disabled';
       return `<label class="tg-ai-chat__file"><input type="checkbox" data-file-index="${index}" ${disabled}><span>${escapeHtml(name)}</span></label>`;
     }).join('');
+  }
+
+  async function openTemplatePreviewModal() {
+    const templateDocxCandidates = [
+      '/js/documents/app/templates/template.docx',
+      '/app/templates/template.docx',
+      '/templates/template.docx',
+      '/template.docx',
+    ];
+    const templatePdfCandidates = [
+      '/js/documents/app/templates/template.pdf',
+      '/app/templates/template.pdf',
+      '/templates/template.pdf',
+      '/template.pdf',
+    ];
+
+    const modal = document.createElement('div');
+    modal.className = 'tg-ai-template-preview';
+    modal.innerHTML = `
+      <div class="tg-ai-template-preview__card">
+        <div class="tg-ai-template-preview__head">
+          <div>
+            <div class="tg-ai-template-preview__title">Шаблон</div>
+            <div class="tg-ai-template-preview__hint">Открываем template.docx в режиме предпросмотра PDF</div>
+          </div>
+          <button type="button" class="tg-ai-template-preview__close" data-template-close>Закрыть</button>
+        </div>
+        <div class="tg-ai-template-preview__body">
+          <iframe class="tg-ai-template-preview__frame" title="Предпросмотр шаблона" data-template-frame></iframe>
+        </div>
+        <div class="tg-ai-template-preview__status" data-template-status>Загрузка шаблона…</div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const frame = modal.querySelector('[data-template-frame]');
+    const status = modal.querySelector('[data-template-status]');
+    const close = () => modal.remove();
+    modal.querySelector('[data-template-close]')?.addEventListener('click', close);
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) close();
+    });
+
+    try {
+      const [pdfUrl, docxUrl] = await Promise.all([
+        resolveFirstAvailableUrl(templatePdfCandidates),
+        resolveFirstAvailableUrl(templateDocxCandidates),
+      ]);
+      if (pdfUrl) {
+        frame.src = toAbsoluteUrl(pdfUrl);
+        status.textContent = 'Готово: открыт PDF-просмотр шаблона.';
+        return;
+      }
+      if (docxUrl) {
+        const absoluteDocx = toAbsoluteUrl(docxUrl);
+        frame.src = `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(absoluteDocx)}`;
+        status.textContent = 'PDF-файл шаблона не найден. Открыт DOCX в режиме просмотрщика.';
+        return;
+      }
+      status.textContent = 'Не удалось найти template.docx.';
+    } catch (error) {
+      status.textContent = (error && error.message) || 'Ошибка открытия шаблона.';
+    }
   }
 
   globalScope.openAiResponseDialog = function openAiResponseDialog(context = {}) {
@@ -893,6 +982,10 @@
       if (target.checked) selected.add(key);
       else selected.delete(key);
       status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
+    });
+
+    templateButton?.addEventListener('click', () => {
+      openTemplatePreviewModal();
     });
 
   };
