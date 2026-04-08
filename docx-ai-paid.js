@@ -1,6 +1,7 @@
 (function() {
   var VISION_BATCH_SIZE = 5;
   var AI_PDF_PAGE_LIMIT = 5;
+  var briefJsPdfLoader = null;
   var VISION_QUALITY_DIRECTIVE = [
     'Сформируй сильный итоговый ответ по задаче пользователя, а не пересказ документа.',
     'Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".',
@@ -287,6 +288,23 @@
     if (window.mammoth) return Promise.resolve(window.mammoth);
     return loadBriefScript('https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js', function() { return Boolean(window.mammoth); })
       .then(function() { return window.mammoth; });
+  }
+
+  function ensureJsPdfLoaded() {
+    if (typeof window !== 'undefined' && window.jspdf && window.jspdf.jsPDF) {
+      return Promise.resolve(window.jspdf.jsPDF);
+    }
+    if (briefJsPdfLoader) return briefJsPdfLoader;
+    briefJsPdfLoader = loadBriefScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', function() {
+      return Boolean(window.jspdf && window.jspdf.jsPDF);
+    })
+      .then(function() { return window.jspdf.jsPDF; })
+      .catch(function() {
+        return loadBriefScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', function() {
+          return Boolean(window.jspdf && window.jspdf.jsPDF);
+        }).then(function() { return window.jspdf.jsPDF; });
+      });
+    return briefJsPdfLoader;
   }
 
   function ensureXlsxLoaded() {
@@ -1072,34 +1090,33 @@
   async function generateTemplateFilesViaApi(answerText) {
     var docxBlob = await generateTemplateFileViaApi(answerText, 'docx');
     if (!docxBlob) throw new Error('docx_not_generated');
-    var pdfBlob = null;
-    try {
-      pdfBlob = await generatePdfFromDocxViaApi(docxBlob);
-    } catch (error) {
-      console.warn('[documents] DOCX→PDF конвертация недоступна, fallback на прямую генерацию PDF:', error && error.message ? error.message : error);
-      pdfBlob = await generateTemplateFileViaApi(answerText, 'pdf');
-    }
+    var pdfBlob = await createPdfBlobFromText(answerText);
     if (!pdfBlob) throw new Error('pdf_not_generated');
     return { docxBlob: docxBlob, pdfBlob: pdfBlob };
   }
 
-  async function generatePdfFromDocxViaApi(docxBlob) {
-    if (!docxBlob) throw new Error('docx_blob_missing');
-    var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    var formData = new FormData();
-    formData.append('action', 'convert_docx_to_pdf');
-    formData.append('file', new File([docxBlob], 'template-answer.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
-    var response = await fetch(apiUrl, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    });
-    if (!response.ok) {
-      throw new Error('Ошибка конвертации DOCX→PDF (' + response.status + ')');
+  async function createPdfBlobFromText(text) {
+    var jsPDF = await ensureJsPdfLoaded();
+    if (!jsPDF) throw new Error('jspdf_not_loaded');
+    var doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    var pageWidth = doc.internal.pageSize.getWidth();
+    var pageHeight = doc.internal.pageSize.getHeight();
+    var margin = 40;
+    var maxWidth = pageWidth - margin * 2;
+    var lineHeight = 16;
+    var lines = doc.splitTextToSize(String(text || ''), maxWidth);
+    var y = margin;
+    for (var i = 0; i < lines.length; i += 1) {
+      if (y > pageHeight - margin) {
+        doc.addPage();
+        y = margin;
+      }
+      doc.text(lines[i], margin, y);
+      y += lineHeight;
     }
-    var pdfBlob = await response.blob();
-    if (!pdfBlob || !pdfBlob.size) return null;
-    return pdfBlob;
+    return doc.output('blob');
   }
 
   if (document.readyState === 'loading') {
