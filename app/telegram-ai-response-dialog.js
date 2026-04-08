@@ -803,8 +803,8 @@
     const templateDocxCandidates = getTemplateDocxCandidates();
 
     const task = context && context.task ? context.task : null;
-    const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
-      ? window.__APPDOSC_OPEN_VIEWER_FILE__
+    const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
+      ? window.__APPDOSC_OPEN_FILES_VIEWER__
       : null;
     if (openExternalViewer) {
       let lastError = null;
@@ -820,7 +820,7 @@
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         };
         try {
-          await openExternalViewer(templateFile, task || {}, { notify: true, hasMultiple: false });
+          await openExternalViewer([templateFile], task || {}, { notify: true, hasMultiple: false });
           return;
         } catch (error) {
           lastError = error;
@@ -898,7 +898,7 @@
             <option value="" selected>🎯 Выберите режим</option>
             ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${escapeHtml(item.value)}">🎯 ${escapeHtml(item.label)}</option>`).join('')}
           </select>
-          <button type="button" class="tg-ai-chat__toggle" data-template-btn hidden>Шаблон</button>
+          <button type="button" class="tg-ai-chat__toggle" data-template-btn>Шаблон</button>
         </div>
         <div class="tg-ai-chat__files" data-files hidden>
           <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
@@ -955,7 +955,6 @@
 
       isSending = true;
       lastAiAnswer = '';
-      if (templateButton) templateButton.hidden = true;
       meta.innerHTML = '';
       createBubble(messages, `Стиль: ${styleMeta.label}. Подготовь готовый ответ по документам.`, 'user');
       status.textContent = 'Vision: готовим файлы...';
@@ -967,7 +966,6 @@
           status.textContent = message;
         });
         lastAiAnswer = answer;
-        if (templateButton) templateButton.hidden = false;
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
 
@@ -982,7 +980,6 @@
         status.textContent = 'Данные переданы.';
       } catch (error) {
         lastAiAnswer = '';
-        if (templateButton) templateButton.hidden = true;
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
         status.textContent = 'Ошибка передачи.';
