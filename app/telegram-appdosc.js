@@ -15597,6 +15597,117 @@ function taskUserCanUploadResponse(task, entry) {
   return entryMatchesUser(entry, ids, names);
 }
 
+function buildResponseTextFileBase(task) {
+  const parts = [];
+  const entryNumber = normalizeValueString(task && task.entryNumber);
+  const documentId = normalizeValueString(task && task.id);
+  if (entryNumber) {
+    parts.push(entryNumber);
+  } else if (documentId) {
+    parts.push(`task_${documentId}`);
+  } else {
+    parts.push('response');
+  }
+  parts.push('text_response');
+  return sanitizePdfFileName(parts.join('_')) || 'text_response';
+}
+
+async function generateResponseTextPdfBlob(task, textValue) {
+  const text = normalizeValue(textValue).replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (!text) {
+    throw new Error('Введите текст для PDF.');
+  }
+
+  const PDFLib = await ensureMiniAppPdfLib();
+  if (!PDFLib || !PDFLib.PDFDocument) {
+    throw new Error('PDF библиотека недоступна.');
+  }
+
+  const { pdfDoc, fonts } = await createPdfDocumentWithFonts(PDFLib, task || null);
+  const colors = getPdfThemeColors(PDFLib);
+  const margin = 42;
+  const pageSize = [595.28, 841.89];
+  const titleFontSize = 18;
+  const metaFontSize = 10;
+  const bodyFontSize = 11;
+  const bodyLineHeight = 14;
+  let page = pdfDoc.addPage(pageSize);
+  let cursorY = 0;
+
+  const drawHeader = (currentPage, pageNumber) => {
+    const size = currentPage.getSize();
+    const baseName = buildResponseTextFileBase(task);
+    currentPage.drawRectangle({
+      x: 0,
+      y: size.height - 86,
+      width: size.width,
+      height: 86,
+      color: colors.header,
+      opacity: 0.92,
+    });
+    drawPdfText(currentPage, 'Текстовый ответ', {
+      x: margin,
+      y: size.height - 44,
+      size: titleFontSize,
+      font: fonts.bold,
+      color: colors.title,
+    });
+    drawPdfText(currentPage, `Файл: ${baseName}.txt`, {
+      x: margin,
+      y: size.height - 62,
+      size: metaFontSize,
+      font: fonts.regular,
+      color: colors.muted,
+    });
+    drawPdfText(currentPage, `Страница ${pageNumber}`, {
+      x: size.width - margin - 70,
+      y: size.height - 62,
+      size: metaFontSize,
+      font: fonts.regular,
+      color: colors.muted,
+    });
+    return size.height - 112;
+  };
+
+  let pageNumber = 1;
+  cursorY = drawHeader(page, pageNumber);
+  const contentWidth = page.getSize().width - margin * 2;
+  const lines = wrapTextForPdf(fonts.regular, text, contentWidth, bodyFontSize);
+  lines.forEach((line) => {
+    if (cursorY <= 34) {
+      pageNumber += 1;
+      page = pdfDoc.addPage(pageSize);
+      cursorY = drawHeader(page, pageNumber);
+    }
+    drawPdfText(page, line || ' ', {
+      x: margin,
+      y: cursorY,
+      size: bodyFontSize,
+      font: fonts.regular,
+      color: colors.value,
+    });
+    cursorY -= bodyLineHeight;
+  });
+
+  const pdfBytes = await pdfDoc.save();
+  return new Blob([pdfBytes], { type: 'application/pdf' });
+}
+
+async function downloadResponseTextFormats(task, textValue, setStatus) {
+  const text = normalizeValue(textValue).replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (!text) {
+    throw new Error('Введите текст, чтобы скачать TXT и PDF.');
+  }
+  const baseName = buildResponseTextFileBase(task);
+  const txtBlob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  downloadBlob(txtBlob, `${baseName}.txt`);
+  const pdfBlob = await generateResponseTextPdfBlob(task, text);
+  downloadBlob(pdfBlob, `${baseName}.pdf`);
+  if (typeof setStatus === 'function') {
+    setStatus('success', 'TXT и PDF готовы к скачиванию.');
+  }
+}
+
 async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '') {
   if (!task || typeof task !== 'object') {
     sendResponseViewerLog('response_upload_failed', {
@@ -15841,6 +15952,10 @@ function createResponseUploadControls(task, entry, setStatus) {
   textSaveButton.type = 'button';
   textSaveButton.className = 'appdosc-card__action appdosc-card__action--response';
   textSaveButton.textContent = 'Сохранить текст';
+  const textDownloadButton = document.createElement('button');
+  textDownloadButton.type = 'button';
+  textDownloadButton.className = 'appdosc-card__action appdosc-card__action--response';
+  textDownloadButton.textContent = 'Скачать TXT + PDF';
 
   const input = document.createElement('input');
   input.type = 'file';
@@ -15888,6 +16003,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     button.disabled = true;
     aiButton.disabled = true;
     textSaveButton.disabled = true;
+    textDownloadButton.disabled = true;
     textInput.disabled = true;
     wrapper.dataset.loading = 'true';
     meta.textContent = `Файлов выбрано: ${files.length}`;
@@ -15917,6 +16033,7 @@ function createResponseUploadControls(task, entry, setStatus) {
       button.disabled = false;
       aiButton.disabled = false;
       textSaveButton.disabled = false;
+      textDownloadButton.disabled = false;
       textInput.disabled = false;
       delete wrapper.dataset.loading;
       input.value = '';
@@ -15935,6 +16052,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     button.disabled = true;
     aiButton.disabled = true;
     textSaveButton.disabled = true;
+    textDownloadButton.disabled = true;
     textInput.disabled = true;
     wrapper.dataset.loading = 'true';
     meta.textContent = 'Сохраняем текстовый ответ...';
@@ -15959,12 +16077,48 @@ function createResponseUploadControls(task, entry, setStatus) {
       button.disabled = false;
       aiButton.disabled = false;
       textSaveButton.disabled = false;
+      textDownloadButton.disabled = false;
       textInput.disabled = false;
       delete wrapper.dataset.loading;
     }
   });
 
-  textActions.append(textSaveButton, textCounter);
+  textDownloadButton.addEventListener('click', async () => {
+    const messageValue = String(textInput.value || '').trim();
+    if (!messageValue) {
+      if (typeof setStatus === 'function') {
+        setStatus('warning', 'Введите текст перед скачиванием.');
+      }
+      return;
+    }
+
+    button.disabled = true;
+    aiButton.disabled = true;
+    textSaveButton.disabled = true;
+    textDownloadButton.disabled = true;
+    textInput.disabled = true;
+    wrapper.dataset.loading = 'true';
+    meta.textContent = 'Готовим TXT и PDF...';
+
+    try {
+      await downloadResponseTextFormats(task, messageValue, setStatus);
+      meta.textContent = 'TXT и PDF скачаны';
+    } catch (error) {
+      meta.textContent = 'Не удалось подготовить форматы';
+      if (typeof setStatus === 'function') {
+        setStatus('error', error?.message || 'Не удалось скачать TXT и PDF.');
+      }
+    } finally {
+      button.disabled = false;
+      aiButton.disabled = false;
+      textSaveButton.disabled = false;
+      textDownloadButton.disabled = false;
+      textInput.disabled = false;
+      delete wrapper.dataset.loading;
+    }
+  });
+
+  textActions.append(textSaveButton, textDownloadButton, textCounter);
   wrapper.append(button, aiButton, meta, textInput, textActions, input);
   return wrapper;
 }
