@@ -1335,6 +1335,48 @@ function resolveTemplatePath(string $fileName, array $extraDirectories = []): st
     return '';
 }
 
+function ensureTempPublicDir(): string
+{
+    $dir = __DIR__ . '/app/temp';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+    return $dir;
+}
+
+function saveGeneratedFileToPublicTemp(string $sourcePath, string $prefix, string $extension): array
+{
+    if ($sourcePath === '' || !is_file($sourcePath)) {
+        return ['path' => '', 'url' => ''];
+    }
+    $safePrefix = preg_replace('/[^a-z0-9_-]+/i', '-', trim($prefix));
+    $safePrefix = is_string($safePrefix) && $safePrefix !== '' ? trim($safePrefix, '-') : 'generated';
+    $safeExt = strtolower(trim($extension));
+    $safeExt = preg_replace('/[^a-z0-9]+/i', '', $safeExt);
+    if (!is_string($safeExt) || $safeExt === '') {
+        $safeExt = 'bin';
+    }
+    $tempDir = ensureTempPublicDir();
+    if ($tempDir === '' || !is_dir($tempDir)) {
+        return ['path' => '', 'url' => ''];
+    }
+    try {
+        $randomTail = bin2hex(random_bytes(4));
+    } catch (Throwable $e) {
+        $randomTail = substr(md5(uniqid((string)mt_rand(), true)), 0, 8);
+    }
+    $fileName = $safePrefix . '-' . gmdate('Ymd-His') . '-' . $randomTail . '.' . $safeExt;
+    $targetPath = rtrim($tempDir, '/') . '/' . $fileName;
+    if (!@copy($sourcePath, $targetPath)) {
+        return ['path' => '', 'url' => ''];
+    }
+    @chmod($targetPath, 0664);
+    return [
+        'path' => $targetPath,
+        'url' => '/js/documents/app/temp/' . $fileName,
+    ];
+}
+
 function looksLikeJsonText(string $value): bool
 {
     $trimmed = trim($value);
@@ -1541,6 +1583,7 @@ if ($action === 'generate_document') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
+    $saveToTemp = (string)($_POST['saveToTemp'] ?? '0') === '1';
 
     if ($answerText === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
@@ -1573,6 +1616,8 @@ if ($action === 'generate_document') {
         jsonResponse(500, ['ok' => false, 'error' => 'Не удалось создать временный файл']);
     }
 
+    $generatedTemp = ['path' => '', 'url' => ''];
+
     if ($format === 'docx') {
         if (!is_file($templateDocxPath)) {
             @unlink($tmpFile);
@@ -1587,6 +1632,12 @@ if ($action === 'generate_document') {
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
+        if ($saveToTemp) {
+            $generatedTemp = saveGeneratedFileToPublicTemp($tmpFile, 'template-answer', 'docx');
+            if (!empty($generatedTemp['url'])) {
+                header('X-Generated-File-Url: ' . $generatedTemp['url']);
+            }
+        }
     } else {
         if (is_file($templatePdfPath)) {
             @unlink($tmpFile);

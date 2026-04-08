@@ -1041,10 +1041,11 @@
       }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
       generateDocxFromTemplateViaApi(aiText)
-        .then(function(blob) {
+        .then(function(result) {
+          var blob = result && result.blob ? result.blob : null;
           if (!blob) throw new Error('empty_blob');
           closeEditor();
-          openDocxRenderPreviewPage(blob);
+          openDocxRenderPreviewPage(blob, result && result.tempUrl ? result.tempUrl : '');
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -1072,7 +1073,7 @@
     });
   }
 
-  function openDocxRenderPreviewPage(blob) {
+  function openDocxRenderPreviewPage(blob, tempUrl) {
     ensureTemplatePreviewStyles();
     if (!blob) throw new Error('empty_blob');
     var existing = document.querySelector('.docx-template-preview');
@@ -1117,9 +1118,13 @@
         return;
       }
       statusNode.textContent = 'Открываю через логику «Просмотреть»...';
-      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: blobUrl, resolvedUrl: blobUrl, previewUrl: blobUrl, fileUrl: blobUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
+      var preferredUrl = (typeof tempUrl === 'string' && tempUrl.trim()) ? tempUrl.trim() : blobUrl;
+      if (preferredUrl.charAt(0) === '/' && typeof window !== 'undefined' && window.location && window.location.origin) {
+        preferredUrl = window.location.origin + preferredUrl;
+      }
+      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: preferredUrl, resolvedUrl: preferredUrl, previewUrl: preferredUrl, fileUrl: preferredUrl, localBlobUrl: blobUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
         .then(function() {
-          statusNode.textContent = 'Файл открыт через «Просмотреть».';
+          statusNode.textContent = tempUrl ? 'Файл из app/temp открыт через «Просмотреть».' : 'Файл открыт через «Просмотреть».';
         })
         .catch(function(error) {
           statusNode.textContent = (error && error.message) ? error.message : 'Не удалось открыть через «Просмотреть».';
@@ -1149,6 +1154,7 @@
     formData.append('format', 'docx');
     formData.append('answer', String(answerText || ''));
     formData.append('documentTitle', 'Ответ ИИ');
+    formData.append('saveToTemp', '1');
     var response = await fetch(apiUrl, {
       method: 'POST',
       credentials: 'same-origin',
@@ -1157,11 +1163,12 @@
     if (!response.ok) {
       throw new Error('Ошибка генерации шаблона (' + response.status + ')');
     }
+    var tempUrl = String(response.headers.get('X-Generated-File-Url') || '').trim();
     var blob = await response.blob();
     if (!blob || !blob.size) {
       return null;
     }
-    return blob;
+    return { blob: blob, tempUrl: tempUrl };
   }
 
   if (document.readyState === 'loading') {
