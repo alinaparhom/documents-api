@@ -869,11 +869,66 @@
     button.textContent = 'Шаблон';
     button.setAttribute('aria-label', 'Вставить текст в маркер [ОТВЕТ ИИ]');
     button.addEventListener('click', function() {
-      var aiText = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
-      replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
-      openTemplateFormatChooser(aiText, button);
+      openTemplateActionModal(button);
     });
     document.body.appendChild(button);
+  }
+
+  function openTemplateActionModal(triggerButton) {
+    if (document.getElementById('docx-template-action-modal')) return;
+    var modal = document.createElement('div');
+    modal.id = 'docx-template-action-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:4300;background:rgba(15,23,42,.36);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
+    modal.innerHTML = '<div style="width:100%;max-width:520px;background:linear-gradient(145deg,rgba(255,255,255,.97),rgba(248,250,252,.95));border:1px solid rgba(255,255,255,.92);border-radius:16px;box-shadow:0 18px 36px rgba(15,23,42,.22);padding:14px;display:grid;gap:10px"><div style="font-size:16px;font-weight:800;color:#0f172a">Подготовка шаблона</div><label style="font-size:12px;color:#64748b">Формат файла</label><select id="docx-template-format" style="width:100%;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:14px;background:#fff;color:#0f172a"><option value="docx">DOCX</option><option value="pdf">PDF</option></select><label style="font-size:12px;color:#64748b">Текст для вставки</label><textarea id="docx-template-text" rows="5" placeholder="Введите текст..." style="width:100%;border:1px solid rgba(203,213,225,.95);border-radius:12px;padding:10px 12px;font-size:14px;resize:vertical;min-height:120px;background:rgba(255,255,255,.95);color:#0f172a"></textarea><div id="docx-template-error" style="display:none;font-size:12px;color:#b91c1c"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" id="docx-template-cancel" style="flex:1;min-height:44px;border:1px solid rgba(148,163,184,.55);background:#fff;color:#334155;border-radius:12px;font-weight:700">Отмена</button><button type="button" id="docx-template-generate" style="flex:1;min-height:44px;border:1px solid rgba(191,219,254,.95);background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1d4ed8;border-radius:12px;font-weight:800">Создать</button></div></div>';
+    document.body.appendChild(modal);
+    var formatNode = modal.querySelector('#docx-template-format');
+    var textNode = modal.querySelector('#docx-template-text');
+    var errorNode = modal.querySelector('#docx-template-error');
+    var closeModal = function() {
+      modal.remove();
+    };
+    modal.querySelector('#docx-template-cancel').addEventListener('click', closeModal);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) closeModal();
+    });
+    modal.querySelector('#docx-template-generate').addEventListener('click', function() {
+      var rawText = String(textNode && textNode.value || '');
+      if (!rawText.trim()) {
+        errorNode.style.display = 'block';
+        errorNode.textContent = 'Введите текст для вставки.';
+        return;
+      }
+      var selectedFormat = String(formatNode && formatNode.value || 'docx').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
+      var aiText = rawText;
+      var replacedCount = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      if (!replacedCount) {
+        replaceAiMarkerInDocument(aiText, '[ОВТЕТ ИИ]');
+      }
+      if (triggerButton) {
+        triggerButton.disabled = true;
+        triggerButton.textContent = 'Подготовка...';
+      }
+      generateDocumentFromTemplateViaApi(aiText, selectedFormat)
+        .then(function(blob) {
+          if (!blob) throw new Error('empty_blob');
+          if (selectedFormat === 'pdf') {
+            openPdfPreviewPage(blob);
+          } else {
+            openDocxRenderPreviewPage(blob);
+          }
+          closeModal();
+        })
+        .catch(function(error) {
+          errorNode.style.display = 'block';
+          errorNode.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'Не удалось создать файл.');
+        })
+        .finally(function() {
+          if (triggerButton) {
+            triggerButton.disabled = false;
+            triggerButton.textContent = 'Шаблон';
+          }
+        });
+    });
   }
 
   function blobToDataUrl(blob) {
@@ -900,79 +955,27 @@
     });
   }
 
-  function openPdfRenderPreviewPage(blob) {
+  function openPdfPreviewPage(blob) {
     var previewWindow = window.open('', '_blank');
     if (!previewWindow) {
       throw new Error('preview_window_blocked');
     }
-    var pdfBlobUrl = URL.createObjectURL(blob);
-    var html = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Превью PDF</title><style>body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(160deg,#e2e8f0,#f8fafc);color:#0f172a}.top{position:sticky;top:0;display:flex;gap:8px;padding:10px;background:rgba(255,255,255,.75);backdrop-filter:blur(8px);border-bottom:1px solid rgba(203,213,225,.9);z-index:2}.btn{border:1px solid rgba(148,163,184,.6);background:#fff;border-radius:10px;padding:10px 12px;font-weight:700}.btn.primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}.pdf{padding:12px;max-width:980px;margin:0 auto}.page{background:#fff;border-radius:14px;box-shadow:0 10px 26px rgba(15,23,42,.16);padding:8px;margin-bottom:10px}.page canvas{width:100%;height:auto}.err{margin:12px auto;max-width:980px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:12px;padding:10px 12px;font-size:13px;display:none}</style><script src=\"https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js\"><\/script></head><body><div class=\"top\"><button id=\"download\" class=\"btn primary\">Скачать</button><button id=\"close\" class=\"btn\">Закрыть</button></div><div id=\"pdf\" class=\"pdf\"></div><div id=\"error\" class=\"err\"></div><script>(async function(){try{var src=' + JSON.stringify(pdfBlobUrl) + ';if(!window.pdfjsLib||typeof window.pdfjsLib.getDocument!==\"function\"){throw new Error(\"pdfjs_not_loaded\");}window.pdfjsLib.GlobalWorkerOptions.workerSrc=\"https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js\";var loadingTask=window.pdfjsLib.getDocument(src);var doc=await loadingTask.promise;var root=document.getElementById(\"pdf\");for(var i=1;i<=doc.numPages;i+=1){var page=await doc.getPage(i);var viewport=page.getViewport({scale:1});var wrap=document.createElement(\"div\");wrap.className=\"page\";var canvas=document.createElement(\"canvas\");var width=Math.max(320,Math.min(window.innerWidth-40,900));var scale=width/Math.max(1,viewport.width);var v=page.getViewport({scale:scale});canvas.width=Math.floor(v.width);canvas.height=Math.floor(v.height);wrap.appendChild(canvas);root.appendChild(wrap);await page.render({canvasContext:canvas.getContext(\"2d\"),viewport:v}).promise;}}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить PDF: \"+(e&&e.message?e.message:\"unknown\");}})();document.getElementById(\"download\").addEventListener(\"click\",function(){var a=document.createElement(\"a\");a.href=' + JSON.stringify(pdfBlobUrl) + ';a.download=\"template-answer.pdf\";document.body.appendChild(a);a.click();document.body.removeChild(a);});document.getElementById(\"close\").addEventListener(\"click\",function(){window.close();});window.addEventListener(\"beforeunload\",function(){try{URL.revokeObjectURL(' + JSON.stringify(pdfBlobUrl) + ');}catch(e){}});<\/script></body></html>';
-    previewWindow.document.open();
-    previewWindow.document.write(html);
-    previewWindow.document.close();
-  }
-
-  function openTemplateFormatChooser(aiText, sourceButton) {
-    var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:4300;background:rgba(15,23,42,.34);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;padding:12px';
-    var panel = document.createElement('div');
-    panel.style.cssText = 'width:min(520px,100%);background:linear-gradient(165deg,rgba(255,255,255,.98),rgba(248,250,252,.95));border:1px solid rgba(255,255,255,.96);border-radius:18px;padding:14px;box-shadow:0 18px 36px rgba(15,23,42,.2);display:flex;flex-direction:column;gap:10px';
-    panel.innerHTML = '<div style="font-weight:700;color:#0f172a;font-size:15px">Как открыть шаблон?</div><div style="font-size:13px;color:#475569">Выберите формат просмотра</div>';
-    var row = document.createElement('div');
-    row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px';
-    var docxBtn = document.createElement('button');
-    docxBtn.type = 'button';
-    docxBtn.textContent = 'Смотреть DOCX';
-    docxBtn.style.cssText = 'border:1px solid rgba(59,130,246,.35);background:rgba(219,234,254,.85);color:#1d4ed8;border-radius:12px;padding:11px 10px;font-weight:700';
-    var pdfBtn = document.createElement('button');
-    pdfBtn.type = 'button';
-    pdfBtn.textContent = 'Смотреть PDF';
-    pdfBtn.style.cssText = 'border:1px solid rgba(148,163,184,.4);background:#fff;color:#0f172a;border-radius:12px;padding:11px 10px;font-weight:700';
-    row.appendChild(docxBtn);
-    row.appendChild(pdfBtn);
-    var closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.textContent = 'Отмена';
-    closeBtn.style.cssText = 'border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.85);color:#334155;border-radius:12px;padding:10px 12px;font-weight:600';
-    panel.appendChild(row);
-    panel.appendChild(closeBtn);
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
-
-    function closeChooser() {
-      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-    }
-
-    async function openFormat(format) {
-      sourceButton.disabled = true;
-      sourceButton.textContent = 'Подготовка...';
-      closeChooser();
-      try {
-        var blob = await generateTemplateFromApi(aiText, format);
-        if (!blob) throw new Error('empty_blob');
-        if (format === 'pdf') openPdfRenderPreviewPage(blob);
-        else openDocxRenderPreviewPage(blob);
-      } catch (error) {
-        sourceButton.textContent = 'Ошибка превью';
-      } finally {
-        sourceButton.disabled = false;
-        setTimeout(function() { sourceButton.textContent = 'Шаблон'; }, 1200);
-      }
-    }
-
-    docxBtn.addEventListener('click', function() { openFormat('docx'); });
-    pdfBtn.addEventListener('click', function() { openFormat('pdf'); });
-    closeBtn.addEventListener('click', closeChooser);
-    overlay.addEventListener('click', function(event) {
-      if (event.target === overlay) closeChooser();
+    blobToDataUrl(blob).then(function(dataUrl) {
+      var html = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Превью PDF</title><style>body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(160deg,#e2e8f0,#f8fafc);color:#0f172a}.top{position:sticky;top:0;display:flex;gap:8px;padding:10px;background:rgba(255,255,255,.75);backdrop-filter:blur(8px);border-bottom:1px solid rgba(203,213,225,.9)}.btn{border:1px solid rgba(148,163,184,.6);background:#fff;border-radius:10px;padding:10px 12px;font-weight:700}.btn.primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}#preview{padding:10px}iframe{width:100%;height:calc(100dvh - 72px);border:none;border-radius:12px;background:#fff;box-shadow:0 10px 26px rgba(15,23,42,.16)}</style></head><body><div class="top"><button id="download" class="btn primary">Скачать</button><button id="close" class="btn">Закрыть</button></div><div id="preview"><iframe src="' + dataUrl + '" title="PDF preview"></iframe></div><script>var dataUrl=' + JSON.stringify(dataUrl) + ';document.getElementById("download").addEventListener("click",function(){var a=document.createElement("a");a.href=dataUrl;a.download="template-answer.pdf";document.body.appendChild(a);a.click();document.body.removeChild(a);});document.getElementById("close").addEventListener("click",function(){window.close();});<\/script></body></html>';
+      previewWindow.document.open();
+      previewWindow.document.write(html);
+      previewWindow.document.close();
+    }).catch(function() {
+      previewWindow.document.body.innerHTML = '<div style="padding:16px;font-family:Arial,sans-serif">Не удалось подготовить превью PDF.</div>';
     });
   }
 
-  async function generateTemplateFromApi(answerText, format) {
+  async function generateDocumentFromTemplateViaApi(answerText, format) {
     var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var safeFormat = String(format || 'docx').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
     var formData = new FormData();
     formData.append('action', 'generate_document');
-    formData.append('format', format === 'pdf' ? 'pdf' : 'docx');
+    formData.append('format', safeFormat);
     formData.append('answer', String(answerText || '').trim());
     formData.append('documentTitle', 'Ответ ИИ');
     var response = await fetch(apiUrl, {
