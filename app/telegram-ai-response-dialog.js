@@ -777,13 +777,33 @@
     }).join('');
   }
 
-  async function openTemplatePreviewModal() {
+  async function openTemplatePreviewModal(context = {}) {
     const templateDocxCandidates = [
       '/js/documents/app/templates/template.docx',
       '/app/templates/template.docx',
       '/templates/template.docx',
       '/template.docx',
     ];
+
+    const task = context && context.task ? context.task : null;
+    const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
+      ? window.__APPDOSC_OPEN_VIEWER_FILE__
+      : null;
+    if (openExternalViewer) {
+      const docxUrl = await resolveFirstAvailableUrl(templateDocxCandidates);
+      if (!docxUrl) {
+        throw new Error('Не удалось найти template.docx.');
+      }
+      const templateFile = {
+        name: 'template.docx',
+        originalName: 'template.docx',
+        url: docxUrl,
+        previewUrl: docxUrl,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      };
+      await openExternalViewer(templateFile, task || {}, { notify: true, hasMultiple: false });
+      return;
+    }
 
     const modal = document.createElement('div');
     modal.className = 'tg-ai-template-preview';
@@ -970,8 +990,12 @@
       status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
     });
 
-    templateButton?.addEventListener('click', () => {
-      openTemplatePreviewModal();
+    templateButton?.addEventListener('click', async () => {
+      try {
+        await openTemplatePreviewModal({ task });
+      } catch (error) {
+        status.textContent = (error && error.message) || 'Не удалось открыть шаблон.';
+      }
     });
 
   };

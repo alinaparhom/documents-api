@@ -9191,6 +9191,12 @@ async function openViewerFile(file, task, options = {}) {
   throw new Error('viewer_open_failed');
 }
 
+if (typeof window !== 'undefined') {
+  window.__APPDOSC_OPEN_VIEWER_FILE__ = async function openViewerFromExternalContext(file, task, options = {}) {
+    return openViewerFile(file, task, options);
+  };
+}
+
 function warmupTaskPdfFiles(task, files, skipFile) {
   if (!Array.isArray(files) || files.length < 2) {
     return;
