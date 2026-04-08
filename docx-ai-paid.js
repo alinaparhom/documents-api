@@ -897,7 +897,7 @@
     return 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   }
 
-  function openTemplateAnswerEditor(triggerButton) {
+  function openTemplateAnswerEditor(triggerButton, initialButtonText) {
     if (document.querySelector('.docx-template-modal')) return;
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-modal';
@@ -909,7 +909,7 @@
     var cancelButton = overlay.querySelector('[data-action="cancel"]');
     var doneButton = overlay.querySelector('[data-action="done"]');
     var errorNode = overlay.querySelector('.docx-template-modal__error');
-    var previousButtonText = triggerButton ? triggerButton.textContent : '';
+    var previousButtonText = triggerButton ? (initialButtonText || triggerButton.textContent) : '';
     if (triggerButton) {
       triggerButton.disabled = true;
       triggerButton.textContent = 'Редактирование...';
@@ -966,7 +966,7 @@
         .then(function(blob) {
           if (!blob) throw new Error('empty_blob');
           closeEditor();
-          openDocxRenderPreviewPage(blob);
+          return openGeneratedDocxInViewMode(blob);
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -976,6 +976,38 @@
           doneButton.textContent = 'Готово';
         });
     });
+  }
+
+  function openGeneratedDocxInViewMode(blob) {
+    var openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
+      ? window.__APPDOSC_OPEN_FILES_VIEWER__
+      : null;
+    if (!blob) return Promise.reject(new Error('empty_blob'));
+    if (!openExternalViewer) {
+      openDocxRenderPreviewPage(blob);
+      return Promise.resolve(false);
+    }
+    var blobUrl = URL.createObjectURL(blob);
+    var payload = [{
+      name: 'template-answer.docx',
+      originalName: 'template-answer.docx',
+      storedName: 'template-answer.docx',
+      url: blobUrl,
+      resolvedUrl: blobUrl,
+      previewUrl: blobUrl,
+      fileUrl: blobUrl,
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    }];
+    return Promise.resolve(openExternalViewer(payload, {}, { notify: true, hasMultiple: false }))
+      .then(function() {
+        setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 120000);
+        return true;
+      })
+      .catch(function() {
+        URL.revokeObjectURL(blobUrl);
+        openDocxRenderPreviewPage(blob);
+        return false;
+      });
   }
 
   function ensureDocxPreviewLibrariesLoaded() {
