@@ -1022,7 +1022,7 @@
     });
     downloadPdfBtn.addEventListener('click', function() {
       if (!pdfBlobUrl) {
-        statusNode.textContent = 'PDF недоступен на сервере. Скачайте Word или добавьте template.pdf / TCPDF.';
+        statusNode.textContent = 'PDF пока недоступен. Нужен LibreOffice на сервере (soffice/libreoffice).';
         return;
       }
       var a = document.createElement('a');
@@ -1067,7 +1067,7 @@
       frame.src = pdfBlobUrl;
       statusNode.textContent = 'Готово: PDF открыт в предпросмотре.';
     } else {
-      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(145deg,#f8fafc,#e2e8f0);font-family:Inter,system-ui,sans-serif;color:#0f172a;padding:16px;box-sizing:border-box}.card{width:min(560px,100%);background:rgba(255,255,255,.86);border:1px solid rgba(203,213,225,.9);border-radius:16px;padding:16px;box-shadow:0 10px 28px rgba(15,23,42,.12)}.title{font-weight:800;font-size:16px;margin:0 0 8px}.text{font-size:13px;line-height:1.5;color:#334155}</style></head><body><div class="card"><p class="title">PDF предпросмотр временно недоступен</p><p class="text">Сервер вернул ошибку при генерации PDF (часто из-за отсутствия <b>template.pdf</b> или библиотеки <b>TCPDF</b>). Вы можете скачать Word-файл сейчас.</p></div></body></html>';
+      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(145deg,#f8fafc,#e2e8f0);font-family:Inter,system-ui,sans-serif;color:#0f172a;padding:16px;box-sizing:border-box}.card{width:min(560px,100%);background:rgba(255,255,255,.86);border:1px solid rgba(203,213,225,.9);border-radius:16px;padding:16px;box-shadow:0 10px 28px rgba(15,23,42,.12)}.title{font-weight:800;font-size:16px;margin:0 0 8px}.text{font-size:13px;line-height:1.5;color:#334155}</style></head><body><div class="card"><p class="title">PDF предпросмотр временно недоступен</p><p class="text">Сервер не смог конвертировать DOCX в PDF. Обычно нужно установить <b>LibreOffice</b> (команда <b>soffice</b> или <b>libreoffice</b>). Сейчас доступно скачивание Word.</p></div></body></html>';
       statusNode.textContent = 'PDF не сформирован на сервере. Доступно скачивание Word.';
     }
   }
@@ -1086,7 +1086,14 @@
       body: formData
     });
     if (!response.ok) {
-      throw new Error('Ошибка генерации ' + normalizedFormat.toUpperCase() + ' (' + response.status + ')');
+      var serverError = '';
+      try {
+        var payload = await response.clone().json();
+        if (payload && typeof payload.error === 'string') {
+          serverError = payload.error.trim();
+        }
+      } catch (e) {}
+      throw new Error(serverError || ('Ошибка генерации ' + normalizedFormat.toUpperCase() + ' (' + response.status + ')'));
     }
     var blob = await response.blob();
     if (!blob || !blob.size) {
