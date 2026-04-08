@@ -9191,6 +9191,31 @@ async function openViewerFile(file, task, options = {}) {
   throw new Error('viewer_open_failed');
 }
 
+async function openFilesViaStandardViewer(files, task = {}, options = {}) {
+  const list = Array.isArray(files) ? files.filter(Boolean) : [];
+  if (!list.length) {
+    throw new Error('Нет файлов для просмотра.');
+  }
+  const firstFile = list[0];
+  const displayName = firstFile.name || 'Документ';
+  showViewerLoader(displayName);
+  docLoadStart(displayName, firstFile.kind || '');
+  docLoadStep('подготовка файлов');
+  renderViewerTabs(list, task || {});
+  docLoadStep('открытие файла');
+  await openViewerFile(firstFile, task || {}, { notify: true, hasMultiple: list.length > 1, ...options });
+  return true;
+}
+
+if (typeof window !== 'undefined') {
+  window.__APPDOSC_OPEN_VIEWER_FILE__ = async function openViewerFromExternalContext(file, task, options = {}) {
+    return openViewerFile(file, task, options);
+  };
+  window.__APPDOSC_OPEN_FILES_VIEWER__ = async function openFilesViewerFromExternalContext(files, task, options = {}) {
+    return openFilesViaStandardViewer(files, task, options);
+  };
+}
+
 function warmupTaskPdfFiles(task, files, skipFile) {
   if (!Array.isArray(files) || files.length < 2) {
     return;
