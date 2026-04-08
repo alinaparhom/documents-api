@@ -1590,7 +1590,7 @@ if ($action === 'generate_document' || $action === 'generate_document_preview') 
             jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);
         }
         if ($isPreviewMode) {
-            $publicDir = __DIR__ . '/tmp-previews';
+            $publicDir = __DIR__ . '/app/tmp';
             if (!is_dir($publicDir)) {
                 @mkdir($publicDir, 0775, true);
             }
@@ -1616,7 +1616,7 @@ if ($action === 'generate_document' || $action === 'generate_document_preview') 
                 }
                 @unlink($tmpFile);
             }
-            jsonResponse(200, ['ok' => true, 'url' => '/tmp-previews/' . $fileName]);
+            jsonResponse(200, ['ok' => true, 'url' => '/app/tmp/' . $fileName]);
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
