@@ -870,7 +870,7 @@ function xmlEscape(string $value): string
 function normalizeDocText(string $value): string
 {
     $normalized = str_replace(["\r\n", "\r"], "\n", $value);
-    return trim($normalized);
+    return rtrim($normalized);
 }
 
 function textToWordParagraphsXml(string $text): string
@@ -881,6 +881,86 @@ function textToWordParagraphsXml(string $text): string
         $chunks[] = '<w:p><w:r><w:t xml:space="preserve">' . xmlEscape($line) . '</w:t></w:r></w:p>';
     }
     return implode('', $chunks);
+}
+
+function replaceMarkerParagraphWithAnswerXml(string $xml, string $marker, string $answerText): array
+{
+    if ($xml === '' || $marker === '') {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $dom = new DOMDocument();
+    $loaded = @$dom->loadXML($xml, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET);
+    if (!$loaded) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+    $paragraphs = $xpath->query('//w:p[.//w:t]');
+    if (!$paragraphs || $paragraphs->length === 0) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $markerLen = mb_strlen($marker, 'UTF-8');
+    $normalizedAnswer = normalizeDocText($answerText);
+    $replaced = false;
+
+    for ($i = $paragraphs->length - 1; $i >= 0; $i -= 1) {
+        $paragraph = $paragraphs->item($i);
+        if (!$paragraph instanceof DOMElement) {
+            continue;
+        }
+        $textNodes = $xpath->query('.//w:t', $paragraph);
+        if (!$textNodes || $textNodes->length === 0) {
+            continue;
+        }
+
+        $paragraphText = '';
+        for ($j = 0; $j < $textNodes->length; $j += 1) {
+            $node = $textNodes->item($j);
+            if ($node instanceof DOMElement) {
+                $paragraphText .= (string)$node->nodeValue;
+            }
+        }
+        $markerPos = mb_strpos($paragraphText, $marker, 0, 'UTF-8');
+        if ($markerPos === false) {
+            continue;
+        }
+
+        $beforeMarker = mb_substr($paragraphText, 0, (int)$markerPos, 'UTF-8');
+        $afterMarker = mb_substr($paragraphText, (int)$markerPos + $markerLen, null, 'UTF-8');
+        $mergedText = $beforeMarker . $normalizedAnswer . $afterMarker;
+        $lines = explode("\n", $mergedText);
+        if (!$lines) {
+            $lines = [''];
+        }
+
+        $pPrNode = $xpath->query('./w:pPr', $paragraph)->item(0);
+        $pPrXml = $pPrNode instanceof DOMNode ? ($dom->saveXML($pPrNode) ?: '') : '';
+        $rPrNode = $xpath->query('.//w:r/w:rPr', $paragraph)->item(0);
+        $rPrXml = $rPrNode instanceof DOMNode ? ($dom->saveXML($rPrNode) ?: '') : '';
+
+        $fragment = $dom->createDocumentFragment();
+        $paragraphXmlChunks = [];
+        foreach ($lines as $line) {
+            $paragraphXmlChunks[] = '<w:p>' . $pPrXml . '<w:r>' . $rPrXml . '<w:t xml:space="preserve">' . xmlEscape($line) . '</w:t></w:r></w:p>';
+        }
+        $fragment->appendXML(implode('', $paragraphXmlChunks));
+
+        $parent = $paragraph->parentNode;
+        if ($parent instanceof DOMNode) {
+            $parent->replaceChild($fragment, $paragraph);
+            $replaced = true;
+        }
+    }
+
+    if (!$replaced) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $newXml = $dom->saveXML($dom->documentElement);
+    return ['xml' => is_string($newXml) ? $newXml : $xml, 'replaced' => true];
 }
 
 function replaceDocxPlaceholders(string $templatePath, string $outputPath, array $replacements): bool
@@ -910,6 +990,14 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
         $updated = $content;
         foreach ($replacements as $search => $replace) {
+            if ($search === '[ОТВЕТ ИИ]') {
+                $markerParagraphResult = replaceMarkerParagraphWithAnswerXml($updated, (string)$search, (string)$replace);
+                if (is_array($markerParagraphResult) && !empty($markerParagraphResult['replaced']) && isset($markerParagraphResult['xml'])) {
+                    $updated = (string)$markerParagraphResult['xml'];
+                    $replacedAny = true;
+                    continue;
+                }
+            }
             $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape($replace));
             if (strpos($updated, $search) !== false) {
                 $updated = str_replace($search, $escaped, $updated);
@@ -927,16 +1015,10 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
     }
 
-    $fallbackAnswer = isset($replacements['[ОТВЕТ_ИИ]'])
-        ? (string)$replacements['[ОТВЕТ_ИИ]']
-        : (isset($replacements['[ОТВЕТ ИИ]']) ? (string)$replacements['[ОТВЕТ ИИ]'] : '');
+    $fallbackAnswer = isset($replacements['[ОТВЕТ ИИ]']) ? (string)$replacements['[ОТВЕТ ИИ]'] : '';
     if (!$replacedAny && $fallbackAnswer !== '') {
-        $docXml = $zip->getFromName('word/document.xml');
-        if (is_string($docXml) && $docXml !== '' && str_contains($docXml, '</w:body>')) {
-            $appendXml = textToWordParagraphsXml($fallbackAnswer);
-            $docXml = str_replace('</w:body>', $appendXml . '</w:body>', $docXml);
-            $zip->addFromString('word/document.xml', $docXml);
-        }
+        $zip->close();
+        return false;
     }
 
     return $zip->close();
@@ -993,7 +1075,12 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
         return ['xml' => $xml, 'replaced' => false];
     }
 
+    $lineBreakToken = '__DOCX_LINE_BREAK__';
+    while (mb_strpos($replace, $lineBreakToken, 0, 'UTF-8') !== false) {
+        $lineBreakToken .= '_X';
+    }
     $replaceText = str_replace(["\r\n", "\r"], "\n", $replace);
+    $replaceText = str_replace("\n", $lineBreakToken, $replaceText);
     for ($m = count($matches) - 1; $m >= 0; $m -= 1) {
         $match = $matches[$m];
         $startInfo = null;
@@ -1047,7 +1134,19 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
     }
 
     $newXml = $dom->saveXML($dom->documentElement);
-    return ['xml' => is_string($newXml) ? $newXml : $xml, 'replaced' => true];
+    if (!is_string($newXml)) {
+        return ['xml' => $xml, 'replaced' => true];
+    }
+
+    if (str_contains($newXml, $lineBreakToken)) {
+        $newXml = str_replace(
+            $lineBreakToken,
+            '</w:t><w:br/><w:t xml:space="preserve">',
+            $newXml
+        );
+    }
+
+    return ['xml' => $newXml, 'replaced' => true];
 }
 
 function createPdfFromText(string $outputPath, string $documentTitle, string $answerText): bool
@@ -1480,12 +1579,11 @@ if ($action === 'generate_document') {
             jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/app/templates/, /js/documents/templates/ или укажите DOCUMENT_TEMPLATE_DIR']);
         }
         if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
-            '[ОТВЕТ_ИИ]' => $answerText,
             '[ОТВЕТ ИИ]' => $answerText,
             '[DOCUMENT_TITLE]' => $documentTitle,
         ])) {
             @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX на основе шаблона']);
+            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
