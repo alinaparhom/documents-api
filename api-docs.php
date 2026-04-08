@@ -943,98 +943,125 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
 
     $xpath = new DOMXPath($dom);
     $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
-    $textNodes = $xpath->query('//w:t');
-    if (!$textNodes || $textNodes->length === 0) {
-        return ['xml' => $xml, 'replaced' => false];
-    }
-
-    $fullText = '';
-    $map = [];
-    for ($i = 0; $i < $textNodes->length; $i += 1) {
-        $node = $textNodes->item($i);
-        if (!$node instanceof DOMElement) {
-            continue;
-        }
-        $value = (string)$node->nodeValue;
-        $start = mb_strlen($fullText, 'UTF-8');
-        $fullText .= $value;
-        $end = mb_strlen($fullText, 'UTF-8');
-        $map[] = ['node' => $node, 'start' => $start, 'end' => $end];
-    }
-    if (!$map || mb_strpos($fullText, $search, 0, 'UTF-8') === false) {
-        return ['xml' => $xml, 'replaced' => false];
-    }
-
-    $matches = [];
-    $cursor = 0;
-    $searchLen = mb_strlen($search, 'UTF-8');
-    while ($cursor <= mb_strlen($fullText, 'UTF-8')) {
-        $index = mb_strpos($fullText, $search, $cursor, 'UTF-8');
-        if ($index === false) {
-            break;
-        }
-        $matches[] = ['start' => $index, 'end' => $index + $searchLen];
-        $cursor = $index + $searchLen;
-    }
-    if (!$matches) {
+    $paragraphNodes = $xpath->query('//w:p');
+    if (!$paragraphNodes || $paragraphNodes->length === 0) {
         return ['xml' => $xml, 'replaced' => false];
     }
 
     $replaceText = str_replace(["\r\n", "\r"], "\n", $replace);
-    for ($m = count($matches) - 1; $m >= 0; $m -= 1) {
-        $match = $matches[$m];
-        $startInfo = null;
-        $endInfo = null;
-        foreach ($map as $item) {
-            if ($startInfo === null && $match['start'] >= $item['start'] && $match['start'] <= $item['end']) {
-                $startInfo = $item;
-            }
-            if ($endInfo === null && $match['end'] >= $item['start'] && $match['end'] <= $item['end']) {
-                $endInfo = $item;
-            }
-            if ($startInfo && $endInfo) {
-                break;
-            }
-        }
-        if (!$startInfo || !$endInfo) {
-            continue;
-        }
-        $startNode = $startInfo['node'];
-        $endNode = $endInfo['node'];
-        $startOffset = max(0, $match['start'] - $startInfo['start']);
-        $endOffset = max(0, $match['end'] - $endInfo['start']);
+    $replacedAny = false;
 
-        $startValue = (string)$startNode->nodeValue;
-        $endValue = (string)$endNode->nodeValue;
-        $startPrefix = mb_substr($startValue, 0, $startOffset, 'UTF-8');
-        $endSuffix = mb_substr($endValue, $endOffset, null, 'UTF-8');
+    $applyNodeValue = static function (DOMElement $node, string $value): void {
+        $node->nodeValue = $value;
+        $needsPreserve = preg_match('/^\s|\s$|\s{2,}|\n/u', $value) === 1;
+        if ($needsPreserve) {
+            $node->setAttribute('xml:space', 'preserve');
+        } else {
+            $node->removeAttribute('xml:space');
+        }
+    };
 
-        if ($startNode->isSameNode($endNode)) {
-            $startNode->nodeValue = $startPrefix . $replaceText . $endSuffix;
+    for ($p = 0; $p < $paragraphNodes->length; $p += 1) {
+        $paragraph = $paragraphNodes->item($p);
+        if (!$paragraph instanceof DOMElement) {
             continue;
         }
 
-        $startNode->nodeValue = $startPrefix . $replaceText;
-        $passedStart = false;
-        foreach ($map as $item) {
-            $node = $item['node'];
-            if ($node->isSameNode($startNode)) {
-                $passedStart = true;
+        $textNodes = $xpath->query('.//w:t', $paragraph);
+        if (!$textNodes || $textNodes->length === 0) {
+            continue;
+        }
+
+        $fullText = '';
+        $map = [];
+        for ($i = 0; $i < $textNodes->length; $i += 1) {
+            $node = $textNodes->item($i);
+            if (!$node instanceof DOMElement) {
                 continue;
             }
-            if (!$passedStart) {
-                continue;
-            }
-            if ($node->isSameNode($endNode)) {
-                $node->nodeValue = $endSuffix;
+            $value = (string)$node->nodeValue;
+            $start = mb_strlen($fullText, 'UTF-8');
+            $fullText .= $value;
+            $end = mb_strlen($fullText, 'UTF-8');
+            $map[] = ['node' => $node, 'start' => $start, 'end' => $end];
+        }
+        if (!$map || mb_strpos($fullText, $search, 0, 'UTF-8') === false) {
+            continue;
+        }
+
+        $matches = [];
+        $cursor = 0;
+        $searchLen = mb_strlen($search, 'UTF-8');
+        while ($cursor <= mb_strlen($fullText, 'UTF-8')) {
+            $index = mb_strpos($fullText, $search, $cursor, 'UTF-8');
+            if ($index === false) {
                 break;
             }
-            $node->nodeValue = '';
+            $matches[] = ['start' => $index, 'end' => $index + $searchLen];
+            $cursor = $index + $searchLen;
         }
+        if (!$matches) {
+            continue;
+        }
+
+        for ($m = count($matches) - 1; $m >= 0; $m -= 1) {
+            $match = $matches[$m];
+            $startInfo = null;
+            $endInfo = null;
+            foreach ($map as $item) {
+                if ($startInfo === null && $match['start'] >= $item['start'] && $match['start'] <= $item['end']) {
+                    $startInfo = $item;
+                }
+                if ($endInfo === null && $match['end'] >= $item['start'] && $match['end'] <= $item['end']) {
+                    $endInfo = $item;
+                }
+                if ($startInfo && $endInfo) {
+                    break;
+                }
+            }
+            if (!$startInfo || !$endInfo) {
+                continue;
+            }
+
+            $startNode = $startInfo['node'];
+            $endNode = $endInfo['node'];
+            $startOffset = max(0, $match['start'] - $startInfo['start']);
+            $endOffset = max(0, $match['end'] - $endInfo['start']);
+
+            $startValue = (string)$startNode->nodeValue;
+            $endValue = (string)$endNode->nodeValue;
+            $startPrefix = mb_substr($startValue, 0, $startOffset, 'UTF-8');
+            $endSuffix = mb_substr($endValue, $endOffset, null, 'UTF-8');
+
+            if ($startNode->isSameNode($endNode)) {
+                $applyNodeValue($startNode, $startPrefix . $replaceText . $endSuffix);
+                $replacedAny = true;
+                continue;
+            }
+
+            $applyNodeValue($startNode, $startPrefix . $replaceText);
+            $passedStart = false;
+            foreach ($map as $item) {
+                $node = $item['node'];
+                if ($node->isSameNode($startNode)) {
+                    $passedStart = true;
+                    continue;
+                }
+                if (!$passedStart) {
+                    continue;
+                }
+                if ($node->isSameNode($endNode)) {
+                    $applyNodeValue($node, $endSuffix);
+                    break;
+                }
+                $applyNodeValue($node, '');
+            }
+        }
+        $replacedAny = true;
     }
 
     $newXml = $dom->saveXML($dom->documentElement);
-    return ['xml' => is_string($newXml) ? $newXml : $xml, 'replaced' => true];
+    return ['xml' => is_string($newXml) ? $newXml : $xml, 'replaced' => $replacedAny];
 }
 
 function createPdfFromText(string $outputPath, string $documentTitle, string $answerText): bool
