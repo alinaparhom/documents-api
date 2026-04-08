@@ -848,11 +848,14 @@
 
   function replaceAiMarkerInDocument(replacementText, markerText) {
     var marker = String(markerText || '[ОТВЕТ ИИ]');
+    var markerAliases = [marker, '[ОТВЕТ_ИИ]', '[ОВТЕТ ИИ]', '[ОВТЕТ_ИИ]'];
     var replacement = String(replacementText || 'Сгенерированный ответ ИИ — здесь может быть любой контент');
     var containers = collectTargetContainers();
     var replacedCount = 0;
     containers.forEach(function(container) {
-      replacedCount += replaceMarkerInContainer(container, marker, replacement);
+      markerAliases.forEach(function(alias) {
+        replacedCount += replaceMarkerInContainer(container, alias, replacement);
+      });
     });
     return replacedCount;
   }
@@ -947,7 +950,7 @@
       renderError('');
       doneButton.disabled = true;
       doneButton.textContent = 'Генерирую...';
-      replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      replaceAiMarkerInDocument(aiText);
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
       generateDocxFromTemplateViaApi(aiText)
         .then(function(blob) {
