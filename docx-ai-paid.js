@@ -167,7 +167,7 @@
     }
     var style = document.createElement('style');
     style.id = 'documents-vip-ai-modal-style';
-    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(8px);z-index:4100;display:flex;align-items:center;justify-content:center;padding:10px}.documents-vip-ai__panel{width:min(860px,100%);max-height:calc(100dvh - 20px);overflow:auto;border-radius:24px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(241,245,249,.9));border:1px solid rgba(255,255,255,.95);box-shadow:0 24px 56px rgba(15,23,42,.24)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9)}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:110px;overflow:auto}.documents-vip-ai__chat{height:min(44dvh,360px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__input{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;max-height:110px;padding:9px;font-size:13px}.documents-vip-ai__send{border:none;background:linear-gradient(135deg,#38bdf8,#14b8a6);color:#fff;padding:12px 14px;border-radius:12px;font-size:14px;font-weight:700}.documents-vip-ai__send:disabled{opacity:.6}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{max-height:100dvh;border-radius:0}.documents-vip-ai__composer{flex-direction:column}}';
+    style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:linear-gradient(180deg,rgba(226,232,240,.34),rgba(148,163,184,.28));backdrop-filter:blur(10px);z-index:4100;display:flex;align-items:stretch;justify-content:center;padding:4px}.documents-vip-ai__panel{width:100%;height:100%;max-height:none;overflow:auto;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.92);box-shadow:0 18px 44px rgba(15,23,42,.16)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9);position:sticky;top:0;background:rgba(255,255,255,.78);backdrop-filter:blur(8px);z-index:2}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:20dvh;overflow:auto}.documents-vip-ai__chat{height:min(50dvh,520px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__composer{display:flex;gap:8px}.documents-vip-ai__select{flex:1;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{border-radius:0}.documents-vip-ai__body{padding:12px}.documents-vip-ai__chat{height:52dvh}.documents-vip-ai__composer{flex-direction:column}}';
     document.head.appendChild(style);
   }
 
@@ -298,7 +298,9 @@
     var name = String(file && file.name || 'document').toLowerCase();
     var isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     var isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
-    var isText = mime.indexOf('text/') === 0 || /\.(txt|md|csv|json|xml|html?)$/i.test(name);
+    var isTextMime = mime.indexOf('text/') === 0 || mime === 'application/json' || mime === 'application/xml' || mime === 'application/x-yaml';
+    var isTextExt = /\.(txt|text|md|markdown|csv|tsv|json|xml|ya?ml|ini|cfg|conf|log|rtf|html?)$/i.test(name);
+    var isText = isTextMime || isTextExt;
     var isDocx = mime.indexOf('wordprocessingml.document') >= 0 || /\.docx$/i.test(name);
     var isXlsx = mime.indexOf('spreadsheetml') >= 0 || /\.xlsx$/i.test(name);
 
@@ -372,7 +374,7 @@
         });
       });
     }
-    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX'));
+    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, текстовые файлы, DOCX, XLSX'));
   }
 
   function loadEntryAsFile(entry) {
@@ -390,15 +392,29 @@
   }
 
   function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus) {
+    var entries = Array.isArray(selectedEntries) ? selectedEntries : [];
     var styleMeta = resolveVipStyle(selectedStyle);
     var preparedPrompt = [promptText, styleMeta && styleMeta.prompt ? styleMeta.prompt : '', VISION_QUALITY_DIRECTIVE, 'Верни готовый ответ на письмо. Не пиши анализ.']
       .filter(Boolean)
       .join('\n\n');
     var images = [];
     var extractedTexts = [];
-    return selectedEntries.reduce(function(chain, entry, index) {
+    var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+
+    function postWithFallback(createFormData, endpointIndex) {
+      if (endpointIndex >= paidEndpoints.length) return Promise.reject(new Error('Не удалось подключиться к VIP API.'));
+      return fetch(paidEndpoints[endpointIndex], { method: 'POST', body: createFormData(), credentials: 'same-origin' })
+        .then(function(response) {
+          if ((response.status === 404 || response.status === 405) && endpointIndex < paidEndpoints.length - 1) {
+            return postWithFallback(createFormData, endpointIndex + 1);
+          }
+          return response.json().then(function(payload) { return { response: response, payload: payload }; });
+        });
+    }
+
+    return entries.reduce(function(chain, entry, index) {
       return chain.then(function() {
-        if (updateStatus) updateStatus('Vision: готовлю файл ' + (index + 1) + '/' + selectedEntries.length + '...');
+        if (updateStatus) updateStatus('Vision: готовлю файл ' + (index + 1) + '/' + entries.length + '...');
         return loadEntryAsFile(entry).then(function(file) {
           return buildVisionPayloadFromFile(file, updateStatus).then(function(prepared) {
             if (prepared.kind === 'multimodal') {
@@ -410,21 +426,32 @@
         });
       });
     }, Promise.resolve()).then(function() {
-      if (!images.length) throw new Error('Vision режим требует изображения или PDF.');
+      if (!images.length) {
+        if (!extractedTexts.length) {
+          throw new Error('Vision режим поддерживает изображения, PDF, DOCX, XLSX и текстовые документы.');
+        }
+        if (updateStatus) updateStatus('Vision: отправляю извлечённый текст в ИИ...');
+        return postWithFallback(function() {
+          var formData = new FormData();
+          formData.append('action', 'generate_response');
+          formData.append('mode', 'paid');
+          formData.append('vision_mode', '1');
+          formData.append('prompt', preparedPrompt);
+          formData.append('extractedTexts', JSON.stringify(extractedTexts));
+          return formData;
+        }, 0).then(function(result) {
+          if (!result.response || !result.response.ok || !result.payload || result.payload.ok !== true) {
+            throw new Error((result.payload && result.payload.error) || 'Не удалось обработать текстовые документы через Vision pipeline.');
+          }
+          var textOnlyAnswer = String(result.payload.response || result.payload.summary || '').trim();
+          if (!textOnlyAnswer) {
+            throw new Error('ИИ не вернул ответ для текстовых документов.');
+          }
+          return { ok: true, response: textOnlyAnswer, mode: 'vision-text', model: result.payload.model || '' };
+        });
+      }
       var batches = chunkItems(images, VISION_BATCH_SIZE);
       var partialAnswers = [];
-      var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
-
-      function postWithFallback(createFormData, endpointIndex) {
-        if (endpointIndex >= paidEndpoints.length) return Promise.reject(new Error('Не удалось подключиться к VIP API.'));
-        return fetch(paidEndpoints[endpointIndex], { method: 'POST', body: createFormData(), credentials: 'same-origin' })
-          .then(function(response) {
-            if ((response.status === 404 || response.status === 405) && endpointIndex < paidEndpoints.length - 1) {
-              return postWithFallback(createFormData, endpointIndex + 1);
-            }
-            return response.json().then(function(payload) { return { response: response, payload: payload }; });
-          });
-      }
 
       return batches.reduce(function(chain, batch, batchIndex) {
         return chain.then(function() {
@@ -617,15 +644,14 @@
     var createElement = options.createElement;
     var closeModal = options.closeModal;
     var escapeHtmlText = options.escapeHtmlText;
-    var handleResponse = options.handleResponse;
-    if (!createElement || !closeModal || !escapeHtmlText || !handleResponse) {
+    if (!createElement || !closeModal || !escapeHtmlText) {
       throw new Error('Недостаточно зависимостей для VIP ИИ модуля.');
     }
 
     var payload = options.payload || {};
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><button class="documents-vip-ai__send" type="button" data-vision-toggle>👁 Vision: OFF</button><select class="documents-vip-ai__input" data-style></select><textarea class="documents-vip-ai__input" data-prompt placeholder="Напишите запрос для VIP ИИ"></textarea><button class="documents-vip-ai__send" type="button" data-send>Отправить</button></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -633,9 +659,6 @@
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
     var styleNode = panel.querySelector('[data-style]');
-    var visionToggle = panel.querySelector('[data-vision-toggle]');
-    var inputNode = panel.querySelector('[data-prompt]');
-    var sendButton = panel.querySelector('[data-send]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
     var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
@@ -643,22 +666,14 @@
     var pendingEntries = pending.map(function(item, index) { return { key: 'pending_' + index, file: item, source: 'pending' }; });
     var fileEntries = linkedEntries.concat(pendingEntries);
     var selectedFiles = {};
-    var visionMode = false;
     fileEntries.forEach(function(entry) {
       selectedFiles[entry.key] = true;
     });
     if (styleNode) {
-      styleNode.innerHTML = VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
+      styleNode.innerHTML = '<option value="" selected>Выберите режим</option>' + VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
         return '<option value="' + escapeHtmlText(item.value) + '">' + escapeHtmlText('Стиль: ' + item.label) + '</option>';
       }).join('');
     }
-    if (visionToggle) {
-      visionToggle.addEventListener('click', function() {
-        visionMode = !visionMode;
-        visionToggle.textContent = visionMode ? '👁 Vision: ON' : '👁 Vision: OFF';
-      });
-    }
-
     if (!fileEntries.length) {
       filesNode.innerHTML = '<em>Нет вложений</em>';
     } else {
@@ -676,11 +691,6 @@
     }
 
     closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
-    overlay.addEventListener('click', function(event) {
-      if (event.target === overlay) {
-        closeModal(overlay);
-      }
-    });
 
     var chatHistory = [];
     function pushChat(role, text) {
@@ -689,67 +699,34 @@
       chatNode.scrollTop = chatNode.scrollHeight;
     }
 
-    pushChat('assistant', 'Готов. Я учту все приложенные файлы (включая сканы) и подготовлю решение.');
+    pushChat('assistant', 'Готов. Выберите режим в выпадающем списке, и после этого запрос отправится автоматически.');
 
-    sendButton.addEventListener('click', function() {
-      var promptText = String(inputNode.value || '').trim();
-      var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
-      if (!promptText) {
+    var isSending = false;
+
+    function sendByCurrentStyle() {
+      if (isSending) {
         return;
       }
-      sendButton.disabled = true;
-      pushChat('user', promptText);
+      if (!styleNode || !String(styleNode.value || '').trim()) {
+        pushChat('assistant', 'Пожалуйста, выберите режим.');
+        return;
+      }
+      var promptText = 'Подготовь готовый ответ по выбранным файлам в деловом стиле.';
+      var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
+      isSending = true;
+      pushChat('user', 'Стиль: ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный') + '. Подготовь готовый ответ.');
       pushChat('assistant', '⏳ Обрабатываю запрос...');
       metaNode.innerHTML = '';
       var startedAt = Date.now();
-      var requestContext = {};
-      var sourceContext = payload.context || {};
-      Object.keys(sourceContext).forEach(function(key) {
-        requestContext[key] = sourceContext[key];
-      });
-      var selectedLinked = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
-      var selectedPending = pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }).map(function(entry) { return entry.file; });
       var selectedEntryObjects = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; })
         .concat(pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }));
-      requestContext.attachedFiles = []
-        .concat(selectedLinked.map(function(file) {
-          return {
-            name: file && file.name ? file.name : '',
-            url: resolveLinkedFileUrl(file),
-            size: file && file.size ? file.size : 0,
-            type: file && file.type ? file.type : ''
-          };
-        }))
-        .concat(selectedPending.map(function(file) {
-          return { name: file.name || '', size: file.size || 0, type: file.type || '' };
-        }));
       chatHistory.push({ role: 'user', text: promptText, ts: Date.now() });
-      requestContext.chatHistory = chatHistory.slice(-8);
 
       Promise.resolve()
         .then(function() {
-          if (visionMode) {
-            return requestVipVisionResponse(promptText, selectedEntryObjects, selectedStyle, function(message) {
-              metaNode.innerHTML = '<span class="documents-vip-ai__chip">' + escapeHtmlText(message) + '</span>';
-            });
-          }
-          var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
-          function tryEndpoint(index) {
-            if (index >= paidEndpoints.length) {
-              throw new Error('Не удалось подключиться к VIP API. Проверьте endpoint api-groq-paid.php.');
-            }
-            return buildVipRequestFormData(payload, promptText, selectedLinked, selectedPending, requestContext, selectedStyle)
-              .then(function(formData) {
-                return fetch(paidEndpoints[index], { method: 'POST', body: formData, credentials: 'same-origin' });
-              })
-              .then(function(response) {
-                if ((response.status === 404 || response.status === 405) && index < paidEndpoints.length - 1) {
-                  return tryEndpoint(index + 1);
-                }
-                return response;
-              });
-          }
-          return tryEndpoint(0).then(handleResponse);
+          return requestVipVisionResponse(promptText, selectedEntryObjects, selectedStyle, function(message) {
+            metaNode.innerHTML = '<span class="documents-vip-ai__chip">' + escapeHtmlText(message) + '</span>';
+          });
         })
         .then(function(data) {
           var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
@@ -757,18 +734,268 @@
           chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
           var elapsed = Date.now() - startedAt;
           var tokens = data && data.tokensUsed ? data.tokensUsed : '—';
-          var mode = data && data.mode ? String(data.mode) : (visionMode ? 'vision' : 'paid');
+          var mode = data && data.mode ? String(data.mode) : 'vision';
           metaNode.innerHTML = '<span class="documents-vip-ai__chip">Режим: ' + escapeHtmlText(mode) + '</span><span class="documents-vip-ai__chip">Модель: ' + escapeHtmlText(data && data.model ? data.model : '—') + '</span><span class="documents-vip-ai__chip">Время: ' + elapsed + ' мс</span><span class="documents-vip-ai__chip">Токены: ' + escapeHtmlText(String(tokens)) + '</span>';
-          inputNode.value = '';
         })
         .catch(function(error) {
           pushChat('assistant', 'Ошибка: ' + (error && error.message ? error.message : 'Неизвестная ошибка'));
         })
         .finally(function() {
-          sendButton.disabled = false;
+          isSending = false;
         });
+    }
+
+    if (styleNode) {
+      styleNode.addEventListener('change', function() {
+        if (!String(styleNode.value || '').trim()) {
+          pushChat('assistant', 'Выберите режим.');
+          return;
+        }
+        sendByCurrentStyle();
+      });
+    }
+  }
+
+  function collectTargetContainers() {
+    var selectors = [
+      '[contenteditable="true"]',
+      '.docs-editor__content',
+      '.docx-editor',
+      '.document-editor',
+      '.js-docx-editor',
+      '[data-docx-editor]',
+      '[data-template-container]'
+    ];
+    var seen = [];
+    selectors.forEach(function(selector) {
+      var nodes = document.querySelectorAll(selector);
+      Array.prototype.forEach.call(nodes, function(node) {
+        if (node && seen.indexOf(node) === -1) {
+          seen.push(node);
+        }
+      });
+    });
+    if (!seen.length && document.body) {
+      seen.push(document.body);
+    }
+    return seen;
+  }
+
+  function replaceMarkerInContainer(container, markerText, replacementText) {
+    if (!container || !markerText) return 0;
+    var textNodes = [];
+    var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node) {
+        if (!node || !node.nodeValue || node.nodeValue.indexOf(markerText) === -1 && node.nodeValue.trim() === '') {
+          return NodeFilter.FILTER_SKIP;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var currentNode = walker.nextNode();
+    while (currentNode) {
+      textNodes.push(currentNode);
+      currentNode = walker.nextNode();
+    }
+    if (!textNodes.length) return 0;
+
+    var fullText = '';
+    var map = [];
+    textNodes.forEach(function(node) {
+      var start = fullText.length;
+      var value = String(node.nodeValue || '');
+      fullText += value;
+      map.push({ node: node, start: start, end: fullText.length });
+    });
+
+    var matches = [];
+    var cursor = 0;
+    while (cursor < fullText.length) {
+      var index = fullText.indexOf(markerText, cursor);
+      if (index < 0) break;
+      matches.push({ start: index, end: index + markerText.length });
+      cursor = index + markerText.length;
+    }
+    if (!matches.length) return 0;
+
+    function resolvePosition(position) {
+      for (var i = 0; i < map.length; i += 1) {
+        var item = map[i];
+        if (position >= item.start && position <= item.end) {
+          return { node: item.node, offset: Math.max(0, position - item.start) };
+        }
+      }
+      var last = map[map.length - 1];
+      return { node: last.node, offset: String(last.node.nodeValue || '').length };
+    }
+
+    for (var m = matches.length - 1; m >= 0; m -= 1) {
+      var match = matches[m];
+      var startPos = resolvePosition(match.start);
+      var endPos = resolvePosition(match.end);
+      var range = document.createRange();
+      range.setStart(startPos.node, startPos.offset);
+      range.setEnd(endPos.node, endPos.offset);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(replacementText));
+      range.detach();
+    }
+    return matches.length;
+  }
+
+  function replaceAiMarkerInDocument(replacementText, markerText) {
+    var marker = String(markerText || '[ОТВЕТ ИИ]');
+    var replacement = String(replacementText || 'Сгенерированный ответ ИИ — здесь может быть любой контент');
+    var containers = collectTargetContainers();
+    var replacedCount = 0;
+    containers.forEach(function(container) {
+      replacedCount += replaceMarkerInContainer(container, marker, replacement);
+    });
+    return replacedCount;
+  }
+
+  function ensureTemplateInsertButton() {
+    if (typeof document === 'undefined' || !document.body) return;
+    if (document.getElementById('docx-template-insert-btn')) return;
+
+    var style = document.createElement('style');
+    style.id = 'docx-template-insert-style';
+    style.textContent = '#docx-template-insert-btn{position:fixed;right:12px;bottom:12px;z-index:4200;border:1px solid rgba(255,255,255,.85);background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(241,245,249,.88));backdrop-filter:blur(10px);color:#0f172a;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.14);max-width:calc(100vw - 24px)}#docx-template-insert-btn:active{transform:translateY(1px)}@media (max-width:768px){#docx-template-insert-btn{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;padding:12px 14px;font-size:14px;border-radius:14px}}';
+    document.head.appendChild(style);
+
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'docx-template-insert-btn';
+    button.textContent = 'Шаблон';
+    button.setAttribute('aria-label', 'Вставить текст в маркер [ОТВЕТ ИИ]');
+    button.addEventListener('click', function() {
+      var aiText = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
+      replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      openTemplateFormatChooser(aiText, button);
+    });
+    document.body.appendChild(button);
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('blob_to_dataurl_failed')); };
+      reader.readAsDataURL(blob);
     });
   }
 
+  function openDocxRenderPreviewPage(blob) {
+    var previewWindow = window.open('', '_blank');
+    if (!previewWindow) {
+      throw new Error('preview_window_blocked');
+    }
+    blobToDataUrl(blob).then(function(dataUrl) {
+      var html = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Превью DOCX</title><style>body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(160deg,#e2e8f0,#f8fafc);color:#0f172a} .top{position:sticky;top:0;display:flex;gap:8px;padding:10px;background:rgba(255,255,255,.75);backdrop-filter:blur(8px);border-bottom:1px solid rgba(203,213,225,.9)} .btn{border:1px solid rgba(148,163,184,.6);background:#fff;border-radius:10px;padding:10px 12px;font-weight:700} .btn.primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe} #preview{padding:12px;max-width:980px;margin:0 auto} .docx-wrapper{background:#fff;border-radius:14px;box-shadow:0 10px 26px rgba(15,23,42,.16);padding:12px;min-height:120px} .err{margin:12px auto;max-width:980px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:12px;padding:10px 12px;font-size:13px}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div class=\"top\"><button id=\"download\" class=\"btn primary\">Скачать</button><button id=\"close\" class=\"btn\">Закрыть</button></div><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(renderer&&typeof renderer.renderAsync===\"function\"){await renderer.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:false});}else{throw new Error(\"docx_preview_not_loaded\");}document.getElementById(\"download\").addEventListener(\"click\",function(){var a=document.createElement(\"a\");a.href=dataUrl;a.download=\"template-answer.docx\";document.body.appendChild(a);a.click();document.body.removeChild(a);});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();document.getElementById(\"close\").addEventListener(\"click\",function(){window.close();});<\/script></body></html>';
+      previewWindow.document.open();
+      previewWindow.document.write(html);
+      previewWindow.document.close();
+    }).catch(function() {
+      previewWindow.document.body.innerHTML = '<div style="padding:16px;font-family:Arial,sans-serif">Не удалось подготовить превью DOCX.</div>';
+    });
+  }
+
+  function openPdfRenderPreviewPage(blob) {
+    var previewWindow = window.open('', '_blank');
+    if (!previewWindow) {
+      throw new Error('preview_window_blocked');
+    }
+    var pdfBlobUrl = URL.createObjectURL(blob);
+    var html = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Превью PDF</title><style>body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(160deg,#e2e8f0,#f8fafc);color:#0f172a}.top{position:sticky;top:0;display:flex;gap:8px;padding:10px;background:rgba(255,255,255,.75);backdrop-filter:blur(8px);border-bottom:1px solid rgba(203,213,225,.9);z-index:2}.btn{border:1px solid rgba(148,163,184,.6);background:#fff;border-radius:10px;padding:10px 12px;font-weight:700}.btn.primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}.pdf{padding:12px;max-width:980px;margin:0 auto}.page{background:#fff;border-radius:14px;box-shadow:0 10px 26px rgba(15,23,42,.16);padding:8px;margin-bottom:10px}.page canvas{width:100%;height:auto}.err{margin:12px auto;max-width:980px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:12px;padding:10px 12px;font-size:13px;display:none}</style><script src=\"https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js\"><\/script></head><body><div class=\"top\"><button id=\"download\" class=\"btn primary\">Скачать</button><button id=\"close\" class=\"btn\">Закрыть</button></div><div id=\"pdf\" class=\"pdf\"></div><div id=\"error\" class=\"err\"></div><script>(async function(){try{var src=' + JSON.stringify(pdfBlobUrl) + ';if(!window.pdfjsLib||typeof window.pdfjsLib.getDocument!==\"function\"){throw new Error(\"pdfjs_not_loaded\");}window.pdfjsLib.GlobalWorkerOptions.workerSrc=\"https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js\";var loadingTask=window.pdfjsLib.getDocument(src);var doc=await loadingTask.promise;var root=document.getElementById(\"pdf\");for(var i=1;i<=doc.numPages;i+=1){var page=await doc.getPage(i);var viewport=page.getViewport({scale:1});var wrap=document.createElement(\"div\");wrap.className=\"page\";var canvas=document.createElement(\"canvas\");var width=Math.max(320,Math.min(window.innerWidth-40,900));var scale=width/Math.max(1,viewport.width);var v=page.getViewport({scale:scale});canvas.width=Math.floor(v.width);canvas.height=Math.floor(v.height);wrap.appendChild(canvas);root.appendChild(wrap);await page.render({canvasContext:canvas.getContext(\"2d\"),viewport:v}).promise;}}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить PDF: \"+(e&&e.message?e.message:\"unknown\");}})();document.getElementById(\"download\").addEventListener(\"click\",function(){var a=document.createElement(\"a\");a.href=' + JSON.stringify(pdfBlobUrl) + ';a.download=\"template-answer.pdf\";document.body.appendChild(a);a.click();document.body.removeChild(a);});document.getElementById(\"close\").addEventListener(\"click\",function(){window.close();});window.addEventListener(\"beforeunload\",function(){try{URL.revokeObjectURL(' + JSON.stringify(pdfBlobUrl) + ');}catch(e){}});<\/script></body></html>';
+    previewWindow.document.open();
+    previewWindow.document.write(html);
+    previewWindow.document.close();
+  }
+
+  function openTemplateFormatChooser(aiText, sourceButton) {
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:4300;background:rgba(15,23,42,.34);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;padding:12px';
+    var panel = document.createElement('div');
+    panel.style.cssText = 'width:min(520px,100%);background:linear-gradient(165deg,rgba(255,255,255,.98),rgba(248,250,252,.95));border:1px solid rgba(255,255,255,.96);border-radius:18px;padding:14px;box-shadow:0 18px 36px rgba(15,23,42,.2);display:flex;flex-direction:column;gap:10px';
+    panel.innerHTML = '<div style="font-weight:700;color:#0f172a;font-size:15px">Как открыть шаблон?</div><div style="font-size:13px;color:#475569">Выберите формат просмотра</div>';
+    var row = document.createElement('div');
+    row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px';
+    var docxBtn = document.createElement('button');
+    docxBtn.type = 'button';
+    docxBtn.textContent = 'Смотреть DOCX';
+    docxBtn.style.cssText = 'border:1px solid rgba(59,130,246,.35);background:rgba(219,234,254,.85);color:#1d4ed8;border-radius:12px;padding:11px 10px;font-weight:700';
+    var pdfBtn = document.createElement('button');
+    pdfBtn.type = 'button';
+    pdfBtn.textContent = 'Смотреть PDF';
+    pdfBtn.style.cssText = 'border:1px solid rgba(148,163,184,.4);background:#fff;color:#0f172a;border-radius:12px;padding:11px 10px;font-weight:700';
+    row.appendChild(docxBtn);
+    row.appendChild(pdfBtn);
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = 'Отмена';
+    closeBtn.style.cssText = 'border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.85);color:#334155;border-radius:12px;padding:10px 12px;font-weight:600';
+    panel.appendChild(row);
+    panel.appendChild(closeBtn);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    function closeChooser() {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+
+    async function openFormat(format) {
+      sourceButton.disabled = true;
+      sourceButton.textContent = 'Подготовка...';
+      closeChooser();
+      try {
+        var blob = await generateTemplateFromApi(aiText, format);
+        if (!blob) throw new Error('empty_blob');
+        if (format === 'pdf') openPdfRenderPreviewPage(blob);
+        else openDocxRenderPreviewPage(blob);
+      } catch (error) {
+        sourceButton.textContent = 'Ошибка превью';
+      } finally {
+        sourceButton.disabled = false;
+        setTimeout(function() { sourceButton.textContent = 'Шаблон'; }, 1200);
+      }
+    }
+
+    docxBtn.addEventListener('click', function() { openFormat('docx'); });
+    pdfBtn.addEventListener('click', function() { openFormat('pdf'); });
+    closeBtn.addEventListener('click', closeChooser);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) closeChooser();
+    });
+  }
+
+  async function generateTemplateFromApi(answerText, format) {
+    var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var formData = new FormData();
+    formData.append('action', 'generate_document');
+    formData.append('format', format === 'pdf' ? 'pdf' : 'docx');
+    formData.append('answer', String(answerText || '').trim());
+    formData.append('documentTitle', 'Ответ ИИ');
+    var response = await fetch(apiUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    });
+    if (!response.ok) {
+      throw new Error('Ошибка генерации шаблона (' + response.status + ')');
+    }
+    var blob = await response.blob();
+    if (!blob || !blob.size) {
+      return null;
+    }
+    return blob;
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ensureTemplateInsertButton);
+  } else {
+    ensureTemplateInsertButton();
+  }
+
   window.openDocumentsVipAiPaidModal = openDocumentsVipAiPaidModal;
+  window.replaceAiMarkerInDocument = replaceAiMarkerInDocument;
 })();
