@@ -1072,9 +1072,28 @@
   async function generateTemplateFilesViaApi(answerText) {
     var docxBlob = await generateTemplateFileViaApi(answerText, 'docx');
     if (!docxBlob) throw new Error('docx_not_generated');
-    var pdfBlob = await generateTemplateFileViaApi(answerText, 'pdf');
+    var pdfBlob = await generatePdfFromDocxViaApi(docxBlob);
     if (!pdfBlob) throw new Error('pdf_not_generated');
     return { docxBlob: docxBlob, pdfBlob: pdfBlob };
+  }
+
+  async function generatePdfFromDocxViaApi(docxBlob) {
+    if (!docxBlob) throw new Error('docx_blob_missing');
+    var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var formData = new FormData();
+    formData.append('action', 'convert_docx_to_pdf');
+    formData.append('file', new File([docxBlob], 'template-answer.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+    var response = await fetch(apiUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    });
+    if (!response.ok) {
+      throw new Error('Ошибка конвертации DOCX→PDF (' + response.status + ')');
+    }
+    var pdfBlob = await response.blob();
+    if (!pdfBlob || !pdfBlob.size) return null;
+    return pdfBlob;
   }
 
   if (document.readyState === 'loading') {

@@ -1173,6 +1173,47 @@ function createPdfFromText(string $outputPath, string $documentTitle, string $an
     return is_file($outputPath) && filesize($outputPath) > 0;
 }
 
+function convertDocxFileToPdf(string $docxPath, string $outputPath, string $documentTitle = ''): bool
+{
+    if ($docxPath === '' || !is_file($docxPath) || $outputPath === '') {
+        return false;
+    }
+
+    $converter = '';
+    if (shellCommandExists('soffice')) {
+        $converter = 'soffice';
+    } elseif (shellCommandExists('libreoffice')) {
+        $converter = 'libreoffice';
+    }
+
+    if ($converter !== '') {
+        $workDir = dirname($outputPath);
+        $inputPath = $workDir . '/source.docx';
+        if (@copy($docxPath, $inputPath)) {
+            $cmd = $converter . ' --headless --convert-to pdf --outdir '
+                . escapeshellarg($workDir) . ' ' . escapeshellarg($inputPath) . ' 2>/dev/null';
+            @exec($cmd, $out, $code);
+            $convertedPath = $workDir . '/source.pdf';
+            if ($code === 0 && is_file($convertedPath) && filesize($convertedPath) > 0) {
+                @rename($convertedPath, $outputPath);
+                @unlink($inputPath);
+                return is_file($outputPath) && filesize($outputPath) > 0;
+            }
+            @unlink($convertedPath);
+            @unlink($inputPath);
+        }
+    }
+
+    if (is_file(__DIR__ . '/vendor/autoload.php')) {
+        require_once __DIR__ . '/vendor/autoload.php';
+    }
+    $text = extractDocxText($docxPath);
+    if ($text === '') {
+        return false;
+    }
+    return createPdfFromText($outputPath, $documentTitle, $text);
+}
+
 function htmlToPlainText(string $html): string
 {
     $text = trim(strip_tags($html));
@@ -1532,7 +1573,7 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html' && $action !== 'convert_docx_to_pdf') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
 }
@@ -1672,6 +1713,36 @@ if ($action === 'generate_from_html') {
     header('Content-Length: ' . filesize($tmpFile));
     readfile($tmpFile);
     @unlink($tmpFile);
+    exit;
+}
+
+if ($action === 'convert_docx_to_pdf') {
+    $docxFiles = normalizeUploadedFiles('file');
+    if (!$docxFiles) {
+        jsonResponse(400, ['ok' => false, 'error' => 'DOCX файл не передан']);
+    }
+    $docxFile = $docxFiles[0];
+    $extension = detectFileExtension($docxFile);
+    if ($extension !== 'docx' && $extension !== 'docm') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Нужен DOCX файл']);
+    }
+    $tmpInput = (string)($docxFile['tmp_name'] ?? '');
+    if ($tmpInput === '' || !is_file($tmpInput)) {
+        jsonResponse(400, ['ok' => false, 'error' => 'Временный DOCX файл недоступен']);
+    }
+    $tmpOutput = tempnam(sys_get_temp_dir(), 'docx_pdf_');
+    if ($tmpOutput === false) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось создать временный PDF']);
+    }
+    if (!convertDocxFileToPdf($tmpInput, $tmpOutput, trim((string)($_POST['documentTitle'] ?? 'Ответ ИИ')))) {
+        @unlink($tmpOutput);
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось конвертировать DOCX в PDF']);
+    }
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="answer.pdf"');
+    header('Content-Length: ' . filesize($tmpOutput));
+    readfile($tmpOutput);
+    @unlink($tmpOutput);
     exit;
 }
 
