@@ -1532,12 +1532,13 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_document_preview' && $action !== 'generate_from_html') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
 }
 
-if ($action === 'generate_document') {
+if ($action === 'generate_document' || $action === 'generate_document_preview') {
+    $isPreviewMode = $action === 'generate_document_preview' || in_array(strtolower((string)($_POST['preview'] ?? '')), ['1', 'true', 'yes'], true);
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
@@ -1550,6 +1551,9 @@ if ($action === 'generate_document') {
     }
     if ($format !== 'docx' && $format !== 'pdf') {
         jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
+    }
+    if ($isPreviewMode && $format !== 'docx') {
+        jsonResponse(400, ['ok' => false, 'error' => 'Preview доступен только для DOCX']);
     }
 
     $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? $_POST['templatePath'] ?? ''));
@@ -1584,6 +1588,35 @@ if ($action === 'generate_document') {
         ])) {
             @unlink($tmpFile);
             jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);
+        }
+        if ($isPreviewMode) {
+            $publicDir = __DIR__ . '/tmp-previews';
+            if (!is_dir($publicDir)) {
+                @mkdir($publicDir, 0775, true);
+            }
+            if (!is_dir($publicDir)) {
+                @unlink($tmpFile);
+                jsonResponse(500, ['ok' => false, 'error' => 'Не удалось создать каталог предпросмотра']);
+            }
+            foreach (glob($publicDir . '/preview_*.docx') ?: [] as $oldFile) {
+                if (is_string($oldFile) && is_file($oldFile) && filemtime($oldFile) !== false && (time() - (int)filemtime($oldFile)) > 7200) {
+                    @unlink($oldFile);
+                }
+            }
+            try {
+                $fileName = 'preview_' . bin2hex(random_bytes(12)) . '.docx';
+            } catch (Throwable $e) {
+                $fileName = 'preview_' . uniqid('', true) . '.docx';
+            }
+            $targetPath = $publicDir . '/' . $fileName;
+            if (!@rename($tmpFile, $targetPath)) {
+                if (!@copy($tmpFile, $targetPath)) {
+                    @unlink($tmpFile);
+                    jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сохранить файл предпросмотра']);
+                }
+                @unlink($tmpFile);
+            }
+            jsonResponse(200, ['ok' => true, 'url' => '/tmp-previews/' . $fileName]);
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
