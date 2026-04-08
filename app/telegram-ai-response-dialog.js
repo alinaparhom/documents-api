@@ -275,6 +275,28 @@
     return '';
   }
 
+  function getTemplateDocxCandidates() {
+    return [
+      '/js/documents/app/templates/template.docx',
+      '/app/templates/template.docx',
+      '/templates/template.docx',
+      '/template.docx',
+    ];
+  }
+
+  function pickPreferredTemplateDocxUrl(candidates) {
+    const list = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+    if (!list.length) return '';
+    const currentPath = normalize(typeof window !== 'undefined' && window.location ? window.location.pathname : '').toLowerCase();
+    if (currentPath.includes('/js/documents/')) {
+      return list.find((item) => String(item).startsWith('/js/documents/')) || list[0];
+    }
+    if (currentPath.includes('/app/')) {
+      return list.find((item) => String(item).startsWith('/app/')) || list[0];
+    }
+    return list[0];
+  }
+
   function buildFileUrlCandidates(file) {
     const sourceValues = [
       file && file.resolvedUrl,
@@ -778,31 +800,33 @@
   }
 
   async function openTemplatePreviewModal(context = {}) {
-    const templateDocxCandidates = [
-      '/js/documents/app/templates/template.docx',
-      '/app/templates/template.docx',
-      '/templates/template.docx',
-      '/template.docx',
-    ];
+    const templateDocxCandidates = getTemplateDocxCandidates();
 
     const task = context && context.task ? context.task : null;
     const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
       ? window.__APPDOSC_OPEN_VIEWER_FILE__
       : null;
     if (openExternalViewer) {
-      const docxUrl = await resolveFirstAvailableUrl(templateDocxCandidates);
-      if (!docxUrl) {
-        throw new Error('Не удалось найти template.docx.');
+      let lastError = null;
+      for (let index = 0; index < templateDocxCandidates.length; index += 1) {
+        const docxUrl = templateDocxCandidates[index];
+        const templateFile = {
+          name: 'template.docx',
+          originalName: 'template.docx',
+          storedName: 'template.docx',
+          url: docxUrl,
+          previewUrl: docxUrl,
+          fileUrl: docxUrl,
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        };
+        try {
+          await openExternalViewer(templateFile, task || {}, { notify: true, hasMultiple: false });
+          return;
+        } catch (error) {
+          lastError = error;
+        }
       }
-      const templateFile = {
-        name: 'template.docx',
-        originalName: 'template.docx',
-        url: docxUrl,
-        previewUrl: docxUrl,
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      };
-      await openExternalViewer(templateFile, task || {}, { notify: true, hasMultiple: false });
-      return;
+      throw new Error((lastError && lastError.message) || 'Не удалось открыть template.docx в просмотрщике.');
     }
 
     const modal = document.createElement('div');
@@ -833,7 +857,7 @@
     });
 
     try {
-      const docxUrl = await resolveFirstAvailableUrl(templateDocxCandidates);
+      const docxUrl = await resolveFirstAvailableUrl(templateDocxCandidates) || pickPreferredTemplateDocxUrl(templateDocxCandidates);
       if (docxUrl) {
         const absoluteDocx = toAbsoluteUrl(docxUrl);
         frame.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absoluteDocx)}`;
