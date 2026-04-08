@@ -1,5 +1,6 @@
 (function() {
   var VISION_BATCH_SIZE = 5;
+  var AI_PDF_PAGE_LIMIT = 5;
   var VISION_QUALITY_DIRECTIVE = [
     'Сформируй сильный итоговый ответ по задаче пользователя, а не пересказ документа.',
     'Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".',
@@ -318,11 +319,12 @@
         return file.arrayBuffer().then(function(bytes) {
           return pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
             var totalPages = Number(pdf.numPages || 0);
-            var pages = Array.from({ length: totalPages }, function(_, i) { return i + 1; });
+            var pagesToRender = Math.min(AI_PDF_PAGE_LIMIT, Math.max(1, totalPages));
+            var pages = Array.from({ length: pagesToRender }, function(_, i) { return i + 1; });
             var images = [];
             return pages.reduce(function(chain, pageNumber, index) {
               return chain.then(function() {
-                if (onProgress) onProgress('Рендер страницы ' + pageNumber + '/' + totalPages + '...');
+                if (onProgress) onProgress('Рендер страницы ' + pageNumber + ' (первые ' + pagesToRender + '/' + totalPages + ')...');
                 return pdf.getPage(pageNumber).then(function(page) {
                   var viewport = page.getViewport({ scale: 1.25 });
                   var canvas = document.createElement('canvas');
@@ -344,7 +346,7 @@
                 });
               });
             }, Promise.resolve()).then(function() {
-              return { kind: 'multimodal', images: images };
+              return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images: images, totalPages: totalPages, selectedPages: pages };
             });
           });
         });
