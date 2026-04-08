@@ -5,7 +5,8 @@
     'Сформируй сильный итоговый ответ по задаче пользователя, а не пересказ документа.',
     'Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".',
     'Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.',
-    'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.'
+    'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.',
+    'Пиши только основной текст: без шапки, без подписи, без блоков "С уважением" и без реквизитов.'
   ].join('\n');
   var briefPdfJsLoader = null;
   var SYSTEM_TONE_PROMPTS = {
@@ -713,7 +714,7 @@
         pushChat('assistant', 'Пожалуйста, выберите режим.');
         return;
       }
-      var promptText = 'Подготовь готовый ответ по выбранным файлам в деловом стиле.';
+      var promptText = 'Подготовь готовый текст для вставки в шаблон: только основная часть, без шапки, без подписи и без служебных приписок.';
       var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
       isSending = true;
       pushChat('user', 'Стиль: ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный') + '. Подготовь готовый ответ.');
@@ -877,6 +878,14 @@
     document.body.appendChild(button);
   }
 
+  function ensureTemplatePreviewStyles() {
+    if (document.getElementById('docx-template-preview-style')) return;
+    var style = document.createElement('style');
+    style.id = 'docx-template-preview-style';
+    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:12px}.docx-template-preview__card{width:min(1080px,100%);height:min(100dvh - 18px,920px);display:flex;flex-direction:column;overflow:hidden;border-radius:20px;border:1px solid rgba(255,255,255,.84);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__body{flex:1;min-height:0;background:#e2e8f0}.docx-template-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}@media (max-width:768px){.docx-template-preview{padding:0}.docx-template-preview__card{height:100dvh;border-radius:0}.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}}';
+    document.head.appendChild(style);
+  }
+
   function resolveLatestAiAnswerText() {
     var stored = typeof window.DOCUMENTS_LAST_AI_ANSWER === 'string' ? window.DOCUMENTS_LAST_AI_ANSWER.trim() : '';
     if (stored) return stored;
@@ -978,17 +987,64 @@
   }
 
   function openDocxRenderPreviewPage(blob) {
-    var previewWindow = window.open('', '_blank');
-    if (!previewWindow) {
-      throw new Error('preview_window_blocked');
+    ensureTemplatePreviewStyles();
+    if (!blob) throw new Error('empty_blob');
+    var existing = document.querySelector('.docx-template-preview');
+    if (existing) existing.remove();
+    var overlay = document.createElement('div');
+    overlay.className = 'docx-template-preview';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть как «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><iframe class="docx-template-preview__frame" title="DOCX preview" data-preview-frame></iframe></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    var frame = overlay.querySelector('[data-preview-frame]');
+    var statusNode = overlay.querySelector('[data-preview-status]');
+    var downloadBtn = overlay.querySelector('[data-preview-download]');
+    var openBtn = overlay.querySelector('[data-preview-open]');
+    var closeBtn = overlay.querySelector('[data-preview-close]');
+    var blobUrl = URL.createObjectURL(blob);
+
+    function closeModal() {
+      document.body.style.overflow = '';
+      URL.revokeObjectURL(blobUrl);
+      overlay.remove();
     }
+
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) closeModal();
+    });
+    downloadBtn.addEventListener('click', function() {
+      var a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+
+    var openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
+      ? window.__APPDOSC_OPEN_FILES_VIEWER__
+      : null;
+    openBtn.addEventListener('click', function() {
+      if (!openExternalViewer) {
+        statusNode.textContent = 'Просмотрщик «Просмотреть» сейчас недоступен.';
+        return;
+      }
+      statusNode.textContent = 'Открываю через логику «Просмотреть»...';
+      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: blobUrl, resolvedUrl: blobUrl, previewUrl: blobUrl, fileUrl: blobUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
+        .then(function() {
+          statusNode.textContent = 'Файл открыт через «Просмотреть».';
+        })
+        .catch(function(error) {
+          statusNode.textContent = (error && error.message) ? error.message : 'Не удалось открыть через «Просмотреть».';
+        });
+    });
+
     blobToDataUrl(blob).then(function(dataUrl) {
-      var html = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Превью DOCX</title><style>:root{color-scheme:light only}body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(170deg,#e2e8f0,#f8fafc);color:#0f172a;min-height:100vh}.top{position:sticky;top:0;display:flex;gap:8px;justify-content:flex-end;padding:10px;background:rgba(255,255,255,.76);backdrop-filter:blur(10px);border-bottom:1px solid rgba(203,213,225,.95);z-index:4}.btn{border:1px solid rgba(148,163,184,.48);background:#fff;border-radius:12px;padding:10px 14px;font-weight:700;color:#334155;min-height:42px}.btn.primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}#preview{padding:14px;max-width:1080px;margin:0 auto}.docx-wrapper{background:rgba(255,255,255,.95);border-radius:18px;box-shadow:0 14px 34px rgba(15,23,42,.18);padding:14px;min-height:140px;border:1px solid rgba(255,255,255,.92)}.err{margin:12px auto;max-width:980px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:12px;padding:10px 12px;font-size:13px}@media (max-width:768px){.top{position:fixed;top:auto;bottom:0;left:0;right:0;justify-content:stretch;padding:10px;padding-bottom:calc(10px + env(safe-area-inset-bottom));background:rgba(255,255,255,.9)}.btn{flex:1}#preview{padding:12px;padding-bottom:88px}.docx-wrapper{border-radius:14px;padding:10px}}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div class=\"top\"><button id=\"close\" class=\"btn\">Закрыть</button><button id=\"download\" class=\"btn primary\">Скачать</button></div><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(renderer&&typeof renderer.renderAsync===\"function\"){await renderer.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:false});}else{throw new Error(\"docx_preview_not_loaded\");}document.getElementById(\"download\").addEventListener(\"click\",function(){var a=document.createElement(\"a\");a.href=dataUrl;a.download=\"template-answer.docx\";document.body.appendChild(a);a.click();document.body.removeChild(a);});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();document.getElementById(\"close\").addEventListener(\"click\",function(){window.close();});<\/script></body></html>';
-      previewWindow.document.open();
-      previewWindow.document.write(html);
-      previewWindow.document.close();
-    }).catch(function() {
-      previewWindow.document.body.innerHTML = '<div style="padding:16px;font-family:Arial,sans-serif">Не удалось подготовить превью DOCX.</div>';
+      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;background:#eef2ff;font-family:Inter,system-ui,sans-serif}#preview{padding:12px;max-width:980px;margin:0 auto}.docx-wrapper{background:#fff;border:1px solid rgba(203,213,225,.8);border-radius:14px;box-shadow:0 10px 30px rgba(15,23,42,.12);padding:10px;min-height:120px}.err{margin:12px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:10px;font-size:13px}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(!renderer||typeof renderer.renderAsync!==\"function\"){throw new Error(\"docx_preview_not_loaded\");}await renderer.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:false});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();<\/script></body></html>';
+      statusNode.textContent = 'Готово: документ открыт в предпросмотре.';
+    }).catch(function(error) {
+      statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
     });
   }
 
