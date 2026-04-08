@@ -1529,12 +1529,32 @@ if ($normalizedContextRaw !== '' && mb_strlen($normalizedContextRaw) > $maxConte
 $responseStyle = trim((string)($_POST['responseStyle'] ?? ''));
 $aiBehavior = trim((string)($_POST['aiBehavior'] ?? ''));
 $requestedModel = trim((string)($_POST['model'] ?? ''));
-$action = trim((string)($_POST['action'] ?? ''));
+$action = trim((string)($_POST['action'] ?? $_GET['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_document_preview' && $action !== 'generate_from_html') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_document_preview' && $action !== 'generate_from_html' && $action !== 'download_preview') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
+
+if ($action === 'download_preview') {
+    $fileName = basename((string)($_GET['file'] ?? ''));
+    if ($fileName === '' || !preg_match('/^preview_[A-Za-z0-9._-]+\\.docx$/', $fileName)) {
+        http_response_code(400);
+        echo 'Некорректное имя файла предпросмотра';
+        exit;
+    }
+    $filePath = __DIR__ . '/app/tmp/' . $fileName;
+    if (!is_file($filePath)) {
+        http_response_code(404);
+        echo 'Файл предпросмотра не найден';
+        exit;
+    }
+    header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    header('Content-Disposition: inline; filename="' . rawurlencode($fileName) . '"');
+    header('Content-Length: ' . filesize($filePath));
+    readfile($filePath);
+    exit;
 }
 
 if ($action === 'generate_document' || $action === 'generate_document_preview') {
@@ -1616,7 +1636,8 @@ if ($action === 'generate_document' || $action === 'generate_document_preview') 
                 }
                 @unlink($tmpFile);
             }
-            jsonResponse(200, ['ok' => true, 'url' => '/app/tmp/' . $fileName]);
+            $scriptName = (string)($_SERVER['SCRIPT_NAME'] ?? '/js/documents/api-docs.php');
+            jsonResponse(200, ['ok' => true, 'url' => $scriptName . '?action=download_preview&file=' . rawurlencode($fileName)]);
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
