@@ -882,7 +882,7 @@
     if (document.getElementById('docx-template-preview-style')) return;
     var style = document.createElement('style');
     style.id = 'docx-template-preview-style';
-    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__body{flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}.docx-template-preview__doc{max-width:920px;margin:0 auto;background:rgba(255,255,255,.82);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12);overflow:auto}.docx-template-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}.docx-template-preview__body{padding:10px}.docx-template-preview__doc{border-radius:12px;padding:6px}}';
+    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__body{flex:1;min-height:0;background:#e2e8f0}.docx-template-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}}';
     document.head.appendChild(style);
   }
 
@@ -978,38 +978,32 @@
     });
   }
 
-  function ensureDocxPreviewLibrariesLoaded() {
-    var loadZip = loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', function() {
-      return Boolean(window.JSZip);
-    });
-    var loadPreview = loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', function() {
-      return Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync));
-    });
-    return Promise.all([loadZip, loadPreview]).then(function() {
-      var renderer = (window.docx && window.docx.renderAsync) ? window.docx : ((window.docxPreview && window.docxPreview.renderAsync) ? window.docxPreview : null);
-      if (!renderer || typeof renderer.renderAsync !== 'function') {
-        throw new Error('docx_preview_not_loaded');
-      }
-      return renderer;
+  function blobToDataUrl(blob) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('blob_to_dataurl_failed')); };
+      reader.readAsDataURL(blob);
     });
   }
 
-  function openDocxRenderPreviewPage(blob) {
+  function openDocxRenderPreviewPage(payload) {
     ensureTemplatePreviewStyles();
-    if (!blob) throw new Error('empty_blob');
+    if (!payload || !payload.blob) throw new Error('empty_blob');
     var existing = document.querySelector('.docx-template-preview');
     if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть как «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть как «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><iframe class="docx-template-preview__frame" title="DOCX preview" data-preview-frame></iframe></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
-    var docPreviewNode = overlay.querySelector('[data-preview-doc]');
+    var frame = overlay.querySelector('[data-preview-frame]');
     var statusNode = overlay.querySelector('[data-preview-status]');
     var downloadBtn = overlay.querySelector('[data-preview-download]');
     var openBtn = overlay.querySelector('[data-preview-open]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
-    var blobUrl = URL.createObjectURL(blob);
+    var blobUrl = URL.createObjectURL(payload.blob);
+    var tempDownloadUrl = payload.tempDownloadUrl || '';
 
     function closeModal() {
       document.body.style.overflow = '';
@@ -1039,7 +1033,8 @@
         return;
       }
       statusNode.textContent = 'Открываю через логику «Просмотреть»...';
-      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: blobUrl, resolvedUrl: blobUrl, previewUrl: blobUrl, fileUrl: blobUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
+      var viewerUrl = tempDownloadUrl || blobUrl;
+      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: viewerUrl, resolvedUrl: viewerUrl, previewUrl: viewerUrl, fileUrl: viewerUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
         .then(function() {
           statusNode.textContent = 'Файл открыт через «Просмотреть».';
         })
@@ -1048,15 +1043,8 @@
         });
     });
 
-    ensureDocxPreviewLibrariesLoaded().then(function(renderer) {
-      return blob.arrayBuffer().then(function(arrayBuffer) {
-        docPreviewNode.innerHTML = '';
-        return renderer.renderAsync(arrayBuffer, docPreviewNode, null, {
-          inWrapper: true,
-          breakPages: true,
-          ignoreWidth: false
-        });
-      });
+    blobToDataUrl(payload.blob).then(function(dataUrl) {
+      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;background:#eef2ff;font-family:Inter,system-ui,sans-serif;overflow:auto}#preview{padding:12px;max-width:100%;margin:0 auto;overflow:auto}.docx-wrapper{background:#fff;border:1px solid rgba(203,213,225,.8);border-radius:14px;box-shadow:0 10px 30px rgba(15,23,42,.12);padding:10px;min-height:120px;overflow:auto}.docx-wrapper *{max-width:100% !important;box-sizing:border-box}.err{margin:12px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:10px;font-size:13px}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(!renderer||typeof renderer.renderAsync!==\"function\"){throw new Error(\"docx_preview_not_loaded\");}await renderer.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:true});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();<\/script></body></html>';
     }).then(function() {
       statusNode.textContent = 'Готово: документ открыт в красивом предпросмотре.';
     }).catch(function(error) {
@@ -1069,6 +1057,7 @@
     var formData = new FormData();
     formData.append('action', 'generate_document');
     formData.append('format', 'docx');
+    formData.append('saveTemp', '1');
     formData.append('answer', String(answerText || ''));
     formData.append('documentTitle', 'Ответ ИИ');
     var response = await fetch(apiUrl, {
@@ -1079,11 +1068,27 @@
     if (!response.ok) {
       throw new Error('Ошибка генерации шаблона (' + response.status + ')');
     }
+    var contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.indexOf('application/json') >= 0) {
+      var data = await response.json();
+      if (!data || data.ok !== true || !data.downloadUrl) {
+        throw new Error(data && data.error ? data.error : 'Не удалось получить временный файл');
+      }
+      var docResponse = await fetch(data.downloadUrl, { credentials: 'same-origin' });
+      if (!docResponse.ok) {
+        throw new Error('Не удалось загрузить временный DOCX (' + docResponse.status + ')');
+      }
+      var tempBlob = await docResponse.blob();
+      if (!tempBlob || !tempBlob.size) {
+        return null;
+      }
+      return { blob: tempBlob, tempDownloadUrl: data.downloadUrl };
+    }
     var blob = await response.blob();
     if (!blob || !blob.size) {
       return null;
     }
-    return blob;
+    return { blob: blob, tempDownloadUrl: '' };
   }
 
   if (document.readyState === 'loading') {

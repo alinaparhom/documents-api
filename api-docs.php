@@ -37,6 +37,25 @@ if ($method === 'OPTIONS') {
 }
 if ($method === 'GET') {
     $action = isset($_GET['action']) ? trim((string)$_GET['action']) : '';
+    if ($action === 'download_temp_document') {
+        $id = trim((string)($_GET['id'] ?? ''));
+        if (!preg_match('/^[a-zA-Z0-9_-]{12,120}\.(docx|pdf)$/', $id)) {
+            jsonResponse(400, ['ok' => false, 'error' => 'Некорректный идентификатор файла']);
+        }
+        $path = __DIR__ . '/app/temp-docs/' . $id;
+        if (!is_file($path)) {
+            jsonResponse(404, ['ok' => false, 'error' => 'Временный файл не найден']);
+        }
+        $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+        $mime = $ext === 'pdf'
+            ? 'application/pdf'
+            : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: inline; filename="' . basename($id) . '"');
+        header('Content-Length: ' . filesize($path));
+        readfile($path);
+        exit;
+    }
     if ($action === 'ai_models') {
         $env = loadEnv(getEnvPaths());
         $rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
@@ -128,6 +147,27 @@ function getEnvPaths(): array
         __DIR__ . '/app/.env',
         __DIR__ . '/.env',
         __DIR__ . '/app/env.txt'
+    ];
+}
+
+function saveGeneratedFileToTemp(string $sourcePath, string $extension): ?array
+{
+    $ext = strtolower(trim($extension));
+    if ($sourcePath === '' || !is_file($sourcePath) || ($ext !== 'docx' && $ext !== 'pdf')) {
+        return null;
+    }
+    $directory = __DIR__ . '/app/temp-docs';
+    if (!is_dir($directory) && !@mkdir($directory, 0775, true) && !is_dir($directory)) {
+        return null;
+    }
+    $id = bin2hex(random_bytes(16)) . '.' . $ext;
+    $target = $directory . '/' . $id;
+    if (!@copy($sourcePath, $target)) {
+        return null;
+    }
+    return [
+        'id' => $id,
+        'path' => $target,
     ];
 }
 
@@ -1541,6 +1581,7 @@ if ($action === 'generate_document') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
+    $saveTemp = (string)($_POST['saveTemp'] ?? '') === '1';
 
     if ($answerText === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
@@ -1602,6 +1643,28 @@ if ($action === 'generate_document') {
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="answer.pdf"');
+    }
+
+    if ($saveTemp) {
+        $saved = saveGeneratedFileToTemp($tmpFile, $format);
+        if ($tmpFile !== $templatePdfPath) {
+            @unlink($tmpFile);
+        }
+        if (!$saved) {
+            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сохранить временный файл']);
+        }
+        $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443);
+        $scheme = $isHttps ? 'https' : 'http';
+        $host = (string)($_SERVER['HTTP_HOST'] ?? '');
+        $basePath = rtrim(str_replace('\\', '/', dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/api-docs.php'))), '/');
+        $base = $scheme . '://' . $host . ($basePath === '' ? '' : $basePath);
+        $downloadUrl = $base . '/api-docs.php?action=download_temp_document&id=' . rawurlencode((string)$saved['id']);
+        jsonResponse(200, [
+            'ok' => true,
+            'tempFileId' => $saved['id'],
+            'downloadUrl' => $downloadUrl,
+            'format' => $format,
+        ]);
     }
 
     header('Content-Length: ' . filesize($tmpFile));
