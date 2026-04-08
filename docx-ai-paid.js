@@ -963,10 +963,10 @@
       }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
       generateDocxFromTemplateViaApi(aiText)
-        .then(function(blob) {
-          if (!blob) throw new Error('empty_blob');
+        .then(function(result) {
+          if (!result || !result.blob) throw new Error('empty_blob');
           closeEditor();
-          openDocxRenderPreviewPage(blob);
+          openDocxRenderPreviewPage(result);
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -978,20 +978,30 @@
     });
   }
 
-  function blobToDataUrl(blob) {
-    return new Promise(function(resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function() { resolve(String(reader.result || '')); };
-      reader.onerror = function() { reject(new Error('blob_to_dataurl_failed')); };
-      reader.readAsDataURL(blob);
-    });
+  function buildOfficePreviewUrl(rawUrl) {
+    var normalizedUrl = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+    if (!normalizedUrl) return '';
+    if (/^https:\/\/view\.officeapps\.live\.com\/op\/embed\.aspx\?src=/i.test(normalizedUrl)) {
+      return normalizedUrl;
+    }
+    if (/^blob:/i.test(normalizedUrl) || /^data:/i.test(normalizedUrl)) {
+      return '';
+    }
+    try {
+      return 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(normalizedUrl);
+    } catch (error) {
+      return '';
+    }
   }
 
-  function openDocxRenderPreviewPage(blob) {
+  function openDocxRenderPreviewPage(result) {
     ensureTemplatePreviewStyles();
-    if (!blob) throw new Error('empty_blob');
+    if (!result || !result.blob) throw new Error('empty_blob');
     var existing = document.querySelector('.docx-template-preview');
     if (existing) existing.remove();
+    var blob = result.blob;
+    var remoteUrl = result.fileUrl || '';
+    var officePreviewUrl = buildOfficePreviewUrl(remoteUrl);
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
     overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть как «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><iframe class="docx-template-preview__frame" title="DOCX preview" data-preview-frame></iframe></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
@@ -1032,7 +1042,7 @@
         return;
       }
       statusNode.textContent = 'Открываю через логику «Просмотреть»...';
-      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: blobUrl, resolvedUrl: blobUrl, previewUrl: blobUrl, fileUrl: blobUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
+      Promise.resolve(openExternalViewer([{ name: 'template-answer.docx', originalName: 'template-answer.docx', storedName: 'template-answer.docx', url: remoteUrl || blobUrl, resolvedUrl: remoteUrl || blobUrl, previewUrl: remoteUrl || blobUrl, fileUrl: remoteUrl || blobUrl, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }], {}, { notify: true, hasMultiple: false }))
         .then(function() {
           statusNode.textContent = 'Файл открыт через «Просмотреть».';
         })
@@ -1041,12 +1051,14 @@
         });
     });
 
-    blobToDataUrl(blob).then(function(dataUrl) {
-      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;background:#eef2ff;font-family:Inter,system-ui,sans-serif;overflow:auto}#preview{padding:12px;max-width:100%;margin:0 auto;overflow:auto}.docx-wrapper{background:#fff;border:1px solid rgba(203,213,225,.8);border-radius:14px;box-shadow:0 10px 30px rgba(15,23,42,.12);padding:10px;min-height:120px;overflow:auto}.docx-wrapper *{max-width:100% !important;box-sizing:border-box}.err{margin:12px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:10px;font-size:13px}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(!renderer||typeof renderer.renderAsync!==\"function\"){throw new Error(\"docx_preview_not_loaded\");}await renderer.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:true});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();<\/script></body></html>';
-      statusNode.textContent = 'Готово: документ открыт в предпросмотре.';
-    }).catch(function(error) {
-      statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
-    });
+    if (officePreviewUrl) {
+      frame.src = officePreviewUrl;
+      statusNode.textContent = 'Готово: предпросмотр DOCX открыт через Office Viewer (iframe).';
+      return;
+    }
+
+    frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:16px;font-family:Inter,system-ui,sans-serif;background:#eef2ff;color:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}.card{max-width:520px;background:#fff;border:1px solid rgba(203,213,225,.85);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(15,23,42,.12)}.hint{font-size:13px;color:#475569;margin-top:6px}</style></head><body><div class="card"><strong>Предпросмотр через Office Viewer недоступен</strong><div class="hint">Для blob-ссылки откройте файл кнопкой «Открыть как Просмотреть» или скачайте документ.</div></div></body></html>';
+    statusNode.textContent = 'Локальный DOCX подготовлен. Для полного просмотра используйте кнопку «Открыть как «Просмотреть»».';
   }
 
   async function generateDocxFromTemplateViaApi(answerText) {
@@ -1068,7 +1080,13 @@
     if (!blob || !blob.size) {
       return null;
     }
-    return blob;
+    var fileUrl = '';
+    try {
+      fileUrl = String(response.headers.get('X-Document-Url') || response.headers.get('Content-Location') || '').trim();
+    } catch (error) {
+      fileUrl = '';
+    }
+    return { blob: blob, fileUrl: fileUrl };
   }
 
   if (document.readyState === 'loading') {
