@@ -892,14 +892,14 @@
       if (event.target === modal) closeModal();
     });
     modal.querySelector('#docx-template-generate').addEventListener('click', function() {
-      var cleanText = String(textNode && textNode.value || '').trim();
-      if (!cleanText) {
+      var rawText = String(textNode && textNode.value || '');
+      if (!rawText.trim()) {
         errorNode.style.display = 'block';
         errorNode.textContent = 'Введите текст для вставки.';
         return;
       }
       var selectedFormat = String(formatNode && formatNode.value || 'docx').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
-      var aiText = cleanText;
+      var aiText = rawText;
       var replacedCount = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
       if (!replacedCount) {
         replaceAiMarkerInDocument(aiText, '[ОВТЕТ ИИ]');

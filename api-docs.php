@@ -869,8 +869,7 @@ function xmlEscape(string $value): string
 
 function normalizeDocText(string $value): string
 {
-    $normalized = str_replace(["\r\n", "\r"], "\n", $value);
-    return trim($normalized);
+    return str_replace(["\r\n", "\r"], "\n", $value);
 }
 
 function textToWordParagraphsXml(string $text): string
@@ -1431,7 +1430,7 @@ if ($action === 'generate_document') {
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
 
-    if ($answerText === '') {
+    if (trim($answerText) === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
     }
     if (mb_strlen($answerText) > 40000) {
