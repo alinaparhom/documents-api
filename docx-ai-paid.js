@@ -1059,12 +1059,20 @@
 
   function ensureDocxPreviewLibrariesLoaded() {
     var loadZip = loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', function() {
-      return Boolean(window.JSZip);
+      var zipCandidate = window.JSZip || (window.JSZip && window.JSZip.default) || window.JSZIP || (window.JSZipUtils && window.JSZipUtils.JSZip);
+      return Boolean(zipCandidate);
     });
     var loadPreview = loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', function() {
       return Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync));
     });
     return Promise.all([loadZip, loadPreview]).then(function() {
+      var jsZipRef = window.JSZip || (window.JSZip && window.JSZip.default) || window.JSZIP || (window.JSZipUtils && window.JSZipUtils.JSZip) || null;
+      if (jsZipRef && typeof jsZipRef.loadAsync === 'function') {
+        window.JSZip = jsZipRef;
+      }
+      if (!window.JSZip || typeof window.JSZip.loadAsync !== 'function') {
+        throw new Error('jszip_not_loaded');
+      }
       var renderer = (window.docx && window.docx.renderAsync) ? window.docx : ((window.docxPreview && window.docxPreview.renderAsync) ? window.docxPreview : null);
       if (!renderer || typeof renderer.renderAsync !== 'function') {
         throw new Error('docx_preview_not_loaded');
