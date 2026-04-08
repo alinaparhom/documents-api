@@ -904,28 +904,19 @@
     document.body.appendChild(button);
   }
 
-  function blobToDataUrl(blob) {
-    return new Promise(function(resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function() { resolve(String(reader.result || '')); };
-      reader.onerror = function() { reject(new Error('blob_to_dataurl_failed')); };
-      reader.readAsDataURL(blob);
-    });
-  }
-
   function openDocxRenderPreviewPage(blob) {
-    var previewWindow = window.open('', '_blank');
-    if (!previewWindow) {
+    if (!blob || !blob.size) {
+      throw new Error('empty_blob');
+    }
+    var blobUrl = URL.createObjectURL(blob);
+    var openedWindow = window.open(blobUrl, '_blank');
+    if (!openedWindow) {
+      URL.revokeObjectURL(blobUrl);
       throw new Error('preview_window_blocked');
     }
-    blobToDataUrl(blob).then(function(dataUrl) {
-      var html = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Превью DOCX</title><style>body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:#f8fafc;color:#0f172a}.top{position:sticky;top:0;z-index:5;display:flex;gap:8px;padding:10px;background:rgba(255,255,255,.9);border-bottom:1px solid #e2e8f0;backdrop-filter:blur(8px)}.btn{border:1px solid #cbd5e1;background:#fff;border-radius:10px;padding:10px 12px;font-weight:600;color:#0f172a}.btn.primary{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}.wrap{padding:12px}.docx{background:#fff;border:1px solid #e2e8f0;border-radius:12px;min-height:120px;padding:12px;box-shadow:0 8px 24px rgba(15,23,42,.08)}.status{font-size:12px;color:#64748b;padding:0 12px 10px}.err{margin:0 12px 12px;border:1px solid #fecaca;background:#fee2e2;color:#991b1b;border-radius:10px;padding:10px;display:none}@media (max-width:768px){.top{padding:8px}.btn{flex:1;min-height:42px}.wrap{padding:8px}.docx{padding:8px}}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div class=\"top\"><button id=\"download\" class=\"btn primary\">Скачать</button><button id=\"close\" class=\"btn\">Закрыть</button></div><div id=\"status\" class=\"status\">Рендерим через готовую библиотеку docx-preview…</div><div class=\"wrap\"><div id=\"docx\" class=\"docx\"></div></div><div id=\"error\" class=\"err\"></div><script>(async function(){var dataUrl=' + JSON.stringify(dataUrl) + ';var status=document.getElementById(\"status\");var err=document.getElementById(\"error\");try{var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(!renderer||typeof renderer.renderAsync!==\"function\"){throw new Error(\"docx_preview_not_loaded\");}await renderer.renderAsync(arrayBuffer,document.getElementById(\"docx\"),null,{inWrapper:true,breakPages:true,ignoreWidth:false});status.textContent=\"Готово\";}catch(e){status.textContent=\"Ошибка\";err.style.display=\"block\";err.textContent=\"Не удалось показать DOCX: \"+(e&&e.message?e.message:\"unknown\");}document.getElementById(\"download\").addEventListener(\"click\",function(){var a=document.createElement(\"a\");a.href=dataUrl;a.download=\"template-answer.docx\";document.body.appendChild(a);a.click();document.body.removeChild(a);});})();document.getElementById(\"close\").addEventListener(\"click\",function(){window.close();});<\/script></body></html>';
-      previewWindow.document.open();
-      previewWindow.document.write(html);
-      previewWindow.document.close();
-    }).catch(function() {
-      previewWindow.document.body.innerHTML = '<div style="padding:16px;font-family:Arial,sans-serif">Не удалось подготовить превью DOCX.</div>';
-    });
+    setTimeout(function() {
+      URL.revokeObjectURL(blobUrl);
+    }, 60 * 1000);
   }
 
   async function generateDocxFromTemplateViaApi(answerText) {
