@@ -870,7 +870,7 @@ function xmlEscape(string $value): string
 function normalizeDocText(string $value): string
 {
     $normalized = str_replace(["\r\n", "\r"], "\n", $value);
-    return trim($normalized);
+    return rtrim($normalized);
 }
 
 function textToWordParagraphsXml(string $text): string

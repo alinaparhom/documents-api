@@ -954,9 +954,6 @@
         return;
       }
       var aiText = aiTextRaw.replace(/[ \t]+$/gm, '');
-      if (aiText.charAt(0) !== '\n') {
-        aiText = '\n' + aiText;
-      }
       renderError('');
       doneButton.disabled = true;
       doneButton.textContent = 'Генерирую...';
