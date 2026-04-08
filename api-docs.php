@@ -1178,11 +1178,6 @@ function convertDocxToPdf(string $docxPath, string $outputDir): ?string
     if ($docxPath === '' || !is_file($docxPath) || $outputDir === '' || !is_dir($outputDir)) {
         return null;
     }
-    if (!shellCommandExists('libreoffice') && !shellCommandExists('soffice')) {
-        return null;
-    }
-
-    $binary = shellCommandExists('libreoffice') ? 'libreoffice' : 'soffice';
     $tmpWorkDir = sys_get_temp_dir() . '/docx_pdf_' . bin2hex(random_bytes(6));
     if (!@mkdir($tmpWorkDir, 0775, true) && !is_dir($tmpWorkDir)) {
         return null;
@@ -1195,26 +1190,41 @@ function convertDocxToPdf(string $docxPath, string $outputDir): ?string
     }
 
     try {
-        $cmd = escapeshellcmd($binary)
-            . ' --headless --convert-to pdf --outdir '
-            . escapeshellarg($outputDir) . ' '
-            . escapeshellarg($inputCopy) . ' 2>&1';
-        $out = [];
-        $code = 1;
-        @exec($cmd, $out, $code);
-        if ($code !== 0) {
-            logApiDocs('warn', 'DOCX->PDF conversion failed', ['code' => $code, 'output' => implode("\n", $out)]);
-            return null;
+        if (shellCommandExists('libreoffice') || shellCommandExists('soffice')) {
+            $binary = shellCommandExists('libreoffice') ? 'libreoffice' : 'soffice';
+            $cmd = escapeshellcmd($binary)
+                . ' --headless --convert-to pdf --outdir '
+                . escapeshellarg($tmpWorkDir) . ' '
+                . escapeshellarg($inputCopy) . ' 2>&1';
+            $out = [];
+            $code = 1;
+            @exec($cmd, $out, $code);
+            if ($code !== 0) {
+                logApiDocs('warn', 'DOCX->PDF conversion failed', ['code' => $code, 'output' => implode("\n", $out)]);
+            } else {
+                $pdfPath = $tmpWorkDir . '/input.pdf';
+                if (is_file($pdfPath) && filesize($pdfPath) > 0) {
+                    return $pdfPath;
+                }
+            }
         }
 
-        $pdfPath = $outputDir . '/input.pdf';
-        if (!is_file($pdfPath) || filesize($pdfPath) <= 0) {
+        // Fallback: создаём PDF из текста DOCX через TCPDF (если LibreOffice недоступен).
+        if (is_file(__DIR__ . '/vendor/autoload.php')) {
+            require_once __DIR__ . '/vendor/autoload.php';
+        }
+        $plainText = extractDocxText($docxPath);
+        if ($plainText === '') {
             return null;
         }
-        return $pdfPath;
+        $fallbackPdf = $tmpWorkDir . '/fallback.pdf';
+        if (!createPdfFromText($fallbackPdf, 'Ответ ИИ', $plainText)) {
+            return null;
+        }
+        return $fallbackPdf;
     } finally {
         @unlink($inputCopy);
-        @rmdir($tmpWorkDir);
+        // Каталог удаляется в action после отдачи файла.
     }
 }
 
@@ -1595,14 +1605,16 @@ if ($action === 'convert_docx_to_pdf') {
     $tmpPdfDir = sys_get_temp_dir();
     $pdfPath = convertDocxToPdf($docxPath, $tmpPdfDir);
     if ($pdfPath === null) {
-        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать PDF для предпросмотра. Проверьте, что на сервере доступен LibreOffice (soffice).']);
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать PDF для предпросмотра. Вы можете скачать документ в формате Word.']);
     }
 
     header('Content-Type: application/pdf');
     header('Content-Disposition: inline; filename="answer-preview.pdf"');
     header('Content-Length: ' . filesize($pdfPath));
     readfile($pdfPath);
+    $workDir = dirname($pdfPath);
     @unlink($pdfPath);
+    @rmdir($workDir);
     exit;
 }
 
