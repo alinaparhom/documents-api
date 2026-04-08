@@ -880,65 +880,26 @@
     button.type = 'button';
     button.id = 'docx-template-insert-btn';
     button.textContent = 'Шаблон Тест';
-    button.setAttribute('aria-label', 'Вставить текст в маркер [ОТВЕТ ИИ]');
+    button.setAttribute('aria-label', 'Открыть шаблон в новом окне');
     button.addEventListener('click', function() {
-      var aiText = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
-      replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
-      button.disabled = true;
-      button.textContent = 'Подготовка превью...';
-      generateDocxFromTemplateViaApi(aiText)
-        .then(function(blob) {
-          if (!blob) throw new Error('empty_blob');
-          openDocxRenderPreviewPage(blob);
-        })
-        .catch(function() {
-          button.textContent = 'Ошибка превью';
-        })
-        .finally(function() {
-          button.disabled = false;
-          setTimeout(function() {
-            button.textContent = 'Шаблон Тест';
-          }, 1200);
-        });
+      openTemplateWindow();
     });
     document.body.appendChild(button);
   }
 
-  function openDocxRenderPreviewPage(blob) {
-    if (!blob || !blob.size) {
-      throw new Error('empty_blob');
+  function openTemplateWindow() {
+    var candidates = [
+      '/app/templates/template.docx',
+      '/js/documents/app/templates/template.docx',
+      'app/templates/template.docx'
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var nextWindow = window.open(candidates[i], '_blank');
+      if (nextWindow) {
+        return;
+      }
     }
-    var blobUrl = URL.createObjectURL(blob);
-    var openedWindow = window.open(blobUrl, '_blank');
-    if (!openedWindow) {
-      URL.revokeObjectURL(blobUrl);
-      throw new Error('preview_window_blocked');
-    }
-    setTimeout(function() {
-      URL.revokeObjectURL(blobUrl);
-    }, 60 * 1000);
-  }
-
-  async function generateDocxFromTemplateViaApi(answerText) {
-    var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    var formData = new FormData();
-    formData.append('action', 'generate_document');
-    formData.append('format', 'docx');
-    formData.append('answer', String(answerText || '').trim());
-    formData.append('documentTitle', 'Ответ ИИ');
-    var response = await fetch(apiUrl, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    });
-    if (!response.ok) {
-      throw new Error('Ошибка генерации шаблона (' + response.status + ')');
-    }
-    var blob = await response.blob();
-    if (!blob || !blob.size) {
-      return null;
-    }
-    return blob;
+    throw new Error('preview_window_blocked');
   }
 
   if (document.readyState === 'loading') {
@@ -948,5 +909,4 @@
   }
 
   window.openDocumentsVipAiPaidModal = openDocumentsVipAiPaidModal;
-  window.replaceAiMarkerInDocument = replaceAiMarkerInDocument;
 })();
