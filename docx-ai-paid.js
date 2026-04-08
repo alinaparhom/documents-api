@@ -959,7 +959,7 @@
       doneButton.textContent = 'Генерирую...';
       var replaced = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
       if (replaced <= 0) {
-        renderError('Не найдена метка [ОТВЕТ ИИ] в документе.');
+        console.warn('[documents] Метка [ОТВЕТ ИИ] не найдена в текущем DOM-превью, продолжаю генерацию через серверный шаблон.');
       }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
       generateTemplateFilesViaApi(aiText)
@@ -1072,7 +1072,13 @@
   async function generateTemplateFilesViaApi(answerText) {
     var docxBlob = await generateTemplateFileViaApi(answerText, 'docx');
     if (!docxBlob) throw new Error('docx_not_generated');
-    var pdfBlob = await generatePdfFromDocxViaApi(docxBlob);
+    var pdfBlob = null;
+    try {
+      pdfBlob = await generatePdfFromDocxViaApi(docxBlob);
+    } catch (error) {
+      console.warn('[documents] DOCX→PDF конвертация недоступна, fallback на прямую генерацию PDF:', error && error.message ? error.message : error);
+      pdfBlob = await generateTemplateFileViaApi(answerText, 'pdf');
+    }
     if (!pdfBlob) throw new Error('pdf_not_generated');
     return { docxBlob: docxBlob, pdfBlob: pdfBlob };
   }
