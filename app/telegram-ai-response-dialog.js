@@ -805,9 +805,25 @@
     const templateDocxCandidates = getTemplateDocxCandidates();
 
     const task = context && context.task ? context.task : null;
-    const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
+    const getExternalViewer = () => {
+      if (typeof window === 'undefined') {
+        return null;
+      }
+      const scopes = [window];
+      try {
+        if (window.parent && window.parent !== window) scopes.push(window.parent);
+      } catch (_error) {}
+      try {
+        if (window.top && window.top !== window && window.top !== window.parent) scopes.push(window.top);
+      } catch (_error) {}
+      for (let i = 0; i < scopes.length; i += 1) {
+        const scope = scopes[i];
+        if (scope && typeof scope.__APPDOSC_OPEN_FILES_VIEWER__ === 'function') {
+          return scope.__APPDOSC_OPEN_FILES_VIEWER__;
+        }
+      }
+      return null;
+    };
 
     const modal = document.createElement('div');
     modal.className = 'tg-ai-template-preview';
@@ -859,6 +875,7 @@
         status.textContent = 'Готово: template.docx открыт.';
 
         openViewerButton?.addEventListener('click', async () => {
+          const openExternalViewer = getExternalViewer();
           if (!openExternalViewer) {
             status.textContent = 'Просмотрщик «Просмотреть» сейчас недоступен.';
             return;
