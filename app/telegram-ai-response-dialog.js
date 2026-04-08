@@ -824,19 +824,26 @@
     const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
       ? window.__APPDOSC_OPEN_FILES_VIEWER__
       : null;
+    const openSingleFileViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
+      ? window.__APPDOSC_OPEN_VIEWER_FILE__
+      : null;
+    const templateFile = {
+      name: 'template.docx',
+      originalName: 'template.docx',
+      storedName: 'template.docx',
+      url: absoluteDocxUrl,
+      previewUrl: absoluteDocxUrl,
+      fileUrl: absoluteDocxUrl,
+      resolvedUrl: absoluteDocxUrl,
+      kind: 'docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
     if (openExternalViewer) {
-      const templateFile = {
-        name: 'template.docx',
-        originalName: 'template.docx',
-        storedName: 'template.docx',
-        url: absoluteDocxUrl,
-        previewUrl: absoluteDocxUrl,
-        fileUrl: absoluteDocxUrl,
-        resolvedUrl: absoluteDocxUrl,
-        kind: 'docx',
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      };
       await openExternalViewer([templateFile], task || {}, { notify: true, hasMultiple: false });
+      return true;
+    }
+    if (openSingleFileViewer) {
+      await openSingleFileViewer(templateFile, task || {}, { notify: true, hasMultiple: false });
       return true;
     }
     return openTemplatePreviewInNewWindow(absoluteDocxUrl);
@@ -985,7 +992,9 @@
 
     templateButton?.addEventListener('click', async () => {
       try {
+        status.textContent = 'Открываем template.docx…';
         await openTemplatePreviewModal({ task });
+        status.textContent = 'Шаблон открыт в предпросмотре.';
       } catch (error) {
         status.textContent = (error && error.message) || 'Не удалось открыть шаблон.';
       }
