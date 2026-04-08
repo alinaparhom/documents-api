@@ -899,8 +899,11 @@
         return;
       }
       var selectedFormat = String(formatNode && formatNode.value || 'docx').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
-      var aiText = '[ОТВЕТ ИИ] (' + cleanText + ')';
-      replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      var aiText = cleanText;
+      var replacedCount = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      if (!replacedCount) {
+        replaceAiMarkerInDocument(aiText, '[ОВТЕТ ИИ]');
+      }
       if (triggerButton) {
         triggerButton.disabled = true;
         triggerButton.textContent = 'Подготовка...';

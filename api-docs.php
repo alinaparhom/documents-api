@@ -927,18 +927,6 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
     }
 
-    $fallbackAnswer = isset($replacements['[ОТВЕТ_ИИ]'])
-        ? (string)$replacements['[ОТВЕТ_ИИ]']
-        : (isset($replacements['[ОТВЕТ ИИ]']) ? (string)$replacements['[ОТВЕТ ИИ]'] : '');
-    if (!$replacedAny && $fallbackAnswer !== '') {
-        $docXml = $zip->getFromName('word/document.xml');
-        if (is_string($docXml) && $docXml !== '' && str_contains($docXml, '</w:body>')) {
-            $appendXml = textToWordParagraphsXml($fallbackAnswer);
-            $docXml = str_replace('</w:body>', $appendXml . '</w:body>', $docXml);
-            $zip->addFromString('word/document.xml', $docXml);
-        }
-    }
-
     return $zip->close();
 }
 
@@ -1464,9 +1452,8 @@ if ($action === 'generate_document') {
     });
 
     $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
-    $templatePdfPath = resolveTemplatePath('template.pdf', $extraTemplateDirs);
-    if (!is_file($templateDocxPath) && !is_file($templatePdfPath)) {
-        jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
+    if (!is_file($templateDocxPath)) {
+        jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
     }
 
     $tmpFile = tempnam(sys_get_temp_dir(), 'answer_');
@@ -1482,6 +1469,7 @@ if ($action === 'generate_document') {
         if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
             '[ОТВЕТ_ИИ]' => $answerText,
             '[ОТВЕТ ИИ]' => $answerText,
+            '[ОВТЕТ ИИ]' => $answerText,
             '[DOCUMENT_TITLE]' => $documentTitle,
         ])) {
             @unlink($tmpFile);
@@ -1490,17 +1478,12 @@ if ($action === 'generate_document') {
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
     } else {
-        if (is_file($templatePdfPath)) {
+        if (is_file(__DIR__ . '/vendor/autoload.php')) {
+            require_once __DIR__ . '/vendor/autoload.php';
+        }
+        if (!createPdfFromText($tmpFile, $documentTitle, $answerText)) {
             @unlink($tmpFile);
-            $tmpFile = $templatePdfPath;
-        } else {
-            if (is_file(__DIR__ . '/vendor/autoload.php')) {
-                require_once __DIR__ . '/vendor/autoload.php';
-            }
-            if (!createPdfFromText($tmpFile, $documentTitle, $answerText)) {
-                @unlink($tmpFile);
-                jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или добавьте template.pdf в директорию шаблонов']);
-            }
+            jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf']);
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="answer.pdf"');
@@ -1508,9 +1491,7 @@ if ($action === 'generate_document') {
 
     header('Content-Length: ' . filesize($tmpFile));
     readfile($tmpFile);
-    if ($tmpFile !== $templatePdfPath) {
-        @unlink($tmpFile);
-    }
+    @unlink($tmpFile);
     exit;
 }
 
