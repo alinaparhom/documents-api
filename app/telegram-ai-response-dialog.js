@@ -750,18 +750,9 @@
       .tg-ai-chat__dots span{width:5px;height:5px;border-radius:50%;background:#0ea5e9;opacity:.35;animation:tg-ai-pulse 1.1s infinite}
       .tg-ai-chat__dots span:nth-child(2){animation-delay:.16s}
       .tg-ai-chat__dots span:nth-child(3){animation-delay:.32s}
-      .tg-ai-template-preview{position:fixed;inset:0;z-index:3800;background:rgba(2,6,23,.65);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:12px}
-      .tg-ai-template-preview__card{width:min(980px,100%);height:min(100dvh - 16px,900px);display:flex;flex-direction:column;overflow:hidden;border-radius:20px;border:1px solid rgba(255,255,255,.8);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 20px 50px rgba(15,23,42,.35)}
-      .tg-ai-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.8)}
-      .tg-ai-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}
-      .tg-ai-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
-      .tg-ai-template-preview__close{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:34px;font-weight:700;color:#0f172a}
-      .tg-ai-template-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}
-      .tg-ai-template-preview__body{flex:1;min-height:0}
-      .tg-ai-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.8);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}}
     `;
     document.head.appendChild(style);
   }
@@ -801,75 +792,54 @@
     }).join('');
   }
 
+  function openTemplatePreviewInNewWindow(previewUrl) {
+    const absolutePreviewUrl = toAbsoluteUrl(previewUrl);
+    if (!absolutePreviewUrl) {
+      throw new Error('Не удалось сформировать ссылку на шаблон.');
+    }
+    const officePreviewUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absolutePreviewUrl)}`;
+    const tgWebApp = typeof window !== 'undefined' && window.Telegram && window.Telegram.WebApp
+      ? window.Telegram.WebApp
+      : null;
+    if (tgWebApp && typeof tgWebApp.openLink === 'function') {
+      tgWebApp.openLink(officePreviewUrl, { try_instant_view: false });
+      return true;
+    }
+    const newWindow = window.open(officePreviewUrl, '_blank', 'noopener,noreferrer');
+    if (!newWindow) {
+      throw new Error('Браузер заблокировал новое окно предпросмотра.');
+    }
+    return true;
+  }
+
   async function openTemplatePreviewModal(context = {}) {
     const templateDocxCandidates = getTemplateDocxCandidates();
+    const docxUrl = await resolveFirstAvailableUrl(templateDocxCandidates) || pickPreferredTemplateDocxUrl(templateDocxCandidates);
+    if (!docxUrl) {
+      throw new Error('Не удалось найти template.docx.');
+    }
+    const absoluteDocxUrl = toAbsoluteUrl(docxUrl);
 
     const task = context && context.task ? context.task : null;
     const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
       ? window.__APPDOSC_OPEN_FILES_VIEWER__
       : null;
     if (openExternalViewer) {
-      let lastError = null;
-      for (let index = 0; index < templateDocxCandidates.length; index += 1) {
-        const docxUrl = templateDocxCandidates[index];
-        const templateFile = {
-          name: 'template.docx',
-          originalName: 'template.docx',
-          storedName: 'template.docx',
-          url: docxUrl,
-          previewUrl: docxUrl,
-          fileUrl: docxUrl,
-          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        };
-        try {
-          await openExternalViewer([templateFile], task || {}, { notify: true, hasMultiple: false });
-          return;
-        } catch (error) {
-          lastError = error;
-        }
-      }
-      throw new Error((lastError && lastError.message) || 'Не удалось открыть template.docx в просмотрщике.');
+      const templateFile = {
+        name: 'template.docx',
+        originalName: 'template.docx',
+        storedName: 'template.docx',
+        url: absoluteDocxUrl,
+        previewUrl: absoluteDocxUrl,
+        fileUrl: absoluteDocxUrl,
+        resolvedUrl: absoluteDocxUrl,
+        kind: 'docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      };
+      await openExternalViewer([templateFile], task || {}, { notify: true, hasMultiple: false });
+      return true;
     }
-
-    const modal = document.createElement('div');
-    modal.className = 'tg-ai-template-preview';
-    modal.innerHTML = `
-      <div class="tg-ai-template-preview__card">
-        <div class="tg-ai-template-preview__head">
-          <div>
-            <div class="tg-ai-template-preview__title">Шаблон</div>
-            <div class="tg-ai-template-preview__hint">Открываем template.docx в режиме предпросмотра</div>
-          </div>
-          <button type="button" class="tg-ai-template-preview__close" data-template-close>Закрыть</button>
-        </div>
-        <div class="tg-ai-template-preview__body">
-          <iframe class="tg-ai-template-preview__frame" title="Предпросмотр шаблона" data-template-frame></iframe>
-        </div>
-        <div class="tg-ai-template-preview__status" data-template-status>Загрузка шаблона…</div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-
-    const frame = modal.querySelector('[data-template-frame]');
-    const status = modal.querySelector('[data-template-status]');
-    const close = () => modal.remove();
-    modal.querySelector('[data-template-close]')?.addEventListener('click', close);
-    modal.addEventListener('click', (event) => {
-      if (event.target === modal) close();
-    });
-
-    try {
-      const docxUrl = await resolveFirstAvailableUrl(templateDocxCandidates) || pickPreferredTemplateDocxUrl(templateDocxCandidates);
-      if (docxUrl) {
-        const absoluteDocx = toAbsoluteUrl(docxUrl);
-        frame.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absoluteDocx)}`;
-        status.textContent = 'Готово: template.docx открыт.';
-        return;
-      }
-      status.textContent = 'Не удалось найти template.docx.';
-    } catch (error) {
-      status.textContent = (error && error.message) || 'Ошибка открытия шаблона.';
-    }
+    return openTemplatePreviewInNewWindow(absoluteDocxUrl);
   }
 
   globalScope.openAiResponseDialog = function openAiResponseDialog(context = {}) {
