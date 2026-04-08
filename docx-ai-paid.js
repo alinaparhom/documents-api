@@ -9,6 +9,7 @@
     'Пиши только основной текст: без шапки, без подписи, без блоков "С уважением" и без реквизитов.'
   ].join('\n');
   var briefPdfJsLoader = null;
+  var docxPreviewLoader = null;
   var SYSTEM_TONE_PROMPTS = {
     neutral: {
       value: 'neutral',
@@ -267,6 +268,40 @@
       throw error;
     });
     return briefPdfJsLoader;
+  }
+
+  function ensureDocxPreviewLoaded() {
+    var existingRenderer = (typeof window !== 'undefined' && window.docx && typeof window.docx.renderAsync === 'function')
+      ? window.docx
+      : ((typeof window !== 'undefined' && window.docxPreview && typeof window.docxPreview.renderAsync === 'function') ? window.docxPreview : null);
+    if (existingRenderer) return Promise.resolve(existingRenderer);
+    if (docxPreviewLoader) return docxPreviewLoader;
+    docxPreviewLoader = new Promise(function(resolve, reject) {
+      var zipScript = document.createElement('script');
+      zipScript.src = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+      zipScript.onload = function() {
+        var previewScript = document.createElement('script');
+        previewScript.src = 'https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js';
+        previewScript.onload = function() {
+          var renderer = (window.docx && typeof window.docx.renderAsync === 'function')
+            ? window.docx
+            : ((window.docxPreview && typeof window.docxPreview.renderAsync === 'function') ? window.docxPreview : null);
+          if (!renderer) {
+            reject(new Error('docx_preview_not_loaded'));
+            return;
+          }
+          resolve(renderer);
+        };
+        previewScript.onerror = function() { reject(new Error('docx_preview_load_failed')); };
+        document.head.appendChild(previewScript);
+      };
+      zipScript.onerror = function() { reject(new Error('jszip_load_failed')); };
+      document.head.appendChild(zipScript);
+    }).catch(function(error) {
+      docxPreviewLoader = null;
+      throw error;
+    });
+    return docxPreviewLoader;
   }
 
   function loadBriefScript(url, checkLoaded) {
@@ -882,7 +917,7 @@
     if (document.getElementById('docx-template-preview-style')) return;
     var style = document.createElement('style');
     style.id = 'docx-template-preview-style';
-    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__body{flex:1;min-height:0;background:#e2e8f0}.docx-template-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}}';
+    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__body{flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:14px;-webkit-overflow-scrolling:touch}.docx-template-preview__render{min-width:fit-content;margin:0 auto}.docx-template-preview__render .docx-wrapper{background:transparent!important;padding:0!important;overflow:visible!important}.docx-template-preview__render .docx{margin:0 auto 14px auto;box-shadow:0 12px 28px rgba(15,23,42,.14);border:1px solid rgba(203,213,225,.88);background:#fff;max-width:none!important}.docx-template-preview__render .docx:last-child{margin-bottom:0}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}.docx-template-preview__body{padding:10px}.docx-template-preview__render{margin:0}}';
     document.head.appendChild(style);
   }
 
@@ -978,15 +1013,6 @@
     });
   }
 
-  function blobToDataUrl(blob) {
-    return new Promise(function(resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function() { resolve(String(reader.result || '')); };
-      reader.onerror = function() { reject(new Error('blob_to_dataurl_failed')); };
-      reader.readAsDataURL(blob);
-    });
-  }
-
   function openDocxRenderPreviewPage(blob) {
     ensureTemplatePreviewStyles();
     if (!blob) throw new Error('empty_blob');
@@ -994,10 +1020,10 @@
     if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть как «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><iframe class="docx-template-preview__frame" title="DOCX preview" data-preview-frame></iframe></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-open>Открыть как «Просмотреть»</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__render" data-preview-render></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
-    var frame = overlay.querySelector('[data-preview-frame]');
+    var renderNode = overlay.querySelector('[data-preview-render]');
     var statusNode = overlay.querySelector('[data-preview-status]');
     var downloadBtn = overlay.querySelector('[data-preview-download]');
     var openBtn = overlay.querySelector('[data-preview-open]');
@@ -1041,12 +1067,33 @@
         });
     });
 
-    blobToDataUrl(blob).then(function(dataUrl) {
-      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>:root{--a4-width-px:794px;--a4-height-px:1123px;--page-gap:14px}*{box-sizing:border-box}html,body{margin:0;height:100%;width:100%}body{background:#e2e8f0;font-family:Inter,system-ui,sans-serif;overflow:hidden}#preview{height:100%;width:100%;padding:12px;overflow:auto;-webkit-overflow-scrolling:touch}#docx{width:fit-content;min-width:calc(var(--a4-width-px) + 4px);margin:0 auto}#docx .docx-wrapper{background:transparent;border:none;box-shadow:none;padding:0;margin:0;min-height:auto;overflow:visible}#docx .docx{display:block;width:var(--a4-width-px)!important;min-width:var(--a4-width-px)!important;max-width:var(--a4-width-px)!important;min-height:var(--a4-height-px);margin:0 auto var(--page-gap) auto;background:#fff;border:1px solid rgba(203,213,225,.9);box-shadow:0 12px 28px rgba(15,23,42,.12);overflow:visible}#docx .docx:last-child{margin-bottom:0}.err{margin:12px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:10px;font-size:13px}@media (max-width:860px){#preview{padding:10px}#docx{margin:0;min-width:var(--a4-width-px)}}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div id=\"preview\"><div id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(!renderer||typeof renderer.renderAsync!==\"function\"){throw new Error(\"docx_preview_not_loaded\");}await renderer.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:false,ignoreHeight:false,ignoreLastRenderedPageBreak:false});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();<\/script></body></html>';
-      statusNode.textContent = 'Готово: документ открыт в предпросмотре.';
-    }).catch(function(error) {
-      statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
-    });
+    blob.arrayBuffer()
+      .then(function(arrayBuffer) {
+        statusNode.textContent = 'Рендерим документ...';
+        renderNode.innerHTML = '';
+        return ensureDocxPreviewLoaded().then(function(renderer) {
+          return renderer.renderAsync(arrayBuffer, renderNode, null, {
+            className: 'docx-preview-page',
+            inWrapper: true,
+            breakPages: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            ignoreFonts: false,
+            ignoreLastRenderedPageBreak: true,
+            renderHeaders: true,
+            renderFooters: true,
+            renderFootnotes: true,
+            renderEndnotes: true
+          });
+        });
+      })
+      .then(function() {
+        statusNode.textContent = 'Готово: документ открыт в предпросмотре.';
+      })
+      .catch(function(error) {
+        statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
+        renderNode.innerHTML = '<div style="max-width:560px;margin:20px auto;padding:14px;border-radius:12px;border:1px solid #fecaca;background:#fff1f2;color:#991b1b">Не удалось показать предпросмотр. Файл можно скачать кнопкой «Скачать».</div>';
+      });
   }
 
   async function generateDocxFromTemplateViaApi(answerText) {
