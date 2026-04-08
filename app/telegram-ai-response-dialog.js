@@ -808,28 +808,6 @@
     const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
       ? window.__APPDOSC_OPEN_FILES_VIEWER__
       : null;
-    if (openExternalViewer) {
-      let lastError = null;
-      for (let index = 0; index < templateDocxCandidates.length; index += 1) {
-        const docxUrl = templateDocxCandidates[index];
-        const templateFile = {
-          name: 'template.docx',
-          originalName: 'template.docx',
-          storedName: 'template.docx',
-          url: docxUrl,
-          previewUrl: docxUrl,
-          fileUrl: docxUrl,
-          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        };
-        try {
-          await openExternalViewer([templateFile], task || {}, { notify: true, hasMultiple: false });
-          return;
-        } catch (error) {
-          lastError = error;
-        }
-      }
-      throw new Error((lastError && lastError.message) || 'Не удалось открыть template.docx в просмотрщике.');
-    }
 
     const modal = document.createElement('div');
     modal.className = 'tg-ai-template-preview';
@@ -840,7 +818,10 @@
             <div class="tg-ai-template-preview__title">Шаблон</div>
             <div class="tg-ai-template-preview__hint">Открываем template.docx в режиме предпросмотра</div>
           </div>
-          <button type="button" class="tg-ai-template-preview__close" data-template-close>Закрыть</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+            <button type="button" class="tg-ai-template-preview__close" data-template-open-viewer>Открыть как «Просмотреть»</button>
+            <button type="button" class="tg-ai-template-preview__close" data-template-close>Закрыть</button>
+          </div>
         </div>
         <div class="tg-ai-template-preview__body">
           <iframe class="tg-ai-template-preview__frame" title="Предпросмотр шаблона" data-template-frame></iframe>
@@ -852,6 +833,7 @@
 
     const frame = modal.querySelector('[data-template-frame]');
     const status = modal.querySelector('[data-template-status]');
+    const openViewerButton = modal.querySelector('[data-template-open-viewer]');
     const close = () => modal.remove();
     modal.querySelector('[data-template-close]')?.addEventListener('click', close);
     modal.addEventListener('click', (event) => {
@@ -862,8 +844,33 @@
       const docxUrl = await resolveFirstAvailableUrl(templateDocxCandidates) || pickPreferredTemplateDocxUrl(templateDocxCandidates);
       if (docxUrl) {
         const absoluteDocx = toAbsoluteUrl(docxUrl);
+        const templateFile = {
+          name: 'template.docx',
+          originalName: 'template.docx',
+          storedName: 'template.docx',
+          url: docxUrl,
+          resolvedUrl: absoluteDocx,
+          previewUrl: docxUrl,
+          fileUrl: docxUrl,
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        };
+
         frame.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absoluteDocx)}`;
         status.textContent = 'Готово: template.docx открыт.';
+
+        openViewerButton?.addEventListener('click', async () => {
+          if (!openExternalViewer) {
+            status.textContent = 'Просмотрщик «Просмотреть» сейчас недоступен.';
+            return;
+          }
+          status.textContent = 'Открываю через логику «Просмотреть»...';
+          try {
+            await openExternalViewer([templateFile], task || {}, { notify: true, hasMultiple: false });
+            status.textContent = 'Файл открыт через «Просмотреть».';
+          } catch (error) {
+            status.textContent = (error && error.message) || 'Не удалось открыть через «Просмотреть».';
+          }
+        });
         return;
       }
       status.textContent = 'Не удалось найти template.docx.';
