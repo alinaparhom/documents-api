@@ -994,6 +994,15 @@
     }
   }
 
+  function blobToDataUrl(blob) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(String(reader.result || '')); };
+      reader.onerror = function() { reject(new Error('blob_to_dataurl_failed')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
   function openDocxRenderPreviewPage(result) {
     ensureTemplatePreviewStyles();
     if (!result || !result.blob) throw new Error('empty_blob');
@@ -1056,9 +1065,13 @@
       statusNode.textContent = 'Готово: предпросмотр DOCX открыт через Office Viewer (iframe).';
       return;
     }
-
-    frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:16px;font-family:Inter,system-ui,sans-serif;background:#eef2ff;color:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}.card{max-width:520px;background:#fff;border:1px solid rgba(203,213,225,.85);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(15,23,42,.12)}.hint{font-size:13px;color:#475569;margin-top:6px}</style></head><body><div class="card"><strong>Предпросмотр через Office Viewer недоступен</strong><div class="hint">Для blob-ссылки откройте файл кнопкой «Открыть как Просмотреть» или скачайте документ.</div></div></body></html>';
-    statusNode.textContent = 'Локальный DOCX подготовлен. Для полного просмотра используйте кнопку «Открыть как «Просмотреть»».';
+    blobToDataUrl(blob).then(function(dataUrl) {
+      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;background:#eef2ff;font-family:Inter,system-ui,sans-serif;overflow:auto}#preview{padding:12px;max-width:100%;margin:0 auto;overflow:auto}.docx-wrapper{background:#fff;border:1px solid rgba(203,213,225,.8);border-radius:14px;box-shadow:0 10px 30px rgba(15,23,42,.12);padding:10px;min-height:120px;overflow:auto}.docx-wrapper *{max-width:100% !important;box-sizing:border-box}.err{margin:12px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:10px;font-size:13px}</style><script src=\"https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js\"><\/script><script src=\"https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js\"><\/script></head><body><div id=\"preview\"><div class=\"docx-wrapper\" id=\"docx\"></div></div><div id=\"error\" class=\"err\" style=\"display:none\"></div><script>(async function(){try{var dataUrl=' + JSON.stringify(dataUrl) + ';var response=await fetch(dataUrl);var arrayBuffer=await response.arrayBuffer();var container=document.getElementById(\"docx\");var renderer=(window.docx&&window.docx.renderAsync)?window.docx:(window.docxPreview&&window.docxPreview.renderAsync?window.docxPreview:null);if(!renderer||typeof renderer.renderAsync!==\"function\"){throw new Error(\"docx_preview_not_loaded\");}await renderer.renderAsync(arrayBuffer,container,null,{inWrapper:true,breakPages:true,ignoreWidth:true});}catch(e){var err=document.getElementById(\"error\");err.style.display=\"block\";err.textContent=\"Не удалось отрендерить DOCX: \"+(e&&e.message?e.message:\"unknown\");}})();<\/script></body></html>';
+      statusNode.textContent = 'Готово: локальный DOCX открыт во встроенном предпросмотре.';
+    }).catch(function(error) {
+      frame.srcdoc = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:16px;font-family:Inter,system-ui,sans-serif;background:#eef2ff;color:#0f172a}.card{max-width:520px;margin:0 auto;background:#fff;border:1px solid rgba(203,213,225,.85);border-radius:16px;padding:16px}.hint{font-size:13px;color:#475569;margin-top:6px}</style></head><body><div class="card"><strong>Не удалось подготовить локальный предпросмотр</strong><div class="hint">Нажмите «Открыть как Просмотреть» или скачайте файл.</div></div></body></html>';
+      statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
+    });
   }
 
   async function generateDocxFromTemplateViaApi(answerText) {
