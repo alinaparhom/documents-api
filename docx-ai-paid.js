@@ -863,6 +863,16 @@
     style.textContent = '#docx-template-insert-btn{position:fixed;right:12px;bottom:12px;z-index:4200;border:1px solid rgba(255,255,255,.85);background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(241,245,249,.88));backdrop-filter:blur(10px);color:#0f172a;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.14);max-width:calc(100vw - 24px)}#docx-template-insert-btn:active{transform:translateY(1px)}.docx-template-modal{position:fixed;inset:0;z-index:4300;background:rgba(226,232,240,.42);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;padding:12px}.docx-template-modal__panel{width:min(560px,100%);background:linear-gradient(160deg,rgba(255,255,255,.95),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.9);box-shadow:0 14px 30px rgba(15,23,42,.16);border-radius:16px;padding:14px;display:grid;gap:10px}.docx-template-modal__title{font-size:16px;font-weight:800;color:#0f172a}.docx-template-modal__hint{font-size:12px;color:#64748b}.docx-template-modal__textarea{width:100%;min-height:120px;max-height:34dvh;border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.9);border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.45;color:#0f172a;resize:vertical;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.25)}.docx-template-modal__actions{display:flex;gap:8px;justify-content:flex-end}.docx-template-modal__btn{border:1px solid rgba(203,213,225,.95);background:#fff;color:#0f172a;border-radius:10px;padding:10px 12px;font-size:13px;font-weight:700}.docx-template-modal__btn--primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}@media (max-width:768px){#docx-template-insert-btn{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;padding:12px 14px;font-size:14px;border-radius:14px}.docx-template-modal{align-items:flex-end;padding:10px}.docx-template-modal__panel{border-radius:14px;padding:12px}.docx-template-modal__textarea{min-height:140px;font-size:16px}.docx-template-modal__actions{flex-direction:column}.docx-template-modal__btn{width:100%;padding:12px;font-size:14px}}';
     document.head.appendChild(style);
 
+    function openTemplateExportPickerPage(answerText) {
+      var pickerWindow = window.open('', '_blank');
+      if (!pickerWindow) return;
+      var safeAnswerText = String(answerText || '');
+      var pickerHtml = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Выбор формата</title><style>body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:14px;font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(160deg,#e2e8f0,#f8fafc);color:#0f172a}.picker{width:min(520px,100%);background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.9);border-radius:18px;box-shadow:0 16px 34px rgba(15,23,42,.15);padding:16px;display:grid;gap:10px}.title{font-size:18px;font-weight:800}.hint{font-size:13px;color:#64748b}.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.btn{border:1px solid rgba(203,213,225,.95);background:#fff;color:#0f172a;border-radius:12px;padding:12px;font-size:14px;font-weight:700}.btn.primary{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}.status{min-height:20px;font-size:12px;color:#334155}@media (max-width:768px){body{padding:10px;align-items:flex-end}.picker{border-radius:14px;padding:12px}.actions{grid-template-columns:1fr}.btn{padding:13px;font-size:15px}}</style></head><body><div class=\"picker\"><div class=\"title\">Куда сохранить ответ?</div><div class=\"hint\">Выберите формат файла: Word (.docx) или PDF.</div><div class=\"actions\"><button class=\"btn primary\" data-format=\"docx\">Word (.docx)</button><button class=\"btn\" data-format=\"pdf\">PDF (.pdf)</button></div><div class=\"status\" id=\"status\"></div></div><script>(function(){var answer=' + JSON.stringify(safeAnswerText) + ';var statusNode=document.getElementById(\"status\");function send(format){if(!window.opener){statusNode.textContent=\"Нет доступа к родительскому окну\";return;}statusNode.textContent=\"Готовим файл...\";window.opener.postMessage({type:\"documents-template-export\",format:format,answer:answer},\"*\");setTimeout(function(){statusNode.textContent=\"Можно закрыть эту вкладку\";},300);}Array.prototype.forEach.call(document.querySelectorAll(\"[data-format]\"),function(btn){btn.addEventListener(\"click\",function(){send(btn.getAttribute(\"data-format\")||\"docx\");});});})();<\/script></body></html>';
+      pickerWindow.document.open();
+      pickerWindow.document.write(pickerHtml);
+      pickerWindow.document.close();
+    }
+
     function openTemplateInputModal() {
       var overlay = document.createElement('div');
       overlay.className = 'docx-template-modal';
@@ -893,6 +903,7 @@
           return;
         }
         replaceAiMarkerInDocument(userText, '[ОТВЕТ ИИ]');
+        openTemplateExportPickerPage(userText);
         closeModal();
       });
 
@@ -935,11 +946,29 @@
     });
   }
 
-  async function generateDocxFromTemplateViaApi(answerText) {
+  function openPdfPreviewPage(blob) {
+    if (!blob || !blob.size) return;
+    var url = URL.createObjectURL(blob);
+    var pdfWindow = window.open(url, '_blank');
+    if (!pdfWindow) {
+      var fallbackLink = document.createElement('a');
+      fallbackLink.href = url;
+      fallbackLink.download = 'template-answer.pdf';
+      document.body.appendChild(fallbackLink);
+      fallbackLink.click();
+      document.body.removeChild(fallbackLink);
+    }
+    setTimeout(function() {
+      URL.revokeObjectURL(url);
+    }, 60 * 1000);
+  }
+
+  async function generateDocumentFromTemplateViaApi(answerText, format) {
+    var normalizedFormat = String(format || 'docx').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
     var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var formData = new FormData();
     formData.append('action', 'generate_document');
-    formData.append('format', 'docx');
+    formData.append('format', normalizedFormat);
     formData.append('answer', String(answerText || '').trim());
     formData.append('documentTitle', 'Ответ ИИ');
     var response = await fetch(apiUrl, {
@@ -956,6 +985,29 @@
     }
     return blob;
   }
+
+  window.addEventListener('message', function(event) {
+    var data = event && event.data ? event.data : null;
+    if (!data || data.type !== 'documents-template-export') return;
+    var format = String(data.format || 'docx').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
+    var answer = String(data.answer || '').trim();
+    if (!answer) return;
+    generateDocumentFromTemplateViaApi(answer, format)
+      .then(function(blob) {
+        if (!blob) throw new Error('empty_blob');
+        if (format === 'pdf') {
+          openPdfPreviewPage(blob);
+          return;
+        }
+        openDocxRenderPreviewPage(blob);
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : 'Не удалось создать файл.';
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+          window.alert(message);
+        }
+      });
+  });
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', ensureTemplateInsertButton);
