@@ -1088,6 +1088,73 @@ function createPdfFromText(string $outputPath, string $documentTitle, string $an
     return is_file($outputPath) && filesize($outputPath) > 0;
 }
 
+function createTempFilePath(string $prefix, string $extension): string
+{
+    $safeExt = ltrim($extension, '.');
+    $safePrefix = preg_replace('/[^a-z0-9_\-]/i', '', $prefix);
+    if (!is_string($safePrefix) || $safePrefix === '') {
+        $safePrefix = 'tmp';
+    }
+    $baseName = $safePrefix . '_' . uniqid('', true);
+    return rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $baseName . ($safeExt !== '' ? '.' . $safeExt : '');
+}
+
+function convertDocxToPdf(string $docxPath, string $pdfPath): bool
+{
+    if (!is_file($docxPath)) {
+        return false;
+    }
+
+    $binary = '';
+    $candidates = ['soffice', 'libreoffice'];
+    foreach ($candidates as $candidate) {
+        $output = [];
+        $exitCode = 1;
+        @exec('command -v ' . escapeshellarg($candidate) . ' 2>/dev/null', $output, $exitCode);
+        if ($exitCode === 0 && isset($output[0]) && trim((string)$output[0]) !== '') {
+            $binary = trim((string)$output[0]);
+            break;
+        }
+    }
+    if ($binary === '') {
+        return false;
+    }
+
+    $outDir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'pdf_convert_' . uniqid('', true);
+    if (!@mkdir($outDir, 0775, true) && !is_dir($outDir)) {
+        return false;
+    }
+
+    $command = escapeshellarg($binary)
+        . ' --headless --convert-to pdf --outdir '
+        . escapeshellarg($outDir) . ' '
+        . escapeshellarg($docxPath)
+        . ' 2>&1';
+    $commandOutput = [];
+    $commandExitCode = 1;
+    @exec($command, $commandOutput, $commandExitCode);
+    logApiDocs('info', 'DOCX->PDF convert command finished', [
+        'binary' => $binary,
+        'exitCode' => $commandExitCode,
+        'output' => implode("\n", $commandOutput),
+    ]);
+
+    $generatedPdf = $outDir . DIRECTORY_SEPARATOR . pathinfo($docxPath, PATHINFO_FILENAME) . '.pdf';
+    $isGenerated = $commandExitCode === 0 && is_file($generatedPdf) && filesize($generatedPdf) > 0;
+    if (!$isGenerated) {
+        if (is_file($generatedPdf)) {
+            @unlink($generatedPdf);
+        }
+        @rmdir($outDir);
+        return false;
+    }
+
+    $copied = @copy($generatedPdf, $pdfPath);
+    @unlink($generatedPdf);
+    @rmdir($outDir);
+    return $copied && is_file($pdfPath) && filesize($pdfPath) > 0;
+}
+
 function htmlToPlainText(string $html): string
 {
     $text = trim(strip_tags($html));
@@ -1482,43 +1549,42 @@ if ($action === 'generate_document') {
         jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
     }
 
-    $tmpFile = tempnam(sys_get_temp_dir(), 'answer_');
-    if ($tmpFile === false) {
-        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось создать временный файл']);
-    }
+    $tmpDocxFile = createTempFilePath('answer', 'docx');
+    $tmpPdfFile = createTempFilePath('answer', 'pdf');
 
-    if ($format === 'docx') {
-        if (!is_file($templateDocxPath)) {
-            @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/app/templates/, /js/documents/templates/ или укажите DOCUMENT_TEMPLATE_DIR']);
-        }
-        if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
+    if (!replaceDocxPlaceholders($templateDocxPath, $tmpDocxFile, [
             '[ОТВЕТ_ИИ]' => $answerText,
             '[ОТВЕТ ИИ]' => $answerText,
             '[ОВТЕТ ИИ]' => $answerText,
             '[DOCUMENT_TITLE]' => $documentTitle,
         ])) {
-            @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX на основе шаблона']);
-        }
+        @unlink($tmpDocxFile);
+        @unlink($tmpPdfFile);
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX на основе шаблона']);
+    }
+
+    if ($format === 'docx') {
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
+        header('Content-Length: ' . filesize($tmpDocxFile));
+        readfile($tmpDocxFile);
+        @unlink($tmpDocxFile);
+        @unlink($tmpPdfFile);
+        exit;
     } else {
-        if (is_file(__DIR__ . '/vendor/autoload.php')) {
-            require_once __DIR__ . '/vendor/autoload.php';
-        }
-        if (!createPdfFromText($tmpFile, $documentTitle, $answerText)) {
-            @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf']);
+        if (!convertDocxToPdf($tmpDocxFile, $tmpPdfFile)) {
+            @unlink($tmpDocxFile);
+            @unlink($tmpPdfFile);
+            jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: не удалось конвертировать DOCX в PDF']);
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="answer.pdf"');
+        header('Content-Length: ' . filesize($tmpPdfFile));
+        readfile($tmpPdfFile);
+        @unlink($tmpDocxFile);
+        @unlink($tmpPdfFile);
+        exit;
     }
-
-    header('Content-Length: ' . filesize($tmpFile));
-    readfile($tmpFile);
-    @unlink($tmpFile);
-    exit;
 }
 
 if ($action === 'generate_from_html') {
