@@ -971,68 +971,13 @@
   }
 
   function openTemplateOfficeViewerModal() {
-    if (document.querySelector('.docx-template-office-viewer')) return;
     var rawTemplateUrl = '/app/templates/template.docx';
     var absoluteTemplateUrl = new URL(rawTemplateUrl, window.location.origin).toString();
-    var openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
-    var overlay = document.createElement('div');
-    overlay.className = 'docx-template-office-viewer';
-    overlay.innerHTML = '<div class="docx-template-office-viewer__card" role="dialog" aria-modal="true" aria-label="Просмотр template.docx"><div class="docx-template-office-viewer__head"><div class="docx-template-office-viewer__title">Тест просмотра template.docx</div><button type="button" class="docx-template-office-viewer__btn" data-office-close>Закрыть</button></div><div class="docx-template-office-viewer__body" style="display:flex;align-items:center;justify-content:center;padding:16px"><button type="button" class="docx-template-office-viewer__btn" data-office-open>Открыть в «Просмотреть»</button></div><div class="docx-template-office-viewer__status" data-office-status>Подготовка...</div></div>';
-    document.body.appendChild(overlay);
-    document.body.style.overflow = 'hidden';
-    var closeBtn = overlay.querySelector('[data-office-close]');
-    var openBtn = overlay.querySelector('[data-office-open]');
-    var statusNode = overlay.querySelector('[data-office-status]');
-
-    function openInViewer() {
-      if (!statusNode) return;
-      if (!openExternalViewer) {
-        statusNode.textContent = 'Встроенный просмотрщик недоступен. Откройте файл напрямую: ' + rawTemplateUrl;
-        return;
-      }
-      statusNode.textContent = 'Открываю template.docx во встроенном просмотрщике...';
-      Promise.resolve(openExternalViewer([{
-        name: 'template.docx',
-        originalName: 'template.docx',
-        storedName: 'template.docx',
-        url: absoluteTemplateUrl,
-        resolvedUrl: absoluteTemplateUrl,
-        previewUrl: absoluteTemplateUrl,
-        fileUrl: absoluteTemplateUrl,
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      }], {}, { notify: true, hasMultiple: false, kind: 'office' }))
-        .then(function() {
-          statusNode.textContent = 'Файл открыт в режиме «Просмотреть».';
-        })
-        .catch(function(error) {
-          statusNode.textContent = 'Не удалось открыть через «Просмотреть»: ' + (error && error.message ? error.message : 'неизвестная ошибка');
-        });
+    var officeViewerUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(absoluteTemplateUrl);
+    var popup = window.open(officeViewerUrl, '_blank', 'noopener,noreferrer');
+    if (!popup) {
+      window.location.href = officeViewerUrl;
     }
-
-    function closeModal() {
-      document.body.style.overflow = '';
-      overlay.remove();
-    }
-    closeBtn.addEventListener('click', closeModal);
-    if (openBtn) {
-      openBtn.addEventListener('click', openInViewer);
-    }
-    openInViewer();
-    overlay.addEventListener('click', function(event) {
-      if (event.target === overlay) closeModal();
-    });
-    document.addEventListener('keydown', function escListener(event) {
-      if (!document.body.contains(overlay)) {
-        document.removeEventListener('keydown', escListener);
-        return;
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeModal();
-      }
-    });
   }
 
   function ensureTemplatePreviewStyles() {
