@@ -13568,15 +13568,7 @@
       });
     });
 
-    function ensureAiModeSelectorStyles() {
-      if (document.getElementById('documents-ai-mode-selector-style')) {
-        return;
-      }
-      var style = document.createElement('style');
-      style.id = 'documents-ai-mode-selector-style';
-      style.textContent = '.documents-ai-mode-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.45);backdrop-filter:blur(8px);z-index:4000;padding:12px}.documents-ai-mode-panel{width:min(420px,100%);background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 44px rgba(15,23,42,.2);backdrop-filter:blur(16px);border-radius:22px;padding:18px}.documents-ai-mode-title{font-size:18px;font-weight:700;color:#0f172a}.documents-ai-mode-sub{margin-top:4px;font-size:13px;color:#475569}.documents-ai-mode-actions{margin-top:14px;display:grid;gap:10px}.documents-ai-mode-btn{border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.92);color:#0f172a;padding:12px 14px;border-radius:14px;font-size:14px;font-weight:600;text-align:left;cursor:pointer}.documents-ai-mode-btn--vip{background:linear-gradient(135deg,rgba(236,253,245,.94),rgba(219,234,254,.94));border-color:rgba(125,211,252,.7)}.documents-ai-mode-close{margin-top:10px;width:100%;border:none;background:transparent;color:#64748b;font-size:13px;padding:8px;cursor:pointer}';
-      document.head.appendChild(style);
-    }
+
 
     var vipAiPaidScriptPromise = null;
 
@@ -13689,38 +13681,6 @@
       };
     }
 
-    function openAiModeSelector() {
-      ensureAiModeSelectorStyles();
-      var overlay = createElement('div', 'documents-ai-mode-overlay');
-      var panel = createElement('div', 'documents-ai-mode-panel');
-      panel.innerHTML = '<div class="documents-ai-mode-title">Выберите режим ИИ</div><div class="documents-ai-mode-sub">Бесплатный режим останется без изменений.</div>';
-      var actions = createElement('div', 'documents-ai-mode-actions');
-      var freeBtn = createElement('button', 'documents-ai-mode-btn', '🤍 Бесплатный ИИ');
-      var vipBtn = createElement('button', 'documents-ai-mode-btn documents-ai-mode-btn--vip', '💎 VIP ИИ (платный)');
-      var cancelBtn = createElement('button', 'documents-ai-mode-close', 'Отмена');
-      [freeBtn, vipBtn, cancelBtn].forEach(function(btn) { btn.type = 'button'; });
-      freeBtn.addEventListener('click', function() {
-        closeModal(overlay);
-        openAiResponseModal(buildAiDialogPayload());
-      });
-      vipBtn.addEventListener('click', function() {
-        closeModal(overlay);
-        openVipAiModal();
-      });
-      cancelBtn.addEventListener('click', function() { closeModal(overlay); });
-      overlay.addEventListener('click', function(event) {
-        if (event.target === overlay) {
-          closeModal(overlay);
-        }
-      });
-      actions.appendChild(freeBtn);
-      actions.appendChild(vipBtn);
-      panel.appendChild(actions);
-      panel.appendChild(cancelBtn);
-      overlay.appendChild(panel);
-      document.body.appendChild(overlay);
-    }
-
     function openVipAiModal() {
       var payload = buildAiDialogPayload();
       ensureVipAiPaidScript()
@@ -13741,7 +13701,7 @@
 
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
-      openAiModeSelector();
+      openVipAiModal();
     });
     aiBriefButton.type = 'button';
     aiBriefButton.addEventListener('click', function() {
