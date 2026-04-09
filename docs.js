@@ -13129,7 +13129,6 @@
     var dropzoneHint = createElement('div', 'documents-responses-dropzone-hint', 'Можно также нажать для выбора, вставить файлы из буфера обмена или перетащить их в это окно.');
     var dropzoneBadge = createElement('div', 'documents-responses-dropzone-badge', 'Drag & Drop • Ctrl+V');
     var hint = createElement('div', 'documents-responses-hint', 'Ответы привязаны к задаче и показываются сразу без перезагрузки страницы.');
-    var aiPageLimitHint = createElement('div', 'documents-responses-hint', '⚠️ В режимах «Кратко ИИ» и «Ответ с помощью ИИ» анализируются только первые 5 страниц документа.');
     var messageWrap = createElement('div', 'documents-responses-message');
     var messageLabel = createElement('label', 'documents-responses-message-label', 'Текстовый ответ (.txt)');
     var messageCounter = createElement('span', 'documents-responses-message-counter', '0 / 12000');
@@ -13764,7 +13763,6 @@
     headerActions.appendChild(closeButton);
     header.appendChild(title);
     header.appendChild(headerActions);
-    header.appendChild(aiPageLimitHint);
     dropzoneCopy.appendChild(dropzoneTitle);
     dropzoneCopy.appendChild(dropzoneHint);
     dropzone.appendChild(dropzoneCopy);
