@@ -641,6 +641,15 @@
     return formData;
   }
 
+  function resolveOrganizationSlugFromPath(pathname) {
+    var pathValue = String(pathname || '');
+    var match = pathValue.match(/\/js\/documents\/([^/?#]+)/i);
+    if (!match || !match[1]) {
+      return '';
+    }
+    return decodeURIComponent(String(match[1] || '')).trim();
+  }
+
   function openDocumentsVipAiPaidModal(config) {
     ensureVipAiModalStyles();
     var options = config && typeof config === 'object' ? config : {};
@@ -652,9 +661,19 @@
     }
 
     var payload = options.payload || {};
+    var organizationSlug = '';
+    if (payload && typeof payload.organization === 'string') {
+      organizationSlug = payload.organization.trim();
+    }
+    if (!organizationSlug && typeof window !== 'undefined' && window.location) {
+      organizationSlug = resolveOrganizationSlugFromPath(window.location.pathname);
+    }
+    var organizationCaption = organizationSlug
+      ? '<div class="documents-vip-ai__sub">🏢 Организация: ' + escapeHtmlText(organizationSlug) + '</div>'
+      : '';
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div><div class="documents-vip-ai__sub">⚠️ ИИ анализирует только первые 5 страниц документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ ИИ анализирует только первые 5 страниц документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
