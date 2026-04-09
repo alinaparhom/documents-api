@@ -1113,6 +1113,7 @@
         renderError('Заполните поля: День, Месяц, Номер и Адресат.');
         return;
       }
+      var addresseeTemplateValue = /^\s/.test(addresseeValue) ? addresseeValue : ('\u00A0' + addresseeValue);
       window.DOCUMENTS_TEMPLATE_META = {
         day: dayValue,
         month: monthValue,
@@ -1126,13 +1127,13 @@
       var replacedDay = replaceAiMarkerInDocument(dayValue, '[ДЕНЬ]');
       var replacedMonth = replaceAiMarkerInDocument(monthValue, '[МЕСЯЦ]');
       var replacedNumber = replaceAiMarkerInDocument(numberValue, '[НОМЕР]');
-      var replacedAddressee = replaceAiMarkerInDocument(addresseeValue, '[АДРЕСАТ]');
+      var replacedAddressee = replaceAiMarkerInDocument(addresseeTemplateValue, '[АДРЕСАТ]');
       var totalReplaced = replacedAnswer + replacedDay + replacedMonth + replacedNumber + replacedAddressee;
       var preparedAnswer = String(aiText || '')
         .replace(/\[ДЕНЬ\]/g, dayValue)
         .replace(/\[МЕСЯЦ\]/g, monthValue)
         .replace(/\[НОМЕР\]/g, numberValue)
-        .replace(/\[АДРЕСАТ\]/g, addresseeValue);
+        .replace(/\[АДРЕСАТ\]/g, addresseeTemplateValue);
       var replaced = totalReplaced;
       if (replaced <= 0) {
         renderError('Не найдены метки [ОТВЕТ ИИ]/[ДЕНЬ]/[МЕСЯЦ]/[НОМЕР]/[АДРЕСАТ] в документе.');
@@ -1142,7 +1143,7 @@
         day: dayValue,
         month: monthValue,
         number: numberValue,
-        addressee: addresseeValue
+        addressee: addresseeTemplateValue
       })
         .then(function(blob) {
           if (!blob) throw new Error('empty_blob');
