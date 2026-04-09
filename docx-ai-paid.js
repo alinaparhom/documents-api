@@ -702,7 +702,7 @@
       : '';
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ ИИ анализирует только первые 5 страниц документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -843,7 +843,7 @@
       chatNode.scrollTop = chatNode.scrollHeight;
     }
 
-    pushChat('assistant', 'Готов. Выберите режим в выпадающем списке, и после этого запрос отправится автоматически. Важно: ИИ анализирует только первые 5 страниц документа.');
+    pushChat('assistant', 'Готов. Выберите режим в выпадающем списке — запрос отправится автоматически. Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.');
 
     var isSending = false;
 
@@ -1006,7 +1006,7 @@
 
     var style = document.createElement('style');
     style.id = 'docx-template-insert-style';
-    style.textContent = '.docx-template-modal{position:fixed;inset:0;z-index:4300;background:linear-gradient(180deg,rgba(226,232,240,.52),rgba(148,163,184,.38));backdrop-filter:blur(12px);display:flex;align-items:stretch;justify-content:center;padding:10px}.docx-template-modal__panel{width:min(940px,100%);height:100%;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.92));border:1px solid rgba(255,255,255,.9);border-radius:22px;box-shadow:0 20px 50px rgba(15,23,42,.18);display:flex;flex-direction:column;overflow:hidden}.docx-template-modal__head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.72);backdrop-filter:blur(8px)}.docx-template-modal__title{font-size:18px;font-weight:800;color:#0f172a}.docx-template-modal__sub{font-size:12px;color:#64748b;margin-top:3px}.docx-template-modal__close{width:36px;height:36px;border:none;border-radius:11px;background:#fff;color:#475569;font-size:21px}.docx-template-modal__body{padding:14px;display:grid;gap:10px;flex:1;min-height:0}.docx-template-modal__hint{font-size:12px;color:#334155;background:rgba(219,234,254,.45);border:1px solid rgba(191,219,254,.9);border-radius:12px;padding:10px 11px}.docx-template-modal__textarea{width:100%;height:100%;min-height:44dvh;max-height:100%;resize:none;border:1px solid rgba(203,213,225,.95);border-radius:14px;background:rgba(255,255,255,.92);padding:13px 14px;font-size:14px;line-height:1.58;color:#0f172a;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 14px;border-top:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.78)}.docx-template-modal__btn{border:1px solid rgba(148,163,184,.45);background:rgba(255,255,255,.96);color:#334155;border-radius:12px;padding:10px 16px;font-weight:700;min-height:42px;transition:all .2s ease}.docx-template-modal__btn:active{transform:translateY(1px)}.docx-template-modal__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8;box-shadow:0 10px 20px rgba(37,99,235,.25)}.docx-template-modal__btn[disabled]{opacity:.6}.docx-template-modal__error{font-size:12px;color:#b91c1c;min-height:16px}@media (max-width:768px){.docx-template-modal{padding:0}.docx-template-modal__panel{border-radius:0}.docx-template-modal__head{padding:12px}.docx-template-modal__body{padding:12px}.docx-template-modal__textarea{min-height:54dvh;font-size:16px}.docx-template-modal__foot{padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));flex-direction:column}.docx-template-modal__btn{width:100%}}';
+    style.textContent = '.docx-template-modal{position:fixed;inset:0;z-index:4300;background:linear-gradient(180deg,rgba(226,232,240,.52),rgba(148,163,184,.38));backdrop-filter:blur(12px);display:flex;align-items:stretch;justify-content:center;padding:10px}.docx-template-modal__panel{width:min(940px,100%);height:100%;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.92));border:1px solid rgba(255,255,255,.9);border-radius:22px;box-shadow:0 20px 50px rgba(15,23,42,.18);display:flex;flex-direction:column;overflow:hidden}.docx-template-modal__head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.72);backdrop-filter:blur(8px)}.docx-template-modal__title{font-size:18px;font-weight:800;color:#0f172a}.docx-template-modal__sub{font-size:12px;color:#64748b;margin-top:3px}.docx-template-modal__close{width:36px;height:36px;border:none;border-radius:11px;background:#fff;color:#475569;font-size:21px}.docx-template-modal__body{padding:14px;display:grid;gap:10px;flex:1;min-height:0}.docx-template-modal__hint{font-size:12px;color:#334155;background:rgba(219,234,254,.45);border:1px solid rgba(191,219,254,.9);border-radius:12px;padding:10px 11px}.docx-template-modal__fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.docx-template-modal__field{display:grid;gap:5px}.docx-template-modal__field-label{font-size:12px;font-weight:600;color:#334155}.docx-template-modal__input{width:100%;border:1px solid rgba(203,213,225,.95);border-radius:12px;background:rgba(255,255,255,.95);padding:10px 11px;font-size:14px;line-height:1.2;color:#0f172a;outline:none}.docx-template-modal__input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__textarea{width:100%;height:100%;min-height:44dvh;max-height:100%;resize:none;border:1px solid rgba(203,213,225,.95);border-radius:14px;background:rgba(255,255,255,.92);padding:13px 14px;font-size:14px;line-height:1.58;color:#0f172a;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 14px;border-top:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.78)}.docx-template-modal__btn{border:1px solid rgba(148,163,184,.45);background:rgba(255,255,255,.96);color:#334155;border-radius:12px;padding:10px 16px;font-weight:700;min-height:42px;transition:all .2s ease}.docx-template-modal__btn:active{transform:translateY(1px)}.docx-template-modal__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8;box-shadow:0 10px 20px rgba(37,99,235,.25)}.docx-template-modal__btn[disabled]{opacity:.6}.docx-template-modal__error{font-size:12px;color:#b91c1c;min-height:16px}@media (max-width:768px){.docx-template-modal{padding:0}.docx-template-modal__panel{border-radius:0}.docx-template-modal__head{padding:12px}.docx-template-modal__body{padding:12px}.docx-template-modal__fields{grid-template-columns:1fr}.docx-template-modal__textarea{min-height:54dvh;font-size:16px}.docx-template-modal__foot{padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));flex-direction:column}.docx-template-modal__btn{width:100%}}';
     document.head.appendChild(style);
   }
 
@@ -1039,7 +1039,7 @@
     if (document.querySelector('.docx-template-modal')) return;
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-modal';
-    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Проверьте текст перед генерацией DOCX</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__hint">Можно отредактировать ответ, затем нажать «Готово». После этого откроется красивое превью с кнопкой скачивания.</div><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div></div>';
+    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Проверьте текст и заполните реквизиты перед генерацией DOCX</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__hint">Формат реквизитов: «[ДЕНЬ]» [МЕСЯЦ] 2026 г. № [НОМЕР] [АДРЕСАТ].</div><div class="docx-template-modal__fields"><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">День</span><input class="docx-template-modal__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Месяц</span><input class="docx-template-modal__input" data-template-month type="text" placeholder="апреля"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Номер</span><input class="docx-template-modal__input" data-template-number type="text" placeholder="12/Д"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Адресат</span><input class="docx-template-modal__input" data-template-addressee type="text" placeholder="ООО «Компания»"></label></div><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
     var textarea = overlay.querySelector('.docx-template-modal__textarea');
@@ -1047,6 +1047,15 @@
     var cancelButton = overlay.querySelector('[data-action="cancel"]');
     var doneButton = overlay.querySelector('[data-action="done"]');
     var errorNode = overlay.querySelector('.docx-template-modal__error');
+    var dayInput = overlay.querySelector('[data-template-day]');
+    var monthInput = overlay.querySelector('[data-template-month]');
+    var numberInput = overlay.querySelector('[data-template-number]');
+    var addresseeInput = overlay.querySelector('[data-template-addressee]');
+    var storedTemplateMeta = window.DOCUMENTS_TEMPLATE_META && typeof window.DOCUMENTS_TEMPLATE_META === 'object' ? window.DOCUMENTS_TEMPLATE_META : {};
+    if (dayInput) dayInput.value = String(storedTemplateMeta.day || '').trim();
+    if (monthInput) monthInput.value = String(storedTemplateMeta.month || '').trim();
+    if (numberInput) numberInput.value = String(storedTemplateMeta.number || '').trim();
+    if (addresseeInput) addresseeInput.value = String(storedTemplateMeta.addressee || '').trim();
     var previousButtonText = triggerButton ? triggerButton.textContent : '';
     if (triggerButton) {
       triggerButton.disabled = true;
@@ -1096,15 +1105,31 @@
         return;
       }
       var aiText = aiTextRaw.replace(/[ \t]+$/gm, '');
+      var dayValue = dayInput ? String(dayInput.value || '').trim() : '';
+      var monthValue = monthInput ? String(monthInput.value || '').trim() : '';
+      var numberValue = numberInput ? String(numberInput.value || '').trim() : '';
+      var addresseeValue = addresseeInput ? String(addresseeInput.value || '').trim() : '';
+      if (!dayValue || !monthValue || !numberValue || !addresseeValue) {
+        renderError('Заполните поля: День, Месяц, Номер и Адресат.');
+        return;
+      }
+      var headerLine = '«' + dayValue + '» ' + monthValue + ' 2026 г. № ' + numberValue + ' ' + addresseeValue + '.';
+      var finalTemplateText = headerLine + '\n\n' + aiText;
+      window.DOCUMENTS_TEMPLATE_META = {
+        day: dayValue,
+        month: monthValue,
+        number: numberValue,
+        addressee: addresseeValue
+      };
       renderError('');
       doneButton.disabled = true;
       doneButton.textContent = 'Генерирую...';
-      var replaced = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      var replaced = replaceAiMarkerInDocument(finalTemplateText, '[ОТВЕТ ИИ]');
       if (replaced <= 0) {
         renderError('Не найдена метка [ОТВЕТ ИИ] в документе.');
       }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
-      generateDocxFromTemplateViaApi(aiText)
+      generateDocxFromTemplateViaApi(finalTemplateText)
         .then(function(blob) {
           if (!blob) throw new Error('empty_blob');
           closeEditor();
@@ -1219,5 +1244,6 @@
   }
 
   window.openDocumentsVipAiPaidModal = openDocumentsVipAiPaidModal;
+  window.openDocxAiTemplateAnswerEditor = openTemplateAnswerEditor;
   window.replaceAiMarkerInDocument = replaceAiMarkerInDocument;
 })();
