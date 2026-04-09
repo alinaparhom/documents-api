@@ -894,12 +894,11 @@
           <div>
             <div class="tg-ai-chat__title">Ответ с помощью ИИ</div>
             <div class="tg-ai-chat__sub">Выберите файлы, затем режим ответа в списке</div>
-            <div class="tg-ai-chat__sub">⚠️ ИИ анализирует только первые 5 страниц документа.</div>
           </div>
           <button type="button" class="tg-ai-chat__close" data-close>✕</button>
         </div>
         <div class="tg-ai-chat__messages" data-messages>
-          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите файлы и режим ответа в выпадающем списке «Выберите режим». ИИ анализирует только первые 5 страниц документа.</div>
+          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Привет! Выберите файлы и режим ответа в выпадающем списке «Выберите режим».</div>
         </div>
         <div class="tg-ai-chat__status" data-status>Выберите режим ответа.</div>
         <div class="tg-ai-chat__composer">
