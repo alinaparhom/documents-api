@@ -1541,6 +1541,10 @@ if ($action === 'generate_document') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
+    $docDay = trim((string)($_POST['docDay'] ?? ''));
+    $docMonth = trim((string)($_POST['docMonth'] ?? ''));
+    $docNumber = trim((string)($_POST['docNumber'] ?? ''));
+    $docRecipient = trim((string)($_POST['docRecipient'] ?? ''));
 
     if ($answerText === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
@@ -1581,6 +1585,10 @@ if ($action === 'generate_document') {
         if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
             '[ОТВЕТ ИИ]' => $answerText,
             '[DOCUMENT_TITLE]' => $documentTitle,
+            '[ДЕНЬ]' => $docDay,
+            '[МЕСЯЦ]' => $docMonth,
+            '[НОМЕР]' => $docNumber,
+            '[АДРЕСАТ]' => $docRecipient,
         ])) {
             @unlink($tmpFile);
             jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);

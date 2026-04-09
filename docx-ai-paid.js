@@ -958,7 +958,7 @@
 
     var style = document.createElement('style');
     style.id = 'docx-template-insert-style';
-    style.textContent = '.docx-template-modal{position:fixed;inset:0;z-index:4300;background:linear-gradient(180deg,rgba(226,232,240,.52),rgba(148,163,184,.38));backdrop-filter:blur(12px);display:flex;align-items:stretch;justify-content:center;padding:10px}.docx-template-modal__panel{width:min(940px,100%);height:100%;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.92));border:1px solid rgba(255,255,255,.9);border-radius:22px;box-shadow:0 20px 50px rgba(15,23,42,.18);display:flex;flex-direction:column;overflow:hidden}.docx-template-modal__head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.72);backdrop-filter:blur(8px)}.docx-template-modal__title{font-size:18px;font-weight:800;color:#0f172a}.docx-template-modal__sub{font-size:12px;color:#64748b;margin-top:3px}.docx-template-modal__close{width:36px;height:36px;border:none;border-radius:11px;background:#fff;color:#475569;font-size:21px}.docx-template-modal__body{padding:14px;display:grid;gap:10px;flex:1;min-height:0}.docx-template-modal__hint{font-size:12px;color:#334155;background:rgba(219,234,254,.45);border:1px solid rgba(191,219,254,.9);border-radius:12px;padding:10px 11px}.docx-template-modal__textarea{width:100%;height:100%;min-height:44dvh;max-height:100%;resize:none;border:1px solid rgba(203,213,225,.95);border-radius:14px;background:rgba(255,255,255,.92);padding:13px 14px;font-size:14px;line-height:1.58;color:#0f172a;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 14px;border-top:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.78)}.docx-template-modal__btn{border:1px solid rgba(148,163,184,.45);background:rgba(255,255,255,.96);color:#334155;border-radius:12px;padding:10px 16px;font-weight:700;min-height:42px;transition:all .2s ease}.docx-template-modal__btn:active{transform:translateY(1px)}.docx-template-modal__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8;box-shadow:0 10px 20px rgba(37,99,235,.25)}.docx-template-modal__btn[disabled]{opacity:.6}.docx-template-modal__error{font-size:12px;color:#b91c1c;min-height:16px}@media (max-width:768px){.docx-template-modal{padding:0}.docx-template-modal__panel{border-radius:0}.docx-template-modal__head{padding:12px}.docx-template-modal__body{padding:12px}.docx-template-modal__textarea{min-height:54dvh;font-size:16px}.docx-template-modal__foot{padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));flex-direction:column}.docx-template-modal__btn{width:100%}}';
+    style.textContent = '.docx-template-modal{position:fixed;inset:0;z-index:4300;background:linear-gradient(180deg,rgba(226,232,240,.52),rgba(148,163,184,.38));backdrop-filter:blur(12px);display:flex;align-items:stretch;justify-content:center;padding:10px}.docx-template-modal__panel{width:min(940px,100%);height:100%;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.92));border:1px solid rgba(255,255,255,.9);border-radius:22px;box-shadow:0 20px 50px rgba(15,23,42,.18);display:flex;flex-direction:column;overflow:hidden}.docx-template-modal__head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.72);backdrop-filter:blur(8px)}.docx-template-modal__title{font-size:18px;font-weight:800;color:#0f172a}.docx-template-modal__sub{font-size:12px;color:#64748b;margin-top:3px}.docx-template-modal__close{width:36px;height:36px;border:none;border-radius:11px;background:#fff;color:#475569;font-size:21px}.docx-template-modal__body{padding:14px;display:grid;gap:10px;flex:1;min-height:0}.docx-template-modal__hint{font-size:12px;color:#334155;background:rgba(219,234,254,.45);border:1px solid rgba(191,219,254,.9);border-radius:12px;padding:10px 11px}.docx-template-modal__meta{display:grid;gap:8px;grid-template-columns:repeat(2,minmax(0,1fr))}.docx-template-modal__meta-field{display:grid;gap:6px;font-size:11px;font-weight:700;color:#475569}.docx-template-modal__meta-field--full{grid-column:1/-1}.docx-template-modal__meta-input{border:1px solid rgba(203,213,225,.95);border-radius:12px;background:rgba(255,255,255,.96);min-height:40px;padding:0 12px;font-size:14px;color:#0f172a;outline:none}.docx-template-modal__meta-input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__textarea{width:100%;height:100%;min-height:44dvh;max-height:100%;resize:none;border:1px solid rgba(203,213,225,.95);border-radius:14px;background:rgba(255,255,255,.92);padding:13px 14px;font-size:14px;line-height:1.58;color:#0f172a;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 14px;border-top:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.78)}.docx-template-modal__btn{border:1px solid rgba(148,163,184,.45);background:rgba(255,255,255,.96);color:#334155;border-radius:12px;padding:10px 16px;font-weight:700;min-height:42px;transition:all .2s ease}.docx-template-modal__btn:active{transform:translateY(1px)}.docx-template-modal__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8;box-shadow:0 10px 20px rgba(37,99,235,.25)}.docx-template-modal__btn[disabled]{opacity:.6}.docx-template-modal__error{font-size:12px;color:#b91c1c;min-height:16px}@media (max-width:768px){.docx-template-modal{padding:0}.docx-template-modal__panel{border-radius:0}.docx-template-modal__head{padding:12px}.docx-template-modal__body{padding:12px}.docx-template-modal__meta{grid-template-columns:1fr}.docx-template-modal__textarea{min-height:54dvh;font-size:16px}.docx-template-modal__foot{padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));flex-direction:column}.docx-template-modal__btn{width:100%}}';
     document.head.appendChild(style);
   }
 
@@ -991,7 +991,7 @@
     if (document.querySelector('.docx-template-modal')) return;
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-modal';
-    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Проверьте текст перед генерацией DOCX</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__hint">Можно отредактировать ответ, затем нажать «Готово». После этого откроется красивое превью с кнопкой скачивания.</div><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div></div>';
+    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Проверьте текст перед генерацией DOCX</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__hint">Заполните шапку: «[ДЕНЬ]» [МЕСЯЦ] 2026 г. № [НОМЕР] [АДРЕСАТ], затем проверьте текст ответа.</div><div class="docx-template-modal__meta"><label class="docx-template-modal__meta-field">ДЕНЬ<input class="docx-template-modal__meta-input" data-meta-day type="text" placeholder="09"></label><label class="docx-template-modal__meta-field">МЕСЯЦ<input class="docx-template-modal__meta-input" data-meta-month type="text" placeholder="апреля"></label><label class="docx-template-modal__meta-field">НОМЕР<input class="docx-template-modal__meta-input" data-meta-number type="text" placeholder="123"></label><label class="docx-template-modal__meta-field docx-template-modal__meta-field--full">АДРЕСАТ<input class="docx-template-modal__meta-input" data-meta-recipient type="text" placeholder="ООО «Пример»"></label></div><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
     var textarea = overlay.querySelector('.docx-template-modal__textarea');
@@ -999,6 +999,10 @@
     var cancelButton = overlay.querySelector('[data-action="cancel"]');
     var doneButton = overlay.querySelector('[data-action="done"]');
     var errorNode = overlay.querySelector('.docx-template-modal__error');
+    var dayInput = overlay.querySelector('[data-meta-day]');
+    var monthInput = overlay.querySelector('[data-meta-month]');
+    var numberInput = overlay.querySelector('[data-meta-number]');
+    var recipientInput = overlay.querySelector('[data-meta-recipient]');
     var previousButtonText = triggerButton ? triggerButton.textContent : '';
     if (triggerButton) {
       triggerButton.disabled = true;
@@ -1048,15 +1052,25 @@
         return;
       }
       var aiText = aiTextRaw.replace(/[ \t]+$/gm, '');
+      var templateMeta = {
+        day: String(dayInput && dayInput.value || '').trim(),
+        month: String(monthInput && monthInput.value || '').trim(),
+        number: String(numberInput && numberInput.value || '').trim(),
+        recipient: String(recipientInput && recipientInput.value || '').trim()
+      };
       renderError('');
       doneButton.disabled = true;
       doneButton.textContent = 'Генерирую...';
       var replaced = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      replaceAiMarkerInDocument(templateMeta.day, '[ДЕНЬ]');
+      replaceAiMarkerInDocument(templateMeta.month, '[МЕСЯЦ]');
+      replaceAiMarkerInDocument(templateMeta.number, '[НОМЕР]');
+      replaceAiMarkerInDocument(templateMeta.recipient, '[АДРЕСАТ]');
       if (replaced <= 0) {
         renderError('Не найдена метка [ОТВЕТ ИИ] в документе.');
       }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
-      generateDocxFromTemplateViaApi(aiText)
+      generateDocxFromTemplateViaApi(aiText, templateMeta)
         .then(function(blob) {
           if (!blob) throw new Error('empty_blob');
           closeEditor();
@@ -1139,12 +1153,17 @@
     });
   }
 
-  async function generateDocxFromTemplateViaApi(answerText) {
+  async function generateDocxFromTemplateViaApi(answerText, templateMeta) {
+    var meta = templateMeta && typeof templateMeta === 'object' ? templateMeta : {};
     var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     var formData = new FormData();
     formData.append('action', 'generate_document');
     formData.append('format', 'docx');
     formData.append('answer', String(answerText || ''));
+    formData.append('docDay', String(meta.day || ''));
+    formData.append('docMonth', String(meta.month || ''));
+    formData.append('docNumber', String(meta.number || ''));
+    formData.append('docRecipient', String(meta.recipient || ''));
     formData.append('documentTitle', 'Ответ ИИ');
     var response = await fetch(apiUrl, {
       method: 'POST',

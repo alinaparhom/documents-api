@@ -2492,12 +2492,21 @@
         alert('Нет текста для экспорта. Сначала получите ответ от ИИ.');
         return;
       }
+      var dayValue = String(editDayInput && editDayInput.value || '').trim();
+      var monthValue = String(editMonthInput && editMonthInput.value || '').trim();
+      var numberValue = String(editNumberInput && editNumberInput.value || '').trim();
+      var recipientValue = String(editRecipientInput && editRecipientInput.value || '').trim();
       var apiUrl = config.apiUrl || window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
       var formData = new FormData();
       formData.append('action', 'generate_document');
       formData.append('format', format);
       formData.append('html', preparedHtml);
+      formData.append('answer', String(answerText || '').trim());
       formData.append('documentTitle', config.documentTitle || '');
+      formData.append('docDay', dayValue);
+      formData.append('docMonth', monthValue);
+      formData.append('docNumber', numberValue);
+      formData.append('docRecipient', recipientValue);
       if (state.templateFile && state.templateFile.fileObject) {
         formData.append('templateFile', state.templateFile.fileObject, state.templateFile.fileObject.name || 'template.docx');
       }
@@ -2590,6 +2599,37 @@
     var editInfo = createElement('div', 'ai-chat-modal__empty', '');
     editInfo.style.fontSize = '12px';
     editInfo.style.marginBottom = '6px';
+    var editMetaGrid = createElement('div', 'ai-chat-modal__settings');
+    editMetaGrid.style.marginBottom = '8px';
+    editMetaGrid.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+    var editDayField = createElement('label', 'ai-chat-modal__field');
+    var editMonthField = createElement('label', 'ai-chat-modal__field');
+    var editNumberField = createElement('label', 'ai-chat-modal__field');
+    var editRecipientField = createElement('label', 'ai-chat-modal__field ai-chat-modal__field--full');
+    var editDayInput = createElement('input', 'ai-chat-modal__input');
+    var editMonthInput = createElement('input', 'ai-chat-modal__input');
+    var editNumberInput = createElement('input', 'ai-chat-modal__input');
+    var editRecipientInput = createElement('input', 'ai-chat-modal__input');
+    editDayInput.type = 'text';
+    editMonthInput.type = 'text';
+    editNumberInput.type = 'text';
+    editRecipientInput.type = 'text';
+    editDayInput.placeholder = 'День (например, 09)';
+    editMonthInput.placeholder = 'Месяц (например, апреля)';
+    editNumberInput.placeholder = 'Номер';
+    editRecipientInput.placeholder = 'Адресат';
+    editDayField.appendChild(createElement('span', '', 'ДЕНЬ'));
+    editMonthField.appendChild(createElement('span', '', 'МЕСЯЦ'));
+    editNumberField.appendChild(createElement('span', '', 'НОМЕР'));
+    editRecipientField.appendChild(createElement('span', '', 'АДРЕСАТ'));
+    editDayField.appendChild(editDayInput);
+    editMonthField.appendChild(editMonthInput);
+    editNumberField.appendChild(editNumberInput);
+    editRecipientField.appendChild(editRecipientInput);
+    editMetaGrid.appendChild(editDayField);
+    editMetaGrid.appendChild(editMonthField);
+    editMetaGrid.appendChild(editNumberField);
+    editMetaGrid.appendChild(editRecipientField);
     var editEditor = createRichEditor('Отредактируйте ответ перед экспортом...');
     var editActions = createElement('div', 'ai-chat-modal__export-buttons');
     var editApply = createElement('button', 'ai-chat-modal__send', 'Обновить');
@@ -2598,6 +2638,7 @@
     var editCopy = createElement('button', 'ai-chat-modal__export-btn', 'Копировать в буфер');
     [editApply, editDocx, editPdf, editCopy].forEach(function (btn) { btn.type = 'button'; editActions.appendChild(btn); });
     editModal.content.appendChild(editInfo);
+    editModal.content.appendChild(editMetaGrid);
     editModal.content.appendChild(editEditor.root);
     editModal.content.appendChild(editActions);
 

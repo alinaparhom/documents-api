@@ -13741,7 +13741,7 @@
 
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
-      openAiModeSelector();
+      openVipAiModal();
     });
     aiBriefButton.type = 'button';
     aiBriefButton.addEventListener('click', function() {
