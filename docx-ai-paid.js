@@ -1055,7 +1055,7 @@
     if (dayInput) dayInput.value = String(storedTemplateMeta.day || '').trim();
     if (monthInput) monthInput.value = String(storedTemplateMeta.month || '').trim();
     if (numberInput) numberInput.value = String(storedTemplateMeta.number || '').trim();
-    if (addresseeInput) addresseeInput.value = String(storedTemplateMeta.addressee || '').trim();
+    if (addresseeInput) addresseeInput.value = String(storedTemplateMeta.addressee || '');
     var previousButtonText = triggerButton ? triggerButton.textContent : '';
     if (triggerButton) {
       triggerButton.disabled = true;
@@ -1108,8 +1108,8 @@
       var dayValue = dayInput ? String(dayInput.value || '').trim() : '';
       var monthValue = monthInput ? String(monthInput.value || '').trim() : '';
       var numberValue = numberInput ? String(numberInput.value || '').trim() : '';
-      var addresseeValue = addresseeInput ? String(addresseeInput.value || '').trim() : '';
-      if (!dayValue || !monthValue || !numberValue || !addresseeValue) {
+      var addresseeValue = addresseeInput ? String(addresseeInput.value || '').replace(/\s+$/g, '') : '';
+      if (!dayValue || !monthValue || !numberValue || !String(addresseeValue || '').trim()) {
         renderError('Заполните поля: День, Месяц, Номер и Адресат.');
         return;
       }
