@@ -1138,7 +1138,12 @@
         renderError('Не найдены метки [ОТВЕТ ИИ]/[ДЕНЬ]/[МЕСЯЦ]/[НОМЕР]/[АДРЕСАТ] в документе.');
       }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
-      generateDocxFromTemplateViaApi(preparedAnswer)
+      generateDocxFromTemplateViaApi(preparedAnswer, {
+        day: dayValue,
+        month: monthValue,
+        number: numberValue,
+        addressee: addresseeValue
+      })
         .then(function(blob) {
           if (!blob) throw new Error('empty_blob');
           closeEditor();
@@ -1224,12 +1229,17 @@
     });
   }
 
-  async function generateDocxFromTemplateViaApi(answerText) {
+  async function generateDocxFromTemplateViaApi(answerText, meta) {
     var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
+    var safeMeta = meta && typeof meta === 'object' ? meta : {};
     var formData = new FormData();
     formData.append('action', 'generate_document');
     formData.append('format', 'docx');
     formData.append('answer', String(answerText || ''));
+    formData.append('templateDay', String(safeMeta.day || ''));
+    formData.append('templateMonth', String(safeMeta.month || ''));
+    formData.append('templateNumber', String(safeMeta.number || ''));
+    formData.append('templateAddressee', String(safeMeta.addressee || ''));
     formData.append('documentTitle', 'Ответ ИИ');
     var response = await fetch(apiUrl, {
       method: 'POST',

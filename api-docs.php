@@ -1541,6 +1541,10 @@ if ($action === 'generate_document') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
+    $templateDay = normalizeDocText((string)($_POST['templateDay'] ?? ''));
+    $templateMonth = normalizeDocText((string)($_POST['templateMonth'] ?? ''));
+    $templateNumber = normalizeDocText((string)($_POST['templateNumber'] ?? ''));
+    $templateAddressee = normalizeDocText((string)($_POST['templateAddressee'] ?? ''));
 
     if ($answerText === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
@@ -1578,10 +1582,23 @@ if ($action === 'generate_document') {
             @unlink($tmpFile);
             jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/app/templates/, /js/documents/templates/ или укажите DOCUMENT_TEMPLATE_DIR']);
         }
-        if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
+        $docxReplacements = [
             '[ОТВЕТ ИИ]' => $answerText,
             '[DOCUMENT_TITLE]' => $documentTitle,
-        ])) {
+        ];
+        if ($templateDay !== '') {
+            $docxReplacements['[ДЕНЬ]'] = $templateDay;
+        }
+        if ($templateMonth !== '') {
+            $docxReplacements['[МЕСЯЦ]'] = $templateMonth;
+        }
+        if ($templateNumber !== '') {
+            $docxReplacements['[НОМЕР]'] = $templateNumber;
+        }
+        if ($templateAddressee !== '') {
+            $docxReplacements['[АДРЕСАТ]'] = $templateAddressee;
+        }
+        if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, $docxReplacements)) {
             @unlink($tmpFile);
             jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);
         }
