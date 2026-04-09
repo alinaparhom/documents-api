@@ -641,6 +641,50 @@
     return formData;
   }
 
+  function resolveOrganizationSlugFromPath(pathname) {
+    var pathValue = String(pathname || '');
+    var match = pathValue.match(/\/js\/documents\/([^/?#]+)/i);
+    if (!match || !match[1]) {
+      return '';
+    }
+    var candidate = decodeURIComponent(String(match[1] || '')).trim();
+    if (!candidate) return '';
+    if (/\.(js|php|html?)$/i.test(candidate)) return '';
+    return candidate;
+  }
+
+  function resolveOrganizationSlug(payload) {
+    var context = payload && payload.context && typeof payload.context === 'object' ? payload.context : {};
+    var documentData = payload && payload.documentData && typeof payload.documentData === 'object' ? payload.documentData : {};
+    var directCandidates = [
+      payload && typeof payload.organization === 'string' ? payload.organization : '',
+      typeof context.organization === 'string' ? context.organization : '',
+      typeof documentData.organization === 'string' ? documentData.organization : ''
+    ];
+    for (var i = 0; i < directCandidates.length; i += 1) {
+      var directValue = String(directCandidates[i] || '').trim();
+      if (directValue) return directValue;
+    }
+    var pathCandidates = [];
+    if (typeof window !== 'undefined' && window.location) {
+      pathCandidates.push(window.location.pathname || '');
+    }
+    if (typeof document !== 'undefined') {
+      if (document.currentScript && document.currentScript.src) {
+        pathCandidates.push(document.currentScript.src);
+      }
+      var scripts = document.querySelectorAll('script[src]');
+      for (var s = 0; s < scripts.length; s += 1) {
+        pathCandidates.push(scripts[s].getAttribute('src') || '');
+      }
+    }
+    for (var j = 0; j < pathCandidates.length; j += 1) {
+      var fromPath = resolveOrganizationSlugFromPath(pathCandidates[j]);
+      if (fromPath) return fromPath;
+    }
+    return '';
+  }
+
   function openDocumentsVipAiPaidModal(config) {
     ensureVipAiModalStyles();
     var options = config && typeof config === 'object' ? config : {};
@@ -652,9 +696,13 @@
     }
 
     var payload = options.payload || {};
+    var organizationSlug = resolveOrganizationSlug(payload);
+    var organizationCaption = organizationSlug
+      ? '<div class="documents-vip-ai__sub">🏢 Организация: ' + escapeHtmlText(organizationSlug) + '</div>'
+      : '';
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div><div class="documents-vip-ai__sub">⚠️ ИИ анализирует только первые 5 страниц документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button type="button" class="documents-vip-ai__template-btn" data-template-open aria-label="Открыть шаблон ответа">Шаблон</button></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ ИИ анализирует только первые 5 страниц документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -1073,14 +1121,17 @@
   }
 
   function ensureDocxPreviewLibrariesLoaded() {
-    var loadZip = loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', function() {
-      return Boolean(window.JSZip);
-    });
-    var loadPreview = loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', function() {
-      return Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync));
-    });
-    return Promise.all([loadZip, loadPreview]).then(function() {
+    return loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', function() {
+      return Boolean(window.JSZip && typeof window.JSZip.loadAsync === 'function');
+    }).then(function() {
+      return loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', function() {
+        return Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync));
+      });
+    }).then(function() {
       var renderer = (window.docx && window.docx.renderAsync) ? window.docx : ((window.docxPreview && window.docxPreview.renderAsync) ? window.docxPreview : null);
+      if (!window.JSZip || typeof window.JSZip.loadAsync !== 'function') {
+        throw new Error('jszip_not_loaded');
+      }
       if (!renderer || typeof renderer.renderAsync !== 'function') {
         throw new Error('docx_preview_not_loaded');
       }
