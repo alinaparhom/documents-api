@@ -74,7 +74,7 @@
   ];
   var CONTEXT_DETAIL_OPTIONS = [
     { value: 'detailed', label: 'Подробно' },
-    { value: 'brief', label: 'Кратко' }
+    { value: 'brief', label: 'Кратко (ИИ анализирует только первые 5 страниц PDF)' }
   ];
   var AI_MODE_OPTIONS = [
     { value: 'free', label: 'Бесплатный ИИ' },
@@ -2260,7 +2260,7 @@
     var header = createElement('div', 'documents-brief-header');
     var titleWrap = createElement('div', '');
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
-    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для краткого вывода (Vision режим).'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для краткого вывода (Vision режим). ИИ читает только первые 5 страниц PDF.'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
@@ -3238,7 +3238,8 @@
       contextUsageHint.textContent = 'Текст к отправке: ' + String(stats.preparedChars || 0)
         + ' символов • режим: ' + (stats.mode === 'brief' ? 'кратко' : 'подробно')
         + ' • файлов: ' + String(stats.filesUsed || 0)
-        + (stats.truncatedFiles ? (' • сжато: ' + String(stats.truncatedFiles)) : '');
+        + (stats.truncatedFiles ? (' • сжато: ' + String(stats.truncatedFiles)) : '')
+        + (stats.mode === 'brief' ? ' • лимит: первые 5 страниц PDF' : '');
     }
 
     function updateFileStatusInUI() {
@@ -3649,11 +3650,12 @@
       aiSettingsModal.close();
     });
 
-    templateButton.addEventListener('click', async function () {
-      setTemplateTab('docx');
-      openOverlay(templateModal);
-      await loadTemplateDocx();
-      await loadTemplatePdf();
+    templateButton.addEventListener('click', function () {
+      if (typeof window.openDocxAiTemplateAnswerEditor === 'function') {
+        window.openDocxAiTemplateAnswerEditor(templateButton);
+        return;
+      }
+      appendAssistantErrorOnce('Редактор шаблона временно недоступен. Обновите страницу.');
     });
     templateDocxTab.addEventListener('click', function () {
       setTemplateTab('docx');
