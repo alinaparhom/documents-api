@@ -1039,7 +1039,7 @@
     if (document.querySelector('.docx-template-modal')) return;
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-modal';
-    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Проверьте текст и заполните реквизиты перед генерацией DOCX</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__hint">Формат реквизитов: «[ДЕНЬ]» [МЕСЯЦ] 2026 г. № [НОМЕР] [АДРЕСАТ].</div><div class="docx-template-modal__fields"><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">День</span><input class="docx-template-modal__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Месяц</span><input class="docx-template-modal__input" data-template-month type="text" placeholder="апреля"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Номер</span><input class="docx-template-modal__input" data-template-number type="text" placeholder="12/Д"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Адресат</span><input class="docx-template-modal__input" data-template-addressee type="text" placeholder="ООО «Компания»"></label></div><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div></div>';
+    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Проверьте текст и заполните реквизиты перед генерацией DOCX</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__hint">Поля ниже подставляются отдельно в метки: [ДЕНЬ], [МЕСЯЦ], [НОМЕР], [АДРЕСАТ].</div><div class="docx-template-modal__fields"><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">День</span><input class="docx-template-modal__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Месяц</span><input class="docx-template-modal__input" data-template-month type="text" placeholder="апреля"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Номер</span><input class="docx-template-modal__input" data-template-number type="text" placeholder="12/Д"></label><label class="docx-template-modal__field"><span class="docx-template-modal__field-label">Адресат</span><input class="docx-template-modal__input" data-template-addressee type="text" placeholder="ООО «Компания»"></label></div><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
     var textarea = overlay.querySelector('.docx-template-modal__textarea');
@@ -1113,8 +1113,6 @@
         renderError('Заполните поля: День, Месяц, Номер и Адресат.');
         return;
       }
-      var headerLine = '«' + dayValue + '» ' + monthValue + ' 2026 г. № ' + numberValue + ' ' + addresseeValue + '.';
-      var finalTemplateText = headerLine + '\n\n' + aiText;
       window.DOCUMENTS_TEMPLATE_META = {
         day: dayValue,
         month: monthValue,
@@ -1124,12 +1122,23 @@
       renderError('');
       doneButton.disabled = true;
       doneButton.textContent = 'Генерирую...';
-      var replaced = replaceAiMarkerInDocument(finalTemplateText, '[ОТВЕТ ИИ]');
+      var replacedAnswer = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
+      var replacedDay = replaceAiMarkerInDocument(dayValue, '[ДЕНЬ]');
+      var replacedMonth = replaceAiMarkerInDocument(monthValue, '[МЕСЯЦ]');
+      var replacedNumber = replaceAiMarkerInDocument(numberValue, '[НОМЕР]');
+      var replacedAddressee = replaceAiMarkerInDocument(addresseeValue, '[АДРЕСАТ]');
+      var totalReplaced = replacedAnswer + replacedDay + replacedMonth + replacedNumber + replacedAddressee;
+      var preparedAnswer = String(aiText || '')
+        .replace(/\[ДЕНЬ\]/g, dayValue)
+        .replace(/\[МЕСЯЦ\]/g, monthValue)
+        .replace(/\[НОМЕР\]/g, numberValue)
+        .replace(/\[АДРЕСАТ\]/g, addresseeValue);
+      var replaced = totalReplaced;
       if (replaced <= 0) {
-        renderError('Не найдена метка [ОТВЕТ ИИ] в документе.');
+        renderError('Не найдены метки [ОТВЕТ ИИ]/[ДЕНЬ]/[МЕСЯЦ]/[НОМЕР]/[АДРЕСАТ] в документе.');
       }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
-      generateDocxFromTemplateViaApi(finalTemplateText)
+      generateDocxFromTemplateViaApi(preparedAnswer)
         .then(function(blob) {
           if (!blob) throw new Error('empty_blob');
           closeEditor();
