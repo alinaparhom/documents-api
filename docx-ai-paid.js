@@ -647,7 +647,42 @@
     if (!match || !match[1]) {
       return '';
     }
-    return decodeURIComponent(String(match[1] || '')).trim();
+    var candidate = decodeURIComponent(String(match[1] || '')).trim();
+    if (!candidate) return '';
+    if (/\.(js|php|html?)$/i.test(candidate)) return '';
+    return candidate;
+  }
+
+  function resolveOrganizationSlug(payload) {
+    var context = payload && payload.context && typeof payload.context === 'object' ? payload.context : {};
+    var documentData = payload && payload.documentData && typeof payload.documentData === 'object' ? payload.documentData : {};
+    var directCandidates = [
+      payload && typeof payload.organization === 'string' ? payload.organization : '',
+      typeof context.organization === 'string' ? context.organization : '',
+      typeof documentData.organization === 'string' ? documentData.organization : ''
+    ];
+    for (var i = 0; i < directCandidates.length; i += 1) {
+      var directValue = String(directCandidates[i] || '').trim();
+      if (directValue) return directValue;
+    }
+    var pathCandidates = [];
+    if (typeof window !== 'undefined' && window.location) {
+      pathCandidates.push(window.location.pathname || '');
+    }
+    if (typeof document !== 'undefined') {
+      if (document.currentScript && document.currentScript.src) {
+        pathCandidates.push(document.currentScript.src);
+      }
+      var scripts = document.querySelectorAll('script[src]');
+      for (var s = 0; s < scripts.length; s += 1) {
+        pathCandidates.push(scripts[s].getAttribute('src') || '');
+      }
+    }
+    for (var j = 0; j < pathCandidates.length; j += 1) {
+      var fromPath = resolveOrganizationSlugFromPath(pathCandidates[j]);
+      if (fromPath) return fromPath;
+    }
+    return '';
   }
 
   function openDocumentsVipAiPaidModal(config) {
@@ -661,13 +696,7 @@
     }
 
     var payload = options.payload || {};
-    var organizationSlug = '';
-    if (payload && typeof payload.organization === 'string') {
-      organizationSlug = payload.organization.trim();
-    }
-    if (!organizationSlug && typeof window !== 'undefined' && window.location) {
-      organizationSlug = resolveOrganizationSlugFromPath(window.location.pathname);
-    }
+    var organizationSlug = resolveOrganizationSlug(payload);
     var organizationCaption = organizationSlug
       ? '<div class="documents-vip-ai__sub">🏢 Организация: ' + escapeHtmlText(organizationSlug) + '</div>'
       : '';
