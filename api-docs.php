@@ -990,21 +990,25 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
         $updated = $content;
         foreach ($replacements as $search => $replace) {
+            $replaceValue = (string)$replace;
+            if ($search === '[АДРЕСАТ]' && $replaceValue !== '' && !preg_match('/^\s/u', $replaceValue)) {
+                $replaceValue = ' ' . $replaceValue;
+            }
             if ($search === '[ОТВЕТ ИИ]') {
-                $markerParagraphResult = replaceMarkerParagraphWithAnswerXml($updated, (string)$search, (string)$replace);
+                $markerParagraphResult = replaceMarkerParagraphWithAnswerXml($updated, (string)$search, $replaceValue);
                 if (is_array($markerParagraphResult) && !empty($markerParagraphResult['replaced']) && isset($markerParagraphResult['xml'])) {
                     $updated = (string)$markerParagraphResult['xml'];
                     $replacedAny = true;
                     continue;
                 }
             }
-            $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape($replace));
+            $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape($replaceValue));
             if (strpos($updated, $search) !== false) {
                 $updated = str_replace($search, $escaped, $updated);
                 $replacedAny = true;
                 continue;
             }
-            $crossRunResult = replacePlaceholderAcrossWordTextRuns($updated, (string)$search, (string)$replace);
+            $crossRunResult = replacePlaceholderAcrossWordTextRuns($updated, (string)$search, $replaceValue);
             if (is_array($crossRunResult) && !empty($crossRunResult['replaced']) && isset($crossRunResult['xml'])) {
                 $updated = (string)$crossRunResult['xml'];
                 $replacedAny = true;
@@ -1110,11 +1114,23 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
         $endSuffix = mb_substr($endValue, $endOffset, null, 'UTF-8');
 
         if ($startNode->isSameNode($endNode)) {
-            $startNode->nodeValue = $startPrefix . $replaceText . $endSuffix;
+            $singleValue = $startPrefix . $replaceText . $endSuffix;
+            $startNode->nodeValue = $singleValue;
+            if (preg_match('/^\s|\s$/u', $singleValue)) {
+                $startNode->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
+            } else {
+                $startNode->removeAttribute('xml:space');
+            }
             continue;
         }
 
-        $startNode->nodeValue = $startPrefix . $replaceText;
+        $startValueUpdated = $startPrefix . $replaceText;
+        $startNode->nodeValue = $startValueUpdated;
+        if (preg_match('/^\s|\s$/u', $startValueUpdated)) {
+            $startNode->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
+        } else {
+            $startNode->removeAttribute('xml:space');
+        }
         $passedStart = false;
         foreach ($map as $item) {
             $node = $item['node'];
@@ -1127,9 +1143,15 @@ function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, strin
             }
             if ($node->isSameNode($endNode)) {
                 $node->nodeValue = $endSuffix;
+                if (preg_match('/^\s|\s$/u', $endSuffix)) {
+                    $node->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
+                } else {
+                    $node->removeAttribute('xml:space');
+                }
                 break;
             }
             $node->nodeValue = '';
+            $node->removeAttribute('xml:space');
         }
     }
 
