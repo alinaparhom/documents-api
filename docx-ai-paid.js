@@ -163,54 +163,6 @@
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
   }
 
-  function resolveDocumentsOrganization() {
-    if (typeof window === 'undefined' || !window.location || !window.location.pathname) {
-      return 'global';
-    }
-    var path = String(window.location.pathname || '');
-    var match = path.match(/\/js\/documents\/([^/?#]+)/i);
-    if (match && match[1]) {
-      return decodeURIComponent(match[1]).trim() || 'global';
-    }
-    return 'global';
-  }
-
-  function getScopedAnswerStorageKey() {
-    return 'documents:last-ai-answer:' + resolveDocumentsOrganization();
-  }
-
-  function setScopedLatestAiAnswer(value) {
-    var text = String(value || '').trim();
-    if (typeof window !== 'undefined') {
-      window.DOCUMENTS_LAST_AI_ANSWER = text;
-      window.__documentsScopedLastAnswers = window.__documentsScopedLastAnswers || {};
-      window.__documentsScopedLastAnswers[getScopedAnswerStorageKey()] = text;
-    }
-    try {
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.setItem(getScopedAnswerStorageKey(), text);
-      }
-    } catch (error) {}
-  }
-
-  function getScopedLatestAiAnswer() {
-    var key = getScopedAnswerStorageKey();
-    if (typeof window !== 'undefined' && window.__documentsScopedLastAnswers && typeof window.__documentsScopedLastAnswers[key] === 'string') {
-      return String(window.__documentsScopedLastAnswers[key] || '').trim();
-    }
-    try {
-      if (typeof sessionStorage !== 'undefined') {
-        var fromSession = String(sessionStorage.getItem(key) || '').trim();
-        if (fromSession) {
-          return fromSession;
-        }
-      }
-    } catch (error) {}
-    return typeof window !== 'undefined' && typeof window.DOCUMENTS_LAST_AI_ANSWER === 'string'
-      ? String(window.DOCUMENTS_LAST_AI_ANSWER || '').trim()
-      : '';
-  }
-
   function ensureVipAiModalStyles() {
     if (document.getElementById('documents-vip-ai-modal-style')) {
       return;
@@ -722,7 +674,7 @@
       selectedFiles[entry.key] = true;
     });
     if (templateButton) {
-      templateButton.disabled = !getScopedLatestAiAnswer();
+      templateButton.disabled = !String(typeof window.DOCUMENTS_LAST_AI_ANSWER === 'string' ? window.DOCUMENTS_LAST_AI_ANSWER : '').trim();
     }
     if (styleNode) {
       styleNode.innerHTML = '<option value="" selected>Выберите режим</option>' + VIP_RESPONSE_STYLE_OPTIONS.map(function(item) {
@@ -833,7 +785,7 @@
         message.appendChild(content);
         var normalizedAssistant = String(text || '').trim();
         if (normalizedAssistant && normalizedAssistant !== '⏳ Обрабатываю запрос...') {
-          setScopedLatestAiAnswer(normalizedAssistant);
+          window.DOCUMENTS_LAST_AI_ANSWER = normalizedAssistant;
           if (templateButton) templateButton.disabled = false;
         }
       } else {
@@ -874,7 +826,7 @@
         })
         .then(function(data) {
           var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
-          setScopedLatestAiAnswer(aiText);
+          window.DOCUMENTS_LAST_AI_ANSWER = aiText;
           if (templateButton) templateButton.disabled = false;
           pushChat('assistant', aiText);
           chatHistory.push({ role: 'assistant', text: aiText, ts: Date.now() });
@@ -1019,7 +971,7 @@
   }
 
   function resolveLatestAiAnswerText() {
-    var stored = getScopedLatestAiAnswer();
+    var stored = typeof window.DOCUMENTS_LAST_AI_ANSWER === 'string' ? window.DOCUMENTS_LAST_AI_ANSWER.trim() : '';
     if (stored && stored !== 'Пустой ответ.') return stored;
     var messages = document.querySelectorAll('.documents-vip-ai__msg--assistant');
     for (var i = messages.length - 1; i >= 0; i -= 1) {
@@ -1103,7 +1055,7 @@
       if (replaced <= 0) {
         renderError('Не найдена метка [ОТВЕТ ИИ] в документе.');
       }
-      setScopedLatestAiAnswer(aiText);
+      window.DOCUMENTS_LAST_AI_ANSWER = aiText;
       generateDocxFromTemplateViaApi(aiText)
         .then(function(blob) {
           if (!blob) throw new Error('empty_blob');
