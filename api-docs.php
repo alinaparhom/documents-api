@@ -1413,6 +1413,28 @@ function resolveTemplatePath(string $fileName, array $extraDirectories = []): st
     return '';
 }
 
+function resolveTemplateCustomPath(string $customPath): string
+{
+    $path = trim($customPath);
+    if ($path === '') {
+        return '';
+    }
+    $decoded = rawurldecode($path);
+    $normalized = str_replace('\\', '/', $decoded);
+    if (preg_match('#\.\.#', $normalized)) {
+        return '';
+    }
+    $documentRoot = isset($_SERVER['DOCUMENT_ROOT']) ? rtrim((string)$_SERVER['DOCUMENT_ROOT'], '/') : '';
+    $candidate = $normalized;
+    if (str_starts_with($candidate, '/') && $documentRoot !== '') {
+        $candidate = $documentRoot . $candidate;
+    }
+    if ($candidate === '' || !is_file($candidate)) {
+        return '';
+    }
+    return $candidate;
+}
+
 function looksLikeJsonText(string $value): bool
 {
     $trimmed = trim($value);
@@ -1649,6 +1671,8 @@ if ($action === 'generate_document') {
     $templateMonth = normalizeDocText((string)($_POST['templateMonth'] ?? ''));
     $templateNumber = normalizeDocText((string)($_POST['templateNumber'] ?? ''));
     $templateAddressee = normalizeDocText((string)($_POST['templateAddressee'] ?? ''));
+    $organizationName = trim((string)($_POST['organization'] ?? ''));
+    $templateFileNameFromRequest = trim((string)($_POST['templateFileName'] ?? ''));
     $responseMode = strtolower(trim((string)($_POST['responseMode'] ?? '')));
 
     if ($answerText === '') {
@@ -1661,7 +1685,21 @@ if ($action === 'generate_document') {
         jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
     }
 
-    $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? $_POST['templatePath'] ?? ''));
+    $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? ''));
+    $templatePathFromRequest = trim((string)($_POST['templatePath'] ?? ''));
+    $templateDocxCustomPath = resolveTemplateCustomPath($templatePathFromRequest);
+    if ($templateDocxCustomPath === '' && $organizationName !== '') {
+        $orgTemplateRelativePath = '/documents/' . rawurlencode($organizationName) . '/' . rawurlencode($organizationName . '_template.docx');
+        $templateDocxCustomPath = resolveTemplateCustomPath($orgTemplateRelativePath);
+    }
+    if ($templateDocxCustomPath === '' && $templateFileNameFromRequest !== '') {
+        $safeFileName = basename(rawurldecode($templateFileNameFromRequest));
+        $safeFileName = preg_replace('/[^A-Za-zА-Яа-я0-9._-]/u', '', (string)$safeFileName);
+        if (is_string($safeFileName) && $safeFileName !== '') {
+            $templateDirCandidate = $templatePathFromRequest !== '' ? dirname($templatePathFromRequest) : '';
+            $templateDocxCustomPath = resolveTemplateCustomPath(rtrim((string)$templateDirCandidate, '/') . '/' . $safeFileName);
+        }
+    }
     $extraTemplateDirs = array_filter([
         trim((string)($env['DOCUMENT_TEMPLATE_DIR'] ?? '')),
         trim((string)($env['DOC_TEMPLATES_DIR'] ?? '')),
@@ -1671,7 +1709,7 @@ if ($action === 'generate_document') {
         return is_string($value) && $value !== '';
     });
 
-    $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
+    $templateDocxPath = $templateDocxCustomPath !== '' ? $templateDocxCustomPath : resolveTemplatePath('template.docx', $extraTemplateDirs);
     $templatePdfPath = resolveTemplatePath('template.pdf', $extraTemplateDirs);
     if (!is_file($templateDocxPath) && !is_file($templatePdfPath)) {
         jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
