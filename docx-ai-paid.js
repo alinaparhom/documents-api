@@ -1219,7 +1219,7 @@
     var previewPayload = settings.previewPayload && typeof settings.previewPayload === 'object' ? settings.previewPayload : null;
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Локальный предпросмотр</div><div class="docx-template-preview__hint">Быстрый режим. Выберите вид как вам удобнее.</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-mode="office">Вид Office</button><button type="button" class="docx-template-preview__btn" data-preview-mode="mobile">Вид Mobile</button><button type="button" class="docx-template-preview__btn" data-preview-open-office>Office Web</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Готовим локальный предпросмотр…</div><div class="docx-template-preview__loading-sub">Это может занять несколько секунд на телефоне.</div><div class="docx-template-preview__bar"></div></div></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка локального предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Локальный предпросмотр</div><div class="docx-template-preview__hint">Быстрый режим. Выберите вид как вам удобнее.</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-mode="office">Вид Office</button><button type="button" class="docx-template-preview__btn" data-preview-mode="mobile">Вид Mobile</button><button type="button" class="docx-template-preview__btn" data-preview-open-office>Office Web</button><button type="button" class="docx-template-preview__btn" data-preview-open-google>Google Docs</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Готовим локальный предпросмотр…</div><div class="docx-template-preview__loading-sub">Это может занять несколько секунд на телефоне.</div><div class="docx-template-preview__bar"></div></div></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка локального предпросмотра…</div></div>';
     document.body.appendChild(overlay);
     var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -1230,6 +1230,7 @@
     var loadingNode = overlay.querySelector('[data-preview-loading]');
     var modeButtons = Array.prototype.slice.call(overlay.querySelectorAll('[data-preview-mode]'));
     var openOfficeBtn = overlay.querySelector('[data-preview-open-office]');
+    var openGoogleBtn = overlay.querySelector('[data-preview-open-google]');
     var blobUrl = URL.createObjectURL(blob);
     var docxArrayBufferPromise = blob.arrayBuffer();
     var modeOptions = {
@@ -1260,11 +1261,21 @@
         openOfficeBtn.disabled = true;
         openOfficeBtn.title = 'Нет внешней ссылки для Office Viewer';
       }
+      if (openGoogleBtn) {
+        openGoogleBtn.disabled = true;
+        openGoogleBtn.title = 'Нет внешней ссылки для Google Docs Viewer';
+      }
     } else if (openOfficeBtn) {
       openOfficeBtn.addEventListener('click', function() {
         closeModal();
         openDocxRenderPreviewPage(previewPayload, { forceOffice: true });
       });
+      if (openGoogleBtn) {
+        openGoogleBtn.addEventListener('click', function() {
+          closeModal();
+          openDocxRenderPreviewPage(previewPayload, { forceOffice: true, viewer: 'google' });
+        });
+      }
     }
 
     function setActiveMode(modeName) {
@@ -1341,11 +1352,20 @@
     }
   }
 
+  function buildViewerFrameUrl(sourceUrl, viewerKind) {
+    var kind = String(viewerKind || 'office').toLowerCase();
+    if (kind === 'google') {
+      return 'https://docs.google.com/gview?embedded=1&url=' + encodeURIComponent(sourceUrl);
+    }
+    return 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl);
+  }
+
   async function openDocxRenderPreviewPage(previewPayload, options) {
     ensureTemplatePreviewStyles();
     if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
     var openOptions = options && typeof options === 'object' ? options : {};
     var forceOffice = Boolean(openOptions.forceOffice);
+    var viewerMode = String(openOptions.viewer || 'office').toLowerCase();
     var previewUrl = String(previewPayload.previewUrl || '').trim();
     var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
     var fastBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
@@ -1374,7 +1394,7 @@
       if (overlay) overlay.remove();
       overlay = document.createElement('div');
       overlay.className = 'docx-template-preview';
-      overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" loading="lazy" referrerpolicy="no-referrer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
+      overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint" data-preview-hint>Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-office>Office Web</button><button type="button" class="docx-template-preview__btn" data-preview-google>Google Docs</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office/Google Viewer" loading="lazy" referrerpolicy="no-referrer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Viewer…</div></div>';
       document.body.appendChild(overlay);
     }
 
@@ -1394,9 +1414,12 @@
     var statusNode = overlay.querySelector('[data-preview-status]');
     var loadingNode = overlay.querySelector('[data-preview-loading]');
     var loadingSubNode = overlay.querySelector('[data-loading-sub]');
+    var hintNode = overlay.querySelector('[data-preview-hint]');
     var loadingSteps = Array.prototype.slice.call(overlay.querySelectorAll('[data-step]'));
     var downloadBtn = overlay.querySelector('[data-preview-download]');
     var localBtn = overlay.querySelector('[data-preview-local]');
+    var officeBtn = overlay.querySelector('[data-preview-office]');
+    var googleBtn = overlay.querySelector('[data-preview-google]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     var blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
@@ -1477,6 +1500,18 @@
       document.body.removeChild(a);
     };
     localBtn.onclick = function() { openLocalPreview(); };
+    if (officeBtn) {
+      officeBtn.onclick = function() {
+        viewerMode = 'office';
+        applyViewerSource('office');
+      };
+    }
+    if (googleBtn) {
+      googleBtn.onclick = function() {
+        viewerMode = 'google';
+        applyViewerSource('google');
+      };
+    }
 
     if (!sourceUrl) {
       statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
@@ -1528,10 +1563,22 @@
       setStep(4, 'Готово.');
       frameNode.style.visibility = '';
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
+      statusNode.textContent = viewerMode === 'google' ? 'Готово: документ открыт через Google Docs Viewer.' : 'Готово: документ открыт через Office Web Viewer.';
     };
-
-    frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl);
+    function applyViewerSource(mode) {
+      viewerMode = mode === 'google' ? 'google' : 'office';
+      if (viewerMode === 'google' && !previewUrl) {
+        statusNode.textContent = 'Google Docs Viewer требует публичную ссылку на файл.';
+        return;
+      }
+      frameNode.style.visibility = 'hidden';
+      if (loadingNode) loadingNode.style.display = '';
+      if (hintNode) hintNode.textContent = viewerMode === 'google' ? 'Документ открыт через Google Docs Viewer' : 'Документ открыт через Office Web Viewer';
+      statusNode.innerHTML = '<span class="docx-template-preview__spinner"></span>Подключаем ' + (viewerMode === 'google' ? 'Google Docs Viewer' : 'Office Web Viewer') + '…';
+      setStep(1, 'Подготавливаем ссылку для ' + (viewerMode === 'google' ? 'Google Docs' : 'Office') + '…');
+      frameNode.src = buildViewerFrameUrl(sourceUrl, viewerMode);
+    }
+    applyViewerSource(viewerMode);
   }
 
   async function generateDocxFromTemplateViaApi(answerText, meta) {
