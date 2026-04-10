@@ -1610,9 +1610,77 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html' && $action !== 'delete_generated_temp') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html' && $action !== 'delete_generated_temp' && $action !== 'copy_template_to_su21') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
+
+if ($action === 'copy_template_to_su21') {
+    $sourceTemplatePath = resolveTemplatePath('template.docx', []);
+    if (!is_file($sourceTemplatePath)) {
+        jsonResponse(404, ['ok' => false, 'error' => 'Исходный шаблон не найден']);
+    }
+
+    $documentRoot = trim((string)($_SERVER['DOCUMENT_ROOT'] ?? ''));
+    $projects = ['su-21', 'monproject'];
+    $results = [];
+    $copiedCount = 0;
+    $existsCount = 0;
+
+    foreach ($projects as $projectSlug) {
+        $targetCandidates = array_values(array_filter([
+            '/documents/' . $projectSlug,
+            __DIR__ . '/documents/' . $projectSlug,
+            $documentRoot !== '' ? rtrim($documentRoot, '/\\') . '/documents/' . $projectSlug : '',
+        ], static function ($value): bool {
+            return is_string($value) && $value !== '';
+        }));
+
+        $targetDir = '';
+        foreach ($targetCandidates as $candidateDir) {
+            if (!is_dir($candidateDir)) {
+                continue;
+            }
+            if (!is_file(rtrim($candidateDir, '/\\') . '/settingsdocs.json')) {
+                continue;
+            }
+            $targetDir = rtrim($candidateDir, '/\\');
+            break;
+        }
+
+        if ($targetDir === '') {
+            jsonResponse(404, ['ok' => false, 'error' => 'Папка /documents/' . $projectSlug . ' с settingsdocs.json не найдена']);
+        }
+        if (!is_writable($targetDir)) {
+            jsonResponse(500, ['ok' => false, 'error' => 'Нет прав на запись в папку /documents/' . $projectSlug]);
+        }
+
+        $targetFileName = $projectSlug . '_template.docx';
+        $targetFilePath = $targetDir . '/' . $targetFileName;
+        if (is_file($targetFilePath)) {
+            $existsCount += 1;
+            $results[] = ['project' => $projectSlug, 'status' => 'exists', 'fileName' => $targetFileName];
+            continue;
+        }
+
+        if (!@copy($sourceTemplatePath, $targetFilePath)) {
+            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось скопировать шаблон в /documents/' . $projectSlug]);
+        }
+
+        $copiedCount += 1;
+        $results[] = ['project' => $projectSlug, 'status' => 'copied', 'fileName' => $targetFileName];
+    }
+
+    jsonResponse(200, [
+        'ok' => true,
+        'alreadyExists' => $copiedCount === 0,
+        'copiedCount' => $copiedCount,
+        'existsCount' => $existsCount,
+        'results' => $results,
+        'message' => $copiedCount > 0
+            ? 'Шаблон скопирован'
+            : 'Файлы уже есть',
+    ]);
 }
 
 if ($action === 'delete_generated_temp') {

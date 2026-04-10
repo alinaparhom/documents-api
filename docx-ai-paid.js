@@ -713,7 +713,7 @@
       : '';
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__loading" data-vip-loading><span class="documents-vip-ai__loading-spinner" aria-hidden="true"></span><span data-vip-loading-text>Готовим ответ с помощью ИИ…</span></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div><div class="documents-vip-ai__startup is-active" data-vip-startup><div class="documents-vip-ai__startup-card"><div style="display:flex;align-items:center;gap:8px"><span class="documents-vip-ai__startup-spinner" aria-hidden="true"></span><div class="documents-vip-ai__startup-title">Открываем AI-модуль</div></div><div class="documents-vip-ai__startup-sub">Подготавливаем интерфейс и список файлов…</div><div class="documents-vip-ai__startup-progress" aria-hidden="true"></div></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__loading" data-vip-loading><span class="documents-vip-ai__loading-spinner" aria-hidden="true"></span><span data-vip-loading-text>Готовим ответ с помощью ИИ…</span></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button><button class="documents-vip-ai__template-btn" data-template-copy type="button">Копировать</button></div></div><div class="documents-vip-ai__startup is-active" data-vip-startup><div class="documents-vip-ai__startup-card"><div style="display:flex;align-items:center;gap:8px"><span class="documents-vip-ai__startup-spinner" aria-hidden="true"></span><div class="documents-vip-ai__startup-title">Открываем AI-модуль</div></div><div class="documents-vip-ai__startup-sub">Подготавливаем интерфейс и список файлов…</div><div class="documents-vip-ai__startup-progress" aria-hidden="true"></div></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -725,6 +725,7 @@
     var startupNode = panel.querySelector('[data-vip-startup]');
     var styleNode = panel.querySelector('[data-style]');
     var templateButton = panel.querySelector('[data-template-open]');
+    var copyTemplateButton = panel.querySelector('[data-template-copy]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
     var linked = Array.isArray(payload.linkedFiles) ? payload.linkedFiles : [];
     var pending = Array.isArray(payload.pendingFiles) ? payload.pendingFiles : [];
@@ -763,6 +764,32 @@
     if (templateButton) {
       templateButton.addEventListener('click', function() {
         openTemplateAnswerEditor(templateButton);
+      });
+    }
+    if (copyTemplateButton) {
+      copyTemplateButton.addEventListener('click', async function() {
+        if (copyTemplateButton.disabled) return;
+        copyTemplateButton.disabled = true;
+        var prevLabel = copyTemplateButton.textContent;
+        copyTemplateButton.textContent = 'Копируем...';
+        try {
+          var copyResult = await copyTemplateDocxToSu21();
+          if (copyResult && copyResult.alreadyExists) {
+            alert('Файл уже есть.');
+          } else {
+            var copiedCount = Number(copyResult && copyResult.copiedCount || 0);
+            if (copiedCount > 1) {
+              alert('Шаблон скопирован в 2 папки.');
+            } else {
+              alert('Шаблон скопирован.');
+            }
+          }
+        } catch (error) {
+          alert((error && error.message) ? error.message : 'Не удалось скопировать шаблон.');
+        } finally {
+          copyTemplateButton.disabled = false;
+          copyTemplateButton.textContent = prevLabel;
+        }
       });
     }
     setTimeout(function() {
@@ -1275,6 +1302,37 @@
     var fallback = ['/js/documents/api-docs.php', '/api-docs.php'];
     var list = configured ? [configured].concat(fallback) : fallback;
     return list.filter(function(item, index) { return item && list.indexOf(item) === index; });
+  }
+
+  async function copyTemplateDocxToSu21() {
+    var endpoints = getDocsGenerateEndpoints();
+    var lastError = null;
+    for (var i = 0; i < endpoints.length; i += 1) {
+      var formData = new FormData();
+      formData.append('action', 'copy_template_to_su21');
+      try {
+        var response = await fetch(endpoints[i], {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData
+        });
+        if (!response || !response.ok) {
+          lastError = new Error('Ошибка копирования (' + (response ? response.status : 0) + ')');
+          continue;
+        }
+        var payload = await response.json().catch(function() { return null; });
+        if (payload && payload.ok) {
+          return {
+            alreadyExists: Boolean(payload.alreadyExists),
+            copiedCount: Number(payload.copiedCount || 0)
+          };
+        }
+        lastError = new Error((payload && payload.error) || 'Не удалось скопировать шаблон.');
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Не удалось скопировать шаблон.');
   }
 
   async function deleteGeneratedTempFile(previewPayload) {
