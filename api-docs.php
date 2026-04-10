@@ -1610,9 +1610,35 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html' && $action !== 'delete_generated_temp') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
+
+if ($action === 'delete_generated_temp') {
+    $rawFileName = trim((string)($_POST['fileName'] ?? ''));
+    $rawUrl = trim((string)($_POST['url'] ?? ''));
+    $candidate = $rawFileName;
+    if ($candidate === '' && $rawUrl !== '') {
+        $pathFromUrl = (string)parse_url($rawUrl, PHP_URL_PATH);
+        $candidate = basename($pathFromUrl);
+    }
+    $candidate = basename($candidate);
+    if ($candidate === '' || !preg_match('/^[a-zA-Z0-9._-]{1,160}$/', $candidate)) {
+        jsonResponse(400, ['ok' => false, 'error' => 'Некорректное имя файла']);
+    }
+    $targetDir = __DIR__ . '/app/tmp/generated';
+    $targetPath = $targetDir . '/' . $candidate;
+    $realDir = realpath($targetDir);
+    $realFile = realpath($targetPath);
+    if (!$realDir || !$realFile || !str_starts_with($realFile, $realDir . DIRECTORY_SEPARATOR)) {
+        jsonResponse(404, ['ok' => true, 'deleted' => false]);
+    }
+    if (!is_file($realFile)) {
+        jsonResponse(200, ['ok' => true, 'deleted' => false]);
+    }
+    $deleted = @unlink($realFile);
+    jsonResponse(200, ['ok' => true, 'deleted' => (bool)$deleted]);
 }
 
 if ($action === 'generate_document') {

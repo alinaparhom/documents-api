@@ -818,6 +818,32 @@
     return Array.from(new Set(endpoints.filter(Boolean)));
   }
 
+  async function deleteGeneratedTempFile(previewPayload) {
+    const fileName = normalize(previewPayload && previewPayload.fileName);
+    const url = normalize(previewPayload && previewPayload.previewUrl);
+    if (!fileName && !url) return;
+    const endpoints = getDocsGenerateEndpoints();
+    for (let index = 0; index < endpoints.length; index += 1) {
+      const endpoint = endpoints[index];
+      const formData = new FormData();
+      formData.append('action', 'delete_generated_temp');
+      if (fileName) formData.append('fileName', fileName);
+      if (url) formData.append('url', url);
+      try {
+        const response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData,
+        }, 12000);
+        if (response && response.ok) {
+          return;
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+  }
+
   async function generateDocxFromTemplateViaApi(answerText, meta = {}) {
     const endpoints = getDocsGenerateEndpoints();
     let lastError = null;
@@ -927,6 +953,9 @@
       if (blobUrl) URL.revokeObjectURL(blobUrl);
       if (stepTimer) clearInterval(stepTimer);
       if (slowTimer) clearTimeout(slowTimer);
+      if (previewUrl || normalize(previewPayload.fileName)) {
+        deleteGeneratedTempFile(previewPayload).catch(() => {});
+      }
       overlay.remove();
     };
     closeBtn?.addEventListener('click', close);
