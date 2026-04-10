@@ -761,6 +761,19 @@
       .tg-ai-template-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-template-preview__body{flex:1;min-height:0}
       .tg-ai-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.8);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
+      .tg-ai-generated-preview{position:fixed;inset:0;z-index:3950;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}
+      .tg-ai-generated-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95))}
+      .tg-ai-generated-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}
+      .tg-ai-generated-preview__title{font-size:14px;font-weight:800;color:#0f172a}
+      .tg-ai-generated-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
+      .tg-ai-generated-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+      .tg-ai-generated-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
+      .tg-ai-generated-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
+      .tg-ai-generated-preview__body{flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}
+      .tg-ai-generated-preview__doc{max-width:920px;margin:0 auto;background:rgba(255,255,255,.82);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12)}
+      .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}
+      .tg-ai-generated-preview__doc .docx{max-width:100%;overflow:auto}
+      .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-template-editor{position:fixed;inset:0;z-index:3900;background:linear-gradient(180deg,rgba(226,232,240,.58),rgba(148,163,184,.42));backdrop-filter:blur(10px);display:flex;align-items:stretch;justify-content:center;padding:8px}
       .tg-ai-template-editor__card{width:min(920px,100%);height:100%;display:flex;flex-direction:column;border-radius:20px;border:1px solid rgba(255,255,255,.92);overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.94));box-shadow:0 20px 45px rgba(15,23,42,.22)}
       .tg-ai-template-editor__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.75)}
@@ -783,7 +796,7 @@
       .tg-ai-template-editor__btn[disabled]{opacity:.65}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__actions{width:100%}.tg-ai-generated-preview__btn{flex:1;min-width:0;padding:8px 10px}.tg-ai-generated-preview__body{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -831,29 +844,95 @@
     throw lastError || new Error('Не удалось сформировать DOCX.');
   }
 
-  async function openGeneratedDocxViaExistingPreview(blob, context = {}) {
-    if (!blob) throw new Error('empty_blob');
-    const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
-    if (!openExternalViewer) {
-      throw new Error('Просмотрщик недоступен.');
+  async function loadScriptIfNeeded(src, isReady) {
+    if (typeof isReady === 'function' && isReady()) return;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.onload = () => {
+        if (!isReady || isReady()) resolve();
+        else reject(new Error('library_not_ready'));
+      };
+      script.onerror = () => reject(new Error('library_load_error'));
+      document.head.appendChild(script);
+    });
+  }
+
+  async function ensureDocxPreviewLibrariesLoaded() {
+    await loadScriptIfNeeded('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', () => Boolean(window.JSZip && typeof window.JSZip.loadAsync === 'function'));
+    await loadScriptIfNeeded('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', () => {
+      return Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync));
+    });
+    const renderer = (window.docx && window.docx.renderAsync)
+      ? window.docx
+      : ((window.docxPreview && window.docxPreview.renderAsync) ? window.docxPreview : null);
+    if (!renderer || typeof renderer.renderAsync !== 'function') {
+      throw new Error('docx_preview_not_loaded');
     }
-    const objectUrl = URL.createObjectURL(blob);
-    const file = {
-      name: 'template-answer.docx',
-      originalName: 'template-answer.docx',
-      storedName: 'template-answer.docx',
-      url: objectUrl,
-      resolvedUrl: objectUrl,
-      previewUrl: objectUrl,
-      fileUrl: objectUrl,
-      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    return renderer;
+  }
+
+  async function openGeneratedDocxViaExistingPreview(blob) {
+    if (!blob) throw new Error('empty_blob');
+    const existing = document.querySelector('.tg-ai-generated-preview');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'tg-ai-generated-preview';
+    overlay.innerHTML = `
+      <div class="tg-ai-generated-preview__card">
+        <div class="tg-ai-generated-preview__head">
+          <div>
+            <div class="tg-ai-generated-preview__title">Предварительный просмотр</div>
+            <div class="tg-ai-generated-preview__hint">Проверьте сгенерированный документ</div>
+          </div>
+          <div class="tg-ai-generated-preview__actions">
+            <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
+            <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
+          </div>
+        </div>
+        <div class="tg-ai-generated-preview__body">
+          <div class="tg-ai-generated-preview__doc" data-preview-doc></div>
+        </div>
+        <div class="tg-ai-generated-preview__status" data-preview-status>Подготовка предпросмотра…</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const docNode = overlay.querySelector('[data-preview-doc]');
+    const statusNode = overlay.querySelector('[data-preview-status]');
+    const downloadBtn = overlay.querySelector('[data-preview-download]');
+    const closeBtn = overlay.querySelector('[data-preview-close]');
+    const blobUrl = URL.createObjectURL(blob);
+
+    const close = () => {
+      URL.revokeObjectURL(blobUrl);
+      overlay.remove();
     };
+    closeBtn?.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    downloadBtn?.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+
     try {
-      await openExternalViewer([file], context.task || {}, { notify: true, hasMultiple: false });
-    } finally {
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+      const renderer = await ensureDocxPreviewLibrariesLoaded();
+      const buffer = await blob.arrayBuffer();
+      docNode.innerHTML = '';
+      await renderer.renderAsync(buffer, docNode, null, {
+        inWrapper: true,
+        breakPages: true,
+        ignoreWidth: true,
+      });
+      statusNode.textContent = 'Готово: документ открыт в новом окне предпросмотра.';
+    } catch (error) {
+      statusNode.textContent = 'Ошибка предпросмотра. Скачайте файл кнопкой выше.';
     }
   }
 
