@@ -1301,14 +1301,29 @@
   async function openDocxRenderPreviewPage(previewPayload) {
     ensureTemplatePreviewStyles();
     if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
-    var existing = document.querySelector('.docx-template-preview');
-    if (existing) existing.remove();
-    var overlay = document.createElement('div');
-    overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
-    document.body.appendChild(overlay);
+
+    var overlay = document.querySelector('.docx-template-preview');
+    var canReuseOverlay = Boolean(overlay && overlay.querySelector('[data-preview-frame]'));
+    if (!canReuseOverlay) {
+      if (overlay) overlay.remove();
+      overlay = document.createElement('div');
+      overlay.className = 'docx-template-preview';
+      overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" loading="lazy" referrerpolicy="no-referrer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
+      document.body.appendChild(overlay);
+    }
+
     var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    overlay.style.display = 'flex';
+
+    if (!overlay.__previewState) {
+      overlay.__previewState = { isClosed: false, blobUrl: '', stepTimer: null, slowTimer: null, payload: null };
+    }
+    var previewState = overlay.__previewState;
+    if (previewState.blobUrl) URL.revokeObjectURL(previewState.blobUrl);
+    if (previewState.stepTimer) clearInterval(previewState.stepTimer);
+    if (previewState.slowTimer) clearTimeout(previewState.slowTimer);
+
     var frameNode = overlay.querySelector('[data-preview-frame]');
     var statusNode = overlay.querySelector('[data-preview-status]');
     var loadingNode = overlay.querySelector('[data-preview-loading]');
@@ -1322,45 +1337,38 @@
     var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     var blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     var sourceUrl = previewUrl || blobUrl;
-    var isClosed = false;
-    var stepTimer = null;
-    var slowTimer = null;
+    var isTelegram = /telegram/i.test(String((navigator && navigator.userAgent) || ''));
+    var isMobile = Boolean(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+    var connectionType = navigator && navigator.connection && navigator.connection.effectiveType ? String(navigator.connection.effectiveType).toLowerCase() : '';
+    var isSlowConnection = connectionType === 'slow-2g' || connectionType === '2g';
+    var shouldAutoFallback = isTelegram || isMobile || isSlowConnection;
+    var localBlobPromise = null;
+    var autoFallbackDone = false;
 
-    function closeModal() {
-      if (isClosed) return;
-      isClosed = true;
-      document.body.style.overflow = previousOverflow;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-      if (stepTimer) clearInterval(stepTimer);
-      if (slowTimer) clearTimeout(slowTimer);
-      overlay.remove();
-      deleteGeneratedTempFile(previewPayload).catch(function() {});
+    previewState.isClosed = false;
+    previewState.blobUrl = blobUrl;
+    previewState.payload = previewPayload;
+
+    async function resolveLocalBlob() {
+      if (!localBlobPromise) {
+        localBlobPromise = (async function() {
+          if (fallbackBlob && fallbackBlob.size) return fallbackBlob;
+          if (!previewUrl) throw new Error('empty_blob');
+          var localResponse = await fetch(previewUrl, { credentials: 'same-origin' });
+          if (!localResponse.ok) throw new Error('download_failed');
+          return localResponse.blob();
+        })();
+      }
+      return localBlobPromise;
     }
 
-    closeBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', function(event) {
-      if (event.target === overlay) closeModal();
-    });
-    downloadBtn.addEventListener('click', function() {
-      var a = document.createElement('a');
-      a.href = sourceUrl;
-      a.download = fileName || 'template-answer.docx';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    });
-    localBtn.addEventListener('click', async function() {
+    async function openLocalPreview() {
       localBtn.disabled = true;
       var previousText = localBtn.textContent;
       localBtn.textContent = 'Открываю...';
       statusNode.textContent = 'Готовим локальный режим...';
       try {
-        var localBlob = fallbackBlob;
-        if (!localBlob && previewUrl) {
-          var localResponse = await fetch(previewUrl, { credentials: 'same-origin' });
-          if (!localResponse.ok) throw new Error('download_failed');
-          localBlob = await localResponse.blob();
-        }
+        var localBlob = await resolveLocalBlob();
         if (!localBlob || !localBlob.size) throw new Error('empty_blob');
         openDocxRenderPreviewLocal(localBlob, fileName);
       } catch (error) {
@@ -1369,12 +1377,54 @@
         localBtn.disabled = false;
         localBtn.textContent = previousText;
       }
-    });
+    }
+
+    function closeModal() {
+      if (previewState.isClosed) return;
+      previewState.isClosed = true;
+      document.body.style.overflow = previousOverflow;
+      if (previewState.blobUrl) {
+        URL.revokeObjectURL(previewState.blobUrl);
+        previewState.blobUrl = '';
+      }
+      if (previewState.stepTimer) {
+        clearInterval(previewState.stepTimer);
+        previewState.stepTimer = null;
+      }
+      if (previewState.slowTimer) {
+        clearTimeout(previewState.slowTimer);
+        previewState.slowTimer = null;
+      }
+      overlay.remove();
+      deleteGeneratedTempFile(previewState.payload || previewPayload).catch(function() {});
+      previewState.payload = null;
+    }
+
+    closeBtn.onclick = closeModal;
+    overlay.onclick = function(event) {
+      if (event.target === overlay) closeModal();
+    };
+    downloadBtn.onclick = function() {
+      var a = document.createElement('a');
+      a.href = sourceUrl;
+      a.download = fileName || 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+    localBtn.onclick = function() { openLocalPreview(); };
 
     if (!sourceUrl) {
       statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
       return;
     }
+
+    frameNode.setAttribute('loading', 'lazy');
+    frameNode.setAttribute('referrerpolicy', 'no-referrer');
+    frameNode.style.visibility = 'hidden';
+    frameNode.removeAttribute('src');
+    if (loadingNode) loadingNode.style.display = '';
+
     var currentStep = 1;
     function setStep(step, subtitle) {
       currentStep = step;
@@ -1386,23 +1436,37 @@
       if (loadingSubNode && subtitle) loadingSubNode.textContent = subtitle;
     }
     setStep(1, 'Подготавливаем файл...');
-    stepTimer = setInterval(function() {
+
+    previewState.stepTimer = setInterval(function() {
       if (currentStep < 3) {
         setStep(currentStep + 1, currentStep === 1 ? 'Подключаем Office Viewer…' : 'Ждём рендер предпросмотра…');
       }
     }, 1300);
-    slowTimer = setTimeout(function() {
-      statusNode.textContent = 'Открытие занимает чуть дольше обычного, пожалуйста подождите…';
-      if (loadingSubNode) loadingSubNode.textContent = 'Office Viewer отвечает медленно, но документ уже загружается.';
-    }, 7000);
-    frameNode.addEventListener('load', function() {
-      if (stepTimer) clearInterval(stepTimer);
-      if (slowTimer) clearTimeout(slowTimer);
+
+    previewState.slowTimer = setTimeout(function() {
+      statusNode.textContent = 'Office Viewer отвечает медленно. Открываем локальный режим…';
+      if (loadingSubNode) loadingSubNode.textContent = 'Переходим в локальный предпросмотр для быстрого открытия.';
+      if (shouldAutoFallback && !autoFallbackDone) {
+        autoFallbackDone = true;
+        openLocalPreview();
+      }
+    }, 4500);
+
+    frameNode.onload = function() {
+      if (previewState.stepTimer) {
+        clearInterval(previewState.stepTimer);
+        previewState.stepTimer = null;
+      }
+      if (previewState.slowTimer) {
+        clearTimeout(previewState.slowTimer);
+        previewState.slowTimer = null;
+      }
       setStep(4, 'Готово.');
       frameNode.style.visibility = '';
       if (loadingNode) loadingNode.style.display = 'none';
       statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
-    }, { once: true });
+    };
+
     frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl);
   }
 
