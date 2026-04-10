@@ -13680,8 +13680,16 @@
       };
     }
 
+    function setVipButtonLoading(active, text) {
+      if (!aiButton) return;
+      aiButton.disabled = Boolean(active);
+      aiButton.classList.toggle('is-loading', Boolean(active));
+      aiButton.textContent = active ? String(text || 'Открываем ИИ…') : 'Ответ с помощью ИИ';
+    }
+
     function openVipAiModal() {
       var payload = buildAiDialogPayload();
+      setVipButtonLoading(true, 'Открываем ИИ…');
       ensureVipAiPaidScript()
         .then(function(openModal) {
           openModal({
@@ -13695,6 +13703,9 @@
         })
         .catch(function(error) {
           showMessage('error', error && error.message ? error.message : 'Не удалось открыть VIP ИИ.');
+        })
+        .finally(function() {
+          setVipButtonLoading(false);
         });
     }
 
