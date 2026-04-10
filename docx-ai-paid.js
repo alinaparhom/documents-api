@@ -170,6 +170,15 @@
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
   }
 
+  function escapeHtmlInline(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   function ensureVipAiModalStyles() {
     if (document.getElementById('documents-vip-ai-modal-style')) {
       return;
@@ -1093,7 +1102,7 @@
     if (document.querySelector('.docx-template-modal')) return;
     var templateConfig = buildOrganizationTemplateConfig(options && options.organization ? options.organization : '');
     var templateLabel = templateConfig.templateFileName || 'template.docx';
-    var compactTemplateInfo = escapeHtmlText(templateLabel.length > 38 ? (templateLabel.slice(0, 35) + '...') : templateLabel);
+    var compactTemplateInfo = escapeHtmlInline(templateLabel.length > 38 ? (templateLabel.slice(0, 35) + '...') : templateLabel);
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-modal';
     overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Заполните поля как в документе и сразу отредактируйте текст ответа. Визуализация ниже имитирует реальный лист: заполните дату, адресата, номер и внесите правки в ответ ИИ.</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__paper"><div class="docx-template-modal__paper-head"><div class="docx-template-modal__paper-title">Черновик документа · ' + compactTemplateInfo + '</div><div class="docx-template-modal__paper-chip">Режим заполнения</div></div><div class="docx-template-modal__line-grid"><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Дата</span><span class="docx-template-modal__date-pack"><input class="docx-template-modal__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09"><input class="docx-template-modal__input" data-template-month type="text" placeholder="апреля"></span></label><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Номер</span><input class="docx-template-modal__input" data-template-number type="text" placeholder="12/Д"></label><label class="docx-template-modal__line docx-template-modal__line--full"><span class="docx-template-modal__field-label">Адресат</span><input class="docx-template-modal__input" data-template-addressee type="text" placeholder="ООО «Компания»"></label></div><label class="docx-template-modal__line"><span class="docx-template-modal__textarea-label">Текст ответа ИИ (можно редактировать)</span><div class="docx-template-modal__editor"><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea></div></label></div><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div><div class="docx-template-modal__busy" data-template-busy><div class="docx-template-modal__busy-card"><div class="docx-template-modal__busy-title">Формируем документ…</div><div class="docx-template-modal__busy-sub">Подождите, готовим файл и открываем предпросмотр.</div><div class="docx-template-modal__busy-spinner" aria-hidden="true"></div></div></div></div>';
