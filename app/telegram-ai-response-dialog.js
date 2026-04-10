@@ -1119,20 +1119,17 @@
     doneButton?.addEventListener('click', async () => {
       const answerRaw = String(textInput && textInput.value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       const answer = answerRaw.trim();
-      const day = normalize(dayInput && dayInput.value);
-      const month = normalize(monthInput && monthInput.value);
-      const number = normalize(numberInput && numberInput.value);
+      const defaultTemplateFieldValue = '_____';
+      const day = normalize(dayInput && dayInput.value) || defaultTemplateFieldValue;
+      const month = normalize(monthInput && monthInput.value) || defaultTemplateFieldValue;
+      const number = normalize(numberInput && numberInput.value) || defaultTemplateFieldValue;
       const addresseeRaw = String(addresseeInput && addresseeInput.value || '').replace(/\s+$/g, '');
-      const addressee = normalize(addresseeRaw);
+      const addressee = normalize(addresseeRaw) || defaultTemplateFieldValue;
       if (!answer) {
         renderError('Добавьте текст ответа ИИ.');
         return;
       }
-      if (!day || !month || !number || !addressee) {
-        renderError('Заполните День, Месяц, Номер и Адресат.');
-        return;
-      }
-      const addresseeTemplateValue = /^\s/.test(addresseeRaw) ? addresseeRaw : (`\u00A0${addresseeRaw}`);
+      const addresseeTemplateValue = /^\s/.test(addressee) ? addressee : (`\u00A0${addressee}`);
       if (globalScope) {
         globalScope.DOCUMENTS_LAST_AI_ANSWER = answer;
         globalScope.DOCUMENTS_TEMPLATE_META = { day, month, number, addressee: addresseeRaw };
