@@ -1316,19 +1316,46 @@
           var html2pdf = values[2];
           var temp = document.createElement('div');
           temp.style.position = 'fixed';
-          temp.style.left = '-99999px';
+          temp.style.left = '0';
           temp.style.top = '0';
           temp.style.width = '794px';
+          temp.style.maxWidth = '794px';
+          temp.style.maxHeight = 'none';
+          temp.style.overflow = 'visible';
+          temp.style.opacity = '0.01';
+          temp.style.pointerEvents = 'none';
+          temp.style.zIndex = '-1';
           temp.style.background = '#fff';
           document.body.appendChild(temp);
           return renderer.renderAsync(arrayBuffer, temp, null, modeOptions.office).then(function() {
-            return html2pdf().set({
+            return Promise.resolve()
+              .then(function() {
+                return new Promise(function(resolve) {
+                  requestAnimationFrame(function() {
+                    requestAnimationFrame(resolve);
+                  });
+                });
+              })
+              .then(function() {
+                if (document.fonts && document.fonts.ready) {
+                  return document.fonts.ready.catch(function() {});
+                }
+                return null;
+              })
+              .then(function() {
+                return html2pdf().set({
               margin: 8,
               filename: (fileName || 'template-answer.docx').replace(/\\.docx$/i, '') + '.pdf',
               image: { type: 'jpeg', quality: 0.92 },
-              html2canvas: { scale: 1.35, useCORS: true },
+              html2canvas: { scale: 1.6, useCORS: true, backgroundColor: '#ffffff' },
               jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }
-            }).from(temp).outputPdf('blob');
+                }).from(temp).toPdf().output('blob');
+              }).then(function(pdfBlob) {
+                if (!pdfBlob || !pdfBlob.size || pdfBlob.size < 1200) {
+                  throw new Error('empty_pdf_blob');
+                }
+                return pdfBlob;
+              });
           }).finally(function() {
             temp.remove();
           });
