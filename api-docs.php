@@ -37,6 +37,11 @@ if ($method === 'OPTIONS') {
 }
 if ($method === 'GET') {
     $action = isset($_GET['action']) ? trim((string)$_GET['action']) : '';
+    if ($action === 'preview_generated') {
+        $envForPreview = loadEnv(getEnvPaths());
+        $fileName = trim((string)($_GET['file'] ?? ''));
+        streamGeneratedPreviewFile($fileName, $envForPreview);
+    }
     if ($action === 'ai_models') {
         $env = loadEnv(getEnvPaths());
         $rawModels = trim((string)($env['AI_MODELS'] ?? $env['OPENAI_MODELS'] ?? ''));
@@ -142,7 +147,168 @@ function buildPublicBaseDirFromScript(): string
     return '/' . trim($dirName, '/');
 }
 
-function saveGeneratedFileAndBuildUrl(string $sourcePath, string $extension): array
+
+function shouldRunGeneratedCleanup(string $targetDir): bool
+{
+    $markerDir = __DIR__ . '/app/tmp';
+    if (!is_dir($markerDir)) {
+        @mkdir($markerDir, 0775, true);
+    }
+    $markerPath = $markerDir . '/generated-cleanup.marker';
+    $now = time();
+    $lastRun = is_file($markerPath) ? (int)@filemtime($markerPath) : 0;
+    if ($lastRun > 0 && ($now - $lastRun) < 300) {
+        return false;
+    }
+    @touch($markerPath);
+    return true;
+}
+
+function cleanupGeneratedFiles(string $targetDir, int $ttlSeconds = 7200): void
+{
+    if (!shouldRunGeneratedCleanup($targetDir)) {
+        return;
+    }
+    $now = time();
+    foreach ((array)glob($targetDir . '/*') as $oldFile) {
+        if (!is_string($oldFile) || !is_file($oldFile)) {
+            continue;
+        }
+        $mtime = (int)@filemtime($oldFile);
+        if ($mtime > 0 && ($now - $mtime) > $ttlSeconds) {
+            @unlink($oldFile);
+        }
+    }
+}
+
+function buildPreviewPublicUrl(string $fileName, array $env): string
+{
+    $baseDir = buildPublicBaseDirFromScript();
+    $query = 'action=preview_generated&file=' . rawurlencode($fileName);
+    $defaultPath = ($baseDir !== '' ? $baseDir : '') . '/api-docs.php?' . $query;
+    if ($defaultPath === '' || $defaultPath[0] !== '/') {
+        $defaultPath = '/' . ltrim($defaultPath, '/');
+    }
+
+    $configuredBase = trim((string)($env['DOCUMENT_PREVIEW_BASE_URL'] ?? $env['DOCUMENTS_PREVIEW_BASE_URL'] ?? $env['PUBLIC_BASE_URL'] ?? ''));
+    if ($configuredBase !== '') {
+        return rtrim($configuredBase, '/') . '/api-docs.php?' . $query;
+    }
+
+    $host = trim((string)($_SERVER['HTTP_HOST'] ?? ''));
+    if ($host !== '') {
+        $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443)
+            || (strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https');
+        $scheme = $isHttps ? 'https' : 'http';
+        $forceHttps = trim((string)($env['DOCUMENT_PREVIEW_FORCE_HTTPS'] ?? '1'));
+        if ($forceHttps !== '0') {
+            $scheme = 'https';
+        }
+        return $scheme . '://' . $host . $defaultPath;
+    }
+
+    return $defaultPath;
+}
+
+function streamGeneratedPreviewFile(string $fileName, array $env): void
+{
+    $requestStarted = isset($_SERVER['REQUEST_TIME_FLOAT']) ? (float)$_SERVER['REQUEST_TIME_FLOAT'] : microtime(true);
+    $safeName = basename($fileName);
+    if ($safeName === '' || !preg_match('/^[a-zA-Z0-9._-]{1,160}$/', $safeName)) {
+        jsonResponse(400, ['ok' => false, 'error' => 'Некорректное имя файла']);
+    }
+
+    $targetDir = __DIR__ . '/app/tmp/generated';
+    $targetPath = $targetDir . '/' . $safeName;
+    $realDir = realpath($targetDir);
+    $realFile = realpath($targetPath);
+    if (!$realDir || !$realFile || !str_starts_with($realFile, $realDir . DIRECTORY_SEPARATOR) || !is_file($realFile)) {
+        jsonResponse(404, ['ok' => false, 'error' => 'Файл не найден']);
+    }
+
+    $size = (int)@filesize($realFile);
+    $ext = strtolower((string)pathinfo($safeName, PATHINFO_EXTENSION));
+    $isPdf = $ext === 'pdf';
+    $contentType = $isPdf
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    $cacheTtl = (int)($env['DOCUMENT_PREVIEW_TTL_SECONDS'] ?? 180);
+    if ($cacheTtl < 30) {
+        $cacheTtl = 30;
+    }
+    if ($cacheTtl > 600) {
+        $cacheTtl = 600;
+    }
+
+    $inline = trim((string)($env['DOCUMENT_PREVIEW_CONTENT_DISPOSITION'] ?? 'inline'));
+    if ($inline !== 'attachment') {
+        $inline = 'inline';
+    }
+
+    header('Content-Type: ' . $contentType);
+    header("Content-Disposition: " . $inline . "; filename=\"" . rawurlencode($safeName) . "\"; filename*=UTF-8''" . rawurlencode($safeName));
+    header('Content-Length: ' . $size);
+    header('Cache-Control: public, max-age=' . $cacheTtl . ', s-maxage=' . $cacheTtl . ', stale-while-revalidate=30');
+    header('Expires: ' . gmdate('D, d M Y H:i:s', time() + $cacheTtl) . ' GMT');
+    header('ETag: "' . sha1($safeName . ':' . $size . ':' . ((int)@filemtime($realFile))) . '"');
+    header('Accept-Ranges: bytes');
+    header('X-Content-Type-Options: nosniff');
+
+    $cdnUrl = trim((string)($env['DOCUMENT_PREVIEW_CDN_URL'] ?? ''));
+    if ($cdnUrl !== '') {
+        header('Link: <' . rtrim($cdnUrl, '/') . '/' . rawurlencode($safeName) . '>; rel=preload; as=document', false);
+    }
+
+    if (!$isPdf) {
+        if (!headers_sent() && extension_loaded('zlib') && ini_get('zlib.output_compression') !== '1') {
+            @ob_start('ob_gzhandler');
+        }
+    }
+
+    $accelPath = trim((string)($env['DOCUMENT_PREVIEW_ACCEL_PATH'] ?? ''));
+    if ($accelPath !== '') {
+        header('X-Accel-Redirect: ' . rtrim($accelPath, '/') . '/' . $safeName);
+        $ttfbMs = (int)round((microtime(true) - $requestStarted) * 1000);
+        logApiDocs('info', 'Preview file served via X-Accel-Redirect', [
+            'previewUrl' => buildPreviewPublicUrl($safeName, $env),
+            'fileName' => $safeName,
+            'bytes' => $size,
+            'ttfbMs' => $ttfbMs,
+            'contentType' => $contentType,
+        ]);
+        exit;
+    }
+
+    $xSendfile = trim((string)($env['DOCUMENT_PREVIEW_X_SENDFILE'] ?? ''));
+    if ($xSendfile === '1') {
+        header('X-Sendfile: ' . $realFile);
+        $ttfbMs = (int)round((microtime(true) - $requestStarted) * 1000);
+        logApiDocs('info', 'Preview file served via X-Sendfile', [
+            'previewUrl' => buildPreviewPublicUrl($safeName, $env),
+            'fileName' => $safeName,
+            'bytes' => $size,
+            'ttfbMs' => $ttfbMs,
+            'contentType' => $contentType,
+        ]);
+        exit;
+    }
+
+    $ttfbMs = (int)round((microtime(true) - $requestStarted) * 1000);
+    logApiDocs('info', 'Preview file stream start', [
+        'previewUrl' => buildPreviewPublicUrl($safeName, $env),
+        'fileName' => $safeName,
+        'bytes' => $size,
+        'ttfbMs' => $ttfbMs,
+        'contentType' => $contentType,
+    ]);
+
+    readfile($realFile);
+    exit;
+}
+
+function saveGeneratedFileAndBuildUrl(string $sourcePath, string $extension, array $env = []): array
 {
     $safeExt = strtolower(trim($extension));
     if ($safeExt !== 'docx' && $safeExt !== 'pdf') {
@@ -156,16 +322,7 @@ function saveGeneratedFileAndBuildUrl(string $sourcePath, string $extension): ar
         return ['ok' => false, 'error' => 'Папка временных файлов недоступна для записи'];
     }
 
-    $now = time();
-    foreach ((array)glob($targetDir . '/*') as $oldFile) {
-        if (!is_string($oldFile) || !is_file($oldFile)) {
-            continue;
-        }
-        $mtime = (int)@filemtime($oldFile);
-        if ($mtime > 0 && ($now - $mtime) > 7200) {
-            @unlink($oldFile);
-        }
-    }
+    cleanupGeneratedFiles($targetDir, 7200);
 
     $fileName = 'generated-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.' . $safeExt;
     $targetPath = $targetDir . '/' . $fileName;
@@ -173,11 +330,7 @@ function saveGeneratedFileAndBuildUrl(string $sourcePath, string $extension): ar
         return ['ok' => false, 'error' => 'Не удалось сохранить сгенерированный файл'];
     }
 
-    $baseDir = buildPublicBaseDirFromScript();
-    $publicUrl = ($baseDir !== '' ? $baseDir : '') . '/app/tmp/generated/' . rawurlencode($fileName);
-    if ($publicUrl === '' || $publicUrl[0] !== '/') {
-        $publicUrl = '/' . ltrim($publicUrl, '/');
-    }
+    $publicUrl = buildPreviewPublicUrl($fileName, $env);
 
     return [
         'ok' => true,
@@ -1708,11 +1861,19 @@ if ($action === 'generate_document') {
             jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);
         }
         if ($responseMode === 'json_url') {
-            $saved = saveGeneratedFileAndBuildUrl($tmpFile, 'docx');
+            $saved = saveGeneratedFileAndBuildUrl($tmpFile, 'docx', $env);
             if (!($saved['ok'] ?? false)) {
                 @unlink($tmpFile);
                 jsonResponse(500, ['ok' => false, 'error' => (string)($saved['error'] ?? 'Не удалось сохранить файл')]);
             }
+            $generatedSize = (int)@filesize((string)($saved['path'] ?? ''));
+            $requestStarted = isset($_SERVER['REQUEST_TIME_FLOAT']) ? (float)$_SERVER['REQUEST_TIME_FLOAT'] : microtime(true);
+            logApiDocs('info', 'Generated DOCX preview URL created', [
+                'previewUrl' => (string)($saved['url'] ?? ''),
+                'fileName' => (string)($saved['fileName'] ?? 'answer.docx'),
+                'bytes' => $generatedSize,
+                'ttfbMs' => (int)round((microtime(true) - $requestStarted) * 1000),
+            ]);
             @unlink($tmpFile);
             jsonResponse(200, [
                 'ok' => true,
@@ -1737,13 +1898,21 @@ if ($action === 'generate_document') {
             }
         }
         if ($responseMode === 'json_url') {
-            $saved = saveGeneratedFileAndBuildUrl($tmpFile, 'pdf');
+            $saved = saveGeneratedFileAndBuildUrl($tmpFile, 'pdf', $env);
             if (!($saved['ok'] ?? false)) {
                 if ($tmpFile !== $templatePdfPath) {
                     @unlink($tmpFile);
                 }
                 jsonResponse(500, ['ok' => false, 'error' => (string)($saved['error'] ?? 'Не удалось сохранить файл')]);
             }
+            $generatedSize = (int)@filesize((string)($saved['path'] ?? ''));
+            $requestStarted = isset($_SERVER['REQUEST_TIME_FLOAT']) ? (float)$_SERVER['REQUEST_TIME_FLOAT'] : microtime(true);
+            logApiDocs('info', 'Generated PDF preview URL created', [
+                'previewUrl' => (string)($saved['url'] ?? ''),
+                'fileName' => (string)($saved['fileName'] ?? 'answer.pdf'),
+                'bytes' => $generatedSize,
+                'ttfbMs' => (int)round((microtime(true) - $requestStarted) * 1000),
+            ]);
             if ($tmpFile !== $templatePdfPath) {
                 @unlink($tmpFile);
             }
