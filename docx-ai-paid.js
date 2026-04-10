@@ -177,6 +177,7 @@
     var style = document.createElement('style');
     style.id = 'documents-vip-ai-modal-style';
     style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:linear-gradient(180deg,rgba(226,232,240,.34),rgba(148,163,184,.28));backdrop-filter:blur(10px);z-index:4100;display:flex;align-items:stretch;justify-content:center;padding:4px}.documents-vip-ai__panel{width:100%;height:100%;max-height:none;overflow:auto;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.92);box-shadow:0 18px 44px rgba(15,23,42,.16)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9);position:sticky;top:0;background:rgba(255,255,255,.78);backdrop-filter:blur(8px);z-index:2}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:20dvh;overflow:auto}.documents-vip-ai__chat{height:min(50dvh,520px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.58;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__msg-content{display:block;line-height:1.62}.documents-vip-ai__msg-content p,.documents-vip-ai__msg-content ul,.documents-vip-ai__msg-content ol,.documents-vip-ai__msg-content h4{margin:0 0 10px}.documents-vip-ai__msg-content p:last-child,.documents-vip-ai__msg-content ul:last-child,.documents-vip-ai__msg-content ol:last-child,.documents-vip-ai__msg-content h4:last-child{margin-bottom:0}.documents-vip-ai__msg-content ul,.documents-vip-ai__msg-content ol{padding-left:18px}.documents-vip-ai__msg-content li{margin:0 0 6px}.documents-vip-ai__msg-content h4{font-size:14px;font-weight:700;line-height:1.4;color:#0b1220}.documents-vip-ai__composer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:rgba(255,255,255,.7)}.documents-vip-ai__select{min-width:0;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__template-btn{border:1px solid rgba(148,163,184,.42);background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(241,245,249,.92));color:#0f172a;border-radius:12px;padding:0 14px;min-height:44px;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 8px 20px rgba(15,23,42,.11)}.documents-vip-ai__template-btn:active{transform:translateY(1px)}.documents-vip-ai__template-btn[disabled]{opacity:.56;box-shadow:none;cursor:not-allowed}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{border-radius:0}.documents-vip-ai__body{padding:12px}.documents-vip-ai__chat{height:52dvh}.documents-vip-ai__msg{font-size:14px;line-height:1.64}.documents-vip-ai__composer{grid-template-columns:1fr}.documents-vip-ai__template-btn{width:100%;font-size:14px;min-height:46px}}';
+    style.textContent += '.documents-vip-ai__loading{display:none;align-items:center;gap:8px;padding:10px 12px;border:1px solid rgba(191,219,254,.95);background:rgba(239,246,255,.75);color:#1e3a8a;border-radius:12px;font-size:12px;font-weight:600}.documents-vip-ai__loading.is-active{display:flex}.documents-vip-ai__loading-spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,.25);border-top-color:#2563eb;animation:documents-vip-spin .8s linear infinite;flex:none}@keyframes documents-vip-spin{to{transform:rotate(360deg)}}';
     document.head.appendChild(style);
   }
 
@@ -710,13 +711,15 @@
       : '';
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__loading" data-vip-loading><span class="documents-vip-ai__loading-spinner" aria-hidden="true"></span><span data-vip-loading-text>Готовим ответ с помощью ИИ…</span></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
     var filesNode = panel.querySelector('.documents-vip-ai__files');
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
+    var loadingNode = panel.querySelector('[data-vip-loading]');
+    var loadingTextNode = panel.querySelector('[data-vip-loading-text]');
     var styleNode = panel.querySelector('[data-style]');
     var templateButton = panel.querySelector('[data-template-open]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
@@ -761,6 +764,14 @@
     }
 
     var chatHistory = [];
+    function setVipLoading(active, text) {
+      if (loadingNode) {
+        loadingNode.classList.toggle('is-active', Boolean(active));
+      }
+      if (loadingTextNode && text) {
+        loadingTextNode.textContent = String(text);
+      }
+    }
     function sanitizeWhitelistedHtml(html) {
       var template = document.createElement('template');
       template.innerHTML = String(html || '');
@@ -868,7 +879,8 @@
       isSending = true;
       pushChat('user', 'Стиль: ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный') + '. Нужен только готовый текст для вставки в документ.');
       pushChat('assistant', '⏳ Обрабатываю запрос...');
-      metaNode.innerHTML = '';
+      setVipLoading(true, 'Готовим ответ с помощью ИИ…');
+      metaNode.innerHTML = '<span class="documents-vip-ai__chip">⏳ Запрос отправлен, ждём ответ…</span>';
       var startedAt = Date.now();
       var selectedEntryObjects = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; })
         .concat(pendingEntries.filter(function(entry) { return selectedFiles[entry.key]; }));
@@ -896,6 +908,7 @@
         })
         .finally(function() {
           isSending = false;
+          setVipLoading(false);
         });
     }
 
@@ -1015,6 +1028,7 @@
     var style = document.createElement('style');
     style.id = 'docx-template-insert-style';
     style.textContent = '.docx-template-modal{position:fixed;inset:0;z-index:4300;background:linear-gradient(180deg,rgba(226,232,240,.52),rgba(148,163,184,.38));backdrop-filter:blur(12px);display:flex;align-items:stretch;justify-content:center;padding:10px}.docx-template-modal__panel{width:min(980px,100%);height:100%;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,250,252,.92));border:1px solid rgba(255,255,255,.9);border-radius:22px;box-shadow:0 20px 50px rgba(15,23,42,.18);display:flex;flex-direction:column;overflow:hidden}.docx-template-modal__head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;padding:14px 16px;border-bottom:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.72);backdrop-filter:blur(8px)}.docx-template-modal__title{font-size:18px;font-weight:800;color:#0f172a}.docx-template-modal__sub{font-size:12px;color:#64748b;margin-top:3px}.docx-template-modal__close{width:36px;height:36px;border:none;border-radius:11px;background:#fff;color:#475569;font-size:21px}.docx-template-modal__body{padding:14px;display:grid;gap:10px;flex:1;min-height:0;overflow:auto}.docx-template-modal__hint{font-size:12px;color:#334155;background:rgba(219,234,254,.45);border:1px solid rgba(191,219,254,.9);border-radius:12px;padding:10px 11px}.docx-template-modal__paper{margin:0 auto;width:min(760px,100%);background:linear-gradient(175deg,rgba(255,255,255,.97),rgba(255,255,255,.9));border:1px solid rgba(203,213,225,.85);border-radius:18px;box-shadow:0 16px 36px rgba(15,23,42,.12);padding:14px;display:grid;gap:14px}.docx-template-modal__paper-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}.docx-template-modal__paper-title{font-size:12px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em}.docx-template-modal__paper-chip{font-size:11px;font-weight:700;color:#1e40af;background:rgba(219,234,254,.65);border:1px solid rgba(191,219,254,.95);border-radius:999px;padding:4px 10px}.docx-template-modal__line-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.docx-template-modal__line{display:grid;gap:5px;min-width:0}.docx-template-modal__line--full{grid-column:1/-1}.docx-template-modal__field-label{font-size:12px;font-weight:600;color:#334155}.docx-template-modal__date-pack{display:grid;grid-template-columns:minmax(68px,110px) minmax(0,1fr);gap:8px;min-width:0}.docx-template-modal__input{width:100%;box-sizing:border-box;border:none;border-bottom:1px dashed rgba(100,116,139,.7);background:rgba(255,255,255,.75);padding:8px 2px 6px;font-size:15px;line-height:1.25;color:#0f172a;outline:none;border-radius:0}.docx-template-modal__input:focus{border-bottom-color:#2563eb}.docx-template-modal__textarea-label{font-size:12px;font-weight:700;color:#334155}.docx-template-modal__editor{background:linear-gradient(180deg,rgba(248,250,252,.88),rgba(241,245,249,.72));border:1px solid rgba(203,213,225,.8);border-radius:14px;padding:10px}.docx-template-modal__textarea{width:100%;box-sizing:border-box;height:100%;min-height:34dvh;max-height:100%;resize:none;border:1px solid rgba(203,213,225,.95);border-radius:12px;background:rgba(255,255,255,.96);padding:13px 14px;font-size:14px;line-height:1.64;color:#0f172a;outline:none}.docx-template-modal__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}.docx-template-modal__foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 14px;border-top:1px solid rgba(226,232,240,.95);background:rgba(255,255,255,.78)}.docx-template-modal__btn{border:1px solid rgba(148,163,184,.45);background:rgba(255,255,255,.96);color:#334155;border-radius:12px;padding:10px 16px;font-weight:700;min-height:42px;transition:all .2s ease}.docx-template-modal__btn:active{transform:translateY(1px)}.docx-template-modal__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8;box-shadow:0 10px 20px rgba(37,99,235,.25)}.docx-template-modal__btn[disabled]{opacity:.6}.docx-template-modal__error{font-size:12px;color:#b91c1c;min-height:16px}@media (max-width:768px){.docx-template-modal{padding:0}.docx-template-modal__panel{border-radius:0}.docx-template-modal__head{padding:12px}.docx-template-modal__body{padding:12px}.docx-template-modal__paper{padding:12px;border-radius:14px}.docx-template-modal__line-grid{grid-template-columns:1fr}.docx-template-modal__date-pack{grid-template-columns:90px minmax(0,1fr)}.docx-template-modal__editor{padding:8px}.docx-template-modal__textarea{min-height:40dvh;font-size:16px}.docx-template-modal__foot{padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));flex-direction:column}.docx-template-modal__btn{width:100%}}';
+    style.textContent += '.docx-template-modal__busy{position:absolute;inset:0;display:none;place-items:center;padding:16px;background:linear-gradient(180deg,rgba(248,250,252,.92),rgba(241,245,249,.9));backdrop-filter:blur(2px);z-index:3}.docx-template-modal__busy.is-active{display:grid}.docx-template-modal__busy-card{width:min(420px,94%);border:1px solid rgba(191,219,254,.95);background:rgba(255,255,255,.88);border-radius:16px;padding:14px;display:grid;gap:8px;box-shadow:0 14px 30px rgba(15,23,42,.14)}.docx-template-modal__busy-title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-modal__busy-sub{font-size:12px;color:#475569}.docx-template-modal__busy-spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(37,99,235,.25);border-top-color:#2563eb;animation:docx-template-busy-spin .8s linear infinite}@keyframes docx-template-busy-spin{to{transform:rotate(360deg)}}';
     document.head.appendChild(style);
   }
 
@@ -1022,7 +1036,7 @@
     if (document.getElementById('docx-template-preview-style')) return;
     var style = document.createElement('style');
     style.id = 'docx-template-preview-style';
-    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__body{flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}.docx-template-preview__doc{max-width:920px;margin:0 auto;background:rgba(255,255,255,.82);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12)}.docx-template-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}.docx-template-preview__doc .docx{max-width:100%;overflow:auto}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}.docx-template-preview__body{padding:10px}.docx-template-preview__doc{border-radius:12px;padding:6px}}';
+    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__btn[disabled]{opacity:.62;cursor:not-allowed}.docx-template-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}.docx-template-preview__doc{max-width:920px;height:100%;margin:0 auto;background:rgba(255,255,255,.82);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12)}.docx-template-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}.docx-template-preview__doc .docx{max-width:100%;overflow:auto}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}.docx-template-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:18px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}.docx-template-preview__loading-card{width:min(500px,95%);border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.85);backdrop-filter:blur(8px);border-radius:18px;padding:15px;box-shadow:0 18px 32px rgba(15,23,42,.12);display:grid;gap:10px}.docx-template-preview__loading-title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__loading-sub{font-size:12px;color:#475569}.docx-template-preview__bar{height:8px;border-radius:999px;background:rgba(191,219,254,.45);overflow:hidden}.docx-template-preview__bar::after{content:\"\";display:block;height:100%;width:36%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#38bdf8);animation:docx-preview-progress 1.4s ease-in-out infinite}.docx-template-preview__steps{display:grid;gap:5px}.docx-template-preview__step{font-size:12px;color:#334155;display:flex;align-items:center;gap:7px}.docx-template-preview__step-dot{width:8px;height:8px;border-radius:50%;background:rgba(148,163,184,.7)}.docx-template-preview__step--active .docx-template-preview__step-dot{background:#2563eb;box-shadow:0 0 0 6px rgba(37,99,235,.16)}.docx-template-preview__step--done .docx-template-preview__step-dot{background:#16a34a}.docx-template-preview__spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,.22);border-top-color:#2563eb;animation:docx-preview-spin .8s linear infinite;display:inline-block;vertical-align:middle;margin-right:6px}@keyframes docx-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}@keyframes docx-preview-spin{to{transform:rotate(360deg)}}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}.docx-template-preview__body{padding:10px}.docx-template-preview__doc{border-radius:12px;padding:6px}.docx-template-preview__loading-card{padding:13px}}';
     document.head.appendChild(style);
   }
 
@@ -1047,7 +1061,7 @@
     if (document.querySelector('.docx-template-modal')) return;
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-modal';
-    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Заполните поля как в документе и сразу отредактируйте текст ответа</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__hint">Визуализация ниже имитирует реальный лист: заполните дату, адресата, номер и внесите правки в ответ ИИ.</div><div class="docx-template-modal__paper"><div class="docx-template-modal__paper-head"><div class="docx-template-modal__paper-title">Черновик документа</div><div class="docx-template-modal__paper-chip">Режим заполнения</div></div><div class="docx-template-modal__line-grid"><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Дата</span><span class="docx-template-modal__date-pack"><input class="docx-template-modal__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09"><input class="docx-template-modal__input" data-template-month type="text" placeholder="апреля"></span></label><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Номер</span><input class="docx-template-modal__input" data-template-number type="text" placeholder="12/Д"></label><label class="docx-template-modal__line docx-template-modal__line--full"><span class="docx-template-modal__field-label">Адресат</span><input class="docx-template-modal__input" data-template-addressee type="text" placeholder="ООО «Компания»"></label></div><label class="docx-template-modal__line"><span class="docx-template-modal__textarea-label">Текст ответа ИИ (можно редактировать)</span><div class="docx-template-modal__editor"><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea></div></label></div><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div></div>';
+    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Заполните поля как в документе и сразу отредактируйте текст ответа</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__hint">Визуализация ниже имитирует реальный лист: заполните дату, адресата, номер и внесите правки в ответ ИИ.</div><div class="docx-template-modal__paper"><div class="docx-template-modal__paper-head"><div class="docx-template-modal__paper-title">Черновик документа</div><div class="docx-template-modal__paper-chip">Режим заполнения</div></div><div class="docx-template-modal__line-grid"><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Дата</span><span class="docx-template-modal__date-pack"><input class="docx-template-modal__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09"><input class="docx-template-modal__input" data-template-month type="text" placeholder="апреля"></span></label><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Номер</span><input class="docx-template-modal__input" data-template-number type="text" placeholder="12/Д"></label><label class="docx-template-modal__line docx-template-modal__line--full"><span class="docx-template-modal__field-label">Адресат</span><input class="docx-template-modal__input" data-template-addressee type="text" placeholder="ООО «Компания»"></label></div><label class="docx-template-modal__line"><span class="docx-template-modal__textarea-label">Текст ответа ИИ (можно редактировать)</span><div class="docx-template-modal__editor"><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea></div></label></div><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div><div class="docx-template-modal__busy" data-template-busy><div class="docx-template-modal__busy-card"><div class="docx-template-modal__busy-title">Формируем документ…</div><div class="docx-template-modal__busy-sub">Подождите, готовим файл и открываем предпросмотр.</div><div class="docx-template-modal__busy-spinner" aria-hidden="true"></div></div></div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
     var textarea = overlay.querySelector('.docx-template-modal__textarea');
@@ -1055,6 +1069,7 @@
     var cancelButton = overlay.querySelector('[data-action="cancel"]');
     var doneButton = overlay.querySelector('[data-action="done"]');
     var errorNode = overlay.querySelector('.docx-template-modal__error');
+    var busyNode = overlay.querySelector('[data-template-busy]');
     var dayInput = overlay.querySelector('[data-template-day]');
     var monthInput = overlay.querySelector('[data-template-month]');
     var numberInput = overlay.querySelector('[data-template-number]');
@@ -1131,21 +1146,12 @@
       renderError('');
       doneButton.disabled = true;
       doneButton.textContent = 'Генерирую...';
-      var replacedAnswer = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
-      var replacedDay = replaceAiMarkerInDocument(dayValue, '[ДЕНЬ]');
-      var replacedMonth = replaceAiMarkerInDocument(monthValue, '[МЕСЯЦ]');
-      var replacedNumber = replaceAiMarkerInDocument(numberValue, '[НОМЕР]');
-      var replacedAddressee = replaceAiMarkerInDocument(addresseeTemplateValue, '[АДРЕСАТ]');
-      var totalReplaced = replacedAnswer + replacedDay + replacedMonth + replacedNumber + replacedAddressee;
+      if (busyNode) busyNode.classList.add('is-active');
       var preparedAnswer = String(aiText || '')
         .replace(/\[ДЕНЬ\]/g, dayValue)
         .replace(/\[МЕСЯЦ\]/g, monthValue)
         .replace(/\[НОМЕР\]/g, numberValue)
         .replace(/\[АДРЕСАТ\]/g, addresseeTemplateValue);
-      var replaced = totalReplaced;
-      if (replaced <= 0) {
-        renderError('Не найдены метки [ОТВЕТ ИИ]/[ДЕНЬ]/[МЕСЯЦ]/[НОМЕР]/[АДРЕСАТ] в документе.');
-      }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
       generateDocxFromTemplateViaApi(preparedAnswer, {
         day: dayValue,
@@ -1153,15 +1159,16 @@
         number: numberValue,
         addressee: addresseeTemplateValue
       })
-        .then(function(blob) {
-          if (!blob) throw new Error('empty_blob');
+        .then(function(previewPayload) {
+          if (!previewPayload) throw new Error('empty_preview_payload');
           closeEditor();
-          openDocxRenderPreviewPage(blob);
+          openDocxRenderPreviewPage(previewPayload);
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
         })
         .finally(function() {
+          if (busyNode) busyNode.classList.remove('is-active');
           doneButton.disabled = false;
           doneButton.textContent = 'Готово';
         });
@@ -1187,24 +1194,24 @@
     });
   }
 
-  function openDocxRenderPreviewPage(blob) {
+  function openDocxRenderPreviewLocal(blob, fileName) {
     ensureTemplatePreviewStyles();
     if (!blob) throw new Error('empty_blob');
-    var existing = document.querySelector('.docx-template-preview');
-    if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Локальный предпросмотр</div><div class="docx-template-preview__hint">Рендерим файл прямо в браузере</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Готовим локальный предпросмотр…</div><div class="docx-template-preview__loading-sub">Это может занять несколько секунд на телефоне.</div><div class="docx-template-preview__bar"></div></div></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка локального предпросмотра…</div></div>';
     document.body.appendChild(overlay);
+    var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     var docPreviewNode = overlay.querySelector('[data-preview-doc]');
     var statusNode = overlay.querySelector('[data-preview-status]');
     var downloadBtn = overlay.querySelector('[data-preview-download]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
+    var loadingNode = overlay.querySelector('[data-preview-loading]');
     var blobUrl = URL.createObjectURL(blob);
 
     function closeModal() {
-      document.body.style.overflow = '';
+      document.body.style.overflow = previousOverflow;
       URL.revokeObjectURL(blobUrl);
       overlay.remove();
     }
@@ -1216,7 +1223,7 @@
     downloadBtn.addEventListener('click', function() {
       var a = document.createElement('a');
       a.href = blobUrl;
-      a.download = 'template-answer.docx';
+      a.download = fileName || 'template-answer.docx';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1232,37 +1239,208 @@
         });
       });
     }).then(function() {
-      statusNode.textContent = 'Готово: документ открыт в красивом предпросмотре.';
+      if (loadingNode) loadingNode.style.display = 'none';
+      statusNode.textContent = 'Готово: локальный предпросмотр открыт.';
     }).catch(function(error) {
+      if (loadingNode) loadingNode.style.display = 'none';
       statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
     });
   }
 
-  async function generateDocxFromTemplateViaApi(answerText, meta) {
-    var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    var safeMeta = meta && typeof meta === 'object' ? meta : {};
-    var formData = new FormData();
-    formData.append('action', 'generate_document');
-    formData.append('format', 'docx');
-    formData.append('answer', String(answerText || ''));
-    formData.append('templateDay', String(safeMeta.day || ''));
-    formData.append('templateMonth', String(safeMeta.month || ''));
-    formData.append('templateNumber', String(safeMeta.number || ''));
-    formData.append('templateAddressee', String(safeMeta.addressee || ''));
-    formData.append('documentTitle', 'Ответ ИИ');
-    var response = await fetch(apiUrl, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
+  function toAbsoluteUrl(value) {
+    var raw = String(value || '').trim();
+    if (!raw) return '';
+    if (raw.indexOf('blob:') === 0 || raw.indexOf('data:') === 0) return raw;
+    try {
+      return new URL(raw, window.location.origin).toString();
+    } catch (error) {
+      return raw;
+    }
+  }
+
+  function getDocsGenerateEndpoints() {
+    var configured = String(window.DOCUMENTS_AI_API_URL || '').trim();
+    var fallback = ['/js/documents/api-docs.php', '/api-docs.php'];
+    var list = configured ? [configured].concat(fallback) : fallback;
+    return list.filter(function(item, index) { return item && list.indexOf(item) === index; });
+  }
+
+  async function deleteGeneratedTempFile(previewPayload) {
+    var fileName = String(previewPayload && previewPayload.fileName || '').trim();
+    var previewUrl = String(previewPayload && previewPayload.previewUrl || '').trim();
+    if (!fileName && !previewUrl) return;
+    var endpoints = getDocsGenerateEndpoints();
+    for (var i = 0; i < endpoints.length; i += 1) {
+      var formData = new FormData();
+      formData.append('action', 'delete_generated_temp');
+      if (fileName) formData.append('fileName', fileName);
+      if (previewUrl) formData.append('url', previewUrl);
+      try {
+        var response = await fetch(endpoints[i], {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData
+        });
+        if (response && response.ok) return;
+      } catch (error) {}
+    }
+  }
+
+  async function openDocxRenderPreviewPage(previewPayload) {
+    ensureTemplatePreviewStyles();
+    if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
+    var existing = document.querySelector('.docx-template-preview');
+    if (existing) existing.remove();
+    var overlay = document.createElement('div');
+    overlay.className = 'docx-template-preview';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
+    document.body.appendChild(overlay);
+    var previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    var frameNode = overlay.querySelector('[data-preview-frame]');
+    var statusNode = overlay.querySelector('[data-preview-status]');
+    var loadingNode = overlay.querySelector('[data-preview-loading]');
+    var loadingSubNode = overlay.querySelector('[data-loading-sub]');
+    var loadingSteps = Array.prototype.slice.call(overlay.querySelectorAll('[data-step]'));
+    var downloadBtn = overlay.querySelector('[data-preview-download]');
+    var localBtn = overlay.querySelector('[data-preview-local]');
+    var closeBtn = overlay.querySelector('[data-preview-close]');
+    var previewUrl = String(previewPayload.previewUrl || '').trim();
+    var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
+    var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+    var blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
+    var sourceUrl = previewUrl || blobUrl;
+    var isClosed = false;
+    var stepTimer = null;
+    var slowTimer = null;
+
+    function closeModal() {
+      if (isClosed) return;
+      isClosed = true;
+      document.body.style.overflow = previousOverflow;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      if (stepTimer) clearInterval(stepTimer);
+      if (slowTimer) clearTimeout(slowTimer);
+      overlay.remove();
+      deleteGeneratedTempFile(previewPayload).catch(function() {});
+    }
+
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) closeModal();
     });
-    if (!response.ok) {
-      throw new Error('Ошибка генерации шаблона (' + response.status + ')');
+    downloadBtn.addEventListener('click', function() {
+      var a = document.createElement('a');
+      a.href = sourceUrl;
+      a.download = fileName || 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+    localBtn.addEventListener('click', async function() {
+      localBtn.disabled = true;
+      var previousText = localBtn.textContent;
+      localBtn.textContent = 'Открываю...';
+      statusNode.textContent = 'Готовим локальный режим...';
+      try {
+        var localBlob = fallbackBlob;
+        if (!localBlob && previewUrl) {
+          var localResponse = await fetch(previewUrl, { credentials: 'same-origin' });
+          if (!localResponse.ok) throw new Error('download_failed');
+          localBlob = await localResponse.blob();
+        }
+        if (!localBlob || !localBlob.size) throw new Error('empty_blob');
+        openDocxRenderPreviewLocal(localBlob, fileName);
+      } catch (error) {
+        statusNode.textContent = 'Не удалось открыть локальный предпросмотр.';
+      } finally {
+        localBtn.disabled = false;
+        localBtn.textContent = previousText;
+      }
+    });
+
+    if (!sourceUrl) {
+      statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
+      return;
     }
-    var blob = await response.blob();
-    if (!blob || !blob.size) {
-      return null;
+    var currentStep = 1;
+    function setStep(step, subtitle) {
+      currentStep = step;
+      loadingSteps.forEach(function(node) {
+        var index = Number(node.getAttribute('data-step') || '0');
+        node.classList.toggle('docx-template-preview__step--active', index === currentStep);
+        node.classList.toggle('docx-template-preview__step--done', index < currentStep);
+      });
+      if (loadingSubNode && subtitle) loadingSubNode.textContent = subtitle;
     }
-    return blob;
+    setStep(1, 'Подготавливаем файл...');
+    stepTimer = setInterval(function() {
+      if (currentStep < 3) {
+        setStep(currentStep + 1, currentStep === 1 ? 'Подключаем Office Viewer…' : 'Ждём рендер предпросмотра…');
+      }
+    }, 1300);
+    slowTimer = setTimeout(function() {
+      statusNode.textContent = 'Открытие занимает чуть дольше обычного, пожалуйста подождите…';
+      if (loadingSubNode) loadingSubNode.textContent = 'Office Viewer отвечает медленно, но документ уже загружается.';
+    }, 7000);
+    frameNode.addEventListener('load', function() {
+      if (stepTimer) clearInterval(stepTimer);
+      if (slowTimer) clearTimeout(slowTimer);
+      setStep(4, 'Готово.');
+      frameNode.style.visibility = '';
+      if (loadingNode) loadingNode.style.display = 'none';
+      statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
+    }, { once: true });
+    frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl);
+  }
+
+  async function generateDocxFromTemplateViaApi(answerText, meta) {
+    var endpoints = getDocsGenerateEndpoints();
+    var safeMeta = meta && typeof meta === 'object' ? meta : {};
+    var lastError = null;
+    for (var i = 0; i < endpoints.length; i += 1) {
+      var formData = new FormData();
+      formData.append('action', 'generate_document');
+      formData.append('format', 'docx');
+      formData.append('answer', String(answerText || ''));
+      formData.append('templateDay', String(safeMeta.day || ''));
+      formData.append('templateMonth', String(safeMeta.month || ''));
+      formData.append('templateNumber', String(safeMeta.number || ''));
+      formData.append('templateAddressee', String(safeMeta.addressee || ''));
+      formData.append('documentTitle', 'Ответ ИИ');
+      formData.append('responseMode', 'json_url');
+      try {
+        var response = await fetch(endpoints[i], {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData
+        });
+        if (!response || !response.ok) {
+          lastError = new Error('Ошибка генерации шаблона (' + (response ? response.status : 0) + ')');
+          continue;
+        }
+        var responseType = String(response.headers.get('content-type') || '').toLowerCase();
+        if (responseType.indexOf('application/json') !== -1) {
+          var payload = await response.json().catch(function() { return null; });
+          var url = String(payload && payload.url || '').trim();
+          if (payload && payload.ok && url) {
+            return {
+              previewUrl: toAbsoluteUrl(url),
+              fileName: String(payload.fileName || 'answer.docx').trim()
+            };
+          }
+          lastError = new Error((payload && payload.error) || 'Сервер не вернул ссылку для предпросмотра.');
+          continue;
+        }
+        var blob = await response.blob();
+        if (blob && blob.size) {
+          return { blob: blob, fileName: 'answer.docx' };
+        }
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Не удалось сформировать DOCX.');
   }
 
   if (document.readyState === 'loading') {
