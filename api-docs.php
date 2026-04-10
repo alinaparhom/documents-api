@@ -1621,12 +1621,33 @@ if ($action === 'copy_template_to_su21') {
         jsonResponse(404, ['ok' => false, 'error' => 'Исходный шаблон не найден']);
     }
 
-    $targetDir = __DIR__ . '/documents/su-21';
-    if (!is_dir($targetDir) && !@mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
-        jsonResponse(500, ['ok' => false, 'error' => 'Папка назначения недоступна']);
+    $documentRoot = trim((string)($_SERVER['DOCUMENT_ROOT'] ?? ''));
+    $targetCandidates = array_values(array_filter([
+        '/documents/su-21',
+        __DIR__ . '/documents/su-21',
+        $documentRoot !== '' ? rtrim($documentRoot, '/\\') . '/documents/su-21' : '',
+    ], static function ($value): bool {
+        return is_string($value) && $value !== '';
+    }));
+
+    $targetDir = '';
+    foreach ($targetCandidates as $candidateDir) {
+        if (!is_dir($candidateDir)) {
+            continue;
+        }
+        if (!is_file(rtrim($candidateDir, '/\\') . '/settingsdocs.json')) {
+            continue;
+        }
+        $targetDir = rtrim($candidateDir, '/\\');
+        break;
     }
+
+    if ($targetDir === '') {
+        jsonResponse(404, ['ok' => false, 'error' => 'Папка /documents/su-21 с settingsdocs.json не найдена']);
+    }
+
     if (!is_writable($targetDir)) {
-        jsonResponse(500, ['ok' => false, 'error' => 'Нет прав на запись в папку назначения']);
+        jsonResponse(500, ['ok' => false, 'error' => 'Нет прав на запись в папку /documents/su-21']);
     }
 
     $targetFilePath = $targetDir . '/template.docx';
