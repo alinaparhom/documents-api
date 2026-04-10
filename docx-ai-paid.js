@@ -1211,6 +1211,15 @@
     });
   }
 
+  function ensureHtml2PdfLoaded() {
+    if (window.html2pdf) return Promise.resolve(window.html2pdf);
+    return loadBriefScript('https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js', function() {
+      return typeof window.html2pdf === 'function';
+    }).then(function() {
+      return window.html2pdf;
+    });
+  }
+
   function openDocxRenderPreviewLocal(blob, fileName, options) {
     ensureTemplatePreviewStyles();
     if (!blob) throw new Error('empty_blob');
@@ -1219,7 +1228,7 @@
     var previewPayload = settings.previewPayload && typeof settings.previewPayload === 'object' ? settings.previewPayload : null;
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Локальный предпросмотр</div><div class="docx-template-preview__hint">Быстрый режим. Выберите вид как вам удобнее.</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-mode="office">Вид Office</button><button type="button" class="docx-template-preview__btn" data-preview-mode="mobile">Вид Mobile</button><button type="button" class="docx-template-preview__btn" data-preview-open-office>Office Web</button><button type="button" class="docx-template-preview__btn" data-preview-open-google>Google Docs</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Готовим локальный предпросмотр…</div><div class="docx-template-preview__loading-sub">Это может занять несколько секунд на телефоне.</div><div class="docx-template-preview__bar"></div></div></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка локального предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Локальный предпросмотр</div><div class="docx-template-preview__hint">Быстрый режим. Выберите вид как вам удобнее.</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-mode="office">Вид Office</button><button type="button" class="docx-template-preview__btn" data-preview-mode="mobile">Вид Mobile</button><button type="button" class="docx-template-preview__btn" data-preview-open-office>Office Web</button><button type="button" class="docx-template-preview__btn" data-preview-open-google>Google Docs</button><button type="button" class="docx-template-preview__btn" data-preview-pdf-open>PDF Preview</button><button type="button" class="docx-template-preview__btn" data-preview-pdf-download>PDF Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Готовим локальный предпросмотр…</div><div class="docx-template-preview__loading-sub">Это может занять несколько секунд на телефоне.</div><div class="docx-template-preview__bar"></div></div></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка локального предпросмотра…</div></div>';
     document.body.appendChild(overlay);
     var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -1231,8 +1240,12 @@
     var modeButtons = Array.prototype.slice.call(overlay.querySelectorAll('[data-preview-mode]'));
     var openOfficeBtn = overlay.querySelector('[data-preview-open-office]');
     var openGoogleBtn = overlay.querySelector('[data-preview-open-google]');
+    var pdfPreviewBtn = overlay.querySelector('[data-preview-pdf-open]');
+    var pdfDownloadBtn = overlay.querySelector('[data-preview-pdf-download]');
     var blobUrl = URL.createObjectURL(blob);
     var docxArrayBufferPromise = blob.arrayBuffer();
+    var rendererPromise = ensureDocxPreviewLibrariesLoaded();
+    var pdfBlobPromise = null;
     var modeOptions = {
       office: { inWrapper: true, breakPages: true, ignoreWidth: false, ignoreHeight: false },
       mobile: { inWrapper: true, breakPages: false, ignoreWidth: true, ignoreHeight: true }
@@ -1295,7 +1308,84 @@
       });
     }
 
-    ensureDocxPreviewLibrariesLoaded().then(function(renderer) {
+    function buildPdfFromDocx() {
+      if (!pdfBlobPromise) {
+        pdfBlobPromise = Promise.all([rendererPromise, docxArrayBufferPromise, ensureHtml2PdfLoaded()]).then(function(values) {
+          var renderer = values[0];
+          var arrayBuffer = values[1];
+          var html2pdf = values[2];
+          var temp = document.createElement('div');
+          temp.style.position = 'fixed';
+          temp.style.left = '-99999px';
+          temp.style.top = '0';
+          temp.style.width = '794px';
+          temp.style.background = '#fff';
+          document.body.appendChild(temp);
+          return renderer.renderAsync(arrayBuffer, temp, null, modeOptions.office).then(function() {
+            return html2pdf().set({
+              margin: 8,
+              filename: (fileName || 'template-answer.docx').replace(/\\.docx$/i, '') + '.pdf',
+              image: { type: 'jpeg', quality: 0.92 },
+              html2canvas: { scale: 1.35, useCORS: true },
+              jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }
+            }).from(temp).outputPdf('blob');
+          }).finally(function() {
+            temp.remove();
+          });
+        });
+      }
+      return pdfBlobPromise;
+    }
+
+    async function openPdfPreview() {
+      if (!pdfPreviewBtn) return;
+      pdfPreviewBtn.disabled = true;
+      var prevText = pdfPreviewBtn.textContent;
+      pdfPreviewBtn.textContent = 'PDF...';
+      statusNode.textContent = 'Конвертируем DOCX → PDF для быстрого просмотра...';
+      try {
+        var pdfBlob = await buildPdfFromDocx();
+        var pdfUrl = URL.createObjectURL(pdfBlob);
+        window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+        setTimeout(function() { URL.revokeObjectURL(pdfUrl); }, 120000);
+        statusNode.textContent = 'PDF предпросмотр открыт в новой вкладке.';
+      } catch (error) {
+        statusNode.textContent = 'Не удалось открыть PDF предпросмотр.';
+      } finally {
+        pdfPreviewBtn.disabled = false;
+        pdfPreviewBtn.textContent = prevText;
+      }
+    }
+
+    async function downloadPdfFile() {
+      if (!pdfDownloadBtn) return;
+      pdfDownloadBtn.disabled = true;
+      var prevText = pdfDownloadBtn.textContent;
+      pdfDownloadBtn.textContent = 'PDF...';
+      statusNode.textContent = 'Конвертируем DOCX → PDF для скачивания...';
+      try {
+        var pdfBlob = await buildPdfFromDocx();
+        var pdfUrl = URL.createObjectURL(pdfBlob);
+        var a = document.createElement('a');
+        a.href = pdfUrl;
+        a.download = (fileName || 'template-answer.docx').replace(/\\.docx$/i, '') + '.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function() { URL.revokeObjectURL(pdfUrl); }, 120000);
+        statusNode.textContent = 'PDF файл готов и скачан.';
+      } catch (error) {
+        statusNode.textContent = 'Не удалось конвертировать в PDF.';
+      } finally {
+        pdfDownloadBtn.disabled = false;
+        pdfDownloadBtn.textContent = prevText;
+      }
+    }
+
+    if (pdfPreviewBtn) pdfPreviewBtn.addEventListener('click', function() { openPdfPreview(); });
+    if (pdfDownloadBtn) pdfDownloadBtn.addEventListener('click', function() { downloadPdfFile(); });
+
+    rendererPromise.then(function(renderer) {
       modeButtons.forEach(function(btn) {
         btn.addEventListener('click', function() {
           renderLocalMode(renderer, btn.getAttribute('data-preview-mode')).catch(function() {
