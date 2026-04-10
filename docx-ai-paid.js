@@ -1131,21 +1131,11 @@
       renderError('');
       doneButton.disabled = true;
       doneButton.textContent = 'Генерирую...';
-      var replacedAnswer = replaceAiMarkerInDocument(aiText, '[ОТВЕТ ИИ]');
-      var replacedDay = replaceAiMarkerInDocument(dayValue, '[ДЕНЬ]');
-      var replacedMonth = replaceAiMarkerInDocument(monthValue, '[МЕСЯЦ]');
-      var replacedNumber = replaceAiMarkerInDocument(numberValue, '[НОМЕР]');
-      var replacedAddressee = replaceAiMarkerInDocument(addresseeTemplateValue, '[АДРЕСАТ]');
-      var totalReplaced = replacedAnswer + replacedDay + replacedMonth + replacedNumber + replacedAddressee;
       var preparedAnswer = String(aiText || '')
         .replace(/\[ДЕНЬ\]/g, dayValue)
         .replace(/\[МЕСЯЦ\]/g, monthValue)
         .replace(/\[НОМЕР\]/g, numberValue)
         .replace(/\[АДРЕСАТ\]/g, addresseeTemplateValue);
-      var replaced = totalReplaced;
-      if (replaced <= 0) {
-        renderError('Не найдены метки [ОТВЕТ ИИ]/[ДЕНЬ]/[МЕСЯЦ]/[НОМЕР]/[АДРЕСАТ] в документе.');
-      }
       window.DOCUMENTS_LAST_AI_ANSWER = aiText;
       generateDocxFromTemplateViaApi(preparedAnswer, {
         day: dayValue,
