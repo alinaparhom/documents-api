@@ -5,6 +5,7 @@
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
+  const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const VISION_BATCH_SIZE = 5;
   const AI_PDF_PAGE_LIMIT = 5;
   const PDF_RENDER_SCALE = 1.25;
@@ -858,7 +859,7 @@
 
   function openTemplateAnswerEditor(context = {}) {
     if (document.querySelector('.tg-ai-template-editor')) return;
-    const aiText = normalize(context && context.aiAnswer);
+    const aiText = normalize(context && context.aiAnswer) || DEFAULT_TEMPLATE_ANSWER_TEXT;
     const task = context && context.task ? context.task : {};
     const onStatus = typeof context.onStatus === 'function' ? context.onStatus : null;
     const storedTemplateMeta = globalScope && globalScope.DOCUMENTS_TEMPLATE_META && typeof globalScope.DOCUMENTS_TEMPLATE_META === 'object'
@@ -1240,10 +1241,6 @@
     templateButton?.addEventListener('click', async () => {
       if (isSending) {
         status.textContent = 'Дождитесь завершения ответа ИИ.';
-        return;
-      }
-      if (!normalize(lastAiAnswer)) {
-        status.textContent = 'Сначала получите ответ ИИ, потом откроется форма заполнения шаблона.';
         return;
       }
       openTemplateAnswerEditor({
