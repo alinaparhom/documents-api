@@ -819,6 +819,7 @@
       formData.append('templateNumber', String(meta.number || ''));
       formData.append('templateAddressee', String(meta.addressee || ''));
       formData.append('documentTitle', 'Ответ ИИ');
+      formData.append('responseMode', 'json_url');
       try {
         const response = await fetchWithTimeout(endpoint, {
           method: 'POST',
@@ -829,12 +830,28 @@
           lastError = new Error(`Ошибка генерации шаблона (${response ? response.status : 0})`);
           continue;
         }
+        const responseType = String(response.headers.get('content-type') || '').toLowerCase();
+        if (responseType.includes('application/json')) {
+          const payload = await response.json().catch(() => null);
+          const url = normalize(payload && payload.url);
+          if (payload && payload.ok && url) {
+            return {
+              previewUrl: toAbsoluteUrl(url),
+              fileName: normalize(payload.fileName) || 'answer.docx',
+            };
+          }
+          lastError = new Error((payload && payload.error) || 'Сервер не вернул ссылку для предпросмотра.');
+          continue;
+        }
         const blob = await response.blob();
         if (!blob || !blob.size) {
           lastError = new Error('Пустой файл от сервера.');
           continue;
         }
-        return blob;
+        return {
+          blob,
+          fileName: 'answer.docx',
+        };
       } catch (error) {
         lastError = error;
       }
@@ -842,8 +859,8 @@
     throw lastError || new Error('Не удалось сформировать DOCX.');
   }
 
-  async function openGeneratedDocxViaExistingPreview(blob) {
-    if (!blob) throw new Error('empty_blob');
+  async function openGeneratedDocxViaExistingPreview(previewPayload) {
+    if (!previewPayload || (typeof previewPayload !== 'object')) throw new Error('empty_preview_payload');
     const existing = document.querySelector('.tg-ai-generated-preview');
     if (existing) existing.remove();
     const overlay = document.createElement('div');
@@ -871,10 +888,13 @@
     const statusNode = overlay.querySelector('[data-preview-status]');
     const downloadBtn = overlay.querySelector('[data-preview-download]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
-    const blobUrl = URL.createObjectURL(blob);
+    const previewUrl = normalize(previewPayload.previewUrl);
+    const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+    const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
+    const sourceUrl = previewUrl || blobUrl;
 
     const close = () => {
-      URL.revokeObjectURL(blobUrl);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
       overlay.remove();
     };
     closeBtn?.addEventListener('click', close);
@@ -883,14 +903,18 @@
     });
     downloadBtn?.addEventListener('click', () => {
       const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = 'template-answer.docx';
+      a.href = sourceUrl;
+      a.download = normalize(previewPayload.fileName) || 'template-answer.docx';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
     });
 
-    const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(blobUrl)}`;
+    if (!sourceUrl) {
+      statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
+      return;
+    }
+    const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
     frameNode.src = officeUrl;
     statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
   }
@@ -1000,7 +1024,7 @@
           .replace(/\[МЕСЯЦ\]/g, month)
           .replace(/\[НОМЕР\]/g, number)
           .replace(/\[АДРЕСАТ\]/g, addresseeTemplateValue);
-        const blob = await generateDocxFromTemplateViaApi(preparedAnswer, {
+        const previewPayload = await generateDocxFromTemplateViaApi(preparedAnswer, {
           day,
           month,
           number,
@@ -1008,7 +1032,7 @@
         });
         close();
         if (onStatus) onStatus('Открываем результат в предпросмотре...');
-        await openGeneratedDocxViaExistingPreview(blob, { task });
+        await openGeneratedDocxViaExistingPreview(previewPayload, { task });
         if (onStatus) onStatus('Готово: документ открыт в предпросмотре.');
       } catch (error) {
         renderError((error && error.message) || 'Не удалось сформировать документ.');

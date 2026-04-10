@@ -131,6 +131,62 @@ function getEnvPaths(): array
     ];
 }
 
+function buildPublicBaseDirFromScript(): string
+{
+    $scriptName = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    $dirName = str_replace('\\', '/', dirname($scriptName));
+    $dirName = trim($dirName);
+    if ($dirName === '' || $dirName === '.' || $dirName === DIRECTORY_SEPARATOR) {
+        return '';
+    }
+    return '/' . trim($dirName, '/');
+}
+
+function saveGeneratedFileAndBuildUrl(string $sourcePath, string $extension): array
+{
+    $safeExt = strtolower(trim($extension));
+    if ($safeExt !== 'docx' && $safeExt !== 'pdf') {
+        $safeExt = 'docx';
+    }
+    $targetDir = __DIR__ . '/app/tmp/generated';
+    if (!is_dir($targetDir)) {
+        @mkdir($targetDir, 0775, true);
+    }
+    if (!is_dir($targetDir) || !is_writable($targetDir)) {
+        return ['ok' => false, 'error' => 'Папка временных файлов недоступна для записи'];
+    }
+
+    $now = time();
+    foreach ((array)glob($targetDir . '/*') as $oldFile) {
+        if (!is_string($oldFile) || !is_file($oldFile)) {
+            continue;
+        }
+        $mtime = (int)@filemtime($oldFile);
+        if ($mtime > 0 && ($now - $mtime) > 7200) {
+            @unlink($oldFile);
+        }
+    }
+
+    $fileName = 'generated-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.' . $safeExt;
+    $targetPath = $targetDir . '/' . $fileName;
+    if (!@copy($sourcePath, $targetPath)) {
+        return ['ok' => false, 'error' => 'Не удалось сохранить сгенерированный файл'];
+    }
+
+    $baseDir = buildPublicBaseDirFromScript();
+    $publicUrl = ($baseDir !== '' ? $baseDir : '') . '/app/tmp/generated/' . rawurlencode($fileName);
+    if ($publicUrl === '' || $publicUrl[0] !== '/') {
+        $publicUrl = '/' . ltrim($publicUrl, '/');
+    }
+
+    return [
+        'ok' => true,
+        'path' => $targetPath,
+        'url' => $publicUrl,
+        'fileName' => $fileName,
+    ];
+}
+
 function normalizeUploadedFiles(string $field): array
 {
     if (!isset($_FILES[$field])) {
@@ -1567,6 +1623,7 @@ if ($action === 'generate_document') {
     $templateMonth = normalizeDocText((string)($_POST['templateMonth'] ?? ''));
     $templateNumber = normalizeDocText((string)($_POST['templateNumber'] ?? ''));
     $templateAddressee = normalizeDocText((string)($_POST['templateAddressee'] ?? ''));
+    $responseMode = strtolower(trim((string)($_POST['responseMode'] ?? '')));
 
     if ($answerText === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
@@ -1624,6 +1681,20 @@ if ($action === 'generate_document') {
             @unlink($tmpFile);
             jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);
         }
+        if ($responseMode === 'json_url') {
+            $saved = saveGeneratedFileAndBuildUrl($tmpFile, 'docx');
+            if (!($saved['ok'] ?? false)) {
+                @unlink($tmpFile);
+                jsonResponse(500, ['ok' => false, 'error' => (string)($saved['error'] ?? 'Не удалось сохранить файл')]);
+            }
+            @unlink($tmpFile);
+            jsonResponse(200, [
+                'ok' => true,
+                'url' => (string)($saved['url'] ?? ''),
+                'fileName' => (string)($saved['fileName'] ?? 'answer.docx'),
+                'format' => 'docx',
+            ]);
+        }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
     } else {
@@ -1638,6 +1709,24 @@ if ($action === 'generate_document') {
                 @unlink($tmpFile);
                 jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или добавьте template.pdf в директорию шаблонов']);
             }
+        }
+        if ($responseMode === 'json_url') {
+            $saved = saveGeneratedFileAndBuildUrl($tmpFile, 'pdf');
+            if (!($saved['ok'] ?? false)) {
+                if ($tmpFile !== $templatePdfPath) {
+                    @unlink($tmpFile);
+                }
+                jsonResponse(500, ['ok' => false, 'error' => (string)($saved['error'] ?? 'Не удалось сохранить файл')]);
+            }
+            if ($tmpFile !== $templatePdfPath) {
+                @unlink($tmpFile);
+            }
+            jsonResponse(200, [
+                'ok' => true,
+                'url' => (string)($saved['url'] ?? ''),
+                'fileName' => (string)($saved['fileName'] ?? 'answer.pdf'),
+                'format' => 'pdf',
+            ]);
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="answer.pdf"');
