@@ -1610,9 +1610,35 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html' && $action !== 'delete_generated_temp') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html' && $action !== 'delete_generated_temp' && $action !== 'copy_template_to_su21') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
+
+if ($action === 'copy_template_to_su21') {
+    $sourceTemplatePath = resolveTemplatePath('template.docx', []);
+    if (!is_file($sourceTemplatePath)) {
+        jsonResponse(404, ['ok' => false, 'error' => 'Исходный шаблон не найден']);
+    }
+
+    $targetDir = __DIR__ . '/documents/su-21';
+    if (!is_dir($targetDir) && !@mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Папка назначения недоступна']);
+    }
+    if (!is_writable($targetDir)) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Нет прав на запись в папку назначения']);
+    }
+
+    $targetFilePath = $targetDir . '/template.docx';
+    if (is_file($targetFilePath)) {
+        jsonResponse(200, ['ok' => true, 'alreadyExists' => true, 'message' => 'Файл уже существует']);
+    }
+
+    if (!@copy($sourceTemplatePath, $targetFilePath)) {
+        jsonResponse(500, ['ok' => false, 'error' => 'Не удалось скопировать шаблон']);
+    }
+
+    jsonResponse(200, ['ok' => true, 'alreadyExists' => false, 'message' => 'Шаблон скопирован']);
 }
 
 if ($action === 'delete_generated_temp') {
