@@ -1173,6 +1173,11 @@
       })
         .then(function(previewPayload) {
           if (!previewPayload) throw new Error('empty_preview_payload');
+          return ensureDocxPreviewLibrariesLoaded()
+            .catch(function() { return null; })
+            .then(function() { return previewPayload; });
+        })
+        .then(function(previewPayload) {
           closeEditor();
           openDocxRenderPreviewPage(previewPayload);
         })
@@ -1301,6 +1306,27 @@
   async function openDocxRenderPreviewPage(previewPayload) {
     ensureTemplatePreviewStyles();
     if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
+    var previewUrl = String(previewPayload.previewUrl || '').trim();
+    var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
+    var fastBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+
+    if (fastBlob && fastBlob.size) {
+      openDocxRenderPreviewLocal(fastBlob, fileName);
+      return;
+    }
+    if (previewUrl) {
+      try {
+        var fastResponse = await fetch(previewUrl, { credentials: 'same-origin', cache: 'force-cache' });
+        if (fastResponse && fastResponse.ok) {
+          var fetchedBlob = await fastResponse.blob();
+          if (fetchedBlob && fetchedBlob.size) {
+            previewPayload.blob = fetchedBlob;
+            openDocxRenderPreviewLocal(fetchedBlob, fileName);
+            return;
+          }
+        }
+      } catch (error) {}
+    }
 
     var overlay = document.querySelector('.docx-template-preview');
     var canReuseOverlay = Boolean(overlay && overlay.querySelector('[data-preview-frame]'));
@@ -1332,8 +1358,6 @@
     var downloadBtn = overlay.querySelector('[data-preview-download]');
     var localBtn = overlay.querySelector('[data-preview-local]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
-    var previewUrl = String(previewPayload.previewUrl || '').trim();
-    var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
     var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     var blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     var sourceUrl = previewUrl || blobUrl;
