@@ -177,6 +177,7 @@
     var style = document.createElement('style');
     style.id = 'documents-vip-ai-modal-style';
     style.textContent = '.documents-vip-ai{position:fixed;inset:0;background:linear-gradient(180deg,rgba(226,232,240,.34),rgba(148,163,184,.28));backdrop-filter:blur(10px);z-index:4100;display:flex;align-items:stretch;justify-content:center;padding:4px}.documents-vip-ai__panel{width:100%;height:100%;max-height:none;overflow:auto;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(248,250,252,.9));border:1px solid rgba(255,255,255,.92);box-shadow:0 18px 44px rgba(15,23,42,.16)}.documents-vip-ai__head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(226,232,240,.9);position:sticky;top:0;background:rgba(255,255,255,.78);backdrop-filter:blur(8px);z-index:2}.documents-vip-ai__title{font-size:18px;font-weight:800;color:#0f172a}.documents-vip-ai__sub{font-size:12px;color:#64748b;margin-top:3px}.documents-vip-ai__close{border:none;background:rgba(255,255,255,.95);width:34px;height:34px;border-radius:10px;color:#334155;font-size:20px}.documents-vip-ai__body{padding:14px;display:grid;gap:10px}.documents-vip-ai__meta{display:flex;flex-wrap:wrap;gap:8px}.documents-vip-ai__chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.84);border:1px solid rgba(203,213,225,.95);font-size:12px;color:#334155}.documents-vip-ai__block{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.78);border-radius:14px;padding:11px}.documents-vip-ai__label{font-size:12px;color:#64748b;margin-bottom:7px}.documents-vip-ai__files{display:grid;gap:6px;font-size:13px;color:#0f172a;max-height:20dvh;overflow:auto}.documents-vip-ai__chat{height:min(50dvh,520px);overflow:auto;display:flex;flex-direction:column;gap:8px}.documents-vip-ai__msg{padding:9px 10px;border-radius:12px;font-size:13px;line-height:1.58;white-space:pre-wrap}.documents-vip-ai__msg--user{align-self:flex-end;background:#dbeafe;color:#1e3a8a}.documents-vip-ai__msg--assistant{align-self:flex-start;background:#fff;color:#0f172a;border:1px solid rgba(203,213,225,.9)}.documents-vip-ai__msg-content{display:block;line-height:1.62}.documents-vip-ai__msg-content p,.documents-vip-ai__msg-content ul,.documents-vip-ai__msg-content ol,.documents-vip-ai__msg-content h4{margin:0 0 10px}.documents-vip-ai__msg-content p:last-child,.documents-vip-ai__msg-content ul:last-child,.documents-vip-ai__msg-content ol:last-child,.documents-vip-ai__msg-content h4:last-child{margin-bottom:0}.documents-vip-ai__msg-content ul,.documents-vip-ai__msg-content ol{padding-left:18px}.documents-vip-ai__msg-content li{margin:0 0 6px}.documents-vip-ai__msg-content h4{font-size:14px;font-weight:700;line-height:1.4;color:#0b1220}.documents-vip-ai__composer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px;border:1px solid rgba(203,213,225,.9);border-radius:14px;background:rgba(255,255,255,.7)}.documents-vip-ai__select{min-width:0;border:1px solid rgba(203,213,225,.95);border-radius:12px;min-height:44px;padding:0 12px;font-size:13px;background:#fff;color:#0f172a;-webkit-appearance:menulist;appearance:menulist}.documents-vip-ai__template-btn{border:1px solid rgba(148,163,184,.42);background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(241,245,249,.92));color:#0f172a;border-radius:12px;padding:0 14px;min-height:44px;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 8px 20px rgba(15,23,42,.11)}.documents-vip-ai__template-btn:active{transform:translateY(1px)}.documents-vip-ai__template-btn[disabled]{opacity:.56;box-shadow:none;cursor:not-allowed}.documents-vip-ai__error{color:#b91c1c}@media (max-width:768px){.documents-vip-ai{padding:0}.documents-vip-ai__panel{border-radius:0}.documents-vip-ai__body{padding:12px}.documents-vip-ai__chat{height:52dvh}.documents-vip-ai__msg{font-size:14px;line-height:1.64}.documents-vip-ai__composer{grid-template-columns:1fr}.documents-vip-ai__template-btn{width:100%;font-size:14px;min-height:46px}}';
+    style.textContent += '.documents-vip-ai__loading{display:none;align-items:center;gap:8px;padding:10px 12px;border:1px solid rgba(191,219,254,.95);background:rgba(239,246,255,.75);color:#1e3a8a;border-radius:12px;font-size:12px;font-weight:600}.documents-vip-ai__loading.is-active{display:flex}.documents-vip-ai__loading-spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,.25);border-top-color:#2563eb;animation:documents-vip-spin .8s linear infinite;flex:none}@keyframes documents-vip-spin{to{transform:rotate(360deg)}}';
     document.head.appendChild(style);
   }
 
@@ -710,13 +711,15 @@
       : '';
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__loading" data-vip-loading><span class="documents-vip-ai__loading-spinner" aria-hidden="true"></span><span data-vip-loading-text>Готовим ответ с помощью ИИ…</span></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
     var filesNode = panel.querySelector('.documents-vip-ai__files');
     var chatNode = panel.querySelector('.documents-vip-ai__chat');
     var metaNode = panel.querySelector('.documents-vip-ai__meta');
+    var loadingNode = panel.querySelector('[data-vip-loading]');
+    var loadingTextNode = panel.querySelector('[data-vip-loading-text]');
     var styleNode = panel.querySelector('[data-style]');
     var templateButton = panel.querySelector('[data-template-open]');
     var closeButtonVip = panel.querySelector('.documents-vip-ai__close');
@@ -761,6 +764,14 @@
     }
 
     var chatHistory = [];
+    function setVipLoading(active, text) {
+      if (loadingNode) {
+        loadingNode.classList.toggle('is-active', Boolean(active));
+      }
+      if (loadingTextNode && text) {
+        loadingTextNode.textContent = String(text);
+      }
+    }
     function sanitizeWhitelistedHtml(html) {
       var template = document.createElement('template');
       template.innerHTML = String(html || '');
@@ -868,6 +879,7 @@
       isSending = true;
       pushChat('user', 'Стиль: ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный') + '. Нужен только готовый текст для вставки в документ.');
       pushChat('assistant', '⏳ Обрабатываю запрос...');
+      setVipLoading(true, 'Готовим ответ с помощью ИИ…');
       metaNode.innerHTML = '';
       var startedAt = Date.now();
       var selectedEntryObjects = linkedEntries.filter(function(entry) { return selectedFiles[entry.key]; })
@@ -896,6 +908,7 @@
         })
         .finally(function() {
           isSending = false;
+          setVipLoading(false);
         });
     }
 
