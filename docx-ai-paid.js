@@ -1022,7 +1022,7 @@
     if (document.getElementById('docx-template-preview-style')) return;
     var style = document.createElement('style');
     style.id = 'docx-template-preview-style';
-    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__body{flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}.docx-template-preview__doc{max-width:920px;margin:0 auto;background:rgba(255,255,255,.82);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12)}.docx-template-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}.docx-template-preview__doc .docx{max-width:100%;overflow:auto}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}.docx-template-preview__body{padding:10px}.docx-template-preview__doc{border-radius:12px;padding:6px}}';
+    style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__btn[disabled]{opacity:.62;cursor:not-allowed}.docx-template-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}.docx-template-preview__doc{max-width:920px;height:100%;margin:0 auto;background:rgba(255,255,255,.82);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12)}.docx-template-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}.docx-template-preview__doc .docx{max-width:100%;overflow:auto}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}.docx-template-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:18px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}.docx-template-preview__loading-card{width:min(500px,95%);border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.85);backdrop-filter:blur(8px);border-radius:18px;padding:15px;box-shadow:0 18px 32px rgba(15,23,42,.12);display:grid;gap:10px}.docx-template-preview__loading-title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__loading-sub{font-size:12px;color:#475569}.docx-template-preview__bar{height:8px;border-radius:999px;background:rgba(191,219,254,.45);overflow:hidden}.docx-template-preview__bar::after{content:\"\";display:block;height:100%;width:36%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#38bdf8);animation:docx-preview-progress 1.4s ease-in-out infinite}.docx-template-preview__steps{display:grid;gap:5px}.docx-template-preview__step{font-size:12px;color:#334155;display:flex;align-items:center;gap:7px}.docx-template-preview__step-dot{width:8px;height:8px;border-radius:50%;background:rgba(148,163,184,.7)}.docx-template-preview__step--active .docx-template-preview__step-dot{background:#2563eb;box-shadow:0 0 0 6px rgba(37,99,235,.16)}.docx-template-preview__step--done .docx-template-preview__step-dot{background:#16a34a}.docx-template-preview__spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,.22);border-top-color:#2563eb;animation:docx-preview-spin .8s linear infinite;display:inline-block;vertical-align:middle;margin-right:6px}@keyframes docx-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}@keyframes docx-preview-spin{to{transform:rotate(360deg)}}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}.docx-template-preview__body{padding:10px}.docx-template-preview__doc{border-radius:12px;padding:6px}.docx-template-preview__loading-card{padding:13px}}';
     document.head.appendChild(style);
   }
 
@@ -1192,7 +1192,7 @@
     if (!blob) throw new Error('empty_blob');
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Локальный предпросмотр</div><div class="docx-template-preview__hint">Рендерим файл прямо в браузере</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Готовим локальный предпросмотр…</div><div class="docx-template-preview__loading-sub">Это может занять несколько секунд на телефоне.</div><div class="docx-template-preview__bar"></div></div></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка локального предпросмотра…</div></div>';
     document.body.appendChild(overlay);
     var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -1200,6 +1200,7 @@
     var statusNode = overlay.querySelector('[data-preview-status]');
     var downloadBtn = overlay.querySelector('[data-preview-download]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
+    var loadingNode = overlay.querySelector('[data-preview-loading]');
     var blobUrl = URL.createObjectURL(blob);
 
     function closeModal() {
@@ -1231,8 +1232,10 @@
         });
       });
     }).then(function() {
-      statusNode.textContent = 'Готово: документ открыт в красивом предпросмотре.';
+      if (loadingNode) loadingNode.style.display = 'none';
+      statusNode.textContent = 'Готово: локальный предпросмотр открыт.';
     }).catch(function(error) {
+      if (loadingNode) loadingNode.style.display = 'none';
       statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
     });
   }
@@ -1283,12 +1286,15 @@
     if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0"></iframe></div></div><div class="docx-template-preview__status" data-preview-status>Подключаем Office Web Viewer…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
     document.body.appendChild(overlay);
     var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     var frameNode = overlay.querySelector('[data-preview-frame]');
     var statusNode = overlay.querySelector('[data-preview-status]');
+    var loadingNode = overlay.querySelector('[data-preview-loading]');
+    var loadingSubNode = overlay.querySelector('[data-loading-sub]');
+    var loadingSteps = Array.prototype.slice.call(overlay.querySelectorAll('[data-step]'));
     var downloadBtn = overlay.querySelector('[data-preview-download]');
     var localBtn = overlay.querySelector('[data-preview-local]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
@@ -1298,12 +1304,16 @@
     var blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     var sourceUrl = previewUrl || blobUrl;
     var isClosed = false;
+    var stepTimer = null;
+    var slowTimer = null;
 
     function closeModal() {
       if (isClosed) return;
       isClosed = true;
       document.body.style.overflow = previousOverflow;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
+      if (stepTimer) clearInterval(stepTimer);
+      if (slowTimer) clearTimeout(slowTimer);
       overlay.remove();
       deleteGeneratedTempFile(previewPayload).catch(function() {});
     }
@@ -1324,6 +1334,7 @@
       localBtn.disabled = true;
       var previousText = localBtn.textContent;
       localBtn.textContent = 'Открываю...';
+      statusNode.textContent = 'Готовим локальный режим...';
       try {
         var localBlob = fallbackBlob;
         if (!localBlob && previewUrl) {
@@ -1345,7 +1356,32 @@
       statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
       return;
     }
+    var currentStep = 1;
+    function setStep(step, subtitle) {
+      currentStep = step;
+      loadingSteps.forEach(function(node) {
+        var index = Number(node.getAttribute('data-step') || '0');
+        node.classList.toggle('docx-template-preview__step--active', index === currentStep);
+        node.classList.toggle('docx-template-preview__step--done', index < currentStep);
+      });
+      if (loadingSubNode && subtitle) loadingSubNode.textContent = subtitle;
+    }
+    setStep(1, 'Подготавливаем файл...');
+    stepTimer = setInterval(function() {
+      if (currentStep < 3) {
+        setStep(currentStep + 1, currentStep === 1 ? 'Подключаем Office Viewer…' : 'Ждём рендер предпросмотра…');
+      }
+    }, 1300);
+    slowTimer = setTimeout(function() {
+      statusNode.textContent = 'Открытие занимает чуть дольше обычного, пожалуйста подождите…';
+      if (loadingSubNode) loadingSubNode.textContent = 'Office Viewer отвечает медленно, но документ уже загружается.';
+    }, 7000);
     frameNode.addEventListener('load', function() {
+      if (stepTimer) clearInterval(stepTimer);
+      if (slowTimer) clearTimeout(slowTimer);
+      setStep(4, 'Готово.');
+      frameNode.style.visibility = '';
+      if (loadingNode) loadingNode.style.display = 'none';
       statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
     }, { once: true });
     frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl);
