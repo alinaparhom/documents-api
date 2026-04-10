@@ -4,6 +4,8 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
+  const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
+  const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const VISION_BATCH_SIZE = 5;
   const AI_PDF_PAGE_LIMIT = 5;
   const PDF_RENDER_SCALE = 1.25;
@@ -761,11 +763,383 @@
       .tg-ai-template-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-template-preview__body{flex:1;min-height:0}
       .tg-ai-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.8);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
+      .tg-ai-generated-preview{position:fixed;inset:0;z-index:3950;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}
+      .tg-ai-generated-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95))}
+      .tg-ai-generated-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}
+      .tg-ai-generated-preview__title{font-size:14px;font-weight:800;color:#0f172a}
+      .tg-ai-generated-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
+      .tg-ai-generated-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+      .tg-ai-generated-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
+      .tg-ai-generated-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
+      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:hidden}
+      .tg-ai-generated-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}
+      .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
+      .tg-ai-generated-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}
+      .tg-ai-generated-preview__loading-card{width:min(520px,92%);border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:18px;padding:16px;box-shadow:0 18px 32px rgba(15,23,42,.12);display:grid;gap:10px}
+      .tg-ai-generated-preview__loading-title{font-size:14px;font-weight:800;color:#0f172a}
+      .tg-ai-generated-preview__loading-sub{font-size:12px;color:#475569}
+      .tg-ai-generated-preview__bar{height:8px;border-radius:999px;background:rgba(191,219,254,.45);overflow:hidden}
+      .tg-ai-generated-preview__bar::after{content:'';display:block;height:100%;width:38%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#38bdf8);animation:tg-ai-preview-progress 1.4s ease-in-out infinite}
+      .tg-ai-generated-preview__steps{display:grid;gap:6px}
+      .tg-ai-generated-preview__step{font-size:12px;color:#334155;display:flex;align-items:center;gap:7px}
+      .tg-ai-generated-preview__step-dot{width:8px;height:8px;border-radius:50%;background:rgba(148,163,184,.7)}
+      .tg-ai-generated-preview__step--active .tg-ai-generated-preview__step-dot{background:#2563eb;box-shadow:0 0 0 6px rgba(37,99,235,.16)}
+      .tg-ai-generated-preview__step--done .tg-ai-generated-preview__step-dot{background:#16a34a}
+      .tg-ai-template-editor{position:fixed;inset:0;z-index:3900;background:linear-gradient(180deg,rgba(226,232,240,.58),rgba(148,163,184,.42));backdrop-filter:blur(10px);display:flex;align-items:stretch;justify-content:center;padding:8px}
+      .tg-ai-template-editor__card{width:min(920px,100%);height:100%;display:flex;flex-direction:column;border-radius:20px;border:1px solid rgba(255,255,255,.92);overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.94));box-shadow:0 20px 45px rgba(15,23,42,.22)}
+      .tg-ai-template-editor__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.75)}
+      .tg-ai-template-editor__title{font-size:16px;font-weight:800;color:#0f172a}
+      .tg-ai-template-editor__sub{font-size:12px;color:#64748b;margin-top:2px}
+      .tg-ai-template-editor__close{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:34px;font-weight:700;color:#0f172a}
+      .tg-ai-template-editor__body{flex:1;min-height:0;overflow:auto;padding:12px;display:grid;gap:10px}
+      .tg-ai-template-editor__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+      .tg-ai-template-editor__field{display:grid;gap:5px}
+      .tg-ai-template-editor__field--full{grid-column:1/-1}
+      .tg-ai-template-editor__label{font-size:12px;color:#334155;font-weight:700}
+      .tg-ai-template-editor__date{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px}
+      .tg-ai-template-editor__input,.tg-ai-template-editor__textarea{width:100%;box-sizing:border-box;border:1px solid rgba(203,213,225,.95);border-radius:12px;background:rgba(255,255,255,.96);padding:10px 12px;color:#0f172a;outline:none}
+      .tg-ai-template-editor__input:focus,.tg-ai-template-editor__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.25)}
+      .tg-ai-template-editor__textarea{min-height:36dvh;resize:vertical;font-size:14px;line-height:1.55}
+      .tg-ai-template-editor__error{font-size:12px;color:#b91c1c;min-height:16px}
+      .tg-ai-template-editor__foot{display:flex;justify-content:flex-end;gap:8px;padding:12px;border-top:1px solid rgba(203,213,225,.75);background:rgba(255,255,255,.84)}
+      .tg-ai-template-editor__btn{border:1px solid rgba(148,163,184,.45);background:#fff;color:#334155;border-radius:12px;padding:10px 14px;min-height:40px;font-weight:700}
+      .tg-ai-template-editor__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
+      .tg-ai-template-editor__btn[disabled]{opacity:.65}
+      .tg-ai-template-editor__btn .tg-ai-chat__spinner{width:14px;height:14px;border-color:rgba(255,255,255,.35);border-top-color:#fff;margin-right:6px;display:inline-block;vertical-align:middle}
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}}
+      @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__actions{width:100%}.tg-ai-generated-preview__btn{flex:1;min-width:0;padding:8px 10px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
+  }
+
+  function getDocsGenerateEndpoints() {
+    const configured = normalize(globalScope && (globalScope.DOCUMENTS_AI_API_URL || globalScope.TELEGRAM_DOCS_API_URL));
+    const endpoints = configured ? [configured, ...DOCS_GENERATE_FALLBACK_ENDPOINTS] : DOCS_GENERATE_FALLBACK_ENDPOINTS.slice();
+    return Array.from(new Set(endpoints.filter(Boolean)));
+  }
+
+  async function deleteGeneratedTempFile(previewPayload) {
+    const fileName = normalize(previewPayload && previewPayload.fileName);
+    const url = normalize(previewPayload && previewPayload.previewUrl);
+    if (!fileName && !url) return;
+    const endpoints = getDocsGenerateEndpoints();
+    for (let index = 0; index < endpoints.length; index += 1) {
+      const endpoint = endpoints[index];
+      const formData = new FormData();
+      formData.append('action', 'delete_generated_temp');
+      if (fileName) formData.append('fileName', fileName);
+      if (url) formData.append('url', url);
+      try {
+        const response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData,
+        }, 12000);
+        if (response && response.ok) {
+          return;
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+  }
+
+  async function generateDocxFromTemplateViaApi(answerText, meta = {}) {
+    const endpoints = getDocsGenerateEndpoints();
+    let lastError = null;
+    for (let index = 0; index < endpoints.length; index += 1) {
+      const endpoint = endpoints[index];
+      const formData = new FormData();
+      formData.append('action', 'generate_document');
+      formData.append('format', 'docx');
+      formData.append('answer', String(answerText || ''));
+      formData.append('templateDay', String(meta.day || ''));
+      formData.append('templateMonth', String(meta.month || ''));
+      formData.append('templateNumber', String(meta.number || ''));
+      formData.append('templateAddressee', String(meta.addressee || ''));
+      formData.append('documentTitle', 'Ответ ИИ');
+      formData.append('responseMode', 'json_url');
+      try {
+        const response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData,
+        }, 45000);
+        if (!response || !response.ok) {
+          lastError = new Error(`Ошибка генерации шаблона (${response ? response.status : 0})`);
+          continue;
+        }
+        const responseType = String(response.headers.get('content-type') || '').toLowerCase();
+        if (responseType.includes('application/json')) {
+          const payload = await response.json().catch(() => null);
+          const url = normalize(payload && payload.url);
+          if (payload && payload.ok && url) {
+            return {
+              previewUrl: toAbsoluteUrl(url),
+              fileName: normalize(payload.fileName) || 'answer.docx',
+            };
+          }
+          lastError = new Error((payload && payload.error) || 'Сервер не вернул ссылку для предпросмотра.');
+          continue;
+        }
+        const blob = await response.blob();
+        if (!blob || !blob.size) {
+          lastError = new Error('Пустой файл от сервера.');
+          continue;
+        }
+        return {
+          blob,
+          fileName: 'answer.docx',
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Не удалось сформировать DOCX.');
+  }
+
+  async function openGeneratedDocxViaExistingPreview(previewPayload) {
+    if (!previewPayload || (typeof previewPayload !== 'object')) throw new Error('empty_preview_payload');
+    const existing = document.querySelector('.tg-ai-generated-preview');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'tg-ai-generated-preview';
+    overlay.innerHTML = `
+      <div class="tg-ai-generated-preview__card">
+        <div class="tg-ai-generated-preview__head">
+          <div>
+            <div class="tg-ai-generated-preview__title">Предварительный просмотр</div>
+            <div class="tg-ai-generated-preview__hint">Проверьте сгенерированный документ</div>
+          </div>
+          <div class="tg-ai-generated-preview__actions">
+            <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
+            <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
+          </div>
+        </div>
+        <div class="tg-ai-generated-preview__body">
+          <iframe class="tg-ai-generated-preview__frame" title="Office Web Viewer" data-preview-frame></iframe>
+          <div class="tg-ai-generated-preview__loading" data-preview-loading>
+            <div class="tg-ai-generated-preview__loading-card">
+              <div class="tg-ai-generated-preview__loading-title">Открываем документ…</div>
+              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div>
+              <div class="tg-ai-generated-preview__bar"></div>
+              <div class="tg-ai-generated-preview__steps">
+                <div class="tg-ai-generated-preview__step tg-ai-generated-preview__step--active" data-step="1"><span class="tg-ai-generated-preview__step-dot"></span><span>1. Подготовка файла</span></div>
+                <div class="tg-ai-generated-preview__step" data-step="2"><span class="tg-ai-generated-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div>
+                <div class="tg-ai-generated-preview__step" data-step="3"><span class="tg-ai-generated-preview__step-dot"></span><span>3. Рендер предпросмотра</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="tg-ai-generated-preview__status" data-preview-status>Подготовка предпросмотра…</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const frameNode = overlay.querySelector('[data-preview-frame]');
+    const statusNode = overlay.querySelector('[data-preview-status]');
+    const loadingNode = overlay.querySelector('[data-preview-loading]');
+    const loadingSubNode = overlay.querySelector('[data-loading-sub]');
+    const downloadBtn = overlay.querySelector('[data-preview-download]');
+    const closeBtn = overlay.querySelector('[data-preview-close]');
+    const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
+    const previewUrl = normalize(previewPayload.previewUrl);
+    const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+    const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
+    const sourceUrl = previewUrl || blobUrl;
+    let stepTimer = null;
+    let slowTimer = null;
+
+    const close = () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      if (stepTimer) clearInterval(stepTimer);
+      if (slowTimer) clearTimeout(slowTimer);
+      if (previewUrl || normalize(previewPayload.fileName)) {
+        deleteGeneratedTempFile(previewPayload).catch(() => {});
+      }
+      overlay.remove();
+    };
+    closeBtn?.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    downloadBtn?.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = sourceUrl;
+      a.download = normalize(previewPayload.fileName) || 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+
+    if (!sourceUrl) {
+      statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
+      return;
+    }
+    frameNode.style.visibility = 'hidden';
+    let step = 1;
+    const setStep = (value, subtitle) => {
+      step = value;
+      loadingSteps.forEach((node) => {
+        const idx = Number(node.getAttribute('data-step') || '0');
+        node.classList.toggle('tg-ai-generated-preview__step--active', idx === step);
+        node.classList.toggle('tg-ai-generated-preview__step--done', idx < step);
+      });
+      if (loadingSubNode && subtitle) {
+        loadingSubNode.textContent = subtitle;
+      }
+    };
+    setStep(1, 'Подготавливаем документ и проверяем ссылку...');
+    stepTimer = setInterval(() => {
+      if (step < 3) {
+        setStep(step + 1, step === 1 ? 'Подключаем Office Web Viewer...' : 'Формируем визуальный предпросмотр...');
+      }
+    }, 1200);
+    slowTimer = setTimeout(() => {
+      statusNode.textContent = 'Открытие занимает чуть дольше обычного, пожалуйста подождите…';
+      if (loadingSubNode) {
+        loadingSubNode.textContent = 'Office Viewer отвечает медленно, но документ уже в очереди на открытие.';
+      }
+    }, 7000);
+    frameNode.addEventListener('load', () => {
+      setStep(4, 'Готово.');
+      clearInterval(stepTimer);
+      clearTimeout(slowTimer);
+      frameNode.style.visibility = '';
+      if (loadingNode) loadingNode.style.display = 'none';
+      statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
+    }, { once: true });
+    const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
+    frameNode.src = officeUrl;
+    statusNode.textContent = 'Открываем через Office Web Viewer…';
+  }
+
+  function openTemplateAnswerEditor(context = {}) {
+    if (document.querySelector('.tg-ai-template-editor')) return;
+    const aiText = normalize(context && context.aiAnswer) || DEFAULT_TEMPLATE_ANSWER_TEXT;
+    const task = context && context.task ? context.task : {};
+    const onStatus = typeof context.onStatus === 'function' ? context.onStatus : null;
+    const storedTemplateMeta = globalScope && globalScope.DOCUMENTS_TEMPLATE_META && typeof globalScope.DOCUMENTS_TEMPLATE_META === 'object'
+      ? globalScope.DOCUMENTS_TEMPLATE_META
+      : {};
+    const overlay = document.createElement('div');
+    overlay.className = 'tg-ai-template-editor';
+    overlay.innerHTML = `
+      <div class="tg-ai-template-editor__card" role="dialog" aria-modal="true" aria-label="Заполнение шаблона">
+        <div class="tg-ai-template-editor__head">
+          <div>
+            <div class="tg-ai-template-editor__title">Заполнение шаблона</div>
+            <div class="tg-ai-template-editor__sub">Проверьте текст ИИ и заполните дату, номер и адресата</div>
+          </div>
+          <button type="button" class="tg-ai-template-editor__close" data-action="cancel">Закрыть</button>
+        </div>
+        <div class="tg-ai-template-editor__body">
+          <div class="tg-ai-template-editor__grid">
+            <label class="tg-ai-template-editor__field">
+              <span class="tg-ai-template-editor__label">Дата</span>
+              <span class="tg-ai-template-editor__date">
+                <input class="tg-ai-template-editor__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09">
+                <input class="tg-ai-template-editor__input" data-template-month type="text" placeholder="апреля">
+              </span>
+            </label>
+            <label class="tg-ai-template-editor__field">
+              <span class="tg-ai-template-editor__label">Номер</span>
+              <input class="tg-ai-template-editor__input" data-template-number type="text" placeholder="12/Д">
+            </label>
+            <label class="tg-ai-template-editor__field tg-ai-template-editor__field--full">
+              <span class="tg-ai-template-editor__label">Адресат</span>
+              <input class="tg-ai-template-editor__input" data-template-addressee type="text" placeholder="ООО «Компания»">
+            </label>
+            <label class="tg-ai-template-editor__field tg-ai-template-editor__field--full">
+              <span class="tg-ai-template-editor__label">Текст ответа ИИ</span>
+              <textarea class="tg-ai-template-editor__textarea" data-template-answer spellcheck="true"></textarea>
+            </label>
+          </div>
+          <div class="tg-ai-template-editor__error" data-template-error aria-live="polite"></div>
+        </div>
+        <div class="tg-ai-template-editor__foot">
+          <button type="button" class="tg-ai-template-editor__btn" data-action="cancel">Отмена</button>
+          <button type="button" class="tg-ai-template-editor__btn tg-ai-template-editor__btn--primary" data-action="done">Готово</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const dayInput = overlay.querySelector('[data-template-day]');
+    const monthInput = overlay.querySelector('[data-template-month]');
+    const numberInput = overlay.querySelector('[data-template-number]');
+    const addresseeInput = overlay.querySelector('[data-template-addressee]');
+    const textInput = overlay.querySelector('[data-template-answer]');
+    const doneButton = overlay.querySelector('[data-action="done"]');
+    const errorNode = overlay.querySelector('[data-template-error]');
+    if (dayInput) dayInput.value = normalize(storedTemplateMeta.day);
+    if (monthInput) monthInput.value = normalize(storedTemplateMeta.month);
+    if (numberInput) numberInput.value = normalize(storedTemplateMeta.number);
+    if (addresseeInput) addresseeInput.value = normalize(storedTemplateMeta.addressee);
+    if (textInput) textInput.value = aiText;
+    const close = () => overlay.remove();
+    overlay.querySelectorAll('[data-action="cancel"]').forEach((button) => {
+      button.addEventListener('click', close);
+    });
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    const renderError = (message) => {
+      if (errorNode) errorNode.textContent = message || '';
+    };
+    doneButton?.addEventListener('click', async () => {
+      const answerRaw = String(textInput && textInput.value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const answer = answerRaw.trim();
+      const day = normalize(dayInput && dayInput.value);
+      const month = normalize(monthInput && monthInput.value);
+      const number = normalize(numberInput && numberInput.value);
+      const addresseeRaw = String(addresseeInput && addresseeInput.value || '').replace(/\s+$/g, '');
+      const addressee = normalize(addresseeRaw);
+      if (!answer) {
+        renderError('Добавьте текст ответа ИИ.');
+        return;
+      }
+      if (!day || !month || !number || !addressee) {
+        renderError('Заполните День, Месяц, Номер и Адресат.');
+        return;
+      }
+      const addresseeTemplateValue = /^\s/.test(addresseeRaw) ? addresseeRaw : (`\u00A0${addresseeRaw}`);
+      if (globalScope) {
+        globalScope.DOCUMENTS_LAST_AI_ANSWER = answer;
+        globalScope.DOCUMENTS_TEMPLATE_META = { day, month, number, addressee: addresseeRaw };
+      }
+      renderError('');
+      if (doneButton) {
+        doneButton.disabled = true;
+        doneButton.innerHTML = '<span class="tg-ai-chat__spinner" aria-hidden="true"></span>Генерируем...';
+      }
+      if (onStatus) onStatus('Генерируем DOCX по шаблону...');
+      try {
+        const preparedAnswer = answer
+          .replace(/\[ДЕНЬ\]/g, day)
+          .replace(/\[МЕСЯЦ\]/g, month)
+          .replace(/\[НОМЕР\]/g, number)
+          .replace(/\[АДРЕСАТ\]/g, addresseeTemplateValue);
+        const previewPayload = await generateDocxFromTemplateViaApi(preparedAnswer, {
+          day,
+          month,
+          number,
+          addressee: addresseeTemplateValue,
+        });
+        close();
+        if (onStatus) onStatus('Открываем результат в предпросмотре...');
+        await openGeneratedDocxViaExistingPreview(previewPayload, { task });
+        if (onStatus) onStatus('Готово: документ открыт в предпросмотре.');
+      } catch (error) {
+        renderError((error && error.message) || 'Не удалось сформировать документ.');
+        if (onStatus) onStatus('Ошибка генерации документа.');
+      } finally {
+        if (doneButton) {
+          doneButton.disabled = false;
+          doneButton.textContent = 'Готово';
+        }
+      }
+    });
   }
 
   function createBubble(container, text, role) {
@@ -1023,11 +1397,17 @@
     });
 
     templateButton?.addEventListener('click', async () => {
-      try {
-        await openTemplatePreviewModal({ task });
-      } catch (error) {
-        status.textContent = (error && error.message) || 'Не удалось открыть шаблон.';
+      if (isSending) {
+        status.textContent = 'Дождитесь завершения ответа ИИ.';
+        return;
       }
+      openTemplateAnswerEditor({
+        aiAnswer: lastAiAnswer,
+        task,
+        onStatus: (message) => {
+          status.textContent = normalize(message) || 'Готово.';
+        },
+      });
     });
 
   };
