@@ -289,6 +289,31 @@
     ];
   }
 
+  function buildOrganizationTemplateConfig(task = {}) {
+    const organizationRaw = normalize(
+      task && (task.organization || task.organizationName || task.organizationTitle || task.organizationFullName || task.organizationShortName || task.org),
+    );
+    if (!organizationRaw) {
+      return {
+        organization: '',
+        templateFileName: 'template.docx',
+        templatePath: '',
+        compactTemplateLabel: 'template.docx',
+      };
+    }
+    const templateFileName = `${organizationRaw}_template.docx`;
+    const templatePath = `/documents/${encodeURIComponent(organizationRaw)}/${encodeURIComponent(templateFileName)}`;
+    const compactTemplateLabel = templateFileName.length > 38
+      ? `${templateFileName.slice(0, 35)}...`
+      : templateFileName;
+    return {
+      organization: organizationRaw,
+      templateFileName,
+      templatePath,
+      compactTemplateLabel,
+    };
+  }
+
   function pickPreferredTemplateDocxUrl(candidates) {
     const list = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
     if (!list.length) return '';
@@ -859,6 +884,9 @@
       formData.append('templateMonth', String(meta.month || ''));
       formData.append('templateNumber', String(meta.number || ''));
       formData.append('templateAddressee', String(meta.addressee || ''));
+      if (meta.organization) formData.append('organization', String(meta.organization || ''));
+      if (meta.templatePath) formData.append('templatePath', String(meta.templatePath || ''));
+      if (meta.templateFileName) formData.append('templateFileName', String(meta.templateFileName || ''));
       formData.append('documentTitle', 'Ответ ИИ');
       formData.append('responseMode', 'json_url');
       try {
@@ -1019,6 +1047,7 @@
     if (document.querySelector('.tg-ai-template-editor')) return;
     const aiText = normalize(context && context.aiAnswer) || DEFAULT_TEMPLATE_ANSWER_TEXT;
     const task = context && context.task ? context.task : {};
+    const templateConfig = buildOrganizationTemplateConfig(task);
     const onStatus = typeof context.onStatus === 'function' ? context.onStatus : null;
     const storedTemplateMeta = globalScope && globalScope.DOCUMENTS_TEMPLATE_META && typeof globalScope.DOCUMENTS_TEMPLATE_META === 'object'
       ? globalScope.DOCUMENTS_TEMPLATE_META
@@ -1030,7 +1059,7 @@
         <div class="tg-ai-template-editor__head">
           <div>
             <div class="tg-ai-template-editor__title">Заполнение шаблона</div>
-            <div class="tg-ai-template-editor__sub">Проверьте текст ИИ и заполните дату, номер и адресата</div>
+            <div class="tg-ai-template-editor__sub">Проверьте текст ИИ и заполните дату, номер и адресата • ${escapeHtml(templateConfig.compactTemplateLabel)}</div>
           </div>
           <button type="button" class="tg-ai-template-editor__close" data-action="cancel">Закрыть</button>
         </div>
@@ -1125,6 +1154,9 @@
           month,
           number,
           addressee: addresseeTemplateValue,
+          organization: templateConfig.organization,
+          templatePath: templateConfig.templatePath,
+          templateFileName: templateConfig.templateFileName,
         });
         close();
         if (onStatus) onStatus('Открываем результат в предпросмотре...');
@@ -1178,9 +1210,13 @@
   }
 
   async function openTemplatePreviewModal(context = {}) {
-    const templateDocxCandidates = getTemplateDocxCandidates();
-
     const task = context && context.task ? context.task : null;
+    const templateConfig = buildOrganizationTemplateConfig(task || {});
+    const templateDocxCandidates = [
+      templateConfig.templatePath,
+      ...getTemplateDocxCandidates(),
+    ].filter(Boolean);
+
     const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
       ? window.__APPDOSC_OPEN_FILES_VIEWER__
       : null;
@@ -1192,7 +1228,7 @@
         <div class="tg-ai-template-preview__head">
           <div>
             <div class="tg-ai-template-preview__title">Шаблон</div>
-            <div class="tg-ai-template-preview__hint">Открываем template.docx в режиме предпросмотра</div>
+            <div class="tg-ai-template-preview__hint">Открываем ${escapeHtml(templateConfig.compactTemplateLabel)} в режиме предпросмотра</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
             <button type="button" class="tg-ai-template-preview__close" data-template-open-viewer>Открыть как «Просмотреть»</button>
@@ -1221,9 +1257,9 @@
       if (docxUrl) {
         const absoluteDocx = toAbsoluteUrl(docxUrl);
         const templateFile = {
-          name: 'template.docx',
-          originalName: 'template.docx',
-          storedName: 'template.docx',
+          name: templateConfig.templateFileName || 'template.docx',
+          originalName: templateConfig.templateFileName || 'template.docx',
+          storedName: templateConfig.templateFileName || 'template.docx',
           url: docxUrl,
           resolvedUrl: absoluteDocx,
           previewUrl: docxUrl,
@@ -1232,7 +1268,7 @@
         };
 
         frame.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absoluteDocx)}`;
-        status.textContent = 'Готово: template.docx открыт.';
+        status.textContent = `Готово: ${templateConfig.templateFileName || 'template.docx'} открыт.`;
 
         openViewerButton?.addEventListener('click', async () => {
           if (!openExternalViewer) {
@@ -1249,7 +1285,7 @@
         });
         return;
       }
-      status.textContent = 'Не удалось найти template.docx.';
+      status.textContent = `Не удалось найти ${templateConfig.templateFileName || 'template.docx'}.`;
     } catch (error) {
       status.textContent = (error && error.message) || 'Ошибка открытия шаблона.';
     }
