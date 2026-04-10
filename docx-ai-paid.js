@@ -1153,10 +1153,10 @@
         number: numberValue,
         addressee: addresseeTemplateValue
       })
-        .then(function(blob) {
-          if (!blob) throw new Error('empty_blob');
+        .then(function(previewPayload) {
+          if (!previewPayload) throw new Error('empty_preview_payload');
           closeEditor();
-          openDocxRenderPreviewPage(blob);
+          openDocxRenderPreviewPage(previewPayload);
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -1187,15 +1187,14 @@
     });
   }
 
-  function openDocxRenderPreviewPage(blob) {
+  function openDocxRenderPreviewLocal(blob, fileName) {
     ensureTemplatePreviewStyles();
     if (!blob) throw new Error('empty_blob');
-    var existing = document.querySelector('.docx-template-preview');
-    if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
     overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Проверьте результат перед скачиванием</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка предпросмотра…</div></div>';
     document.body.appendChild(overlay);
+    var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     var docPreviewNode = overlay.querySelector('[data-preview-doc]');
     var statusNode = overlay.querySelector('[data-preview-status]');
@@ -1204,7 +1203,7 @@
     var blobUrl = URL.createObjectURL(blob);
 
     function closeModal() {
-      document.body.style.overflow = '';
+      document.body.style.overflow = previousOverflow;
       URL.revokeObjectURL(blobUrl);
       overlay.remove();
     }
@@ -1216,7 +1215,7 @@
     downloadBtn.addEventListener('click', function() {
       var a = document.createElement('a');
       a.href = blobUrl;
-      a.download = 'template-answer.docx';
+      a.download = fileName || 'template-answer.docx';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1238,31 +1237,167 @@
     });
   }
 
-  async function generateDocxFromTemplateViaApi(answerText, meta) {
-    var apiUrl = (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    var safeMeta = meta && typeof meta === 'object' ? meta : {};
-    var formData = new FormData();
-    formData.append('action', 'generate_document');
-    formData.append('format', 'docx');
-    formData.append('answer', String(answerText || ''));
-    formData.append('templateDay', String(safeMeta.day || ''));
-    formData.append('templateMonth', String(safeMeta.month || ''));
-    formData.append('templateNumber', String(safeMeta.number || ''));
-    formData.append('templateAddressee', String(safeMeta.addressee || ''));
-    formData.append('documentTitle', 'Ответ ИИ');
-    var response = await fetch(apiUrl, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
+  function toAbsoluteUrl(value) {
+    var raw = String(value || '').trim();
+    if (!raw) return '';
+    if (raw.indexOf('blob:') === 0 || raw.indexOf('data:') === 0) return raw;
+    try {
+      return new URL(raw, window.location.origin).toString();
+    } catch (error) {
+      return raw;
+    }
+  }
+
+  function getDocsGenerateEndpoints() {
+    var configured = String(window.DOCUMENTS_AI_API_URL || '').trim();
+    var fallback = ['/js/documents/api-docs.php', '/api-docs.php'];
+    var list = configured ? [configured].concat(fallback) : fallback;
+    return list.filter(function(item, index) { return item && list.indexOf(item) === index; });
+  }
+
+  async function deleteGeneratedTempFile(previewPayload) {
+    var fileName = String(previewPayload && previewPayload.fileName || '').trim();
+    var previewUrl = String(previewPayload && previewPayload.previewUrl || '').trim();
+    if (!fileName && !previewUrl) return;
+    var endpoints = getDocsGenerateEndpoints();
+    for (var i = 0; i < endpoints.length; i += 1) {
+      var formData = new FormData();
+      formData.append('action', 'delete_generated_temp');
+      if (fileName) formData.append('fileName', fileName);
+      if (previewUrl) formData.append('url', previewUrl);
+      try {
+        var response = await fetch(endpoints[i], {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData
+        });
+        if (response && response.ok) return;
+      } catch (error) {}
+    }
+  }
+
+  async function openDocxRenderPreviewPage(previewPayload) {
+    ensureTemplatePreviewStyles();
+    if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
+    var existing = document.querySelector('.docx-template-preview');
+    if (existing) existing.remove();
+    var overlay = document.createElement('div');
+    overlay.className = 'docx-template-preview';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0"></iframe></div></div><div class="docx-template-preview__status" data-preview-status>Подключаем Office Web Viewer…</div></div>';
+    document.body.appendChild(overlay);
+    var previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    var frameNode = overlay.querySelector('[data-preview-frame]');
+    var statusNode = overlay.querySelector('[data-preview-status]');
+    var downloadBtn = overlay.querySelector('[data-preview-download]');
+    var localBtn = overlay.querySelector('[data-preview-local]');
+    var closeBtn = overlay.querySelector('[data-preview-close]');
+    var previewUrl = String(previewPayload.previewUrl || '').trim();
+    var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
+    var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+    var blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
+    var sourceUrl = previewUrl || blobUrl;
+    var isClosed = false;
+
+    function closeModal() {
+      if (isClosed) return;
+      isClosed = true;
+      document.body.style.overflow = previousOverflow;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      overlay.remove();
+      deleteGeneratedTempFile(previewPayload).catch(function() {});
+    }
+
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) closeModal();
     });
-    if (!response.ok) {
-      throw new Error('Ошибка генерации шаблона (' + response.status + ')');
+    downloadBtn.addEventListener('click', function() {
+      var a = document.createElement('a');
+      a.href = sourceUrl;
+      a.download = fileName || 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+    localBtn.addEventListener('click', async function() {
+      localBtn.disabled = true;
+      var previousText = localBtn.textContent;
+      localBtn.textContent = 'Открываю...';
+      try {
+        var localBlob = fallbackBlob;
+        if (!localBlob && previewUrl) {
+          var localResponse = await fetch(previewUrl, { credentials: 'same-origin' });
+          if (!localResponse.ok) throw new Error('download_failed');
+          localBlob = await localResponse.blob();
+        }
+        if (!localBlob || !localBlob.size) throw new Error('empty_blob');
+        openDocxRenderPreviewLocal(localBlob, fileName);
+      } catch (error) {
+        statusNode.textContent = 'Не удалось открыть локальный предпросмотр.';
+      } finally {
+        localBtn.disabled = false;
+        localBtn.textContent = previousText;
+      }
+    });
+
+    if (!sourceUrl) {
+      statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
+      return;
     }
-    var blob = await response.blob();
-    if (!blob || !blob.size) {
-      return null;
+    frameNode.addEventListener('load', function() {
+      statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
+    }, { once: true });
+    frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl);
+  }
+
+  async function generateDocxFromTemplateViaApi(answerText, meta) {
+    var endpoints = getDocsGenerateEndpoints();
+    var safeMeta = meta && typeof meta === 'object' ? meta : {};
+    var lastError = null;
+    for (var i = 0; i < endpoints.length; i += 1) {
+      var formData = new FormData();
+      formData.append('action', 'generate_document');
+      formData.append('format', 'docx');
+      formData.append('answer', String(answerText || ''));
+      formData.append('templateDay', String(safeMeta.day || ''));
+      formData.append('templateMonth', String(safeMeta.month || ''));
+      formData.append('templateNumber', String(safeMeta.number || ''));
+      formData.append('templateAddressee', String(safeMeta.addressee || ''));
+      formData.append('documentTitle', 'Ответ ИИ');
+      formData.append('responseMode', 'json_url');
+      try {
+        var response = await fetch(endpoints[i], {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData
+        });
+        if (!response || !response.ok) {
+          lastError = new Error('Ошибка генерации шаблона (' + (response ? response.status : 0) + ')');
+          continue;
+        }
+        var responseType = String(response.headers.get('content-type') || '').toLowerCase();
+        if (responseType.indexOf('application/json') !== -1) {
+          var payload = await response.json().catch(function() { return null; });
+          var url = String(payload && payload.url || '').trim();
+          if (payload && payload.ok && url) {
+            return {
+              previewUrl: toAbsoluteUrl(url),
+              fileName: String(payload.fileName || 'answer.docx').trim()
+            };
+          }
+          lastError = new Error((payload && payload.error) || 'Сервер не вернул ссылку для предпросмотра.');
+          continue;
+        }
+        var blob = await response.blob();
+        if (blob && blob.size) {
+          return { blob: blob, fileName: 'answer.docx' };
+        }
+      } catch (error) {
+        lastError = error;
+      }
     }
-    return blob;
+    throw lastError || new Error('Не удалось сформировать DOCX.');
   }
 
   if (document.readyState === 'loading') {
