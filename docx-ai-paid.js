@@ -1139,20 +1139,21 @@
         return;
       }
       var aiText = aiTextRaw.replace(/[ \t]+$/gm, '');
-      var dayValue = dayInput ? String(dayInput.value || '').trim() : '';
-      var monthValue = monthInput ? String(monthInput.value || '').trim() : '';
-      var numberValue = numberInput ? String(numberInput.value || '').trim() : '';
-      var addresseeValue = addresseeInput ? String(addresseeInput.value || '').replace(/\s+$/g, '') : '';
-      if (!dayValue || !monthValue || !numberValue || !String(addresseeValue || '').trim()) {
-        renderError('Заполните поля: День, Месяц, Номер и Адресат.');
-        return;
-      }
+      var defaultTemplateFieldValue = '_____';
+      var rawDayValue = dayInput ? String(dayInput.value || '').trim() : '';
+      var rawMonthValue = monthInput ? String(monthInput.value || '').trim() : '';
+      var rawNumberValue = numberInput ? String(numberInput.value || '').trim() : '';
+      var rawAddresseeValue = addresseeInput ? String(addresseeInput.value || '').replace(/\s+$/g, '') : '';
+      var dayValue = rawDayValue || defaultTemplateFieldValue;
+      var monthValue = rawMonthValue || defaultTemplateFieldValue;
+      var numberValue = rawNumberValue || defaultTemplateFieldValue;
+      var addresseeValue = String(rawAddresseeValue || '').trim() || defaultTemplateFieldValue;
       var addresseeTemplateValue = /^\s/.test(addresseeValue) ? addresseeValue : ('\u00A0' + addresseeValue);
       window.DOCUMENTS_TEMPLATE_META = {
-        day: dayValue,
-        month: monthValue,
-        number: numberValue,
-        addressee: addresseeValue
+        day: rawDayValue,
+        month: rawMonthValue,
+        number: rawNumberValue,
+        addressee: rawAddresseeValue
       };
       renderError('');
       doneButton.disabled = true;
