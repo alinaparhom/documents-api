@@ -1243,8 +1243,7 @@
         return;
       }
       if (!normalize(lastAiAnswer)) {
-        status.textContent = 'Сначала получите ответ ИИ, затем нажмите «Шаблон».';
-        await openTemplatePreviewModal({ task }).catch(() => {});
+        status.textContent = 'Сначала получите ответ ИИ, потом откроется форма заполнения шаблона.';
         return;
       }
       openTemplateAnswerEditor({
