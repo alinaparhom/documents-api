@@ -1206,21 +1206,24 @@
     });
   }
 
-  function openDocxRenderPreviewLocal(blob, fileName) {
+  function openDocxRenderPreviewLocal(blob, fileName, officeSourceUrl) {
     ensureTemplatePreviewStyles();
     if (!blob) throw new Error('empty_blob');
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Локальный предпросмотр</div><div class="docx-template-preview__hint">Рендерим файл прямо в браузере</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" data-preview-doc aria-label="DOCX preview"></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Готовим локальный предпросмотр…</div><div class="docx-template-preview__loading-sub">Это может занять несколько секунд на телефоне.</div><div class="docx-template-preview__bar"></div></div></div></div><div class="docx-template-preview__status" data-preview-status>Подготовка локального предпросмотра…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Локально • Office-вид</div><div class="docx-template-preview__hint">Пытаемся открыть точную копию Office Viewer для совпадения отступов, шрифтов и форматирования.</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc aria-label="DOCX preview"><iframe title="Office Web Viewer Local" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем Office-копию…</div><div class="docx-template-preview__loading-sub" data-preview-loading-sub>Готовим точный рендер, как в Office Viewer.</div><div class="docx-template-preview__bar"></div></div></div></div><div class="docx-template-preview__status" data-preview-status>Подключаем Office Viewer…</div></div>';
     document.body.appendChild(overlay);
     var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     var docPreviewNode = overlay.querySelector('[data-preview-doc]');
+    var frameNode = overlay.querySelector('[data-preview-frame]');
     var statusNode = overlay.querySelector('[data-preview-status]');
     var downloadBtn = overlay.querySelector('[data-preview-download]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var loadingNode = overlay.querySelector('[data-preview-loading]');
+    var loadingSubNode = overlay.querySelector('[data-preview-loading-sub]');
     var blobUrl = URL.createObjectURL(blob);
+    var safeOfficeUrl = String(officeSourceUrl || '').trim();
 
     function closeModal() {
       document.body.style.overflow = previousOverflow;
@@ -1240,23 +1243,46 @@
       a.click();
       document.body.removeChild(a);
     });
-
-    ensureDocxPreviewLibrariesLoaded().then(function(renderer) {
-      return blob.arrayBuffer().then(function(arrayBuffer) {
-        docPreviewNode.innerHTML = '';
-        return renderer.renderAsync(arrayBuffer, docPreviewNode, null, {
-          inWrapper: true,
-          breakPages: true,
-          ignoreWidth: true
+    function openCompatibilityFallback() {
+      statusNode.textContent = 'Office-копия недоступна. Включен локальный совместимый режим (может отличаться от Office).';
+      if (loadingSubNode) loadingSubNode.textContent = 'Переключаемся на локальный рендер.';
+      ensureDocxPreviewLibrariesLoaded().then(function(renderer) {
+        return blob.arrayBuffer().then(function(arrayBuffer) {
+          if (frameNode) frameNode.remove();
+          docPreviewNode.innerHTML = '';
+          return renderer.renderAsync(arrayBuffer, docPreviewNode, null, {
+            inWrapper: true,
+            breakPages: true,
+            ignoreWidth: true
+          });
         });
+      }).then(function() {
+        if (loadingNode) loadingNode.style.display = 'none';
+        statusNode.textContent = 'Готово: локальный совместимый предпросмотр открыт.';
+      }).catch(function(error) {
+        if (loadingNode) loadingNode.style.display = 'none';
+        statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
       });
-    }).then(function() {
-      if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = 'Готово: локальный предпросмотр открыт.';
-    }).catch(function(error) {
-      if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
-    });
+    }
+
+    if (safeOfficeUrl && frameNode) {
+      frameNode.addEventListener('load', function() {
+        frameNode.style.visibility = '';
+        if (loadingNode) loadingNode.style.display = 'none';
+        statusNode.textContent = 'Готово: открыта точная Office-копия документа.';
+      }, { once: true });
+      frameNode.addEventListener('error', function() {
+        openCompatibilityFallback();
+      }, { once: true });
+      frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(safeOfficeUrl);
+      setTimeout(function() {
+        if (loadingNode && loadingNode.style.display !== 'none') {
+          openCompatibilityFallback();
+        }
+      }, 9000);
+      return;
+    }
+    openCompatibilityFallback();
   }
 
   function toAbsoluteUrl(value) {
@@ -1362,7 +1388,7 @@
           localBlob = await localResponse.blob();
         }
         if (!localBlob || !localBlob.size) throw new Error('empty_blob');
-        openDocxRenderPreviewLocal(localBlob, fileName);
+        openDocxRenderPreviewLocal(localBlob, fileName, previewUrl);
       } catch (error) {
         statusNode.textContent = 'Не удалось открыть локальный предпросмотр.';
       } finally {
