@@ -8,6 +8,13 @@
     'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.',
     'Пиши только основной текст: без шапки, без подписи, без блоков "С уважением" и без реквизитов.'
   ].join('\n');
+  var RESPONSE_OUTPUT_DIRECTIVE = [
+    'РЕЖИМ «Ответ с помощью ИИ»: верни только текст, который сразу вставляется в документ.',
+    'Запрещены приветствия, обращения, подписи, имена, должности, реквизиты, номера счетов и контакты.',
+    'Запрещены мета-блоки и фразы вроде: «Анализ», «Разбор», «Я проанализировал».',
+    'Если данных недостаточно — укажи только недостающие данные, без служебных фраз.'
+  ].join('\n');
+
   var briefPdfJsLoader = null;
   var SYSTEM_TONE_PROMPTS = {
     neutral: {
@@ -397,7 +404,7 @@
   function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus) {
     var entries = Array.isArray(selectedEntries) ? selectedEntries : [];
     var styleMeta = resolveVipStyle(selectedStyle);
-    var preparedPrompt = [promptText, styleMeta && styleMeta.prompt ? styleMeta.prompt : '', VISION_QUALITY_DIRECTIVE, 'Верни готовый ответ на письмо. Не пиши анализ.']
+    var preparedPrompt = [promptText, styleMeta && styleMeta.prompt ? styleMeta.prompt : '', VISION_QUALITY_DIRECTIVE, RESPONSE_OUTPUT_DIRECTIVE, 'Верни готовый ответ на письмо. Не пиши анализ.']
       .filter(Boolean)
       .join('\n\n');
     var images = [];
@@ -633,6 +640,7 @@
     if (styleMeta && styleMeta.prompt) {
       finalPrompt = (finalPrompt ? (finalPrompt + '\n\n') : '') + styleMeta.prompt;
     }
+    finalPrompt = [finalPrompt, RESPONSE_OUTPUT_DIRECTIVE].filter(Boolean).join('\n\n');
     if (payloadContext.ocrSummary) {
       finalPrompt += '\n\nOCR контекст по каждому файлу:\n' + payloadContext.ocrSummary;
     }
@@ -855,10 +863,10 @@
         pushChat('assistant', 'Пожалуйста, выберите режим.');
         return;
       }
-      var promptText = 'Подготовь готовый текст для вставки в шаблон: только основная часть, без шапки, без подписи и без служебных приписок.';
+      var promptText = 'Дай готовый текст ответа по файлу для вставки в документ: только суть, без приветствия, подписи, реквизитов и счетов.';
       var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
       isSending = true;
-      pushChat('user', 'Стиль: ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный') + '. Подготовь готовый ответ.');
+      pushChat('user', 'Стиль: ' + (resolveVipStyle(selectedStyle).label || 'Нейтральный') + '. Нужен только готовый текст для вставки в документ.');
       pushChat('assistant', '⏳ Обрабатываю запрос...');
       metaNode.innerHTML = '';
       var startedAt = Date.now();
