@@ -797,9 +797,6 @@
       .tg-ai-generated-preview__zoom{display:inline-flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:rgba(255,255,255,.95)}
       .tg-ai-generated-preview__zoom-btn{border:none;background:rgba(241,245,249,.9);color:#0f172a;border-radius:8px;min-width:28px;height:28px;font-weight:800}
       .tg-ai-generated-preview__zoom-value{font-size:12px;min-width:42px;text-align:center;color:#334155;font-weight:700}
-      .tg-ai-generated-preview__pager{display:inline-flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:rgba(255,255,255,.95)}
-      .tg-ai-generated-preview__pager-btn{border:none;background:rgba(241,245,249,.9);color:#0f172a;border-radius:8px;min-width:28px;height:28px;font-weight:800}
-      .tg-ai-generated-preview__pager-value{font-size:12px;min-width:44px;text-align:center;color:#334155;font-weight:700}
       .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
       .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
@@ -812,7 +809,6 @@
       .tg-ai-generated-preview__doc{min-height:100%;margin:0 auto;background:rgba(255,255,255,.85);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12);transform-origin:top center;transition:transform .14s ease}
       .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}
       .tg-ai-generated-preview__doc .docx{overflow:visible}
-      .tg-ai-generated-preview__doc .docx-wrapper>section{margin:0 auto 14px!important}
       .tg-ai-generated-preview__frame{display:none;width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}
@@ -850,7 +846,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__tools{gap:4px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-generated-preview__zoom-value,.tg-ai-generated-preview__pager-value{min-width:36px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1098,11 +1094,6 @@
               <span class="tg-ai-generated-preview__zoom-value" data-preview-zoom-value>100%</span>
               <button type="button" class="tg-ai-generated-preview__zoom-btn" data-preview-zoom-in aria-label="Увеличить">+</button>
             </div>
-            <div class="tg-ai-generated-preview__pager">
-              <button type="button" class="tg-ai-generated-preview__pager-btn" data-preview-page-prev aria-label="Предыдущая">‹</button>
-              <span class="tg-ai-generated-preview__pager-value" data-preview-page-value>1/1</span>
-              <button type="button" class="tg-ai-generated-preview__pager-btn" data-preview-page-next aria-label="Следующая">›</button>
-            </div>
             <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
             <button type="button" class="tg-ai-generated-preview__close-icon" data-preview-close-icon aria-label="Закрыть">×</button>
           </div>
@@ -1152,9 +1143,6 @@
     const zoomOutBtn = overlay.querySelector('[data-preview-zoom-out]');
     const zoomInBtn = overlay.querySelector('[data-preview-zoom-in]');
     const zoomValueNode = overlay.querySelector('[data-preview-zoom-value]');
-    const pagePrevBtn = overlay.querySelector('[data-preview-page-prev]');
-    const pageNextBtn = overlay.querySelector('[data-preview-page-next]');
-    const pageValueNode = overlay.querySelector('[data-preview-page-value]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
@@ -1163,38 +1151,13 @@
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     const sourceUrl = previewUrl || blobUrl;
     let zoom = 1;
-    let pages = [];
-    let currentPage = 0;
 
     const applyZoom = () => {
       if (!docNode) return;
-      const normalized = Math.max(0.2, Math.min(2.5, Number(zoom) || 1));
+      const normalized = Math.max(0.7, Math.min(1.6, Number(zoom) || 1));
       zoom = Number(normalized.toFixed(2));
       docNode.style.transform = `scale(${zoom})`;
       if (zoomValueNode) zoomValueNode.textContent = `${Math.round(zoom * 100)}%`;
-    };
-    const applyPagination = () => {
-      const total = pages.length;
-      if (!total) {
-        if (pageValueNode) pageValueNode.textContent = '1/1';
-        if (pagePrevBtn) pagePrevBtn.disabled = true;
-        if (pageNextBtn) pageNextBtn.disabled = true;
-        return;
-      }
-      currentPage = Math.max(0, Math.min(currentPage, total - 1));
-      pages.forEach((node, idx) => {
-        node.style.display = idx === currentPage ? '' : 'none';
-      });
-      if (pageValueNode) pageValueNode.textContent = `${currentPage + 1}/${total}`;
-      if (pagePrevBtn) pagePrevBtn.disabled = currentPage <= 0;
-      if (pageNextBtn) pageNextBtn.disabled = currentPage >= total - 1;
-    };
-    const collectPages = () => {
-      const sectionPages = Array.from(docNode.querySelectorAll('.docx-wrapper > section'));
-      const fallbackPages = sectionPages.length ? sectionPages : Array.from(docNode.querySelectorAll('.docx-wrapper .docx-page'));
-      pages = fallbackPages;
-      currentPage = 0;
-      applyPagination();
     };
 
     const close = () => {
@@ -1230,33 +1193,14 @@
       zoom = zoom + 0.1;
       applyZoom();
     });
-    pagePrevBtn?.addEventListener('click', () => {
-      currentPage -= 1;
-      applyPagination();
-    });
-    pageNextBtn?.addEventListener('click', () => {
-      currentPage += 1;
-      applyPagination();
-    });
-    downloadBtn?.addEventListener('click', async () => {
+    downloadBtn?.addEventListener('click', () => {
       toggleMenu(false);
-      const prevText = downloadBtn.textContent;
-      downloadBtn.disabled = true;
-      downloadBtn.textContent = 'Готовим...';
-      try {
-        const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
-        const url = URL.createObjectURL(fileBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = normalize(previewPayload.fileName) || 'template-answer.docx';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 1500);
-      } finally {
-        downloadBtn.disabled = false;
-        downloadBtn.textContent = prevText;
-      }
+      const a = document.createElement('a');
+      a.href = sourceUrl;
+      a.download = normalize(previewPayload.fileName) || 'template-answer.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     });
     if (attachBtn) {
       const taskReady = Boolean(normalize(task && task.id));
@@ -1326,7 +1270,6 @@
           ignoreHeight: false,
           ignoreFonts: false,
         });
-        collectPages();
         applyZoom();
         docNode.style.visibility = '';
         if (loadingNode) loadingNode.style.display = 'none';
