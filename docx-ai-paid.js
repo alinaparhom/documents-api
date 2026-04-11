@@ -1719,6 +1719,37 @@
       }
     }
 
+    var accessUser = window
+      && window.documentsAccessContext
+      && window.documentsAccessContext.user
+      && typeof window.documentsAccessContext.user === 'object'
+      ? window.documentsAccessContext.user
+      : null;
+    if (accessUser) {
+      var contextName = String(
+        accessUser.fullName
+        || accessUser.displayName
+        || accessUser.name
+        || accessUser.responsible
+        || accessUser.username
+        || accessUser.login
+        || ''
+      ).trim();
+      if (!contextName) {
+        var contextCombined = [accessUser.lastName, accessUser.firstName]
+          .map(function(part) { return String(part || '').trim(); })
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        if (contextCombined) {
+          contextName = contextCombined;
+        }
+      }
+      if (contextName) {
+        return contextName;
+      }
+    }
+
     return '';
   }
 
@@ -1736,6 +1767,27 @@
     if (userId) {
       return userId;
     }
+
+    var accessUser = window
+      && window.documentsAccessContext
+      && window.documentsAccessContext.user
+      && typeof window.documentsAccessContext.user === 'object'
+      ? window.documentsAccessContext.user
+      : null;
+    if (accessUser) {
+      var contextUserId = String(
+        accessUser.telegram_user_id
+        || accessUser.telegramId
+        || accessUser.chatId
+        || accessUser.user_id
+        || accessUser.id
+        || ''
+      ).trim();
+      if (contextUserId) {
+        return contextUserId;
+      }
+    }
+
     var search = '';
     try {
       search = String(window && window.location && window.location.search || '');
