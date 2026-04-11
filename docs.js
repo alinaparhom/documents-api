@@ -13141,6 +13141,16 @@
     hiddenInput.type = 'file';
     hiddenInput.multiple = true;
     hiddenInput.hidden = true;
+    var isResponseModalClosed = false;
+
+    function closeResponseModal() {
+      if (isResponseModalClosed) {
+        return;
+      }
+      isResponseModalClosed = true;
+      window.removeEventListener('documents:response-attached', handleResponseAttachedEvent);
+      closeModal(modal);
+    }
 
     function syncCurrentDoc() {
       currentDoc = findDocumentById(doc.id) || currentDoc || doc;
@@ -13492,6 +13502,29 @@
         });
     }
 
+    function handleResponseAttachedEvent(event) {
+      if (isResponseModalClosed) {
+        return;
+      }
+      var detail = event && event.detail && typeof event.detail === 'object' ? event.detail : null;
+      if (!detail) {
+        return;
+      }
+      var attachedDocumentId = String(detail.documentId || '').trim();
+      if (!attachedDocumentId || attachedDocumentId !== String(doc.id)) {
+        return;
+      }
+      refreshRegistrySilently()
+        .then(function() {
+          if (isResponseModalClosed) {
+            return;
+          }
+          syncCurrentDoc();
+          renderTable();
+        })
+        .catch(function() {});
+    }
+
     hiddenInput.addEventListener('change', function(event) {
       var selected = Array.from(event.target.files || []);
       if (!selected.length) {
@@ -13758,12 +13791,12 @@
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
-      closeModal(modal);
+      closeResponseModal();
     });
 
     modal.addEventListener('click', function(event) {
       if (event.target === modal) {
-        closeModal(modal);
+        closeResponseModal();
       }
     });
 
@@ -13792,6 +13825,7 @@
     panel.appendChild(hiddenInput);
     modal.appendChild(panel);
     document.body.appendChild(modal);
+    window.addEventListener('documents:response-attached', handleResponseAttachedEvent);
     renderTable();
     updateMessageCounter();
     dropzone.focus({ preventScroll: true });

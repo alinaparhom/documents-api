@@ -1719,19 +1719,156 @@
       }
     }
 
-    var responsibleRaw = task && (task.responsible || task.responsibles);
-    var responsibleName = '';
-    if (Array.isArray(responsibleRaw)) {
-      responsibleName = responsibleRaw
-        .map(function(item) { return String(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item) || '').trim(); })
-        .filter(Boolean)
-        .join(', ');
-    } else if (responsibleRaw && typeof responsibleRaw === 'object') {
-      responsibleName = String(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value || '').trim();
-    } else {
-      responsibleName = String(responsibleRaw || '').trim();
+    var accessUser = window
+      && window.documentsAccessContext
+      && window.documentsAccessContext.user
+      && typeof window.documentsAccessContext.user === 'object'
+      ? window.documentsAccessContext.user
+      : null;
+    if (accessUser) {
+      var contextName = String(
+        accessUser.fullName
+        || accessUser.displayName
+        || accessUser.name
+        || accessUser.responsible
+        || accessUser.username
+        || accessUser.login
+        || ''
+      ).trim();
+      if (!contextName) {
+        var contextCombined = [accessUser.lastName, accessUser.firstName]
+          .map(function(part) { return String(part || '').trim(); })
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        if (contextCombined) {
+          contextName = contextCombined;
+        }
+      }
+      if (contextName) {
+        return contextName;
+      }
     }
-    return responsibleName;
+
+    var directoryTelegramId = resolveAuthorizedTelegramUserId();
+    var directoryLogins = [];
+    var directoryEntries = [];
+    if (accessUser && accessUser.login) {
+      directoryLogins.push(String(accessUser.login).trim().toLowerCase());
+    }
+    if (accessUser && accessUser.username) {
+      directoryLogins.push(String(accessUser.username).trim().toLowerCase());
+    }
+
+    var pushDirectoryEntries = function(source, bucket) {
+      if (!source) {
+        return;
+      }
+      if (Array.isArray(source)) {
+        source.forEach(function(entry) {
+          bucket.push(entry);
+        });
+        return;
+      }
+      if (typeof source === 'object') {
+        Object.keys(source).forEach(function(key) {
+          var list = source[key];
+          if (Array.isArray(list)) {
+            list.forEach(function(entry) {
+              bucket.push(entry);
+            });
+          }
+        });
+      }
+    };
+
+    var accessContext = window && window.documentsAccessContext ? window.documentsAccessContext : null;
+    if (accessContext) {
+      pushDirectoryEntries(accessContext.responsibles, directoryEntries);
+      pushDirectoryEntries(accessContext.subordinates, directoryEntries);
+      pushDirectoryEntries(accessContext.directors, directoryEntries);
+    }
+
+    for (var i = 0; i < directoryEntries.length; i += 1) {
+      var entry = directoryEntries[i];
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      var entryTelegram = String(entry.telegram || entry.telegram_user_id || entry.telegramId || entry.chatId || '').trim();
+      var entryLogin = String(entry.login || entry.username || '').trim().toLowerCase();
+      var telegramMatched = Boolean(directoryTelegramId) && Boolean(entryTelegram) && entryTelegram === directoryTelegramId;
+      var loginMatched = Boolean(entryLogin) && directoryLogins.indexOf(entryLogin) !== -1;
+      if (!telegramMatched && !loginMatched) {
+        continue;
+      }
+      var entryName = String(entry.responsible || entry.name || entry.fullName || entry.displayName || '').trim();
+      if (entryName) {
+        return entryName;
+      }
+    }
+
+    return '';
+  }
+
+  function resolveAuthorizedTelegramUserId() {
+    var webAppUser = window
+      && window.Telegram
+      && window.Telegram.WebApp
+      && window.Telegram.WebApp.initDataUnsafe
+      && window.Telegram.WebApp.initDataUnsafe.user
+      ? window.Telegram.WebApp.initDataUnsafe.user
+      : null;
+    var userId = webAppUser && (webAppUser.id || webAppUser.user_id || webAppUser.telegram_user_id)
+      ? String(webAppUser.id || webAppUser.user_id || webAppUser.telegram_user_id).trim()
+      : '';
+    if (userId) {
+      return userId;
+    }
+
+    var accessUser = window
+      && window.documentsAccessContext
+      && window.documentsAccessContext.user
+      && typeof window.documentsAccessContext.user === 'object'
+      ? window.documentsAccessContext.user
+      : null;
+    if (accessUser) {
+      var contextUserId = String(
+        accessUser.telegram_user_id
+        || accessUser.telegram
+        || accessUser.telegramId
+        || accessUser.chatId
+        || accessUser.user_id
+        || accessUser.id
+        || ''
+      ).trim();
+      if (contextUserId) {
+        return contextUserId;
+      }
+    }
+
+    var search = '';
+    try {
+      search = String(window && window.location && window.location.search || '');
+    } catch (error) {
+      search = '';
+    }
+    var params = null;
+    try {
+      params = new URLSearchParams(search || '');
+    } catch (error) {
+      params = null;
+    }
+    if (!params) {
+      return '';
+    }
+    return String(
+      params.get('telegram_user_id')
+      || params.get('telegramId')
+      || params.get('user_id')
+      || params.get('userid')
+      || params.get('id')
+      || ''
+    ).trim();
   }
 
   async function attachGeneratedDocxToTaskResponse(previewPayload, options) {
@@ -1787,6 +1924,10 @@
     formData.append('documentId', documentId);
     formData.append('responsible', responsibleFinal);
     formData.append('uploaderName', uploaderFinal);
+    var telegramUserId = resolveAuthorizedTelegramUserId();
+    if (telegramUserId) {
+      formData.append('telegram_user_id', telegramUserId);
+    }
     formData.append('attachments[]', fileBlob, fileName);
 
     var headers = {};
