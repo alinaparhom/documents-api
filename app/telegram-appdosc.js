@@ -11244,6 +11244,80 @@ function getDirectorsForOrganization(organization) {
   return Array.isArray(list) ? list : [];
 }
 
+const settingsDocsResponsibleCache = new Map();
+
+function normalizeSettingsDocsEntries(payload) {
+  if (!payload) {
+    return [];
+  }
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload.responsibles)) {
+    return payload.responsibles;
+  }
+  if (payload.settings && Array.isArray(payload.settings.responsibles)) {
+    return payload.settings.responsibles;
+  }
+  if (Array.isArray(payload.block1)) {
+    return payload.block1;
+  }
+  return [];
+}
+
+async function getResponsibleFromSettingsDocs(organization, telegramId) {
+  const orgKey = getOrganizationKey(organization);
+  const tgKey = normalizeIdentifier(telegramId);
+  if (!orgKey || !tgKey || typeof fetch !== 'function') {
+    return '';
+  }
+
+  const cacheKey = `${orgKey}::${tgKey}`;
+  if (settingsDocsResponsibleCache.has(cacheKey)) {
+    return settingsDocsResponsibleCache.get(cacheKey) || '';
+  }
+
+  const orgVariants = Array.from(new Set([
+    String(organization || '').trim(),
+    orgKey,
+    encodeURIComponent(String(organization || '').trim()),
+    encodeURIComponent(orgKey),
+  ].filter(Boolean)));
+
+  const urlCandidates = [];
+  orgVariants.forEach((value) => {
+    urlCandidates.push(`/documents/${value}/settingsdocs.json`);
+    urlCandidates.push(`/documents/${value}/settings.json`);
+  });
+
+  for (const url of urlCandidates) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const response = await fetch(url, { credentials: 'include', cache: 'no-store' });
+      if (!response.ok) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const payload = await response.json();
+      const entries = normalizeSettingsDocsEntries(payload);
+      if (!entries.length) {
+        continue;
+      }
+      const match = entries.find((entry) => normalizeIdentifier(entry && entry.telegram) === tgKey);
+      const responsible = normalizeValue(match && match.responsible);
+      if (responsible) {
+        settingsDocsResponsibleCache.set(cacheKey, responsible);
+        return responsible;
+      }
+    } catch (_) {
+      // ignore and try next url
+    }
+  }
+
+  settingsDocsResponsibleCache.set(cacheKey, '');
+  return '';
+}
+
 function getCurrentUserResponsibleFromTask(task) {
   if (!task || typeof task !== 'object') {
     return '';
@@ -16060,9 +16134,10 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     formData.append('telegram_user_id', effectiveTelegramId);
   }
 
+  const responsibleFromSettingsDocs = await getResponsibleFromSettingsDocs(organization, effectiveTelegramId);
   const responsibleFromTask = getCurrentUserResponsibleFromTask(task);
   const responsibleFromAccess = getCurrentUserResponsibleFromAccess();
-  const resolvedResponsible = responsibleFromTask || responsibleFromAccess;
+  const resolvedResponsible = responsibleFromSettingsDocs || responsibleFromTask || responsibleFromAccess;
   if (resolvedResponsible) {
     formData.append('uploadedBy', resolvedResponsible);
     formData.append('uploadedByName', resolvedResponsible);
