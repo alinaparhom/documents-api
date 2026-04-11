@@ -1719,19 +1719,46 @@
       }
     }
 
-    var responsibleRaw = task && (task.responsible || task.responsibles);
-    var responsibleName = '';
-    if (Array.isArray(responsibleRaw)) {
-      responsibleName = responsibleRaw
-        .map(function(item) { return String(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item) || '').trim(); })
-        .filter(Boolean)
-        .join(', ');
-    } else if (responsibleRaw && typeof responsibleRaw === 'object') {
-      responsibleName = String(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value || '').trim();
-    } else {
-      responsibleName = String(responsibleRaw || '').trim();
+    return '';
+  }
+
+  function resolveAuthorizedTelegramUserId() {
+    var webAppUser = window
+      && window.Telegram
+      && window.Telegram.WebApp
+      && window.Telegram.WebApp.initDataUnsafe
+      && window.Telegram.WebApp.initDataUnsafe.user
+      ? window.Telegram.WebApp.initDataUnsafe.user
+      : null;
+    var userId = webAppUser && (webAppUser.id || webAppUser.user_id || webAppUser.telegram_user_id)
+      ? String(webAppUser.id || webAppUser.user_id || webAppUser.telegram_user_id).trim()
+      : '';
+    if (userId) {
+      return userId;
     }
-    return responsibleName;
+    var search = '';
+    try {
+      search = String(window && window.location && window.location.search || '');
+    } catch (error) {
+      search = '';
+    }
+    var params = null;
+    try {
+      params = new URLSearchParams(search || '');
+    } catch (error) {
+      params = null;
+    }
+    if (!params) {
+      return '';
+    }
+    return String(
+      params.get('telegram_user_id')
+      || params.get('telegramId')
+      || params.get('user_id')
+      || params.get('userid')
+      || params.get('id')
+      || ''
+    ).trim();
   }
 
   async function attachGeneratedDocxToTaskResponse(previewPayload, options) {
@@ -1787,6 +1814,10 @@
     formData.append('documentId', documentId);
     formData.append('responsible', responsibleFinal);
     formData.append('uploaderName', uploaderFinal);
+    var telegramUserId = resolveAuthorizedTelegramUserId();
+    if (telegramUserId) {
+      formData.append('telegram_user_id', telegramUserId);
+    }
     formData.append('attachments[]', fileBlob, fileName);
 
     var headers = {};
