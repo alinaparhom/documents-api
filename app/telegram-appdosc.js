@@ -501,24 +501,31 @@ function ensureAiDialogScriptLoaded() {
 
   if (!aiDialogLoader) {
     aiDialogLoader = (async () => {
+      try {
+        await import('./telegram-ai-response-dialog.js');
+        if (typeof window.openAiResponseDialog === 'function') {
+          return window.openAiResponseDialog;
+        }
+      } catch (_) {
+        // fallback ниже
+      }
+
       const scriptSources = [
         '/js/documents/app/telegram-ai-response-dialog.js',
         '/app/telegram-ai-response-dialog.js',
       ];
-      const version = encodeURIComponent(String(window.__RUNTIME_ASSET_VERSION__ || window.__ASSET_VERSION__ || Date.now()));
-      const loadScript = (src) => new Promise((resolve) => {
-        const script = document.createElement('script');
-        script.src = src;
-        script.defer = true;
-        script.dataset.aiDialogScript = 'true';
-        script.onload = () => resolve(true);
-        script.onerror = () => resolve(false);
-        document.head.appendChild(script);
-      });
-
+      const version = encodeURIComponent(String(window.__ASSET_VERSION__ || Date.now()));
       for (let index = 0; index < scriptSources.length; index += 1) {
         const src = `${scriptSources[index]}?v=${version}`;
-        const loaded = await loadScript(src);
+        const loaded = await new Promise((resolve) => {
+          const script = document.createElement('script');
+          script.src = src;
+          script.defer = true;
+          script.dataset.aiDialogScript = 'true';
+          script.onload = () => resolve(true);
+          script.onerror = () => resolve(false);
+          document.head.appendChild(script);
+        });
         if (loaded && typeof window.openAiResponseDialog === 'function') {
           return window.openAiResponseDialog;
         }
@@ -2864,25 +2871,6 @@ function resolveEntryTaskIdFromQuery(params, hashParams) {
 function readQueryContext() {
   const params = new URLSearchParams(window.location.search);
   const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  const initDataFromQuery = params.get('tgWebAppData')
-    || params.get('tgwebappdata')
-    || params.get('init_data')
-    || hashParams.get('tgWebAppData')
-    || hashParams.get('tgwebappdata')
-    || hashParams.get('init_data');
-  if (!state.telegram.initData && initDataFromQuery) {
-    let normalizedInitData = '';
-    try {
-      normalizedInitData = decodeURIComponent(String(initDataFromQuery));
-    } catch (error) {
-      normalizedInitData = String(initDataFromQuery);
-    }
-    normalizedInitData = normalizedInitData.trim();
-    if (normalizedInitData) {
-      state.telegram.initData = normalizedInitData;
-      hydrateTelegramFromInitData(normalizedInitData);
-    }
-  }
   const viewerDebugParam = params.get('viewerDebug');
   const normalizeDebugFlag = (value) => {
     if (value === null || value === undefined) {
@@ -15813,10 +15801,19 @@ function createResponseUploadControls(task, entry, setStatus) {
 
   const textInput = document.createElement('textarea');
   textInput.className = 'appdosc-card__assign-response-text';
-  textInput.placeholder = 'Текстовый ответ к задаче (сохранится как .txt)';
+  textInput.placeholder = 'Ввести текст ответа';
   textInput.maxLength = 12000;
   textInput.rows = 3;
   let editingTextResponse = null;
+
+  const applyAutoHeight = (textarea) => {
+    if (!textarea) {
+      return;
+    }
+    textarea.style.overflow = 'hidden';
+    textarea.style.height = '0px';
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 48)}px`;
+  };
 
   const responseFiles = Array.isArray(task && task.responses) ? task.responses : [];
   const editableTxtCandidates = responseFiles.filter((file) => isTextResponseFile(file) && isResponseOwnedByCurrentUser(file));
@@ -15876,6 +15873,7 @@ function createResponseUploadControls(task, entry, setStatus) {
   textInput.addEventListener('input', () => {
     const length = String(textInput.value || '').length;
     textCounter.textContent = `${length} / 12000`;
+    applyAutoHeight(textInput);
   });
   textInput.dispatchEvent(new Event('input'));
 
@@ -15897,6 +15895,7 @@ function createResponseUploadControls(task, entry, setStatus) {
       meta.textContent = files.length > 1 ? 'Ответы загружены' : 'Ответ загружен';
       textInput.value = '';
       textCounter.textContent = '0 / 12000';
+      applyAutoHeight(textInput);
     } catch (error) {
       sendResponseViewerLog('response_upload_failed', {
         reason: 'client_exception',
@@ -15950,6 +15949,7 @@ function createResponseUploadControls(task, entry, setStatus) {
       textInput.value = '';
       editingTextResponse = null;
       textCounter.textContent = '0 / 12000';
+      applyAutoHeight(textInput);
     } catch (error) {
       meta.textContent = 'Сохранение не удалось';
       if (typeof setStatus === 'function') {
@@ -16285,6 +16285,13 @@ function setupAssignmentControls(card, task) {
     if (comment) {
       commentInput.value = comment;
     }
+    const resizeCommentInput = () => {
+      commentInput.style.overflow = 'hidden';
+      commentInput.style.height = '0px';
+      commentInput.style.height = `${Math.max(commentInput.scrollHeight, 48)}px`;
+    };
+    commentInput.addEventListener('input', resizeCommentInput);
+    requestAnimationFrame(() => requestAnimationFrame(resizeCommentInput));
     info.appendChild(commentInput);
 
     const instructionBlock = document.createElement('div');
@@ -17058,6 +17065,13 @@ function setupSubordinateControls(card, task) {
     if (comment) {
       commentInput.value = comment;
     }
+    const resizeCommentInput = () => {
+      commentInput.style.overflow = 'hidden';
+      commentInput.style.height = '0px';
+      commentInput.style.height = `${Math.max(commentInput.scrollHeight, 48)}px`;
+    };
+    commentInput.addEventListener('input', resizeCommentInput);
+    requestAnimationFrame(() => requestAnimationFrame(resizeCommentInput));
     info.appendChild(commentInput);
 
     const deadline = document.createElement('div');
@@ -17491,4 +17505,4 @@ function setupSubordinateControls(card, task) {
     organization,
     available: assignmentCandidates.length,
   });
-}
+}Error('viewer_open_failed');
