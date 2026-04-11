@@ -1443,8 +1443,8 @@
           organization: safeContext.organization,
           payload: safeContext.payload
         })
-          .then(function() {
-            statusNode.textContent = 'Документ прикреплён к задаче как ответ.';
+          .then(function(result) {
+            statusNode.textContent = 'Документ прикреплён: ' + (result && result.fileName ? result.fileName : 'DOCX-файл') + '.';
             attachBtn.textContent = 'Прикреплено';
           })
           .catch(function(error) {
@@ -1634,7 +1634,6 @@
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
     formData.append('documentId', documentId);
-    formData.append('responseMessage', 'Ответ сформирован автоматически в режиме «Ответ с помощью ИИ».');
     formData.append('attachments[]', fileBlob, fileName);
 
     var headers = {};
@@ -1660,7 +1659,17 @@
     if (!response.ok || !data || data.success !== true) {
       throw new Error((data && (data.error || data.message)) || ('Ошибка прикрепления к задаче (' + response.status + ').'));
     }
-    return { ok: true };
+    try {
+      if (typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('documents:response-attached', {
+          detail: { documentId: documentId, organization: organization, fileName: fileName, payload: data }
+        }));
+      }
+      if (typeof window.loadTasks === 'function') {
+        window.loadTasks(true).catch(function() {});
+      }
+    } catch (notifyError) {}
+    return { ok: true, fileName: fileName, payload: data };
   }
 
   if (document.readyState === 'loading') {

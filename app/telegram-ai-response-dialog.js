@@ -977,7 +977,6 @@
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
     formData.append('documentId', documentId);
-    formData.append('responseMessage', 'Ответ сформирован автоматически в режиме «Ответ с помощью ИИ».');
     formData.append('attachments[]', fileBlob, fileName);
 
     const telegramInitData = normalize(
@@ -1002,7 +1001,14 @@
     if (!response.ok || !payload || payload.success !== true) {
       throw new Error((payload && (payload.error || payload.message)) || `Ошибка прикрепления к задаче (${response.status}).`);
     }
-    return { ok: true };
+    try {
+      if (typeof globalScope.CustomEvent === 'function' && typeof globalScope.dispatchEvent === 'function') {
+        globalScope.dispatchEvent(new CustomEvent('documents:response-attached', {
+          detail: { documentId, organization, fileName, payload },
+        }));
+      }
+    } catch (_) {}
+    return { ok: true, fileName, payload };
   }
 
   async function openGeneratedDocxViaExistingPreview(previewPayload, context = {}) {
@@ -1092,8 +1098,8 @@
         attachBtn.disabled = true;
         attachBtn.textContent = 'Прикрепляем...';
         try {
-          await attachGeneratedDocxToTaskResponse(previewPayload, task);
-          statusNode.textContent = 'Документ прикреплён к задаче как ответ.';
+          const result = await attachGeneratedDocxToTaskResponse(previewPayload, task);
+          statusNode.textContent = `Документ прикреплён: ${normalize(result && result.fileName) || 'DOCX-файл'}.`;
           attachBtn.textContent = 'Прикреплено';
         } catch (error) {
           statusNode.textContent = `Не удалось прикрепить: ${(error && error.message) || 'неизвестная ошибка'}`;
