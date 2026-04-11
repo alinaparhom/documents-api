@@ -843,13 +843,16 @@
       .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
       .tg-ai-generated-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
-      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:hidden;padding:0}
-      .tg-ai-generated-preview__viewport{position:relative;height:100%;overflow:auto;padding:12px;display:flex;justify-content:center;align-items:flex-start}
-      .tg-ai-generated-preview__doc{width:auto;min-height:100%;margin:0 auto;background:rgba(255,255,255,.85);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12);transform-origin:top center;transition:transform .14s ease}
-      .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}
-      .tg-ai-generated-preview__doc .docx{overflow:visible}
-      .tg-ai-generated-preview__doc .docx-wrapper>section{margin:0 auto 18px!important;overflow:visible}
-      .tg-ai-generated-preview__doc .docx-wrapper p,.tg-ai-generated-preview__doc .docx-wrapper td,.tg-ai-generated-preview__doc .docx-wrapper li{overflow-wrap:break-word;word-break:normal}
+      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:radial-gradient(circle at top left,rgba(147,197,253,.20),transparent 35%),linear-gradient(180deg,#dbeafe,#e2e8f0 40%,#cbd5e1);overflow:hidden;padding:0}
+      .tg-ai-generated-preview__viewport{position:relative;height:100%;overflow:auto;padding:14px;display:flex;justify-content:center;align-items:flex-start}
+      .tg-ai-generated-preview__doc{width:min(100%,920px);min-height:100%;margin:0 auto;background:linear-gradient(155deg,rgba(255,255,255,.93),rgba(248,250,252,.9));border-radius:18px;padding:12px;border:1px solid rgba(191,219,254,.8);box-shadow:0 18px 38px rgba(15,23,42,.14);transform-origin:top center;transition:transform .14s ease}
+      .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important;max-width:100%}
+      .tg-ai-generated-preview__doc .docx{overflow:visible;max-width:100%}
+      .tg-ai-generated-preview__doc .docx-wrapper>section{margin:0 auto 18px!important;overflow:hidden;border-radius:6px;box-shadow:0 8px 24px rgba(15,23,42,.10);max-width:100%!important}
+      .tg-ai-generated-preview__doc .docx-wrapper>section:last-child{margin-bottom:4px!important}
+      .tg-ai-generated-preview__doc .docx-wrapper table{max-width:100%!important;table-layout:fixed}
+      .tg-ai-generated-preview__doc .docx-wrapper img{max-width:100%!important;height:auto!important}
+      .tg-ai-generated-preview__doc .docx-wrapper p,.tg-ai-generated-preview__doc .docx-wrapper td,.tg-ai-generated-preview__doc .docx-wrapper li,.tg-ai-generated-preview__doc .docx-wrapper span{overflow-wrap:anywhere;word-break:break-word}
       .tg-ai-generated-preview__frame{display:none;width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}
@@ -887,7 +890,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1189,6 +1192,9 @@
     const previewUrl = normalize(previewPayload.previewUrl);
     const officeSourceUrl = toAbsoluteUrl(previewUrl);
     const task = context && context.task ? context.task : {};
+    const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
+      ? window.__APPDOSC_OPEN_FILES_VIEWER__
+      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     const sourceUrl = previewUrl || blobUrl;
@@ -1334,7 +1340,7 @@
       }
     };
 
-    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
+    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl) || typeof openExternalViewer === 'function';
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
@@ -1344,6 +1350,28 @@
       toggleMenu(false);
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
+        return;
+      }
+      if (typeof openExternalViewer === 'function' && previewUrl) {
+        statusNode.textContent = 'Открываем через системный просмотрщик…';
+        const fileName = normalize(previewPayload.fileName) || 'template-answer.docx';
+        const viewerFile = {
+          name: fileName,
+          originalName: fileName,
+          storedName: fileName,
+          url: previewUrl,
+          resolvedUrl: toAbsoluteUrl(previewUrl),
+          previewUrl,
+          fileUrl: previewUrl,
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        };
+        openExternalViewer([viewerFile], task || {}, { notify: true, hasMultiple: false })
+          .then(() => {
+            statusNode.textContent = 'Документ открыт через системный Office Viewer.';
+          })
+          .catch((error) => {
+            statusNode.textContent = (error && error.message) || 'Не удалось открыть через системный просмотрщик.';
+          });
         return;
       }
       if (loadingNode) loadingNode.style.display = 'none';
