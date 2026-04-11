@@ -1193,9 +1193,6 @@
     const previewUrl = normalize(previewPayload.previewUrl);
     const officeSourceUrl = toAbsoluteUrl(previewUrl);
     const task = context && context.task ? context.task : {};
-    const openExternalViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     const sourceUrl = previewUrl || blobUrl;
@@ -1341,7 +1338,7 @@
       }
     };
 
-    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl) || typeof openExternalViewer === 'function';
+    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
@@ -1351,28 +1348,6 @@
       toggleMenu(false);
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
-        return;
-      }
-      if (typeof openExternalViewer === 'function' && previewUrl) {
-        statusNode.textContent = 'Открываем через системный просмотрщик…';
-        const fileName = normalize(previewPayload.fileName) || 'template-answer.docx';
-        const viewerFile = {
-          name: fileName,
-          originalName: fileName,
-          storedName: fileName,
-          url: previewUrl,
-          resolvedUrl: toAbsoluteUrl(previewUrl),
-          previewUrl,
-          fileUrl: previewUrl,
-          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        };
-        openExternalViewer([viewerFile], task || {}, { notify: true, hasMultiple: false })
-          .then(() => {
-            statusNode.textContent = 'Документ открыт через системный Office Viewer.';
-          })
-          .catch((error) => {
-            statusNode.textContent = (error && error.message) || 'Не удалось открыть через системный просмотрщик.';
-          });
         return;
       }
       if (loadingNode) loadingNode.style.display = 'none';
