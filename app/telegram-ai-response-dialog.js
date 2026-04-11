@@ -1413,15 +1413,46 @@
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
         return;
       }
+      const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
       if (loadingNode) loadingNode.style.display = 'none';
       if (docNode) docNode.style.display = 'none';
       if (viewportNode) viewportNode.style.display = 'none';
-      if (frameNode) frameNode.style.display = '';
-      const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
-      frameNode.onload = () => {
-        statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+      if (frameNode) {
+        frameNode.style.display = '';
+        frameNode.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+      }
+      let loaded = false;
+      let fallbackTimer = 0;
+      const openExternalOffice = () => {
+        const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+        if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
+          try {
+            telegramWebApp.openLink(officeUrl);
+            return true;
+          } catch (_) {}
+        }
+        try {
+          window.open(officeUrl, '_blank', 'noopener');
+          return true;
+        } catch (_) {
+          return false;
+        }
       };
-      frameNode.src = officeUrl;
+      if (frameNode) {
+        frameNode.onload = () => {
+          loaded = true;
+          if (fallbackTimer) clearTimeout(fallbackTimer);
+          statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+        };
+        frameNode.src = officeUrl;
+      }
+      fallbackTimer = setTimeout(() => {
+        if (loaded) return;
+        const opened = openExternalOffice();
+        statusNode.textContent = opened
+          ? 'Office Viewer открыт внешне (встроенный iframe может блокироваться в Telegram).'
+          : 'Office Viewer не загрузился. Попробуйте открыть файл через «Скачать».';
+      }, 6500);
       statusNode.textContent = 'Открываем через Office Viewer…';
     });
 
