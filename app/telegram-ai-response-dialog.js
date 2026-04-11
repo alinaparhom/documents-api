@@ -928,7 +928,124 @@
     throw lastError || new Error('Не удалось сформировать DOCX.');
   }
 
-  async function openGeneratedDocxViaExistingPreview(previewPayload) {
+  function showAttachSuccessToast(message) {
+    if (typeof document === 'undefined') return;
+    let style = document.getElementById('tg-ai-attach-toast-style');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'tg-ai-attach-toast-style';
+      style.textContent = '.tg-ai-attach-toast{position:fixed;left:50%;bottom:calc(12px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:4500;max-width:min(92vw,560px);padding:10px 12px;border-radius:14px;border:1px solid rgba(187,247,208,.95);background:linear-gradient(145deg,rgba(240,253,244,.95),rgba(220,252,231,.92));backdrop-filter:blur(8px);box-shadow:0 12px 28px rgba(15,23,42,.18);color:#14532d;font-size:12px;line-height:1.45;font-weight:700}';
+      document.head.appendChild(style);
+    }
+    const existing = document.querySelector('.tg-ai-attach-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.className = 'tg-ai-attach-toast';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3500);
+  }
+
+  async function resolveGeneratedDocxBlob(previewPayload) {
+    if (previewPayload && previewPayload.blob instanceof Blob) {
+      return previewPayload.blob;
+    }
+    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
+    if (!previewUrl) {
+      throw new Error('Не удалось получить файл документа для прикрепления.');
+    }
+    const response = await fetchWithTimeout(previewUrl, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    }, 30000);
+    if (!response || !response.ok) {
+      throw new Error(`Не удалось скачать документ для прикрепления (${response ? response.status : 0}).`);
+    }
+    const blob = await response.blob();
+    if (!blob || !blob.size) {
+      throw new Error('Получен пустой файл документа.');
+    }
+    return blob;
+  }
+
+  async function attachGeneratedDocxToTaskResponse(previewPayload, task = {}) {
+    const documentId = normalize(task && task.id);
+    const organization = normalize(
+      task && (task.organization || task.organizationName || task.organizationTitle || task.organizationFullName || task.organizationShortName || task.org),
+    );
+    if (!documentId || !organization) {
+      return { ok: false, skipped: true, reason: 'task_context_missing' };
+    }
+    const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    const resolveResponsibleName = () => {
+      const responsibleRaw = task && (task.responsible || task.responsibles);
+      if (Array.isArray(responsibleRaw)) {
+        const list = responsibleRaw
+          .map((item) => normalize(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item)))
+          .filter(Boolean);
+        if (list.length) return list.join(', ');
+      } else if (responsibleRaw && typeof responsibleRaw === 'object') {
+        const fromObject = normalize(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value);
+        if (fromObject) return fromObject;
+      } else {
+        const fromString = normalize(responsibleRaw);
+        if (fromString) return fromString;
+      }
+      return '';
+    };
+    const responsibleName = resolveResponsibleName() || 'Неизвестный';
+    const date = new Date();
+    const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const timeStamp = `${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}`;
+    const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
+    const safeResponsible = responsibleName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
+    const safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
+    const fileName = `${safeResponsible}_${dateStamp}_${timeStamp}_${safeTaskNumber}.docx`;
+    const formData = new FormData();
+    formData.append('action', 'response_upload');
+    formData.append('organization', organization);
+    formData.append('documentId', documentId);
+    formData.append('responsible', responsibleName);
+    formData.append('uploaderName', responsibleName);
+    formData.append('attachments[]', fileBlob, fileName);
+
+    const telegramInitData = normalize(
+      globalScope
+      && globalScope.Telegram
+      && globalScope.Telegram.WebApp
+      && globalScope.Telegram.WebApp.initData,
+    );
+    const headers = {};
+    if (telegramInitData) {
+      headers['X-Telegram-Init-Data'] = telegramInitData;
+    }
+
+    const uploadUrl = `/docs.php?action=response_upload&organization=${encodeURIComponent(organization)}`;
+    const response = await fetchWithTimeout(uploadUrl, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: formData,
+    }, 45000);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.success !== true) {
+      throw new Error((payload && (payload.error || payload.message)) || `Ошибка прикрепления к задаче (${response.status}).`);
+    }
+    try {
+      if (typeof globalScope.CustomEvent === 'function' && typeof globalScope.dispatchEvent === 'function') {
+        globalScope.dispatchEvent(new CustomEvent('documents:response-attached', {
+          detail: { documentId, organization, fileName, payload },
+        }));
+      }
+      if (globalScope && typeof globalScope.__APPDOSC_FORCE_REFRESH_TASKS__ === 'function') {
+        Promise.resolve(globalScope.__APPDOSC_FORCE_REFRESH_TASKS__()).catch(() => {});
+      }
+    } catch (_) {}
+    return { ok: true, fileName, payload };
+  }
+
+  async function openGeneratedDocxViaExistingPreview(previewPayload, context = {}) {
     if (!previewPayload || (typeof previewPayload !== 'object')) throw new Error('empty_preview_payload');
     const existing = document.querySelector('.tg-ai-generated-preview');
     if (existing) existing.remove();
@@ -942,6 +1059,7 @@
             <div class="tg-ai-generated-preview__hint">Проверьте сгенерированный документ</div>
           </div>
           <div class="tg-ai-generated-preview__actions">
+            <button type="button" class="tg-ai-generated-preview__btn" data-preview-attach>Прикрепить к задаче</button>
             <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
             <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
           </div>
@@ -970,9 +1088,11 @@
     const loadingNode = overlay.querySelector('[data-preview-loading]');
     const loadingSubNode = overlay.querySelector('[data-loading-sub]');
     const downloadBtn = overlay.querySelector('[data-preview-download]');
+    const attachBtn = overlay.querySelector('[data-preview-attach]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
+    const task = context && context.task ? context.task : {};
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     const sourceUrl = previewUrl || blobUrl;
@@ -1000,6 +1120,30 @@
       a.click();
       document.body.removeChild(a);
     });
+    if (attachBtn) {
+      const taskReady = Boolean(normalize(task && task.id));
+      if (!taskReady) {
+        attachBtn.disabled = true;
+        attachBtn.textContent = 'Нет задачи';
+      }
+      attachBtn.addEventListener('click', async () => {
+        if (attachBtn.disabled) return;
+        const prevText = attachBtn.textContent;
+        attachBtn.disabled = true;
+        attachBtn.textContent = 'Прикрепляем...';
+        try {
+          const result = await attachGeneratedDocxToTaskResponse(previewPayload, task);
+          const taskNo = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.id));
+          statusNode.textContent = `Документ прикреплён: ${normalize(result && result.fileName) || 'DOCX-файл'}.`;
+          showAttachSuccessToast(`✅ Задача №${taskNo || '—'} · файл: ${normalize(result && result.fileName) || 'DOCX-файл'}`);
+          attachBtn.textContent = 'Прикреплено';
+        } catch (error) {
+          statusNode.textContent = `Не удалось прикрепить: ${(error && error.message) || 'неизвестная ошибка'}`;
+          attachBtn.disabled = false;
+          attachBtn.textContent = prevText;
+        }
+      });
+    }
 
     if (!sourceUrl) {
       statusNode.textContent = 'Ошибка: не получена ссылка на документ.';

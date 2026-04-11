@@ -725,6 +725,57 @@
     };
   }
 
+  function showAttachSuccessToast(message) {
+    if (typeof document === 'undefined') return;
+    var style = document.getElementById('docx-attach-toast-style');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'docx-attach-toast-style';
+      style.textContent = '.docx-attach-toast{position:fixed;left:50%;bottom:calc(12px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:4700;max-width:min(92vw,560px);padding:10px 12px;border-radius:14px;border:1px solid rgba(187,247,208,.95);background:linear-gradient(145deg,rgba(240,253,244,.95),rgba(220,252,231,.92));backdrop-filter:blur(8px);box-shadow:0 12px 28px rgba(15,23,42,.18);color:#14532d;font-size:12px;line-height:1.45;font-weight:700}';
+      document.head.appendChild(style);
+    }
+    var existing = document.querySelector('.docx-attach-toast');
+    if (existing) existing.remove();
+    var toast = document.createElement('div');
+    toast.className = 'docx-attach-toast';
+    toast.textContent = String(message || '');
+    document.body.appendChild(toast);
+    setTimeout(function() { toast.remove(); }, 3500);
+  }
+
+  function resolveTaskContext(options) {
+    var safeOptions = options && typeof options === 'object' ? options : {};
+    var payload = safeOptions.payload && typeof safeOptions.payload === 'object' ? safeOptions.payload : {};
+    var context = payload.context && typeof payload.context === 'object' ? payload.context : {};
+    var documentData = payload.documentData && typeof payload.documentData === 'object' ? payload.documentData : {};
+    var directTask = safeOptions.task && typeof safeOptions.task === 'object'
+      ? safeOptions.task
+      : (payload.task && typeof payload.task === 'object' ? payload.task : (context.task && typeof context.task === 'object' ? context.task : null));
+    if (directTask) {
+      return directTask;
+    }
+    var taskId = String(
+      safeOptions.documentId
+      || safeOptions.taskId
+      || payload.documentId
+      || payload.taskId
+      || context.documentId
+      || context.taskId
+      || documentData.id
+      || ''
+    ).trim();
+    if (!taskId) {
+      return null;
+    }
+    return {
+      id: taskId,
+      entryNumber: String(documentData.entryNumber || documentData.number || context.entryNumber || context.number || '').trim(),
+      responsible: documentData.responsible || context.responsible || payload.responsible || '',
+      organization: String(safeOptions.organization || payload.organization || context.organization || documentData.organization || '').trim(),
+      organizationName: String(documentData.organizationName || '').trim()
+    };
+  }
+
   function openDocumentsVipAiPaidModal(config) {
     ensureVipAiModalStyles();
     var options = config && typeof config === 'object' ? config : {};
@@ -791,8 +842,15 @@
     closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
     if (templateButton) {
       templateButton.addEventListener('click', function() {
-        openTemplateAnswerEditor(templateButton, {
+        var taskContext = resolveTaskContext({
+          task: payload && payload.task ? payload.task : null,
+          payload: payload,
           organization: organizationSlug
+        });
+        openTemplateAnswerEditor(templateButton, {
+          organization: organizationSlug,
+          task: taskContext,
+          payload: payload
         });
       });
     }
@@ -1211,7 +1269,7 @@
         .then(function(previewPayload) {
           if (!previewPayload) throw new Error('empty_preview_payload');
           closeEditor();
-          openDocxRenderPreviewPage(previewPayload);
+          openDocxRenderPreviewPage(previewPayload, options);
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -1358,14 +1416,14 @@
     }
   }
 
-  async function openDocxRenderPreviewPage(previewPayload) {
+  async function openDocxRenderPreviewPage(previewPayload, context) {
     ensureTemplatePreviewStyles();
     if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
     var existing = document.querySelector('.docx-template-preview');
     if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-attach>Прикрепить к задаче</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
     document.body.appendChild(overlay);
     var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -1375,10 +1433,12 @@
     var loadingSubNode = overlay.querySelector('[data-loading-sub]');
     var loadingSteps = Array.prototype.slice.call(overlay.querySelectorAll('[data-step]'));
     var downloadBtn = overlay.querySelector('[data-preview-download]');
+    var attachBtn = overlay.querySelector('[data-preview-attach]');
     var localBtn = overlay.querySelector('[data-preview-local]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var previewUrl = String(previewPayload.previewUrl || '').trim();
     var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
+    var safeContext = context && typeof context === 'object' ? context : {};
     var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     var blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     var sourceUrl = previewUrl || blobUrl;
@@ -1409,6 +1469,36 @@
       a.click();
       document.body.removeChild(a);
     });
+    var resolvedTask = resolveTaskContext(safeContext);
+    if (attachBtn) {
+      var hasTaskId = Boolean(resolvedTask && resolvedTask.id);
+      if (!hasTaskId) {
+        attachBtn.disabled = true;
+        attachBtn.textContent = 'Нет задачи';
+      }
+      attachBtn.addEventListener('click', function() {
+        if (attachBtn.disabled) return;
+        var oldText = attachBtn.textContent;
+        attachBtn.disabled = true;
+        attachBtn.textContent = 'Прикрепляем...';
+        attachGeneratedDocxToTaskResponse(previewPayload, {
+          task: resolvedTask,
+          organization: safeContext.organization,
+          payload: safeContext.payload
+        })
+          .then(function(result) {
+            var taskNo = String(resolvedTask && (resolvedTask.entryNumber || resolvedTask.taskNumber || resolvedTask.number || resolvedTask.id) || '').trim();
+            statusNode.textContent = 'Документ прикреплён: ' + (result && result.fileName ? result.fileName : 'DOCX-файл') + '.';
+            showAttachSuccessToast('✅ Задача №' + (taskNo || '—') + ' · файл: ' + (result && result.fileName ? result.fileName : 'DOCX-файл'));
+            attachBtn.textContent = 'Прикреплено';
+          })
+          .catch(function(error) {
+            statusNode.textContent = 'Не удалось прикрепить: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+            attachBtn.disabled = false;
+            attachBtn.textContent = oldText;
+          });
+      });
+    }
     localBtn.addEventListener('click', async function() {
       localBtn.disabled = true;
       var previousText = localBtn.textContent;
@@ -1516,6 +1606,119 @@
       }
     }
     throw lastError || new Error('Не удалось сформировать DOCX.');
+  }
+
+  async function resolveGeneratedDocxBlob(previewPayload) {
+    if (previewPayload && previewPayload.blob instanceof Blob) {
+      return previewPayload.blob;
+    }
+    var previewUrl = String(previewPayload && previewPayload.previewUrl || '').trim();
+    if (!previewUrl) {
+      throw new Error('Не удалось получить файл документа для прикрепления.');
+    }
+    var response = await fetch(previewUrl, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    if (!response || !response.ok) {
+      throw new Error('Не удалось скачать документ для прикрепления (' + (response ? response.status : 0) + ').');
+    }
+    var blob = await response.blob();
+    if (!blob || !blob.size) {
+      throw new Error('Получен пустой файл документа.');
+    }
+    return blob;
+  }
+
+  async function attachGeneratedDocxToTaskResponse(previewPayload, options) {
+    var safeOptions = options && typeof options === 'object' ? options : {};
+    var task = resolveTaskContext(safeOptions) || {};
+    var documentId = String(task.id || '').trim();
+    var organization = String(
+      task.organization
+      || task.organizationName
+      || task.organizationTitle
+      || task.organizationFullName
+      || task.organizationShortName
+      || task.org
+      || safeOptions.organization
+      || ''
+    ).trim();
+    if (!documentId || !organization) {
+      return { ok: false, skipped: true, reason: 'task_context_missing' };
+    }
+    var fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    var responsibleRaw = task && (task.responsible || task.responsibles);
+    var responsibleName = '';
+    if (Array.isArray(responsibleRaw)) {
+      responsibleName = responsibleRaw
+        .map(function(item) { return String(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item) || '').trim(); })
+        .filter(Boolean)
+        .join(', ');
+    } else if (responsibleRaw && typeof responsibleRaw === 'object') {
+      responsibleName = String(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value || '').trim();
+    } else {
+      responsibleName = String(responsibleRaw || '').trim();
+    }
+    var responsibleFinal = String(responsibleName || 'Неизвестный').trim();
+    var now = new Date();
+    var dateStamp = String(now.getFullYear()) + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    var timeStamp = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0');
+    var taskNumberRaw = String(
+      task.entryNumber
+      || task.taskNumber
+      || task.number
+      || task.regNumber
+      || task.documentNumber
+      || task.id
+      || ''
+    ).trim();
+    var safeAuthor = responsibleFinal.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
+    var safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
+    var fileName = safeAuthor + '_' + dateStamp + '_' + timeStamp + '_' + safeTaskNumber + '.docx';
+    var formData = new FormData();
+    formData.append('action', 'response_upload');
+    formData.append('organization', organization);
+    formData.append('documentId', documentId);
+    formData.append('responsible', responsibleFinal);
+    formData.append('uploaderName', responsibleFinal);
+    formData.append('attachments[]', fileBlob, fileName);
+
+    var headers = {};
+    var initData = String(
+      window
+      && window.Telegram
+      && window.Telegram.WebApp
+      && window.Telegram.WebApp.initData
+        ? window.Telegram.WebApp.initData
+        : ''
+    ).trim();
+    if (initData) {
+      headers['X-Telegram-Init-Data'] = initData;
+    }
+
+    var response = await fetch('/docs.php?action=response_upload&organization=' + encodeURIComponent(organization), {
+      method: 'POST',
+      credentials: 'include',
+      headers: headers,
+      body: formData
+    });
+    var data = await response.json().catch(function() { return null; });
+    if (!response.ok || !data || data.success !== true) {
+      throw new Error((data && (data.error || data.message)) || ('Ошибка прикрепления к задаче (' + response.status + ').'));
+    }
+    try {
+      if (typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('documents:response-attached', {
+          detail: { documentId: documentId, organization: organization, fileName: fileName, payload: data }
+        }));
+      }
+      if (typeof window.__APPDOSC_FORCE_REFRESH_TASKS__ === 'function') {
+        Promise.resolve(window.__APPDOSC_FORCE_REFRESH_TASKS__()).catch(function() {});
+      }
+    } catch (notifyError) {}
+    return { ok: true, fileName: fileName, payload: data };
   }
 
   if (document.readyState === 'loading') {
