@@ -15732,6 +15732,45 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   return data;
 }
 
+function bindRealtimeResponseAttachSync() {
+  if (typeof window === 'undefined') return;
+  if (window.__appdoscRealtimeAttachBound) return;
+  window.__appdoscRealtimeAttachBound = true;
+  window.addEventListener('documents:response-attached', async (event) => {
+    const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+    const documentId = normalizeValue(detail.documentId || detail.taskId);
+    if (!documentId) return;
+
+    const responseFileName = normalizeValue(detail.fileName);
+    const responseEntry = responseFileName
+      ? {
+        originalName: responseFileName,
+        storedName: responseFileName,
+        uploadedAt: new Date().toISOString(),
+      }
+      : null;
+    if (responseEntry && Array.isArray(state.tasks)) {
+      state.tasks.forEach((task) => {
+        if (!task || normalizeValue(task.id) !== documentId) return;
+        if (!Array.isArray(task.responses)) {
+          task.responses = [];
+        }
+        const exists = task.responses.some((item) => normalizeValue(item && item.originalName) === responseFileName);
+        if (!exists) {
+          task.responses.unshift(responseEntry);
+        }
+      });
+    }
+
+    if (typeof loadTasks === 'function') {
+      try {
+        await loadTasks(true);
+      } catch (_) {}
+    }
+  });
+}
+bindRealtimeResponseAttachSync();
+
 async function updateTaskResponseText(task, storedName, textValue, setStatus) {
   if (!task || typeof task !== 'object') {
     throw new Error('Не удалось определить задачу.');
