@@ -928,6 +928,71 @@
     throw lastError || new Error('Не удалось сформировать DOCX.');
   }
 
+  async function resolveGeneratedDocxBlob(previewPayload) {
+    if (previewPayload && previewPayload.blob instanceof Blob) {
+      return previewPayload.blob;
+    }
+    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
+    if (!previewUrl) {
+      throw new Error('Не удалось получить файл документа для прикрепления.');
+    }
+    const response = await fetchWithTimeout(previewUrl, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    }, 30000);
+    if (!response || !response.ok) {
+      throw new Error(`Не удалось скачать документ для прикрепления (${response ? response.status : 0}).`);
+    }
+    const blob = await response.blob();
+    if (!blob || !blob.size) {
+      throw new Error('Получен пустой файл документа.');
+    }
+    return blob;
+  }
+
+  async function attachGeneratedDocxToTaskResponse(previewPayload, task = {}) {
+    const documentId = normalize(task && task.id);
+    const organization = normalize(
+      task && (task.organization || task.organizationName || task.organizationTitle || task.organizationFullName || task.organizationShortName || task.org),
+    );
+    if (!documentId || !organization) {
+      return { ok: false, skipped: true, reason: 'task_context_missing' };
+    }
+    const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    const fileName = normalize(previewPayload && previewPayload.fileName) || `ai-response-${documentId}.docx`;
+    const formData = new FormData();
+    formData.append('action', 'response_upload');
+    formData.append('organization', organization);
+    formData.append('documentId', documentId);
+    formData.append('responseMessage', 'Ответ сформирован автоматически в режиме «Ответ с помощью ИИ».');
+    formData.append('attachments[]', fileBlob, fileName);
+
+    const telegramInitData = normalize(
+      globalScope
+      && globalScope.Telegram
+      && globalScope.Telegram.WebApp
+      && globalScope.Telegram.WebApp.initData,
+    );
+    const headers = {};
+    if (telegramInitData) {
+      headers['X-Telegram-Init-Data'] = telegramInitData;
+    }
+
+    const uploadUrl = `/docs.php?action=response_upload&organization=${encodeURIComponent(organization)}`;
+    const response = await fetchWithTimeout(uploadUrl, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: formData,
+    }, 45000);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.success !== true) {
+      throw new Error((payload && (payload.error || payload.message)) || `Ошибка прикрепления к задаче (${response.status}).`);
+    }
+    return { ok: true };
+  }
+
   async function openGeneratedDocxViaExistingPreview(previewPayload) {
     if (!previewPayload || (typeof previewPayload !== 'object')) throw new Error('empty_preview_payload');
     const existing = document.querySelector('.tg-ai-generated-preview');
@@ -1155,6 +1220,17 @@
           templatePath: templateConfig.templatePath,
           templateFileName: templateConfig.templateFileName,
         });
+        if (onStatus) onStatus('Прикрепляем документ к задаче...');
+        try {
+          const attachResult = await attachGeneratedDocxToTaskResponse(previewPayload, task);
+          if (onStatus && attachResult && attachResult.ok) {
+            onStatus('Документ прикреплён к задаче. Открываем предпросмотр...');
+          }
+        } catch (attachError) {
+          if (onStatus) {
+            onStatus(`Документ создан, но не прикреплён к задаче: ${(attachError && attachError.message) || 'неизвестная ошибка'}`);
+          }
+        }
         close();
         if (onStatus) onStatus('Открываем результат в предпросмотре...');
         await openGeneratedDocxViaExistingPreview(previewPayload, { task });

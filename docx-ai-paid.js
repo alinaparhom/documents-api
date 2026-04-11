@@ -791,7 +791,8 @@
     if (templateButton) {
       templateButton.addEventListener('click', function() {
         openTemplateAnswerEditor(templateButton, {
-          organization: organizationSlug
+          organization: organizationSlug,
+          task: payload && payload.task ? payload.task : null
         });
       });
     }
@@ -1209,8 +1210,13 @@
       })
         .then(function(previewPayload) {
           if (!previewPayload) throw new Error('empty_preview_payload');
-          closeEditor();
-          openDocxRenderPreviewPage(previewPayload);
+          return attachGeneratedDocxToTaskResponse(previewPayload, options).catch(function(attachError) {
+            renderError('Документ создан, но не прикреплён к задаче: ' + (attachError && attachError.message ? attachError.message : 'неизвестная ошибка'));
+            return null;
+          }).then(function() {
+            closeEditor();
+            openDocxRenderPreviewPage(previewPayload);
+          });
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -1492,6 +1498,81 @@
       }
     }
     throw lastError || new Error('Не удалось сформировать DOCX.');
+  }
+
+  async function resolveGeneratedDocxBlob(previewPayload) {
+    if (previewPayload && previewPayload.blob instanceof Blob) {
+      return previewPayload.blob;
+    }
+    var previewUrl = String(previewPayload && previewPayload.previewUrl || '').trim();
+    if (!previewUrl) {
+      throw new Error('Не удалось получить файл документа для прикрепления.');
+    }
+    var response = await fetch(previewUrl, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    if (!response || !response.ok) {
+      throw new Error('Не удалось скачать документ для прикрепления (' + (response ? response.status : 0) + ').');
+    }
+    var blob = await response.blob();
+    if (!blob || !blob.size) {
+      throw new Error('Получен пустой файл документа.');
+    }
+    return blob;
+  }
+
+  async function attachGeneratedDocxToTaskResponse(previewPayload, options) {
+    var safeOptions = options && typeof options === 'object' ? options : {};
+    var task = safeOptions.task && typeof safeOptions.task === 'object' ? safeOptions.task : {};
+    var documentId = String(task.id || '').trim();
+    var organization = String(
+      task.organization
+      || task.organizationName
+      || task.organizationTitle
+      || task.organizationFullName
+      || task.organizationShortName
+      || task.org
+      || safeOptions.organization
+      || ''
+    ).trim();
+    if (!documentId || !organization) {
+      return { ok: false, skipped: true, reason: 'task_context_missing' };
+    }
+    var fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    var fileName = String(previewPayload && previewPayload.fileName || '').trim() || ('ai-response-' + documentId + '.docx');
+    var formData = new FormData();
+    formData.append('action', 'response_upload');
+    formData.append('organization', organization);
+    formData.append('documentId', documentId);
+    formData.append('responseMessage', 'Ответ сформирован автоматически в режиме «Ответ с помощью ИИ».');
+    formData.append('attachments[]', fileBlob, fileName);
+
+    var headers = {};
+    var initData = String(
+      window
+      && window.Telegram
+      && window.Telegram.WebApp
+      && window.Telegram.WebApp.initData
+        ? window.Telegram.WebApp.initData
+        : ''
+    ).trim();
+    if (initData) {
+      headers['X-Telegram-Init-Data'] = initData;
+    }
+
+    var response = await fetch('/docs.php?action=response_upload&organization=' + encodeURIComponent(organization), {
+      method: 'POST',
+      credentials: 'include',
+      headers: headers,
+      body: formData
+    });
+    var data = await response.json().catch(function() { return null; });
+    if (!response.ok || !data || data.success !== true) {
+      throw new Error((data && (data.error || data.message)) || ('Ошибка прикрепления к задаче (' + response.status + ').'));
+    }
+    return { ok: true };
   }
 
   if (document.readyState === 'loading') {
