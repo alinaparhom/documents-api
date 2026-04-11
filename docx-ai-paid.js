@@ -1137,6 +1137,7 @@
     var style = document.createElement('style');
     style.id = 'docx-template-preview-style';
     style.textContent = '.docx-template-preview{position:fixed;inset:0;z-index:4400;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}.docx-template-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.7);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 24px 52px rgba(15,23,42,.32)}.docx-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}.docx-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}.docx-template-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.docx-template-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}.docx-template-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}.docx-template-preview__btn[disabled]{opacity:.62;cursor:not-allowed}.docx-template-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}.docx-template-preview__doc{max-width:920px;height:100%;margin:0 auto;background:rgba(255,255,255,.82);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12)}.docx-template-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}.docx-template-preview__doc .docx{max-width:100%;overflow:auto}.docx-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}.docx-template-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:18px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}.docx-template-preview__loading-card{width:min(500px,95%);border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.85);backdrop-filter:blur(8px);border-radius:18px;padding:15px;box-shadow:0 18px 32px rgba(15,23,42,.12);display:grid;gap:10px}.docx-template-preview__loading-title{font-size:14px;font-weight:800;color:#0f172a}.docx-template-preview__loading-sub{font-size:12px;color:#475569}.docx-template-preview__bar{height:8px;border-radius:999px;background:rgba(191,219,254,.45);overflow:hidden}.docx-template-preview__bar::after{content:\"\";display:block;height:100%;width:36%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#38bdf8);animation:docx-preview-progress 1.4s ease-in-out infinite}.docx-template-preview__steps{display:grid;gap:5px}.docx-template-preview__step{font-size:12px;color:#334155;display:flex;align-items:center;gap:7px}.docx-template-preview__step-dot{width:8px;height:8px;border-radius:50%;background:rgba(148,163,184,.7)}.docx-template-preview__step--active .docx-template-preview__step-dot{background:#2563eb;box-shadow:0 0 0 6px rgba(37,99,235,.16)}.docx-template-preview__step--done .docx-template-preview__step-dot{background:#16a34a}.docx-template-preview__spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,.22);border-top-color:#2563eb;animation:docx-preview-spin .8s linear infinite;display:inline-block;vertical-align:middle;margin-right:6px}@keyframes docx-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}@keyframes docx-preview-spin{to{transform:rotate(360deg)}}@media (max-width:768px){.docx-template-preview__head{padding:10px}.docx-template-preview__actions{width:100%}.docx-template-preview__btn{flex:1;min-width:0;padding:8px 10px}.docx-template-preview__body{padding:10px}.docx-template-preview__doc{border-radius:12px;padding:6px}.docx-template-preview__loading-card{padding:13px}}';
+    style.textContent += '.docx-template-preview__body{background:linear-gradient(180deg,#dbeafe,#e2e8f0);padding:14px}.docx-template-preview__doc{width:min(100%,980px);height:auto;min-height:100%;padding:14px;border-radius:20px;background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(248,250,252,.9));overflow:auto}.docx-template-preview__doc .docx-wrapper{display:flex;justify-content:center;padding:0!important;overflow:auto}.docx-template-preview__doc .docx{margin:0 auto!important;max-width:100%!important;min-width:0!important;overflow:visible!important}.docx-template-preview__doc .docx *{max-width:100%;word-wrap:break-word;overflow-wrap:anywhere;box-sizing:border-box}.docx-template-preview__doc section.docx{background:#fff!important;box-shadow:0 16px 34px rgba(15,23,42,.12)!important;border:1px solid rgba(226,232,240,.95)!important;border-radius:6px;overflow:hidden}.docx-template-preview__doc table{width:100%!important;table-layout:fixed}.docx-template-preview__doc td,.docx-template-preview__doc th{word-break:break-word}.docx-template-preview__status{font-size:13px;line-height:1.4}.docx-template-preview__head{backdrop-filter:blur(8px);background:rgba(255,255,255,.72)}@media (max-width:768px){.docx-template-preview__body{padding:8px}.docx-template-preview__doc{padding:8px;border-radius:14px}.docx-template-preview__doc section.docx{transform-origin:top center;max-width:100%!important}}';
     document.head.appendChild(style);
   }
 
@@ -1360,8 +1361,8 @@
           renderFooters: true,
           renderFootnotes: true,
           useBase64URL: true,
-          ignoreWidth: true,
-          ignoreHeight: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
           ignoreFonts: true,
           experimental: false,
           debug: false
@@ -1385,6 +1386,23 @@
       return new URL(raw, window.location.origin).toString();
     } catch (error) {
       return raw;
+    }
+  }
+
+  function isLikelyPublicOfficeUrl(value) {
+    var absolute = toAbsoluteUrl(value);
+    if (!/^https:\/\//i.test(absolute)) return false;
+    try {
+      var parsed = new URL(absolute);
+      var host = String(parsed.hostname || '').toLowerCase();
+      if (!host) return false;
+      if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local')) return false;
+      if (/^(10|127)\./.test(host)) return false;
+      if (/^192\.168\./.test(host)) return false;
+      if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)) return false;
+      return true;
+    } catch (error) {
+      return false;
     }
   }
 
@@ -1439,7 +1457,12 @@
     var officeBtn = overlay.querySelector('[data-preview-office]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var previewUrl = String(previewPayload.previewUrl || '').trim();
-    var officeSourceUrl = toAbsoluteUrl(previewUrl);
+    var officeSourceUrl = toAbsoluteUrl(
+      previewPayload.officeUrl ||
+      previewPayload.publicUrl ||
+      previewPayload.viewerUrl ||
+      previewUrl
+    );
     var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
     var safeContext = context && typeof context === 'object' ? context : {};
     var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
@@ -1531,8 +1554,8 @@
           renderFooters: true,
           renderFootnotes: true,
           useBase64URL: true,
-          ignoreWidth: true,
-          ignoreHeight: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
           ignoreFonts: true
         });
         if (loadingNode) loadingNode.style.display = 'none';
@@ -1547,14 +1570,14 @@
     }
 
     localBtn.addEventListener('click', showLocalPreview);
-    var canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
+    var canUseOfficeViewer = isLikelyPublicOfficeUrl(officeSourceUrl);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
-      officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
+      officeBtn.title = 'Office Viewer доступен только по публичной HTTPS-ссылке без авторизации';
     }
     officeBtn.addEventListener('click', function() {
       if (!canUseOfficeViewer) {
-        statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
+        statusNode.textContent = 'Office Viewer недоступен: нужна публичная HTTPS-ссылка без авторизации.';
         return;
       }
       if (docNode) docNode.style.display = 'none';
@@ -1630,8 +1653,10 @@
           var payload = await response.json().catch(function() { return null; });
           var url = String(payload && payload.url || '').trim();
           if (payload && payload.ok && url) {
+            var officeUrl = String((payload && (payload.officeUrl || payload.publicUrl || payload.viewerUrl)) || '').trim();
             return {
               previewUrl: toAbsoluteUrl(url),
+              officeUrl: officeUrl ? toAbsoluteUrl(officeUrl) : '',
               fileName: String(payload.fileName || 'answer.docx').trim()
             };
           }
