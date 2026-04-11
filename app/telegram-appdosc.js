@@ -7851,9 +7851,95 @@ function updateViewerDeleteState(file) {
   elements.viewerDeleteResponse.setAttribute('aria-disabled', canDelete ? 'false' : 'true');
 }
 
+function findResponsibleNameInAccessByFile(file) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = new Set();
+  const nameCandidates = new Set();
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.add(normalized);
+    }
+  };
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      nameCandidates.add(normalized);
+    }
+  };
+
+  pushId(file.uploadedById);
+  pushId(file.uploadedByTelegram);
+  pushId(file.uploadedByLogin);
+  pushId(file.uploadedBy);
+  pushName(file.uploadedByName);
+  pushName(file.uploadedBy);
+
+  const uploadedByKey = normalizeValue(file.uploadedByKey);
+  if (uploadedByKey) {
+    if (uploadedByKey.startsWith('id:')) {
+      pushId(uploadedByKey.slice(3));
+    } else if (uploadedByKey.startsWith('name:')) {
+      pushName(uploadedByKey.slice(5));
+    } else {
+      pushId(uploadedByKey);
+      pushName(uploadedByKey);
+    }
+  }
+
+  const ids = Array.from(idCandidates);
+  const names = Array.from(nameCandidates);
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
 function resolveViewerFileOwnerLabel(file) {
   if (!file || typeof file !== 'object' || !file.isResponse) {
     return '';
+  }
+
+  const mappedResponsible = findResponsibleNameInAccessByFile(file);
+  if (mappedResponsible) {
+    return mappedResponsible;
   }
 
   const byName = normalizeValue(file.uploadedBy);
@@ -15257,7 +15343,7 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       isResponse: true,
       storedName: normalizeValue(file.storedName),
       uploadedByKey: normalizeValue(file.uploadedByKey),
-      uploadedBy: normalizeValue(file.uploadedBy),
+      uploadedBy: findResponsibleNameInAccessByFile(file) || normalizeValue(file.uploadedBy),
     });
   });
 
