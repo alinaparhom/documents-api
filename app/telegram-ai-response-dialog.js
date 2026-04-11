@@ -960,7 +960,9 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
-    const fileName = normalize(previewPayload && previewPayload.fileName) || `ai-response-${documentId}.docx`;
+    const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
+    const safeTaskNumber = taskNumberRaw.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || documentId;
+    const fileName = `otvet-po-zadache-${safeTaskNumber}.docx`;
     const formData = new FormData();
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
@@ -993,7 +995,7 @@
     return { ok: true };
   }
 
-  async function openGeneratedDocxViaExistingPreview(previewPayload) {
+  async function openGeneratedDocxViaExistingPreview(previewPayload, context = {}) {
     if (!previewPayload || (typeof previewPayload !== 'object')) throw new Error('empty_preview_payload');
     const existing = document.querySelector('.tg-ai-generated-preview');
     if (existing) existing.remove();
@@ -1007,6 +1009,7 @@
             <div class="tg-ai-generated-preview__hint">Проверьте сгенерированный документ</div>
           </div>
           <div class="tg-ai-generated-preview__actions">
+            <button type="button" class="tg-ai-generated-preview__btn" data-preview-attach>Прикрепить к задаче</button>
             <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
             <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
           </div>
@@ -1035,9 +1038,11 @@
     const loadingNode = overlay.querySelector('[data-preview-loading]');
     const loadingSubNode = overlay.querySelector('[data-loading-sub]');
     const downloadBtn = overlay.querySelector('[data-preview-download]');
+    const attachBtn = overlay.querySelector('[data-preview-attach]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
+    const task = context && context.task ? context.task : {};
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     const sourceUrl = previewUrl || blobUrl;
@@ -1065,6 +1070,28 @@
       a.click();
       document.body.removeChild(a);
     });
+    if (attachBtn) {
+      const taskReady = Boolean(normalize(task && task.id));
+      if (!taskReady) {
+        attachBtn.disabled = true;
+        attachBtn.textContent = 'Нет задачи';
+      }
+      attachBtn.addEventListener('click', async () => {
+        if (attachBtn.disabled) return;
+        const prevText = attachBtn.textContent;
+        attachBtn.disabled = true;
+        attachBtn.textContent = 'Прикрепляем...';
+        try {
+          await attachGeneratedDocxToTaskResponse(previewPayload, task);
+          statusNode.textContent = 'Документ прикреплён к задаче как ответ.';
+          attachBtn.textContent = 'Прикреплено';
+        } catch (error) {
+          statusNode.textContent = `Не удалось прикрепить: ${(error && error.message) || 'неизвестная ошибка'}`;
+          attachBtn.disabled = false;
+          attachBtn.textContent = prevText;
+        }
+      });
+    }
 
     if (!sourceUrl) {
       statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
@@ -1220,17 +1247,6 @@
           templatePath: templateConfig.templatePath,
           templateFileName: templateConfig.templateFileName,
         });
-        if (onStatus) onStatus('Прикрепляем документ к задаче...');
-        try {
-          const attachResult = await attachGeneratedDocxToTaskResponse(previewPayload, task);
-          if (onStatus && attachResult && attachResult.ok) {
-            onStatus('Документ прикреплён к задаче. Открываем предпросмотр...');
-          }
-        } catch (attachError) {
-          if (onStatus) {
-            onStatus(`Документ создан, но не прикреплён к задаче: ${(attachError && attachError.message) || 'неизвестная ошибка'}`);
-          }
-        }
         close();
         if (onStatus) onStatus('Открываем результат в предпросмотре...');
         await openGeneratedDocxViaExistingPreview(previewPayload, { task });

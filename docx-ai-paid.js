@@ -1210,13 +1210,8 @@
       })
         .then(function(previewPayload) {
           if (!previewPayload) throw new Error('empty_preview_payload');
-          return attachGeneratedDocxToTaskResponse(previewPayload, options).catch(function(attachError) {
-            renderError('Документ создан, но не прикреплён к задаче: ' + (attachError && attachError.message ? attachError.message : 'неизвестная ошибка'));
-            return null;
-          }).then(function() {
-            closeEditor();
-            openDocxRenderPreviewPage(previewPayload);
-          });
+          closeEditor();
+          openDocxRenderPreviewPage(previewPayload, options);
         })
         .catch(function(error) {
           renderError('Не удалось создать превью: ' + (error && error.message ? error.message : 'неизвестная ошибка'));
@@ -1340,14 +1335,14 @@
     }
   }
 
-  async function openDocxRenderPreviewPage(previewPayload) {
+  async function openDocxRenderPreviewPage(previewPayload, context) {
     ensureTemplatePreviewStyles();
     if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
     var existing = document.querySelector('.docx-template-preview');
     if (existing) existing.remove();
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-preview';
-    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
+    overlay.innerHTML = '<div class="docx-template-preview__card"><div class="docx-template-preview__head"><div><div class="docx-template-preview__title">Предварительный просмотр</div><div class="docx-template-preview__hint">Документ открыт через Office Web Viewer</div></div><div class="docx-template-preview__actions"><button type="button" class="docx-template-preview__btn" data-preview-attach>Прикрепить к задаче</button><button type="button" class="docx-template-preview__btn docx-template-preview__btn--primary" data-preview-download>Скачать</button><button type="button" class="docx-template-preview__btn" data-preview-local>Локально</button><button type="button" class="docx-template-preview__btn" data-preview-close>Закрыть</button></div></div><div class="docx-template-preview__body"><div class="docx-template-preview__doc" style="height:100%;max-width:none;padding:0;overflow:hidden;" data-preview-doc><iframe title="Office Web Viewer" data-preview-frame style="width:100%;height:100%;border:0;background:#e2e8f0;visibility:hidden"></iframe></div><div class="docx-template-preview__loading" data-preview-loading><div class="docx-template-preview__loading-card"><div class="docx-template-preview__loading-title">Открываем документ…</div><div class="docx-template-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div><div class="docx-template-preview__bar"></div><div class="docx-template-preview__steps"><div class="docx-template-preview__step docx-template-preview__step--active" data-step="1"><span class="docx-template-preview__step-dot"></span><span>1. Подготовка файла</span></div><div class="docx-template-preview__step" data-step="2"><span class="docx-template-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div><div class="docx-template-preview__step" data-step="3"><span class="docx-template-preview__step-dot"></span><span>3. Загрузка предпросмотра</span></div></div></div></div></div><div class="docx-template-preview__status" data-preview-status><span class="docx-template-preview__spinner"></span>Подключаем Office Web Viewer…</div></div>';
     document.body.appendChild(overlay);
     var previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -1357,10 +1352,12 @@
     var loadingSubNode = overlay.querySelector('[data-loading-sub]');
     var loadingSteps = Array.prototype.slice.call(overlay.querySelectorAll('[data-step]'));
     var downloadBtn = overlay.querySelector('[data-preview-download]');
+    var attachBtn = overlay.querySelector('[data-preview-attach]');
     var localBtn = overlay.querySelector('[data-preview-local]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var previewUrl = String(previewPayload.previewUrl || '').trim();
     var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
+    var safeContext = context && typeof context === 'object' ? context : {};
     var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     var blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     var sourceUrl = previewUrl || blobUrl;
@@ -1391,6 +1388,29 @@
       a.click();
       document.body.removeChild(a);
     });
+    if (attachBtn) {
+      var hasTaskId = Boolean(safeContext.task && safeContext.task.id);
+      if (!hasTaskId) {
+        attachBtn.disabled = true;
+        attachBtn.textContent = 'Нет задачи';
+      }
+      attachBtn.addEventListener('click', function() {
+        if (attachBtn.disabled) return;
+        var oldText = attachBtn.textContent;
+        attachBtn.disabled = true;
+        attachBtn.textContent = 'Прикрепляем...';
+        attachGeneratedDocxToTaskResponse(previewPayload, safeContext)
+          .then(function() {
+            statusNode.textContent = 'Документ прикреплён к задаче как ответ.';
+            attachBtn.textContent = 'Прикреплено';
+          })
+          .catch(function(error) {
+            statusNode.textContent = 'Не удалось прикрепить: ' + (error && error.message ? error.message : 'неизвестная ошибка');
+            attachBtn.disabled = false;
+            attachBtn.textContent = oldText;
+          });
+      });
+    }
     localBtn.addEventListener('click', async function() {
       localBtn.disabled = true;
       var previousText = localBtn.textContent;
@@ -1541,7 +1561,17 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     var fileBlob = await resolveGeneratedDocxBlob(previewPayload);
-    var fileName = String(previewPayload && previewPayload.fileName || '').trim() || ('ai-response-' + documentId + '.docx');
+    var taskNumberRaw = String(
+      task.entryNumber
+      || task.taskNumber
+      || task.number
+      || task.regNumber
+      || task.documentNumber
+      || task.id
+      || ''
+    ).trim();
+    var safeTaskNumber = taskNumberRaw.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || documentId;
+    var fileName = 'otvet-po-zadache-' + safeTaskNumber + '.docx';
     var formData = new FormData();
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
