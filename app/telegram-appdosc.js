@@ -11244,6 +11244,46 @@ function getDirectorsForOrganization(organization) {
   return Array.isArray(list) ? list : [];
 }
 
+function getCurrentUserResponsibleFromTask(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return '';
+  }
+
+  const pools = [];
+  if (Array.isArray(task.responsibles)) {
+    pools.push(...task.responsibles);
+  }
+  if (Array.isArray(task.subordinates)) {
+    pools.push(...task.subordinates);
+  }
+  if (Array.isArray(task.directors)) {
+    pools.push(...task.directors);
+  }
+
+  for (const entry of pools) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
 function getCurrentUserResponsibleFromAccess() {
   const access = state && state.access && typeof state.access === 'object' ? state.access : null;
   if (!access) {
@@ -16020,12 +16060,14 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     formData.append('telegram_user_id', effectiveTelegramId);
   }
 
+  const responsibleFromTask = getCurrentUserResponsibleFromTask(task);
   const responsibleFromAccess = getCurrentUserResponsibleFromAccess();
-  if (responsibleFromAccess) {
-    formData.append('uploadedBy', responsibleFromAccess);
-    formData.append('uploadedByName', responsibleFromAccess);
-    formData.append('uploaderName', responsibleFromAccess);
-    formData.append('telegram_full_name', responsibleFromAccess);
+  const resolvedResponsible = responsibleFromTask || responsibleFromAccess;
+  if (resolvedResponsible) {
+    formData.append('uploadedBy', resolvedResponsible);
+    formData.append('uploadedByName', resolvedResponsible);
+    formData.append('uploaderName', resolvedResponsible);
+    formData.append('telegram_full_name', resolvedResponsible);
   }
 
   const headers = {};
