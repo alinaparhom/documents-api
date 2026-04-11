@@ -928,6 +928,24 @@
     throw lastError || new Error('Не удалось сформировать DOCX.');
   }
 
+  function showAttachSuccessToast(message) {
+    if (typeof document === 'undefined') return;
+    let style = document.getElementById('tg-ai-attach-toast-style');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'tg-ai-attach-toast-style';
+      style.textContent = '.tg-ai-attach-toast{position:fixed;left:50%;bottom:calc(12px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:4500;max-width:min(92vw,560px);padding:10px 12px;border-radius:14px;border:1px solid rgba(187,247,208,.95);background:linear-gradient(145deg,rgba(240,253,244,.95),rgba(220,252,231,.92));backdrop-filter:blur(8px);box-shadow:0 12px 28px rgba(15,23,42,.18);color:#14532d;font-size:12px;line-height:1.45;font-weight:700}';
+      document.head.appendChild(style);
+    }
+    const existing = document.querySelector('.tg-ai-attach-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.className = 'tg-ai-attach-toast';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3500);
+  }
+
   async function resolveGeneratedDocxBlob(previewPayload) {
     if (previewPayload && previewPayload.blob instanceof Blob) {
       return previewPayload.blob;
@@ -1128,7 +1146,9 @@
         attachBtn.textContent = 'Прикрепляем...';
         try {
           const result = await attachGeneratedDocxToTaskResponse(previewPayload, task);
+          const taskNo = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.id));
           statusNode.textContent = `Документ прикреплён: ${normalize(result && result.fileName) || 'DOCX-файл'}.`;
+          showAttachSuccessToast(`✅ Задача №${taskNo || '—'} · файл: ${normalize(result && result.fileName) || 'DOCX-файл'}`);
           attachBtn.textContent = 'Прикреплено';
         } catch (error) {
           statusNode.textContent = `Не удалось прикрепить: ${(error && error.message) || 'неизвестная ошибка'}`;

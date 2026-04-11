@@ -724,6 +724,24 @@
     };
   }
 
+  function showAttachSuccessToast(message) {
+    if (typeof document === 'undefined') return;
+    var style = document.getElementById('docx-attach-toast-style');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'docx-attach-toast-style';
+      style.textContent = '.docx-attach-toast{position:fixed;left:50%;bottom:calc(12px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:4700;max-width:min(92vw,560px);padding:10px 12px;border-radius:14px;border:1px solid rgba(187,247,208,.95);background:linear-gradient(145deg,rgba(240,253,244,.95),rgba(220,252,231,.92));backdrop-filter:blur(8px);box-shadow:0 12px 28px rgba(15,23,42,.18);color:#14532d;font-size:12px;line-height:1.45;font-weight:700}';
+      document.head.appendChild(style);
+    }
+    var existing = document.querySelector('.docx-attach-toast');
+    if (existing) existing.remove();
+    var toast = document.createElement('div');
+    toast.className = 'docx-attach-toast';
+    toast.textContent = String(message || '');
+    document.body.appendChild(toast);
+    setTimeout(function() { toast.remove(); }, 3500);
+  }
+
   function resolveTaskContext(options) {
     var safeOptions = options && typeof options === 'object' ? options : {};
     var payload = safeOptions.payload && typeof safeOptions.payload === 'object' ? safeOptions.payload : {};
@@ -1444,7 +1462,9 @@
           payload: safeContext.payload
         })
           .then(function(result) {
+            var taskNo = String(resolvedTask && (resolvedTask.entryNumber || resolvedTask.taskNumber || resolvedTask.number || resolvedTask.id) || '').trim();
             statusNode.textContent = 'Документ прикреплён: ' + (result && result.fileName ? result.fileName : 'DOCX-файл') + '.';
+            showAttachSuccessToast('✅ Задача №' + (taskNo || '—') + ' · файл: ' + (result && result.fileName ? result.fileName : 'DOCX-файл'));
             attachBtn.textContent = 'Прикреплено';
           })
           .catch(function(error) {
