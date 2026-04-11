@@ -16203,7 +16203,9 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
 
   await loadTasks(true);
   if (typeof setStatus === 'function') {
-    setStatus('success', data.message || 'Ответ загружен.');
+    const uploaderLabel = resolvedResponsible || effectiveTelegramId || 'не определён';
+    const baseMessage = data.message || 'Ответ загружен.';
+    setStatus('success', `${baseMessage} uploadedBy: ${uploaderLabel}`);
   }
 
   sendResponseViewerLog('response_upload_success', {
@@ -16217,6 +16219,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     })),
     hasResponseMessage: Boolean(responseMessage),
     responseMessageLength: responseMessage.length,
+    uploadedBy: resolvedResponsible || '',
   });
 
   return data;
