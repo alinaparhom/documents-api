@@ -843,13 +843,17 @@
       .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
       .tg-ai-generated-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
-      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:hidden;padding:0}
-      .tg-ai-generated-preview__viewport{position:relative;height:100%;overflow:auto;padding:12px;display:flex;justify-content:center;align-items:flex-start}
-      .tg-ai-generated-preview__doc{width:auto;min-height:100%;margin:0 auto;background:rgba(255,255,255,.85);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12);transform-origin:top center;transition:transform .14s ease}
-      .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}
-      .tg-ai-generated-preview__doc .docx{overflow:visible}
-      .tg-ai-generated-preview__doc .docx-wrapper>section{margin:0 auto 18px!important;overflow:visible}
-      .tg-ai-generated-preview__doc .docx-wrapper p,.tg-ai-generated-preview__doc .docx-wrapper td,.tg-ai-generated-preview__doc .docx-wrapper li{overflow-wrap:break-word;word-break:normal}
+      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:radial-gradient(circle at top left,rgba(147,197,253,.20),transparent 35%),linear-gradient(180deg,#dbeafe,#e2e8f0 40%,#cbd5e1);overflow:hidden;padding:0}
+      .tg-ai-generated-preview__viewport{position:relative;height:100%;overflow:auto;padding:14px;display:flex;justify-content:center;align-items:flex-start}
+      .tg-ai-generated-preview__doc{--tg-a4-width:210mm;--tg-a4-min-height:297mm;--tg-page-gutter:clamp(8px,1.8vw,18px);width:100%;max-width:calc(var(--tg-a4-width) + var(--tg-page-gutter) * 2);min-height:100%;margin:0 auto;background:linear-gradient(155deg,rgba(255,255,255,.93),rgba(248,250,252,.9));border-radius:18px;padding:var(--tg-page-gutter);border:1px solid rgba(191,219,254,.8);box-shadow:0 18px 38px rgba(15,23,42,.14);transform-origin:top center;transition:transform .14s ease;box-sizing:border-box}
+      .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important;max-width:100%}
+      .tg-ai-generated-preview__doc .docx{overflow:visible;max-width:100%}
+      .tg-ai-generated-preview__doc .docx-wrapper>section{box-sizing:border-box;margin:0 auto 18px!important;overflow:visible;border-radius:6px;box-shadow:0 8px 24px rgba(15,23,42,.10);width:min(var(--tg-a4-width),100%)!important;max-width:100%!important;min-height:var(--tg-a4-min-height);background:#fff!important;color:#0f172a!important}
+      .tg-ai-generated-preview__doc .docx-wrapper>section:last-child{margin-bottom:4px!important}
+      .tg-ai-generated-preview__doc .docx-wrapper table{width:100%!important;max-width:100%!important;table-layout:fixed}
+      .tg-ai-generated-preview__doc .docx-wrapper img{display:block;max-width:100%!important;height:auto!important}
+      .tg-ai-generated-preview__doc .docx,.tg-ai-generated-preview__doc .docx *{color:#0f172a}
+      .tg-ai-generated-preview__doc .docx-wrapper p,.tg-ai-generated-preview__doc .docx-wrapper td,.tg-ai-generated-preview__doc .docx-wrapper th,.tg-ai-generated-preview__doc .docx-wrapper li,.tg-ai-generated-preview__doc .docx-wrapper span{max-width:100%;overflow-wrap:anywhere;word-break:break-word}
       .tg-ai-generated-preview__frame{display:none;width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}
@@ -887,7 +891,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1028,6 +1032,63 @@
       } catch (_) {}
     }
     throw new Error(`Не удалось скачать документ для предпросмотра (${lastStatus || 'no_response'}).`);
+  }
+
+  async function downloadGeneratedPreviewFile(previewPayload) {
+    const fileName = normalize(previewPayload && previewPayload.fileName) || 'template-answer.docx';
+    const sourceUrl = normalize(previewPayload && previewPayload.previewUrl);
+    const fallbackBlob = previewPayload && previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+    if (fallbackBlob && fallbackBlob.size) {
+      const blobUrl = URL.createObjectURL(fallbackBlob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1200);
+      return true;
+    }
+    if (sourceUrl) {
+      try {
+        const response = await fetchWithTimeout(sourceUrl, { credentials: 'include', cache: 'no-store' }, 30000);
+        if (response && response.ok) {
+          const blob = await response.blob();
+          if (blob && blob.size) {
+            const blobUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = fileName;
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 1200);
+            return true;
+          }
+        }
+      } catch (_) {}
+      try {
+        const link = document.createElement('a');
+        link.href = sourceUrl;
+        link.download = fileName;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return true;
+      } catch (_) {}
+      const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+      if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
+        try {
+          telegramWebApp.openLink(sourceUrl);
+          return true;
+        } catch (_) {}
+      }
+    }
+    return false;
   }
 
   async function ensureDocxPreviewLibrariesLoaded() {
@@ -1189,9 +1250,14 @@
     const previewUrl = normalize(previewPayload.previewUrl);
     const officeSourceUrl = toAbsoluteUrl(previewUrl);
     const task = context && context.task ? context.task : {};
+    const openViewerFile = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
+      ? window.__APPDOSC_OPEN_VIEWER_FILE__
+      : null;
+    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
+      ? window.__APPDOSC_OPEN_FILES_VIEWER__
+      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
-    const sourceUrl = previewUrl || blobUrl;
     let zoom = 1;
 
     const applyZoom = () => {
@@ -1242,14 +1308,21 @@
       zoom = zoom + 0.1;
       applyZoom();
     });
-    downloadBtn?.addEventListener('click', () => {
+    downloadBtn?.addEventListener('click', async () => {
       toggleMenu(false);
-      const a = document.createElement('a');
-      a.href = sourceUrl;
-      a.download = normalize(previewPayload.fileName) || 'template-answer.docx';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      if (downloadBtn) {
+        downloadBtn.disabled = true;
+        downloadBtn.textContent = 'Скачиваем…';
+      }
+      try {
+        const ok = await downloadGeneratedPreviewFile(previewPayload);
+        statusNode.textContent = ok ? 'Файл отправлен на скачивание.' : 'Не удалось скачать файл.';
+      } finally {
+        if (downloadBtn) {
+          downloadBtn.disabled = false;
+          downloadBtn.textContent = 'Скачать';
+        }
+      }
     });
     if (attachBtn) {
       const taskReady = Boolean(normalize(task && task.id));
@@ -1315,7 +1388,7 @@
           renderFooters: true,
           renderFootnotes: true,
           useBase64URL: true,
-          ignoreWidth: false,
+          ignoreWidth: true,
           ignoreHeight: false,
           ignoreFonts: false,
         });
@@ -1334,7 +1407,7 @@
       }
     };
 
-    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
+    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl) || Boolean((openViewerFile || openFilesViewer) && previewUrl);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
@@ -1346,15 +1419,77 @@
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
         return;
       }
+      if ((openViewerFile || openFilesViewer) && previewUrl) {
+        statusNode.textContent = 'Открываем как в режиме «Просмотреть»…';
+        const fileName = normalize(previewPayload.fileName) || 'template-answer.docx';
+        const viewerFile = {
+          name: fileName,
+          originalName: fileName,
+          storedName: fileName,
+          url: previewUrl,
+          resolvedUrl: toAbsoluteUrl(previewUrl),
+          previewUrl,
+          fileUrl: previewUrl,
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          kind: 'office',
+        };
+        Promise.resolve(
+          openViewerFile
+            ? openViewerFile(viewerFile, task || {}, { notify: true, hasMultiple: false })
+            : openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }),
+        )
+          .then(() => {
+            statusNode.textContent = 'Документ открыт через логику «Просмотреть».';
+          })
+          .catch((error) => {
+            statusNode.textContent = (error && error.message) || 'Не удалось открыть через «Просмотреть». Пробуем Office Viewer…';
+            if (frameNode) {
+              frameNode.style.display = '';
+              frameNode.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
+            }
+          });
+        return;
+      }
+      const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
       if (loadingNode) loadingNode.style.display = 'none';
       if (docNode) docNode.style.display = 'none';
       if (viewportNode) viewportNode.style.display = 'none';
-      if (frameNode) frameNode.style.display = '';
-      const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
-      frameNode.onload = () => {
-        statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+      if (frameNode) {
+        frameNode.style.display = '';
+        frameNode.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+      }
+      let loaded = false;
+      let fallbackTimer = 0;
+      const openExternalOffice = () => {
+        const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+        if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
+          try {
+            telegramWebApp.openLink(officeUrl);
+            return true;
+          } catch (_) {}
+        }
+        try {
+          window.open(officeUrl, '_blank', 'noopener');
+          return true;
+        } catch (_) {
+          return false;
+        }
       };
-      frameNode.src = officeUrl;
+      if (frameNode) {
+        frameNode.onload = () => {
+          loaded = true;
+          if (fallbackTimer) clearTimeout(fallbackTimer);
+          statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+        };
+        frameNode.src = officeUrl;
+      }
+      fallbackTimer = setTimeout(() => {
+        if (loaded) return;
+        const opened = openExternalOffice();
+        statusNode.textContent = opened
+          ? 'Office Viewer открыт внешне (встроенный iframe может блокироваться в Telegram).'
+          : 'Office Viewer не загрузился. Попробуйте открыть файл через «Скачать».';
+      }, 6500);
       statusNode.textContent = 'Открываем через Office Viewer…';
     });
 
@@ -1636,7 +1771,7 @@
           </select>
           <button type="button" class="tg-ai-chat__toggle" data-template-btn>Шаблон</button>
         </div>
-        <div class="tg-ai-chat__files" data-files hidden>
+        <div class="tg-ai-chat__files" data-files>
           <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
           <div class="tg-ai-chat__files-list" data-files-list></div>
         </div>
@@ -1690,6 +1825,7 @@
       }
 
       isSending = true;
+      if (filesPanel) filesPanel.hidden = true;
       lastAiAnswer = '';
       meta.innerHTML = '';
       createBubble(messages, `Стиль: ${styleMeta.label}. Подготовь готовый ответ по документам.`, 'user');
@@ -1734,6 +1870,7 @@
       styleIndex = nextIndex >= 0 ? nextIndex : 0;
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
       status.textContent = `Стиль ответа: ${styleMeta.label}.`;
+      if (filesPanel) filesPanel.hidden = true;
       sendByCurrentStyle();
     });
 
