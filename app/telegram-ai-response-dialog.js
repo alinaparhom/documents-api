@@ -790,10 +790,15 @@
       .tg-ai-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.8);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview{position:fixed;inset:0;z-index:3950;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}
       .tg-ai-generated-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95))}
-      .tg-ai-generated-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}
+      .tg-ai-generated-preview__head{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}
       .tg-ai-generated-preview__title{font-size:14px;font-weight:800;color:#0f172a}
       .tg-ai-generated-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
-      .tg-ai-generated-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+      .tg-ai-generated-preview__tools{display:flex;align-items:center;gap:8px}
+      .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
+      .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
+      .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
+      .tg-ai-generated-preview__menu[hidden]{display:none}
+      .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
       .tg-ai-generated-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
       .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}
@@ -837,7 +842,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__actions{width:100%}.tg-ai-generated-preview__btn{flex:1;min-width:0;padding:8px 10px}.tg-ai-generated-preview__body{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__body{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -954,22 +959,30 @@
       return previewPayload.blob;
     }
     const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
-    if (!previewUrl) {
-      throw new Error('Не удалось получить файл документа для прикрепления.');
+    const fileName = normalize(previewPayload && previewPayload.fileName);
+    const directTmpUrl = fileName ? `/tmp/generated/${encodeURIComponent(fileName)}` : '';
+    const candidates = Array.from(new Set([previewUrl, directTmpUrl].filter(Boolean)));
+    if (!candidates.length) {
+      throw new Error('Не удалось получить файл документа для предпросмотра.');
     }
-    const response = await fetchWithTimeout(previewUrl, {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-    }, 30000);
-    if (!response || !response.ok) {
-      throw new Error(`Не удалось скачать документ для прикрепления (${response ? response.status : 0}).`);
+    let lastStatus = 0;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const url = candidates[index];
+      try {
+        const response = await fetchWithTimeout(url, {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        }, 30000);
+        if (!response || !response.ok) {
+          lastStatus = response ? response.status : 0;
+          continue;
+        }
+        const blob = await response.blob();
+        if (blob && blob.size) return blob;
+      } catch (_) {}
     }
-    const blob = await response.blob();
-    if (!blob || !blob.size) {
-      throw new Error('Получен пустой файл документа.');
-    }
-    return blob;
+    throw new Error(`Не удалось скачать документ для предпросмотра (${lastStatus || 'no_response'}).`);
   }
 
   async function ensureDocxPreviewLibrariesLoaded() {
@@ -1071,13 +1084,17 @@
             <div class="tg-ai-generated-preview__title">Предварительный просмотр</div>
             <div class="tg-ai-generated-preview__hint">Локальная копия документа как в файле</div>
           </div>
-          <div class="tg-ai-generated-preview__actions">
-            <button type="button" class="tg-ai-generated-preview__btn" data-preview-attach>Прикрепить к задаче</button>
-            <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
-            <button type="button" class="tg-ai-generated-preview__btn" data-preview-local>Локально</button>
-            <button type="button" class="tg-ai-generated-preview__btn" data-preview-office>Office Viewer</button>
-            <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
+          <div class="tg-ai-generated-preview__tools">
+            <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
+            <button type="button" class="tg-ai-generated-preview__close-icon" data-preview-close-icon aria-label="Закрыть">×</button>
           </div>
+        </div>
+        <div class="tg-ai-generated-preview__menu" data-preview-menu hidden>
+          <button type="button" class="tg-ai-generated-preview__btn" data-preview-attach>Прикрепить к задаче</button>
+          <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
+          <button type="button" class="tg-ai-generated-preview__btn" data-preview-local>Локально</button>
+          <button type="button" class="tg-ai-generated-preview__btn" data-preview-office>Office Viewer</button>
+          <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
         </div>
         <div class="tg-ai-generated-preview__body">
           <div class="tg-ai-generated-preview__doc" data-preview-doc aria-label="DOCX preview"></div>
@@ -1108,6 +1125,9 @@
     const attachBtn = overlay.querySelector('[data-preview-attach]');
     const localBtn = overlay.querySelector('[data-preview-local]');
     const officeBtn = overlay.querySelector('[data-preview-office]');
+    const menuNode = overlay.querySelector('[data-preview-menu]');
+    const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
+    const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
@@ -1123,11 +1143,26 @@
       }
       overlay.remove();
     };
+    const toggleMenu = (forceOpen) => {
+      if (!menuNode) return;
+      const open = typeof forceOpen === 'boolean' ? forceOpen : menuNode.hasAttribute('hidden');
+      if (open) menuNode.removeAttribute('hidden');
+      else menuNode.setAttribute('hidden', '');
+    };
     closeBtn?.addEventListener('click', close);
+    closeIconBtn?.addEventListener('click', close);
+    menuToggleBtn?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleMenu();
+    });
     overlay.addEventListener('click', (event) => {
+      if (menuNode && !menuNode.contains(event.target) && event.target !== menuToggleBtn) {
+        toggleMenu(false);
+      }
       if (event.target === overlay) close();
     });
     downloadBtn?.addEventListener('click', () => {
+      toggleMenu(false);
       const a = document.createElement('a');
       a.href = sourceUrl;
       a.download = normalize(previewPayload.fileName) || 'template-answer.docx';
@@ -1142,6 +1177,7 @@
         attachBtn.textContent = 'Нет задачи';
       }
       attachBtn.addEventListener('click', async () => {
+        toggleMenu(false);
         if (attachBtn.disabled) return;
         const prevText = attachBtn.textContent;
         attachBtn.disabled = true;
@@ -1196,9 +1232,9 @@
           renderFooters: true,
           renderFootnotes: true,
           useBase64URL: true,
-          ignoreWidth: true,
-          ignoreHeight: true,
-          ignoreFonts: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
         });
         if (loadingNode) loadingNode.style.display = 'none';
         statusNode.textContent = 'Готово: локальный предпросмотр открыт.';
@@ -1217,8 +1253,9 @@
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной ссылке';
     }
-    localBtn?.addEventListener('click', () => { openLocalPreview(); });
+    localBtn?.addEventListener('click', () => { toggleMenu(false); openLocalPreview(); });
     officeBtn?.addEventListener('click', () => {
+      toggleMenu(false);
       if (!sourceUrl) return;
       if (loadingNode) loadingNode.style.display = 'none';
       if (docNode) docNode.style.display = 'none';
