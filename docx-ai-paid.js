@@ -1637,48 +1637,7 @@
     } else {
       responsibleName = String(responsibleRaw || '').trim();
     }
-    var globalAuthorized = String(
-      window
-      && window.DOCUMENTS_AUTH_USER
-      && (window.DOCUMENTS_AUTH_USER.fullName || window.DOCUMENTS_AUTH_USER.name || window.DOCUMENTS_AUTH_USER.fio)
-        ? (window.DOCUMENTS_AUTH_USER.fullName || window.DOCUMENTS_AUTH_USER.name || window.DOCUMENTS_AUTH_USER.fio)
-        : ''
-    ).trim();
-    var globalCurrent = String(
-      window
-      && window.DOCUMENTS_CURRENT_USER
-      && (window.DOCUMENTS_CURRENT_USER.fullName || window.DOCUMENTS_CURRENT_USER.name || window.DOCUMENTS_CURRENT_USER.fio)
-        ? (window.DOCUMENTS_CURRENT_USER.fullName || window.DOCUMENTS_CURRENT_USER.name || window.DOCUMENTS_CURRENT_USER.fio)
-        : ''
-    ).trim();
-    var uiUser = String(
-      typeof document !== 'undefined'
-      && document.querySelector
-      && document.querySelector('[data-user-name]')
-      && document.querySelector('[data-user-name]').textContent
-        ? document.querySelector('[data-user-name]').textContent
-        : ''
-    ).trim();
-    var urlUser = '';
-    try {
-      var query = new URLSearchParams(String(window && window.location && window.location.search ? window.location.search : ''));
-      urlUser = String(query.get('full_name') || query.get('telegram_full_name') || query.get('user_full_name') || '').trim();
-    } catch (urlError) {
-      urlUser = '';
-    }
-    var telegramUser = window
-      && window.Telegram
-      && window.Telegram.WebApp
-      && window.Telegram.WebApp.initDataUnsafe
-      && window.Telegram.WebApp.initDataUnsafe.user
-        ? window.Telegram.WebApp.initDataUnsafe.user
-        : null;
-    var telegramName = String(
-      telegramUser
-        ? ([telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ') || telegramUser.username || '')
-        : ''
-    ).trim();
-    var authorRaw = String(responsibleName || globalAuthorized || globalCurrent || uiUser || urlUser || telegramName || 'Автор').trim();
+    var responsibleFinal = String(responsibleName || 'responsible').trim();
     var now = new Date();
     var dateStamp = String(now.getFullYear()) + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     var taskNumberRaw = String(
@@ -1690,7 +1649,7 @@
       || task.id
       || ''
     ).trim();
-    var safeAuthor = authorRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
+    var safeAuthor = responsibleFinal.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
     var safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
     var fileName = safeAuthor + '_Ответ_' + dateStamp + '_' + safeTaskNumber + '.docx';
     var formData = new FormData();
