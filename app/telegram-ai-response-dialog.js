@@ -809,8 +809,8 @@
       .tg-ai-generated-preview__doc{min-height:100%;margin:0 auto;background:rgba(255,255,255,.85);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12);transform-origin:top center;transition:transform .14s ease}
       .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}
       .tg-ai-generated-preview__doc .docx{overflow:visible}
-      .tg-ai-generated-preview__doc .docx-wrapper>section{margin:0 auto 14px!important;overflow:hidden}
-      .tg-ai-generated-preview__doc .docx-wrapper>section *{max-width:100%;box-sizing:border-box}
+      .tg-ai-generated-preview__doc .docx-wrapper>section{margin:0 auto 14px!important;overflow:visible}
+      .tg-ai-generated-preview__doc .docx-wrapper img,.tg-ai-generated-preview__doc .docx-wrapper table{max-width:100%;box-sizing:border-box}
       .tg-ai-generated-preview__doc .docx-wrapper p,.tg-ai-generated-preview__doc .docx-wrapper td,.tg-ai-generated-preview__doc .docx-wrapper li{overflow-wrap:break-word;word-break:normal}
       .tg-ai-generated-preview__frame{display:none;width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
@@ -1149,6 +1149,7 @@
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
+    const officeSourceUrl = toAbsoluteUrl(previewUrl);
     const task = context && context.task ? context.task : {};
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
@@ -1295,21 +1296,28 @@
       }
     };
 
-    if (officeBtn && !previewUrl) {
+    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
+    if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
-      officeBtn.title = 'Office Viewer доступен только по публичной ссылке';
+      officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
     }
     localBtn?.addEventListener('click', () => { toggleMenu(false); openLocalPreview(); });
     officeBtn?.addEventListener('click', () => {
       toggleMenu(false);
-      if (!sourceUrl) return;
+      if (!canUseOfficeViewer) {
+        statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
+        return;
+      }
       if (loadingNode) loadingNode.style.display = 'none';
       if (docNode) docNode.style.display = 'none';
       if (viewportNode) viewportNode.style.display = 'none';
       if (frameNode) frameNode.style.display = '';
-      const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
+      const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
+      frameNode.onload = () => {
+        statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+      };
       frameNode.src = officeUrl;
-      statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
+      statusNode.textContent = 'Открываем через Office Viewer…';
     });
 
     await openLocalPreview();

@@ -1439,6 +1439,7 @@
     var officeBtn = overlay.querySelector('[data-preview-office]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var previewUrl = String(previewPayload.previewUrl || '').trim();
+    var officeSourceUrl = toAbsoluteUrl(previewUrl);
     var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
     var safeContext = context && typeof context === 'object' ? context : {};
     var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
@@ -1546,19 +1547,26 @@
     }
 
     localBtn.addEventListener('click', showLocalPreview);
-    if (officeBtn && !previewUrl) {
+    var canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
+    if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
-      officeBtn.title = 'Office Viewer доступен только по публичной ссылке';
+      officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
     }
     officeBtn.addEventListener('click', function() {
-      if (!sourceUrl) return;
+      if (!canUseOfficeViewer) {
+        statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
+        return;
+      }
       if (docNode) docNode.style.display = 'none';
       if (frameNode) {
         frameNode.style.display = '';
-        frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl);
+        frameNode.onload = function() {
+          statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+        };
+        frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(officeSourceUrl);
       }
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
+      statusNode.textContent = 'Открываем через Office Viewer…';
     });
 
     if (!sourceUrl) {
