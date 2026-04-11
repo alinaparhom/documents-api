@@ -16,6 +16,7 @@
   ].join('\n');
 
   var briefPdfJsLoader = null;
+  var docxPreviewHtmlCache = (typeof WeakMap === 'function') ? new WeakMap() : null;
   var SYSTEM_TONE_PROMPTS = {
     neutral: {
       value: 'neutral',
@@ -1257,6 +1258,9 @@
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var loadingNode = overlay.querySelector('[data-preview-loading]');
     var blobUrl = URL.createObjectURL(blob);
+    var setStatus = function(text) {
+      if (statusNode) statusNode.textContent = text;
+    };
 
     function closeModal() {
       document.body.style.overflow = previousOverflow;
@@ -1277,21 +1281,41 @@
       document.body.removeChild(a);
     });
 
+    var cachedHtml = docxPreviewHtmlCache && docxPreviewHtmlCache.get(blob);
+    if (cachedHtml) {
+      if (loadingNode) loadingNode.style.display = 'none';
+      docPreviewNode.innerHTML = cachedHtml;
+      setStatus('Готово: предпросмотр открыт из кэша.');
+      return;
+    }
+
+    setStatus('Шаг 1/3: подключаем движок предпросмотра…');
     ensureDocxPreviewLibrariesLoaded().then(function(renderer) {
+      setStatus('Шаг 2/3: читаем и подготавливаем DOCX…');
       return blob.arrayBuffer().then(function(arrayBuffer) {
+        setStatus('Шаг 3/3: рендерим документ…');
         docPreviewNode.innerHTML = '';
         return renderer.renderAsync(arrayBuffer, docPreviewNode, null, {
           inWrapper: true,
           breakPages: true,
-          ignoreWidth: true
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          useBase64URL: true,
+          ignoreWidth: true,
+          ignoreHeight: true,
+          ignoreFonts: true,
+          experimental: false,
+          debug: false
         });
       });
     }).then(function() {
+      if (docxPreviewHtmlCache) docxPreviewHtmlCache.set(blob, docPreviewNode.innerHTML);
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = 'Готово: локальный предпросмотр открыт.';
+      setStatus('Готово: локальный предпросмотр открыт.');
     }).catch(function(error) {
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = 'Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown');
+      setStatus('Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown'));
     });
   }
 
