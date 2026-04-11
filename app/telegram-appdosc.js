@@ -15805,6 +15805,45 @@ function taskUserCanUploadResponse(task, entry) {
 }
 
 function resolveCurrentUploaderMeta(task, currentEntry) {
+  const telegramIdKey = normalizeIdentifier(state && state.telegram && state.telegram.id);
+  const organizationKey = getOrganizationKey(getTaskOrganization(task));
+  const accessEntries = [];
+  if (organizationKey && state.access && typeof state.access === 'object') {
+    const orgResponsibles = Array.isArray(state.access.responsibles?.[organizationKey]) ? state.access.responsibles[organizationKey] : [];
+    const orgSubordinates = Array.isArray(state.access.subordinates?.[organizationKey]) ? state.access.subordinates[organizationKey] : [];
+    accessEntries.push(...orgResponsibles, ...orgSubordinates);
+  }
+
+  const matchedByTelegram = telegramIdKey
+    ? accessEntries.find((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return false;
+      }
+      const candidates = [entry.telegram, entry.chatId, entry.id];
+      return candidates.some((value) => normalizeIdentifier(value) === telegramIdKey);
+    })
+    : null;
+
+  if (matchedByTelegram) {
+    const uploadedBy = normalizeValue(matchedByTelegram.responsible)
+      || normalizeValue(matchedByTelegram.name)
+      || normalizeValue(matchedByTelegram.fullName)
+      || normalizeValue(matchedByTelegram.displayName)
+      || normalizeValue(matchedByTelegram.login)
+      || '';
+
+    const uploadedByKey = buildAssignmentDirectoryKey(matchedByTelegram.id)
+      || buildAssignmentDirectoryKey(matchedByTelegram.telegram)
+      || buildAssignmentDirectoryKey(matchedByTelegram.chatId)
+      || buildAssignmentDirectoryKey(matchedByTelegram.number)
+      || buildAssignmentDirectoryKey(matchedByTelegram.login)
+      || buildAssignmentDirectoryKey(matchedByTelegram.email)
+      || buildAssignmentDirectoryKey(uploadedBy)
+      || '';
+
+    return { uploadedBy, uploadedByKey };
+  }
+
   const preferredEntry = currentEntry && typeof currentEntry === 'object'
     ? currentEntry
     : null;
