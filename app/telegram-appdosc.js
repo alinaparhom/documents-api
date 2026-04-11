@@ -15212,20 +15212,8 @@ function isResponseOwnedByCurrentUser(file) {
   if (!file || typeof file !== 'object') {
     return false;
   }
-  const userKeys = new Set();
-  const { ids, names } = getUserIdentifierCandidates();
-  ids.forEach((value) => {
-    const key = buildAssignmentDirectoryKey(value);
-    if (key) {
-      userKeys.add(key);
-    }
-  });
-  names.forEach((value) => {
-    const key = buildAssignmentDirectoryKey(value);
-    if (key) {
-      userKeys.add(key);
-    }
-  });
+
+  const userKeys = collectCurrentUserOwnershipKeys();
   if (!userKeys.size) {
     return false;
   }
@@ -15236,6 +15224,77 @@ function isResponseOwnedByCurrentUser(file) {
     }
   }
   return false;
+}
+
+function collectCurrentUserOwnershipKeys() {
+  const userKeys = new Set();
+  const pushKey = (value) => {
+    const raw = normalizeValue(value).toLowerCase();
+    if (raw) {
+      userKeys.add(raw);
+    }
+    const key = buildAssignmentDirectoryKey(value);
+    if (key) {
+      userKeys.add(key);
+    }
+    if (raw.startsWith('id:')) {
+      const idValue = buildAssignmentDirectoryKey(raw.slice(3));
+      if (idValue) {
+        userKeys.add(idValue);
+      }
+    }
+    if (raw.startsWith('name:')) {
+      const nameValue = buildAssignmentDirectoryKey(raw.slice(5));
+      if (nameValue) {
+        userKeys.add(nameValue);
+      }
+    }
+  };
+
+  const { ids, names } = getUserIdentifierCandidates();
+  ids.forEach(pushKey);
+  names.forEach(pushKey);
+  pushKey(state.telegram.username);
+  pushKey(state.telegram.fullName);
+
+  const accessPools = [];
+  if (state.access && typeof state.access === 'object') {
+    const groups = [
+      state.access.responsibles,
+      state.access.subordinates,
+      state.access.directors,
+    ];
+    groups.forEach((group) => {
+      if (!group || typeof group !== 'object') {
+        return;
+      }
+      Object.values(group).forEach((entries) => {
+        if (Array.isArray(entries)) {
+          accessPools.push(...entries);
+        }
+      });
+    });
+  }
+
+  accessPools.forEach((entry) => {
+    if (!entry || typeof entry !== 'object' || !entryMatchesUser(entry, ids, names)) {
+      return;
+    }
+    [
+      entry.id,
+      entry.telegram,
+      entry.chatId,
+      entry.email,
+      entry.number,
+      entry.login,
+      entry.responsible,
+      entry.name,
+      entry.fullName,
+      entry.displayName,
+    ].forEach(pushKey);
+  });
+
+  return userKeys;
 }
 
 function buildResponseViewButtonLabel(count) {
