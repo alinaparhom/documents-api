@@ -724,6 +724,38 @@
     };
   }
 
+  function resolveTaskContext(options) {
+    var safeOptions = options && typeof options === 'object' ? options : {};
+    var payload = safeOptions.payload && typeof safeOptions.payload === 'object' ? safeOptions.payload : {};
+    var context = payload.context && typeof payload.context === 'object' ? payload.context : {};
+    var documentData = payload.documentData && typeof payload.documentData === 'object' ? payload.documentData : {};
+    var directTask = safeOptions.task && typeof safeOptions.task === 'object'
+      ? safeOptions.task
+      : (payload.task && typeof payload.task === 'object' ? payload.task : (context.task && typeof context.task === 'object' ? context.task : null));
+    if (directTask) {
+      return directTask;
+    }
+    var taskId = String(
+      safeOptions.documentId
+      || safeOptions.taskId
+      || payload.documentId
+      || payload.taskId
+      || context.documentId
+      || context.taskId
+      || documentData.id
+      || ''
+    ).trim();
+    if (!taskId) {
+      return null;
+    }
+    return {
+      id: taskId,
+      entryNumber: String(documentData.entryNumber || documentData.number || context.entryNumber || context.number || '').trim(),
+      organization: String(safeOptions.organization || payload.organization || context.organization || documentData.organization || '').trim(),
+      organizationName: String(documentData.organizationName || '').trim()
+    };
+  }
+
   function openDocumentsVipAiPaidModal(config) {
     ensureVipAiModalStyles();
     var options = config && typeof config === 'object' ? config : {};
@@ -790,9 +822,15 @@
     closeButtonVip.addEventListener('click', function() { closeModal(overlay); });
     if (templateButton) {
       templateButton.addEventListener('click', function() {
+        var taskContext = resolveTaskContext({
+          task: payload && payload.task ? payload.task : null,
+          payload: payload,
+          organization: organizationSlug
+        });
         openTemplateAnswerEditor(templateButton, {
           organization: organizationSlug,
-          task: payload && payload.task ? payload.task : null
+          task: taskContext,
+          payload: payload
         });
       });
     }
@@ -1388,8 +1426,9 @@
       a.click();
       document.body.removeChild(a);
     });
+    var resolvedTask = resolveTaskContext(safeContext);
     if (attachBtn) {
-      var hasTaskId = Boolean(safeContext.task && safeContext.task.id);
+      var hasTaskId = Boolean(resolvedTask && resolvedTask.id);
       if (!hasTaskId) {
         attachBtn.disabled = true;
         attachBtn.textContent = 'Нет задачи';
@@ -1399,7 +1438,11 @@
         var oldText = attachBtn.textContent;
         attachBtn.disabled = true;
         attachBtn.textContent = 'Прикрепляем...';
-        attachGeneratedDocxToTaskResponse(previewPayload, safeContext)
+        attachGeneratedDocxToTaskResponse(previewPayload, {
+          task: resolvedTask,
+          organization: safeContext.organization,
+          payload: safeContext.payload
+        })
           .then(function() {
             statusNode.textContent = 'Документ прикреплён к задаче как ответ.';
             attachBtn.textContent = 'Прикреплено';
@@ -1545,7 +1588,7 @@
 
   async function attachGeneratedDocxToTaskResponse(previewPayload, options) {
     var safeOptions = options && typeof options === 'object' ? options : {};
-    var task = safeOptions.task && typeof safeOptions.task === 'object' ? safeOptions.task : {};
+    var task = resolveTaskContext(safeOptions) || {};
     var documentId = String(task.id || '').trim();
     var organization = String(
       task.organization
@@ -1561,6 +1604,20 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     var fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    var telegramUser = window
+      && window.Telegram
+      && window.Telegram.WebApp
+      && window.Telegram.WebApp.initDataUnsafe
+      && window.Telegram.WebApp.initDataUnsafe.user
+        ? window.Telegram.WebApp.initDataUnsafe.user
+        : null;
+    var authorRaw = String(
+      telegramUser && (telegramUser.username || [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' '))
+        ? (telegramUser.username || [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' '))
+        : 'Автор'
+    ).trim();
+    var now = new Date();
+    var dateStamp = String(now.getFullYear()) + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     var taskNumberRaw = String(
       task.entryNumber
       || task.taskNumber
@@ -1570,8 +1627,9 @@
       || task.id
       || ''
     ).trim();
-    var safeTaskNumber = taskNumberRaw.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || documentId;
-    var fileName = 'otvet-po-zadache-' + safeTaskNumber + '.docx';
+    var safeAuthor = authorRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
+    var safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
+    var fileName = safeAuthor + '_Ответ_' + dateStamp + '_' + safeTaskNumber + '.docx';
     var formData = new FormData();
     formData.append('action', 'response_upload');
     formData.append('organization', organization);

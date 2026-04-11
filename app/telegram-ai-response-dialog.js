@@ -960,9 +960,19 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    const telegramUser = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp && globalScope.Telegram.WebApp.initDataUnsafe
+      && globalScope.Telegram.WebApp.initDataUnsafe.user
+      ? globalScope.Telegram.WebApp.initDataUnsafe.user
+      : null;
+    const authorRaw = normalize(
+      telegramUser && (telegramUser.username || [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' '))
+    ) || 'Автор';
+    const date = new Date();
+    const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
-    const safeTaskNumber = taskNumberRaw.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || documentId;
-    const fileName = `otvet-po-zadache-${safeTaskNumber}.docx`;
+    const safeAuthor = authorRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
+    const safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
+    const fileName = `${safeAuthor}_Ответ_${dateStamp}_${safeTaskNumber}.docx`;
     const formData = new FormData();
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
