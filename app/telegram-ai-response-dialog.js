@@ -1054,6 +1054,9 @@
           detail: { documentId, organization, fileName, payload },
         }));
       }
+      if (globalScope && typeof globalScope.__APPDOSC_FORCE_REFRESH_TASKS__ === 'function') {
+        Promise.resolve(globalScope.__APPDOSC_FORCE_REFRESH_TASKS__()).catch(() => {});
+      }
     } catch (_) {}
     return { ok: true, fileName, payload };
   }

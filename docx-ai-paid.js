@@ -1715,8 +1715,8 @@
           detail: { documentId: documentId, organization: organization, fileName: fileName, payload: data }
         }));
       }
-      if (typeof window.loadTasks === 'function') {
-        window.loadTasks(true).catch(function() {});
+      if (typeof window.__APPDOSC_FORCE_REFRESH_TASKS__ === 'function') {
+        Promise.resolve(window.__APPDOSC_FORCE_REFRESH_TASKS__()).catch(function() {});
       }
     } catch (notifyError) {}
     return { ok: true, fileName: fileName, payload: data };
