@@ -2680,6 +2680,7 @@ function initElements() {
   elements.taskSelector = document.querySelector('[data-task-select]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
+  elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
 
@@ -2690,6 +2691,7 @@ function initElements() {
   });
   updateViewerDownloadState(null);
   updateViewerDeleteState(null);
+  updateViewerFileOwnerState(null);
 }
 
 function initTelegram() {
@@ -7849,6 +7851,44 @@ function updateViewerDeleteState(file) {
   elements.viewerDeleteResponse.setAttribute('aria-disabled', canDelete ? 'false' : 'true');
 }
 
+function resolveViewerFileOwnerLabel(file) {
+  if (!file || typeof file !== 'object' || !file.isResponse) {
+    return '';
+  }
+
+  const byName = normalizeValue(file.uploadedBy);
+  if (byName) {
+    return byName;
+  }
+
+  const byKey = normalizeValue(file.uploadedByKey);
+  if (!byKey) {
+    return '';
+  }
+
+  if (byKey.startsWith('name:')) {
+    return normalizeValue(byKey.slice(5));
+  }
+  if (byKey.startsWith('id:')) {
+    return `ID ${normalizeValue(byKey.slice(3))}`;
+  }
+  return byKey;
+}
+
+function updateViewerFileOwnerState(file) {
+  if (!elements.viewerFileOwner) {
+    return;
+  }
+  const owner = resolveViewerFileOwnerLabel(file);
+  if (!owner) {
+    elements.viewerFileOwner.textContent = '';
+    elements.viewerFileOwner.hidden = true;
+    return;
+  }
+  elements.viewerFileOwner.textContent = `Загрузил: ${owner}`;
+  elements.viewerFileOwner.hidden = false;
+}
+
 async function deleteTaskResponseFile(task, file) {
   if (!task || typeof task !== 'object') {
     throw new Error('Не удалось определить задачу.');
@@ -7916,6 +7956,7 @@ async function handleViewerDeleteResponseClick() {
       viewerTabsState.activeFile = null;
       updateViewerDownloadState(null);
       updateViewerDeleteState(null);
+      updateViewerFileOwnerState(null);
       setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
       return;
     }
@@ -7927,6 +7968,7 @@ async function handleViewerDeleteResponseClick() {
   } catch (error) {
     setStatus('error', `Не удалось удалить ответ: ${error && error.message ? error.message : 'неизвестная ошибка'}`);
   } finally {
+    updateViewerFileOwnerState(getViewerFileToDownload());
     updateViewerDeleteState(getViewerFileToDownload());
   }
 }
@@ -9170,6 +9212,7 @@ async function openViewerFile(file, task, options = {}) {
     viewerTabsState.activeFile = file;
     updateViewerDownloadState(file);
     updateViewerDeleteState(file);
+    updateViewerFileOwnerState(file);
     if (isPdf && mode === 'inline') {
       try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
       // Счётчик страниц может быть 0, если PDF ещё загружается — обновим после загрузки
@@ -9659,6 +9702,7 @@ function renderViewerTabs(files, task) {
     viewerTabsState.activeFile = files && files.length ? files[0] : null;
     updateViewerDownloadState(viewerTabsState.activeFile);
     updateViewerDeleteState(viewerTabsState.activeFile);
+    updateViewerFileOwnerState(viewerTabsState.activeFile);
     return;
   }
 
@@ -9682,6 +9726,7 @@ function renderViewerTabs(files, task) {
     viewerTabsState.activeFile = files && files.length ? files[0] : null;
     updateViewerDownloadState(viewerTabsState.activeFile);
     updateViewerDeleteState(viewerTabsState.activeFile);
+    updateViewerFileOwnerState(viewerTabsState.activeFile);
     return;
   }
 
@@ -9694,6 +9739,7 @@ function renderViewerTabs(files, task) {
   viewerTabsState.activeFile = files && files.length ? files[0] : null;
   updateViewerDownloadState(viewerTabsState.activeFile);
   updateViewerDeleteState(viewerTabsState.activeFile);
+  updateViewerFileOwnerState(viewerTabsState.activeFile);
 
   files.forEach((file, index) => {
     const button = document.createElement('button');
