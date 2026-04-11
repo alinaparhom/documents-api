@@ -11158,6 +11158,72 @@ function getDirectorsForOrganization(organization) {
   return Array.isArray(list) ? list : [];
 }
 
+function getCurrentUserResponsibleFromAccess() {
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = [];
+  const nameCandidates = [];
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.push(normalized);
+    }
+  };
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      nameCandidates.push(normalized);
+    }
+  };
+
+  pushId(state.telegram.id);
+  pushId(state.telegram.chatId);
+  pushId(state.telegram.username);
+  pushName(state.telegram.fullName);
+  pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+
+  const ids = Array.from(new Set(idCandidates));
+  const names = Array.from(new Set(nameCandidates));
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
 function getUserIdentifierCandidates() {
   const idCandidates = [];
   const nameCandidates = [];
@@ -11182,6 +11248,11 @@ function getUserIdentifierCandidates() {
 
   pushName(state.telegram.fullName);
   pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+
+  const responsibleName = getCurrentUserResponsibleFromAccess();
+  if (responsibleName) {
+    pushName(responsibleName);
+  }
 
   return {
     ids: Array.from(new Set(idCandidates)),
@@ -15256,6 +15327,7 @@ function collectCurrentUserOwnershipKeys() {
   names.forEach(pushKey);
   pushKey(state.telegram.username);
   pushKey(state.telegram.fullName);
+  pushKey(getCurrentUserResponsibleFromAccess());
 
   const accessPools = [];
   if (state.access && typeof state.access === 'object') {
@@ -15860,6 +15932,14 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   });
   if (effectiveTelegramId) {
     formData.append('telegram_user_id', effectiveTelegramId);
+  }
+
+  const responsibleFromAccess = getCurrentUserResponsibleFromAccess();
+  if (responsibleFromAccess) {
+    formData.append('uploadedBy', responsibleFromAccess);
+    formData.append('uploadedByName', responsibleFromAccess);
+    formData.append('uploaderName', responsibleFromAccess);
+    formData.append('telegram_full_name', responsibleFromAccess);
   }
 
   const headers = {};
