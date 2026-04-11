@@ -960,13 +960,42 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
-    const telegramUser = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp && globalScope.Telegram.WebApp.initDataUnsafe
-      && globalScope.Telegram.WebApp.initDataUnsafe.user
-      ? globalScope.Telegram.WebApp.initDataUnsafe.user
-      : null;
-    const authorRaw = normalize(
-      telegramUser && (telegramUser.username || [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' '))
-    ) || 'Автор';
+    const resolveAuthorizedAuthorName = () => {
+      const fromGlobalUser = normalize(
+        globalScope
+        && globalScope.DOCUMENTS_AUTH_USER
+        && (globalScope.DOCUMENTS_AUTH_USER.fullName || globalScope.DOCUMENTS_AUTH_USER.name || globalScope.DOCUMENTS_AUTH_USER.fio),
+      );
+      if (fromGlobalUser) return fromGlobalUser;
+      const fromCurrentUser = normalize(
+        globalScope
+        && globalScope.DOCUMENTS_CURRENT_USER
+        && (globalScope.DOCUMENTS_CURRENT_USER.fullName || globalScope.DOCUMENTS_CURRENT_USER.name || globalScope.DOCUMENTS_CURRENT_USER.fio),
+      );
+      if (fromCurrentUser) return fromCurrentUser;
+      const fromUi = normalize(
+        typeof document !== 'undefined'
+        && document.querySelector
+        && document.querySelector('[data-user-name]')
+        && document.querySelector('[data-user-name]').textContent,
+      );
+      if (fromUi) return fromUi;
+      const fromUrl = (() => {
+        try {
+          const params = new URLSearchParams(String(globalScope && globalScope.location && globalScope.location.search || ''));
+          return normalize(params.get('full_name') || params.get('telegram_full_name') || params.get('user_full_name'));
+        } catch (_) {
+          return '';
+        }
+      })();
+      if (fromUrl) return fromUrl;
+      const telegramUser = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp && globalScope.Telegram.WebApp.initDataUnsafe
+        && globalScope.Telegram.WebApp.initDataUnsafe.user
+        ? globalScope.Telegram.WebApp.initDataUnsafe.user
+        : null;
+      return normalize(telegramUser && ([telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ') || telegramUser.username));
+    };
+    const authorRaw = resolveAuthorizedAuthorName() || 'Автор';
     const date = new Date();
     const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
