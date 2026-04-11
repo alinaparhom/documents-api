@@ -1629,15 +1629,15 @@
     var responsibleName = '';
     if (Array.isArray(responsibleRaw)) {
       responsibleName = responsibleRaw
-        .map(function(item) { return String(item && (item.name || item.fullName || item.fio || item.label || item.value || item) || '').trim(); })
+        .map(function(item) { return String(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item) || '').trim(); })
         .filter(Boolean)
         .join(', ');
     } else if (responsibleRaw && typeof responsibleRaw === 'object') {
-      responsibleName = String(responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value || '').trim();
+      responsibleName = String(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value || '').trim();
     } else {
       responsibleName = String(responsibleRaw || '').trim();
     }
-    var responsibleFinal = String(responsibleName || 'responsible').trim();
+    var responsibleFinal = String(responsibleName || 'Неизвестный').trim();
     var now = new Date();
     var dateStamp = String(now.getFullYear()) + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     var timeStamp = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0');
@@ -1650,7 +1650,7 @@
       || task.id
       || ''
     ).trim();
-    var safeAuthor = responsibleFinal.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
+    var safeAuthor = responsibleFinal.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
     var safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
     var fileName = safeAuthor + '_' + dateStamp + '_' + timeStamp + '_' + safeTaskNumber + '.docx';
     var formData = new FormData();

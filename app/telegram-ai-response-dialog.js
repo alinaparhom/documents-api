@@ -982,11 +982,11 @@
       const responsibleRaw = task && (task.responsible || task.responsibles);
       if (Array.isArray(responsibleRaw)) {
         const list = responsibleRaw
-          .map((item) => normalize(item && (item.name || item.fullName || item.fio || item.label || item.value || item)))
+          .map((item) => normalize(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item)))
           .filter(Boolean);
         if (list.length) return list.join(', ');
       } else if (responsibleRaw && typeof responsibleRaw === 'object') {
-        const fromObject = normalize(responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value);
+        const fromObject = normalize(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value);
         if (fromObject) return fromObject;
       } else {
         const fromString = normalize(responsibleRaw);
@@ -994,12 +994,12 @@
       }
       return '';
     };
-    const responsibleName = resolveResponsibleName() || 'responsible';
+    const responsibleName = resolveResponsibleName() || 'Неизвестный';
     const date = new Date();
     const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const timeStamp = `${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}`;
     const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
-    const safeResponsible = responsibleName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
+    const safeResponsible = responsibleName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
     const safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
     const fileName = `${safeResponsible}_${dateStamp}_${timeStamp}_${safeTaskNumber}.docx`;
     const formData = new FormData();
