@@ -7851,9 +7851,95 @@ function updateViewerDeleteState(file) {
   elements.viewerDeleteResponse.setAttribute('aria-disabled', canDelete ? 'false' : 'true');
 }
 
+function findResponsibleNameInAccessByFile(file) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = new Set();
+  const nameCandidates = new Set();
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.add(normalized);
+    }
+  };
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      nameCandidates.add(normalized);
+    }
+  };
+
+  pushId(file.uploadedById);
+  pushId(file.uploadedByTelegram);
+  pushId(file.uploadedByLogin);
+  pushId(file.uploadedBy);
+  pushName(file.uploadedByName);
+  pushName(file.uploadedBy);
+
+  const uploadedByKey = normalizeValue(file.uploadedByKey);
+  if (uploadedByKey) {
+    if (uploadedByKey.startsWith('id:')) {
+      pushId(uploadedByKey.slice(3));
+    } else if (uploadedByKey.startsWith('name:')) {
+      pushName(uploadedByKey.slice(5));
+    } else {
+      pushId(uploadedByKey);
+      pushName(uploadedByKey);
+    }
+  }
+
+  const ids = Array.from(idCandidates);
+  const names = Array.from(nameCandidates);
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
 function resolveViewerFileOwnerLabel(file) {
   if (!file || typeof file !== 'object' || !file.isResponse) {
     return '';
+  }
+
+  const mappedResponsible = findResponsibleNameInAccessByFile(file);
+  if (mappedResponsible) {
+    return mappedResponsible;
   }
 
   const byName = normalizeValue(file.uploadedBy);
@@ -11158,6 +11244,186 @@ function getDirectorsForOrganization(organization) {
   return Array.isArray(list) ? list : [];
 }
 
+const settingsDocsResponsibleCache = new Map();
+
+function normalizeSettingsDocsEntries(payload) {
+  if (!payload) {
+    return [];
+  }
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload.responsibles)) {
+    return payload.responsibles;
+  }
+  if (payload.settings && Array.isArray(payload.settings.responsibles)) {
+    return payload.settings.responsibles;
+  }
+  if (Array.isArray(payload.block1)) {
+    return payload.block1;
+  }
+  return [];
+}
+
+async function getResponsibleFromSettingsDocs(organization, telegramId) {
+  const orgKey = getOrganizationKey(organization);
+  const tgKey = normalizeIdentifier(telegramId);
+  if (!orgKey || !tgKey || typeof fetch !== 'function') {
+    return '';
+  }
+
+  const cacheKey = `${orgKey}::${tgKey}`;
+  if (settingsDocsResponsibleCache.has(cacheKey)) {
+    return settingsDocsResponsibleCache.get(cacheKey) || '';
+  }
+
+  const orgVariants = Array.from(new Set([
+    String(organization || '').trim(),
+    orgKey,
+    encodeURIComponent(String(organization || '').trim()),
+    encodeURIComponent(orgKey),
+  ].filter(Boolean)));
+
+  const urlCandidates = [];
+  orgVariants.forEach((value) => {
+    urlCandidates.push(`/documents/${value}/settingsdocs.json`);
+    urlCandidates.push(`/documents/${value}/settings.json`);
+  });
+
+  for (const url of urlCandidates) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const response = await fetch(url, { credentials: 'include', cache: 'no-store' });
+      if (!response.ok) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const payload = await response.json();
+      const entries = normalizeSettingsDocsEntries(payload);
+      if (!entries.length) {
+        continue;
+      }
+      const match = entries.find((entry) => normalizeIdentifier(entry && entry.telegram) === tgKey);
+      const responsible = normalizeValue(match && match.responsible);
+      if (responsible) {
+        settingsDocsResponsibleCache.set(cacheKey, responsible);
+        return responsible;
+      }
+    } catch (_) {
+      // ignore and try next url
+    }
+  }
+
+  settingsDocsResponsibleCache.set(cacheKey, '');
+  return '';
+}
+
+function getCurrentUserResponsibleFromTask(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return '';
+  }
+
+  const pools = [];
+  if (Array.isArray(task.responsibles)) {
+    pools.push(...task.responsibles);
+  }
+  if (Array.isArray(task.subordinates)) {
+    pools.push(...task.subordinates);
+  }
+  if (Array.isArray(task.directors)) {
+    pools.push(...task.directors);
+  }
+
+  for (const entry of pools) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserResponsibleFromAccess() {
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = [];
+  const nameCandidates = [];
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.push(normalized);
+    }
+  };
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      nameCandidates.push(normalized);
+    }
+  };
+
+  pushId(state.telegram.id);
+  pushId(state.telegram.chatId);
+  pushId(state.telegram.username);
+  pushName(state.telegram.fullName);
+  pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+
+  const ids = Array.from(new Set(idCandidates));
+  const names = Array.from(new Set(nameCandidates));
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
 function getUserIdentifierCandidates() {
   const idCandidates = [];
   const nameCandidates = [];
@@ -11182,6 +11448,11 @@ function getUserIdentifierCandidates() {
 
   pushName(state.telegram.fullName);
   pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+
+  const responsibleName = getCurrentUserResponsibleFromAccess();
+  if (responsibleName) {
+    pushName(responsibleName);
+  }
 
   return {
     ids: Array.from(new Set(idCandidates)),
@@ -15186,7 +15457,7 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       isResponse: true,
       storedName: normalizeValue(file.storedName),
       uploadedByKey: normalizeValue(file.uploadedByKey),
-      uploadedBy: normalizeValue(file.uploadedBy),
+      uploadedBy: findResponsibleNameInAccessByFile(file) || normalizeValue(file.uploadedBy),
     });
   });
 
@@ -15256,6 +15527,7 @@ function collectCurrentUserOwnershipKeys() {
   names.forEach(pushKey);
   pushKey(state.telegram.username);
   pushKey(state.telegram.fullName);
+  pushKey(getCurrentUserResponsibleFromAccess());
 
   const accessPools = [];
   if (state.access && typeof state.access === 'object') {
@@ -15804,7 +16076,7 @@ function taskUserCanUploadResponse(task, entry) {
   return entryMatchesUser(entry, ids, names);
 }
 
-async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '') {
+async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '', ownerEntry = null) {
   if (!task || typeof task !== 'object') {
     sendResponseViewerLog('response_upload_failed', {
       reason: 'task_missing',
@@ -15860,6 +16132,22 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   });
   if (effectiveTelegramId) {
     formData.append('telegram_user_id', effectiveTelegramId);
+  }
+
+  const ownerResponsible = normalizeValue(ownerEntry && ownerEntry.responsible)
+    || normalizeValue(ownerEntry && ownerEntry.name)
+    || normalizeValue(ownerEntry && ownerEntry.fullName)
+    || normalizeValue(ownerEntry && ownerEntry.displayName)
+    || normalizeValue(ownerEntry && ownerEntry.label);
+  const responsibleFromSettingsDocs = await getResponsibleFromSettingsDocs(organization, effectiveTelegramId);
+  const responsibleFromTask = getCurrentUserResponsibleFromTask(task);
+  const responsibleFromAccess = getCurrentUserResponsibleFromAccess();
+  const resolvedResponsible = ownerResponsible || responsibleFromSettingsDocs || responsibleFromTask || responsibleFromAccess;
+  if (resolvedResponsible) {
+    formData.append('uploadedBy', resolvedResponsible);
+    formData.append('uploadedByName', resolvedResponsible);
+    formData.append('uploaderName', resolvedResponsible);
+    formData.append('telegram_full_name', resolvedResponsible);
   }
 
   const headers = {};
@@ -15920,7 +16208,9 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
 
   await loadTasks(true);
   if (typeof setStatus === 'function') {
-    setStatus('success', data.message || 'Ответ загружен.');
+    const uploaderLabel = resolvedResponsible || effectiveTelegramId || 'не определён';
+    const baseMessage = data.message || 'Ответ загружен.';
+    setStatus('success', `${baseMessage} uploadedBy: ${uploaderLabel}`);
   }
 
   sendResponseViewerLog('response_upload_success', {
@@ -15934,6 +16224,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     })),
     hasResponseMessage: Boolean(responseMessage),
     responseMessageLength: responseMessage.length,
+    uploadedBy: resolvedResponsible || '',
   });
 
   return data;
@@ -16110,7 +16401,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     meta.textContent = `Файлов выбрано: ${files.length}`;
 
     try {
-      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '');
+      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '', entry);
       meta.textContent = files.length > 1 ? 'Ответы загружены' : 'Ответ загружен';
       textInput.value = '';
       textCounter.textContent = '0 / 12000';
@@ -16162,7 +16453,7 @@ function createResponseUploadControls(task, entry, setStatus) {
         await updateTaskResponseText(task, normalizeValue(editingTextResponse.storedName), messageValue, setStatus);
         meta.textContent = 'Текстовый ответ обновлён';
       } else {
-        await uploadTaskResponseFiles(task, [], setStatus, messageValue);
+        await uploadTaskResponseFiles(task, [], setStatus, messageValue, entry);
         meta.textContent = 'Текстовый ответ сохранён';
       }
       textInput.value = '';
