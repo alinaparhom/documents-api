@@ -1672,6 +1672,68 @@
     return blob;
   }
 
+  function resolveAuthorizedUserName(task) {
+    var webAppUser = window
+      && window.Telegram
+      && window.Telegram.WebApp
+      && window.Telegram.WebApp.initDataUnsafe
+      && window.Telegram.WebApp.initDataUnsafe.user
+      ? window.Telegram.WebApp.initDataUnsafe.user
+      : null;
+    if (webAppUser && typeof webAppUser === 'object') {
+      var tgName = [webAppUser.first_name, webAppUser.last_name]
+        .map(function(part) { return String(part || '').trim(); })
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (!tgName) {
+        tgName = String(webAppUser.username || '').trim();
+      }
+      if (tgName) {
+        return tgName;
+      }
+    }
+
+    var search = '';
+    try {
+      search = String(window && window.location && window.location.search || '');
+    } catch (error) {
+      search = '';
+    }
+    var params = null;
+    try {
+      params = new URLSearchParams(search || '');
+    } catch (error) {
+      params = null;
+    }
+    if (params) {
+      var fullName = String(params.get('telegram_full_name') || params.get('full_name') || '').trim();
+      if (fullName) {
+        return fullName;
+      }
+      var firstName = String(params.get('telegram_first_name') || params.get('first_name') || '').trim();
+      var lastName = String(params.get('telegram_last_name') || params.get('last_name') || '').trim();
+      var queryName = (firstName + ' ' + lastName).trim();
+      if (queryName) {
+        return queryName;
+      }
+    }
+
+    var responsibleRaw = task && (task.responsible || task.responsibles);
+    var responsibleName = '';
+    if (Array.isArray(responsibleRaw)) {
+      responsibleName = responsibleRaw
+        .map(function(item) { return String(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item) || '').trim(); })
+        .filter(Boolean)
+        .join(', ');
+    } else if (responsibleRaw && typeof responsibleRaw === 'object') {
+      responsibleName = String(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value || '').trim();
+    } else {
+      responsibleName = String(responsibleRaw || '').trim();
+    }
+    return responsibleName;
+  }
+
   async function attachGeneratedDocxToTaskResponse(previewPayload, options) {
     var safeOptions = options && typeof options === 'object' ? options : {};
     var task = resolveTaskContext(safeOptions) || {};
@@ -1703,6 +1765,7 @@
       responsibleName = String(responsibleRaw || '').trim();
     }
     var responsibleFinal = String(responsibleName || 'Неизвестный').trim();
+    var uploaderFinal = String(resolveAuthorizedUserName(task) || 'Неизвестный').trim();
     var now = new Date();
     var dateStamp = String(now.getFullYear()) + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     var timeStamp = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0');
@@ -1715,7 +1778,7 @@
       || task.id
       || ''
     ).trim();
-    var safeAuthor = responsibleFinal.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
+    var safeAuthor = uploaderFinal.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
     var safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
     var fileName = safeAuthor + '_' + dateStamp + '_' + timeStamp + '_' + safeTaskNumber + '.docx';
     var formData = new FormData();
@@ -1723,7 +1786,7 @@
     formData.append('organization', organization);
     formData.append('documentId', documentId);
     formData.append('responsible', responsibleFinal);
-    formData.append('uploaderName', responsibleFinal);
+    formData.append('uploaderName', uploaderFinal);
     formData.append('attachments[]', fileBlob, fileName);
 
     var headers = {};
