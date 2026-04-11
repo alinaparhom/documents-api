@@ -1034,6 +1034,63 @@
     throw new Error(`Не удалось скачать документ для предпросмотра (${lastStatus || 'no_response'}).`);
   }
 
+  async function downloadGeneratedPreviewFile(previewPayload) {
+    const fileName = normalize(previewPayload && previewPayload.fileName) || 'template-answer.docx';
+    const sourceUrl = normalize(previewPayload && previewPayload.previewUrl);
+    const fallbackBlob = previewPayload && previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+    if (fallbackBlob && fallbackBlob.size) {
+      const blobUrl = URL.createObjectURL(fallbackBlob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1200);
+      return true;
+    }
+    if (sourceUrl) {
+      try {
+        const response = await fetchWithTimeout(sourceUrl, { credentials: 'include', cache: 'no-store' }, 30000);
+        if (response && response.ok) {
+          const blob = await response.blob();
+          if (blob && blob.size) {
+            const blobUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = fileName;
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 1200);
+            return true;
+          }
+        }
+      } catch (_) {}
+      try {
+        const link = document.createElement('a');
+        link.href = sourceUrl;
+        link.download = fileName;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return true;
+      } catch (_) {}
+      const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+      if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
+        try {
+          telegramWebApp.openLink(sourceUrl);
+          return true;
+        } catch (_) {}
+      }
+    }
+    return false;
+  }
+
   async function ensureDocxPreviewLibrariesLoaded() {
     await loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', () => Boolean(window.JSZip && typeof window.JSZip.loadAsync === 'function'));
     await loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', () => Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync)));
@@ -1195,7 +1252,6 @@
     const task = context && context.task ? context.task : {};
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
-    const sourceUrl = previewUrl || blobUrl;
     let zoom = 1;
 
     const applyZoom = () => {
@@ -1246,14 +1302,21 @@
       zoom = zoom + 0.1;
       applyZoom();
     });
-    downloadBtn?.addEventListener('click', () => {
+    downloadBtn?.addEventListener('click', async () => {
       toggleMenu(false);
-      const a = document.createElement('a');
-      a.href = sourceUrl;
-      a.download = normalize(previewPayload.fileName) || 'template-answer.docx';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      if (downloadBtn) {
+        downloadBtn.disabled = true;
+        downloadBtn.textContent = 'Скачиваем…';
+      }
+      try {
+        const ok = await downloadGeneratedPreviewFile(previewPayload);
+        statusNode.textContent = ok ? 'Файл отправлен на скачивание.' : 'Не удалось скачать файл.';
+      } finally {
+        if (downloadBtn) {
+          downloadBtn.disabled = false;
+          downloadBtn.textContent = 'Скачать';
+        }
+      }
     });
     if (attachBtn) {
       const taskReady = Boolean(normalize(task && task.id));
@@ -1640,7 +1703,7 @@
           </select>
           <button type="button" class="tg-ai-chat__toggle" data-template-btn>Шаблон</button>
         </div>
-        <div class="tg-ai-chat__files" data-files hidden>
+        <div class="tg-ai-chat__files" data-files>
           <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
           <div class="tg-ai-chat__files-list" data-files-list></div>
         </div>
@@ -1694,6 +1757,7 @@
       }
 
       isSending = true;
+      if (filesPanel) filesPanel.hidden = true;
       lastAiAnswer = '';
       meta.innerHTML = '';
       createBubble(messages, `Стиль: ${styleMeta.label}. Подготовь готовый ответ по документам.`, 'user');
@@ -1738,6 +1802,7 @@
       styleIndex = nextIndex >= 0 ? nextIndex : 0;
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
       status.textContent = `Стиль ответа: ${styleMeta.label}.`;
+      if (filesPanel) filesPanel.hidden = true;
       sendByCurrentStyle();
     });
 
