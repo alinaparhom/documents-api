@@ -179,6 +179,45 @@
     return String(value || '').trim();
   }
 
+  function resolveAuthorizedUserName(globalObject) {
+    const webAppUser = globalObject
+      && globalObject.Telegram
+      && globalObject.Telegram.WebApp
+      && globalObject.Telegram.WebApp.initDataUnsafe
+      && globalObject.Telegram.WebApp.initDataUnsafe.user
+      ? globalObject.Telegram.WebApp.initDataUnsafe.user
+      : null;
+    if (webAppUser && typeof webAppUser === 'object') {
+      let tgName = [webAppUser.first_name, webAppUser.last_name]
+        .map((part) => normalize(part))
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (!tgName) {
+        tgName = normalize(webAppUser.username);
+      }
+      if (tgName) return tgName;
+    }
+
+    let params = null;
+    try {
+      const search = String(globalObject && globalObject.location && globalObject.location.search ? globalObject.location.search : '');
+      params = new URLSearchParams(search || '');
+    } catch (_) {
+      params = null;
+    }
+    if (params) {
+      const fullName = normalize(params.get('telegram_full_name') || params.get('full_name'));
+      if (fullName) return fullName;
+      const firstName = normalize(params.get('telegram_first_name') || params.get('first_name'));
+      const lastName = normalize(params.get('telegram_last_name') || params.get('last_name'));
+      const queryName = normalize(`${firstName} ${lastName}`);
+      if (queryName) return queryName;
+    }
+
+    return '';
+  }
+
   function escapeHtml(value) {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -1026,20 +1065,20 @@
       }
       return '';
     };
-    const responsibleName = resolveResponsibleName() || 'Неизвестный';
+    const uploaderName = resolveAuthorizedUserName(globalScope) || resolveResponsibleName() || 'Неизвестный';
     const date = new Date();
     const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const timeStamp = `${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}`;
     const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
-    const safeResponsible = responsibleName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
+    const safeResponsible = uploaderName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
     const safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
     const fileName = `${safeResponsible}_${dateStamp}_${timeStamp}_${safeTaskNumber}.docx`;
     const formData = new FormData();
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
     formData.append('documentId', documentId);
-    formData.append('responsible', responsibleName);
-    formData.append('uploaderName', responsibleName);
+    formData.append('responsible', resolveResponsibleName() || uploaderName);
+    formData.append('uploaderName', uploaderName);
     formData.append('attachments[]', fileBlob, fileName);
 
     const telegramInitData = normalize(
