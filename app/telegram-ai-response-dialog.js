@@ -790,14 +790,28 @@
       .tg-ai-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.8);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview{position:fixed;inset:0;z-index:3950;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}
       .tg-ai-generated-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95))}
-      .tg-ai-generated-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}
+      .tg-ai-generated-preview__head{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}
       .tg-ai-generated-preview__title{font-size:14px;font-weight:800;color:#0f172a}
       .tg-ai-generated-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
-      .tg-ai-generated-preview__actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+      .tg-ai-generated-preview__tools{display:flex;align-items:center;gap:6px}
+      .tg-ai-generated-preview__zoom{display:inline-flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:rgba(255,255,255,.95)}
+      .tg-ai-generated-preview__zoom-btn{border:none;background:rgba(241,245,249,.9);color:#0f172a;border-radius:8px;min-width:28px;height:28px;font-weight:800}
+      .tg-ai-generated-preview__zoom-value{font-size:12px;min-width:42px;text-align:center;color:#334155;font-weight:700}
+      .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
+      .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
+      .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
+      .tg-ai-generated-preview__menu[hidden]{display:none}
+      .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
       .tg-ai-generated-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
-      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:hidden}
-      .tg-ai-generated-preview__frame{width:100%;height:100%;border:0;background:#e2e8f0}
+      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:hidden;padding:0}
+      .tg-ai-generated-preview__viewport{position:relative;height:100%;overflow:auto;padding:12px;display:flex;justify-content:center;align-items:flex-start}
+      .tg-ai-generated-preview__doc{width:auto;min-height:100%;margin:0 auto;background:rgba(255,255,255,.85);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12);transform-origin:top center;transition:transform .14s ease}
+      .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}
+      .tg-ai-generated-preview__doc .docx{overflow:visible}
+      .tg-ai-generated-preview__doc .docx-wrapper>section{margin:0 auto 18px!important;overflow:visible}
+      .tg-ai-generated-preview__doc .docx-wrapper p,.tg-ai-generated-preview__doc .docx-wrapper td,.tg-ai-generated-preview__doc .docx-wrapper li{overflow-wrap:break-word;word-break:normal}
+      .tg-ai-generated-preview__frame{display:none;width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}
       .tg-ai-generated-preview__loading-card{width:min(520px,92%);border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:18px;padding:16px;box-shadow:0 18px 32px rgba(15,23,42,.12);display:grid;gap:10px}
@@ -834,7 +848,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__actions{width:100%}.tg-ai-generated-preview__btn{flex:1;min-width:0;padding:8px 10px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -951,22 +965,40 @@
       return previewPayload.blob;
     }
     const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
-    if (!previewUrl) {
-      throw new Error('Не удалось получить файл документа для прикрепления.');
+    const fileName = normalize(previewPayload && previewPayload.fileName);
+    const directTmpUrl = fileName ? `/tmp/generated/${encodeURIComponent(fileName)}` : '';
+    const candidates = Array.from(new Set([previewUrl, directTmpUrl].filter(Boolean)));
+    if (!candidates.length) {
+      throw new Error('Не удалось получить файл документа для предпросмотра.');
     }
-    const response = await fetchWithTimeout(previewUrl, {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-    }, 30000);
-    if (!response || !response.ok) {
-      throw new Error(`Не удалось скачать документ для прикрепления (${response ? response.status : 0}).`);
+    let lastStatus = 0;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const url = candidates[index];
+      try {
+        const response = await fetchWithTimeout(url, {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        }, 30000);
+        if (!response || !response.ok) {
+          lastStatus = response ? response.status : 0;
+          continue;
+        }
+        const blob = await response.blob();
+        if (blob && blob.size) return blob;
+      } catch (_) {}
     }
-    const blob = await response.blob();
-    if (!blob || !blob.size) {
-      throw new Error('Получен пустой файл документа.');
+    throw new Error(`Не удалось скачать документ для предпросмотра (${lastStatus || 'no_response'}).`);
+  }
+
+  async function ensureDocxPreviewLibrariesLoaded() {
+    await loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', () => Boolean(window.JSZip && typeof window.JSZip.loadAsync === 'function'));
+    await loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', () => Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync)));
+    const renderer = (window.docx && window.docx.renderAsync) ? window.docx : ((window.docxPreview && window.docxPreview.renderAsync) ? window.docxPreview : null);
+    if (!renderer || typeof renderer.renderAsync !== 'function') {
+      throw new Error('docx_preview_not_loaded');
     }
-    return blob;
+    return renderer;
   }
 
   async function attachGeneratedDocxToTaskResponse(previewPayload, task = {}) {
@@ -1056,25 +1088,39 @@
         <div class="tg-ai-generated-preview__head">
           <div>
             <div class="tg-ai-generated-preview__title">Предварительный просмотр</div>
-            <div class="tg-ai-generated-preview__hint">Проверьте сгенерированный документ</div>
+            <div class="tg-ai-generated-preview__hint">Локальная копия документа как в файле</div>
           </div>
-          <div class="tg-ai-generated-preview__actions">
-            <button type="button" class="tg-ai-generated-preview__btn" data-preview-attach>Прикрепить к задаче</button>
-            <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
-            <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
+          <div class="tg-ai-generated-preview__tools">
+            <div class="tg-ai-generated-preview__zoom">
+              <button type="button" class="tg-ai-generated-preview__zoom-btn" data-preview-zoom-out aria-label="Уменьшить">−</button>
+              <span class="tg-ai-generated-preview__zoom-value" data-preview-zoom-value>100%</span>
+              <button type="button" class="tg-ai-generated-preview__zoom-btn" data-preview-zoom-in aria-label="Увеличить">+</button>
+            </div>
+            <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
+            <button type="button" class="tg-ai-generated-preview__close-icon" data-preview-close-icon aria-label="Закрыть">×</button>
           </div>
         </div>
+        <div class="tg-ai-generated-preview__menu" data-preview-menu hidden>
+          <button type="button" class="tg-ai-generated-preview__btn" data-preview-attach>Прикрепить к задаче</button>
+          <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
+          <button type="button" class="tg-ai-generated-preview__btn" data-preview-local>Локально</button>
+          <button type="button" class="tg-ai-generated-preview__btn" data-preview-office>Office Viewer</button>
+          <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
+        </div>
         <div class="tg-ai-generated-preview__body">
+          <div class="tg-ai-generated-preview__viewport" data-preview-viewport>
+            <div class="tg-ai-generated-preview__doc" data-preview-doc aria-label="DOCX preview"></div>
+          </div>
           <iframe class="tg-ai-generated-preview__frame" title="Office Web Viewer" data-preview-frame></iframe>
           <div class="tg-ai-generated-preview__loading" data-preview-loading>
             <div class="tg-ai-generated-preview__loading-card">
-              <div class="tg-ai-generated-preview__loading-title">Открываем документ…</div>
-              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Подготавливаем безопасную ссылку для Office Web Viewer.</div>
+              <div class="tg-ai-generated-preview__loading-title">Готовим локальный предпросмотр…</div>
+              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Рендерим документ прямо в браузере.</div>
               <div class="tg-ai-generated-preview__bar"></div>
               <div class="tg-ai-generated-preview__steps">
                 <div class="tg-ai-generated-preview__step tg-ai-generated-preview__step--active" data-step="1"><span class="tg-ai-generated-preview__step-dot"></span><span>1. Подготовка файла</span></div>
-                <div class="tg-ai-generated-preview__step" data-step="2"><span class="tg-ai-generated-preview__step-dot"></span><span>2. Подключение Office Viewer</span></div>
-                <div class="tg-ai-generated-preview__step" data-step="3"><span class="tg-ai-generated-preview__step-dot"></span><span>3. Рендер предпросмотра</span></div>
+                <div class="tg-ai-generated-preview__step" data-step="2"><span class="tg-ai-generated-preview__step-dot"></span><span>2. Подключение движка</span></div>
+                <div class="tg-ai-generated-preview__step" data-step="3"><span class="tg-ai-generated-preview__step-dot"></span><span>3. Отрисовка документа</span></div>
               </div>
             </div>
           </div>
@@ -1083,36 +1129,82 @@
       </div>
     `;
     document.body.appendChild(overlay);
+    const docNode = overlay.querySelector('[data-preview-doc]');
+    const viewportNode = overlay.querySelector('[data-preview-viewport]');
     const frameNode = overlay.querySelector('[data-preview-frame]');
     const statusNode = overlay.querySelector('[data-preview-status]');
     const loadingNode = overlay.querySelector('[data-preview-loading]');
     const loadingSubNode = overlay.querySelector('[data-loading-sub]');
     const downloadBtn = overlay.querySelector('[data-preview-download]');
     const attachBtn = overlay.querySelector('[data-preview-attach]');
+    const localBtn = overlay.querySelector('[data-preview-local]');
+    const officeBtn = overlay.querySelector('[data-preview-office]');
+    const menuNode = overlay.querySelector('[data-preview-menu]');
+    const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
+    const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
+    const zoomOutBtn = overlay.querySelector('[data-preview-zoom-out]');
+    const zoomInBtn = overlay.querySelector('[data-preview-zoom-in]');
+    const zoomValueNode = overlay.querySelector('[data-preview-zoom-value]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
+    const officeSourceUrl = toAbsoluteUrl(previewUrl);
     const task = context && context.task ? context.task : {};
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     const sourceUrl = previewUrl || blobUrl;
-    let stepTimer = null;
-    let slowTimer = null;
+    let zoom = 1;
+
+    const applyZoom = () => {
+      if (!docNode) return;
+      const normalized = Math.max(0.2, Math.min(1.6, Number(zoom) || 1));
+      zoom = Number(normalized.toFixed(2));
+      if ('zoom' in docNode.style) {
+        docNode.style.zoom = String(zoom);
+        docNode.style.transform = 'none';
+        docNode.style.width = 'auto';
+      } else {
+        docNode.style.transform = `scale(${zoom})`;
+        docNode.style.width = 'auto';
+      }
+      if (zoomValueNode) zoomValueNode.textContent = `${Math.round(zoom * 100)}%`;
+    };
 
     const close = () => {
       if (blobUrl) URL.revokeObjectURL(blobUrl);
-      if (stepTimer) clearInterval(stepTimer);
-      if (slowTimer) clearTimeout(slowTimer);
       if (previewUrl || normalize(previewPayload.fileName)) {
         deleteGeneratedTempFile(previewPayload).catch(() => {});
       }
       overlay.remove();
     };
+    const toggleMenu = (forceOpen) => {
+      if (!menuNode) return;
+      const open = typeof forceOpen === 'boolean' ? forceOpen : menuNode.hasAttribute('hidden');
+      if (open) menuNode.removeAttribute('hidden');
+      else menuNode.setAttribute('hidden', '');
+    };
     closeBtn?.addEventListener('click', close);
+    closeIconBtn?.addEventListener('click', close);
+    menuToggleBtn?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleMenu();
+    });
     overlay.addEventListener('click', (event) => {
+      if (menuNode && !menuNode.contains(event.target) && event.target !== menuToggleBtn) {
+        toggleMenu(false);
+      }
       if (event.target === overlay) close();
     });
+    zoomOutBtn?.addEventListener('click', () => {
+      zoom = zoom - 0.1;
+      applyZoom();
+    });
+    zoomInBtn?.addEventListener('click', () => {
+      zoom = zoom + 0.1;
+      applyZoom();
+    });
     downloadBtn?.addEventListener('click', () => {
+      toggleMenu(false);
       const a = document.createElement('a');
       a.href = sourceUrl;
       a.download = normalize(previewPayload.fileName) || 'template-answer.docx';
@@ -1127,6 +1219,7 @@
         attachBtn.textContent = 'Нет задачи';
       }
       attachBtn.addEventListener('click', async () => {
+        toggleMenu(false);
         if (attachBtn.disabled) return;
         const prevText = attachBtn.textContent;
         attachBtn.disabled = true;
@@ -1145,11 +1238,6 @@
       });
     }
 
-    if (!sourceUrl) {
-      statusNode.textContent = 'Ошибка: не получена ссылка на документ.';
-      return;
-    }
-    frameNode.style.visibility = 'hidden';
     let step = 1;
     const setStep = (value, subtitle) => {
       step = value;
@@ -1158,33 +1246,80 @@
         node.classList.toggle('tg-ai-generated-preview__step--active', idx === step);
         node.classList.toggle('tg-ai-generated-preview__step--done', idx < step);
       });
-      if (loadingSubNode && subtitle) {
-        loadingSubNode.textContent = subtitle;
+      if (loadingSubNode && subtitle) loadingSubNode.textContent = subtitle;
+    };
+
+    const openLocalPreview = async () => {
+      if (localBtn) {
+        localBtn.disabled = true;
+        localBtn.textContent = 'Открываю…';
+      }
+      if (docNode) docNode.style.display = '';
+      if (viewportNode) viewportNode.style.display = '';
+      if (frameNode) frameNode.style.display = 'none';
+      if (loadingNode) loadingNode.style.display = '';
+      statusNode.textContent = 'Подготовка локального предпросмотра…';
+      try {
+        const localBlob = await resolveGeneratedDocxBlob(previewPayload);
+        if (!localBlob || !localBlob.size) throw new Error('empty_blob');
+        setStep(1, 'Подготавливаем файл...');
+        const renderer = await ensureDocxPreviewLibrariesLoaded();
+        setStep(2, 'Подключаем движок предпросмотра...');
+        const arrayBuffer = await localBlob.arrayBuffer();
+        setStep(3, 'Отрисовываем документ...');
+        docNode.innerHTML = '';
+        docNode.style.visibility = 'hidden';
+        await renderer.renderAsync(arrayBuffer, docNode, null, {
+          inWrapper: true,
+          breakPages: true,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          useBase64URL: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+        });
+        applyZoom();
+        docNode.style.visibility = '';
+        if (loadingNode) loadingNode.style.display = 'none';
+        statusNode.textContent = 'Готово: локальный предпросмотр открыт.';
+      } catch (_) {
+        if (loadingNode) loadingNode.style.display = 'none';
+        statusNode.textContent = 'Локальный предпросмотр не открылся. Используйте Office Viewer.';
+      } finally {
+        if (localBtn) {
+          localBtn.disabled = false;
+          localBtn.textContent = 'Локально';
+        }
       }
     };
-    setStep(1, 'Подготавливаем документ и проверяем ссылку...');
-    stepTimer = setInterval(() => {
-      if (step < 3) {
-        setStep(step + 1, step === 1 ? 'Подключаем Office Web Viewer...' : 'Формируем визуальный предпросмотр...');
+
+    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
+    if (officeBtn && !canUseOfficeViewer) {
+      officeBtn.disabled = true;
+      officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
+    }
+    localBtn?.addEventListener('click', () => { toggleMenu(false); openLocalPreview(); });
+    officeBtn?.addEventListener('click', () => {
+      toggleMenu(false);
+      if (!canUseOfficeViewer) {
+        statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
+        return;
       }
-    }, 1200);
-    slowTimer = setTimeout(() => {
-      statusNode.textContent = 'Открытие занимает чуть дольше обычного, пожалуйста подождите…';
-      if (loadingSubNode) {
-        loadingSubNode.textContent = 'Office Viewer отвечает медленно, но документ уже в очереди на открытие.';
-      }
-    }, 7000);
-    frameNode.addEventListener('load', () => {
-      setStep(4, 'Готово.');
-      clearInterval(stepTimer);
-      clearTimeout(slowTimer);
-      frameNode.style.visibility = '';
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = 'Готово: документ открыт через Office Web Viewer.';
-    }, { once: true });
-    const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
-    frameNode.src = officeUrl;
-    statusNode.textContent = 'Открываем через Office Web Viewer…';
+      if (docNode) docNode.style.display = 'none';
+      if (viewportNode) viewportNode.style.display = 'none';
+      if (frameNode) frameNode.style.display = '';
+      const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
+      frameNode.onload = () => {
+        statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+      };
+      frameNode.src = officeUrl;
+      statusNode.textContent = 'Открываем через Office Viewer…';
+    });
+
+    await openLocalPreview();
   }
 
   function openTemplateAnswerEditor(context = {}) {
