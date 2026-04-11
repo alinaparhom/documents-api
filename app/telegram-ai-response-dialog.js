@@ -997,14 +997,17 @@
     const responsibleName = resolveResponsibleName() || 'responsible';
     const date = new Date();
     const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const timeStamp = `${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}`;
     const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
     const safeResponsible = responsibleName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
     const safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
-    const fileName = `${safeResponsible}_Ответ_${dateStamp}_${safeTaskNumber}.docx`;
+    const fileName = `${safeResponsible}_${dateStamp}_${timeStamp}_${safeTaskNumber}.docx`;
     const formData = new FormData();
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
     formData.append('documentId', documentId);
+    formData.append('responsible', responsibleName);
+    formData.append('uploaderName', responsibleName);
     formData.append('attachments[]', fileBlob, fileName);
 
     const telegramInitData = normalize(

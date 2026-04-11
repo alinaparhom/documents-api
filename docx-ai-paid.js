@@ -1640,6 +1640,7 @@
     var responsibleFinal = String(responsibleName || 'responsible').trim();
     var now = new Date();
     var dateStamp = String(now.getFullYear()) + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    var timeStamp = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0');
     var taskNumberRaw = String(
       task.entryNumber
       || task.taskNumber
@@ -1651,11 +1652,13 @@
     ).trim();
     var safeAuthor = responsibleFinal.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
     var safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
-    var fileName = safeAuthor + '_Ответ_' + dateStamp + '_' + safeTaskNumber + '.docx';
+    var fileName = safeAuthor + '_' + dateStamp + '_' + timeStamp + '_' + safeTaskNumber + '.docx';
     var formData = new FormData();
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
     formData.append('documentId', documentId);
+    formData.append('responsible', responsibleFinal);
+    formData.append('uploaderName', responsibleFinal);
     formData.append('attachments[]', fileBlob, fileName);
 
     var headers = {};
