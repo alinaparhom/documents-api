@@ -7885,7 +7885,7 @@ function updateViewerFileOwnerState(file) {
     elements.viewerFileOwner.hidden = true;
     return;
   }
-  elements.viewerFileOwner.textContent = `Загрузил: ${owner}`;
+  elements.viewerFileOwner.textContent = `👤 ${owner}`;
   elements.viewerFileOwner.hidden = false;
 }
 
