@@ -2681,6 +2681,7 @@ function initElements() {
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
+  elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
 
   logIosStage('elements_initialized', {
     cardsContainer: Boolean(elements.cardsContainer),
@@ -2688,6 +2689,7 @@ function initElements() {
     placeholderFound: Boolean(elements.placeholder),
   });
   updateViewerDownloadState(null);
+  updateViewerDeleteState(null);
 }
 
 function initTelegram() {
@@ -7827,6 +7829,108 @@ function updateViewerDownloadState(file) {
   elements.viewerDownload.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
 }
 
+function canDeleteResponseFromViewer(file) {
+  if (!file || typeof file !== 'object' || !file.isResponse) {
+    return false;
+  }
+  if (!normalizeValue(file.storedName)) {
+    return false;
+  }
+  return isResponseOwnedByCurrentUser(file);
+}
+
+function updateViewerDeleteState(file) {
+  if (!elements.viewerDeleteResponse) {
+    return;
+  }
+  const canDelete = canDeleteResponseFromViewer(file);
+  elements.viewerDeleteResponse.hidden = !canDelete;
+  elements.viewerDeleteResponse.disabled = !canDelete;
+  elements.viewerDeleteResponse.setAttribute('aria-disabled', canDelete ? 'false' : 'true');
+}
+
+async function deleteTaskResponseFile(task, file) {
+  if (!task || typeof task !== 'object') {
+    throw new Error('Не удалось определить задачу.');
+  }
+
+  const documentId = normalizeValue(task.id);
+  const organization = getTaskOrganization(task);
+  const storedName = normalizeValue(file && file.storedName);
+  if (!documentId || !organization || !storedName) {
+    throw new Error('Не удалось определить ответ для удаления.');
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const response = await fetch(`/docs.php?action=response_delete&organization=${encodeURIComponent(organization)}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify({
+      action: 'response_delete',
+      organization,
+      documentId,
+      storedName,
+    }),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_) {
+    data = null;
+  }
+  if (!response.ok || !data || data.success !== true) {
+    throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
+  }
+
+  await loadTasks(true);
+  return data;
+}
+
+async function handleViewerDeleteResponseClick() {
+  const file = getViewerFileToDownload();
+  const task = viewerTabsState.task;
+  if (!canDeleteResponseFromViewer(file) || !task) {
+    return;
+  }
+  if (!window.confirm('Удалить этот ответ?')) {
+    return;
+  }
+
+  if (elements.viewerDeleteResponse) {
+    elements.viewerDeleteResponse.disabled = true;
+  }
+
+  try {
+    const result = await deleteTaskResponseFile(task, file);
+    const currentFiles = Array.isArray(viewerTabsState.files) ? viewerTabsState.files : [];
+    const nextFiles = currentFiles.filter((item) => normalizeValue(item && item.storedName) !== normalizeValue(file.storedName));
+
+    if (!nextFiles.length) {
+      renderViewerTabs([], task);
+      viewerTabsState.activeFile = null;
+      updateViewerDownloadState(null);
+      updateViewerDeleteState(null);
+      setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
+      return;
+    }
+
+    const nextIndex = Math.min(viewerTabsState.activeIndex, nextFiles.length - 1);
+    renderViewerTabs(nextFiles, task);
+    await handleViewerTabClick(nextIndex, task);
+    setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
+  } catch (error) {
+    setStatus('error', `Не удалось удалить ответ: ${error && error.message ? error.message : 'неизвестная ошибка'}`);
+  } finally {
+    updateViewerDeleteState(getViewerFileToDownload());
+  }
+}
+
 async function handleViewerDownloadClick() {
   const file = getViewerFileToDownload();
   if (!file) {
@@ -9065,6 +9169,7 @@ async function openViewerFile(file, task, options = {}) {
     });
     viewerTabsState.activeFile = file;
     updateViewerDownloadState(file);
+    updateViewerDeleteState(file);
     if (isPdf && mode === 'inline') {
       try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
       // Счётчик страниц может быть 0, если PDF ещё загружается — обновим после загрузки
@@ -9553,6 +9658,7 @@ function renderViewerTabs(files, task) {
   if (!elements.viewerTabs || !elements.viewerTabsList) {
     viewerTabsState.activeFile = files && files.length ? files[0] : null;
     updateViewerDownloadState(viewerTabsState.activeFile);
+    updateViewerDeleteState(viewerTabsState.activeFile);
     return;
   }
 
@@ -9575,6 +9681,7 @@ function renderViewerTabs(files, task) {
     viewerTabsState.task = task || null;
     viewerTabsState.activeFile = files && files.length ? files[0] : null;
     updateViewerDownloadState(viewerTabsState.activeFile);
+    updateViewerDeleteState(viewerTabsState.activeFile);
     return;
   }
 
@@ -9586,6 +9693,7 @@ function renderViewerTabs(files, task) {
   viewerTabsState.task = task || null;
   viewerTabsState.activeFile = files && files.length ? files[0] : null;
   updateViewerDownloadState(viewerTabsState.activeFile);
+  updateViewerDeleteState(viewerTabsState.activeFile);
 
   files.forEach((file, index) => {
     const button = document.createElement('button');
@@ -14515,6 +14623,9 @@ function attachEvents() {
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
   }
+  if (elements.viewerDeleteResponse) {
+    elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
+  }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -15027,6 +15138,9 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       name: displayName,
       kind,
       isResponse: true,
+      storedName: normalizeValue(file.storedName),
+      uploadedByKey: normalizeValue(file.uploadedByKey),
+      uploadedBy: normalizeValue(file.uploadedBy),
     });
   });
 
