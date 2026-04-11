@@ -1750,6 +1750,63 @@
       }
     }
 
+    var directoryTelegramId = resolveAuthorizedTelegramUserId();
+    var directoryLogins = [];
+    var directoryEntries = [];
+    if (accessUser && accessUser.login) {
+      directoryLogins.push(String(accessUser.login).trim().toLowerCase());
+    }
+    if (accessUser && accessUser.username) {
+      directoryLogins.push(String(accessUser.username).trim().toLowerCase());
+    }
+
+    var pushDirectoryEntries = function(source, bucket) {
+      if (!source) {
+        return;
+      }
+      if (Array.isArray(source)) {
+        source.forEach(function(entry) {
+          bucket.push(entry);
+        });
+        return;
+      }
+      if (typeof source === 'object') {
+        Object.keys(source).forEach(function(key) {
+          var list = source[key];
+          if (Array.isArray(list)) {
+            list.forEach(function(entry) {
+              bucket.push(entry);
+            });
+          }
+        });
+      }
+    };
+
+    var accessContext = window && window.documentsAccessContext ? window.documentsAccessContext : null;
+    if (accessContext) {
+      pushDirectoryEntries(accessContext.responsibles, directoryEntries);
+      pushDirectoryEntries(accessContext.subordinates, directoryEntries);
+      pushDirectoryEntries(accessContext.directors, directoryEntries);
+    }
+
+    for (var i = 0; i < directoryEntries.length; i += 1) {
+      var entry = directoryEntries[i];
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      var entryTelegram = String(entry.telegram || entry.telegram_user_id || entry.telegramId || entry.chatId || '').trim();
+      var entryLogin = String(entry.login || entry.username || '').trim().toLowerCase();
+      var telegramMatched = Boolean(directoryTelegramId) && Boolean(entryTelegram) && entryTelegram === directoryTelegramId;
+      var loginMatched = Boolean(entryLogin) && directoryLogins.indexOf(entryLogin) !== -1;
+      if (!telegramMatched && !loginMatched) {
+        continue;
+      }
+      var entryName = String(entry.responsible || entry.name || entry.fullName || entry.displayName || '').trim();
+      if (entryName) {
+        return entryName;
+      }
+    }
+
     return '';
   }
 
@@ -1777,6 +1834,7 @@
     if (accessUser) {
       var contextUserId = String(
         accessUser.telegram_user_id
+        || accessUser.telegram
         || accessUser.telegramId
         || accessUser.chatId
         || accessUser.user_id
