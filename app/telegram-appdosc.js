@@ -15804,85 +15804,7 @@ function taskUserCanUploadResponse(task, entry) {
   return entryMatchesUser(entry, ids, names);
 }
 
-function resolveCurrentUploaderMeta(task, currentEntry) {
-  const telegramIdKey = normalizeIdentifier(state && state.telegram && state.telegram.id);
-  const organizationKey = getOrganizationKey(getTaskOrganization(task));
-  const accessEntries = [];
-  if (organizationKey && state.access && typeof state.access === 'object') {
-    const orgResponsibles = Array.isArray(state.access.responsibles?.[organizationKey]) ? state.access.responsibles[organizationKey] : [];
-    const orgSubordinates = Array.isArray(state.access.subordinates?.[organizationKey]) ? state.access.subordinates[organizationKey] : [];
-    accessEntries.push(...orgResponsibles, ...orgSubordinates);
-  }
-
-  const matchedByTelegram = telegramIdKey
-    ? accessEntries.find((entry) => {
-      if (!entry || typeof entry !== 'object') {
-        return false;
-      }
-      const candidates = [entry.telegram, entry.chatId, entry.id];
-      return candidates.some((value) => normalizeIdentifier(value) === telegramIdKey);
-    })
-    : null;
-
-  if (matchedByTelegram) {
-    const uploadedBy = normalizeValue(matchedByTelegram.responsible)
-      || normalizeValue(matchedByTelegram.name)
-      || normalizeValue(matchedByTelegram.fullName)
-      || normalizeValue(matchedByTelegram.displayName)
-      || normalizeValue(matchedByTelegram.login)
-      || '';
-
-    const uploadedByKey = buildAssignmentDirectoryKey(matchedByTelegram.id)
-      || buildAssignmentDirectoryKey(matchedByTelegram.telegram)
-      || buildAssignmentDirectoryKey(matchedByTelegram.chatId)
-      || buildAssignmentDirectoryKey(matchedByTelegram.number)
-      || buildAssignmentDirectoryKey(matchedByTelegram.login)
-      || buildAssignmentDirectoryKey(matchedByTelegram.email)
-      || buildAssignmentDirectoryKey(uploadedBy)
-      || '';
-
-    return { uploadedBy, uploadedByKey };
-  }
-
-  const preferredEntry = currentEntry && typeof currentEntry === 'object'
-    ? currentEntry
-    : null;
-  const taskEntries = task && typeof task === 'object'
-    ? [
-      ...(Array.isArray(task.assignees) ? task.assignees : []),
-      ...(Array.isArray(task.responsibles) ? task.responsibles : []),
-      ...(Array.isArray(task.subordinates) ? task.subordinates : []),
-      task.assignee,
-      task.responsible,
-      task.subordinate,
-    ].filter((entry) => entry && typeof entry === 'object')
-    : [];
-
-  const sourceEntry = preferredEntry || taskEntries[0] || null;
-  if (!sourceEntry) {
-    return { uploadedBy: '', uploadedByKey: '' };
-  }
-
-  const uploadedBy = normalizeValue(sourceEntry.responsible)
-    || normalizeValue(sourceEntry.name)
-    || normalizeValue(sourceEntry.fullName)
-    || normalizeValue(sourceEntry.displayName)
-    || normalizeValue(sourceEntry.login)
-    || '';
-
-  const uploadedByKey = buildAssignmentDirectoryKey(sourceEntry.id)
-    || buildAssignmentDirectoryKey(sourceEntry.telegram)
-    || buildAssignmentDirectoryKey(sourceEntry.chatId)
-    || buildAssignmentDirectoryKey(sourceEntry.number)
-    || buildAssignmentDirectoryKey(sourceEntry.login)
-    || buildAssignmentDirectoryKey(sourceEntry.email)
-    || buildAssignmentDirectoryKey(uploadedBy)
-    || '';
-
-  return { uploadedBy, uploadedByKey };
-}
-
-async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '', currentEntry = null) {
+async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '') {
   if (!task || typeof task !== 'object') {
     sendResponseViewerLog('response_upload_failed', {
       reason: 'task_missing',
@@ -15914,7 +15836,17 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   }
 
   const fileList = await prepareResponseFilesForUpload(originalFileList);
-  const uploaderMeta = resolveCurrentUploaderMeta(task, currentEntry);
+  const fallbackTelegramId = normalizeValue(
+    window
+      && window.Telegram
+      && window.Telegram.WebApp
+      && window.Telegram.WebApp.initDataUnsafe
+      && window.Telegram.WebApp.initDataUnsafe.user
+      && window.Telegram.WebApp.initDataUnsafe.user.id !== undefined
+      ? window.Telegram.WebApp.initDataUnsafe.user.id
+      : '',
+  );
+  const effectiveTelegramId = normalizeValue(state && state.telegram && state.telegram.id) || fallbackTelegramId;
 
   const formData = new FormData();
   formData.append('action', 'response_upload');
@@ -15926,11 +15858,8 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   fileList.forEach((file) => {
     formData.append('attachments[]', file, file.name || 'answer-file');
   });
-  if (normalizeValue(uploaderMeta.uploadedBy)) {
-    formData.append('uploadedBy', normalizeValue(uploaderMeta.uploadedBy));
-  }
-  if (normalizeValue(uploaderMeta.uploadedByKey)) {
-    formData.append('uploadedByKey', normalizeValue(uploaderMeta.uploadedByKey));
+  if (effectiveTelegramId) {
+    formData.append('telegram_user_id', effectiveTelegramId);
   }
 
   const headers = {};
@@ -15973,8 +15902,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
       reason: 'server_rejected',
       documentId,
       organization,
-      uploadedBy: normalizeValue(uploaderMeta.uploadedBy),
-      uploadedByKey: normalizeValue(uploaderMeta.uploadedByKey),
+      telegramId: effectiveTelegramId,
       status: response.status,
       statusText: response.statusText || '',
       responseError: data && (data.error || data.message) ? (data.error || data.message) : '',
@@ -15998,8 +15926,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   sendResponseViewerLog('response_upload_success', {
     documentId,
     organization,
-    uploadedBy: normalizeValue(uploaderMeta.uploadedBy),
-    uploadedByKey: normalizeValue(uploaderMeta.uploadedByKey),
+    telegramId: effectiveTelegramId,
     files: fileList.map((file) => ({
       name: normalizeValue(file && file.name),
       size: Number(file && file.size) || 0,
@@ -16183,7 +16110,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     meta.textContent = `Файлов выбрано: ${files.length}`;
 
     try {
-      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '', entry);
+      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '');
       meta.textContent = files.length > 1 ? 'Ответы загружены' : 'Ответ загружен';
       textInput.value = '';
       textCounter.textContent = '0 / 12000';
@@ -16235,7 +16162,7 @@ function createResponseUploadControls(task, entry, setStatus) {
         await updateTaskResponseText(task, normalizeValue(editingTextResponse.storedName), messageValue, setStatus);
         meta.textContent = 'Текстовый ответ обновлён';
       } else {
-        await uploadTaskResponseFiles(task, [], setStatus, messageValue, entry);
+        await uploadTaskResponseFiles(task, [], setStatus, messageValue);
         meta.textContent = 'Текстовый ответ сохранён';
       }
       textInput.value = '';
