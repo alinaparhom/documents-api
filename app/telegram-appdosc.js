@@ -15732,12 +15732,6 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   return data;
 }
 
-if (typeof window !== 'undefined' && typeof loadTasks === 'function') {
-  window.__APPDOSC_FORCE_REFRESH_TASKS__ = async () => {
-    await loadTasks(true);
-  };
-}
-
 async function updateTaskResponseText(task, storedName, textValue, setStatus) {
   if (!task || typeof task !== 'object') {
     throw new Error('Не удалось определить задачу.');
