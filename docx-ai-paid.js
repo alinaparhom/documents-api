@@ -769,6 +769,7 @@
     return {
       id: taskId,
       entryNumber: String(documentData.entryNumber || documentData.number || context.entryNumber || context.number || '').trim(),
+      responsible: documentData.responsible || context.responsible || payload.responsible || '',
       organization: String(safeOptions.organization || payload.organization || context.organization || documentData.organization || '').trim(),
       organizationName: String(documentData.organizationName || '').trim()
     };
@@ -1624,6 +1625,18 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     var fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    var responsibleRaw = task && (task.responsible || task.responsibles);
+    var responsibleName = '';
+    if (Array.isArray(responsibleRaw)) {
+      responsibleName = responsibleRaw
+        .map(function(item) { return String(item && (item.name || item.fullName || item.fio || item.label || item.value || item) || '').trim(); })
+        .filter(Boolean)
+        .join(', ');
+    } else if (responsibleRaw && typeof responsibleRaw === 'object') {
+      responsibleName = String(responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value || '').trim();
+    } else {
+      responsibleName = String(responsibleRaw || '').trim();
+    }
     var globalAuthorized = String(
       window
       && window.DOCUMENTS_AUTH_USER
@@ -1665,7 +1678,7 @@
         ? ([telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ') || telegramUser.username || '')
         : ''
     ).trim();
-    var authorRaw = String(globalAuthorized || globalCurrent || uiUser || urlUser || telegramName || 'Автор').trim();
+    var authorRaw = String(responsibleName || globalAuthorized || globalCurrent || uiUser || urlUser || telegramName || 'Автор').trim();
     var now = new Date();
     var dateStamp = String(now.getFullYear()) + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     var taskNumberRaw = String(

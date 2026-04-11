@@ -978,7 +978,20 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
-    const resolveAuthorizedAuthorName = () => {
+    const resolveResponsibleAuthorName = () => {
+      const responsibleRaw = task && (task.responsible || task.responsibles);
+      if (Array.isArray(responsibleRaw)) {
+        const list = responsibleRaw
+          .map((item) => normalize(item && (item.name || item.fullName || item.fio || item.label || item.value || item)))
+          .filter(Boolean);
+        if (list.length) return list.join(', ');
+      } else if (responsibleRaw && typeof responsibleRaw === 'object') {
+        const fromObject = normalize(responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value);
+        if (fromObject) return fromObject;
+      } else {
+        const fromString = normalize(responsibleRaw);
+        if (fromString) return fromString;
+      }
       const fromGlobalUser = normalize(
         globalScope
         && globalScope.DOCUMENTS_AUTH_USER
@@ -1013,7 +1026,7 @@
         : null;
       return normalize(telegramUser && ([telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ') || telegramUser.username));
     };
-    const authorRaw = resolveAuthorizedAuthorName() || 'Автор';
+    const authorRaw = resolveResponsibleAuthorName() || 'Автор';
     const date = new Date();
     const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
