@@ -16076,7 +16076,7 @@ function taskUserCanUploadResponse(task, entry) {
   return entryMatchesUser(entry, ids, names);
 }
 
-async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '') {
+async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '', ownerEntry = null) {
   if (!task || typeof task !== 'object') {
     sendResponseViewerLog('response_upload_failed', {
       reason: 'task_missing',
@@ -16134,10 +16134,15 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     formData.append('telegram_user_id', effectiveTelegramId);
   }
 
+  const ownerResponsible = normalizeValue(ownerEntry && ownerEntry.responsible)
+    || normalizeValue(ownerEntry && ownerEntry.name)
+    || normalizeValue(ownerEntry && ownerEntry.fullName)
+    || normalizeValue(ownerEntry && ownerEntry.displayName)
+    || normalizeValue(ownerEntry && ownerEntry.label);
   const responsibleFromSettingsDocs = await getResponsibleFromSettingsDocs(organization, effectiveTelegramId);
   const responsibleFromTask = getCurrentUserResponsibleFromTask(task);
   const responsibleFromAccess = getCurrentUserResponsibleFromAccess();
-  const resolvedResponsible = responsibleFromSettingsDocs || responsibleFromTask || responsibleFromAccess;
+  const resolvedResponsible = ownerResponsible || responsibleFromSettingsDocs || responsibleFromTask || responsibleFromAccess;
   if (resolvedResponsible) {
     formData.append('uploadedBy', resolvedResponsible);
     formData.append('uploadedByName', resolvedResponsible);
@@ -16396,7 +16401,7 @@ function createResponseUploadControls(task, entry, setStatus) {
     meta.textContent = `Файлов выбрано: ${files.length}`;
 
     try {
-      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '');
+      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '', entry);
       meta.textContent = files.length > 1 ? 'Ответы загружены' : 'Ответ загружен';
       textInput.value = '';
       textCounter.textContent = '0 / 12000';
@@ -16448,7 +16453,7 @@ function createResponseUploadControls(task, entry, setStatus) {
         await updateTaskResponseText(task, normalizeValue(editingTextResponse.storedName), messageValue, setStatus);
         meta.textContent = 'Текстовый ответ обновлён';
       } else {
-        await uploadTaskResponseFiles(task, [], setStatus, messageValue);
+        await uploadTaskResponseFiles(task, [], setStatus, messageValue, entry);
         meta.textContent = 'Текстовый ответ сохранён';
       }
       textInput.value = '';
