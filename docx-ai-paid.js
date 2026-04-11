@@ -1302,17 +1302,23 @@
           renderFooters: true,
           renderFootnotes: true,
           useBase64URL: true,
-          ignoreWidth: true,
-          ignoreHeight: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
           ignoreFonts: true,
           experimental: false,
           debug: false
         });
       });
     }).then(function() {
+      var pageNodes = docPreviewNode.querySelectorAll('.docx-page');
+      for (var i = 0; i < pageNodes.length; i += 1) {
+        pageNodes[i].style.margin = '0 auto 14px';
+        pageNodes[i].style.boxShadow = '0 12px 30px rgba(15,23,42,.10)';
+        pageNodes[i].style.borderRadius = '8px';
+      }
       if (docxPreviewHtmlCache) docxPreviewHtmlCache.set(blob, docPreviewNode.innerHTML);
       if (loadingNode) loadingNode.style.display = 'none';
-      setStatus('Готово: локальный предпросмотр открыт.');
+      setStatus(pageNodes.length > 1 ? ('Готово: найдено страниц — ' + pageNodes.length + '.') : 'Готово: локальный предпросмотр открыт.');
     }).catch(function(error) {
       if (loadingNode) loadingNode.style.display = 'none';
       setStatus('Ошибка предпросмотра: ' + (error && error.message ? error.message : 'unknown'));
