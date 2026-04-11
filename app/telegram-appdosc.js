@@ -15745,6 +15745,52 @@ function taskUserCanUploadResponse(task, entry) {
   return entryMatchesUser(entry, ids, names);
 }
 
+function resolveCurrentUploaderMeta(task) {
+  const { ids, names } = getUserIdentifierCandidates();
+  const fallbackName = normalizeValue(state.telegram.fullName)
+    || normalizeValue(state.telegram.username)
+    || (ids[0] ? `ID ${ids[0]}` : '');
+
+  const fallbackKey = buildAssignmentDirectoryKey(ids[0])
+    || buildAssignmentDirectoryKey(state.telegram.username)
+    || buildAssignmentDirectoryKey(fallbackName);
+
+  const organizationKey = getOrganizationKey(getTaskOrganization(task));
+  const pools = [];
+  if (organizationKey && state.access && typeof state.access === 'object') {
+    pools.push(
+      ...(Array.isArray(state.access.responsibles?.[organizationKey]) ? state.access.responsibles[organizationKey] : []),
+      ...(Array.isArray(state.access.subordinates?.[organizationKey]) ? state.access.subordinates[organizationKey] : []),
+      ...(Array.isArray(state.access.directors?.[organizationKey]) ? state.access.directors[organizationKey] : []),
+    );
+  }
+
+  const matchedEntry = pools.find((entry) => entryMatchesUser(entry, ids, names)) || null;
+  if (!matchedEntry) {
+    return {
+      uploadedBy: fallbackName,
+      uploadedByKey: fallbackKey,
+    };
+  }
+
+  const uploadedBy = normalizeValue(matchedEntry.responsible)
+    || normalizeValue(matchedEntry.name)
+    || normalizeValue(matchedEntry.fullName)
+    || normalizeValue(matchedEntry.displayName)
+    || fallbackName;
+
+  const uploadedByKey = buildAssignmentDirectoryKey(matchedEntry.id)
+    || buildAssignmentDirectoryKey(matchedEntry.telegram)
+    || buildAssignmentDirectoryKey(matchedEntry.chatId)
+    || buildAssignmentDirectoryKey(matchedEntry.number)
+    || buildAssignmentDirectoryKey(matchedEntry.login)
+    || buildAssignmentDirectoryKey(matchedEntry.email)
+    || buildAssignmentDirectoryKey(uploadedBy)
+    || fallbackKey;
+
+  return { uploadedBy, uploadedByKey };
+}
+
 async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '') {
   if (!task || typeof task !== 'object') {
     sendResponseViewerLog('response_upload_failed', {
@@ -15788,6 +15834,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
       : '',
   );
   const effectiveTelegramId = normalizeValue(state && state.telegram && state.telegram.id) || fallbackTelegramId;
+  const uploaderMeta = resolveCurrentUploaderMeta(task);
 
   const formData = new FormData();
   formData.append('action', 'response_upload');
@@ -15801,6 +15848,12 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
   });
   if (effectiveTelegramId) {
     formData.append('telegram_user_id', effectiveTelegramId);
+  }
+  if (normalizeValue(uploaderMeta.uploadedBy)) {
+    formData.append('uploadedBy', normalizeValue(uploaderMeta.uploadedBy));
+  }
+  if (normalizeValue(uploaderMeta.uploadedByKey)) {
+    formData.append('uploadedByKey', normalizeValue(uploaderMeta.uploadedByKey));
   }
 
   const headers = {};
