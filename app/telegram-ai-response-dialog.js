@@ -793,7 +793,10 @@
       .tg-ai-generated-preview__head{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}
       .tg-ai-generated-preview__title{font-size:14px;font-weight:800;color:#0f172a}
       .tg-ai-generated-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
-      .tg-ai-generated-preview__tools{display:flex;align-items:center;gap:8px}
+      .tg-ai-generated-preview__tools{display:flex;align-items:center;gap:6px}
+      .tg-ai-generated-preview__zoom{display:inline-flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:rgba(255,255,255,.95)}
+      .tg-ai-generated-preview__zoom-btn{border:none;background:rgba(241,245,249,.9);color:#0f172a;border-radius:8px;min-width:28px;height:28px;font-weight:800}
+      .tg-ai-generated-preview__zoom-value{font-size:12px;min-width:42px;text-align:center;color:#334155;font-weight:700}
       .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
       .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
@@ -801,10 +804,11 @@
       .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
       .tg-ai-generated-preview__btn{border:1px solid rgba(203,213,225,.9);background:#fff;border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
-      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:auto;padding:12px}
-      .tg-ai-generated-preview__doc{max-width:920px;min-height:100%;margin:0 auto;background:rgba(255,255,255,.85);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12)}
+      .tg-ai-generated-preview__body{position:relative;flex:1;min-height:0;background:#e2e8f0;overflow:hidden;padding:0}
+      .tg-ai-generated-preview__viewport{position:relative;height:100%;overflow:auto;padding:12px;display:flex;justify-content:center;align-items:flex-start}
+      .tg-ai-generated-preview__doc{min-height:100%;margin:0 auto;background:rgba(255,255,255,.85);border-radius:16px;padding:8px;border:1px solid rgba(203,213,225,.85);box-shadow:0 10px 24px rgba(15,23,42,.12);transform-origin:top center;transition:transform .14s ease}
       .tg-ai-generated-preview__doc .docx-wrapper{background:transparent!important;box-shadow:none!important;padding:0!important;border:0!important}
-      .tg-ai-generated-preview__doc .docx{max-width:100%;overflow:auto}
+      .tg-ai-generated-preview__doc .docx{overflow:visible}
       .tg-ai-generated-preview__frame{display:none;width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}
@@ -842,7 +846,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__body{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__composer{grid-template-columns:1fr}.tg-ai-chat__toggle{grid-column:auto}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:10px}.tg-ai-generated-preview__doc{border-radius:12px;padding:6px}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1085,6 +1089,11 @@
             <div class="tg-ai-generated-preview__hint">Локальная копия документа как в файле</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
+            <div class="tg-ai-generated-preview__zoom">
+              <button type="button" class="tg-ai-generated-preview__zoom-btn" data-preview-zoom-out aria-label="Уменьшить">−</button>
+              <span class="tg-ai-generated-preview__zoom-value" data-preview-zoom-value>100%</span>
+              <button type="button" class="tg-ai-generated-preview__zoom-btn" data-preview-zoom-in aria-label="Увеличить">+</button>
+            </div>
             <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
             <button type="button" class="tg-ai-generated-preview__close-icon" data-preview-close-icon aria-label="Закрыть">×</button>
           </div>
@@ -1097,7 +1106,9 @@
           <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
         </div>
         <div class="tg-ai-generated-preview__body">
-          <div class="tg-ai-generated-preview__doc" data-preview-doc aria-label="DOCX preview"></div>
+          <div class="tg-ai-generated-preview__viewport" data-preview-viewport>
+            <div class="tg-ai-generated-preview__doc" data-preview-doc aria-label="DOCX preview"></div>
+          </div>
           <iframe class="tg-ai-generated-preview__frame" title="Office Web Viewer" data-preview-frame></iframe>
           <div class="tg-ai-generated-preview__loading" data-preview-loading>
             <div class="tg-ai-generated-preview__loading-card">
@@ -1117,6 +1128,7 @@
     `;
     document.body.appendChild(overlay);
     const docNode = overlay.querySelector('[data-preview-doc]');
+    const viewportNode = overlay.querySelector('[data-preview-viewport]');
     const frameNode = overlay.querySelector('[data-preview-frame]');
     const statusNode = overlay.querySelector('[data-preview-status]');
     const loadingNode = overlay.querySelector('[data-preview-loading]');
@@ -1128,6 +1140,9 @@
     const menuNode = overlay.querySelector('[data-preview-menu]');
     const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
     const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
+    const zoomOutBtn = overlay.querySelector('[data-preview-zoom-out]');
+    const zoomInBtn = overlay.querySelector('[data-preview-zoom-in]');
+    const zoomValueNode = overlay.querySelector('[data-preview-zoom-value]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
@@ -1135,6 +1150,15 @@
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     const sourceUrl = previewUrl || blobUrl;
+    let zoom = 1;
+
+    const applyZoom = () => {
+      if (!docNode) return;
+      const normalized = Math.max(0.7, Math.min(1.6, Number(zoom) || 1));
+      zoom = Number(normalized.toFixed(2));
+      docNode.style.transform = `scale(${zoom})`;
+      if (zoomValueNode) zoomValueNode.textContent = `${Math.round(zoom * 100)}%`;
+    };
 
     const close = () => {
       if (blobUrl) URL.revokeObjectURL(blobUrl);
@@ -1160,6 +1184,14 @@
         toggleMenu(false);
       }
       if (event.target === overlay) close();
+    });
+    zoomOutBtn?.addEventListener('click', () => {
+      zoom = zoom - 0.1;
+      applyZoom();
+    });
+    zoomInBtn?.addEventListener('click', () => {
+      zoom = zoom + 0.1;
+      applyZoom();
     });
     downloadBtn?.addEventListener('click', () => {
       toggleMenu(false);
@@ -1213,6 +1245,7 @@
         localBtn.textContent = 'Открываю…';
       }
       if (docNode) docNode.style.display = '';
+      if (viewportNode) viewportNode.style.display = '';
       if (frameNode) frameNode.style.display = 'none';
       if (loadingNode) loadingNode.style.display = '';
       statusNode.textContent = 'Подготовка локального предпросмотра…';
@@ -1225,6 +1258,7 @@
         const arrayBuffer = await localBlob.arrayBuffer();
         setStep(3, 'Отрисовываем документ...');
         docNode.innerHTML = '';
+        docNode.style.visibility = 'hidden';
         await renderer.renderAsync(arrayBuffer, docNode, null, {
           inWrapper: true,
           breakPages: true,
@@ -1236,6 +1270,8 @@
           ignoreHeight: false,
           ignoreFonts: false,
         });
+        applyZoom();
+        docNode.style.visibility = '';
         if (loadingNode) loadingNode.style.display = 'none';
         statusNode.textContent = 'Готово: локальный предпросмотр открыт.';
       } catch (_) {
@@ -1259,6 +1295,7 @@
       if (!sourceUrl) return;
       if (loadingNode) loadingNode.style.display = 'none';
       if (docNode) docNode.style.display = 'none';
+      if (viewportNode) viewportNode.style.display = 'none';
       if (frameNode) frameNode.style.display = '';
       const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
       frameNode.src = officeUrl;
