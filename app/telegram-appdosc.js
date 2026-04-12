@@ -11386,28 +11386,18 @@ function getCurrentUserResponsibleFromAccess() {
   }
 
   const idCandidates = [];
-  const nameCandidates = [];
   const pushId = (value) => {
     const normalized = normalizeIdentifier(value);
     if (normalized) {
       idCandidates.push(normalized);
     }
   };
-  const pushName = (value) => {
-    const normalized = normalizeName(value);
-    if (normalized) {
-      nameCandidates.push(normalized);
-    }
-  };
 
   pushId(state.telegram.id);
   pushId(state.telegram.chatId);
-  pushId(state.telegram.username);
-  pushName(state.telegram.fullName);
-  pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
 
   const ids = Array.from(new Set(idCandidates));
-  const names = Array.from(new Set(nameCandidates));
+  const names = [];
 
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object') {
@@ -15526,12 +15516,11 @@ function collectCurrentUserOwnershipKeys() {
     }
   };
 
-  const { ids, names } = getUserIdentifierCandidates();
-  ids.forEach(pushKey);
-  names.forEach(pushKey);
-  pushKey(state.telegram.username);
-  pushKey(state.telegram.fullName);
-  pushKey(getCurrentUserResponsibleFromAccess());
+  const responsibleName = normalizeValue(getCurrentUserResponsibleFromAccess());
+  if (responsibleName) {
+    pushKey(responsibleName);
+    pushKey(`name:${responsibleName.toLowerCase()}`);
+  }
 
   const accessPools = [];
   if (state.access && typeof state.access === 'object') {
@@ -15552,8 +15541,13 @@ function collectCurrentUserOwnershipKeys() {
     });
   }
 
+  const normalizedResponsible = normalizeName(responsibleName);
   accessPools.forEach((entry) => {
-    if (!entry || typeof entry !== 'object' || !entryMatchesUser(entry, ids, names)) {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    const entryName = normalizeName(entry.responsible || entry.name || entry.fullName || entry.displayName);
+    if (!normalizedResponsible || !entryName || entryName !== normalizedResponsible) {
       return;
     }
     [
