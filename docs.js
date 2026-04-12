@@ -14219,6 +14219,23 @@
       var uploadProgressStatus = createElement('div', 'documents-upload-progress__status', 'Ожидание отправки');
       var uploadProgressBar = createElement('div', 'documents-upload-progress__bar');
       var uploadProgressFill = createElement('div', 'documents-upload-progress__fill');
+      var aiBriefLiveCard = createElement('div', 'documents-ai-brief-live');
+      var aiBriefLiveTitle = createElement('div', 'documents-ai-brief-live__title', 'Кратко ИИ (сразу при добавлении)');
+      var aiBriefLiveBody = createElement('div', 'documents-ai-brief-live__body', 'Добавьте файл — здесь появится краткий вывод.');
+      aiBriefLiveCard.style.marginTop = '10px';
+      aiBriefLiveCard.style.padding = '10px';
+      aiBriefLiveCard.style.border = '1px solid rgba(148,163,184,.35)';
+      aiBriefLiveCard.style.borderRadius = '12px';
+      aiBriefLiveCard.style.background = 'rgba(255,255,255,.72)';
+      aiBriefLiveTitle.style.fontSize = '12px';
+      aiBriefLiveTitle.style.fontWeight = '700';
+      aiBriefLiveTitle.style.color = '#334155';
+      aiBriefLiveBody.style.marginTop = '6px';
+      aiBriefLiveBody.style.fontSize = '12px';
+      aiBriefLiveBody.style.whiteSpace = 'pre-wrap';
+      aiBriefLiveBody.style.color = '#0f172a';
+      aiBriefLiveCard.appendChild(aiBriefLiveTitle);
+      aiBriefLiveCard.appendChild(aiBriefLiveBody);
       uploadProgressBar.appendChild(uploadProgressFill);
       uploadProgressHeader.appendChild(uploadProgressTitle);
       uploadProgressHeader.appendChild(uploadProgressPercent);
@@ -14255,6 +14272,7 @@
       attachmentsMeta.appendChild(attachmentsHint);
       attachmentsMeta.appendChild(attachmentsSummary);
       attachmentsMeta.appendChild(uploadProgress);
+      attachmentsMeta.appendChild(aiBriefLiveCard);
 
       attachmentsWrapper.appendChild(attachmentsField.input);
       attachmentsWrapper.appendChild(attachmentsMeta);
@@ -14390,6 +14408,54 @@
         return normalizeAttachmentAiBrief(summary);
       }
 
+      function renderAiBriefLiveCard() {
+        var rows = [];
+
+        function pushRow(label, text) {
+          rows.push('• ' + label + '\n  ' + text);
+        }
+
+        attachmentsStore.forEach(function(file, index) {
+          var label = file && file.name ? String(file.name) : ('Новый файл ' + (index + 1));
+          var key = resolveLocalAttachmentKey(file);
+          var isPending = key && attachmentAiPendingByKey[key];
+          var isSupported = isAttachmentSupportedForAiBrief(file);
+          var briefText = normalizeAttachmentAiBrief(file && file.aiBrief ? file.aiBrief : '');
+
+          if (!isSupported) {
+            pushRow(label, 'Формат не поддерживается для «Кратко ИИ».');
+            return;
+          }
+          if (isPending) {
+            pushRow(label, '⏳ ИИ анализирует файл...');
+            return;
+          }
+          if (briefText) {
+            pushRow(label, briefText);
+            return;
+          }
+          pushRow(label, 'Краткий вывод пока пустой.');
+        });
+
+        if (!rows.length && Array.isArray(existingAttachments) && existingAttachments.length) {
+          existingAttachments.forEach(function(file, index) {
+            var label = file && (file.originalName || file.storedName || file.name)
+              ? String(file.originalName || file.storedName || file.name)
+              : ('Файл ' + (index + 1));
+            var briefText = getAttachmentAiBrief(file);
+            if (briefText) {
+              pushRow(label, briefText);
+            }
+          });
+        }
+
+        if (!rows.length) {
+          aiBriefLiveBody.textContent = 'Добавьте файл — здесь появится краткий вывод.';
+          return;
+        }
+        aiBriefLiveBody.textContent = rows.join('\n\n');
+      }
+
       function enqueueAttachmentAiBrief(file) {
         var key = resolveLocalAttachmentKey(file);
         if (!key || attachmentAiPendingByKey[key] || attachmentAiSummaryByKey[key]) {
@@ -14426,6 +14492,7 @@
           .finally(function() {
             delete attachmentAiPendingByKey[key];
             renderAttachmentsSummary(attachmentsStore);
+            renderAiBriefLiveCard();
           });
       }
 
@@ -14611,6 +14678,7 @@
         }
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
+        renderAiBriefLiveCard();
         files.forEach(function(file) {
           if (isAttachmentSupportedForAiBrief(file)) {
             enqueueAttachmentAiBrief(file);
@@ -14660,6 +14728,7 @@
 
       attachmentsWrapper.addEventListener('paste', handleAttachmentsPaste);
       attachmentsField.input.addEventListener('paste', handleAttachmentsPaste);
+      renderAiBriefLiveCard();
 
       grid.appendChild(attachmentsField.field);
 
