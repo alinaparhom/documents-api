@@ -1110,23 +1110,7 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
-    const resolveResponsibleName = () => {
-      const responsibleRaw = task && (task.responsible || task.responsibles);
-      if (Array.isArray(responsibleRaw)) {
-        const list = responsibleRaw
-          .map((item) => normalize(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item)))
-          .filter(Boolean);
-        if (list.length) return list.join(', ');
-      } else if (responsibleRaw && typeof responsibleRaw === 'object') {
-        const fromObject = normalize(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value);
-        if (fromObject) return fromObject;
-      } else {
-        const fromString = normalize(responsibleRaw);
-        if (fromString) return fromString;
-      }
-      return '';
-    };
-    const uploaderName = resolveAuthorizedUserName(globalScope) || resolveResponsibleName() || 'Неизвестный';
+    const uploaderName = resolveAuthorizedUserName(globalScope) || 'Пользователь';
     const date = new Date();
     const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const timeStamp = `${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}`;
@@ -1138,8 +1122,8 @@
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
     formData.append('documentId', documentId);
-    formData.append('responsible', resolveResponsibleName() || uploaderName);
-    formData.append('uploaderName', uploaderName);
+    formData.append('uploadedBy', uploaderName);
+    formData.append('uploadedByKey', `name:${uploaderName.toLowerCase()}`);
     formData.append('attachments[]', fileBlob, fileName);
 
     const telegramInitData = normalize(
@@ -1162,7 +1146,8 @@
     }, 45000);
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || payload.success !== true) {
-      throw new Error((payload && (payload.error || payload.message)) || `Ошибка прикрепления к задаче (${response.status}).`);
+      const serverMessage = payload && (payload.error || payload.message);
+      throw new Error(serverMessage || `Ошибка прикрепления к задаче (${response.status}).`);
     }
     try {
       if (typeof globalScope.CustomEvent === 'function' && typeof globalScope.dispatchEvent === 'function') {

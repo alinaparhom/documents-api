@@ -3308,62 +3308,66 @@ function docs_resolve_current_user_label(array $requestContext, ?array $sessionA
 
 function docs_resolve_response_upload_author(string $folder, array $requestContext, ?array $sessionAuth = null): array
 {
-    $defaultKey = docs_resolve_current_user_key($requestContext, $sessionAuth);
-    $defaultLabel = docs_resolve_current_user_label($requestContext, $sessionAuth);
+    $fallbackLabel = docs_resolve_current_user_label($requestContext, $sessionAuth);
+    $fallbackKey = docs_resolve_current_user_key($requestContext, $sessionAuth);
 
     $postLabel = sanitize_text_field((string) ($_POST['uploadedBy'] ?? ''), 200);
-    $postKey = sanitize_text_field((string) ($_POST['uploadedByKey'] ?? ''), 200);
     if ($postLabel !== '') {
+        $postKey = sanitize_text_field((string) ($_POST['uploadedByKey'] ?? ''), 200);
+
         return [
             'label' => $postLabel,
-            'key' => $postKey !== '' ? $postKey : $defaultKey,
+            'key' => $postKey !== '' ? $postKey : ('name:' . mb_strtolower($postLabel, 'UTF-8')),
             'source' => 'post',
             'telegramUserId' => '',
             'matchedResponsible' => null,
         ];
     }
 
-    $telegramCandidates = [];
-    $pushTelegramCandidate = static function ($value) use (&$telegramCandidates): void {
-        $normalized = normalize_identifier_value($value);
-        if ($normalized === '') {
-            return;
-        }
-        $telegramCandidates[$normalized] = true;
-    };
-
-    $pushTelegramCandidate($requestContext['raw']['telegram_user_id'] ?? '');
-    $pushTelegramCandidate($requestContext['primaryId'] ?? '');
-    if (isset($requestContext['user']) && is_array($requestContext['user'])) {
-        $pushTelegramCandidate($requestContext['user']['id'] ?? '');
+    $telegramUserId = normalize_identifier_value($requestContext['raw']['telegram_user_id'] ?? '');
+    if ($telegramUserId === '') {
+        $telegramUserId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+    }
+    if ($telegramUserId === '' && isset($requestContext['user']) && is_array($requestContext['user'])) {
+        $telegramUserId = normalize_identifier_value($requestContext['user']['id'] ?? '');
     }
 
-    $responsibles = load_responsibles_for_folder($folder);
-    foreach (array_keys($telegramCandidates) as $telegramCandidate) {
-        $matchedEntry = docs_find_responsible_by_candidate($responsibles, $telegramCandidate);
-        if (!is_array($matchedEntry)) {
-            continue;
-        }
+    if ($telegramUserId !== '') {
+        $responsibles = load_responsibles_for_folder($folder);
+        foreach ($responsibles as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
 
-        $responsibleName = sanitize_text_field((string) ($matchedEntry['responsible'] ?? ''), 200);
-        if ($responsibleName === '') {
-            continue;
-        }
+            $entryTelegramId = normalize_identifier_value($entry['telegram_user_id'] ?? ($entry['telegram'] ?? ''));
+            if ($entryTelegramId === '' || $entryTelegramId !== $telegramUserId) {
+                continue;
+            }
 
-        return [
-            'label' => $responsibleName,
-            'key' => $defaultKey !== '' ? $defaultKey : ('name:' . mb_strtolower($responsibleName, 'UTF-8')),
-            'source' => 'settingsdocs',
-            'telegramUserId' => $telegramCandidate,
-            'matchedResponsible' => $responsibleName,
-        ];
+            $responsible = sanitize_text_field((string) ($entry['responsible'] ?? ''), 200);
+            if ($responsible === '') {
+                continue;
+            }
+
+            return [
+                'label' => $responsible,
+                'key' => 'name:' . mb_strtolower($responsible, 'UTF-8'),
+                'source' => 'settingsdocs',
+                'telegramUserId' => $telegramUserId,
+                'matchedResponsible' => $responsible,
+            ];
+        }
+    }
+
+    if ($fallbackLabel === '') {
+        $fallbackLabel = 'Пользователь';
     }
 
     return [
-        'label' => $defaultLabel,
-        'key' => $defaultKey !== '' ? $defaultKey : ('name:' . mb_strtolower($defaultLabel, 'UTF-8')),
+        'label' => $fallbackLabel,
+        'key' => $fallbackKey !== '' ? $fallbackKey : ('name:' . mb_strtolower($fallbackLabel, 'UTF-8')),
         'source' => 'fallback',
-        'telegramUserId' => '',
+        'telegramUserId' => $telegramUserId,
         'matchedResponsible' => null,
     ];
 }
