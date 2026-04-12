@@ -3306,6 +3306,68 @@ function docs_resolve_current_user_label(array $requestContext, ?array $sessionA
     return 'Пользователь';
 }
 
+function docs_resolve_response_upload_author(string $folder, array $requestContext, ?array $sessionAuth = null): array
+{
+    $defaultKey = docs_resolve_current_user_key($requestContext, $sessionAuth);
+    $defaultLabel = docs_resolve_current_user_label($requestContext, $sessionAuth);
+
+    $postLabel = sanitize_text_field((string) ($_POST['uploadedBy'] ?? ''), 200);
+    $postKey = sanitize_text_field((string) ($_POST['uploadedByKey'] ?? ''), 200);
+    if ($postLabel !== '') {
+        return [
+            'label' => $postLabel,
+            'key' => $postKey !== '' ? $postKey : $defaultKey,
+            'source' => 'post',
+            'telegramUserId' => '',
+            'matchedResponsible' => null,
+        ];
+    }
+
+    $telegramCandidates = [];
+    $pushTelegramCandidate = static function ($value) use (&$telegramCandidates): void {
+        $normalized = normalize_identifier_value($value);
+        if ($normalized === '') {
+            return;
+        }
+        $telegramCandidates[$normalized] = true;
+    };
+
+    $pushTelegramCandidate($requestContext['raw']['telegram_user_id'] ?? '');
+    $pushTelegramCandidate($requestContext['primaryId'] ?? '');
+    if (isset($requestContext['user']) && is_array($requestContext['user'])) {
+        $pushTelegramCandidate($requestContext['user']['id'] ?? '');
+    }
+
+    $responsibles = load_responsibles_for_folder($folder);
+    foreach (array_keys($telegramCandidates) as $telegramCandidate) {
+        $matchedEntry = docs_find_responsible_by_candidate($responsibles, $telegramCandidate);
+        if (!is_array($matchedEntry)) {
+            continue;
+        }
+
+        $responsibleName = sanitize_text_field((string) ($matchedEntry['responsible'] ?? ''), 200);
+        if ($responsibleName === '') {
+            continue;
+        }
+
+        return [
+            'label' => $responsibleName,
+            'key' => $defaultKey !== '' ? $defaultKey : ('name:' . mb_strtolower($responsibleName, 'UTF-8')),
+            'source' => 'settingsdocs',
+            'telegramUserId' => $telegramCandidate,
+            'matchedResponsible' => $responsibleName,
+        ];
+    }
+
+    return [
+        'label' => $defaultLabel,
+        'key' => $defaultKey !== '' ? $defaultKey : ('name:' . mb_strtolower($defaultLabel, 'UTF-8')),
+        'source' => 'fallback',
+        'telegramUserId' => '',
+        'matchedResponsible' => null,
+    ];
+}
+
 function docs_normalize_response_file_name(string $original, array $record, int $sequence = 1): string
 {
     $base = normalize_file_name($original, $record, $sequence);
@@ -15657,8 +15719,10 @@ switch ($action) {
         }
 
         $responseDir = docs_get_document_responses_dir($folder, $documentId, true);
-        $uploaderKey = docs_resolve_current_user_key($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
-        $uploaderLabel = docs_resolve_current_user_label($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $resolvedUploadAuthor = docs_resolve_response_upload_author($folder, $requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $uploaderKey = (string) ($resolvedUploadAuthor['key'] ?? '');
+        $uploaderLabel = (string) ($resolvedUploadAuthor['label'] ?? 'Пользователь');
+        $uploaderSource = (string) ($resolvedUploadAuthor['source'] ?? 'fallback');
         $uploadedAt = date('c');
         $names = $hasAttachments ? $_FILES['attachments']['name'] : [];
         $tmpNames = $hasAttachments ? $_FILES['attachments']['tmp_name'] : [];
@@ -15666,6 +15730,16 @@ switch ($action) {
         $sizes = $hasAttachments ? $_FILES['attachments']['size'] : [];
         $sequenceBase = count($records[$recordIndex]['responses']);
         $uploadedStoredNames = [];
+        docs_write_response_log('Определён автор загрузки ответа', [
+            'organization' => $organization,
+            'folder' => $folder,
+            'documentId' => $documentId,
+            'selectedSource' => $uploaderSource,
+            'uploadedBy' => $uploaderLabel,
+            'uploadedByKey' => $uploaderKey,
+            'telegramUserId' => (string) ($resolvedUploadAuthor['telegramUserId'] ?? ''),
+            'matchedResponsible' => (string) ($resolvedUploadAuthor['matchedResponsible'] ?? ''),
+        ]);
         docs_write_response_log('Старт загрузки файла Ответ к задаче', [
             'organization' => $organization,
             'folder' => $folder,
@@ -15673,6 +15747,14 @@ switch ($action) {
             'uploader' => [
                 'label' => $uploaderLabel,
                 'key' => $uploaderKey,
+                'source' => $uploaderSource,
+            ],
+            'uploaderResolution' => [
+                'selectedSource' => $uploaderSource,
+                'postUploadedBy' => sanitize_text_field((string) ($_POST['uploadedBy'] ?? ''), 200),
+                'postUploadedByKey' => sanitize_text_field((string) ($_POST['uploadedByKey'] ?? ''), 200),
+                'telegramUserId' => (string) ($resolvedUploadAuthor['telegramUserId'] ?? ''),
+                'matchedResponsible' => (string) ($resolvedUploadAuthor['matchedResponsible'] ?? ''),
             ],
             'dataSources' => docs_collect_response_log_sources($folder),
             'responseDirectory' => $responseDir,
