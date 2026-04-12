@@ -7745,6 +7745,42 @@
     }
   }
 
+  function normalizeAttachmentAiBrief(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function getAttachmentAiBrief(file) {
+    if (!file || typeof file !== 'object') {
+      return '';
+    }
+    var candidates = [
+      file.aiBrief,
+      file.aiBriefSummary,
+      file.briefSummary,
+      file.summaryAi,
+      file.summary_ai
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var normalized = normalizeAttachmentAiBrief(candidates[i]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return '';
+  }
+
+  function getAttachmentAiBriefPreview(file, maxLength) {
+    var text = getAttachmentAiBrief(file);
+    var limit = Math.max(20, Number(maxLength) || 160);
+    if (!text) {
+      return '';
+    }
+    if (text.length <= limit) {
+      return text;
+    }
+    return text.slice(0, limit - 1).trim() + '…';
+  }
+
   function buildDocumentSummaryRows(doc, attachmentsOverride) {
     function resolveStatusValue() {
       if (!doc || typeof doc !== 'object') {
@@ -7891,6 +7927,10 @@
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
+        var briefSummary = getAttachmentAiBrief(file);
+        if (briefSummary) {
+          lines.push('   Кратко ИИ: ' + briefSummary);
+        }
       }
       attachmentsText = lines.join('\n');
     }
@@ -12006,6 +12046,11 @@
           handleAttachmentPreview(doc, file, link);
         });
         filesList.appendChild(link);
+        var briefPreview = getAttachmentAiBriefPreview(file, 180);
+        if (briefPreview) {
+          var briefNode = createElement('div', 'documents-file-link__brief', 'Кратко ИИ: ' + briefPreview);
+          filesList.appendChild(briefNode);
+        }
       });
     } else {
       filesList.textContent = '—';
@@ -14218,6 +14263,9 @@
 
       var attachmentsDataTransfer = new DataTransfer();
       var attachmentsStore = [];
+      var attachmentAiSummaryByKey = Object.create(null);
+      var attachmentAiPendingByKey = Object.create(null);
+      var attachmentAiQueue = Promise.resolve();
       var existingAttachments = Array.isArray(doc && doc.files) ? doc.files.slice() : [];
       var removedAttachmentKeys = Object.create(null);
 
@@ -14287,6 +14335,98 @@
       function resolveAttachmentKey(file) {
         var keys = collectAttachmentKeys(file);
         return keys.length ? keys[0] : '';
+      }
+
+      function resolveLocalAttachmentKey(file) {
+        if (!(file instanceof File)) {
+          return '';
+        }
+        return [file.name || '', file.size || 0, file.lastModified || 0, file.type || ''].join('::');
+      }
+
+      function isAttachmentSupportedForAiBrief(file) {
+        if (!(file instanceof File)) {
+          return false;
+        }
+        var name = String(file.name || '').toLowerCase();
+        var type = String(file.type || '').toLowerCase();
+        var extension = '';
+        var dotIndex = name.lastIndexOf('.');
+        if (dotIndex >= 0) {
+          extension = name.slice(dotIndex + 1);
+        }
+
+        var supportedExtensions = {
+          pdf: true,
+          jpg: true,
+          jpeg: true,
+          png: true,
+          doc: true,
+          docx: true,
+          txt: true
+        };
+
+        if (extension && supportedExtensions[extension]) {
+          return true;
+        }
+
+        if (!type) {
+          return false;
+        }
+
+        return type.indexOf('application/pdf') === 0
+          || type.indexOf('image/jpeg') === 0
+          || type.indexOf('image/png') === 0
+          || type.indexOf('application/msword') === 0
+          || type.indexOf('application/vnd.openxmlformats-officedocument.wordprocessingml.document') === 0
+          || type.indexOf('text/plain') === 0;
+      }
+
+      function normalizeAiBriefPayload(payload) {
+        if (!payload || typeof payload !== 'object') {
+          return '';
+        }
+        var summary = payload.summary || payload.response || payload.analysis || payload.text || '';
+        return normalizeAttachmentAiBrief(summary);
+      }
+
+      function enqueueAttachmentAiBrief(file) {
+        var key = resolveLocalAttachmentKey(file);
+        if (!key || attachmentAiPendingByKey[key] || attachmentAiSummaryByKey[key]) {
+          return;
+        }
+        attachmentAiPendingByKey[key] = true;
+        file.aiBrief = '⏳ Анализируется...';
+        renderAttachmentsSummary(attachmentsStore);
+
+        attachmentAiQueue = attachmentAiQueue
+          .then(function() {
+            return requestAiBriefSummaryByAttachment(
+              { label: file.name || 'Файл', fileObject: file },
+              buildApiUrl('generate_summary'),
+              'paid'
+            );
+          })
+          .then(function(payload) {
+            var briefText = normalizeAiBriefPayload(payload);
+            if (briefText) {
+              attachmentAiSummaryByKey[key] = briefText;
+              file.aiBrief = briefText;
+            } else {
+              file.aiBrief = '';
+            }
+          })
+          .catch(function(error) {
+            file.aiBrief = '';
+            logFilesDiagnostics('ai-brief-error', {
+              name: file && file.name ? file.name : '',
+              message: error && error.message ? error.message : String(error)
+            });
+          })
+          .finally(function() {
+            delete attachmentAiPendingByKey[key];
+            renderAttachmentsSummary(attachmentsStore);
+          });
       }
 
       function buildAttachmentBadge(label, options) {
@@ -14370,7 +14510,13 @@
                 renderAttachmentsSummary(attachmentsStore);
               }
             });
-            existingList.appendChild(badge);
+            var itemWrap = createElement('div', 'documents-file__item');
+            itemWrap.appendChild(badge);
+            var existingBrief = getAttachmentAiBrief(file);
+            if (existingBrief) {
+              itemWrap.appendChild(createElement('div', 'documents-file__brief', 'Кратко ИИ: ' + existingBrief));
+            }
+            existingList.appendChild(itemWrap);
           });
           existingGroup.appendChild(existingList);
           attachmentsSummary.appendChild(existingGroup);
@@ -14401,7 +14547,13 @@
                 renderAttachmentsSummary(attachmentsStore);
               }
             });
-            newList.appendChild(badge);
+            var newItemWrap = createElement('div', 'documents-file__item');
+            newItemWrap.appendChild(badge);
+            var newBrief = getAttachmentAiBrief(file);
+            if (newBrief) {
+              newItemWrap.appendChild(createElement('div', 'documents-file__brief', 'Кратко ИИ: ' + newBrief));
+            }
+            newList.appendChild(newItemWrap);
           });
           newGroup.appendChild(newList);
           attachmentsSummary.appendChild(newGroup);
@@ -14447,8 +14599,27 @@
         });
 
         attachmentsStore = currentFiles.slice();
+        for (var newIndex = 0; newIndex < attachmentsStore.length; newIndex += 1) {
+          var currentFile = attachmentsStore[newIndex];
+          if (!(currentFile instanceof File)) {
+            continue;
+          }
+          var localKey = resolveLocalAttachmentKey(currentFile);
+          if (localKey && attachmentAiSummaryByKey[localKey] && !currentFile.aiBrief) {
+            currentFile.aiBrief = attachmentAiSummaryByKey[localKey];
+          }
+        }
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
+        files.forEach(function(file) {
+          if (isAttachmentSupportedForAiBrief(file)) {
+            enqueueAttachmentAiBrief(file);
+            return;
+          }
+          if (file && typeof file === 'object') {
+            file.aiBrief = '';
+          }
+        });
 
         logFilesDiagnostics('sync', {
           source: source || 'unknown',
@@ -14833,6 +15004,12 @@
                   batchFormData.append('documentId', createdOrUpdatedDocumentId);
                   batch.forEach(function(file) {
                     batchFormData.append('attachments[]', file);
+                    var aiBriefText = file && file.aiBrief ? normalizeAttachmentAiBrief(file.aiBrief) : '';
+                    if (aiBriefText && aiBriefText.indexOf('⏳') !== 0) {
+                      batchFormData.append('attachmentBriefs[]', aiBriefText);
+                    } else {
+                      batchFormData.append('attachmentBriefs[]', '');
+                    }
                   });
                   appendTelegramUserIdToFormData(batchFormData);
 
