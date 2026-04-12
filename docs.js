@@ -14588,8 +14588,7 @@
               itemWrap.appendChild(retryButton);
             }
             if (briefText) {
-              var previewBrief = briefText.length > 280 ? briefText.slice(0, 280).trim() + '…' : briefText;
-              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', 'Кратко от ИИ: ' + previewBrief));
+              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '✅ Кратко ИИ готово'));
               var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Показать результат');
               viewButton.type = 'button';
               viewButton.addEventListener('click', function(event) {
