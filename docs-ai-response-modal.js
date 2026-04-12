@@ -3739,6 +3739,9 @@
   }
 
   if (typeof window !== 'undefined') {
+    window.requestDocumentsAiBriefByFile = function(source, setStatus) {
+      return requestBriefVisionByFile(source, typeof setStatus === 'function' ? setStatus : function() {});
+    };
     window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
     window.openDocumentsAiBriefSummaryModal = openDocumentsAiBriefSummaryModal;
   }

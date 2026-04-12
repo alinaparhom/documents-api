@@ -2589,6 +2589,23 @@
       });
   }
 
+  function requestAiBriefSummaryViaBriefModule(source, onProgress) {
+    function callFromWindow() {
+      if (typeof window.requestDocumentsAiBriefByFile !== 'function') {
+        throw new Error('Логика «Кратко ИИ» не инициализирована.');
+      }
+      return window.requestDocumentsAiBriefByFile(source, onProgress);
+    }
+
+    if (typeof window.requestDocumentsAiBriefByFile === 'function') {
+      return callFromWindow();
+    }
+
+    return ensureAiResponseModalScript().then(function() {
+      return callFromWindow();
+    });
+  }
+
 
   function openAiConclusionModal(config) {
     ensureResponsesStyle();
@@ -14467,10 +14484,14 @@
 
         attachmentAiQueue = attachmentAiQueue
           .then(function() {
-            return requestAiBriefSummaryByAttachment(
+            return requestAiBriefSummaryViaBriefModule(
               { label: file.name || 'Файл', fileObject: file },
-              buildApiUrl('generate_summary'),
-              'paid'
+              function(progressText) {
+                if (progressText) {
+                  file.aiBrief = '⏳ ' + String(progressText);
+                  renderAiBriefLiveCard();
+                }
+              }
             );
           })
           .then(function(payload) {
@@ -14482,26 +14503,11 @@
             file.aiBrief = briefText;
           })
           .catch(function(error) {
-            return requestAiBriefSummaryForFileDirect(
-              { label: file && file.name ? file.name : 'Файл', fileObject: file },
-              buildApiUrl('generate_summary')
-            )
-              .then(function(fallbackPayload) {
-                var fallbackBrief = normalizeAiBriefPayload(fallbackPayload);
-                if (!fallbackBrief) {
-                  throw new Error('empty_brief_fallback');
-                }
-                attachmentAiSummaryByKey[key] = fallbackBrief;
-                file.aiBrief = fallbackBrief;
-              })
-              .catch(function(fallbackError) {
-                file.aiBrief = '';
-                logFilesDiagnostics('ai-brief-error', {
-                  name: file && file.name ? file.name : '',
-                  message: fallbackError && fallbackError.message ? fallbackError.message : String(fallbackError),
-                  sourceMessage: error && error.message ? error.message : String(error)
-                });
-              });
+            file.aiBrief = '';
+            logFilesDiagnostics('ai-brief-error', {
+              name: file && file.name ? file.name : '',
+              message: error && error.message ? error.message : String(error)
+            });
           })
           .finally(function() {
             delete attachmentAiPendingByKey[key];
