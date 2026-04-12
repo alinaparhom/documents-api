@@ -1122,8 +1122,6 @@
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
     formData.append('documentId', documentId);
-    formData.append('uploadedBy', uploaderName);
-    formData.append('uploadedByKey', `name:${uploaderName.toLowerCase()}`);
     formData.append('attachments[]', fileBlob, fileName);
 
     const telegramInitData = normalize(

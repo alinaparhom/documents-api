@@ -3333,29 +3333,39 @@ function docs_resolve_response_upload_author(string $folder, array $requestConte
     }
 
     if ($telegramUserId !== '') {
-        $responsibles = load_responsibles_for_folder($folder);
-        foreach ($responsibles as $entry) {
-            if (!is_array($entry)) {
-                continue;
-            }
+        $settings = load_admin_settings($folder);
+        $searchPools = [];
+        if (isset($settings['block3']) && is_array($settings['block3'])) {
+            $searchPools[] = $settings['block3'];
+        }
+        if (isset($settings['responsibles']) && is_array($settings['responsibles'])) {
+            $searchPools[] = $settings['responsibles'];
+        }
 
-            $entryTelegramId = normalize_identifier_value($entry['telegram_user_id'] ?? ($entry['telegram'] ?? ''));
-            if ($entryTelegramId === '' || $entryTelegramId !== $telegramUserId) {
-                continue;
-            }
+        foreach ($searchPools as $pool) {
+            foreach ($pool as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
 
-            $responsible = sanitize_text_field((string) ($entry['responsible'] ?? ''), 200);
-            if ($responsible === '') {
-                continue;
-            }
+                $entryTelegramId = normalize_identifier_value($entry['telegram_user_id'] ?? ($entry['telegram'] ?? ($entry['chatId'] ?? '')));
+                if ($entryTelegramId === '' || $entryTelegramId !== $telegramUserId) {
+                    continue;
+                }
 
-            return [
-                'label' => $responsible,
-                'key' => 'name:' . mb_strtolower($responsible, 'UTF-8'),
-                'source' => 'settingsdocs',
-                'telegramUserId' => $telegramUserId,
-                'matchedResponsible' => $responsible,
-            ];
+                $responsible = sanitize_text_field((string) ($entry['subordinate'] ?? ($entry['responsible'] ?? ($entry['name'] ?? ''))), 200);
+                if ($responsible === '') {
+                    continue;
+                }
+
+                return [
+                    'label' => $responsible,
+                    'key' => 'name:' . mb_strtolower($responsible, 'UTF-8'),
+                    'source' => 'settingsdocs',
+                    'telegramUserId' => $telegramUserId,
+                    'matchedResponsible' => $responsible,
+                ];
+            }
         }
     }
 
