@@ -14307,6 +14307,7 @@
       var attachmentsDataTransfer = new DataTransfer();
       var attachmentsStore = [];
       var pendingAiBriefByFileKey = Object.create(null);
+      var pendingAiBriefPromises = Object.create(null);
       var existingAttachments = Array.isArray(doc && doc.files) ? doc.files.slice() : [];
       var removedAttachmentKeys = Object.create(null);
 
@@ -14318,6 +14319,68 @@
         var size = typeof file.size === 'number' ? String(file.size) : '';
         var modified = typeof file.lastModified === 'number' ? String(file.lastModified) : '';
         return [name, size, modified].join('::');
+      }
+
+      function openAiBriefPreviewModal(fileName, briefText) {
+        var overlay = createElement('div', 'documents-modal');
+        var shell = createElement('div', 'documents-modal__shell documents-modal__shell--narrow');
+        var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
+        var title = createElement('h3', 'documents-modal__title', 'Кратко от ИИ');
+        var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+        closeButton.type = 'button';
+        closeButton.addEventListener('click', function() {
+          closeModal(overlay);
+        });
+        var actions = createElement('div', 'documents-modal__actions');
+        actions.appendChild(closeButton);
+        header.appendChild(title);
+        header.appendChild(actions);
+        var body = createElement('div', 'documents-form');
+        body.appendChild(createElement('div', 'documents-form__hint', fileName || 'Файл'));
+        body.appendChild(createElement('pre', 'documents-conclusion-preview', briefText || 'Пустой ответ от ИИ.'));
+        shell.appendChild(header);
+        shell.appendChild(body);
+        overlay.appendChild(shell);
+        overlay.addEventListener('click', function(event) {
+          if (event.target === overlay) {
+            closeModal(overlay);
+          }
+        });
+        document.body.appendChild(overlay);
+      }
+
+      function scheduleAiBriefForFile(file, force) {
+        var key = buildLocalFileKey(file);
+        if (!key) {
+          return;
+        }
+        var currentState = pendingAiBriefByFileKey[key];
+        if (!force && currentState && currentState.status === 'ready' && normalizeAiBriefText(currentState.text || '')) {
+          return;
+        }
+        if (pendingAiBriefPromises[key]) {
+          return;
+        }
+        pendingAiBriefByFileKey[key] = { status: 'loading', text: '', error: '' };
+        renderAttachmentsSummary(attachmentsStore);
+        var apiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+        pendingAiBriefPromises[key] = prepareAiBriefsForBatchFiles([file], apiUrl, null, function(_file, briefText) {
+          pendingAiBriefByFileKey[key] = {
+            status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
+            text: normalizeAiBriefText(briefText || ''),
+            error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
+          };
+          renderAttachmentsSummary(attachmentsStore);
+        }).catch(function(error) {
+          pendingAiBriefByFileKey[key] = {
+            status: 'error',
+            text: '',
+            error: error && error.message ? String(error.message) : 'Ошибка ИИ'
+          };
+          renderAttachmentsSummary(attachmentsStore);
+        }).finally(function() {
+          delete pendingAiBriefPromises[key];
+        });
       }
 
       function logFilesDiagnostics(action, details) {
@@ -14506,10 +14569,35 @@
               }
             });
             itemWrap.appendChild(badge);
-            var briefText = normalizeAiBriefText(pendingAiBriefByFileKey[buildLocalFileKey(file)] || '');
+            var fileKey = buildLocalFileKey(file);
+            var briefState = fileKey ? pendingAiBriefByFileKey[fileKey] : null;
+            var briefText = normalizeAiBriefText(briefState && briefState.text ? briefState.text : '');
+            if (briefState && briefState.status === 'loading') {
+              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '⏳ Кратко ИИ: анализирую файл...'));
+            }
+            if (briefState && briefState.status === 'error' && !briefText) {
+              var errorLine = createElement('div', 'documents-file__brief-preview', '⚠️ Кратко ИИ: ' + (briefState.error || 'не удалось получить ответ'));
+              itemWrap.appendChild(errorLine);
+              var retryButton = createElement('button', 'documents-button documents-button--secondary', 'Повторить ИИ');
+              retryButton.type = 'button';
+              retryButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                scheduleAiBriefForFile(file, true);
+              });
+              itemWrap.appendChild(retryButton);
+            }
             if (briefText) {
               var previewBrief = briefText.length > 280 ? briefText.slice(0, 280).trim() + '…' : briefText;
               itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', 'Кратко от ИИ: ' + previewBrief));
+              var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Показать результат');
+              viewButton.type = 'button';
+              viewButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                openAiBriefPreviewModal(file && file.name ? file.name : 'Файл', briefText);
+              });
+              itemWrap.appendChild(viewButton);
             }
             newList.appendChild(itemWrap);
           });
@@ -14530,11 +14618,13 @@
         if (!append) {
           attachmentsStore = [];
           pendingAiBriefByFileKey = Object.create(null);
+          pendingAiBriefPromises = Object.create(null);
         }
 
         var currentFiles = attachmentsStore.slice();
         var addedCount = 0;
         var duplicateCount = 0;
+        var addedFiles = [];
         var incomingNames = [];
         var duplicateNames = [];
 
@@ -14551,6 +14641,7 @@
           if (!isDuplicate) {
             currentFiles.push(file);
             addedCount += 1;
+            addedFiles.push(file);
           } else {
             duplicateCount += 1;
             duplicateNames.push(file.name);
@@ -14572,6 +14663,9 @@
         });
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
+        addedFiles.forEach(function(file) {
+          scheduleAiBriefForFile(file, false);
+        });
 
         logFilesDiagnostics('sync', {
           source: source || 'unknown',
@@ -14962,7 +15056,11 @@
                   }, function(file, briefText) {
                     var fileKey = buildLocalFileKey(file);
                     if (fileKey) {
-                      pendingAiBriefByFileKey[fileKey] = normalizeAiBriefText(briefText || '');
+                      pendingAiBriefByFileKey[fileKey] = {
+                        status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
+                        text: normalizeAiBriefText(briefText || ''),
+                        error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
+                      };
                     }
                     renderAttachmentsSummary(attachmentsStore);
                   }).then(function(aiBriefs) {
