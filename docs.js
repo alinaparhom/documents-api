@@ -2255,6 +2255,60 @@
     return '';
   }
 
+  function normalizeAiBriefText(text) {
+    return String(text || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
+  }
+
+  function extractAiBriefFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return '';
+    }
+    var text = normalizeAiBriefText(payload.summary || '');
+    if (!text) {
+      text = normalizeAiBriefText(extractPlainAiBriefText(payload));
+    }
+    if (!text) {
+      text = normalizeAiBriefText(buildAiConclusionFromPayload(payload, ''));
+    }
+    if (text.length > 1800) {
+      text = text.slice(0, 1800).trim();
+    }
+    return text;
+  }
+
+  async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress) {
+    var batchFiles = Array.isArray(files) ? files : [];
+    var result = [];
+    for (var i = 0; i < batchFiles.length; i += 1) {
+      var file = batchFiles[i];
+      var briefText = '';
+      if (typeof onProgress === 'function') {
+        onProgress(i, batchFiles.length, file);
+      }
+      try {
+        var payload = await requestAiBriefSummaryByAttachment({
+          fileObject: file,
+          label: file && file.name ? file.name : ('Файл ' + (i + 1))
+        }, apiUrl, 'paid');
+        briefText = extractAiBriefFromPayload(payload);
+      } catch (error) {
+        docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
+          fileName: file && file.name ? file.name : '',
+          message: error && error.message ? error.message : String(error || '')
+        });
+      }
+      result.push(briefText);
+    }
+    if (typeof onProgress === 'function') {
+      onProgress(batchFiles.length, batchFiles.length, null);
+    }
+    return result;
+  }
+
 
   function getDirectAiAnalyzeUrl(apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
@@ -7891,6 +7945,10 @@
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
+        var aiBrief = normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : '');
+        if (aiBrief) {
+          lines.push('   Кратко от ИИ: ' + aiBrief);
+        }
       }
       attachmentsText = lines.join('\n');
     }
@@ -11987,6 +12045,7 @@
     var filesList = createElement('div', 'documents-files__list');
     if (attachments.length) {
       attachments.forEach(function(file) {
+        var itemWrap = createElement('div', 'documents-file-item');
         var link = createElement('a', 'documents-file-link', getAttachmentName(file));
         link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
         link.target = '_blank';
@@ -12005,7 +12064,12 @@
           event.preventDefault();
           handleAttachmentPreview(doc, file, link);
         });
-        filesList.appendChild(link);
+        itemWrap.appendChild(link);
+        var aiBrief = normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : '');
+        if (aiBrief) {
+          itemWrap.appendChild(createElement('div', 'documents-file-ai-brief', 'Кратко от ИИ: ' + aiBrief));
+        }
+        filesList.appendChild(itemWrap);
       });
     } else {
       filesList.textContent = '—';
@@ -14827,26 +14891,38 @@
               var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
-                  var batchFormData = new FormData();
-                  batchFormData.append('action', 'update');
-                  batchFormData.append('organization', state.organization);
-                  batchFormData.append('documentId', createdOrUpdatedDocumentId);
-                  batch.forEach(function(file) {
-                    batchFormData.append('attachments[]', file);
-                  });
-                  appendTelegramUserIdToFormData(batchFormData);
-
-                  return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
-                    var progressInsideBatch = 0;
-                    if (progress && progress.lengthComputable && progress.total > 0) {
-                      progressInsideBatch = progress.loaded / progress.total;
+                  var aiApiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+                  return prepareAiBriefsForBatchFiles(batch, aiApiUrl, function(done, total) {
+                    if (!total) {
+                      return;
                     }
-                    var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
-                    var uploadPercent = 35 + Math.round(overallProgress * 60);
-                    uploadPercent = Math.max(35, Math.min(95, uploadPercent));
-                    updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
-                  }).then(function(batchData) {
-                    updateStateFromPayload(batchData);
+                    var batchAiProgress = (done / total) / Math.max(1, batches.length);
+                    var aiPercent = 35 + Math.round(((batchIndex / Math.max(1, batches.length)) + batchAiProgress) * 28);
+                    aiPercent = Math.max(35, Math.min(88, aiPercent));
+                    updateUploadProgress(aiPercent, 'Кратко ИИ: ' + done + '/' + total + ' (' + (batchIndex + 1) + '/' + batches.length + ')', 'is-stage-processing');
+                  }).then(function(aiBriefs) {
+                    var batchFormData = new FormData();
+                    batchFormData.append('action', 'update');
+                    batchFormData.append('organization', state.organization);
+                    batchFormData.append('documentId', createdOrUpdatedDocumentId);
+                    batch.forEach(function(file, fileIndex) {
+                      batchFormData.append('attachments[]', file);
+                      batchFormData.append('attachmentsAiBrief[]', aiBriefs && aiBriefs[fileIndex] ? String(aiBriefs[fileIndex]) : '');
+                    });
+                    appendTelegramUserIdToFormData(batchFormData);
+
+                    return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
+                      var progressInsideBatch = 0;
+                      if (progress && progress.lengthComputable && progress.total > 0) {
+                        progressInsideBatch = progress.loaded / progress.total;
+                      }
+                      var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
+                      var uploadPercent = 65 + Math.round(overallProgress * 30);
+                      uploadPercent = Math.max(65, Math.min(95, uploadPercent));
+                      updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
+                    }).then(function(batchData) {
+                      updateStateFromPayload(batchData);
+                    });
                   });
                 });
               }, Promise.resolve());
