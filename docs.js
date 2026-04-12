@@ -14475,19 +14475,33 @@
           })
           .then(function(payload) {
             var briefText = normalizeAiBriefPayload(payload);
-            if (briefText) {
-              attachmentAiSummaryByKey[key] = briefText;
-              file.aiBrief = briefText;
-            } else {
-              file.aiBrief = '';
+            if (!briefText) {
+              throw new Error('empty_brief');
             }
+            attachmentAiSummaryByKey[key] = briefText;
+            file.aiBrief = briefText;
           })
           .catch(function(error) {
-            file.aiBrief = '';
-            logFilesDiagnostics('ai-brief-error', {
-              name: file && file.name ? file.name : '',
-              message: error && error.message ? error.message : String(error)
-            });
+            return requestAiBriefSummaryForFileDirect(
+              { label: file && file.name ? file.name : 'Файл', fileObject: file },
+              buildApiUrl('generate_summary')
+            )
+              .then(function(fallbackPayload) {
+                var fallbackBrief = normalizeAiBriefPayload(fallbackPayload);
+                if (!fallbackBrief) {
+                  throw new Error('empty_brief_fallback');
+                }
+                attachmentAiSummaryByKey[key] = fallbackBrief;
+                file.aiBrief = fallbackBrief;
+              })
+              .catch(function(fallbackError) {
+                file.aiBrief = '';
+                logFilesDiagnostics('ai-brief-error', {
+                  name: file && file.name ? file.name : '',
+                  message: fallbackError && fallbackError.message ? fallbackError.message : String(fallbackError),
+                  sourceMessage: error && error.message ? error.message : String(error)
+                });
+              });
           })
           .finally(function() {
             delete attachmentAiPendingByKey[key];
