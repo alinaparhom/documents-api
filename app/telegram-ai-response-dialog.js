@@ -1110,11 +1110,33 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    const resolveUploaderNameFromTask = () => {
+      const pools = [
+        task && task.subordinates,
+        task && task.assignees,
+        task && task.responsibles,
+        task && task.responsible,
+        task && task.executor,
+      ];
+      for (const pool of pools) {
+        if (Array.isArray(pool)) {
+          for (const item of pool) {
+            const candidate = normalize(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item));
+            if (candidate) return candidate;
+          }
+          continue;
+        }
+        const candidate = normalize(pool && (pool.responsible || pool.name || pool.fullName || pool.fio || pool.label || pool.value || pool));
+        if (candidate) return candidate;
+      }
+      return '';
+    };
+    const uploaderName = resolveUploaderNameFromTask() || resolveAuthorizedUserName(globalScope) || 'Пользователь';
     const date = new Date();
     const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const timeStamp = `${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}`;
     const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
-    const safeResponsible = 'Кто добавил';
+    const safeResponsible = uploaderName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Пользователь';
     const safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
     const fileName = `${safeResponsible}_${dateStamp}_${timeStamp}_${safeTaskNumber}.docx`;
     const formData = new FormData();
