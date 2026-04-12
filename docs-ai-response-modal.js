@@ -2088,7 +2088,40 @@
       file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
     }
 
-    var prepared = await buildBriefVisionPayloadFromFile(file, function(message) { setStatus(message, 'loading'); });
+    var prepared = null;
+    try {
+      prepared = await buildBriefVisionPayloadFromFile(file, function(message) { setStatus(message, 'loading'); });
+    } catch (prepareError) {
+      setStatus('Не удалось подготовить файл, пробую OCR fallback...', 'loading');
+      var ocrFallbackText = await requestBriefOcrByFile(file, file.name || fileName).catch(function() { return ''; });
+      if (!ocrFallbackText) {
+        throw prepareError;
+      }
+      var fallbackPrompt = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
+      var fallbackRequest = await postBriefGroqPaidWithFallback(function() {
+        var formData = new FormData();
+        formData.append('action', 'generate_summary');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', fallbackPrompt);
+        formData.append('extractedTexts', JSON.stringify([{
+          name: file.name || fileName,
+          type: file.type || 'text/plain',
+          text: String(ocrFallbackText).slice(0, 70000)
+        }]));
+        return formData;
+      });
+      var fallbackPayloadOnly = fallbackRequest && fallbackRequest.payload;
+      if (!fallbackRequest.response.ok || !fallbackPayloadOnly || fallbackPayloadOnly.ok !== true) {
+        throw new Error((fallbackPayloadOnly && fallbackPayloadOnly.error) || 'Ошибка OCR fallback в Vision режиме.');
+      }
+      return {
+        summary: briefToSummaryText(fallbackPayloadOnly.summary || fallbackPayloadOnly.response),
+        model: fallbackPayloadOnly.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        timeMs: fallbackPayloadOnly.durationMs || fallbackPayloadOnly.timeMs || 0,
+        warning: 'Использован OCR fallback'
+      };
+    }
     var prompt = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
 
     if (prepared.kind === 'text') {
