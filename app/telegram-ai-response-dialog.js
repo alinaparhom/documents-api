@@ -1110,36 +1110,39 @@
       return { ok: false, skipped: true, reason: 'task_context_missing' };
     }
     const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
-    const resolveResponsibleName = () => {
-      const responsibleRaw = task && (task.responsible || task.responsibles);
-      if (Array.isArray(responsibleRaw)) {
-        const list = responsibleRaw
-          .map((item) => normalize(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item)))
-          .filter(Boolean);
-        if (list.length) return list.join(', ');
-      } else if (responsibleRaw && typeof responsibleRaw === 'object') {
-        const fromObject = normalize(responsibleRaw.responsible || responsibleRaw.fullName || responsibleRaw.name || responsibleRaw.fio || responsibleRaw.label || responsibleRaw.value);
-        if (fromObject) return fromObject;
-      } else {
-        const fromString = normalize(responsibleRaw);
-        if (fromString) return fromString;
+    const resolveUploaderNameFromTask = () => {
+      const pools = [
+        task && task.subordinates,
+        task && task.assignees,
+        task && task.responsibles,
+        task && task.responsible,
+        task && task.executor,
+      ];
+      for (const pool of pools) {
+        if (Array.isArray(pool)) {
+          for (const item of pool) {
+            const candidate = normalize(item && (item.responsible || item.name || item.fullName || item.fio || item.label || item.value || item));
+            if (candidate) return candidate;
+          }
+          continue;
+        }
+        const candidate = normalize(pool && (pool.responsible || pool.name || pool.fullName || pool.fio || pool.label || pool.value || pool));
+        if (candidate) return candidate;
       }
       return '';
     };
-    const uploaderName = resolveAuthorizedUserName(globalScope) || resolveResponsibleName() || 'Неизвестный';
+    const uploaderName = resolveUploaderNameFromTask() || resolveAuthorizedUserName(globalScope) || 'Пользователь';
     const date = new Date();
     const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const timeStamp = `${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}`;
     const taskNumberRaw = normalize(task && (task.entryNumber || task.taskNumber || task.number || task.regNumber || task.documentNumber || task.id));
-    const safeResponsible = uploaderName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Неизвестный';
+    const safeResponsible = uploaderName.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Пользователь';
     const safeTaskNumber = taskNumberRaw.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || documentId;
     const fileName = `${safeResponsible}_${dateStamp}_${timeStamp}_${safeTaskNumber}.docx`;
     const formData = new FormData();
     formData.append('action', 'response_upload');
     formData.append('organization', organization);
     formData.append('documentId', documentId);
-    formData.append('responsible', resolveResponsibleName() || uploaderName);
-    formData.append('uploaderName', uploaderName);
     formData.append('attachments[]', fileBlob, fileName);
 
     const telegramInitData = normalize(
@@ -1162,7 +1165,8 @@
     }, 45000);
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || payload.success !== true) {
-      throw new Error((payload && (payload.error || payload.message)) || `Ошибка прикрепления к задаче (${response.status}).`);
+      const serverMessage = payload && (payload.error || payload.message);
+      throw new Error(serverMessage || `Ошибка прикрепления к задаче (${response.status}).`);
     }
     try {
       if (typeof globalScope.CustomEvent === 'function' && typeof globalScope.dispatchEvent === 'function') {

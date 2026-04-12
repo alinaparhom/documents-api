@@ -9659,6 +9659,8 @@ async function handleViewerTabClick(index, task) {
       setViewerTabActive(index);
       viewerTabsState.activeFile = file;
       updateViewerDownloadState(file);
+      updateViewerDeleteState(file);
+      updateViewerFileOwnerState(file);
       try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
       const restoreMs = Math.round(performance.now() - restoreStart);
       logViewWatchEvent('task_view_watch_tab_cache_hit', task, {
@@ -9723,6 +9725,8 @@ async function handleViewerTabClick(index, task) {
     }
     viewerTabsState.activeFile = file;
     updateViewerDownloadState(file);
+    updateViewerDeleteState(file);
+    updateViewerFileOwnerState(file);
     // Обновить кол-во страниц после загрузки PDF
     try {
       updatePdfTabPageCount();
@@ -11382,28 +11386,18 @@ function getCurrentUserResponsibleFromAccess() {
   }
 
   const idCandidates = [];
-  const nameCandidates = [];
   const pushId = (value) => {
     const normalized = normalizeIdentifier(value);
     if (normalized) {
       idCandidates.push(normalized);
     }
   };
-  const pushName = (value) => {
-    const normalized = normalizeName(value);
-    if (normalized) {
-      nameCandidates.push(normalized);
-    }
-  };
 
   pushId(state.telegram.id);
   pushId(state.telegram.chatId);
-  pushId(state.telegram.username);
-  pushName(state.telegram.fullName);
-  pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
 
   const ids = Array.from(new Set(idCandidates));
-  const names = Array.from(new Set(nameCandidates));
+  const names = [];
 
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object') {
@@ -15522,12 +15516,11 @@ function collectCurrentUserOwnershipKeys() {
     }
   };
 
-  const { ids, names } = getUserIdentifierCandidates();
-  ids.forEach(pushKey);
-  names.forEach(pushKey);
-  pushKey(state.telegram.username);
-  pushKey(state.telegram.fullName);
-  pushKey(getCurrentUserResponsibleFromAccess());
+  const responsibleName = normalizeValue(getCurrentUserResponsibleFromAccess());
+  if (responsibleName) {
+    pushKey(responsibleName);
+    pushKey(`name:${responsibleName.toLowerCase()}`);
+  }
 
   const accessPools = [];
   if (state.access && typeof state.access === 'object') {
@@ -15548,8 +15541,13 @@ function collectCurrentUserOwnershipKeys() {
     });
   }
 
+  const normalizedResponsible = normalizeName(responsibleName);
   accessPools.forEach((entry) => {
-    if (!entry || typeof entry !== 'object' || !entryMatchesUser(entry, ids, names)) {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    const entryName = normalizeName(entry.responsible || entry.name || entry.fullName || entry.displayName);
+    if (!normalizedResponsible || !entryName || entryName !== normalizedResponsible) {
       return;
     }
     [
@@ -16134,22 +16132,6 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     formData.append('telegram_user_id', effectiveTelegramId);
   }
 
-  const ownerResponsible = normalizeValue(ownerEntry && ownerEntry.responsible)
-    || normalizeValue(ownerEntry && ownerEntry.name)
-    || normalizeValue(ownerEntry && ownerEntry.fullName)
-    || normalizeValue(ownerEntry && ownerEntry.displayName)
-    || normalizeValue(ownerEntry && ownerEntry.label);
-  const responsibleFromSettingsDocs = await getResponsibleFromSettingsDocs(organization, effectiveTelegramId);
-  const responsibleFromTask = getCurrentUserResponsibleFromTask(task);
-  const responsibleFromAccess = getCurrentUserResponsibleFromAccess();
-  const resolvedResponsible = ownerResponsible || responsibleFromSettingsDocs || responsibleFromTask || responsibleFromAccess;
-  if (resolvedResponsible) {
-    formData.append('uploadedBy', resolvedResponsible);
-    formData.append('uploadedByName', resolvedResponsible);
-    formData.append('uploaderName', resolvedResponsible);
-    formData.append('telegram_full_name', resolvedResponsible);
-  }
-
   const headers = {};
   if (state.telegram.initData) {
     headers['X-Telegram-Init-Data'] = state.telegram.initData;
@@ -16208,9 +16190,8 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
 
   await loadTasks(true);
   if (typeof setStatus === 'function') {
-    const uploaderLabel = resolvedResponsible || effectiveTelegramId || 'не определён';
     const baseMessage = data.message || 'Ответ загружен.';
-    setStatus('success', `${baseMessage} uploadedBy: ${uploaderLabel}`);
+    setStatus('success', baseMessage);
   }
 
   sendResponseViewerLog('response_upload_success', {
@@ -16224,7 +16205,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     })),
     hasResponseMessage: Boolean(responseMessage),
     responseMessageLength: responseMessage.length,
-    uploadedBy: resolvedResponsible || '',
+    uploadedBy: '',
   });
 
   return data;

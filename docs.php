@@ -3249,39 +3249,78 @@ function docs_resolve_current_user_key(array $requestContext, ?array $sessionAut
     return '';
 }
 
-function docs_is_current_user_response_owner(array $response, array $requestContext, ?array $sessionAuth = null): bool
+function docs_resolve_site_user_identity_for_responses(string $folder, array $requestContext, ?array $sessionAuth = null): array
 {
+    $telegramUserId = normalize_identifier_value($requestContext['raw']['telegram_user_id'] ?? '');
+    if ($telegramUserId === '') {
+        $telegramUserId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+    }
+    if ($telegramUserId === '' && isset($requestContext['user']) && is_array($requestContext['user'])) {
+        $telegramUserId = normalize_identifier_value($requestContext['user']['id'] ?? '');
+    }
+
+    if ($telegramUserId !== '') {
+        $settings = load_admin_settings($folder);
+        $searchPools = [];
+        if (isset($settings['block3']) && is_array($settings['block3'])) {
+            $searchPools[] = $settings['block3'];
+        }
+        if (isset($settings['responsibles']) && is_array($settings['responsibles'])) {
+            $searchPools[] = $settings['responsibles'];
+        }
+
+        foreach ($searchPools as $pool) {
+            foreach ($pool as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+
+                $entryTelegramId = normalize_identifier_value($entry['telegram_user_id'] ?? ($entry['telegram'] ?? ($entry['chatId'] ?? '')));
+                if ($entryTelegramId === '' || $entryTelegramId !== $telegramUserId) {
+                    continue;
+                }
+
+                $label = sanitize_text_field((string) ($entry['subordinate'] ?? ($entry['responsible'] ?? ($entry['name'] ?? ''))), 200);
+                if ($label === '') {
+                    continue;
+                }
+
+                return [
+                    'label' => $label,
+                    'key' => 'name:' . mb_strtolower($label, 'UTF-8'),
+                    'source' => 'settingsdocs',
+                ];
+            }
+        }
+    }
+
+    $fallbackLabel = docs_resolve_current_user_label($requestContext, $sessionAuth);
+    if ($fallbackLabel === '') {
+        $fallbackLabel = 'Пользователь';
+    }
+    $fallbackKey = docs_resolve_current_user_key($requestContext, $sessionAuth);
+
+    return [
+        'label' => $fallbackLabel,
+        'key' => $fallbackKey !== '' ? $fallbackKey : ('name:' . mb_strtolower($fallbackLabel, 'UTF-8')),
+        'source' => 'fallback',
+    ];
+}
+
+function docs_is_current_user_response_owner(array $response, string $folder, array $requestContext, ?array $sessionAuth = null): bool
+{
+    $siteIdentity = docs_resolve_site_user_identity_for_responses($folder, $requestContext, $sessionAuth);
+    $siteKeyNormalized = mb_strtolower(trim((string) ($siteIdentity['key'] ?? '')), 'UTF-8');
+    $siteLabelNormalized = docs_normalize_name_candidate_value($siteIdentity['label'] ?? '');
+
     $ownerKey = sanitize_text_field((string) ($response['uploadedByKey'] ?? ''), 200);
     $ownerKeyNormalized = $ownerKey !== '' ? mb_strtolower(trim($ownerKey), 'UTF-8') : '';
-
-    $currentUserKey = docs_resolve_current_user_key($requestContext, $sessionAuth);
-    $currentUserKeyNormalized = $currentUserKey !== '' ? mb_strtolower(trim($currentUserKey), 'UTF-8') : '';
-
-    if ($ownerKeyNormalized !== '' && $currentUserKeyNormalized !== '' && $ownerKeyNormalized === $currentUserKeyNormalized) {
+    if ($ownerKeyNormalized !== '' && $siteKeyNormalized !== '' && $ownerKeyNormalized === $siteKeyNormalized) {
         return true;
     }
 
     $ownerName = docs_normalize_name_candidate_value($response['uploadedBy'] ?? '');
-    if ($ownerName === '') {
-        return false;
-    }
-
-    $nameCandidates = [];
-    $pushNameCandidate = static function ($value) use (&$nameCandidates): void {
-        $normalized = docs_normalize_name_candidate_value($value);
-        if ($normalized !== '') {
-            $nameCandidates[$normalized] = true;
-        }
-    };
-
-    $user = isset($requestContext['user']) && is_array($requestContext['user']) ? $requestContext['user'] : [];
-    $pushNameCandidate($user['fullName'] ?? null);
-    $pushNameCandidate($user['username'] ?? null);
-    $pushNameCandidate($sessionAuth['fullName'] ?? null);
-    $pushNameCandidate($sessionAuth['login'] ?? null);
-    $pushNameCandidate($user['id'] ?? ($requestContext['primaryId'] ?? null));
-
-    return isset($nameCandidates[$ownerName]);
+    return $ownerName !== '' && $siteLabelNormalized !== '' && $ownerName === $siteLabelNormalized;
 }
 
 function docs_resolve_current_user_label(array $requestContext, ?array $sessionAuth = null): string
@@ -3304,6 +3343,82 @@ function docs_resolve_current_user_label(array $requestContext, ?array $sessionA
     }
 
     return 'Пользователь';
+}
+
+function docs_resolve_response_upload_author(string $folder, array $requestContext, ?array $sessionAuth = null): array
+{
+    $fallbackLabel = docs_resolve_current_user_label($requestContext, $sessionAuth);
+    $fallbackKey = docs_resolve_current_user_key($requestContext, $sessionAuth);
+
+    $postLabel = sanitize_text_field((string) ($_POST['uploadedBy'] ?? ''), 200);
+    if ($postLabel !== '') {
+        $postKey = sanitize_text_field((string) ($_POST['uploadedByKey'] ?? ''), 200);
+
+        return [
+            'label' => $postLabel,
+            'key' => $postKey !== '' ? $postKey : ('name:' . mb_strtolower($postLabel, 'UTF-8')),
+            'source' => 'post',
+            'telegramUserId' => '',
+            'matchedResponsible' => null,
+        ];
+    }
+
+    $telegramUserId = normalize_identifier_value($requestContext['raw']['telegram_user_id'] ?? '');
+    if ($telegramUserId === '') {
+        $telegramUserId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+    }
+    if ($telegramUserId === '' && isset($requestContext['user']) && is_array($requestContext['user'])) {
+        $telegramUserId = normalize_identifier_value($requestContext['user']['id'] ?? '');
+    }
+
+    if ($telegramUserId !== '') {
+        $settings = load_admin_settings($folder);
+        $searchPools = [];
+        if (isset($settings['block3']) && is_array($settings['block3'])) {
+            $searchPools[] = $settings['block3'];
+        }
+        if (isset($settings['responsibles']) && is_array($settings['responsibles'])) {
+            $searchPools[] = $settings['responsibles'];
+        }
+
+        foreach ($searchPools as $pool) {
+            foreach ($pool as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+
+                $entryTelegramId = normalize_identifier_value($entry['telegram_user_id'] ?? ($entry['telegram'] ?? ($entry['chatId'] ?? '')));
+                if ($entryTelegramId === '' || $entryTelegramId !== $telegramUserId) {
+                    continue;
+                }
+
+                $responsible = sanitize_text_field((string) ($entry['subordinate'] ?? ($entry['responsible'] ?? ($entry['name'] ?? ''))), 200);
+                if ($responsible === '') {
+                    continue;
+                }
+
+                return [
+                    'label' => $responsible,
+                    'key' => 'name:' . mb_strtolower($responsible, 'UTF-8'),
+                    'source' => 'settingsdocs',
+                    'telegramUserId' => $telegramUserId,
+                    'matchedResponsible' => $responsible,
+                ];
+            }
+        }
+    }
+
+    if ($fallbackLabel === '') {
+        $fallbackLabel = 'Пользователь';
+    }
+
+    return [
+        'label' => $fallbackLabel,
+        'key' => $fallbackKey !== '' ? $fallbackKey : ('name:' . mb_strtolower($fallbackLabel, 'UTF-8')),
+        'source' => 'fallback',
+        'telegramUserId' => $telegramUserId,
+        'matchedResponsible' => null,
+    ];
 }
 
 function docs_normalize_response_file_name(string $original, array $record, int $sequence = 1): string
@@ -15657,8 +15772,10 @@ switch ($action) {
         }
 
         $responseDir = docs_get_document_responses_dir($folder, $documentId, true);
-        $uploaderKey = docs_resolve_current_user_key($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
-        $uploaderLabel = docs_resolve_current_user_label($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $resolvedUploadAuthor = docs_resolve_response_upload_author($folder, $requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $uploaderKey = (string) ($resolvedUploadAuthor['key'] ?? '');
+        $uploaderLabel = (string) ($resolvedUploadAuthor['label'] ?? 'Пользователь');
+        $uploaderSource = (string) ($resolvedUploadAuthor['source'] ?? 'fallback');
         $uploadedAt = date('c');
         $names = $hasAttachments ? $_FILES['attachments']['name'] : [];
         $tmpNames = $hasAttachments ? $_FILES['attachments']['tmp_name'] : [];
@@ -15666,6 +15783,16 @@ switch ($action) {
         $sizes = $hasAttachments ? $_FILES['attachments']['size'] : [];
         $sequenceBase = count($records[$recordIndex]['responses']);
         $uploadedStoredNames = [];
+        docs_write_response_log('Определён автор загрузки ответа', [
+            'organization' => $organization,
+            'folder' => $folder,
+            'documentId' => $documentId,
+            'selectedSource' => $uploaderSource,
+            'uploadedBy' => $uploaderLabel,
+            'uploadedByKey' => $uploaderKey,
+            'telegramUserId' => (string) ($resolvedUploadAuthor['telegramUserId'] ?? ''),
+            'matchedResponsible' => (string) ($resolvedUploadAuthor['matchedResponsible'] ?? ''),
+        ]);
         docs_write_response_log('Старт загрузки файла Ответ к задаче', [
             'organization' => $organization,
             'folder' => $folder,
@@ -15673,6 +15800,14 @@ switch ($action) {
             'uploader' => [
                 'label' => $uploaderLabel,
                 'key' => $uploaderKey,
+                'source' => $uploaderSource,
+            ],
+            'uploaderResolution' => [
+                'selectedSource' => $uploaderSource,
+                'postUploadedBy' => sanitize_text_field((string) ($_POST['uploadedBy'] ?? ''), 200),
+                'postUploadedByKey' => sanitize_text_field((string) ($_POST['uploadedByKey'] ?? ''), 200),
+                'telegramUserId' => (string) ($resolvedUploadAuthor['telegramUserId'] ?? ''),
+                'matchedResponsible' => (string) ($resolvedUploadAuthor['matchedResponsible'] ?? ''),
             ],
             'dataSources' => docs_collect_response_log_sources($folder),
             'responseDirectory' => $responseDir,
@@ -15966,7 +16101,7 @@ switch ($action) {
                 if (!is_array($response) || (string) ($response['storedName'] ?? '') !== $storedName) {
                     continue;
                 }
-                if (!docs_is_current_user_response_owner($response, $requestContext, $resolvedSessionAuth)) {
+                if (!docs_is_current_user_response_owner($response, $folder, $requestContext, $resolvedSessionAuth)) {
                     if ($registryHandle !== null) {
                         docs_unlock_registry($registryHandle);
                     }
@@ -16085,7 +16220,7 @@ switch ($action) {
                     $remaining[] = $response;
                     continue;
                 }
-                if (!docs_is_current_user_response_owner($response, $requestContext, $resolvedSessionAuth)) {
+                if (!docs_is_current_user_response_owner($response, $folder, $requestContext, $resolvedSessionAuth)) {
                     if ($registryHandle !== null) {
                         docs_unlock_registry($registryHandle);
                     }
