@@ -2274,13 +2274,10 @@
     if (!text) {
       text = normalizeAiBriefText(buildAiConclusionFromPayload(payload, ''));
     }
-    if (text.length > 1800) {
-      text = text.slice(0, 1800).trim();
-    }
     return text;
   }
 
-  async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress) {
+  async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress, onItemResolved) {
     var batchFiles = Array.isArray(files) ? files : [];
     var result = [];
     var requestFromBriefModule = null;
@@ -2324,6 +2321,9 @@
             message: fallbackError && fallbackError.message ? fallbackError.message : (error && error.message ? error.message : String(error || ''))
           });
         }
+      }
+      if (typeof onItemResolved === 'function') {
+        onItemResolved(file, briefText, i, batchFiles.length);
       }
       result.push(briefText);
     }
@@ -14306,8 +14306,19 @@
 
       var attachmentsDataTransfer = new DataTransfer();
       var attachmentsStore = [];
+      var pendingAiBriefByFileKey = Object.create(null);
       var existingAttachments = Array.isArray(doc && doc.files) ? doc.files.slice() : [];
       var removedAttachmentKeys = Object.create(null);
+
+      function buildLocalFileKey(file) {
+        if (!file) {
+          return '';
+        }
+        var name = file.name ? String(file.name) : '';
+        var size = typeof file.size === 'number' ? String(file.size) : '';
+        var modified = typeof file.lastModified === 'number' ? String(file.lastModified) : '';
+        return [name, size, modified].join('::');
+      }
 
       function logFilesDiagnostics(action, details) {
         if (typeof sendClientDiagnostics !== 'function') {
@@ -14470,6 +14481,7 @@
           newGroup.appendChild(newTitle);
           var newList = createElement('div', 'documents-file__group-list');
           files.forEach(function(file, index) {
+            var itemWrap = createElement('div', 'documents-file__item');
             var badge = buildAttachmentBadge(file.name, {
               variant: 'new',
               removable: true,
@@ -14479,6 +14491,10 @@
                 }
                 var beforeCount = attachmentsStore.length;
                 attachmentsStore.splice(index, 1);
+                var removedKey = buildLocalFileKey(file);
+                if (removedKey && pendingAiBriefByFileKey[removedKey]) {
+                  delete pendingAiBriefByFileKey[removedKey];
+                }
                 syncAttachmentsInput();
                 logFilesDiagnostics('remove-new', {
                   name: file.name,
@@ -14489,7 +14505,13 @@
                 renderAttachmentsSummary(attachmentsStore);
               }
             });
-            newList.appendChild(badge);
+            itemWrap.appendChild(badge);
+            var briefText = normalizeAiBriefText(pendingAiBriefByFileKey[buildLocalFileKey(file)] || '');
+            if (briefText) {
+              var previewBrief = briefText.length > 280 ? briefText.slice(0, 280).trim() + '…' : briefText;
+              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', 'Кратко от ИИ: ' + previewBrief));
+            }
+            newList.appendChild(itemWrap);
           });
           newGroup.appendChild(newList);
           attachmentsSummary.appendChild(newGroup);
@@ -14507,6 +14529,7 @@
       function syncAttachments(files, append, source) {
         if (!append) {
           attachmentsStore = [];
+          pendingAiBriefByFileKey = Object.create(null);
         }
 
         var currentFiles = attachmentsStore.slice();
@@ -14535,6 +14558,18 @@
         });
 
         attachmentsStore = currentFiles.slice();
+        var activeKeys = Object.create(null);
+        attachmentsStore.forEach(function(file) {
+          var key = buildLocalFileKey(file);
+          if (key) {
+            activeKeys[key] = true;
+          }
+        });
+        Object.keys(pendingAiBriefByFileKey).forEach(function(key) {
+          if (!activeKeys[key]) {
+            delete pendingAiBriefByFileKey[key];
+          }
+        });
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
 
@@ -14924,6 +14959,12 @@
                     var aiPercent = 35 + Math.round(((batchIndex / Math.max(1, batches.length)) + batchAiProgress) * 28);
                     aiPercent = Math.max(35, Math.min(88, aiPercent));
                     updateUploadProgress(aiPercent, 'Кратко ИИ: ' + done + '/' + total + ' (' + (batchIndex + 1) + '/' + batches.length + ')', 'is-stage-processing');
+                  }, function(file, briefText) {
+                    var fileKey = buildLocalFileKey(file);
+                    if (fileKey) {
+                      pendingAiBriefByFileKey[fileKey] = normalizeAiBriefText(briefText || '');
+                    }
+                    renderAttachmentsSummary(attachmentsStore);
                   }).then(function(aiBriefs) {
                     var batchFormData = new FormData();
                     batchFormData.append('action', 'update');
