@@ -2283,6 +2283,14 @@
   async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress) {
     var batchFiles = Array.isArray(files) ? files : [];
     var result = [];
+    var requestFromBriefModule = null;
+    try {
+      await ensureAiResponseModalScript();
+      if (typeof window !== 'undefined' && typeof window.requestDocumentsAiBriefByFileSource === 'function') {
+        requestFromBriefModule = window.requestDocumentsAiBriefByFileSource;
+      }
+    } catch (_) {}
+
     for (var i = 0; i < batchFiles.length; i += 1) {
       var file = batchFiles[i];
       var briefText = '';
@@ -2290,11 +2298,17 @@
         onProgress(i, batchFiles.length, file);
       }
       try {
-        var payload = await requestAiBriefSummaryByAttachment({
+        var source = {
           fileObject: file,
           label: file && file.name ? file.name : ('Файл ' + (i + 1))
-        }, apiUrl, 'paid');
-        briefText = extractAiBriefFromPayload(payload);
+        };
+        if (typeof requestFromBriefModule === 'function') {
+          var modulePayload = await requestFromBriefModule(source, function() {});
+          briefText = normalizeAiBriefText(modulePayload && modulePayload.summary ? modulePayload.summary : '');
+        } else {
+          var payload = await requestAiBriefSummaryByAttachment(source, apiUrl, 'paid');
+          briefText = extractAiBriefFromPayload(payload);
+        }
       } catch (error) {
         docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
           fileName: file && file.name ? file.name : '',

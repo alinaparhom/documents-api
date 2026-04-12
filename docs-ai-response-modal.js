@@ -3741,5 +3741,6 @@
   if (typeof window !== 'undefined') {
     window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
     window.openDocumentsAiBriefSummaryModal = openDocumentsAiBriefSummaryModal;
+    window.requestDocumentsAiBriefByFileSource = requestBriefVisionByFile;
   }
 })();
