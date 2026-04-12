@@ -2305,15 +2305,25 @@
         if (typeof requestFromBriefModule === 'function') {
           var modulePayload = await requestFromBriefModule(source, function() {});
           briefText = normalizeAiBriefText(modulePayload && modulePayload.summary ? modulePayload.summary : '');
-        } else {
+        }
+        if (!briefText) {
           var payload = await requestAiBriefSummaryByAttachment(source, apiUrl, 'paid');
           briefText = extractAiBriefFromPayload(payload);
         }
       } catch (error) {
-        docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
-          fileName: file && file.name ? file.name : '',
-          message: error && error.message ? error.message : String(error || '')
-        });
+        try {
+          var fallbackSource = {
+            fileObject: file,
+            label: file && file.name ? file.name : ('Файл ' + (i + 1))
+          };
+          var fallbackPayload = await requestAiBriefSummaryByAttachment(fallbackSource, apiUrl, 'paid');
+          briefText = extractAiBriefFromPayload(fallbackPayload);
+        } catch (fallbackError) {
+          docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
+            fileName: file && file.name ? file.name : '',
+            message: fallbackError && fallbackError.message ? fallbackError.message : (error && error.message ? error.message : String(error || ''))
+          });
+        }
       }
       result.push(briefText);
     }
