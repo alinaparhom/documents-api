@@ -2255,6 +2255,84 @@
     return '';
   }
 
+  function normalizeAiBriefText(text) {
+    return String(text || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
+  }
+
+  function extractAiBriefFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return '';
+    }
+    var text = normalizeAiBriefText(payload.summary || '');
+    if (!text) {
+      text = normalizeAiBriefText(extractPlainAiBriefText(payload));
+    }
+    if (!text) {
+      text = normalizeAiBriefText(buildAiConclusionFromPayload(payload, ''));
+    }
+    return text;
+  }
+
+  async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress, onItemResolved) {
+    var batchFiles = Array.isArray(files) ? files : [];
+    var result = [];
+    var requestFromBriefModule = null;
+    try {
+      await ensureAiResponseModalScript();
+      if (typeof window !== 'undefined' && typeof window.requestDocumentsAiBriefByFileSource === 'function') {
+        requestFromBriefModule = window.requestDocumentsAiBriefByFileSource;
+      }
+    } catch (_) {}
+
+    for (var i = 0; i < batchFiles.length; i += 1) {
+      var file = batchFiles[i];
+      var briefText = '';
+      if (typeof onProgress === 'function') {
+        onProgress(i, batchFiles.length, file);
+      }
+      try {
+        var source = {
+          fileObject: file,
+          label: file && file.name ? file.name : ('Файл ' + (i + 1))
+        };
+        if (typeof requestFromBriefModule === 'function') {
+          var modulePayload = await requestFromBriefModule(source, function() {});
+          briefText = normalizeAiBriefText(modulePayload && modulePayload.summary ? modulePayload.summary : '');
+        }
+        if (!briefText) {
+          var payload = await requestAiBriefSummaryByAttachment(source, apiUrl, 'paid');
+          briefText = extractAiBriefFromPayload(payload);
+        }
+      } catch (error) {
+        try {
+          var fallbackSource = {
+            fileObject: file,
+            label: file && file.name ? file.name : ('Файл ' + (i + 1))
+          };
+          var fallbackPayload = await requestAiBriefSummaryByAttachment(fallbackSource, apiUrl, 'paid');
+          briefText = extractAiBriefFromPayload(fallbackPayload);
+        } catch (fallbackError) {
+          docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
+            fileName: file && file.name ? file.name : '',
+            message: fallbackError && fallbackError.message ? fallbackError.message : (error && error.message ? error.message : String(error || ''))
+          });
+        }
+      }
+      if (typeof onItemResolved === 'function') {
+        onItemResolved(file, briefText, i, batchFiles.length);
+      }
+      result.push(briefText);
+    }
+    if (typeof onProgress === 'function') {
+      onProgress(batchFiles.length, batchFiles.length, null);
+    }
+    return result;
+  }
+
 
   function getDirectAiAnalyzeUrl(apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
@@ -7891,6 +7969,10 @@
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
+        var aiBrief = normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : '');
+        if (aiBrief) {
+          lines.push('   Кратко от ИИ: ' + aiBrief);
+        }
       }
       attachmentsText = lines.join('\n');
     }
@@ -11987,6 +12069,7 @@
     var filesList = createElement('div', 'documents-files__list');
     if (attachments.length) {
       attachments.forEach(function(file) {
+        var itemWrap = createElement('div', 'documents-file-item');
         var link = createElement('a', 'documents-file-link', getAttachmentName(file));
         link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
         link.target = '_blank';
@@ -12005,7 +12088,12 @@
           event.preventDefault();
           handleAttachmentPreview(doc, file, link);
         });
-        filesList.appendChild(link);
+        itemWrap.appendChild(link);
+        var aiBrief = normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : '');
+        if (aiBrief) {
+          itemWrap.appendChild(createElement('div', 'documents-file-ai-brief', 'Кратко от ИИ: ' + aiBrief));
+        }
+        filesList.appendChild(itemWrap);
       });
     } else {
       filesList.textContent = '—';
@@ -14218,8 +14306,82 @@
 
       var attachmentsDataTransfer = new DataTransfer();
       var attachmentsStore = [];
+      var pendingAiBriefByFileKey = Object.create(null);
+      var pendingAiBriefPromises = Object.create(null);
       var existingAttachments = Array.isArray(doc && doc.files) ? doc.files.slice() : [];
       var removedAttachmentKeys = Object.create(null);
+
+      function buildLocalFileKey(file) {
+        if (!file) {
+          return '';
+        }
+        var name = file.name ? String(file.name) : '';
+        var size = typeof file.size === 'number' ? String(file.size) : '';
+        var modified = typeof file.lastModified === 'number' ? String(file.lastModified) : '';
+        return [name, size, modified].join('::');
+      }
+
+      function openAiBriefPreviewModal(fileName, briefText) {
+        var overlay = createElement('div', 'documents-modal');
+        var shell = createElement('div', 'documents-modal__shell documents-modal__shell--narrow');
+        var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
+        var title = createElement('h3', 'documents-modal__title', 'Кратко от ИИ');
+        var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+        closeButton.type = 'button';
+        closeButton.addEventListener('click', function() {
+          closeModal(overlay);
+        });
+        var actions = createElement('div', 'documents-modal__actions');
+        actions.appendChild(closeButton);
+        header.appendChild(title);
+        header.appendChild(actions);
+        var body = createElement('div', 'documents-form');
+        body.appendChild(createElement('div', 'documents-form__hint', fileName || 'Файл'));
+        body.appendChild(createElement('pre', 'documents-conclusion-preview', briefText || 'Пустой ответ от ИИ.'));
+        shell.appendChild(header);
+        shell.appendChild(body);
+        overlay.appendChild(shell);
+        overlay.addEventListener('click', function(event) {
+          if (event.target === overlay) {
+            closeModal(overlay);
+          }
+        });
+        document.body.appendChild(overlay);
+      }
+
+      function scheduleAiBriefForFile(file, force) {
+        var key = buildLocalFileKey(file);
+        if (!key) {
+          return;
+        }
+        var currentState = pendingAiBriefByFileKey[key];
+        if (!force && currentState && currentState.status === 'ready' && normalizeAiBriefText(currentState.text || '')) {
+          return;
+        }
+        if (pendingAiBriefPromises[key]) {
+          return;
+        }
+        pendingAiBriefByFileKey[key] = { status: 'loading', text: '', error: '' };
+        renderAttachmentsSummary(attachmentsStore);
+        var apiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+        pendingAiBriefPromises[key] = prepareAiBriefsForBatchFiles([file], apiUrl, null, function(_file, briefText) {
+          pendingAiBriefByFileKey[key] = {
+            status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
+            text: normalizeAiBriefText(briefText || ''),
+            error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
+          };
+          renderAttachmentsSummary(attachmentsStore);
+        }).catch(function(error) {
+          pendingAiBriefByFileKey[key] = {
+            status: 'error',
+            text: '',
+            error: error && error.message ? String(error.message) : 'Ошибка ИИ'
+          };
+          renderAttachmentsSummary(attachmentsStore);
+        }).finally(function() {
+          delete pendingAiBriefPromises[key];
+        });
+      }
 
       function logFilesDiagnostics(action, details) {
         if (typeof sendClientDiagnostics !== 'function') {
@@ -14382,6 +14544,7 @@
           newGroup.appendChild(newTitle);
           var newList = createElement('div', 'documents-file__group-list');
           files.forEach(function(file, index) {
+            var itemWrap = createElement('div', 'documents-file__item');
             var badge = buildAttachmentBadge(file.name, {
               variant: 'new',
               removable: true,
@@ -14391,6 +14554,10 @@
                 }
                 var beforeCount = attachmentsStore.length;
                 attachmentsStore.splice(index, 1);
+                var removedKey = buildLocalFileKey(file);
+                if (removedKey && pendingAiBriefByFileKey[removedKey]) {
+                  delete pendingAiBriefByFileKey[removedKey];
+                }
                 syncAttachmentsInput();
                 logFilesDiagnostics('remove-new', {
                   name: file.name,
@@ -14401,7 +14568,37 @@
                 renderAttachmentsSummary(attachmentsStore);
               }
             });
-            newList.appendChild(badge);
+            itemWrap.appendChild(badge);
+            var fileKey = buildLocalFileKey(file);
+            var briefState = fileKey ? pendingAiBriefByFileKey[fileKey] : null;
+            var briefText = normalizeAiBriefText(briefState && briefState.text ? briefState.text : '');
+            if (briefState && briefState.status === 'loading') {
+              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '⏳ Кратко ИИ: анализирую файл...'));
+            }
+            if (briefState && briefState.status === 'error' && !briefText) {
+              var errorLine = createElement('div', 'documents-file__brief-preview', '⚠️ Кратко ИИ: ' + (briefState.error || 'не удалось получить ответ'));
+              itemWrap.appendChild(errorLine);
+              var retryButton = createElement('button', 'documents-button documents-button--secondary', 'Повторить ИИ');
+              retryButton.type = 'button';
+              retryButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                scheduleAiBriefForFile(file, true);
+              });
+              itemWrap.appendChild(retryButton);
+            }
+            if (briefText) {
+              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '✅ Кратко ИИ готово'));
+              var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Показать результат');
+              viewButton.type = 'button';
+              viewButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                openAiBriefPreviewModal(file && file.name ? file.name : 'Файл', briefText);
+              });
+              itemWrap.appendChild(viewButton);
+            }
+            newList.appendChild(itemWrap);
           });
           newGroup.appendChild(newList);
           attachmentsSummary.appendChild(newGroup);
@@ -14419,11 +14616,14 @@
       function syncAttachments(files, append, source) {
         if (!append) {
           attachmentsStore = [];
+          pendingAiBriefByFileKey = Object.create(null);
+          pendingAiBriefPromises = Object.create(null);
         }
 
         var currentFiles = attachmentsStore.slice();
         var addedCount = 0;
         var duplicateCount = 0;
+        var addedFiles = [];
         var incomingNames = [];
         var duplicateNames = [];
 
@@ -14440,6 +14640,7 @@
           if (!isDuplicate) {
             currentFiles.push(file);
             addedCount += 1;
+            addedFiles.push(file);
           } else {
             duplicateCount += 1;
             duplicateNames.push(file.name);
@@ -14447,8 +14648,23 @@
         });
 
         attachmentsStore = currentFiles.slice();
+        var activeKeys = Object.create(null);
+        attachmentsStore.forEach(function(file) {
+          var key = buildLocalFileKey(file);
+          if (key) {
+            activeKeys[key] = true;
+          }
+        });
+        Object.keys(pendingAiBriefByFileKey).forEach(function(key) {
+          if (!activeKeys[key]) {
+            delete pendingAiBriefByFileKey[key];
+          }
+        });
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
+        addedFiles.forEach(function(file) {
+          scheduleAiBriefForFile(file, false);
+        });
 
         logFilesDiagnostics('sync', {
           source: source || 'unknown',
@@ -14827,26 +15043,48 @@
               var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
-                  var batchFormData = new FormData();
-                  batchFormData.append('action', 'update');
-                  batchFormData.append('organization', state.organization);
-                  batchFormData.append('documentId', createdOrUpdatedDocumentId);
-                  batch.forEach(function(file) {
-                    batchFormData.append('attachments[]', file);
-                  });
-                  appendTelegramUserIdToFormData(batchFormData);
-
-                  return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
-                    var progressInsideBatch = 0;
-                    if (progress && progress.lengthComputable && progress.total > 0) {
-                      progressInsideBatch = progress.loaded / progress.total;
+                  var aiApiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+                  return prepareAiBriefsForBatchFiles(batch, aiApiUrl, function(done, total) {
+                    if (!total) {
+                      return;
                     }
-                    var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
-                    var uploadPercent = 35 + Math.round(overallProgress * 60);
-                    uploadPercent = Math.max(35, Math.min(95, uploadPercent));
-                    updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
-                  }).then(function(batchData) {
-                    updateStateFromPayload(batchData);
+                    var batchAiProgress = (done / total) / Math.max(1, batches.length);
+                    var aiPercent = 35 + Math.round(((batchIndex / Math.max(1, batches.length)) + batchAiProgress) * 28);
+                    aiPercent = Math.max(35, Math.min(88, aiPercent));
+                    updateUploadProgress(aiPercent, 'Кратко ИИ: ' + done + '/' + total + ' (' + (batchIndex + 1) + '/' + batches.length + ')', 'is-stage-processing');
+                  }, function(file, briefText) {
+                    var fileKey = buildLocalFileKey(file);
+                    if (fileKey) {
+                      pendingAiBriefByFileKey[fileKey] = {
+                        status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
+                        text: normalizeAiBriefText(briefText || ''),
+                        error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
+                      };
+                    }
+                    renderAttachmentsSummary(attachmentsStore);
+                  }).then(function(aiBriefs) {
+                    var batchFormData = new FormData();
+                    batchFormData.append('action', 'update');
+                    batchFormData.append('organization', state.organization);
+                    batchFormData.append('documentId', createdOrUpdatedDocumentId);
+                    batch.forEach(function(file, fileIndex) {
+                      batchFormData.append('attachments[]', file);
+                      batchFormData.append('attachmentsAiBrief[]', aiBriefs && aiBriefs[fileIndex] ? String(aiBriefs[fileIndex]) : '');
+                    });
+                    appendTelegramUserIdToFormData(batchFormData);
+
+                    return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
+                      var progressInsideBatch = 0;
+                      if (progress && progress.lengthComputable && progress.total > 0) {
+                        progressInsideBatch = progress.loaded / progress.total;
+                      }
+                      var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
+                      var uploadPercent = 65 + Math.round(overallProgress * 30);
+                      uploadPercent = Math.max(65, Math.min(95, uploadPercent));
+                      updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
+                    }).then(function(batchData) {
+                      updateStateFromPayload(batchData);
+                    });
                   });
                 });
               }, Promise.resolve());

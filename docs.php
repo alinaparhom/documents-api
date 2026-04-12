@@ -13890,6 +13890,14 @@ switch ($action) {
         }
 
         $dir = ensure_organization_directory($folder);
+        $attachmentsAiBriefRaw = $_POST['attachmentsAiBrief'] ?? [];
+        if (!is_array($attachmentsAiBriefRaw)) {
+            $attachmentsAiBriefRaw = [$attachmentsAiBriefRaw];
+        }
+        $attachmentsAiBrief = array_map(
+            static fn($value): string => sanitize_text_field((string) $value, 2000),
+            $attachmentsAiBriefRaw
+        );
 
         if (!empty($_FILES['attachments']) && isset($_FILES['attachments']['name'])) {
             $names = $_FILES['attachments']['name'];
@@ -13936,12 +13944,14 @@ switch ($action) {
                     $target = $dir . '/' . $storedName;
 
                     if (move_uploaded_file($tmpPath, $target)) {
+                        $aiBrief = isset($attachmentsAiBrief[$i]) ? trim((string) $attachmentsAiBrief[$i]) : '';
                         $record['files'][] = [
                             'originalName' => $originalName,
                             'storedName' => $storedName,
                             'size' => (int) ($sizes[$i] ?? filesize($target) ?: 0),
                             'uploadedAt' => date('c'),
                             'url' => build_public_path($folder, $storedName),
+                            'aiBrief' => $aiBrief,
                         ];
                         docs_log_file_debug('files:create stored', [
                             'documentId' => $documentId,
@@ -13967,12 +13977,14 @@ switch ($action) {
                     $storedNameSingle = normalize_file_name($originalNameSingle, $record);
                     $targetSingle = $dir . '/' . $storedNameSingle;
                     if (move_uploaded_file($tmpPathSingle, $targetSingle)) {
+                        $aiBriefSingle = isset($attachmentsAiBrief[0]) ? trim((string) $attachmentsAiBrief[0]) : '';
                         $record['files'][] = [
                             'originalName' => $originalNameSingle,
                             'storedName' => $storedNameSingle,
                             'size' => (int) ($sizes ?? filesize($targetSingle) ?: 0),
                             'uploadedAt' => date('c'),
                             'url' => build_public_path($folder, $storedNameSingle),
+                            'aiBrief' => $aiBriefSingle,
                         ];
                         docs_log_file_debug('files:create stored single', [
                             'documentId' => $documentId,
@@ -15418,6 +15430,14 @@ switch ($action) {
 
                 if (!empty($_FILES['attachments']) && isset($_FILES['attachments']['name'])) {
                     $dir = ensure_organization_directory($folder);
+                    $attachmentsAiBriefRaw = $_POST['attachmentsAiBrief'] ?? [];
+                    if (!is_array($attachmentsAiBriefRaw)) {
+                        $attachmentsAiBriefRaw = [$attachmentsAiBriefRaw];
+                    }
+                    $attachmentsAiBrief = array_map(
+                        static fn($value): string => sanitize_text_field((string) $value, 2000),
+                        $attachmentsAiBriefRaw
+                    );
                     $names = $_FILES['attachments']['name'];
                     $tmpNames = $_FILES['attachments']['tmp_name'];
                     $errors = $_FILES['attachments']['error'];
@@ -15463,12 +15483,14 @@ switch ($action) {
                             $target = $dir . '/' . $storedName;
 
                             if (move_uploaded_file($tmpPath, $target)) {
+                                $aiBrief = isset($attachmentsAiBrief[$i]) ? trim((string) $attachmentsAiBrief[$i]) : '';
                                 $record['files'][] = [
                                     'originalName' => $originalName,
                                     'storedName' => $storedName,
                                     'size' => (int) ($sizes[$i] ?? filesize($target) ?: 0),
                                     'uploadedAt' => date('c'),
                                     'url' => build_public_path($folder, $storedName),
+                                    'aiBrief' => $aiBrief,
                                 ];
                                 $filesUpdated = true;
                                 docs_log_file_debug('files:update stored', [
@@ -15495,12 +15517,14 @@ switch ($action) {
                             $storedNameSingle = normalize_file_name($originalNameSingle, $record, $existingFileCount + 1);
                             $targetSingle = $dir . '/' . $storedNameSingle;
                             if (move_uploaded_file($tmpPathSingle, $targetSingle)) {
+                                $aiBriefSingle = isset($attachmentsAiBrief[0]) ? trim((string) $attachmentsAiBrief[0]) : '';
                                 $record['files'][] = [
                                     'originalName' => $originalNameSingle,
                                     'storedName' => $storedNameSingle,
                                     'size' => (int) ($sizes ?? filesize($targetSingle) ?: 0),
                                     'uploadedAt' => date('c'),
                                     'url' => build_public_path($folder, $storedNameSingle),
+                                    'aiBrief' => $aiBriefSingle,
                                 ];
                                 $filesUpdated = true;
                                 docs_log_file_debug('files:update stored single', [
