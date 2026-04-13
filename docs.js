@@ -7977,7 +7977,7 @@
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
         var aiBrief = getAttachmentAiBrief(file);
-        lines.push('   Кратко от ИИ: ' + (aiBrief || '—'));
+        lines.push('   Кратко ИИ: ' + (aiBrief ? 'есть' : '—'));
       }
       attachmentsText = lines.join('\n');
     }
@@ -12096,20 +12096,18 @@
         itemWrap.appendChild(link);
         var aiBrief = getAttachmentAiBrief(file);
         var briefWrap = createElement('div', 'documents-file-ai-brief');
-        if (aiBrief) {
-          var briefPreviewText = aiBrief.length > 180 ? (aiBrief.slice(0, 180) + '…') : aiBrief;
-          briefWrap.appendChild(createElement('div', '', 'Кратко от ИИ: ' + briefPreviewText));
-          var briefButton = createElement('button', 'documents-action documents-action--ai', 'Показать результат');
-          briefButton.type = 'button';
-          briefButton.addEventListener('click', function(event) {
-            event.preventDefault();
-            event.stopPropagation();
-            openAttachmentAiBriefModal(getAttachmentName(file), aiBrief);
-          });
-          briefWrap.appendChild(briefButton);
-        } else {
-          briefWrap.appendChild(createElement('div', '', 'Кратко от ИИ: —'));
+        var briefButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
+        briefButton.type = 'button';
+        briefButton.addEventListener('click', function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openAttachmentAiBriefModal(getAttachmentName(file), aiBrief || '—');
+        });
+        if (!aiBrief) {
+          briefButton.disabled = true;
+          briefButton.title = 'Кратко ИИ пока отсутствует';
         }
+        briefWrap.appendChild(briefButton);
         itemWrap.appendChild(briefWrap);
         filesList.appendChild(itemWrap);
       });
@@ -14622,7 +14620,7 @@
             }
             if (briefText) {
               itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '✅ Кратко ИИ готово'));
-              var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Показать результат');
+              var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Кратко ИИ');
               viewButton.type = 'button';
               viewButton.addEventListener('click', function(event) {
                 event.preventDefault();

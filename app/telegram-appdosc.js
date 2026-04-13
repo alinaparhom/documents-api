@@ -3898,8 +3898,8 @@ function createCard(task, index, anchorRegistry) {
   const aiBriefFiles = Array.isArray(task.files) ? task.files : [];
   const aiBriefLines = aiBriefFiles.map((file, index) => {
     const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
-    const text = normalizeValue(file && file.aiBrief) || '—';
-    return `• ${fileName}: ${text}`;
+    const hasText = Boolean(normalizeValue(file && file.aiBrief));
+    return `• ${fileName}: Кратко ИИ ${hasText ? 'есть' : '—'}`;
   });
   const hasAiBrief = setCardField(card, '[data-field="aiBriefText"]', aiBriefLines.length ? aiBriefLines.join('\n\n') : '—', {
     hideIfEmpty: true,
@@ -5183,7 +5183,7 @@ function buildTaskSummaryRows(task, attachments) {
       }
       lines.push(description);
       const aiBrief = normalizeValueString(file && file.aiBrief);
-      lines.push(`   Кратко от ИИ: ${aiBrief || '—'}`);
+      lines.push(`   Кратко ИИ: ${aiBrief ? 'есть' : '—'}`);
     });
     attachmentsText = lines.join('\n');
   }
