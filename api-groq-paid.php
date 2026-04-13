@@ -17,6 +17,7 @@ const MAX_TEXT_CHUNKS_TOTAL = 30;
 const MAX_TEXT_PAYLOAD_CHARS = 90000;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_API_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
 
 function respond(int $status, array $payload): void
@@ -546,6 +547,59 @@ function callGroqChat(array $requestPayload, string $apiKey): array
 
     if ($httpCode >= 400) {
         $msg = trim((string)($decoded['error']['message'] ?? 'Ошибка Groq API'));
+        return ['ok' => false, 'status' => $httpCode, 'error' => $msg, 'raw' => $decoded];
+    }
+
+    return ['ok' => true, 'status' => 200, 'raw' => $decoded];
+}
+
+function callGroqTranscription(string $tmpPath, string $fileName, string $mime, string $apiKey, string $model = 'whisper-large-v3-turbo'): array
+{
+    if (!is_file($tmpPath)) {
+        return ['ok' => false, 'status' => 422, 'error' => 'Аудиофайл не найден'];
+    }
+
+    $ch = curl_init(GROQ_API_TRANSCRIBE_URL);
+    if ($ch === false) {
+        return ['ok' => false, 'status' => 500, 'error' => 'Не удалось инициализировать cURL'];
+    }
+
+    $safeName = sanitizeFileName($fileName !== '' ? $fileName : 'voice-message.webm');
+    $curlFile = new CURLFile($tmpPath, $mime !== '' ? $mime : 'audio/webm', $safeName);
+    $postFields = [
+        'model' => $model !== '' ? $model : 'whisper-large-v3-turbo',
+        'temperature' => '0',
+        'response_format' => 'verbose_json',
+        'language' => 'ru',
+        'file' => $curlFile,
+    ];
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_TIMEOUT => 120,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+        ],
+        CURLOPT_POSTFIELDS => $postFields,
+    ]);
+
+    $rawResponse = curl_exec($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($rawResponse === false) {
+        return ['ok' => false, 'status' => 502, 'error' => 'Ошибка запроса к Groq Whisper: ' . $curlErr];
+    }
+
+    $decoded = json_decode((string)$rawResponse, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'status' => 502, 'error' => 'Groq Whisper вернул невалидный JSON'];
+    }
+
+    if ($httpCode >= 400) {
+        $msg = trim((string)($decoded['error']['message'] ?? 'Ошибка Groq Whisper API'));
         return ['ok' => false, 'status' => $httpCode, 'error' => $msg, 'raw' => $decoded];
     }
 
@@ -1173,6 +1227,53 @@ function handleGenerateResponseAction(array $env): void
     ]);
 }
 
+function handleTranscribeAudioAction(array $env): void
+{
+    $apiKey = getGroqKey($env);
+    if ($apiKey === '') {
+        respond(500, ['ok' => false, 'error' => 'GROQ_API_KEY не настроен']);
+    }
+
+    $files = normalizeUploadedFiles('audio');
+    if (!$files) {
+        $files = normalizeUploadedFiles('file');
+    }
+    if (!$files) {
+        $files = normalizeUploadedFiles('files');
+    }
+    if (!$files) {
+        respond(422, ['ok' => false, 'error' => 'Аудио не передано (поле audio/file/files).']);
+    }
+
+    $audio = $files[0];
+    $tmp = (string)($audio['tmp_name'] ?? '');
+    $name = (string)($audio['name'] ?? 'voice-message.webm');
+    $mime = detectMime($tmp, (string)($audio['client_type'] ?? ''));
+    if (!str_starts_with($mime, 'audio/') && !str_starts_with($mime, 'video/')) {
+        respond(422, ['ok' => false, 'error' => 'Неверный тип файла. Нужен audio/video контейнер.']);
+    }
+
+    $model = trim(requestStringField('transcribe_model', 'whisper-large-v3-turbo'));
+    $startedAt = microtime(true);
+    $result = callGroqTranscription($tmp, $name, $mime, $apiKey, $model);
+    if (($result['ok'] ?? false) !== true) {
+        respond((int)($result['status'] ?? 502), ['ok' => false, 'error' => (string)($result['error'] ?? 'Ошибка распознавания аудио')]);
+    }
+
+    $decoded = (array)($result['raw'] ?? []);
+    $text = trim((string)($decoded['text'] ?? ''));
+    if ($text === '') {
+        respond(502, ['ok' => false, 'error' => 'Whisper не вернул текст']);
+    }
+
+    respond(200, [
+        'ok' => true,
+        'text' => $text,
+        'model' => (string)($decoded['model'] ?? $model),
+        'durationMs' => max(1, (int)round((microtime(true) - $startedAt) * 1000)),
+    ]);
+}
+
 function handleGetRequest(array $env): void
 {
     $action = trim((string)($_GET['action'] ?? ''));
@@ -1182,7 +1283,7 @@ function handleGetRequest(array $env): void
             'message' => 'pong',
             'apiKeyConfigured' => getGroqKey($env) !== '',
             'model' => resolveModel($env),
-            'actions' => ['analyze_paid', 'generate_summary', 'generate_response'],
+            'actions' => ['analyze_paid', 'generate_summary', 'generate_response', 'transcribe_audio'],
         ]);
     }
 
@@ -1191,7 +1292,7 @@ function handleGetRequest(array $env): void
         'message' => 'API доступен. Для обработки документов используйте POST action=analyze_paid и files[].',
         'method' => 'POST',
         'defaultAction' => 'analyze_paid',
-        'availablePostActions' => ['analyze_paid', 'generate_summary', 'generate_response'],
+        'availablePostActions' => ['analyze_paid', 'generate_summary', 'generate_response', 'transcribe_audio'],
         'availableGetActions' => ['health', 'ping'],
     ]);
 }
@@ -1212,6 +1313,9 @@ function handlePostRequest(array $env): void
         },
         'generate_response' => static function (array $currentEnv): void {
             handleGenerateResponseAction($currentEnv);
+        },
+        'transcribe_audio' => static function (array $currentEnv): void {
+            handleTranscribeAudioAction($currentEnv);
         },
     ];
 
