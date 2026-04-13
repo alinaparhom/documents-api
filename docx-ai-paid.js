@@ -995,6 +995,17 @@
       mediaStream = null;
     }
 
+    function refreshSendButtonState() {
+      if (!sendButton) return;
+      if (isSending || isTranscribingVoice) {
+        sendButton.disabled = true;
+        return;
+      }
+      var hasStyle = styleNode && String(styleNode.value || '').trim();
+      var hasText = chatInput && String(chatInput.value || '').trim();
+      sendButton.disabled = !(hasStyle && hasText);
+    }
+
     function postVoiceTranscription(audioBlob, fileName) {
       function postWithFallback(endpointIndex) {
         if (endpointIndex >= paidEndpoints.length) {
@@ -1078,7 +1089,7 @@
         })
         .finally(function() {
           isSending = false;
-          if (sendButton) sendButton.disabled = false;
+          refreshSendButtonState();
           if (voiceButton) voiceButton.disabled = false;
           setVipLoading(false);
         });
@@ -1091,9 +1102,11 @@
           chatInput.value = '';
           chatInput.focus();
         }
+        refreshSendButtonState();
       });
     }
     if (chatInput) {
+      chatInput.addEventListener('input', refreshSendButtonState);
       chatInput.addEventListener('keydown', function(event) {
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
@@ -1164,6 +1177,7 @@
               }
               isTranscribingVoice = true;
               if (voiceButton) voiceButton.disabled = true;
+              refreshSendButtonState();
               postVoiceTranscription(recordedBlob, 'voice-message.webm')
                 .then(function(result) {
                   if (chatInput) chatInput.value = result.text;
@@ -1177,6 +1191,7 @@
                 .finally(function() {
                   isTranscribingVoice = false;
                   if (voiceButton) voiceButton.disabled = false;
+                  refreshSendButtonState();
                 });
             };
             mediaRecorder.start();
@@ -1188,6 +1203,7 @@
     }
 
     if (styleNode) {
+      styleNode.addEventListener('change', refreshSendButtonState);
       styleNode.addEventListener('change', function() {
         if (!String(styleNode.value || '').trim()) {
           pushChat('assistant', 'Выберите режим.');
@@ -1196,6 +1212,7 @@
         pushChat('assistant', 'Стиль: ' + (resolveVipStyle(styleNode.value).label || 'Нейтральный') + ' ✅ Теперь задайте вопрос.');
       });
     }
+    refreshSendButtonState();
   }
 
   function collectTargetContainers() {
