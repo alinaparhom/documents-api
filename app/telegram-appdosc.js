@@ -4519,6 +4519,34 @@ function applyRegistrationDateHeader(card, registrationDate) {
   }
 }
 
+function openCardFileBriefModal(fileName, briefText) {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;z-index:2500;background:rgba(15,23,42,.38);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'width:min(640px,100%);max-height:85vh;overflow:auto;background:rgba(255,255,255,.94);border:1px solid rgba(255,255,255,.85);border-radius:18px;box-shadow:0 20px 40px rgba(15,23,42,.28);padding:14px;';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:15px;font-weight:700;color:#0f172a;margin-bottom:6px;';
+  title.textContent = fileName || 'Файл';
+  const text = document.createElement('pre');
+  text.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;font:500 13px/1.45 Inter,system-ui,sans-serif;color:#1e293b;';
+  text.textContent = briefText || 'Кратко от ИИ отсутствует.';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = 'Закрыть';
+  closeButton.style.cssText = 'margin-top:12px;padding:8px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.5);background:#fff;color:#0f172a;font-weight:600;';
+  closeButton.addEventListener('click', () => modal.remove());
+  panel.appendChild(title);
+  panel.appendChild(text);
+  panel.appendChild(closeButton);
+  modal.appendChild(panel);
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) {
+      modal.remove();
+    }
+  });
+  document.body.appendChild(modal);
+}
+
 function populateCardFiles(card, files) {
   const container = card.querySelector('[data-files]');
   if (!container) {
@@ -4544,17 +4572,48 @@ function populateCardFiles(card, files) {
 
   const maxToShow = 3;
   safeFiles.slice(0, maxToShow).forEach((file) => {
-    const element = document.createElement('span');
+    const element = document.createElement('div');
     element.className = 'appdosc-card__file';
     const displayName = normalizeValue(file.originalName)
       || normalizeValue(file.storedName)
       || 'Файл';
-    element.textContent = displayName;
+    const title = document.createElement('span');
+    title.textContent = displayName;
+    element.appendChild(title);
     if (displayName) {
       element.title = displayName;
     } else {
       element.removeAttribute('title');
     }
+    const actions = document.createElement('span');
+    actions.className = 'appdosc-card__file-actions';
+    const previewButton = document.createElement('button');
+    previewButton.type = 'button';
+    previewButton.className = 'appdosc-card__file-action';
+    previewButton.textContent = 'Просмотр';
+    previewButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const resolvedUrl = resolveDocumentUrl(normalizeValue(file.url) || normalizeValue(file.storedName));
+      if (resolvedUrl) {
+        openExternalDocument(resolvedUrl);
+      }
+    });
+    actions.appendChild(previewButton);
+    const fileBrief = normalizeValue(file.aiBrief);
+    if (fileBrief) {
+      const briefButton = document.createElement('button');
+      briefButton.type = 'button';
+      briefButton.className = 'appdosc-card__file-action appdosc-card__file-action--brief';
+      briefButton.textContent = 'Кратко ИИ';
+      briefButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openCardFileBriefModal(displayName, fileBrief);
+      });
+      actions.appendChild(briefButton);
+    }
+    element.appendChild(actions);
     container.appendChild(element);
   });
 

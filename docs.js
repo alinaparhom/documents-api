@@ -2263,6 +2263,13 @@
       .trim();
   }
 
+  function getAttachmentAiBrief(file) {
+    if (!file || typeof file !== 'object') {
+      return '';
+    }
+    return normalizeAiBriefText(file.aiBrief || '');
+  }
+
   function extractAiBriefFromPayload(payload) {
     if (!payload || typeof payload !== 'object') {
       return '';
@@ -7969,7 +7976,7 @@
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
-        var aiBrief = normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : '');
+        var aiBrief = getAttachmentAiBrief(file);
         if (aiBrief) {
           lines.push('   Кратко от ИИ: ' + aiBrief);
         }
@@ -12089,9 +12096,19 @@
           handleAttachmentPreview(doc, file, link);
         });
         itemWrap.appendChild(link);
-        var aiBrief = normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : '');
+        var aiBrief = getAttachmentAiBrief(file);
         if (aiBrief) {
-          itemWrap.appendChild(createElement('div', 'documents-file-ai-brief', 'Кратко от ИИ: ' + aiBrief));
+          var briefWrap = createElement('div', 'documents-file-ai-brief');
+          briefWrap.appendChild(createElement('span', '', 'Кратко от ИИ готово'));
+          var briefButton = createElement('button', 'documents-action documents-action--ai', 'Просмотр');
+          briefButton.type = 'button';
+          briefButton.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            openAttachmentAiBriefModal(getAttachmentName(file), aiBrief);
+          });
+          briefWrap.appendChild(briefButton);
+          itemWrap.appendChild(briefWrap);
         }
         filesList.appendChild(itemWrap);
       });
@@ -14080,6 +14097,34 @@
       var modal = document.querySelector('.documents-modal');
       closeModal(modal);
     }
+  }
+
+  function openAttachmentAiBriefModal(fileName, briefText) {
+    var overlay = createElement('div', 'documents-modal');
+    var shell = createElement('div', 'documents-modal__shell documents-modal__shell--narrow');
+    var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
+    var title = createElement('h3', 'documents-modal__title', 'Кратко от ИИ');
+    var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', function() {
+      closeModal(overlay);
+    });
+    var actions = createElement('div', 'documents-modal__actions');
+    actions.appendChild(closeButton);
+    header.appendChild(title);
+    header.appendChild(actions);
+    var body = createElement('div', 'documents-form');
+    body.appendChild(createElement('div', 'documents-form__hint', fileName || 'Файл'));
+    body.appendChild(createElement('pre', 'documents-conclusion-preview', briefText || 'Пустой ответ от ИИ.'));
+    shell.appendChild(header);
+    shell.appendChild(body);
+    overlay.appendChild(shell);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) {
+        closeModal(overlay);
+      }
+    });
+    document.body.appendChild(overlay);
   }
 
   function openDocumentForm(doc) {
