@@ -190,7 +190,7 @@
     style.textContent += '.documents-vip-ai__loading{display:none;align-items:center;gap:8px;padding:10px 12px;border:1px solid rgba(191,219,254,.95);background:rgba(239,246,255,.75);color:#1e3a8a;border-radius:12px;font-size:12px;font-weight:600}.documents-vip-ai__loading.is-active{display:flex}.documents-vip-ai__loading-spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,.25);border-top-color:#2563eb;animation:documents-vip-spin .8s linear infinite;flex:none}@keyframes documents-vip-spin{to{transform:rotate(360deg)}}';
     style.textContent += '.documents-vip-ai__panel{position:relative}.documents-vip-ai__head::after{content:\"\";position:absolute;left:14px;right:14px;bottom:0;height:1px;background:linear-gradient(90deg,transparent,rgba(148,163,184,.45),transparent)}.documents-vip-ai__files label{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid rgba(226,232,240,.95);border-radius:12px;background:rgba(255,255,255,.8);transition:all .18s ease}.documents-vip-ai__files label:active{transform:scale(.995)}.documents-vip-ai__files input[type=\"checkbox\"]{width:18px;height:18px;accent-color:#2563eb;flex:none}.documents-vip-ai__files span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.documents-vip-ai__block{box-shadow:0 8px 24px rgba(15,23,42,.06)}.documents-vip-ai__msg--assistant{box-shadow:0 6px 18px rgba(15,23,42,.06)}.documents-vip-ai__msg--user{box-shadow:0 6px 16px rgba(37,99,235,.2)}.documents-vip-ai__meta{padding:2px 0}.documents-vip-ai__chip{background:linear-gradient(135deg,rgba(255,255,255,.95),rgba(241,245,249,.9));box-shadow:0 4px 12px rgba(15,23,42,.05)}.documents-vip-ai__template-btn{transition:transform .16s ease,box-shadow .16s ease}.documents-vip-ai__template-btn:hover{transform:translateY(-1px);box-shadow:0 10px 20px rgba(15,23,42,.14)}.documents-vip-ai__select:focus,.documents-vip-ai__template-btn:focus,.documents-vip-ai__close:focus{outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.2)}.documents-vip-ai__startup{position:absolute;inset:0;display:none;place-items:center;padding:18px;background:linear-gradient(180deg,rgba(248,250,252,.92),rgba(241,245,249,.9));backdrop-filter:blur(4px);z-index:4}.documents-vip-ai__startup.is-active{display:grid}.documents-vip-ai__startup-card{width:min(420px,94%);border:1px solid rgba(191,219,254,.95);background:rgba(255,255,255,.9);border-radius:16px;padding:14px;display:grid;gap:8px;box-shadow:0 14px 30px rgba(15,23,42,.14)}.documents-vip-ai__startup-title{font-size:14px;font-weight:800;color:#0f172a}.documents-vip-ai__startup-sub{font-size:12px;color:#475569}.documents-vip-ai__startup-progress{height:7px;border-radius:999px;background:rgba(191,219,254,.45);overflow:hidden}.documents-vip-ai__startup-progress::after{content:\"\";display:block;height:100%;width:36%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#38bdf8);animation:documents-vip-progress 1.3s ease-in-out infinite}.documents-vip-ai__startup-spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(37,99,235,.25);border-top-color:#2563eb;animation:documents-vip-spin .8s linear infinite}@keyframes documents-vip-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}@media (max-width:768px){.documents-vip-ai__files label{padding:9px 10px}.documents-vip-ai__chip{font-size:11px}.documents-vip-ai__startup-card{padding:13px}}';
     style.textContent += '.documents-vip-ai__body{gap:8px;padding:12px}.documents-vip-ai__block{padding:10px;border-radius:12px}.documents-vip-ai__label{margin-bottom:6px}.documents-vip-ai__chat{height:min(46dvh,480px)}.documents-vip-ai__msg{padding:8px 10px;font-size:13px;line-height:1.52}.documents-vip-ai__composer{padding:8px;border-radius:12px}.documents-vip-ai__select,.documents-vip-ai__template-btn{min-height:42px;font-size:13px}.documents-vip-ai__head{padding:12px 14px}.documents-vip-ai__title{font-size:17px}@media (max-width:768px){.documents-vip-ai__body{padding:10px;gap:7px}.documents-vip-ai__chat{height:48dvh}.documents-vip-ai__msg{font-size:13px;line-height:1.56}.documents-vip-ai__head{padding:10px 12px}.documents-vip-ai__title{font-size:16px}.documents-vip-ai__template-btn,.documents-vip-ai__select{min-height:44px}}';
-    style.textContent += '.documents-vip-ai__composer{display:grid;gap:8px}.documents-vip-ai__composer-main{display:grid;gap:8px}.documents-vip-ai__input{width:100%;min-height:84px;resize:vertical;border:1px solid rgba(203,213,225,.95);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,.92);font-size:14px;line-height:1.45;color:#0f172a}.documents-vip-ai__input::placeholder{color:#94a3b8}.documents-vip-ai__input:focus{outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.2)}.documents-vip-ai__composer-actions{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.documents-vip-ai__composer-tools{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}.documents-vip-ai__voice-status{font-size:12px;color:#475569}.documents-vip-ai__action-btn{border:1px solid rgba(148,163,184,.45);background:rgba(255,255,255,.95);color:#0f172a;border-radius:12px;min-height:42px;padding:0 12px;font-size:13px;font-weight:700}.documents-vip-ai__action-btn--send{background:linear-gradient(135deg,#2563eb,#38bdf8);color:#fff;border-color:rgba(37,99,235,.4)}.documents-vip-ai__action-btn--voice.is-active{background:linear-gradient(135deg,rgba(16,185,129,.22),rgba(45,212,191,.2));border-color:rgba(16,185,129,.55);color:#065f46}.documents-vip-ai__action-btn[disabled]{opacity:.55;cursor:not-allowed}.documents-vip-ai__composer-actions-right{display:flex;gap:8px;align-items:center}@media (max-width:768px){.documents-vip-ai__composer-tools{grid-template-columns:1fr}.documents-vip-ai__action-btn,.documents-vip-ai__template-btn{min-height:44px;font-size:14px}.documents-vip-ai__input{min-height:96px}.documents-vip-ai__composer-actions{align-items:stretch}.documents-vip-ai__composer-actions-right{width:100%}.documents-vip-ai__composer-actions-right .documents-vip-ai__action-btn{flex:1}}';
+    style.textContent += '.documents-vip-ai__composer{display:grid;gap:10px;padding:10px;background:linear-gradient(145deg,rgba(255,255,255,.88),rgba(248,250,252,.84));border:1px solid rgba(191,219,254,.55)}.documents-vip-ai__composer-main{display:grid;gap:8px}.documents-vip-ai__input{width:100%;min-height:90px;resize:vertical;border:1px solid rgba(191,219,254,.8);border-radius:14px;padding:12px 13px;background:rgba(255,255,255,.96);font-size:14px;line-height:1.48;color:#0f172a;box-shadow:inset 0 1px 2px rgba(15,23,42,.05)}.documents-vip-ai__input::placeholder{color:#94a3b8}.documents-vip-ai__input:focus{outline:none;box-shadow:0 0 0 3px rgba(56,189,248,.25),inset 0 1px 2px rgba(15,23,42,.04);border-color:rgba(56,189,248,.7)}.documents-vip-ai__composer-actions{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.documents-vip-ai__composer-tools{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}.documents-vip-ai__voice-status{font-size:12px;color:#475569;padding:6px 10px;border-radius:999px;background:rgba(239,246,255,.85);border:1px solid rgba(191,219,254,.95)}.documents-vip-ai__action-btn{border:1px solid rgba(148,163,184,.35);background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(248,250,252,.92));color:#0f172a;border-radius:12px;min-height:44px;padding:0 14px;font-size:13px;font-weight:700;box-shadow:0 8px 18px rgba(15,23,42,.08);transition:transform .16s ease,box-shadow .16s ease}.documents-vip-ai__action-btn:hover{transform:translateY(-1px);box-shadow:0 10px 22px rgba(15,23,42,.12)}.documents-vip-ai__action-btn--send{background:linear-gradient(135deg,#2563eb,#0ea5e9);color:#fff;border-color:rgba(37,99,235,.4)}.documents-vip-ai__action-btn--voice.is-active{background:linear-gradient(135deg,rgba(16,185,129,.22),rgba(45,212,191,.2));border-color:rgba(16,185,129,.55);color:#065f46}.documents-vip-ai__action-btn[disabled]{opacity:.55;cursor:not-allowed;box-shadow:none;transform:none}.documents-vip-ai__composer-actions-right{display:flex;gap:8px;align-items:center}@media (max-width:768px){.documents-vip-ai__composer{gap:8px;padding:8px}.documents-vip-ai__composer-tools{grid-template-columns:1fr}.documents-vip-ai__action-btn,.documents-vip-ai__template-btn{min-height:46px;font-size:14px}.documents-vip-ai__input{min-height:104px;font-size:15px}.documents-vip-ai__composer-actions{align-items:stretch;gap:7px}.documents-vip-ai__voice-status{width:100%;text-align:center}.documents-vip-ai__composer-actions-right{width:100%}.documents-vip-ai__composer-actions-right .documents-vip-ai__action-btn{flex:1}}';
     document.head.appendChild(style);
   }
 
@@ -794,7 +794,7 @@
       : '';
     var overlay = createElement('div', 'documents-vip-ai');
     var panel = createElement('div', 'documents-vip-ai__panel');
-    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__loading" data-vip-loading><span class="documents-vip-ai__loading-spinner" aria-hidden="true"></span><span data-vip-loading-text>Готовим ответ с помощью ИИ…</span></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><div class="documents-vip-ai__composer-main"><textarea class="documents-vip-ai__input" data-chat-input placeholder="Напишите вопрос по файлам…"></textarea><div class="documents-vip-ai__composer-actions"><span class="documents-vip-ai__voice-status" data-voice-status>Голосовой ввод: выключен</span><div class="documents-vip-ai__composer-actions-right"><button class="documents-vip-ai__action-btn documents-vip-ai__action-btn--voice" data-voice-toggle type="button">🎤 Голос</button><button class="documents-vip-ai__action-btn documents-vip-ai__action-btn--send" data-send type="button">Отправить</button></div></div></div><div class="documents-vip-ai__composer-tools"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div></div><div class="documents-vip-ai__startup is-active" data-vip-startup><div class="documents-vip-ai__startup-card"><div style="display:flex;align-items:center;gap:8px"><span class="documents-vip-ai__startup-spinner" aria-hidden="true"></span><div class="documents-vip-ai__startup-title">Открываем AI-модуль</div></div><div class="documents-vip-ai__startup-sub">Подготавливаем интерфейс и список файлов…</div><div class="documents-vip-ai__startup-progress" aria-hidden="true"></div></div></div>';
+    panel.innerHTML = '<div class="documents-vip-ai__head"><div><div class="documents-vip-ai__title">VIP AI Ассистент</div><div class="documents-vip-ai__sub">Отдельный чат по приложенным файлам</div>' + organizationCaption + '<div class="documents-vip-ai__sub">⚠️ Важно: ИИ анализирует только первые 5 страниц каждого PDF-документа.</div></div><button class="documents-vip-ai__close" aria-label="Закрыть">×</button></div><div class="documents-vip-ai__body"><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Файлы для анализа</div><div class="documents-vip-ai__files"></div></div><div class="documents-vip-ai__block"><div class="documents-vip-ai__label">Чат с VIP ИИ</div><div class="documents-vip-ai__chat"></div></div><div class="documents-vip-ai__loading" data-vip-loading><span class="documents-vip-ai__loading-spinner" aria-hidden="true"></span><span data-vip-loading-text>Готовим ответ с помощью ИИ…</span></div><div class="documents-vip-ai__meta"></div><div class="documents-vip-ai__composer"><div class="documents-vip-ai__composer-main"><textarea class="documents-vip-ai__input" data-chat-input placeholder="Напишите вопрос по документам или нажмите «🎤 Запись»…"></textarea><div class="documents-vip-ai__composer-actions"><span class="documents-vip-ai__voice-status" data-voice-status>🎙️ Голосовой ввод: выключен</span><div class="documents-vip-ai__composer-actions-right"><button class="documents-vip-ai__action-btn documents-vip-ai__action-btn--voice" data-voice-toggle type="button">🎤 Запись</button><button class="documents-vip-ai__action-btn documents-vip-ai__action-btn--send" data-send type="button">✈️ Отправить</button></div></div></div><div class="documents-vip-ai__composer-tools"><select class="documents-vip-ai__select" data-style aria-label="Стиль ответа"></select><button class="documents-vip-ai__template-btn" data-template-open type="button">Шаблон</button></div></div></div><div class="documents-vip-ai__startup is-active" data-vip-startup><div class="documents-vip-ai__startup-card"><div style="display:flex;align-items:center;gap:8px"><span class="documents-vip-ai__startup-spinner" aria-hidden="true"></span><div class="documents-vip-ai__startup-title">Открываем AI-модуль</div></div><div class="documents-vip-ai__startup-sub">Подготавливаем интерфейс и список файлов…</div><div class="documents-vip-ai__startup-progress" aria-hidden="true"></div></div></div>';
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
@@ -964,7 +964,7 @@
       chatNode.scrollTop = chatNode.scrollHeight;
     }
 
-    pushChat('assistant', 'Готов к диалогу. Выберите стиль, напишите вопрос и нажмите «Отправить». Можно надиктовать вопрос кнопкой 🎤.');
+    pushChat('assistant', 'Готово 👌 Выберите стиль ответа, напишите вопрос и нажмите «✈️ Отправить». Для диктовки используйте «🎤 Запись».');
 
     var isSending = false;
     var isVoiceRecording = false;
@@ -981,6 +981,7 @@
       }
       if (voiceButton) {
         voiceButton.classList.toggle('is-active', Boolean(isActive));
+        voiceButton.textContent = isActive ? '⏹️ Стоп' : '🎤 Запись';
       }
       isVoiceRecording = Boolean(isActive);
     }
@@ -997,7 +998,7 @@
     function postVoiceTranscription(audioBlob, fileName) {
       function postWithFallback(endpointIndex) {
         if (endpointIndex >= paidEndpoints.length) {
-          return Promise.reject(new Error('Не удалось подключиться к API распознавания голоса.'));
+          return Promise.reject(new Error('Сервис распознавания временно недоступен. Попробуйте ещё раз.'));
         }
         var formData = new FormData();
         formData.append('action', 'transcribe_audio');
@@ -1015,11 +1016,11 @@
       }
       return postWithFallback(0).then(function(result) {
         if (!result.response || !result.response.ok || !result.payload || result.payload.ok !== true) {
-          throw new Error((result.payload && result.payload.error) || 'Ошибка распознавания аудио.');
+          throw new Error((result.payload && result.payload.error) || 'Не удалось распознать аудио.');
         }
         var text = String(result.payload.text || '').trim();
         if (!text) {
-          throw new Error('Whisper не вернул текст.');
+          throw new Error('Не удалось получить текст из записи.');
         }
         return {
           text: text,
@@ -1038,7 +1039,7 @@
       }
       var normalizedPrompt = String(promptText || '').trim();
       if (!normalizedPrompt) {
-        pushChat('assistant', 'Введите вопрос или используйте голосовой ввод.');
+        pushChat('assistant', 'Введите текст вопроса или надиктуйте его кнопкой «🎤 Запись».');
         return;
       }
       var selectedStyle = styleNode && styleNode.value ? String(styleNode.value) : 'neutral';
@@ -1112,7 +1113,7 @@
         && typeof navigator.mediaDevices.getUserMedia === 'function';
       if (!mediaSupport) {
         voiceButton.disabled = true;
-        updateVoiceStatus('Голосовой ввод не поддерживается в этом браузере.', false);
+        updateVoiceStatus('🎙️ Голосовой ввод недоступен в этом браузере.', false);
       } else {
         voiceButton.addEventListener('click', function() {
           if (isTranscribingVoice) {
@@ -1141,7 +1142,7 @@
             }
             mediaRecorder = selectedMime ? new MediaRecorder(stream, { mimeType: selectedMime }) : new MediaRecorder(stream);
             mediaRecorder.onstart = function() {
-              updateVoiceStatus('Идёт запись… Нажмите 🎤 ещё раз, чтобы остановить.', true);
+              updateVoiceStatus('🔴 Идёт запись. Нажмите «🎤 Запись» ещё раз для остановки.', true);
             };
             mediaRecorder.ondataavailable = function(event) {
               if (event && event.data && event.data.size > 0) {
@@ -1149,16 +1150,16 @@
               }
             };
             mediaRecorder.onerror = function() {
-              updateVoiceStatus('Ошибка записи аудио. Повторите попытку.', false);
+              updateVoiceStatus('⚠️ Ошибка записи. Проверьте микрофон и попробуйте снова.', false);
               stopVoiceStream();
             };
             mediaRecorder.onstop = function() {
-              updateVoiceStatus('Распознаём речь через Whisper…', false);
+              updateVoiceStatus('⏳ Распознаём речь через Whisper…', false);
               var recordedBlob = new Blob(voiceChunks, { type: (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm' });
               stopVoiceStream();
               voiceChunks = [];
               if (!recordedBlob || !recordedBlob.size) {
-                updateVoiceStatus('Запись пустая. Попробуйте ещё раз.', false);
+                updateVoiceStatus('⚠️ Запись пустая. Скажите фразу и попробуйте ещё раз.', false);
                 return;
               }
               isTranscribingVoice = true;
@@ -1166,12 +1167,12 @@
               postVoiceTranscription(recordedBlob, 'voice-message.webm')
                 .then(function(result) {
                   if (chatInput) chatInput.value = result.text;
-                  pushChat('assistant', '🎙️ Распознано (' + result.model + '): ' + result.text);
-                  updateVoiceStatus('Готово. Отправляем в ИИ…', false);
+                  pushChat('assistant', '🎙️ Текст из голоса: ' + result.text);
+                  updateVoiceStatus('✅ Текст распознан. Отправляем запрос в ИИ…', false);
                   sendByCurrentStyle(result.text);
                 })
                 .catch(function(error) {
-                  updateVoiceStatus('Не удалось распознать голос: ' + (error && error.message ? error.message : 'ошибка'), false);
+                  updateVoiceStatus('⚠️ Не удалось распознать голос: ' + (error && error.message ? error.message : 'неизвестная ошибка'), false);
                 })
                 .finally(function() {
                   isTranscribingVoice = false;
@@ -1180,7 +1181,7 @@
             };
             mediaRecorder.start();
           }).catch(function() {
-            updateVoiceStatus('Нет доступа к микрофону. Разрешите доступ и повторите.', false);
+            updateVoiceStatus('🚫 Нет доступа к микрофону. Разрешите доступ и повторите.', false);
           });
         });
       }
@@ -1192,7 +1193,7 @@
           pushChat('assistant', 'Выберите режим.');
           return;
         }
-        pushChat('assistant', 'Стиль обновлён: ' + (resolveVipStyle(styleNode.value).label || 'Нейтральный') + '. Теперь введите вопрос.');
+        pushChat('assistant', 'Стиль: ' + (resolveVipStyle(styleNode.value).label || 'Нейтральный') + ' ✅ Теперь задайте вопрос.');
       });
     }
   }
