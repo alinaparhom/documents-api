@@ -2686,6 +2686,7 @@ function initElements() {
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
+  elements.viewerBrief = document.querySelector('[data-viewer-brief]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
 
   logIosStage('elements_initialized', {
@@ -2694,6 +2695,7 @@ function initElements() {
     placeholderFound: Boolean(elements.placeholder),
   });
   updateViewerDownloadState(null);
+  updateViewerBriefState(null);
   updateViewerDeleteState(null);
   updateViewerFileOwnerState(null);
 }
@@ -7913,6 +7915,24 @@ function updateViewerDownloadState(file) {
   const hasFile = Boolean(file && (file.isSummary || file.resolvedUrl || file.url || file.previewUrl));
   elements.viewerDownload.disabled = !hasFile;
   elements.viewerDownload.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  updateViewerBriefState(file);
+}
+
+function updateViewerBriefState(file) {
+  if (!elements.viewerBrief) {
+    return;
+  }
+  const hasFile = Boolean(file && !file.isSummary);
+  const hasBrief = Boolean(normalizeValue(file && file.aiBrief));
+  const enabled = hasFile && hasBrief;
+  elements.viewerBrief.disabled = !enabled;
+  elements.viewerBrief.hidden = !hasFile;
+  elements.viewerBrief.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+  if (hasFile && !hasBrief) {
+    elements.viewerBrief.title = 'Кратко ИИ пока отсутствует';
+  } else {
+    elements.viewerBrief.removeAttribute('title');
+  }
 }
 
 function canDeleteResponseFromViewer(file) {
@@ -8141,6 +8161,16 @@ async function handleViewerDeleteResponseClick() {
     updateViewerFileOwnerState(getViewerFileToDownload());
     updateViewerDeleteState(getViewerFileToDownload());
   }
+}
+
+function handleViewerBriefClick() {
+  const file = getViewerFileToDownload();
+  if (!file || file.isSummary) {
+    return;
+  }
+  const fileName = getAttachmentName(file) || 'Файл';
+  const briefText = normalizeValue(file.aiBrief) || '—';
+  openTelegramFileAiBriefModal(fileName, briefText);
 }
 
 async function handleViewerDownloadClick() {
@@ -15017,6 +15047,9 @@ function attachEvents() {
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
+  }
+  if (elements.viewerBrief) {
+    elements.viewerBrief.addEventListener('click', handleViewerBriefClick);
   }
   if (elements.viewerDeleteResponse) {
     elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
