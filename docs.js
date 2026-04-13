@@ -7977,9 +7977,7 @@
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
         var aiBrief = getAttachmentAiBrief(file);
-        if (aiBrief) {
-          lines.push('   Кратко от ИИ: ' + aiBrief);
-        }
+        lines.push('   Кратко от ИИ: ' + (aiBrief || '—'));
       }
       attachmentsText = lines.join('\n');
     }
@@ -12097,8 +12095,8 @@
         });
         itemWrap.appendChild(link);
         var aiBrief = getAttachmentAiBrief(file);
+        var briefWrap = createElement('div', 'documents-file-ai-brief');
         if (aiBrief) {
-          var briefWrap = createElement('div', 'documents-file-ai-brief');
           var briefPreviewText = aiBrief.length > 180 ? (aiBrief.slice(0, 180) + '…') : aiBrief;
           briefWrap.appendChild(createElement('div', '', 'Кратко от ИИ: ' + briefPreviewText));
           var briefButton = createElement('button', 'documents-action documents-action--ai', 'Показать результат');
@@ -12109,8 +12107,10 @@
             openAttachmentAiBriefModal(getAttachmentName(file), aiBrief);
           });
           briefWrap.appendChild(briefButton);
-          itemWrap.appendChild(briefWrap);
+        } else {
+          briefWrap.appendChild(createElement('div', '', 'Кратко от ИИ: —'));
         }
+        itemWrap.appendChild(briefWrap);
         filesList.appendChild(itemWrap);
       });
     } else {

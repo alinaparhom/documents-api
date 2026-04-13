@@ -3895,17 +3895,13 @@ function createCard(task, index, anchorRegistry) {
   });
   toggleSection(card, '[data-field="resolution"]', hasResolution);
 
-  const aiBriefLines = (Array.isArray(task.files) ? task.files : [])
-    .map((file, index) => {
-      const text = normalizeValue(file && file.aiBrief);
-      if (!text) {
-        return '';
-      }
-      const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
-      return `• ${fileName}: ${text}`;
-    })
-    .filter(Boolean);
-  const hasAiBrief = setCardField(card, '[data-field="aiBriefText"]', aiBriefLines.join('\n\n'), {
+  const aiBriefFiles = Array.isArray(task.files) ? task.files : [];
+  const aiBriefLines = aiBriefFiles.map((file, index) => {
+    const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
+    const text = normalizeValue(file && file.aiBrief) || '—';
+    return `• ${fileName}: ${text}`;
+  });
+  const hasAiBrief = setCardField(card, '[data-field="aiBriefText"]', aiBriefLines.length ? aiBriefLines.join('\n\n') : '—', {
     hideIfEmpty: true,
     setTitle: false,
   });
@@ -5187,9 +5183,7 @@ function buildTaskSummaryRows(task, attachments) {
       }
       lines.push(description);
       const aiBrief = normalizeValueString(file && file.aiBrief);
-      if (aiBrief) {
-        lines.push(`   Кратко от ИИ: ${aiBrief}`);
-      }
+      lines.push(`   Кратко от ИИ: ${aiBrief || '—'}`);
     });
     attachmentsText = lines.join('\n');
   }
