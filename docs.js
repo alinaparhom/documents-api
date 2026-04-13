@@ -7970,10 +7970,8 @@
     }
 
     var attachmentsText = 'Нет вложений';
-    var aiBriefText = '—';
     if (attachmentsList.length) {
       var lines = [];
-      var aiBriefLines = [];
       for (var i = 0; i < attachmentsList.length; i += 1) {
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
@@ -7981,13 +7979,9 @@
         var aiBrief = getAttachmentAiBrief(file);
         if (aiBrief) {
           lines.push('   Кратко от ИИ: ' + aiBrief);
-          aiBriefLines.push((i + 1) + '. ' + fileName + ': ' + aiBrief);
         }
       }
       attachmentsText = lines.join('\n');
-      if (aiBriefLines.length) {
-        aiBriefText = aiBriefLines.join('\n\n');
-      }
     }
 
     return [
@@ -8007,8 +8001,7 @@
       { label: 'Срок исполнения', value: resolveDueDateSummary() },
       { label: 'Поручения', value: resolveInstructionSummary() },
       { label: 'Статус', value: resolveStatusValue() },
-      { label: 'Файлы', value: attachmentsText },
-      { label: 'Кратко от ИИ', value: aiBriefText }
+      { label: 'Файлы', value: attachmentsText }
     ];
   }
 
@@ -12106,8 +12099,9 @@
         var aiBrief = getAttachmentAiBrief(file);
         if (aiBrief) {
           var briefWrap = createElement('div', 'documents-file-ai-brief');
-          briefWrap.appendChild(createElement('span', '', 'Кратко от ИИ готово'));
-          var briefButton = createElement('button', 'documents-action documents-action--ai', 'Просмотр');
+          var briefPreviewText = aiBrief.length > 180 ? (aiBrief.slice(0, 180) + '…') : aiBrief;
+          briefWrap.appendChild(createElement('div', '', 'Кратко от ИИ: ' + briefPreviewText));
+          var briefButton = createElement('button', 'documents-action documents-action--ai', 'Показать результат');
           briefButton.type = 'button';
           briefButton.addEventListener('click', function(event) {
             event.preventDefault();
@@ -14121,8 +14115,19 @@
     header.appendChild(title);
     header.appendChild(actions);
     var body = createElement('div', 'documents-form');
-    body.appendChild(createElement('div', 'documents-form__hint', fileName || 'Файл'));
-    body.appendChild(createElement('pre', 'documents-conclusion-preview', briefText || 'Пустой ответ от ИИ.'));
+    var fileHint = createElement('div', 'documents-form__hint', 'Файл: ' + (fileName || 'Файл'));
+    var resultTitle = createElement('div', 'documents-form__hint', 'Результат анализа');
+    var resultBox = createElement('div', 'documents-conclusion-preview');
+    resultBox.style.whiteSpace = 'pre-wrap';
+    resultBox.style.lineHeight = '1.6';
+    resultBox.style.fontSize = '14px';
+    resultBox.style.padding = '14px';
+    resultBox.style.borderRadius = '14px';
+    resultBox.style.background = 'rgba(248, 250, 252, 0.9)';
+    resultBox.textContent = briefText || 'Пустой ответ от ИИ.';
+    body.appendChild(fileHint);
+    body.appendChild(resultTitle);
+    body.appendChild(resultBox);
     shell.appendChild(header);
     shell.appendChild(body);
     overlay.appendChild(shell);
@@ -14374,31 +14379,7 @@
       }
 
       function openAiBriefPreviewModal(fileName, briefText) {
-        var overlay = createElement('div', 'documents-modal');
-        var shell = createElement('div', 'documents-modal__shell documents-modal__shell--narrow');
-        var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
-        var title = createElement('h3', 'documents-modal__title', 'Кратко от ИИ');
-        var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
-        closeButton.type = 'button';
-        closeButton.addEventListener('click', function() {
-          closeModal(overlay);
-        });
-        var actions = createElement('div', 'documents-modal__actions');
-        actions.appendChild(closeButton);
-        header.appendChild(title);
-        header.appendChild(actions);
-        var body = createElement('div', 'documents-form');
-        body.appendChild(createElement('div', 'documents-form__hint', fileName || 'Файл'));
-        body.appendChild(createElement('pre', 'documents-conclusion-preview', briefText || 'Пустой ответ от ИИ.'));
-        shell.appendChild(header);
-        shell.appendChild(body);
-        overlay.appendChild(shell);
-        overlay.addEventListener('click', function(event) {
-          if (event.target === overlay) {
-            closeModal(overlay);
-          }
-        });
-        document.body.appendChild(overlay);
+        openAttachmentAiBriefModal(fileName, briefText);
       }
 
       function scheduleAiBriefForFile(file, force) {

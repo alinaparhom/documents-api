@@ -5186,6 +5186,10 @@ function buildTaskSummaryRows(task, attachments) {
         description += ` (${metaParts.join(' • ')})`;
       }
       lines.push(description);
+      const aiBrief = normalizeValueString(file && file.aiBrief);
+      if (aiBrief) {
+        lines.push(`   Кратко от ИИ: ${aiBrief}`);
+      }
     });
     attachmentsText = lines.join('\n');
   }
