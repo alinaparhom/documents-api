@@ -2614,6 +2614,10 @@ const FALLBACK_CARD_TEMPLATE = `
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
   </div>
+  <div class="appdosc-card__resolution" data-field="aiBrief">
+    <div class="appdosc-card__block-title">Кратко от ИИ</div>
+    <div class="appdosc-card__block-text" data-field="aiBriefText"></div>
+  </div>
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
     <div class="appdosc-card__deadline">
@@ -3891,6 +3895,22 @@ function createCard(task, index, anchorRegistry) {
   });
   toggleSection(card, '[data-field="resolution"]', hasResolution);
 
+  const aiBriefLines = (Array.isArray(task.files) ? task.files : [])
+    .map((file, index) => {
+      const text = normalizeValue(file && file.aiBrief);
+      if (!text) {
+        return '';
+      }
+      const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
+      return `• ${fileName}: ${text}`;
+    })
+    .filter(Boolean);
+  const hasAiBrief = setCardField(card, '[data-field="aiBriefText"]', aiBriefLines.join('\n\n'), {
+    hideIfEmpty: true,
+    setTitle: false,
+  });
+  toggleSection(card, '[data-field="aiBrief"]', hasAiBrief);
+
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
   });
@@ -4519,34 +4539,6 @@ function applyRegistrationDateHeader(card, registrationDate) {
   }
 }
 
-function openCardFileBriefModal(fileName, briefText) {
-  const modal = document.createElement('div');
-  modal.style.cssText = 'position:fixed;inset:0;z-index:2500;background:rgba(15,23,42,.38);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
-  const panel = document.createElement('div');
-  panel.style.cssText = 'width:min(640px,100%);max-height:85vh;overflow:auto;background:rgba(255,255,255,.94);border:1px solid rgba(255,255,255,.85);border-radius:18px;box-shadow:0 20px 40px rgba(15,23,42,.28);padding:14px;';
-  const title = document.createElement('div');
-  title.style.cssText = 'font-size:15px;font-weight:700;color:#0f172a;margin-bottom:6px;';
-  title.textContent = fileName || 'Файл';
-  const text = document.createElement('pre');
-  text.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;font:500 13px/1.45 Inter,system-ui,sans-serif;color:#1e293b;';
-  text.textContent = briefText || 'Кратко от ИИ отсутствует.';
-  const closeButton = document.createElement('button');
-  closeButton.type = 'button';
-  closeButton.textContent = 'Закрыть';
-  closeButton.style.cssText = 'margin-top:12px;padding:8px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.5);background:#fff;color:#0f172a;font-weight:600;';
-  closeButton.addEventListener('click', () => modal.remove());
-  panel.appendChild(title);
-  panel.appendChild(text);
-  panel.appendChild(closeButton);
-  modal.appendChild(panel);
-  modal.addEventListener('click', (event) => {
-    if (event.target === modal) {
-      modal.remove();
-    }
-  });
-  document.body.appendChild(modal);
-}
-
 function populateCardFiles(card, files) {
   const container = card.querySelector('[data-files]');
   if (!container) {
@@ -4600,19 +4592,6 @@ function populateCardFiles(card, files) {
       }
     });
     actions.appendChild(previewButton);
-    const fileBrief = normalizeValue(file.aiBrief);
-    if (fileBrief) {
-      const briefButton = document.createElement('button');
-      briefButton.type = 'button';
-      briefButton.className = 'appdosc-card__file-action appdosc-card__file-action--brief';
-      briefButton.textContent = 'Кратко ИИ';
-      briefButton.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        openCardFileBriefModal(displayName, fileBrief);
-      });
-      actions.appendChild(briefButton);
-    }
     element.appendChild(actions);
     container.appendChild(element);
   });

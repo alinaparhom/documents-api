@@ -7970,8 +7970,10 @@
     }
 
     var attachmentsText = 'Нет вложений';
+    var aiBriefText = '—';
     if (attachmentsList.length) {
       var lines = [];
+      var aiBriefLines = [];
       for (var i = 0; i < attachmentsList.length; i += 1) {
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
@@ -7979,9 +7981,13 @@
         var aiBrief = getAttachmentAiBrief(file);
         if (aiBrief) {
           lines.push('   Кратко от ИИ: ' + aiBrief);
+          aiBriefLines.push((i + 1) + '. ' + fileName + ': ' + aiBrief);
         }
       }
       attachmentsText = lines.join('\n');
+      if (aiBriefLines.length) {
+        aiBriefText = aiBriefLines.join('\n\n');
+      }
     }
 
     return [
@@ -8001,7 +8007,8 @@
       { label: 'Срок исполнения', value: resolveDueDateSummary() },
       { label: 'Поручения', value: resolveInstructionSummary() },
       { label: 'Статус', value: resolveStatusValue() },
-      { label: 'Файлы', value: attachmentsText }
+      { label: 'Файлы', value: attachmentsText },
+      { label: 'Кратко от ИИ', value: aiBriefText }
     ];
   }
 
