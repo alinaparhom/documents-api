@@ -9758,6 +9758,18 @@ function docs_prepare_records_for_response(array $records, string $organization,
                 if (isset($file['storedName']) && !isset($file['url'])) {
                     $file['url'] = build_public_path($folder, (string) $file['storedName']);
                 }
+                $normalizedAiBrief = '';
+                if (isset($file['aiBrief'])) {
+                    $normalizedAiBrief = sanitize_text_field((string) $file['aiBrief'], 2000);
+                } elseif (isset($file['briefai'])) {
+                    $normalizedAiBrief = sanitize_text_field((string) $file['briefai'], 2000);
+                }
+                if ($normalizedAiBrief !== '') {
+                    $file['aiBrief'] = $normalizedAiBrief;
+                }
+                if (isset($file['briefai'])) {
+                    unset($file['briefai']);
+                }
             }
             unset($file);
         }

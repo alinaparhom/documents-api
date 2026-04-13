@@ -2263,6 +2263,13 @@
       .trim();
   }
 
+  function getAttachmentAiBrief(file) {
+    if (!file || typeof file !== 'object') {
+      return '';
+    }
+    return normalizeAiBriefText(file.aiBrief || '');
+  }
+
   function extractAiBriefFromPayload(payload) {
     if (!payload || typeof payload !== 'object') {
       return '';
@@ -7969,10 +7976,7 @@
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
-        var aiBrief = normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : '');
-        if (aiBrief) {
-          lines.push('   Кратко от ИИ: ' + aiBrief);
-        }
+        lines.push('   Кратко ИИ: кнопка рядом с файлом');
       }
       attachmentsText = lines.join('\n');
     }
@@ -12089,10 +12093,21 @@
           handleAttachmentPreview(doc, file, link);
         });
         itemWrap.appendChild(link);
-        var aiBrief = normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : '');
-        if (aiBrief) {
-          itemWrap.appendChild(createElement('div', 'documents-file-ai-brief', 'Кратко от ИИ: ' + aiBrief));
+        var aiBrief = getAttachmentAiBrief(file);
+        var briefWrap = createElement('div', 'documents-file-ai-brief');
+        var briefButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
+        briefButton.type = 'button';
+        briefButton.addEventListener('click', function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openAttachmentAiBriefModal(getAttachmentName(file), aiBrief || '—');
+        });
+        if (!aiBrief) {
+          briefButton.disabled = true;
+          briefButton.title = 'Кратко ИИ пока отсутствует';
         }
+        briefWrap.appendChild(briefButton);
+        itemWrap.appendChild(briefWrap);
         filesList.appendChild(itemWrap);
       });
     } else {
@@ -14082,6 +14097,45 @@
     }
   }
 
+  function openAttachmentAiBriefModal(fileName, briefText) {
+    var overlay = createElement('div', 'documents-modal');
+    var shell = createElement('div', 'documents-modal__shell documents-modal__shell--narrow');
+    var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
+    var title = createElement('h3', 'documents-modal__title', 'Кратко от ИИ');
+    var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', function() {
+      closeModal(overlay);
+    });
+    var actions = createElement('div', 'documents-modal__actions');
+    actions.appendChild(closeButton);
+    header.appendChild(title);
+    header.appendChild(actions);
+    var body = createElement('div', 'documents-form');
+    var fileHint = createElement('div', 'documents-form__hint', 'Файл: ' + (fileName || 'Файл'));
+    var resultTitle = createElement('div', 'documents-form__hint', 'Результат анализа');
+    var resultBox = createElement('div', 'documents-conclusion-preview');
+    resultBox.style.whiteSpace = 'pre-wrap';
+    resultBox.style.lineHeight = '1.6';
+    resultBox.style.fontSize = '14px';
+    resultBox.style.padding = '14px';
+    resultBox.style.borderRadius = '14px';
+    resultBox.style.background = 'rgba(248, 250, 252, 0.9)';
+    resultBox.textContent = briefText || 'Пустой ответ от ИИ.';
+    body.appendChild(fileHint);
+    body.appendChild(resultTitle);
+    body.appendChild(resultBox);
+    shell.appendChild(header);
+    shell.appendChild(body);
+    overlay.appendChild(shell);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) {
+        closeModal(overlay);
+      }
+    });
+    document.body.appendChild(overlay);
+  }
+
   function openDocumentForm(doc) {
     if (!state.organization) {
       showMessage('error', 'Организация для этой страницы не определена.');
@@ -14322,31 +14376,7 @@
       }
 
       function openAiBriefPreviewModal(fileName, briefText) {
-        var overlay = createElement('div', 'documents-modal');
-        var shell = createElement('div', 'documents-modal__shell documents-modal__shell--narrow');
-        var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
-        var title = createElement('h3', 'documents-modal__title', 'Кратко от ИИ');
-        var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
-        closeButton.type = 'button';
-        closeButton.addEventListener('click', function() {
-          closeModal(overlay);
-        });
-        var actions = createElement('div', 'documents-modal__actions');
-        actions.appendChild(closeButton);
-        header.appendChild(title);
-        header.appendChild(actions);
-        var body = createElement('div', 'documents-form');
-        body.appendChild(createElement('div', 'documents-form__hint', fileName || 'Файл'));
-        body.appendChild(createElement('pre', 'documents-conclusion-preview', briefText || 'Пустой ответ от ИИ.'));
-        shell.appendChild(header);
-        shell.appendChild(body);
-        overlay.appendChild(shell);
-        overlay.addEventListener('click', function(event) {
-          if (event.target === overlay) {
-            closeModal(overlay);
-          }
-        });
-        document.body.appendChild(overlay);
+        openAttachmentAiBriefModal(fileName, briefText);
       }
 
       function scheduleAiBriefForFile(file, force) {
@@ -14589,7 +14619,7 @@
             }
             if (briefText) {
               itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '✅ Кратко ИИ готово'));
-              var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Показать результат');
+              var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Кратко ИИ');
               viewButton.type = 'button';
               viewButton.addEventListener('click', function(event) {
                 event.preventDefault();

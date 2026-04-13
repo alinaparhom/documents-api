@@ -2614,6 +2614,10 @@ const FALLBACK_CARD_TEMPLATE = `
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
   </div>
+  <div class="appdosc-card__resolution" data-field="aiBrief">
+    <div class="appdosc-card__block-title">Кратко от ИИ</div>
+    <div class="appdosc-card__block-text" data-field="aiBriefText"></div>
+  </div>
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
     <div class="appdosc-card__deadline">
@@ -2682,6 +2686,7 @@ function initElements() {
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
+  elements.viewerBrief = document.querySelector('[data-viewer-brief]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
 
   logIosStage('elements_initialized', {
@@ -2690,6 +2695,7 @@ function initElements() {
     placeholderFound: Boolean(elements.placeholder),
   });
   updateViewerDownloadState(null);
+  updateViewerBriefState(null);
   updateViewerDeleteState(null);
   updateViewerFileOwnerState(null);
 }
@@ -3891,6 +3897,39 @@ function createCard(task, index, anchorRegistry) {
   });
   toggleSection(card, '[data-field="resolution"]', hasResolution);
 
+  const aiBriefContainer = card.querySelector('[data-field="aiBriefText"]');
+  const aiBriefFiles = Array.isArray(task.files) ? task.files : [];
+  if (aiBriefContainer) {
+    aiBriefContainer.textContent = '';
+    if (aiBriefFiles.length) {
+      aiBriefFiles.forEach((file, index) => {
+        const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
+        const aiBriefText = normalizeValue(file && file.aiBrief);
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(148,163,184,.32);';
+        const label = document.createElement('span');
+        label.style.cssText = 'font-size:12px;line-height:1.35;color:#1e293b;word-break:break-word;';
+        label.textContent = fileName;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'appdosc-card__action';
+        btn.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
+        btn.textContent = 'Кратко ИИ';
+        btn.disabled = !aiBriefText;
+        if (!aiBriefText) {
+          btn.title = 'Кратко ИИ пока отсутствует';
+        }
+        btn.addEventListener('click', () => openTelegramFileAiBriefModal(fileName, aiBriefText || '—'));
+        row.appendChild(label);
+        row.appendChild(btn);
+        aiBriefContainer.appendChild(row);
+      });
+    } else {
+      aiBriefContainer.textContent = '—';
+    }
+  }
+  toggleSection(card, '[data-field="aiBrief"]', true);
+
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
   });
@@ -4493,6 +4532,34 @@ function toggleSection(card, selector, shouldShow) {
   section.hidden = !shouldShow;
 }
 
+function openTelegramFileAiBriefModal(fileName, briefText) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:4000;background:rgba(15,23,42,.42);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:10px;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'width:min(680px,100%);max-height:84vh;overflow:auto;border-radius:18px;padding:14px;background:rgba(255,255,255,.96);border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 40px rgba(15,23,42,.24);';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:15px;font-weight:700;color:#0f172a;margin-bottom:8px;';
+  title.textContent = fileName || 'Файл';
+  const text = document.createElement('pre');
+  text.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;font:500 13px/1.5 Inter,system-ui,sans-serif;color:#1e293b;background:rgba(248,250,252,.95);border-radius:12px;padding:12px;';
+  text.textContent = briefText || '—';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = 'Закрыть';
+  closeButton.style.cssText = 'margin-top:12px;padding:8px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.45);background:#fff;color:#0f172a;font-weight:600;';
+  closeButton.addEventListener('click', () => overlay.remove());
+  panel.appendChild(title);
+  panel.appendChild(text);
+  panel.appendChild(closeButton);
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      overlay.remove();
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
 function applyRegistrationDateHeader(card, registrationDate) {
   if (!(card instanceof HTMLElement)) {
     return;
@@ -4544,17 +4611,35 @@ function populateCardFiles(card, files) {
 
   const maxToShow = 3;
   safeFiles.slice(0, maxToShow).forEach((file) => {
-    const element = document.createElement('span');
+    const element = document.createElement('div');
     element.className = 'appdosc-card__file';
     const displayName = normalizeValue(file.originalName)
       || normalizeValue(file.storedName)
       || 'Файл';
-    element.textContent = displayName;
+    const title = document.createElement('span');
+    title.textContent = displayName;
+    element.appendChild(title);
     if (displayName) {
       element.title = displayName;
     } else {
       element.removeAttribute('title');
     }
+    const actions = document.createElement('span');
+    actions.className = 'appdosc-card__file-actions';
+    const previewButton = document.createElement('button');
+    previewButton.type = 'button';
+    previewButton.className = 'appdosc-card__file-action';
+    previewButton.textContent = 'Просмотр';
+    previewButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const resolvedUrl = resolveDocumentUrl(normalizeValue(file.url) || normalizeValue(file.storedName));
+      if (resolvedUrl) {
+        openExternalDocument(resolvedUrl);
+      }
+    });
+    actions.appendChild(previewButton);
+    element.appendChild(actions);
     container.appendChild(element);
   });
 
@@ -5148,6 +5233,7 @@ function buildTaskSummaryRows(task, attachments) {
         description += ` (${metaParts.join(' • ')})`;
       }
       lines.push(description);
+      lines.push('   Кратко ИИ: кнопка в карточке');
     });
     attachmentsText = lines.join('\n');
   }
@@ -6464,6 +6550,7 @@ function resolveTaskViewerFiles(task) {
       previewUrl,
       name: displayName,
       kind,
+      aiBrief: normalizeValue(file.aiBrief),
     });
   });
 
@@ -7829,6 +7916,22 @@ function updateViewerDownloadState(file) {
   const hasFile = Boolean(file && (file.isSummary || file.resolvedUrl || file.url || file.previewUrl));
   elements.viewerDownload.disabled = !hasFile;
   elements.viewerDownload.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  updateViewerBriefState(file);
+}
+
+function updateViewerBriefState(file) {
+  if (!elements.viewerBrief) {
+    return;
+  }
+  const hasFile = Boolean(file && !file.isSummary);
+  elements.viewerBrief.disabled = !hasFile;
+  elements.viewerBrief.hidden = !hasFile;
+  elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  if (hasFile && !normalizeValue(file && file.aiBrief)) {
+    elements.viewerBrief.title = 'ИИ-кратко отсутствует, покажем прочерк';
+  } else {
+    elements.viewerBrief.removeAttribute('title');
+  }
 }
 
 function canDeleteResponseFromViewer(file) {
@@ -8057,6 +8160,16 @@ async function handleViewerDeleteResponseClick() {
     updateViewerFileOwnerState(getViewerFileToDownload());
     updateViewerDeleteState(getViewerFileToDownload());
   }
+}
+
+function handleViewerBriefClick() {
+  const file = getViewerFileToDownload();
+  if (!file || file.isSummary) {
+    return;
+  }
+  const fileName = getAttachmentName(file) || 'Файл';
+  const briefText = normalizeValue(file.aiBrief) || '—';
+  openTelegramFileAiBriefModal(fileName, briefText);
 }
 
 async function handleViewerDownloadClick() {
@@ -14933,6 +15046,9 @@ function attachEvents() {
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
+  }
+  if (elements.viewerBrief) {
+    elements.viewerBrief.addEventListener('click', handleViewerBriefClick);
   }
   if (elements.viewerDeleteResponse) {
     elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
