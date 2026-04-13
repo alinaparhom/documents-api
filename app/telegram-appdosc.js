@@ -6550,6 +6550,7 @@ function resolveTaskViewerFiles(task) {
       previewUrl,
       name: displayName,
       kind,
+      aiBrief: normalizeValue(file.aiBrief),
     });
   });
 
@@ -7923,13 +7924,11 @@ function updateViewerBriefState(file) {
     return;
   }
   const hasFile = Boolean(file && !file.isSummary);
-  const hasBrief = Boolean(normalizeValue(file && file.aiBrief));
-  const enabled = hasFile && hasBrief;
-  elements.viewerBrief.disabled = !enabled;
+  elements.viewerBrief.disabled = !hasFile;
   elements.viewerBrief.hidden = !hasFile;
-  elements.viewerBrief.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-  if (hasFile && !hasBrief) {
-    elements.viewerBrief.title = 'Кратко ИИ пока отсутствует';
+  elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  if (hasFile && !normalizeValue(file && file.aiBrief)) {
+    elements.viewerBrief.title = 'ИИ-кратко отсутствует, покажем прочерк';
   } else {
     elements.viewerBrief.removeAttribute('title');
   }
