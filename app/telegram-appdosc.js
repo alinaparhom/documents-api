@@ -3895,17 +3895,38 @@ function createCard(task, index, anchorRegistry) {
   });
   toggleSection(card, '[data-field="resolution"]', hasResolution);
 
+  const aiBriefContainer = card.querySelector('[data-field="aiBriefText"]');
   const aiBriefFiles = Array.isArray(task.files) ? task.files : [];
-  const aiBriefLines = aiBriefFiles.map((file, index) => {
-    const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
-    const hasText = Boolean(normalizeValue(file && file.aiBrief));
-    return `• ${fileName}: Кратко ИИ ${hasText ? 'есть' : '—'}`;
-  });
-  const hasAiBrief = setCardField(card, '[data-field="aiBriefText"]', aiBriefLines.length ? aiBriefLines.join('\n\n') : '—', {
-    hideIfEmpty: true,
-    setTitle: false,
-  });
-  toggleSection(card, '[data-field="aiBrief"]', hasAiBrief);
+  if (aiBriefContainer) {
+    aiBriefContainer.textContent = '';
+    if (aiBriefFiles.length) {
+      aiBriefFiles.forEach((file, index) => {
+        const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
+        const aiBriefText = normalizeValue(file && file.aiBrief);
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(148,163,184,.32);';
+        const label = document.createElement('span');
+        label.style.cssText = 'font-size:12px;line-height:1.35;color:#1e293b;word-break:break-word;';
+        label.textContent = fileName;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'appdosc-card__action';
+        btn.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
+        btn.textContent = 'Кратко ИИ';
+        btn.disabled = !aiBriefText;
+        if (!aiBriefText) {
+          btn.title = 'Кратко ИИ пока отсутствует';
+        }
+        btn.addEventListener('click', () => openTelegramFileAiBriefModal(fileName, aiBriefText || '—'));
+        row.appendChild(label);
+        row.appendChild(btn);
+        aiBriefContainer.appendChild(row);
+      });
+    } else {
+      aiBriefContainer.textContent = '—';
+    }
+  }
+  toggleSection(card, '[data-field="aiBrief"]', true);
 
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
@@ -4507,6 +4528,34 @@ function toggleSection(card, selector, shouldShow) {
     return;
   }
   section.hidden = !shouldShow;
+}
+
+function openTelegramFileAiBriefModal(fileName, briefText) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:4000;background:rgba(15,23,42,.42);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:10px;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'width:min(680px,100%);max-height:84vh;overflow:auto;border-radius:18px;padding:14px;background:rgba(255,255,255,.96);border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 40px rgba(15,23,42,.24);';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:15px;font-weight:700;color:#0f172a;margin-bottom:8px;';
+  title.textContent = fileName || 'Файл';
+  const text = document.createElement('pre');
+  text.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;font:500 13px/1.5 Inter,system-ui,sans-serif;color:#1e293b;background:rgba(248,250,252,.95);border-radius:12px;padding:12px;';
+  text.textContent = briefText || '—';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = 'Закрыть';
+  closeButton.style.cssText = 'margin-top:12px;padding:8px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.45);background:#fff;color:#0f172a;font-weight:600;';
+  closeButton.addEventListener('click', () => overlay.remove());
+  panel.appendChild(title);
+  panel.appendChild(text);
+  panel.appendChild(closeButton);
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      overlay.remove();
+    }
+  });
+  document.body.appendChild(overlay);
 }
 
 function applyRegistrationDateHeader(card, registrationDate) {
@@ -5182,8 +5231,7 @@ function buildTaskSummaryRows(task, attachments) {
         description += ` (${metaParts.join(' • ')})`;
       }
       lines.push(description);
-      const aiBrief = normalizeValueString(file && file.aiBrief);
-      lines.push(`   Кратко ИИ: ${aiBrief ? 'есть' : '—'}`);
+      lines.push('   Кратко ИИ: кнопка в карточке');
     });
     attachmentsText = lines.join('\n');
   }

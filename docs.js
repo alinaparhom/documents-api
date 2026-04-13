@@ -7976,8 +7976,7 @@
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
-        var aiBrief = getAttachmentAiBrief(file);
-        lines.push('   Кратко ИИ: ' + (aiBrief ? 'есть' : '—'));
+        lines.push('   Кратко ИИ: кнопка рядом с файлом');
       }
       attachmentsText = lines.join('\n');
     }
