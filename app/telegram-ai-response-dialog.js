@@ -1015,14 +1015,19 @@
     setTimeout(() => toast.remove(), 3500);
   }
 
+  function buildGeneratedDocxUrlCandidates(previewPayload) {
+    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
+    const fileName = normalize(previewPayload && previewPayload.fileName);
+    const mappedTmpUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/tmp/generated/') : '';
+    const directTmpUrl = fileName ? `/tmp/generated/${encodeURIComponent(fileName)}` : '';
+    return Array.from(new Set([previewUrl, mappedTmpUrl, directTmpUrl].filter(Boolean))).map((url) => toAbsoluteUrl(url));
+  }
+
   async function resolveGeneratedDocxBlob(previewPayload) {
     if (previewPayload && previewPayload.blob instanceof Blob) {
       return previewPayload.blob;
     }
-    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
-    const fileName = normalize(previewPayload && previewPayload.fileName);
-    const directTmpUrl = fileName ? `/tmp/generated/${encodeURIComponent(fileName)}` : '';
-    const candidates = Array.from(new Set([previewUrl, directTmpUrl].filter(Boolean)));
+    const candidates = buildGeneratedDocxUrlCandidates(previewPayload);
     if (!candidates.length) {
       throw new Error('Не удалось получить файл документа для предпросмотра.');
     }
@@ -1264,7 +1269,8 @@
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
-    const officeSourceUrl = toAbsoluteUrl(previewUrl);
+    const officeSourceCandidates = buildGeneratedDocxUrlCandidates(previewPayload).filter((url) => /^https?:\/\//i.test(url));
+    const officeSourceUrl = officeSourceCandidates[0] || '';
     const task = context && context.task ? context.task : {};
     const openViewerFile = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
       ? window.__APPDOSC_OPEN_VIEWER_FILE__
@@ -1423,60 +1429,47 @@
       }
     };
 
-    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl) || Boolean((openViewerFile || openFilesViewer) && previewUrl);
+    const canUseOfficeViewer = Boolean(officeSourceCandidates.length) || Boolean((openViewerFile || openFilesViewer) && officeSourceUrl);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
     }
     localBtn?.addEventListener('click', () => { toggleMenu(false); openLocalPreview(); });
-    officeBtn?.addEventListener('click', () => {
-      toggleMenu(false);
+    const openViaOfficeViewer = () => {
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
-        return;
+        return Promise.resolve(false);
       }
-      if ((openViewerFile || openFilesViewer) && previewUrl) {
+      const primaryUrl = officeSourceUrl || previewUrl;
+      if ((openViewerFile || openFilesViewer) && primaryUrl) {
         statusNode.textContent = 'Открываем как в режиме «Просмотреть»…';
         const fileName = normalize(previewPayload.fileName) || 'template-answer.docx';
         const viewerFile = {
           name: fileName,
           originalName: fileName,
           storedName: fileName,
-          url: previewUrl,
-          resolvedUrl: toAbsoluteUrl(previewUrl),
-          previewUrl,
-          fileUrl: previewUrl,
+          url: primaryUrl,
+          resolvedUrl: toAbsoluteUrl(primaryUrl),
+          previewUrl: primaryUrl,
+          fileUrl: primaryUrl,
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           kind: 'office',
         };
-        Promise.resolve(
+        return Promise.resolve(
           openViewerFile
             ? openViewerFile(viewerFile, task || {}, { notify: true, hasMultiple: false })
             : openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }),
         )
           .then(() => {
             statusNode.textContent = 'Документ открыт через логику «Просмотреть».';
+            return true;
           })
-          .catch((error) => {
-            statusNode.textContent = (error && error.message) || 'Не удалось открыть через «Просмотреть». Пробуем Office Viewer…';
-            if (frameNode) {
-              frameNode.style.display = '';
-              frameNode.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
-            }
+          .catch(() => {
+            statusNode.textContent = 'Не удалось открыть через «Просмотреть». Пробуем Office Viewer…';
+            return false;
           });
-        return;
       }
-      const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
-      if (loadingNode) loadingNode.style.display = 'none';
-      if (docNode) docNode.style.display = 'none';
-      if (viewportNode) viewportNode.style.display = 'none';
-      if (frameNode) {
-        frameNode.style.display = '';
-        frameNode.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
-      }
-      let loaded = false;
-      let fallbackTimer = 0;
-      const openExternalOffice = () => {
+      const openExternalOffice = (officeUrl) => {
         const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
         if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
           try {
@@ -1491,25 +1484,66 @@
           return false;
         }
       };
+      if (loadingNode) loadingNode.style.display = 'none';
+      if (docNode) docNode.style.display = 'none';
+      if (viewportNode) viewportNode.style.display = 'none';
       if (frameNode) {
-        frameNode.onload = () => {
-          loaded = true;
-          if (fallbackTimer) clearTimeout(fallbackTimer);
-          statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
-        };
-        frameNode.src = officeUrl;
+        frameNode.style.display = '';
+        frameNode.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
       }
-      fallbackTimer = setTimeout(() => {
-        if (loaded) return;
-        const opened = openExternalOffice();
-        statusNode.textContent = opened
-          ? 'Office Viewer открыт внешне (встроенный iframe может блокироваться в Telegram).'
-          : 'Office Viewer не загрузился. Попробуйте открыть файл через «Скачать».';
-      }, 6500);
       statusNode.textContent = 'Открываем через Office Viewer…';
+      return new Promise((resolve) => {
+        let candidateIndex = 0;
+        const tryNext = () => {
+          if (candidateIndex >= officeSourceCandidates.length) {
+            resolve(false);
+            return;
+          }
+          const source = officeSourceCandidates[candidateIndex];
+          candidateIndex += 1;
+          const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(source)}`;
+          let settled = false;
+          const fallbackTimer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            const opened = openExternalOffice(officeUrl);
+            if (opened) {
+              statusNode.textContent = 'Office Viewer открыт внешне.';
+              resolve(true);
+              return;
+            }
+            tryNext();
+          }, 4500);
+          if (frameNode) {
+            frameNode.onload = () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(fallbackTimer);
+              statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+              resolve(true);
+            };
+            frameNode.src = officeUrl;
+          } else {
+            clearTimeout(fallbackTimer);
+            tryNext();
+          }
+        };
+        tryNext();
+      });
+    };
+    officeBtn?.addEventListener('click', () => {
+      toggleMenu(false);
+      openViaOfficeViewer().then((opened) => {
+        if (!opened) {
+          statusNode.textContent = 'Office Viewer недоступен. Открываем локальный режим…';
+          openLocalPreview();
+        }
+      });
     });
-
-    await openLocalPreview();
+    const openedViaOffice = await openViaOfficeViewer();
+    if (!openedViaOffice) {
+      await openLocalPreview();
+    }
   }
 
   function openTemplateAnswerEditor(context = {}) {

@@ -1582,22 +1582,6 @@
     }
   }
 
-  function buildGeneratedDocxUrlCandidates(previewPayload) {
-    var previewUrl = String(previewPayload && previewPayload.previewUrl || '').trim();
-    var fileName = String(previewPayload && previewPayload.fileName || '').trim();
-    var encodedFileName = fileName ? encodeURIComponent(fileName) : '';
-    var mappedPreviewUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/tmp/generated/') : '';
-    var candidates = [
-      toAbsoluteUrl(previewUrl),
-      toAbsoluteUrl(mappedPreviewUrl),
-      encodedFileName ? toAbsoluteUrl('/tmp/generated/' + encodedFileName) : '',
-      encodedFileName ? toAbsoluteUrl('/app/tmp/generated/' + encodedFileName) : ''
-    ];
-    return candidates.filter(function(url, index) {
-      return url && candidates.indexOf(url) === index;
-    });
-  }
-
   function getDocsGenerateEndpoints() {
     var configured = String(window.DOCUMENTS_AI_API_URL || '').trim();
     var fallback = ['/js/documents/api-docs.php', '/api-docs.php'];
@@ -1649,8 +1633,7 @@
     var officeBtn = overlay.querySelector('[data-preview-office]');
     var closeBtn = overlay.querySelector('[data-preview-close]');
     var previewUrl = String(previewPayload.previewUrl || '').trim();
-    var officeSourceCandidates = buildGeneratedDocxUrlCandidates(previewPayload);
-    var officeSourceUrl = officeSourceCandidates.length ? officeSourceCandidates[0] : '';
+    var officeSourceUrl = toAbsoluteUrl(previewUrl);
     var fileName = String(previewPayload.fileName || 'template-answer.docx').trim();
     var safeContext = context && typeof context === 'object' ? context : {};
     var fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
@@ -1758,85 +1741,31 @@
     }
 
     localBtn.addEventListener('click', showLocalPreview);
-    var canUseOfficeViewer = officeSourceCandidates.some(function(url) { return /^https?:\/\//i.test(url); });
+    var canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
     }
-    function openOfficeExternal(officeUrl) {
-      try {
-        var tg = window.Telegram && window.Telegram.WebApp;
-        if (tg && typeof tg.openLink === 'function') {
-          tg.openLink(officeUrl);
-          return true;
-        }
-      } catch (error) {}
-      try {
-        window.open(officeUrl, '_blank', 'noopener');
-        return true;
-      } catch (error) {
-        return false;
-      }
-    }
     function showOfficePreview() {
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
-        return Promise.resolve(false);
+        return false;
       }
       if (docNode) docNode.style.display = 'none';
-      var candidates = officeSourceCandidates.filter(function(url) { return /^https?:\/\//i.test(url); });
-      var tryIndex = 0;
-      var lastExternalOpened = false;
-      if (frameNode) frameNode.style.display = '';
+      if (frameNode) {
+        frameNode.style.display = '';
+        frameNode.onload = function() {
+          statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+        };
+        frameNode.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(officeSourceUrl);
+      }
       if (loadingNode) loadingNode.style.display = 'none';
       statusNode.textContent = 'Открываем через Office Viewer…';
-      return new Promise(function(resolve) {
-        var tryNext = function() {
-          if (tryIndex >= candidates.length) {
-            if (lastExternalOpened) {
-              statusNode.textContent = 'Office Viewer открыт во внешнем окне.';
-              resolve(true);
-              return;
-            }
-            resolve(false);
-            return;
-          }
-          var source = candidates[tryIndex];
-          tryIndex += 1;
-          var officeUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(source);
-          var settled = false;
-          var fallbackTimer = setTimeout(function() {
-            if (settled) return;
-            settled = true;
-            lastExternalOpened = openOfficeExternal(officeUrl) || lastExternalOpened;
-            tryNext();
-          }, 4500);
-          if (frameNode) {
-            frameNode.onload = function() {
-              if (settled) return;
-              settled = true;
-              clearTimeout(fallbackTimer);
-              statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
-              resolve(true);
-            };
-            frameNode.src = officeUrl;
-          } else {
-            clearTimeout(fallbackTimer);
-            lastExternalOpened = openOfficeExternal(officeUrl) || lastExternalOpened;
-            tryNext();
-          }
-        };
-        tryNext();
-      });
+      return true;
     }
 
     officeBtn.addEventListener('click', function() {
-      showOfficePreview().then(function(opened) {
-        if (!opened) {
-          statusNode.textContent = 'Office Viewer не открылся. Открываем локальный режим…';
-          showLocalPreview();
-        }
-      });
+      showOfficePreview();
     });
 
     if (!sourceUrl) {
@@ -1853,8 +1782,8 @@
       });
       if (loadingSubNode && subtitle) loadingSubNode.textContent = subtitle;
     }
-    showOfficePreview().then(function(openedViaOffice) {
-      if (openedViaOffice) return;
+    var openedViaOffice = showOfficePreview();
+    if (!openedViaOffice) {
       stepTimer = setInterval(function() {
         if (currentStep < 3) {
           setStep(currentStep + 1, currentStep === 1 ? 'Подключаем движок предпросмотра...' : 'Рендерим страницу...');
@@ -1867,7 +1796,7 @@
         if (stepTimer) clearInterval(stepTimer);
         if (slowTimer) clearTimeout(slowTimer);
       });
-    });
+    }
   }
 
   async function generateDocxFromTemplateViaApi(answerText, meta) {
@@ -1926,29 +1855,23 @@
     if (previewPayload && previewPayload.blob instanceof Blob) {
       return previewPayload.blob;
     }
-    var candidates = buildGeneratedDocxUrlCandidates(previewPayload);
-    if (!candidates.length) {
+    var previewUrl = String(previewPayload && previewPayload.previewUrl || '').trim();
+    if (!previewUrl) {
       throw new Error('Не удалось получить файл документа для прикрепления.');
     }
-    var lastStatus = 0;
-    for (var i = 0; i < candidates.length; i += 1) {
-      try {
-        var response = await fetch(candidates[i], {
-          method: 'GET',
-          credentials: 'same-origin',
-          cache: 'no-store'
-        });
-        if (!response || !response.ok) {
-          lastStatus = response ? response.status : 0;
-          continue;
-        }
-        var blob = await response.blob();
-        if (blob && blob.size) {
-          return blob;
-        }
-      } catch (error) {}
+    var response = await fetch(previewUrl, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    if (!response || !response.ok) {
+      throw new Error('Не удалось скачать документ для прикрепления (' + (response ? response.status : 0) + ').');
     }
-    throw new Error('Не удалось скачать документ для прикрепления (' + (lastStatus || 'no_response') + ').');
+    var blob = await response.blob();
+    if (!blob || !blob.size) {
+      throw new Error('Получен пустой файл документа.');
+    }
+    return blob;
   }
 
   function resolveAuthorizedUserName(task) {
