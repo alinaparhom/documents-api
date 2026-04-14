@@ -12127,7 +12127,11 @@
     actions.appendChild(responseButton);
     var briefSummaryButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
     briefSummaryButton.type = 'button';
-    briefSummaryButton.addEventListener('click', function() {
+    briefSummaryButton.addEventListener('click', function(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       var linkedFiles = [];
       if (doc && Array.isArray(doc.files)) {
         linkedFiles = doc.files.map(function(file) {

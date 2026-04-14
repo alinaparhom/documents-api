@@ -7898,8 +7898,13 @@ function updateViewerBriefState(file) {
   }
   const hasFile = Boolean(file && !file.isSummary);
   elements.viewerBrief.disabled = !hasFile;
-  elements.viewerBrief.hidden = true;
+  elements.viewerBrief.hidden = !hasFile;
   elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  if (hasFile && !normalizeValue(file && file.aiBrief)) {
+    elements.viewerBrief.title = 'ИИ-кратко отсутствует, покажем прочерк';
+  } else {
+    elements.viewerBrief.removeAttribute('title');
+  }
 }
 
 function canDeleteResponseFromViewer(file) {
