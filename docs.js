@@ -2262,11 +2262,100 @@
       .trim();
   }
 
+  function formatAiBriefForStorage(text) {
+    var normalized = normalizeAiBriefText(text || '');
+    if (!normalized) {
+      return '';
+    }
+    return normalized
+      .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
+      .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
+      .replace(/\n{3,}/g, '\n\n');
+  }
+
   function getAttachmentAiBrief(file) {
     if (!file || typeof file !== 'object') {
       return '';
     }
-    return normalizeAiBriefText(file.aiBrief || '');
+    return formatAiBriefForStorage(file.aiBrief || '');
+  }
+
+  function findDocumentFileForAiBrief(documentData, source) {
+    if (!documentData || !Array.isArray(documentData.files) || !source) {
+      return null;
+    }
+    var sourceStoredName = normalizeTextInputValue(source.storedName || '');
+    var sourceOriginalName = normalizeTextInputValue(source.originalName || '');
+    var sourceUrl = normalizeTextInputValue(source.url || '');
+    var sourceUrlFile = sourceUrl ? normalizeTextInputValue(sourceUrl.split('/').pop() || '') : '';
+    for (var i = 0; i < documentData.files.length; i += 1) {
+      var candidate = documentData.files[i];
+      if (!candidate || typeof candidate !== 'object') {
+        continue;
+      }
+      var storedName = normalizeTextInputValue(candidate.storedName || '');
+      var originalName = normalizeTextInputValue(candidate.originalName || '');
+      var fileUrl = normalizeTextInputValue(candidate.url || '');
+      var fileUrlName = fileUrl ? normalizeTextInputValue(fileUrl.split('/').pop() || '') : '';
+      if (sourceStoredName && storedName && sourceStoredName === storedName) {
+        return candidate;
+      }
+      if (sourceOriginalName && originalName && sourceOriginalName === originalName) {
+        return candidate;
+      }
+      if (sourceUrlFile && fileUrlName && sourceUrlFile === fileUrlName) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function persistDocumentFileAiBrief(documentData, source, briefText) {
+    var nextBrief = formatAiBriefForStorage(briefText || '');
+    if (!documentData || !documentData.id || !nextBrief || !state.organization) {
+      return Promise.resolve(false);
+    }
+    var matchedFile = findDocumentFileForAiBrief(documentData, source);
+    var fileStoredName = normalizeTextInputValue(
+      (source && source.storedName) || (matchedFile && matchedFile.storedName) || ''
+    );
+    var fileOriginalName = normalizeTextInputValue(
+      (source && source.originalName) || (matchedFile && matchedFile.originalName) || ''
+    );
+    var fileUrl = normalizeTextInputValue(
+      (source && source.url) || (matchedFile && matchedFile.url) || ''
+    );
+    if (!fileStoredName && !fileOriginalName && !fileUrl) {
+      return Promise.resolve(false);
+    }
+
+    if (matchedFile) {
+      matchedFile.aiBrief = nextBrief;
+    }
+
+    var payload = {
+      action: 'mini_app_update_task',
+      organization: state.organization,
+      documentId: documentData.id,
+      updateType: 'file_brief',
+      aiBrief: nextBrief,
+      fileStoredName: fileStoredName,
+      fileOriginalName: fileOriginalName,
+      fileUrl: fileUrl
+    };
+    mergeTelegramUserId(payload);
+
+    return fetch(buildApiUrl('mini_app_update_task', { organization: state.organization }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        updateStateFromPayload(data);
+        return true;
+      });
   }
 
   function extractAiBriefFromPayload(payload) {
@@ -2280,7 +2369,7 @@
     if (!text) {
       text = normalizeAiBriefText(buildAiConclusionFromPayload(payload, ''));
     }
-    return text;
+    return formatAiBriefForStorage(text);
   }
 
   async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress, onItemResolved) {
@@ -2328,6 +2417,7 @@
           });
         }
       }
+      briefText = formatAiBriefForStorage(briefText);
       if (typeof onItemResolved === 'function') {
         onItemResolved(file, briefText, i, batchFiles.length);
       }
@@ -12092,21 +12182,6 @@
           handleAttachmentPreview(doc, file, link);
         });
         itemWrap.appendChild(link);
-        var aiBrief = getAttachmentAiBrief(file);
-        var briefWrap = createElement('div', 'documents-file-ai-brief');
-        var briefButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
-        briefButton.type = 'button';
-        briefButton.addEventListener('click', function(event) {
-          event.preventDefault();
-          event.stopPropagation();
-          openAttachmentAiBriefModal(getAttachmentName(file), aiBrief || '—');
-        });
-        if (!aiBrief) {
-          briefButton.disabled = true;
-          briefButton.title = 'Кратко ИИ пока отсутствует';
-        }
-        briefWrap.appendChild(briefButton);
-        itemWrap.appendChild(briefWrap);
         filesList.appendChild(itemWrap);
       });
     } else {
@@ -12139,6 +12214,40 @@
       openResponseModal(doc);
     });
     actions.appendChild(responseButton);
+
+    var briefActionButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
+    briefActionButton.type = 'button';
+    briefActionButton.disabled = !attachments.length;
+    if (!attachments.length) {
+      briefActionButton.title = 'Нет прикреплённых файлов.';
+    }
+    briefActionButton.addEventListener('click', function() {
+      if (!attachments.length) {
+        return;
+      }
+      var linkedFiles = attachments.map(function(file) {
+        return {
+          name: getAttachmentName(file),
+          url: resolveAttachmentUrl(file, { bustCache: true }) || '',
+          storedName: file && file.storedName ? String(file.storedName) : '',
+          originalName: file && file.originalName ? String(file.originalName) : '',
+          aiBrief: getAttachmentAiBrief(file)
+        };
+      }).filter(function(file) {
+        return Boolean(file && file.url);
+      });
+      openAiBriefSummaryModal({
+        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
+        showMessage: showMessage,
+        documentData: doc || {},
+        linkedFiles: linkedFiles,
+        pendingFiles: [],
+        onBriefReady: function(source, briefText) {
+          return persistDocumentFileAiBrief(doc, source, briefText);
+        }
+      });
+    });
+    actions.appendChild(briefActionButton);
 
     var hasAttachments = Array.isArray(doc.files) && doc.files.length;
     var viewEntry = findCurrentUserViewEntry(doc);
@@ -13855,7 +13964,10 @@
         linkedFiles = currentDoc.files.map(function(file) {
           return {
             name: getAttachmentName(file),
-            url: resolveAttachmentUrl(file, { bustCache: true }) || ''
+            url: resolveAttachmentUrl(file, { bustCache: true }) || '',
+            storedName: file && file.storedName ? String(file.storedName) : '',
+            originalName: file && file.originalName ? String(file.originalName) : '',
+            aiBrief: getAttachmentAiBrief(file)
           };
         }).filter(function(file) {
           return Boolean(file && file.url);
@@ -13866,7 +13978,10 @@
         showMessage: showMessage,
         documentData: currentDoc || doc || {},
         pendingFiles: pendingFiles.slice(),
-        linkedFiles: linkedFiles
+        linkedFiles: linkedFiles,
+        onBriefReady: function(source, briefText) {
+          return persistDocumentFileAiBrief(currentDoc || doc, source, briefText);
+        }
       });
     });
     aiConclusionButton.type = 'button';
