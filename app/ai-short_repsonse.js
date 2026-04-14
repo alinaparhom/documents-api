@@ -662,7 +662,7 @@ export function createTelegramBriefAi(deps = {}) {
     container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
   }
 
-  return function openTelegramBriefModal(task, statusHandler) {
+  const openTelegramBriefModal = function openTelegramBriefModal(task, statusHandler) {
     ensureTelegramBriefModalStyle();
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -777,4 +777,22 @@ export function createTelegramBriefAi(deps = {}) {
 
     document.body.appendChild(modal);
   };
+
+  openTelegramBriefModal.requestBriefForSource = async function requestBriefForSource(source, onStatus) {
+    const setStatus = typeof onStatus === 'function'
+      ? onStatus
+      : () => {};
+    const payload = await requestTelegramVisionByFile(source, (message, tone) => {
+      setStatus(message, tone || 'loading');
+    });
+    return {
+      summary: toBriefSummaryText(payload && payload.summary),
+      model: normalizeValue(payload && payload.model),
+      timeMs: Number(payload && payload.timeMs) || 0,
+      warning: normalizeValue(payload && payload.warning),
+      raw: payload,
+    };
+  };
+
+  return openTelegramBriefModal;
 }
