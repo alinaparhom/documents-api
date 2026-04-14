@@ -13219,6 +13219,77 @@ switch ($action) {
 
             $removedCount = count($removedEntries);
             $message = $removedCount > 1 ? 'Подчинённые удалены.' : 'Подчинённый удалён.';
+        } elseif ($updateType === 'file_brief') {
+            if (!$isDirector && !$isTaskAssignee && !$isTaskSubordinate) {
+                respond_error('Недостаточно прав для сохранения краткого ИИ.', 403, [
+                    'requiresDirector' => true,
+                    'requiresAssignee' => true,
+                ]);
+            }
+
+            if (!isset($records[$recordIndex]['files']) || !is_array($records[$recordIndex]['files']) || empty($records[$recordIndex]['files'])) {
+                respond_error('В задаче нет файлов для сохранения краткого ИИ.', 404);
+            }
+
+            $nextAiBrief = sanitize_text_field((string) ($payload['aiBrief'] ?? ''), 2000);
+            if ($nextAiBrief === '') {
+                respond_error('Пустой краткий ИИ нельзя сохранить.', 400);
+            }
+
+            $storedNameCandidate = sanitize_text_field((string) ($payload['fileStoredName'] ?? ''), 255);
+            $originalNameCandidate = sanitize_text_field((string) ($payload['fileOriginalName'] ?? ''), 220);
+            $urlCandidateRaw = sanitize_text_field((string) ($payload['fileUrl'] ?? ''), 500);
+            $urlCandidate = '';
+            if ($urlCandidateRaw !== '') {
+                $urlPath = parse_url($urlCandidateRaw, PHP_URL_PATH);
+                if (is_string($urlPath) && $urlPath !== '') {
+                    $urlCandidate = sanitize_text_field(rawurldecode(basename($urlPath)), 255);
+                }
+            }
+
+            $updated = false;
+            foreach ($records[$recordIndex]['files'] as &$taskFile) {
+                if (!is_array($taskFile)) {
+                    continue;
+                }
+
+                $fileStoredName = sanitize_text_field((string) ($taskFile['storedName'] ?? ''), 255);
+                $fileOriginalName = sanitize_text_field((string) ($taskFile['originalName'] ?? ''), 220);
+                $fileUrlName = '';
+                if (!empty($taskFile['url'])) {
+                    $fileUrlPath = parse_url((string) $taskFile['url'], PHP_URL_PATH);
+                    if (is_string($fileUrlPath) && $fileUrlPath !== '') {
+                        $fileUrlName = sanitize_text_field(rawurldecode(basename($fileUrlPath)), 255);
+                    }
+                }
+
+                $isMatch = false;
+                if ($storedNameCandidate !== '' && $storedNameCandidate === $fileStoredName) {
+                    $isMatch = true;
+                } elseif ($originalNameCandidate !== '' && $originalNameCandidate === $fileOriginalName) {
+                    $isMatch = true;
+                } elseif ($urlCandidate !== '' && $urlCandidate === $fileUrlName) {
+                    $isMatch = true;
+                }
+
+                if (!$isMatch) {
+                    continue;
+                }
+
+                $taskFile['aiBrief'] = $nextAiBrief;
+                if (isset($taskFile['briefai'])) {
+                    unset($taskFile['briefai']);
+                }
+                $updated = true;
+                break;
+            }
+            unset($taskFile);
+
+            if (!$updated) {
+                respond_error('Не удалось найти файл для сохранения краткого ИИ.', 404);
+            }
+
+            $message = 'Кратко ИИ сохранено.';
         } elseif ($updateType === 'complete') {
             if (!$isDirector) {
                 respond_error('Недостаточно прав для завершения задачи.', 403, [

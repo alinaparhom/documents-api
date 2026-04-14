@@ -6528,6 +6528,9 @@ function resolveTaskViewerFiles(task) {
       previewUrl,
       name: displayName,
       kind,
+      storedName: normalizeValue(file.storedName),
+      originalName: normalizeValue(file.originalName),
+      sourceUrl: normalizeValue(file.url),
       aiBrief: normalizeBriefText(file.aiBrief),
     });
   });
@@ -8175,34 +8178,31 @@ function findTaskFileByViewerFile(task, file) {
 async function persistViewerFileAiBrief(task, file, briefText) {
   const documentId = normalizeValue(task && task.id);
   const organization = getTaskOrganization(task);
-  if (!documentId || !organization || !Array.isArray(task && task.files)) {
+  if (!documentId || !organization) {
     return false;
   }
 
-  const fileSnapshot = task.files.map((item) => (item && typeof item === 'object' ? { ...item } : item));
-  const target = findTaskFileByViewerFile({ files: fileSnapshot }, file);
-  if (!target || typeof target !== 'object') {
-    return false;
-  }
-  target.aiBrief = briefText;
-
-  const formData = new FormData();
-  formData.append('action', 'update');
-  formData.append('organization', organization);
-  formData.append('documentId', documentId);
-  formData.append('fields', new Blob([JSON.stringify({ files: fileSnapshot })], { type: 'application/json; charset=utf-8' }));
-  appendTelegramUserIdToFormData(formData);
-
-  const headers = {};
+  const payload = {
+    ...buildRequestBody({ includeInitData: false, includeNameTokens: false }),
+    action: 'mini_app_update_task',
+    updateType: 'file_brief',
+    organization,
+    documentId,
+    aiBrief: briefText,
+    fileStoredName: normalizeValue(file && file.storedName),
+    fileOriginalName: normalizeValue(file && file.originalName),
+    fileUrl: normalizeValue(file && (file.sourceUrl || file.url)),
+  };
+  const headers = { 'Content-Type': 'application/json' };
   if (state.telegram.initData) {
     headers['X-Telegram-Init-Data'] = state.telegram.initData;
   }
 
-  const response = await fetch(API_URL, {
+  const response = await fetch('/docs.php?action=mini_app_update_task', {
     method: 'POST',
     credentials: 'include',
     headers,
-    body: formData,
+    body: JSON.stringify(payload),
   });
   const data = await response.json().catch(() => null);
   if (!response.ok || !data || data.success !== true) {
