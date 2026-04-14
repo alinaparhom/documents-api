@@ -805,8 +805,8 @@
       .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+      .tg-ai-chat__toolbar--compact{grid-template-columns:repeat(2,minmax(0,1fr))}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
-      .tg-ai-chat__toggle--ghost{display:flex;align-items:center;justify-content:center;opacity:.55;pointer-events:none}
       .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
       .tg-ai-chat__input-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:end}
       .tg-ai-chat__input{min-height:52px;max-height:156px;border:1px solid rgba(148,163,184,.35);border-radius:14px;background:rgba(255,255,255,.98);padding:10px 12px;color:#0f172a;font-size:14px;line-height:1.4;resize:none;outline:none}
@@ -1787,13 +1787,12 @@
           <div class="tg-ai-chat__files-list" data-files-list></div>
         </div>
         <div class="tg-ai-chat__composer">
-          <div class="tg-ai-chat__toolbar">
+          <div class="tg-ai-chat__toolbar tg-ai-chat__toolbar--compact">
             <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
             <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
               <option value="" selected>🎯 Выберите режим</option>
               ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${escapeHtml(item.value)}">🎯 ${escapeHtml(item.label)}</option>`).join('')}
             </select>
-            <span class="tg-ai-chat__toggle tg-ai-chat__toggle--ghost" aria-hidden="true">Ввод</span>
           </div>
           <div class="tg-ai-chat__input-row">
             <textarea class="tg-ai-chat__input" data-prompt-input rows="2" placeholder="Например: Подготовь деловой ответ на претензию по этому документу"></textarea>
