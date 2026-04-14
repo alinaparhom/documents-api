@@ -2270,6 +2270,24 @@
     return normalizeAiBriefText(file.aiBrief || '');
   }
 
+  var attachmentAiBriefStateByKey = Object.create(null);
+
+  function buildAttachmentBriefCacheKey(doc, file) {
+    var docId = doc && doc.id !== undefined && doc.id !== null ? String(doc.id) : 'doc';
+    var fileKey = '';
+    if (file && typeof file === 'object') {
+      fileKey = String(
+        file.storedName
+        || file.originalName
+        || file.fileName
+        || file.name
+        || file.url
+        || ''
+      ).trim();
+    }
+    return docId + '::' + fileKey;
+  }
+
   function extractAiBriefFromPayload(payload) {
     if (!payload || typeof payload !== 'object') {
       return '';
@@ -12069,6 +12087,16 @@
     var attachments = Array.isArray(doc.files) ? doc.files : [];
     var filesSummary = createElement('div', 'documents-files__summary', 'Файлы (' + attachments.length + ')');
     filesCell.appendChild(filesSummary);
+    if (attachments.length) {
+      var filesBriefButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
+      filesBriefButton.type = 'button';
+      filesBriefButton.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        openDocumentAiBriefModal(doc, attachments, filesBriefButton);
+      });
+      filesCell.appendChild(filesBriefButton);
+    }
 
     var filesList = createElement('div', 'documents-files__list');
     if (attachments.length) {
@@ -12093,21 +12121,6 @@
           handleAttachmentPreview(doc, file, link);
         });
         itemWrap.appendChild(link);
-        var aiBrief = getAttachmentAiBrief(file);
-        var briefWrap = createElement('div', 'documents-file-ai-brief');
-        var briefButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
-        briefButton.type = 'button';
-        briefButton.addEventListener('click', function(event) {
-          event.preventDefault();
-          event.stopPropagation();
-          openAttachmentAiBriefModal(getAttachmentName(file), aiBrief || '—');
-        });
-        if (!aiBrief) {
-          briefButton.disabled = true;
-          briefButton.title = 'Кратко ИИ пока отсутствует';
-        }
-        briefWrap.appendChild(briefButton);
-        itemWrap.appendChild(briefWrap);
         filesList.appendChild(itemWrap);
       });
     } else {
@@ -14134,6 +14147,147 @@
       }
     });
     document.body.appendChild(overlay);
+  }
+
+  async function resolveAttachmentAiBrief(doc, file) {
+    if (!file || typeof file !== 'object') {
+      throw new Error('Файл не найден.');
+    }
+    var storedBrief = getAttachmentAiBrief(file);
+    if (storedBrief) {
+      return storedBrief;
+    }
+    var cacheKey = buildAttachmentBriefCacheKey(doc, file);
+    var cachedState = attachmentAiBriefStateByKey[cacheKey];
+    if (cachedState && cachedState.status === 'ready' && normalizeAiBriefText(cachedState.text || '')) {
+      return normalizeAiBriefText(cachedState.text || '');
+    }
+    if (cachedState && cachedState.status === 'loading' && cachedState.promise) {
+      return cachedState.promise;
+    }
+
+    var source = {
+      label: getAttachmentName(file),
+      url: resolveAttachmentUrl(file, { bustCache: true }) || ''
+    };
+    if (!source.url) {
+      throw new Error('Не удалось определить ссылку на файл.');
+    }
+    var apiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+    var promise = requestAiBriefSummaryByAttachment(source, apiUrl, 'paid')
+      .then(function(payload) {
+        var briefText = extractAiBriefFromPayload(payload);
+        if (!briefText) {
+          throw new Error('ИИ вернул пустой ответ.');
+        }
+        file.aiBrief = briefText;
+        attachmentAiBriefStateByKey[cacheKey] = {
+          status: 'ready',
+          text: briefText
+        };
+        return briefText;
+      })
+      .catch(function(error) {
+        attachmentAiBriefStateByKey[cacheKey] = {
+          status: 'error',
+          text: '',
+          error: error && error.message ? String(error.message) : 'Ошибка ИИ'
+        };
+        throw error;
+      });
+
+    attachmentAiBriefStateByKey[cacheKey] = {
+      status: 'loading',
+      text: '',
+      promise: promise
+    };
+
+    return promise;
+  }
+
+  function openDocumentAiBriefModal(doc, attachments, triggerButton) {
+    var files = Array.isArray(attachments) ? attachments.filter(Boolean) : [];
+    if (!files.length) {
+      showMessage('error', 'В задаче нет файлов для краткого вывода.');
+      return;
+    }
+
+    var overlay = createElement('div', 'documents-brief-modal');
+    var panel = createElement('div', 'documents-brief-panel');
+    var header = createElement('div', 'documents-brief-header');
+    var titleWrap = createElement('div', '');
+    titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Кратко ИИ'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Выберите файл для краткого вывода (Vision режим). ИИ читает только первые 5 страниц PDF.'));
+    var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+    var body = createElement('div', 'documents-brief-body');
+    var list = createElement('div', 'documents-brief-list');
+    var preview = createElement('pre', 'documents-brief-preview', 'Выберите файл для просмотра краткого вывода.');
+    var activeFileKey = '';
+
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', function() {
+      closeModal(overlay);
+    });
+
+    files.forEach(function(file, index) {
+      var name = getAttachmentName(file) || ('Файл ' + (index + 1));
+      var cacheKey = buildAttachmentBriefCacheKey(doc, file);
+      var button = createElement('button', 'documents-brief-item');
+      button.type = 'button';
+      button.appendChild(createElement('span', 'documents-brief-item-name', name));
+      button.appendChild(createElement('span', 'documents-brief-item-meta', 'Файл из задачи'));
+      button.addEventListener('click', function() {
+        activeFileKey = cacheKey;
+        Array.from(list.querySelectorAll('.documents-brief-item')).forEach(function(item) {
+          item.classList.toggle('is-active', item === button);
+        });
+
+        var readyBrief = getAttachmentAiBrief(file);
+        if (readyBrief) {
+          preview.classList.remove('is-loading');
+          preview.textContent = readyBrief;
+          return;
+        }
+
+        preview.classList.add('is-loading');
+        preview.textContent = '⏳ Кратко ИИ: вычисление...';
+        resolveAttachmentAiBrief(doc, file)
+          .then(function(briefText) {
+            if (activeFileKey !== cacheKey) {
+              return;
+            }
+            preview.classList.remove('is-loading');
+            preview.textContent = briefText;
+          })
+          .catch(function(error) {
+            if (activeFileKey !== cacheKey) {
+              return;
+            }
+            preview.classList.remove('is-loading');
+            preview.textContent = '⚠️ ' + (error && error.message ? error.message : 'Не удалось получить краткий вывод.');
+          });
+      });
+      list.appendChild(button);
+    });
+
+    header.appendChild(titleWrap);
+    header.appendChild(closeButton);
+    body.appendChild(list);
+    body.appendChild(preview);
+    panel.appendChild(header);
+    panel.appendChild(body);
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) {
+        closeModal(overlay);
+      }
+    });
+    document.body.appendChild(overlay);
+    document.addEventListener('keydown', handleEscape);
+
+    if (triggerButton) {
+      triggerButton.blur();
+    }
   }
 
   function openDocumentForm(doc) {

@@ -2625,7 +2625,7 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief>Кратко ИИ</button>
+      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief hidden>Кратко ИИ</button>
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
@@ -4624,22 +4624,6 @@ function populateCardFiles(card, files) {
     } else {
       element.removeAttribute('title');
     }
-    const actions = document.createElement('span');
-    actions.className = 'appdosc-card__file-actions';
-    const previewButton = document.createElement('button');
-    previewButton.type = 'button';
-    previewButton.className = 'appdosc-card__file-action';
-    previewButton.textContent = 'Просмотр';
-    previewButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const resolvedUrl = resolveDocumentUrl(normalizeValue(file.url) || normalizeValue(file.storedName));
-      if (resolvedUrl) {
-        openExternalDocument(resolvedUrl);
-      }
-    });
-    actions.appendChild(previewButton);
-    element.appendChild(actions);
     container.appendChild(element);
   });
 
@@ -7919,19 +7903,16 @@ function updateViewerDownloadState(file) {
   updateViewerBriefState(file);
 }
 
-function updateViewerBriefState(file) {
+function updateViewerBriefState() {
   if (!elements.viewerBrief) {
     return;
   }
-  const hasFile = Boolean(file && !file.isSummary);
-  elements.viewerBrief.disabled = !hasFile;
-  elements.viewerBrief.hidden = !hasFile;
-  elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
-  if (hasFile && !normalizeValue(file && file.aiBrief)) {
-    elements.viewerBrief.title = 'ИИ-кратко отсутствует, покажем прочерк';
-  } else {
-    elements.viewerBrief.removeAttribute('title');
-  }
+  elements.viewerBrief.disabled = true;
+  elements.viewerBrief.hidden = true;
+  elements.viewerBrief.style.display = 'none';
+  elements.viewerBrief.setAttribute('aria-disabled', 'true');
+  elements.viewerBrief.setAttribute('aria-hidden', 'true');
+  elements.viewerBrief.removeAttribute('title');
 }
 
 function canDeleteResponseFromViewer(file) {
@@ -8160,16 +8141,6 @@ async function handleViewerDeleteResponseClick() {
     updateViewerFileOwnerState(getViewerFileToDownload());
     updateViewerDeleteState(getViewerFileToDownload());
   }
-}
-
-function handleViewerBriefClick() {
-  const file = getViewerFileToDownload();
-  if (!file || file.isSummary) {
-    return;
-  }
-  const fileName = getAttachmentName(file) || 'Файл';
-  const briefText = normalizeValue(file.aiBrief) || '—';
-  openTelegramFileAiBriefModal(fileName, briefText);
 }
 
 async function handleViewerDownloadClick() {
@@ -15046,9 +15017,6 @@ function attachEvents() {
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
-  }
-  if (elements.viewerBrief) {
-    elements.viewerBrief.addEventListener('click', handleViewerBriefClick);
   }
   if (elements.viewerDeleteResponse) {
     elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
