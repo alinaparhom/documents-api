@@ -1264,7 +1264,9 @@
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
-    const officeSourceUrl = toAbsoluteUrl(previewUrl);
+    const generatedFileName = normalize(previewPayload.fileName);
+    const fallbackOfficePath = generatedFileName ? `/tmp/generated/${encodeURIComponent(generatedFileName)}` : '';
+    const officeSourceUrl = toAbsoluteUrl(previewUrl || fallbackOfficePath);
     const task = context && context.task ? context.task : {};
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
@@ -1426,7 +1428,8 @@
     const openOfficePreview = () => {
       toggleMenu(false);
       if (!canUseOfficeViewer) {
-        statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
+        statusNode.textContent = 'Office Viewer недоступен. Открываем локальный просмотр…';
+        openLocalPreview();
         return;
       }
       const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
