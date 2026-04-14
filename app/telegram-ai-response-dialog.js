@@ -1018,9 +1018,15 @@
   function buildGeneratedDocxUrlCandidates(previewPayload) {
     const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
     const fileName = normalize(previewPayload && previewPayload.fileName);
-    const mappedTmpUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/tmp/generated/') : '';
-    const directTmpUrl = fileName ? `/tmp/generated/${encodeURIComponent(fileName)}` : '';
-    return Array.from(new Set([previewUrl, mappedTmpUrl, directTmpUrl].filter(Boolean))).map((url) => toAbsoluteUrl(url));
+    const directGeneratedUrl = fileName ? `/js/documents/tmp/generated/${encodeURIComponent(fileName)}` : '';
+    const mappedTmpUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
+    const mappedLegacyTmpUrl = previewUrl ? previewUrl.replace(/\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
+    return Array.from(new Set([
+      directGeneratedUrl,
+      mappedTmpUrl,
+      mappedLegacyTmpUrl,
+      previewUrl,
+    ].filter(Boolean))).map((url) => toAbsoluteUrl(url));
   }
 
   async function resolveGeneratedDocxBlob(previewPayload) {
@@ -1209,7 +1215,7 @@
         <div class="tg-ai-generated-preview__head">
           <div>
             <div class="tg-ai-generated-preview__title">Предварительный просмотр</div>
-            <div class="tg-ai-generated-preview__hint">Локальная копия документа как в файле</div>
+            <div class="tg-ai-generated-preview__hint">Открытие через Office Viewer в этом окне</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
             <div class="tg-ai-generated-preview__zoom">
@@ -1268,9 +1274,6 @@
       fileName: generatedFileName,
     }).filter((url) => /^https?:\/\//i.test(url));
     const task = context && context.task ? context.task : {};
-    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     let zoom = 1;
@@ -1375,21 +1378,6 @@
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
         return false;
       }
-      const openExternalOffice = (officeUrl) => {
-        const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
-        if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
-          try {
-            telegramWebApp.openLink(officeUrl);
-            return true;
-          } catch (_) {}
-        }
-        try {
-          window.open(officeUrl, '_blank', 'noopener');
-          return true;
-        } catch (_) {
-          return false;
-        }
-      };
       if (loadingNode) loadingNode.style.display = '';
       if (docNode) docNode.style.display = 'none';
       if (viewportNode) viewportNode.style.display = 'none';
@@ -1410,36 +1398,9 @@
         const fallbackTimer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          const viewerFile = {
-            name: generatedFileName || 'answer.docx',
-            originalName: generatedFileName || 'answer.docx',
-            storedName: generatedFileName || 'answer.docx',
-            url: sourceUrl,
-            resolvedUrl: toAbsoluteUrl(sourceUrl),
-            previewUrl: sourceUrl,
-            fileUrl: sourceUrl,
-            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            kind: 'office',
-          };
-          if (openFilesViewer) {
-            Promise.resolve(openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }))
-              .then(() => {
-                if (loadingNode) loadingNode.style.display = 'none';
-                statusNode.textContent = 'Открыто через «Просмотреть».';
-                resolve(true);
-              })
-              .catch(() => {
-                const opened = openExternalOffice(officeUrl);
-                if (loadingNode) loadingNode.style.display = 'none';
-                statusNode.textContent = opened ? 'Office Viewer открыт внешне.' : 'Не удалось открыть документ.';
-                resolve(opened);
-              });
-            return;
-          }
-          const opened = openExternalOffice(officeUrl);
           if (loadingNode) loadingNode.style.display = 'none';
-          statusNode.textContent = opened ? 'Office Viewer открыт внешне.' : 'Не удалось открыть документ.';
-          resolve(opened);
+          statusNode.textContent = 'Не удалось открыть в окне. Нажмите «Скачать».';
+          resolve(false);
         }, 5500);
         if (!frameNode) {
           clearTimeout(fallbackTimer);
