@@ -2258,8 +2258,7 @@
   function normalizeAiBriefText(text) {
     return String(text || '')
       .replace(/\r\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\u0000/g, '')
       .trim();
   }
 
@@ -14114,13 +14113,19 @@
     var body = createElement('div', 'documents-form');
     var fileHint = createElement('div', 'documents-form__hint', 'Файл: ' + (fileName || 'Файл'));
     var resultTitle = createElement('div', 'documents-form__hint', 'Результат анализа');
-    var resultBox = createElement('div', 'documents-conclusion-preview');
+    var resultBox = document.createElement('pre');
+    resultBox.className = 'documents-conclusion-preview';
     resultBox.style.whiteSpace = 'pre-wrap';
     resultBox.style.lineHeight = '1.6';
     resultBox.style.fontSize = '14px';
     resultBox.style.padding = '14px';
     resultBox.style.borderRadius = '14px';
     resultBox.style.background = 'rgba(248, 250, 252, 0.9)';
+    resultBox.style.border = '1px solid rgba(203, 213, 225, 0.7)';
+    resultBox.style.fontFamily = 'Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    resultBox.style.tabSize = '4';
+    resultBox.style.overflow = 'auto';
+    resultBox.style.margin = '0';
     resultBox.textContent = briefText || 'Пустой ответ от ИИ.';
     body.appendChild(fileHint);
     body.appendChild(resultTitle);
