@@ -3903,7 +3903,7 @@ function createCard(task, index, anchorRegistry) {
     if (aiBriefFiles.length) {
       aiBriefFiles.forEach((file, index) => {
         const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
-        const aiBriefText = normalizeValue(file && file.aiBrief);
+        const aiBriefText = normalizeBriefText(file && file.aiBrief);
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(148,163,184,.32);';
         const label = document.createElement('span');
@@ -4530,12 +4530,12 @@ function openTelegramFileAiBriefModal(fileName, briefText) {
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:4000;background:rgba(15,23,42,.42);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:10px;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'width:min(680px,100%);max-height:84vh;overflow:auto;border-radius:18px;padding:14px;background:rgba(255,255,255,.96);border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 40px rgba(15,23,42,.24);';
+  panel.style.cssText = 'width:min(760px,100%);max-height:84vh;overflow:auto;border-radius:18px;padding:14px;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.95));border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 40px rgba(15,23,42,.24);';
   const title = document.createElement('div');
   title.style.cssText = 'font-size:15px;font-weight:700;color:#0f172a;margin-bottom:8px;';
   title.textContent = fileName || 'Файл';
   const text = document.createElement('pre');
-  text.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;font:500 13px/1.5 Inter,system-ui,sans-serif;color:#1e293b;background:rgba(248,250,252,.95);border-radius:12px;padding:12px;';
+  text.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;tab-size:4;font:500 13px/1.65 Inter,system-ui,sans-serif;color:#1e293b;background:rgba(248,250,252,.95);border-radius:12px;padding:14px;border:1px solid rgba(203,213,225,.72);';
   text.textContent = briefText || '—';
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
@@ -6528,7 +6528,10 @@ function resolveTaskViewerFiles(task) {
       previewUrl,
       name: displayName,
       kind,
-      aiBrief: normalizeValue(file.aiBrief),
+      storedName: normalizeValue(file.storedName),
+      originalName: normalizeValue(file.originalName),
+      sourceUrl: normalizeValue(file.url),
+      aiBrief: normalizeBriefText(file.aiBrief),
     });
   });
 
@@ -7905,7 +7908,7 @@ function updateViewerBriefState(file) {
   elements.viewerBrief.disabled = !hasFile;
   elements.viewerBrief.hidden = !hasFile;
   elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
-  if (hasFile && !normalizeValue(file && file.aiBrief)) {
+  if (hasFile && !normalizeBriefText(file && file.aiBrief)) {
     elements.viewerBrief.title = 'ИИ-кратко отсутствует — рассчитаем после нажатия';
   } else {
     elements.viewerBrief.removeAttribute('title');
@@ -8146,7 +8149,7 @@ function handleViewerBriefClick() {
     return;
   }
   const fileName = getAttachmentName(file) || 'Файл';
-  const briefText = normalizeValue(file.aiBrief);
+  const briefText = normalizeBriefText(file.aiBrief);
   if (briefText) {
     openTelegramFileAiBriefModal(fileName, briefText);
     return;
@@ -8175,34 +8178,31 @@ function findTaskFileByViewerFile(task, file) {
 async function persistViewerFileAiBrief(task, file, briefText) {
   const documentId = normalizeValue(task && task.id);
   const organization = getTaskOrganization(task);
-  if (!documentId || !organization || !Array.isArray(task && task.files)) {
+  if (!documentId || !organization) {
     return false;
   }
 
-  const fileSnapshot = task.files.map((item) => (item && typeof item === 'object' ? { ...item } : item));
-  const target = findTaskFileByViewerFile({ files: fileSnapshot }, file);
-  if (!target || typeof target !== 'object') {
-    return false;
-  }
-  target.aiBrief = briefText;
-
-  const formData = new FormData();
-  formData.append('action', 'update');
-  formData.append('organization', organization);
-  formData.append('documentId', documentId);
-  formData.append('fields', new Blob([JSON.stringify({ files: fileSnapshot })], { type: 'application/json; charset=utf-8' }));
-  appendTelegramUserIdToFormData(formData);
-
-  const headers = {};
+  const payload = {
+    ...buildRequestBody({ includeInitData: false, includeNameTokens: false }),
+    action: 'mini_app_update_task',
+    updateType: 'file_brief',
+    organization,
+    documentId,
+    aiBrief: briefText,
+    fileStoredName: normalizeValue(file && file.storedName),
+    fileOriginalName: normalizeValue(file && file.originalName),
+    fileUrl: normalizeValue(file && (file.sourceUrl || file.url)),
+  };
+  const headers = { 'Content-Type': 'application/json' };
   if (state.telegram.initData) {
     headers['X-Telegram-Init-Data'] = state.telegram.initData;
   }
 
-  const response = await fetch(API_URL, {
+  const response = await fetch('/docs.php?action=mini_app_update_task', {
     method: 'POST',
     credentials: 'include',
     headers,
-    body: formData,
+    body: JSON.stringify(payload),
   });
   const data = await response.json().catch(() => null);
   if (!response.ok || !data || data.success !== true) {
@@ -8238,7 +8238,7 @@ async function generateViewerFileAiBrief(file, fileName) {
     const result = await telegramBriefModalFactory.requestBriefForSource(source, (message, tone) => {
       setStatus(tone === 'error' ? 'error' : 'info', `Кратко ИИ: ${message}`);
     });
-    const nextBrief = normalizeValue(result && result.summary);
+    const nextBrief = normalizeBriefText(result && result.summary);
     if (!nextBrief) {
       throw new Error('ИИ вернул пустой краткий ответ.');
     }
@@ -11039,6 +11039,12 @@ function normalizeValue(value) {
 
   const string = String(value).trim();
   return string && string !== '—' ? string : '';
+}
+
+function normalizeBriefText(value) {
+  const source = value === null || value === undefined ? '' : String(value);
+  const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '');
+  return normalized.trim() ? normalized : '';
 }
 
 function normalizeAssignmentComment(value) {
