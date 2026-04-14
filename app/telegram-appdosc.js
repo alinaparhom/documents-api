@@ -2625,7 +2625,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief hidden>Кратко ИИ</button>
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
@@ -3944,11 +3943,6 @@ function createCard(task, index, anchorRegistry) {
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
   }
-  const briefButton = card.querySelector('[data-card-brief]');
-  if (briefButton) {
-    briefButton.addEventListener('click', () => openTelegramBriefModal(task, setStatus));
-  }
-
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -4624,22 +4618,6 @@ function populateCardFiles(card, files) {
     } else {
       element.removeAttribute('title');
     }
-    const actions = document.createElement('span');
-    actions.className = 'appdosc-card__file-actions';
-    const previewButton = document.createElement('button');
-    previewButton.type = 'button';
-    previewButton.className = 'appdosc-card__file-action';
-    previewButton.textContent = 'Просмотр';
-    previewButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const resolvedUrl = resolveDocumentUrl(normalizeValue(file.url) || normalizeValue(file.storedName));
-      if (resolvedUrl) {
-        openExternalDocument(resolvedUrl);
-      }
-    });
-    actions.appendChild(previewButton);
-    element.appendChild(actions);
     container.appendChild(element);
   });
 
@@ -7928,7 +7906,7 @@ function updateViewerBriefState(file) {
   elements.viewerBrief.hidden = !hasFile;
   elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
   if (hasFile && !normalizeValue(file && file.aiBrief)) {
-    elements.viewerBrief.title = 'ИИ-кратко отсутствует, покажем прочерк';
+    elements.viewerBrief.title = 'ИИ-кратко отсутствует — рассчитаем после нажатия';
   } else {
     elements.viewerBrief.removeAttribute('title');
   }
@@ -8168,8 +8146,162 @@ function handleViewerBriefClick() {
     return;
   }
   const fileName = getAttachmentName(file) || 'Файл';
-  const briefText = normalizeValue(file.aiBrief) || '—';
-  openTelegramFileAiBriefModal(fileName, briefText);
+  const briefText = normalizeValue(file.aiBrief);
+  if (briefText) {
+    openTelegramFileAiBriefModal(fileName, briefText);
+    return;
+  }
+  void generateViewerFileAiBrief(file, fileName);
+}
+
+function findTaskFileByViewerFile(task, file) {
+  if (!task || !Array.isArray(task.files) || !file) {
+    return null;
+  }
+  const storedName = normalizeValue(file.storedName);
+  const originalName = normalizeValue(file.originalName);
+  const url = normalizeValue(file.url);
+  return task.files.find((candidate) => {
+    if (!candidate || typeof candidate !== 'object') {
+      return false;
+    }
+    const sameStored = storedName && normalizeValue(candidate.storedName) === storedName;
+    const sameOriginal = originalName && normalizeValue(candidate.originalName) === originalName;
+    const sameUrl = url && normalizeValue(candidate.url) === url;
+    return Boolean(sameStored || sameOriginal || sameUrl);
+  }) || null;
+}
+
+async function persistViewerFileAiBrief(task, file, briefText) {
+  const documentId = normalizeValue(task && task.id);
+  const organization = getTaskOrganization(task);
+  if (!documentId || !organization || !Array.isArray(task && task.files)) {
+    return false;
+  }
+
+  const fileSnapshot = task.files.map((item) => (item && typeof item === 'object' ? { ...item } : item));
+  const target = findTaskFileByViewerFile({ files: fileSnapshot }, file);
+  if (!target || typeof target !== 'object') {
+    return false;
+  }
+  target.aiBrief = briefText;
+
+  const formData = new FormData();
+  formData.append('action', 'update');
+  formData.append('organization', organization);
+  formData.append('documentId', documentId);
+  formData.append('fields', new Blob([JSON.stringify({ files: fileSnapshot })], { type: 'application/json; charset=utf-8' }));
+  appendTelegramUserIdToFormData(formData);
+
+  const headers = {};
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: formData,
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || data.success !== true) {
+    throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
+  }
+  return true;
+}
+
+async function generateViewerFileAiBrief(file, fileName) {
+  if (!elements.viewerBrief || elements.viewerBrief.dataset.loading === 'true') {
+    return;
+  }
+  const task = viewerTabsState.task;
+  if (!task) {
+    setStatus('warning', 'Не удалось определить задачу для краткого ИИ.');
+    return;
+  }
+  if (!telegramBriefModalFactory || typeof telegramBriefModalFactory.requestBriefForSource !== 'function') {
+    setStatus('error', 'Модуль Кратко ИИ не загружен.');
+    return;
+  }
+
+  setActionButtonLoading(elements.viewerBrief, true);
+  const stopViewerBriefLoading = startViewerBriefLoadingAnimation();
+  const source = {
+    label: fileName || getAttachmentName(file) || 'Файл',
+    url: resolveFileFetchUrl(file),
+    fileObject: file && file.fileObject instanceof File ? file.fileObject : null,
+  };
+
+  try {
+    setStatus('info', 'Кратко ИИ: подготавливаю файл...');
+    const result = await telegramBriefModalFactory.requestBriefForSource(source, (message, tone) => {
+      setStatus(tone === 'error' ? 'error' : 'info', `Кратко ИИ: ${message}`);
+    });
+    const nextBrief = normalizeValue(result && result.summary);
+    if (!nextBrief) {
+      throw new Error('ИИ вернул пустой краткий ответ.');
+    }
+
+    file.aiBrief = nextBrief;
+    const taskFile = findTaskFileByViewerFile(task, file);
+    if (taskFile) {
+      taskFile.aiBrief = nextBrief;
+    }
+
+    try {
+      await persistViewerFileAiBrief(task, file, nextBrief);
+    } catch (error) {
+      setStatus('warning', `Кратко ИИ сохранено локально: ${error instanceof Error ? error.message : 'ошибка сохранения'}`);
+    }
+
+    updateViewerBriefState(file);
+    openTelegramFileAiBriefModal(fileName, nextBrief);
+    setStatus('success', 'Кратко ИИ готово.');
+  } catch (error) {
+    setStatus('error', `Кратко ИИ: ${error instanceof Error ? error.message : 'неизвестная ошибка'}`);
+  } finally {
+    setActionButtonLoading(elements.viewerBrief, false);
+    stopViewerBriefLoading();
+  }
+}
+
+function startViewerBriefLoadingAnimation() {
+  if (!elements.viewerBrief) {
+    return () => {};
+  }
+  const button = elements.viewerBrief;
+  const initialText = button.textContent || 'Кратко - ИИ';
+  const initialTitle = button.getAttribute('title') || '';
+  const initialBackground = button.style.background;
+  const initialBorderColor = button.style.borderColor;
+  const initialColor = button.style.color;
+  let frame = 0;
+
+  button.setAttribute('aria-busy', 'true');
+  button.style.background = 'linear-gradient(135deg, rgba(239,246,255,.96), rgba(224,242,254,.95))';
+  button.style.borderColor = 'rgba(59,130,246,.55)';
+  button.style.color = '#1d4ed8';
+
+  const timerId = window.setInterval(() => {
+    frame = (frame + 1) % 4;
+    const dots = '.'.repeat(frame);
+    button.textContent = `⏳ Кратко ИИ${dots}`;
+  }, 260);
+
+  return () => {
+    window.clearInterval(timerId);
+    button.textContent = initialText;
+    button.style.background = initialBackground;
+    button.style.borderColor = initialBorderColor;
+    button.style.color = initialColor;
+    if (initialTitle) {
+      button.setAttribute('title', initialTitle);
+    } else {
+      button.removeAttribute('title');
+    }
+    button.setAttribute('aria-busy', 'false');
+  };
 }
 
 async function handleViewerDownloadClick() {
