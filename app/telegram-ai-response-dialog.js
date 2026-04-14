@@ -1224,7 +1224,6 @@
         <div class="tg-ai-generated-preview__menu" data-preview-menu hidden>
           <button type="button" class="tg-ai-generated-preview__btn" data-preview-attach>Прикрепить к задаче</button>
           <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
-          <button type="button" class="tg-ai-generated-preview__btn" data-preview-local>Локально</button>
           <button type="button" class="tg-ai-generated-preview__btn" data-preview-office>Office Viewer</button>
           <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
         </div>
@@ -1235,14 +1234,9 @@
           <iframe class="tg-ai-generated-preview__frame" title="Office Web Viewer" data-preview-frame></iframe>
           <div class="tg-ai-generated-preview__loading" data-preview-loading>
             <div class="tg-ai-generated-preview__loading-card">
-              <div class="tg-ai-generated-preview__loading-title">Готовим локальный предпросмотр…</div>
-              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Рендерим документ прямо в браузере.</div>
+              <div class="tg-ai-generated-preview__loading-title">Открываем документ…</div>
+              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Быстрый просмотр через Office Viewer.</div>
               <div class="tg-ai-generated-preview__bar"></div>
-              <div class="tg-ai-generated-preview__steps">
-                <div class="tg-ai-generated-preview__step tg-ai-generated-preview__step--active" data-step="1"><span class="tg-ai-generated-preview__step-dot"></span><span>1. Подготовка файла</span></div>
-                <div class="tg-ai-generated-preview__step" data-step="2"><span class="tg-ai-generated-preview__step-dot"></span><span>2. Подключение движка</span></div>
-                <div class="tg-ai-generated-preview__step" data-step="3"><span class="tg-ai-generated-preview__step-dot"></span><span>3. Отрисовка документа</span></div>
-              </div>
             </div>
           </div>
         </div>
@@ -1258,7 +1252,6 @@
     const loadingSubNode = overlay.querySelector('[data-loading-sub]');
     const downloadBtn = overlay.querySelector('[data-preview-download]');
     const attachBtn = overlay.querySelector('[data-preview-attach]');
-    const localBtn = overlay.querySelector('[data-preview-local]');
     const officeBtn = overlay.querySelector('[data-preview-office]');
     const menuNode = overlay.querySelector('[data-preview-menu]');
     const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
@@ -1267,7 +1260,6 @@
     const zoomInBtn = overlay.querySelector('[data-preview-zoom-in]');
     const zoomValueNode = overlay.querySelector('[data-preview-zoom-value]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
-    const loadingSteps = Array.from(overlay.querySelectorAll('[data-step]'));
     const previewUrl = normalize(previewPayload.previewUrl);
     const officeSourceCandidates = buildGeneratedDocxUrlCandidates(previewPayload).filter((url) => /^https?:\/\//i.test(url));
     const officeSourceUrl = officeSourceCandidates[0] || '';
@@ -1372,69 +1364,11 @@
       });
     }
 
-    let step = 1;
-    const setStep = (value, subtitle) => {
-      step = value;
-      loadingSteps.forEach((node) => {
-        const idx = Number(node.getAttribute('data-step') || '0');
-        node.classList.toggle('tg-ai-generated-preview__step--active', idx === step);
-        node.classList.toggle('tg-ai-generated-preview__step--done', idx < step);
-      });
-      if (loadingSubNode && subtitle) loadingSubNode.textContent = subtitle;
-    };
-
-    const openLocalPreview = async () => {
-      if (localBtn) {
-        localBtn.disabled = true;
-        localBtn.textContent = 'Открываю…';
-      }
-      if (docNode) docNode.style.display = '';
-      if (viewportNode) viewportNode.style.display = '';
-      if (frameNode) frameNode.style.display = 'none';
-      if (loadingNode) loadingNode.style.display = '';
-      statusNode.textContent = 'Подготовка локального предпросмотра…';
-      try {
-        const localBlob = await resolveGeneratedDocxBlob(previewPayload);
-        if (!localBlob || !localBlob.size) throw new Error('empty_blob');
-        setStep(1, 'Подготавливаем файл...');
-        const renderer = await ensureDocxPreviewLibrariesLoaded();
-        setStep(2, 'Подключаем движок предпросмотра...');
-        const arrayBuffer = await localBlob.arrayBuffer();
-        setStep(3, 'Отрисовываем документ...');
-        docNode.innerHTML = '';
-        docNode.style.visibility = 'hidden';
-        await renderer.renderAsync(arrayBuffer, docNode, null, {
-          inWrapper: true,
-          breakPages: true,
-          renderHeaders: true,
-          renderFooters: true,
-          renderFootnotes: true,
-          useBase64URL: true,
-          ignoreWidth: true,
-          ignoreHeight: false,
-          ignoreFonts: false,
-        });
-        applyZoom();
-        docNode.style.visibility = '';
-        if (loadingNode) loadingNode.style.display = 'none';
-        statusNode.textContent = 'Готово: локальный предпросмотр открыт.';
-      } catch (_) {
-        if (loadingNode) loadingNode.style.display = 'none';
-        statusNode.textContent = 'Локальный предпросмотр не открылся. Используйте Office Viewer.';
-      } finally {
-        if (localBtn) {
-          localBtn.disabled = false;
-          localBtn.textContent = 'Локально';
-        }
-      }
-    };
-
     const canUseOfficeViewer = Boolean(officeSourceCandidates.length) || Boolean((openViewerFile || openFilesViewer) && officeSourceUrl);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
     }
-    localBtn?.addEventListener('click', () => { toggleMenu(false); openLocalPreview(); });
     const openViaOfficeViewer = () => {
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
@@ -1535,15 +1469,11 @@
       toggleMenu(false);
       openViaOfficeViewer().then((opened) => {
         if (!opened) {
-          statusNode.textContent = 'Office Viewer недоступен. Открываем локальный режим…';
-          openLocalPreview();
+          statusNode.textContent = 'Office Viewer недоступен. Нажмите «Скачать».';
         }
       });
     });
-    const openedViaOffice = await openViaOfficeViewer();
-    if (!openedViaOffice) {
-      await openLocalPreview();
-    }
+    await openViaOfficeViewer();
   }
 
   function openTemplateAnswerEditor(context = {}) {
