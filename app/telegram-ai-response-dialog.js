@@ -1220,7 +1220,7 @@
         <div class="tg-ai-generated-preview__head">
           <div>
             <div class="tg-ai-generated-preview__title">Предварительный просмотр</div>
-            <div class="tg-ai-generated-preview__hint">Открытие через Office Viewer в этом окне</div>
+            <div class="tg-ai-generated-preview__hint">Локальный предпросмотр документа в этом окне</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
             <div class="tg-ai-generated-preview__zoom">
@@ -1235,18 +1235,16 @@
         <div class="tg-ai-generated-preview__menu" data-preview-menu hidden>
           <button type="button" class="tg-ai-generated-preview__btn" data-preview-attach>Прикрепить к задаче</button>
           <button type="button" class="tg-ai-generated-preview__btn tg-ai-generated-preview__btn--primary" data-preview-download>Скачать</button>
-          <button type="button" class="tg-ai-generated-preview__btn" data-preview-office>Office Viewer</button>
           <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
         </div>
         <div class="tg-ai-generated-preview__body">
           <div class="tg-ai-generated-preview__viewport" data-preview-viewport>
             <div class="tg-ai-generated-preview__doc" data-preview-doc aria-label="DOCX preview"></div>
           </div>
-          <iframe class="tg-ai-generated-preview__frame" title="Office Web Viewer" data-preview-frame></iframe>
           <div class="tg-ai-generated-preview__loading" data-preview-loading>
             <div class="tg-ai-generated-preview__loading-card">
               <div class="tg-ai-generated-preview__loading-title">Открываем документ…</div>
-              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Быстрый просмотр через Office Viewer.</div>
+              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Локальная отрисовка документа.</div>
               <div class="tg-ai-generated-preview__bar"></div>
             </div>
           </div>
@@ -1257,13 +1255,11 @@
     document.body.appendChild(overlay);
     const docNode = overlay.querySelector('[data-preview-doc]');
     const viewportNode = overlay.querySelector('[data-preview-viewport]');
-    const frameNode = overlay.querySelector('[data-preview-frame]');
     const statusNode = overlay.querySelector('[data-preview-status]');
     const loadingNode = overlay.querySelector('[data-preview-loading]');
     const loadingSubNode = overlay.querySelector('[data-loading-sub]');
     const downloadBtn = overlay.querySelector('[data-preview-download]');
     const attachBtn = overlay.querySelector('[data-preview-attach]');
-    const officeBtn = overlay.querySelector('[data-preview-office]');
     const menuNode = overlay.querySelector('[data-preview-menu]');
     const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
     const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
@@ -1275,15 +1271,6 @@
     const generatedFileName = normalize(previewPayload.fileName)
       || normalize(previewUrl.split('/').pop());
     const task = context && context.task ? context.task : {};
-    const officeSourceCandidates = buildGeneratedDocxUrlCandidates({
-      previewUrl,
-      fileName: generatedFileName,
-    }, {
-      organization: normalize(task && (task.organization || task.organizationName || task.org)),
-    }).filter((url) => /^https?:\/\//i.test(url));
-    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     let zoom = 1;
@@ -1378,95 +1365,30 @@
       });
     }
 
-    const canUseOfficeViewer = officeSourceCandidates.length > 0;
-    if (officeBtn && !canUseOfficeViewer) {
-      officeBtn.disabled = true;
-      officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
+    try {
+      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 1/2: Загружаем файл…';
+      statusNode.textContent = 'Подготовка локального предпросмотра…';
+      const [renderer, blob] = await Promise.all([
+        ensureDocxPreviewLibrariesLoaded(),
+        resolveGeneratedDocxBlob(previewPayload),
+      ]);
+      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 2/2: Рисуем страницы…';
+      await renderer.renderAsync(blob, docNode, null, {
+        className: 'docx',
+        breakPages: true,
+        ignoreWidth: false,
+        ignoreHeight: false,
+        useBase64URL: true,
+        inWrapper: true,
+      });
+      if (viewportNode) viewportNode.style.display = '';
+      if (loadingNode) loadingNode.style.display = 'none';
+      applyZoom();
+      statusNode.textContent = `Готово: ${generatedFileName || 'документ'} открыт локально.`;
+    } catch (error) {
+      if (loadingNode) loadingNode.style.display = 'none';
+      statusNode.textContent = `Не удалось открыть документ: ${(error && error.message) || 'ошибка рендера'}`;
     }
-    const openViaOfficeViewer = async () => {
-      if (!canUseOfficeViewer) {
-        statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
-        return false;
-      }
-      if (loadingNode) loadingNode.style.display = '';
-      if (docNode) docNode.style.display = 'none';
-      if (viewportNode) viewportNode.style.display = 'none';
-      if (frameNode) {
-        frameNode.style.display = '';
-        frameNode.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
-      }
-      statusNode.textContent = 'Открываем через Office Viewer…';
-      const resolvedSource = await resolveFirstAvailableUrl(officeSourceCandidates);
-      const sourceUrl = resolvedSource || officeSourceCandidates[0] || '';
-      if (!sourceUrl) {
-        if (loadingNode) loadingNode.style.display = 'none';
-        return false;
-      }
-      return new Promise((resolve) => {
-        const sourceWithBuster = sourceUrl.includes('?')
-          ? `${sourceUrl}&v=${Date.now()}`
-          : `${sourceUrl}?v=${Date.now()}`;
-        const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceWithBuster)}`;
-        const viewerFile = {
-          name: generatedFileName || 'answer.docx',
-          originalName: generatedFileName || 'answer.docx',
-          storedName: generatedFileName || 'answer.docx',
-          url: sourceUrl,
-          resolvedUrl: toAbsoluteUrl(sourceUrl),
-          previewUrl: sourceUrl,
-          fileUrl: sourceUrl,
-          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          kind: 'office',
-        };
-        const openViaStandardViewerFallback = () => {
-          if (!openFilesViewer) return resolve(false);
-          Promise.resolve(openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }))
-            .then(() => resolve(true))
-            .catch(() => resolve(false));
-        };
-        let settled = false;
-        const fallbackTimer = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          if (loadingNode) loadingNode.style.display = 'none';
-          statusNode.textContent = 'Открываю через логику «Просмотреть»…';
-          openViaStandardViewerFallback();
-        }, 5500);
-        if (!frameNode) {
-          clearTimeout(fallbackTimer);
-          resolve(false);
-          return;
-        }
-        frameNode.onerror = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(fallbackTimer);
-          if (loadingNode) loadingNode.style.display = 'none';
-          statusNode.textContent = 'Открываю через логику «Просмотреть»…';
-          openViaStandardViewerFallback();
-        };
-        frameNode.onload = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(fallbackTimer);
-          if (loadingNode) loadingNode.style.display = 'none';
-          statusNode.textContent = 'Документ открыт через Office Viewer.';
-          resolve(true);
-        };
-        frameNode.src = officeUrl;
-      });
-    };
-    officeBtn?.addEventListener('click', () => {
-      toggleMenu(false);
-      openViaOfficeViewer().then((opened) => {
-        if (!opened) {
-          if (loadingNode) loadingNode.style.display = 'none';
-          statusNode.textContent = 'Office Viewer недоступен. Нажмите «Скачать».';
-        }
-      });
-    });
-    const opened = await openViaOfficeViewer();
-    if (!opened && loadingNode) loadingNode.style.display = 'none';
   }
 
   function openTemplateAnswerEditor(context = {}) {
