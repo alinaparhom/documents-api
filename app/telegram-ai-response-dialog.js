@@ -1015,13 +1015,18 @@
     setTimeout(() => toast.remove(), 3500);
   }
 
-  function buildGeneratedDocxUrlCandidates(previewPayload) {
+  function buildGeneratedDocxUrlCandidates(previewPayload, options = {}) {
     const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
     const fileName = normalize(previewPayload && previewPayload.fileName);
+    const organization = normalize(options && options.organization).replace(/^\/+|\/+$/g, '');
     const directGeneratedUrl = fileName ? `/js/documents/tmp/generated/${encodeURIComponent(fileName)}` : '';
+    const directOrganizationGeneratedUrl = (organization && fileName)
+      ? `/js/documents/${encodeURIComponent(organization)}/tmp/generated/${encodeURIComponent(fileName)}`
+      : '';
     const mappedTmpUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
     const mappedLegacyTmpUrl = previewUrl ? previewUrl.replace(/\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
     return Array.from(new Set([
+      directOrganizationGeneratedUrl,
       directGeneratedUrl,
       mappedTmpUrl,
       mappedLegacyTmpUrl,
@@ -1269,11 +1274,16 @@
     const previewUrl = normalize(previewPayload.previewUrl);
     const generatedFileName = normalize(previewPayload.fileName)
       || normalize(previewUrl.split('/').pop());
+    const task = context && context.task ? context.task : {};
     const officeSourceCandidates = buildGeneratedDocxUrlCandidates({
       previewUrl,
       fileName: generatedFileName,
+    }, {
+      organization: normalize(task && (task.organization || task.organizationName || task.org)),
     }).filter((url) => /^https?:\/\//i.test(url));
-    const task = context && context.task ? context.task : {};
+    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
+      ? window.__APPDOSC_OPEN_FILES_VIEWER__
+      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     let zoom = 1;
@@ -1393,14 +1403,34 @@
         return false;
       }
       return new Promise((resolve) => {
-        const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
+        const sourceWithBuster = sourceUrl.includes('?')
+          ? `${sourceUrl}&v=${Date.now()}`
+          : `${sourceUrl}?v=${Date.now()}`;
+        const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceWithBuster)}`;
+        const viewerFile = {
+          name: generatedFileName || 'answer.docx',
+          originalName: generatedFileName || 'answer.docx',
+          storedName: generatedFileName || 'answer.docx',
+          url: sourceUrl,
+          resolvedUrl: toAbsoluteUrl(sourceUrl),
+          previewUrl: sourceUrl,
+          fileUrl: sourceUrl,
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          kind: 'office',
+        };
+        const openViaStandardViewerFallback = () => {
+          if (!openFilesViewer) return resolve(false);
+          Promise.resolve(openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }))
+            .then(() => resolve(true))
+            .catch(() => resolve(false));
+        };
         let settled = false;
         const fallbackTimer = setTimeout(() => {
           if (settled) return;
           settled = true;
           if (loadingNode) loadingNode.style.display = 'none';
-          statusNode.textContent = 'Не удалось открыть в окне. Нажмите «Скачать».';
-          resolve(false);
+          statusNode.textContent = 'Открываю через логику «Просмотреть»…';
+          openViaStandardViewerFallback();
         }, 5500);
         if (!frameNode) {
           clearTimeout(fallbackTimer);
@@ -1412,7 +1442,8 @@
           settled = true;
           clearTimeout(fallbackTimer);
           if (loadingNode) loadingNode.style.display = 'none';
-          resolve(false);
+          statusNode.textContent = 'Открываю через логику «Просмотреть»…';
+          openViaStandardViewerFallback();
         };
         frameNode.onload = () => {
           if (settled) return;
