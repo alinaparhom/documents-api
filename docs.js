@@ -13327,7 +13327,6 @@
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
     var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
-    var aiConclusionButton = createElement('button', 'documents-button documents-button--ai', 'Вывод');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -13629,7 +13628,6 @@
         saveButton.disabled = true;
         addButton.disabled = true;
         aiButton.disabled = true;
-        aiConclusionButton.disabled = true;
         closeButton.disabled = true;
         return fetch(buildApiUrl('response_text_update', { organization: state.organization }), {
           method: 'POST',
@@ -13657,7 +13655,6 @@
             saveButton.disabled = false;
             addButton.disabled = false;
             aiButton.disabled = false;
-            aiConclusionButton.disabled = false;
             closeButton.disabled = false;
           });
       }
@@ -13670,7 +13667,6 @@
       saveButton.disabled = true;
       addButton.disabled = true;
       aiButton.disabled = true;
-      aiConclusionButton.disabled = true;
       closeButton.disabled = true;
       var formData = new FormData();
       formData.append('action', 'response_upload');
@@ -13703,7 +13699,6 @@
           saveButton.disabled = false;
           addButton.disabled = false;
           aiButton.disabled = false;
-          aiConclusionButton.disabled = false;
           closeButton.disabled = false;
         });
     }
@@ -13952,27 +13947,6 @@
     aiButton.addEventListener('click', function() {
       openVipAiModal();
     });
-    aiConclusionButton.type = 'button';
-    aiConclusionButton.addEventListener('click', function() {
-      var linkedFiles = [];
-      if (currentDoc && Array.isArray(currentDoc.files)) {
-        linkedFiles = currentDoc.files.map(function(file) {
-          return {
-            name: getAttachmentName(file),
-            url: resolveAttachmentUrl(file, { bustCache: true }) || ''
-          };
-        }).filter(function(file) {
-          return Boolean(file && file.url);
-        });
-      }
-      openAiConclusionModal({
-        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
-        showMessage: showMessage,
-        documentData: currentDoc || doc || {},
-        pendingFiles: pendingFiles.slice(),
-        linkedFiles: linkedFiles
-      });
-    });
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
@@ -13986,7 +13960,6 @@
     });
 
     headerActions.appendChild(aiButton);
-    headerActions.appendChild(aiConclusionButton);
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
