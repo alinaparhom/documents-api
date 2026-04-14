@@ -1264,12 +1264,6 @@
     const officeSourceCandidates = buildGeneratedDocxUrlCandidates(previewPayload).filter((url) => /^https?:\/\//i.test(url));
     const officeSourceUrl = officeSourceCandidates[0] || '';
     const task = context && context.task ? context.task : {};
-    const openViewerFile = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
-      ? window.__APPDOSC_OPEN_VIEWER_FILE__
-      : null;
-    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     let zoom = 1;
@@ -1364,7 +1358,7 @@
       });
     }
 
-    const canUseOfficeViewer = Boolean(officeSourceCandidates.length) || Boolean((openViewerFile || openFilesViewer) && officeSourceUrl);
+    const canUseOfficeViewer = Boolean(officeSourceCandidates.length);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
@@ -1373,35 +1367,6 @@
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
         return Promise.resolve(false);
-      }
-      const primaryUrl = officeSourceUrl || previewUrl;
-      if ((openViewerFile || openFilesViewer) && primaryUrl) {
-        statusNode.textContent = 'Открываем как в режиме «Просмотреть»…';
-        const fileName = normalize(previewPayload.fileName) || 'template-answer.docx';
-        const viewerFile = {
-          name: fileName,
-          originalName: fileName,
-          storedName: fileName,
-          url: primaryUrl,
-          resolvedUrl: toAbsoluteUrl(primaryUrl),
-          previewUrl: primaryUrl,
-          fileUrl: primaryUrl,
-          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          kind: 'office',
-        };
-        return Promise.resolve(
-          openViewerFile
-            ? openViewerFile(viewerFile, task || {}, { notify: true, hasMultiple: false })
-            : openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }),
-        )
-          .then(() => {
-            statusNode.textContent = 'Документ открыт через логику «Просмотреть».';
-            return true;
-          })
-          .catch(() => {
-            statusNode.textContent = 'Не удалось открыть через «Просмотреть». Пробуем Office Viewer…';
-            return false;
-          });
       }
       const openExternalOffice = (officeUrl) => {
         const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
