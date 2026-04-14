@@ -1383,7 +1383,7 @@
           return false;
         }
       };
-      if (loadingNode) loadingNode.style.display = 'none';
+      if (loadingNode) loadingNode.style.display = '';
       if (docNode) docNode.style.display = 'none';
       if (viewportNode) viewportNode.style.display = 'none';
       if (frameNode) {
@@ -1407,6 +1407,7 @@
             settled = true;
             const opened = openExternalOffice(officeUrl);
             if (opened) {
+              if (loadingNode) loadingNode.style.display = 'none';
               statusNode.textContent = 'Office Viewer открыт внешне.';
               resolve(true);
               return;
@@ -1414,11 +1415,26 @@
             tryNext();
           }, 4500);
           if (frameNode) {
-            frameNode.onload = () => {
+            const startedAt = Date.now();
+            frameNode.onerror = () => {
               if (settled) return;
               settled = true;
               clearTimeout(fallbackTimer);
-              statusNode.textContent = 'Готово: документ открыт через Office Viewer.';
+              tryNext();
+            };
+            frameNode.onload = () => {
+              if (settled) return;
+              const elapsed = Date.now() - startedAt;
+              if (elapsed < 700) {
+                settled = true;
+                clearTimeout(fallbackTimer);
+                tryNext();
+                return;
+              }
+              settled = true;
+              clearTimeout(fallbackTimer);
+              if (loadingNode) loadingNode.style.display = 'none';
+              statusNode.textContent = 'Документ открыт через Office Viewer.';
               resolve(true);
             };
             frameNode.src = officeUrl;
@@ -1434,11 +1450,13 @@
       toggleMenu(false);
       openViaOfficeViewer().then((opened) => {
         if (!opened) {
+          if (loadingNode) loadingNode.style.display = 'none';
           statusNode.textContent = 'Office Viewer недоступен. Нажмите «Скачать».';
         }
       });
     });
-    await openViaOfficeViewer();
+    const opened = await openViaOfficeViewer();
+    if (!opened && loadingNode) loadingNode.style.display = 'none';
   }
 
   function openTemplateAnswerEditor(context = {}) {
