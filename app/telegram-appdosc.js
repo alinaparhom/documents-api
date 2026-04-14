@@ -2625,7 +2625,7 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief>Кратко ИИ</button>
+      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief hidden aria-hidden="true">Кратко ИИ</button>
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
@@ -3909,19 +3909,8 @@ function createCard(task, index, anchorRegistry) {
         row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(148,163,184,.32);';
         const label = document.createElement('span');
         label.style.cssText = 'font-size:12px;line-height:1.35;color:#1e293b;word-break:break-word;';
-        label.textContent = fileName;
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'appdosc-card__action';
-        btn.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
-        btn.textContent = 'Кратко ИИ';
-        btn.disabled = !aiBriefText;
-        if (!aiBriefText) {
-          btn.title = 'Кратко ИИ пока отсутствует';
-        }
-        btn.addEventListener('click', () => openTelegramFileAiBriefModal(fileName, aiBriefText || '—'));
+        label.textContent = aiBriefText ? `${fileName} • готово` : `${fileName} • будет рассчитано по кнопке «Кратко ИИ»`;
         row.appendChild(label);
-        row.appendChild(btn);
         aiBriefContainer.appendChild(row);
       });
     } else {
@@ -4624,22 +4613,6 @@ function populateCardFiles(card, files) {
     } else {
       element.removeAttribute('title');
     }
-    const actions = document.createElement('span');
-    actions.className = 'appdosc-card__file-actions';
-    const previewButton = document.createElement('button');
-    previewButton.type = 'button';
-    previewButton.className = 'appdosc-card__file-action';
-    previewButton.textContent = 'Просмотр';
-    previewButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const resolvedUrl = resolveDocumentUrl(normalizeValue(file.url) || normalizeValue(file.storedName));
-      if (resolvedUrl) {
-        openExternalDocument(resolvedUrl);
-      }
-    });
-    actions.appendChild(previewButton);
-    element.appendChild(actions);
     container.appendChild(element);
   });
 
@@ -7925,13 +7898,8 @@ function updateViewerBriefState(file) {
   }
   const hasFile = Boolean(file && !file.isSummary);
   elements.viewerBrief.disabled = !hasFile;
-  elements.viewerBrief.hidden = !hasFile;
+  elements.viewerBrief.hidden = true;
   elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
-  if (hasFile && !normalizeValue(file && file.aiBrief)) {
-    elements.viewerBrief.title = 'ИИ-кратко отсутствует, покажем прочерк';
-  } else {
-    elements.viewerBrief.removeAttribute('title');
-  }
 }
 
 function canDeleteResponseFromViewer(file) {

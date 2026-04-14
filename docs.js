@@ -12093,21 +12093,6 @@
           handleAttachmentPreview(doc, file, link);
         });
         itemWrap.appendChild(link);
-        var aiBrief = getAttachmentAiBrief(file);
-        var briefWrap = createElement('div', 'documents-file-ai-brief');
-        var briefButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
-        briefButton.type = 'button';
-        briefButton.addEventListener('click', function(event) {
-          event.preventDefault();
-          event.stopPropagation();
-          openAttachmentAiBriefModal(getAttachmentName(file), aiBrief || '—');
-        });
-        if (!aiBrief) {
-          briefButton.disabled = true;
-          briefButton.title = 'Кратко ИИ пока отсутствует';
-        }
-        briefWrap.appendChild(briefButton);
-        itemWrap.appendChild(briefWrap);
         filesList.appendChild(itemWrap);
       });
     } else {
@@ -12140,6 +12125,36 @@
       openResponseModal(doc);
     });
     actions.appendChild(responseButton);
+    var briefSummaryButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
+    briefSummaryButton.type = 'button';
+    briefSummaryButton.addEventListener('click', function() {
+      var linkedFiles = [];
+      if (doc && Array.isArray(doc.files)) {
+        linkedFiles = doc.files.map(function(file) {
+          return {
+            id: getAttachmentKey(file),
+            name: getAttachmentName(file),
+            url: resolveAttachmentUrl(file, { bustCache: true }) || '',
+            aiBrief: normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : ''),
+            fileRef: file
+          };
+        }).filter(function(file) {
+          return Boolean(file && file.url);
+        });
+      }
+      openAiBriefSummaryModal({
+        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
+        showMessage: showMessage,
+        linkedFiles: linkedFiles,
+        pendingFiles: [],
+        onBriefReady: function(source, briefText) {
+          if (source && source.fileRef && typeof source.fileRef === 'object') {
+            source.fileRef.aiBrief = briefText;
+          }
+        }
+      });
+    });
+    actions.appendChild(briefSummaryButton);
 
     var hasAttachments = Array.isArray(doc.files) && doc.files.length;
     var viewEntry = findCurrentUserViewEntry(doc);
@@ -13855,8 +13870,11 @@
       if (currentDoc && Array.isArray(currentDoc.files)) {
         linkedFiles = currentDoc.files.map(function(file) {
           return {
+            id: getAttachmentKey(file),
             name: getAttachmentName(file),
-            url: resolveAttachmentUrl(file, { bustCache: true }) || ''
+            url: resolveAttachmentUrl(file, { bustCache: true }) || '',
+            aiBrief: normalizeAiBriefText(file && file.aiBrief ? file.aiBrief : ''),
+            fileRef: file
           };
         }).filter(function(file) {
           return Boolean(file && file.url);
@@ -13867,7 +13885,12 @@
         showMessage: showMessage,
         documentData: currentDoc || doc || {},
         pendingFiles: pendingFiles.slice(),
-        linkedFiles: linkedFiles
+        linkedFiles: linkedFiles,
+        onBriefReady: function(source, briefText) {
+          if (source && source.fileRef && typeof source.fileRef === 'object') {
+            source.fileRef.aiBrief = briefText;
+          }
+        }
       });
     });
     aiConclusionButton.type = 'button';

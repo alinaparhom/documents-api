@@ -2236,7 +2236,15 @@
     metaCompact.style.padding = '0 14px 8px';
 
     var sources = [];
-    linkedFiles.forEach(function(file, index) { sources.push({ id: 'linked_' + index, label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)), url: file && file.url ? String(file.url) : '' }); });
+    linkedFiles.forEach(function(file, index) {
+      sources.push({
+        id: 'linked_' + index,
+        label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)),
+        url: file && file.url ? String(file.url) : '',
+        aiBrief: briefToSummaryText(file && file.aiBrief ? file.aiBrief : ''),
+        fileRef: file && file.fileRef ? file.fileRef : null,
+      });
+    });
     pendingFiles.forEach(function(file, index) { sources.push({ id: 'pending_' + index, label: file && file.name ? String(file.name) : ('Новый файл ' + (index + 1)), fileObject: file }); });
 
     function makeActive(button) {
@@ -2252,12 +2260,28 @@
       button.addEventListener('click', function() {
         makeActive(button);
         button.disabled = true;
-        preview.textContent = '⏳ Обрабатываю файл...';
+        var cachedText = briefToSummaryText(source.aiBrief || (source.fileRef && source.fileRef.aiBrief ? source.fileRef.aiBrief : ''));
+        if (cachedText) {
+          preview.textContent = cachedText;
+          metaCompact.textContent = 'Источник: поле aiBrief • Режим: Vision';
+          button.disabled = false;
+          return;
+        }
+        preview.textContent = '⏳ Вычисляю краткий вывод...';
         var startedAt = Date.now();
         requestBriefVisionByFile(source, function(message) { preview.textContent = message || '⏳ Обрабатываю файл...'; })
           .then(function(aiPayload) {
-          var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
+          var summaryText = briefToSummaryText(aiPayload && aiPayload.summary ? aiPayload.summary : '');
           preview.textContent = summaryText || 'Пустой ответ от ИИ.';
+          if (summaryText) {
+            source.aiBrief = summaryText;
+            if (source.fileRef && typeof source.fileRef === 'object') {
+              source.fileRef.aiBrief = summaryText;
+            }
+            if (typeof options.onBriefReady === 'function') {
+              options.onBriefReady(source, summaryText);
+            }
+          }
           var elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
           metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Время: ' + elapsed + ' сек';
           })

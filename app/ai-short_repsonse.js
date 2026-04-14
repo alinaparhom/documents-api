@@ -18,6 +18,7 @@ export function createTelegramBriefAi(deps = {}) {
     escapeHtml = (value) => String(value || ''),
     getAttachmentName = (_, index) => `Файл ${index}`,
     resolveFileFetchUrl = () => '',
+    onBriefReady = null,
   } = deps;
 
   let briefPdfJsLoader = null;
@@ -704,7 +705,7 @@ export function createTelegramBriefAi(deps = {}) {
     (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
       const name = getAttachmentName(file, index + 1);
       const url = resolveFileFetchUrl(file);
-      if (url) sources.push({ label: name, url, type: 'file' });
+      if (url) sources.push({ label: name, url, type: 'file', fileRef: file });
     });
 
     const activate = (button) => Array.from(list.querySelectorAll('.appdosc-brief-ai__item')).forEach((el) => el.classList.toggle('is-active', el === button));
@@ -740,12 +741,28 @@ export function createTelegramBriefAi(deps = {}) {
         activate(button);
         try {
           button.disabled = true;
+          const cachedBriefText = toBriefSummaryText(source && source.fileRef && source.fileRef.aiBrief);
+          if (cachedBriefText) {
+            renderTelegramBriefPreview(preview, { summary: cachedBriefText, model: 'cached' });
+            setStatus('Готово. Показан сохранённый краткий вывод.', 'success');
+            if (metaNode) {
+              metaNode.textContent = 'Источник: поле aiBrief • Режим: Vision';
+            }
+            return;
+          }
           const modeLabel = 'Vision';
           setStatus(`${modeLabel}: ${source.label}`, 'loading');
           preview.innerHTML = `<p class="appdosc-brief-ai__placeholder">⏳ ${escapeHtml(modeLabel)}: подготовка и отправка файла...</p>`;
           const startedAt = Date.now();
           const aiPayload = await requestTelegramVisionByFile(source, setStatus);
           if (requestId !== activeRequestId) return;
+          const summaryText = toBriefSummaryText(aiPayload && aiPayload.summary) || extractTelegramPlainAiBriefText(aiPayload);
+          if (summaryText && source && source.fileRef && typeof source.fileRef === 'object') {
+            source.fileRef.aiBrief = summaryText;
+            if (typeof onBriefReady === 'function') {
+              onBriefReady(source.fileRef, summaryText, task);
+            }
+          }
           renderTelegramBriefPreview(preview, aiPayload);
           setStatus('Готово. Краткий вывод получен через Vision.', 'success');
           if (metaNode) {
