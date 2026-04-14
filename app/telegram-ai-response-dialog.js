@@ -1018,15 +1018,29 @@
   function buildGeneratedDocxUrlCandidates(previewPayload, options = {}) {
     const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
     const fileName = normalize(previewPayload && previewPayload.fileName);
+    const safeFileName = normalize(fileName.split('/').pop());
     const organization = normalize(options && options.organization).replace(/^\/+|\/+$/g, '');
-    const directGeneratedUrl = fileName ? `/js/documents/tmp/generated/${encodeURIComponent(fileName)}` : '';
-    const directOrganizationGeneratedUrl = (organization && fileName)
-      ? `/js/documents/${encodeURIComponent(organization)}/tmp/generated/${encodeURIComponent(fileName)}`
+    const directGeneratedUrl = safeFileName ? `/js/documents/tmp/generated/${encodeURIComponent(safeFileName)}` : '';
+    const directOrganizationGeneratedUrl = (organization && safeFileName)
+      ? `/js/documents/${encodeURIComponent(organization)}/tmp/generated/${encodeURIComponent(safeFileName)}`
       : '';
+    const exactPublicBaseCandidates = [
+      normalize(globalScope && globalScope.TG_GENERATED_DOCX_PUBLIC_BASE),
+      'https://bimmax.pro/documents/app/tmp/generated/generated/',
+      'https://bimmax.pro/documents/app/tmp/generated/',
+    ].filter(Boolean);
+    const exactPublicUrls = safeFileName
+      ? exactPublicBaseCandidates.map((base) => `${String(base).replace(/\/+$/g, '')}/${encodeURIComponent(safeFileName)}`)
+      : [];
     const mappedTmpUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
     const mappedLegacyTmpUrl = previewUrl ? previewUrl.replace(/\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
+    const mappedExactGeneratedUrl = previewUrl
+      ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/app/tmp/generated/generated/')
+      : '';
     return Array.from(new Set([
       previewUrl,
+      ...exactPublicUrls,
+      mappedExactGeneratedUrl,
       directOrganizationGeneratedUrl,
       directGeneratedUrl,
       mappedTmpUrl,
