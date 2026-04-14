@@ -2236,7 +2236,14 @@
     metaCompact.style.padding = '0 14px 8px';
 
     var sources = [];
-    linkedFiles.forEach(function(file, index) { sources.push({ id: 'linked_' + index, label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)), url: file && file.url ? String(file.url) : '' }); });
+    linkedFiles.forEach(function(file, index) { sources.push({
+      id: 'linked_' + index,
+      label: file && file.name ? String(file.name) : ('Файл ' + (index + 1)),
+      url: file && file.url ? String(file.url) : '',
+      storedName: file && file.storedName ? String(file.storedName) : '',
+      originalName: file && file.originalName ? String(file.originalName) : '',
+      aiBrief: file && file.aiBrief ? String(file.aiBrief) : ''
+    }); });
     pendingFiles.forEach(function(file, index) { sources.push({ id: 'pending_' + index, label: file && file.name ? String(file.name) : ('Новый файл ' + (index + 1)), fileObject: file }); });
 
     function makeActive(button) {
@@ -2251,6 +2258,12 @@
       button.appendChild(createElement('span', 'documents-brief-item-meta', source.fileObject ? 'Новый файл (локально)' : 'Файл из задачи'));
       button.addEventListener('click', function() {
         makeActive(button);
+        var cachedBrief = String(source && source.aiBrief ? source.aiBrief : '').trim();
+        if (cachedBrief) {
+          preview.textContent = cachedBrief;
+          metaCompact.textContent = 'Кратко ИИ загружено из задачи.';
+          return;
+        }
         button.disabled = true;
         preview.textContent = '⏳ Обрабатываю файл...';
         var startedAt = Date.now();
@@ -2258,8 +2271,14 @@
           .then(function(aiPayload) {
           var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
           preview.textContent = summaryText || 'Пустой ответ от ИИ.';
+          source.aiBrief = summaryText;
           var elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
           metaCompact.textContent = 'Модель: ' + String(aiPayload && aiPayload.model ? aiPayload.model : '—') + ' • Время: ' + elapsed + ' сек';
+          if (summaryText && typeof options.onBriefReady === 'function') {
+            Promise.resolve(options.onBriefReady(source, summaryText)).catch(function(error) {
+              showStatusMessage('warning', 'Не удалось сохранить «Кратко ИИ»: ' + (error && error.message ? error.message : 'ошибка'));
+            });
+          }
           })
           .catch(function(error) {
           preview.textContent = 'Ошибка: ' + (error && error.message ? error.message : 'неизвестная ошибка');
