@@ -1263,9 +1263,10 @@
     const previewUrl = normalize(previewPayload.previewUrl);
     const generatedFileName = normalize(previewPayload.fileName)
       || normalize(previewUrl.split('/').pop());
-    const officeSourceUrl = generatedFileName
-      ? toAbsoluteUrl(`/tmp/generated/${encodeURIComponent(generatedFileName)}`)
-      : '';
+    const officeSourceCandidates = buildGeneratedDocxUrlCandidates({
+      previewUrl,
+      fileName: generatedFileName,
+    }).filter((url) => /^https?:\/\//i.test(url));
     const task = context && context.task ? context.task : {};
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
@@ -1361,15 +1362,15 @@
       });
     }
 
-    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
+    const canUseOfficeViewer = officeSourceCandidates.length > 0;
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
     }
-    const openViaOfficeViewer = () => {
+    const openViaOfficeViewer = async () => {
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
-        return Promise.resolve(false);
+        return false;
       }
       const openExternalOffice = (officeUrl) => {
         const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
@@ -1394,8 +1395,14 @@
         frameNode.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
       }
       statusNode.textContent = 'Открываем через Office Viewer…';
+      const resolvedSource = await resolveFirstAvailableUrl(officeSourceCandidates);
+      const sourceUrl = resolvedSource || officeSourceCandidates[0] || '';
+      if (!sourceUrl) {
+        if (loadingNode) loadingNode.style.display = 'none';
+        return false;
+      }
       return new Promise((resolve) => {
-        const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
+        const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
         let settled = false;
         const fallbackTimer = setTimeout(() => {
           if (settled) return;
