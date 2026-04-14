@@ -2267,20 +2267,7 @@
     if (!normalized) {
       return '';
     }
-
-    if (/\n/.test(normalized)) {
-      return normalized.replace(/\n{3,}/g, '\n\n');
-    }
-
-    var sentences = normalized.split(/(?<=[.!?])\s+/).map(function(item) {
-      return normalizeAiBriefText(item || '');
-    }).filter(Boolean);
-
-    if (sentences.length >= 3) {
-      return sentences.join('\n\n');
-    }
-
-    return normalized;
+    return normalized.replace(/\n{3,}/g, '\n\n');
   }
 
   function getAttachmentAiBrief(file) {
