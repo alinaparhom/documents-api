@@ -1483,6 +1483,27 @@
     }
   }
 
+  function openGeneratedDocxInOfficeViewer(previewPayload) {
+    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
+    const fileName = normalize(previewPayload && previewPayload.fileName);
+    const fallbackUrl = fileName ? `/tmp/generated/${encodeURIComponent(fileName)}` : '';
+    const sourceUrl = toAbsoluteUrl(previewUrl || fallbackUrl);
+    if (!/^https?:\/\//i.test(sourceUrl)) {
+      throw new Error('Нет публичной ссылки для Office Viewer.');
+    }
+    const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
+    const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+    if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
+      telegramWebApp.openLink(officeUrl);
+      return;
+    }
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(officeUrl, '_blank', 'noopener');
+      return;
+    }
+    throw new Error('Не удалось открыть Office Viewer.');
+  }
+
   function openTemplateAnswerEditor(context = {}) {
     if (document.querySelector('.tg-ai-template-editor')) return;
     const aiText = normalize(context && context.aiAnswer) || DEFAULT_TEMPLATE_ANSWER_TEXT;
@@ -1596,9 +1617,9 @@
           templateFileName: templateConfig.templateFileName,
         });
         close();
-        if (onStatus) onStatus('Открываем результат в отдельном окне...');
-        await openGeneratedDocxViaExistingPreview(previewPayload, { task });
-        if (onStatus) onStatus('Готово: документ открыт, доступны скачивание и прикрепление.');
+        if (onStatus) onStatus('Открываем результат через Office Viewer...');
+        openGeneratedDocxInOfficeViewer(previewPayload);
+        if (onStatus) onStatus('Готово: документ открыт через Office Viewer.');
       } catch (error) {
         renderError((error && error.message) || 'Не удалось сформировать документ.');
         if (onStatus) onStatus('Ошибка генерации документа.');
