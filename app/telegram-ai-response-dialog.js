@@ -1523,6 +1523,53 @@
     }
   }
 
+  async function openGeneratedDocxFast(previewPayload, context = {}) {
+    if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
+    const previewUrl = normalize(previewPayload.previewUrl);
+    const officeSourceUrl = toAbsoluteUrl(previewUrl);
+    const task = context && context.task ? context.task : {};
+    const fileName = normalize(previewPayload.fileName) || 'template-answer.docx';
+    const openViewerFile = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
+      ? window.__APPDOSC_OPEN_VIEWER_FILE__
+      : null;
+    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
+      ? window.__APPDOSC_OPEN_FILES_VIEWER__
+      : null;
+
+    if ((openViewerFile || openFilesViewer) && previewUrl) {
+      const viewerFile = {
+        name: fileName,
+        originalName: fileName,
+        storedName: fileName,
+        url: previewUrl,
+        resolvedUrl: officeSourceUrl,
+        previewUrl,
+        fileUrl: previewUrl,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        kind: 'office',
+      };
+      await Promise.resolve(
+        openViewerFile
+          ? openViewerFile(viewerFile, task || {}, { notify: true, hasMultiple: false })
+          : openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }),
+      );
+      return true;
+    }
+
+    if (!/^https?:\/\//i.test(officeSourceUrl)) return false;
+    const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
+    const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+    if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
+      telegramWebApp.openLink(officeUrl);
+      return true;
+    }
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(officeUrl, '_blank', 'noopener');
+      return true;
+    }
+    return false;
+  }
+
   function openTemplateAnswerEditor(context = {}) {
     if (document.querySelector('.tg-ai-template-editor')) return;
     const aiText = normalize(context && context.aiAnswer) || DEFAULT_TEMPLATE_ANSWER_TEXT;
@@ -1636,9 +1683,12 @@
           templateFileName: templateConfig.templateFileName,
         });
         close();
-        if (onStatus) onStatus('Открываем результат в предпросмотре...');
-        await openGeneratedDocxViaExistingPreview(previewPayload, { task });
-        if (onStatus) onStatus('Готово: документ открыт в предпросмотре.');
+        if (onStatus) onStatus('Открываем результат через Office Viewer...');
+        const openedFast = await openGeneratedDocxFast(previewPayload, { task });
+        if (!openedFast) {
+          await openGeneratedDocxViaExistingPreview(previewPayload, { task });
+        }
+        if (onStatus) onStatus('Готово: документ открыт через Office Viewer.');
       } catch (error) {
         renderError((error && error.message) || 'Не удалось сформировать документ.');
         if (onStatus) onStatus('Ошибка генерации документа.');
