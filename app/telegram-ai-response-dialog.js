@@ -866,7 +866,7 @@
       .tg-ai-generated-preview__doc .docx-wrapper img{display:block;max-width:100%!important;height:auto!important}
       .tg-ai-generated-preview__doc .docx,.tg-ai-generated-preview__doc .docx *{color:#0f172a}
       .tg-ai-generated-preview__doc .docx-wrapper p,.tg-ai-generated-preview__doc .docx-wrapper td,.tg-ai-generated-preview__doc .docx-wrapper th,.tg-ai-generated-preview__doc .docx-wrapper li,.tg-ai-generated-preview__doc .docx-wrapper span{max-width:100%;overflow-wrap:anywhere;word-break:break-word}
-      .tg-ai-generated-preview__frame{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;border:0;background:#e2e8f0}
+      .tg-ai-generated-preview__frame{display:block;position:absolute;inset:0;z-index:2;width:100%;height:100%;border:0;background:#e2e8f0}
       .tg-ai-generated-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.82);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview__loading{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at 20% 20%,rgba(147,197,253,.2),transparent 42%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(241,245,249,.94))}
       .tg-ai-generated-preview__loading-card{width:min(520px,92%);border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);border-radius:18px;padding:16px;box-shadow:0 18px 32px rgba(15,23,42,.12);display:grid;gap:10px}
@@ -1220,14 +1220,9 @@
         <div class="tg-ai-generated-preview__head">
           <div>
             <div class="tg-ai-generated-preview__title">Предварительный просмотр</div>
-            <div class="tg-ai-generated-preview__hint">Локальный предпросмотр документа в этом окне</div>
+            <div class="tg-ai-generated-preview__hint">Просмотр через Office Viewer</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
-            <div class="tg-ai-generated-preview__zoom">
-              <button type="button" class="tg-ai-generated-preview__zoom-btn" data-preview-zoom-out aria-label="Уменьшить">−</button>
-              <span class="tg-ai-generated-preview__zoom-value" data-preview-zoom-value>100%</span>
-              <button type="button" class="tg-ai-generated-preview__zoom-btn" data-preview-zoom-in aria-label="Увеличить">+</button>
-            </div>
             <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
             <button type="button" class="tg-ai-generated-preview__close-icon" data-preview-close-icon aria-label="Закрыть">×</button>
           </div>
@@ -1238,13 +1233,11 @@
           <button type="button" class="tg-ai-generated-preview__btn" data-preview-close>Закрыть</button>
         </div>
         <div class="tg-ai-generated-preview__body">
-          <div class="tg-ai-generated-preview__viewport" data-preview-viewport>
-            <div class="tg-ai-generated-preview__doc" data-preview-doc aria-label="DOCX preview"></div>
-          </div>
+          <iframe class="tg-ai-generated-preview__frame" data-preview-frame title="Предпросмотр DOCX через Office Viewer"></iframe>
           <div class="tg-ai-generated-preview__loading" data-preview-loading>
             <div class="tg-ai-generated-preview__loading-card">
               <div class="tg-ai-generated-preview__loading-title">Открываем документ…</div>
-              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Локальная отрисовка документа.</div>
+              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Подготовка ссылки для Office Viewer.</div>
               <div class="tg-ai-generated-preview__bar"></div>
             </div>
           </div>
@@ -1253,8 +1246,7 @@
       </div>
     `;
     document.body.appendChild(overlay);
-    const docNode = overlay.querySelector('[data-preview-doc]');
-    const viewportNode = overlay.querySelector('[data-preview-viewport]');
+    const frameNode = overlay.querySelector('[data-preview-frame]');
     const statusNode = overlay.querySelector('[data-preview-status]');
     const loadingNode = overlay.querySelector('[data-preview-loading]');
     const loadingSubNode = overlay.querySelector('[data-loading-sub]');
@@ -1263,35 +1255,13 @@
     const menuNode = overlay.querySelector('[data-preview-menu]');
     const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
     const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
-    const zoomOutBtn = overlay.querySelector('[data-preview-zoom-out]');
-    const zoomInBtn = overlay.querySelector('[data-preview-zoom-in]');
-    const zoomValueNode = overlay.querySelector('[data-preview-zoom-value]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const previewUrl = normalize(previewPayload.previewUrl);
     const generatedFileName = normalize(previewPayload.fileName)
       || normalize(previewUrl.split('/').pop());
     const task = context && context.task ? context.task : {};
-    const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
-    const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
-    let zoom = 1;
-
-    const applyZoom = () => {
-      if (!docNode) return;
-      const normalized = Math.max(0.2, Math.min(1.6, Number(zoom) || 1));
-      zoom = Number(normalized.toFixed(2));
-      if ('zoom' in docNode.style) {
-        docNode.style.zoom = String(zoom);
-        docNode.style.transform = 'none';
-        docNode.style.width = 'auto';
-      } else {
-        docNode.style.transform = `scale(${zoom})`;
-        docNode.style.width = 'auto';
-      }
-      if (zoomValueNode) zoomValueNode.textContent = `${Math.round(zoom * 100)}%`;
-    };
 
     const close = () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
       if (previewUrl || normalize(previewPayload.fileName)) {
         deleteGeneratedTempFile(previewPayload).catch(() => {});
       }
@@ -1314,14 +1284,6 @@
         toggleMenu(false);
       }
       if (event.target === overlay) close();
-    });
-    zoomOutBtn?.addEventListener('click', () => {
-      zoom = zoom - 0.1;
-      applyZoom();
-    });
-    zoomInBtn?.addEventListener('click', () => {
-      zoom = zoom + 0.1;
-      applyZoom();
     });
     downloadBtn?.addEventListener('click', async () => {
       toggleMenu(false);
@@ -1366,28 +1328,21 @@
     }
 
     try {
-      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 1/2: Загружаем файл…';
-      statusNode.textContent = 'Подготовка локального предпросмотра…';
-      const [renderer, blob] = await Promise.all([
-        ensureDocxPreviewLibrariesLoaded(),
-        resolveGeneratedDocxBlob(previewPayload),
-      ]);
-      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 2/2: Рисуем страницы…';
-      await renderer.renderAsync(blob, docNode, null, {
-        className: 'docx',
-        breakPages: true,
-        ignoreWidth: false,
-        ignoreHeight: false,
-        useBase64URL: true,
-        inWrapper: true,
-      });
-      if (viewportNode) viewportNode.style.display = '';
+      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 1/2: Проверяем URL документа…';
+      statusNode.textContent = 'Подготовка просмотра через Office Viewer…';
+      const docxUrlCandidates = buildGeneratedDocxUrlCandidates(previewPayload);
+      const publicUrl = docxUrlCandidates.find((candidate) => /^https?:\/\//i.test(String(candidate || '')));
+      if (!publicUrl) {
+        throw new Error('Не удалось получить публичную ссылку на DOCX для Office Viewer.');
+      }
+      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 2/2: Открываем Office Viewer…';
+      const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(publicUrl)}`;
+      frameNode.src = officeViewerUrl;
       if (loadingNode) loadingNode.style.display = 'none';
-      applyZoom();
-      statusNode.textContent = `Готово: ${generatedFileName || 'документ'} открыт локально.`;
+      statusNode.textContent = `Готово: ${generatedFileName || 'документ'} открыт через Office Viewer.`;
     } catch (error) {
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = `Не удалось открыть документ: ${(error && error.message) || 'ошибка рендера'}`;
+      statusNode.textContent = `Не удалось открыть документ: ${(error && error.message) || 'ошибка предпросмотра'}`;
     }
   }
 
