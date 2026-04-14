@@ -1975,12 +1975,12 @@
     var style = document.createElement('style');
     style.id = 'documents-ai-brief-feature-style';
     style.textContent = '' +
-      '.documents-action--ai-brief-new{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 10px;border-radius:12px;border:1px solid rgba(59,130,246,0.35);background:linear-gradient(135deg, rgba(239,246,255,0.96), rgba(224,242,254,0.95));color:#1d4ed8;font-weight:700;box-shadow:0 8px 16px rgba(37,99,235,0.14);transition:transform .16s ease, box-shadow .16s ease, filter .16s ease;}' +
+      '.documents-action--ai-brief-new{position:relative;display:inline-flex;align-items:center;justify-content:center;padding:7px 10px;border-radius:11px;border:1px solid rgba(59,130,246,0.35);background:linear-gradient(135deg, rgba(239,246,255,0.96), rgba(224,242,254,0.95));color:#1d4ed8;font-weight:700;font-size:12px;box-shadow:0 6px 14px rgba(37,99,235,0.12);transition:transform .16s ease, box-shadow .16s ease, filter .16s ease;}' +
       '.documents-action--ai-brief-new:hover,.documents-action--ai-brief-new:focus-visible{transform:translateY(-1px);box-shadow:0 12px 20px rgba(37,99,235,0.2);filter:saturate(1.04);outline:none;}' +
       '.documents-action--ai-brief-new:disabled{opacity:.65;box-shadow:none;transform:none;}' +
       '.documents-action--ai-brief-new .documents-action__label{line-height:1;}' +
-      '.documents-action--ai-brief-new .documents-action__badge{display:inline-flex;align-items:center;justify-content:center;min-width:38px;height:18px;padding:0 6px;border-radius:999px;background:rgba(37,99,235,0.14);color:#1e40af;border:1px solid rgba(59,130,246,0.28);font-size:10px;line-height:1;font-weight:800;letter-spacing:.04em;text-transform:uppercase;}' +
-      '@media (max-width:768px){.documents-action--ai-brief-new{width:100%;min-height:36px;padding:8px 10px;}.documents-action--ai-brief-new .documents-action__badge{min-width:34px;height:17px;font-size:9px;}}';
+      '.documents-action--ai-brief-new .documents-action__badge{position:absolute;top:-7px;right:6px;display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:14px;padding:0 5px;border-radius:999px;background:#2563eb;color:#fff;border:1px solid rgba(255,255,255,.92);font-size:8px;line-height:1;font-weight:800;letter-spacing:.04em;text-transform:uppercase;box-shadow:0 3px 8px rgba(37,99,235,.35);}' +
+      '@media (max-width:768px){.documents-action--ai-brief-new{width:100%;min-height:34px;padding:7px 10px;font-size:12px;}.documents-action--ai-brief-new .documents-action__badge{top:-6px;right:8px;}}';
     document.head.appendChild(style);
   }
 
@@ -12222,8 +12222,8 @@
 
     var briefActionButton = createElement('button', 'documents-action documents-action--ai documents-action--ai-brief-new');
     briefActionButton.type = 'button';
-    briefActionButton.appendChild(createElement('span', 'documents-action__label', 'Кратко ИИ'));
-    briefActionButton.appendChild(createElement('span', 'documents-action__badge', 'NEW'));
+    briefActionButton.appendChild(createElement('span', 'documents-action__label', 'Кратко'));
+    briefActionButton.appendChild(createElement('span', 'documents-action__badge', 'ИИ'));
     briefActionButton.disabled = !attachments.length;
     briefActionButton.title = 'Новый режим: краткий разбор файлов задачи с автосохранением.';
     if (!attachments.length) {
