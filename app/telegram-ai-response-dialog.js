@@ -1026,12 +1026,50 @@
     const mappedTmpUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
     const mappedLegacyTmpUrl = previewUrl ? previewUrl.replace(/\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
     return Array.from(new Set([
+      previewUrl,
       directOrganizationGeneratedUrl,
       directGeneratedUrl,
       mappedTmpUrl,
       mappedLegacyTmpUrl,
-      previewUrl,
     ].filter(Boolean))).map((url) => toAbsoluteUrl(url));
+  }
+
+  async function resolvePublicDocxUrlForOffice(previewPayload, options = {}) {
+    const candidates = buildGeneratedDocxUrlCandidates(previewPayload, options);
+    if (!candidates.length) {
+      throw new Error('Не удалось получить ссылку на DOCX.');
+    }
+    let lastStatus = 0;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = normalize(candidates[index]);
+      if (!/^https?:\/\//i.test(candidate)) continue;
+      try {
+        const response = await fetchWithTimeout(candidate, {
+          method: 'HEAD',
+          credentials: 'omit',
+          cache: 'no-store',
+        }, 12000);
+        if (!response || !response.ok) {
+          lastStatus = response ? response.status : 0;
+          continue;
+        }
+        return candidate;
+      } catch (_) {}
+      try {
+        const fallbackResponse = await fetchWithTimeout(candidate, {
+          method: 'GET',
+          credentials: 'omit',
+          cache: 'no-store',
+          headers: { Range: 'bytes=0-0' },
+        }, 12000);
+        if (!fallbackResponse || !fallbackResponse.ok) {
+          lastStatus = fallbackResponse ? fallbackResponse.status : lastStatus;
+          continue;
+        }
+        return candidate;
+      } catch (_) {}
+    }
+    throw new Error(`URL документа недоступен публично (${lastStatus || 'no_public_access'}).`);
   }
 
   async function resolveGeneratedDocxBlob(previewPayload) {
@@ -1330,11 +1368,7 @@
     try {
       if (loadingSubNode) loadingSubNode.textContent = 'Шаг 1/2: Проверяем URL документа…';
       statusNode.textContent = 'Подготовка просмотра через Office Viewer…';
-      const docxUrlCandidates = buildGeneratedDocxUrlCandidates(previewPayload);
-      const publicUrl = docxUrlCandidates.find((candidate) => /^https?:\/\//i.test(String(candidate || '')));
-      if (!publicUrl) {
-        throw new Error('Не удалось получить публичную ссылку на DOCX для Office Viewer.');
-      }
+      const publicUrl = await resolvePublicDocxUrlForOffice(previewPayload);
       if (loadingSubNode) loadingSubNode.textContent = 'Шаг 2/2: Открываем Office Viewer…';
       const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(publicUrl)}`;
       frameNode.src = officeViewerUrl;
@@ -1342,7 +1376,7 @@
       statusNode.textContent = `Готово: ${generatedFileName || 'документ'} открыт через Office Viewer.`;
     } catch (error) {
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = `Не удалось открыть документ: ${(error && error.message) || 'ошибка предпросмотра'}`;
+      statusNode.textContent = `Не удалось открыть документ: ${(error && error.message) || 'ошибка предпросмотра'}. Скачайте файл или проверьте, что ссылка публичная.`;
     }
   }
 
