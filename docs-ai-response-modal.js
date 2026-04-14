@@ -2256,7 +2256,12 @@
     }
 
     function setPreviewText(text) {
-      var value = String(text || '').trim();
+      var value = String(text || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
+        .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
       preview.textContent = value || '—';
     }
 

@@ -2267,7 +2267,10 @@
     if (!normalized) {
       return '';
     }
-    return normalized.replace(/\n{3,}/g, '\n\n');
+    return normalized
+      .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
+      .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
+      .replace(/\n{3,}/g, '\n\n');
   }
 
   function getAttachmentAiBrief(file) {
