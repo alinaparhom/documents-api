@@ -1261,8 +1261,11 @@
     const zoomValueNode = overlay.querySelector('[data-preview-zoom-value]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const previewUrl = normalize(previewPayload.previewUrl);
-    const officeSourceCandidates = buildGeneratedDocxUrlCandidates(previewPayload).filter((url) => /^https?:\/\//i.test(url));
-    const officeSourceUrl = officeSourceCandidates[0] || '';
+    const generatedFileName = normalize(previewPayload.fileName)
+      || normalize(previewUrl.split('/').pop());
+    const officeSourceUrl = generatedFileName
+      ? toAbsoluteUrl(`/tmp/generated/${encodeURIComponent(generatedFileName)}`)
+      : '';
     const task = context && context.task ? context.task : {};
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
@@ -1358,7 +1361,7 @@
       });
     }
 
-    const canUseOfficeViewer = Boolean(officeSourceCandidates.length);
+    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
@@ -1392,58 +1395,42 @@
       }
       statusNode.textContent = 'Открываем через Office Viewer…';
       return new Promise((resolve) => {
-        let candidateIndex = 0;
-        const tryNext = () => {
-          if (candidateIndex >= officeSourceCandidates.length) {
-            resolve(false);
+        const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
+        let settled = false;
+        const fallbackTimer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          const opened = openExternalOffice(officeUrl);
+          if (opened) {
+            if (loadingNode) loadingNode.style.display = 'none';
+            statusNode.textContent = 'Office Viewer открыт внешне.';
+            resolve(true);
             return;
           }
-          const source = officeSourceCandidates[candidateIndex];
-          candidateIndex += 1;
-          const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(source)}`;
-          let settled = false;
-          const fallbackTimer = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            const opened = openExternalOffice(officeUrl);
-            if (opened) {
-              if (loadingNode) loadingNode.style.display = 'none';
-              statusNode.textContent = 'Office Viewer открыт внешне.';
-              resolve(true);
-              return;
-            }
-            tryNext();
-          }, 4500);
-          if (frameNode) {
-            const startedAt = Date.now();
-            frameNode.onerror = () => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(fallbackTimer);
-              tryNext();
-            };
-            frameNode.onload = () => {
-              if (settled) return;
-              const elapsed = Date.now() - startedAt;
-              if (elapsed < 700) {
-                settled = true;
-                clearTimeout(fallbackTimer);
-                tryNext();
-                return;
-              }
-              settled = true;
-              clearTimeout(fallbackTimer);
-              if (loadingNode) loadingNode.style.display = 'none';
-              statusNode.textContent = 'Документ открыт через Office Viewer.';
-              resolve(true);
-            };
-            frameNode.src = officeUrl;
-          } else {
-            clearTimeout(fallbackTimer);
-            tryNext();
-          }
+          if (loadingNode) loadingNode.style.display = 'none';
+          resolve(false);
+        }, 5500);
+        if (!frameNode) {
+          clearTimeout(fallbackTimer);
+          resolve(false);
+          return;
+        }
+        frameNode.onerror = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(fallbackTimer);
+          if (loadingNode) loadingNode.style.display = 'none';
+          resolve(false);
         };
-        tryNext();
+        frameNode.onload = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(fallbackTimer);
+          if (loadingNode) loadingNode.style.display = 'none';
+          statusNode.textContent = 'Документ открыт через Office Viewer.';
+          resolve(true);
+        };
+        frameNode.src = officeUrl;
       });
     };
     officeBtn?.addEventListener('click', () => {
