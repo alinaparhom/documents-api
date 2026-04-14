@@ -2277,9 +2277,7 @@
     }).filter(Boolean);
 
     if (sentences.length >= 3) {
-      return sentences.map(function(item, index) {
-        return index === 0 ? item : ('• ' + item);
-      }).join('\n');
+      return sentences.join('\n\n');
     }
 
     return normalized;

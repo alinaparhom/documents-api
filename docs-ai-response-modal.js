@@ -2267,47 +2267,23 @@
     function renderPrettyBrief(text) {
       var lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
       var html = [];
-      var listBuffer = [];
-      var orderedBuffer = [];
-
-      function flushList() {
-        if (listBuffer.length) {
-          html.push('<ul>' + listBuffer.map(function(item) { return '<li>' + item + '</li>'; }).join('') + '</ul>');
-          listBuffer = [];
-        }
-        if (orderedBuffer.length) {
-          html.push('<ol>' + orderedBuffer.map(function(item) { return '<li>' + item + '</li>'; }).join('') + '</ol>');
-          orderedBuffer = [];
-        }
-      }
 
       lines.forEach(function(rawLine) {
         var line = String(rawLine || '').trim();
         if (!line) {
-          flushList();
           return;
         }
-        var bulletMatch = line.match(/^[-•*]\s+(.+)$/);
-        if (bulletMatch) {
-          orderedBuffer = [];
-          listBuffer.push(escapeHtml(bulletMatch[1]));
-          return;
-        }
-        var orderedMatch = line.match(/^\d+[.)]\s+(.+)$/);
-        if (orderedMatch) {
-          listBuffer = [];
-          orderedBuffer.push(escapeHtml(orderedMatch[1]));
-          return;
-        }
-        flushList();
-        var safeLine = escapeHtml(line);
-        if (/^[^.!?]{2,60}:$/.test(line)) {
+        var normalizedLine = line
+          .replace(/^[-•*]\s+/, '')
+          .replace(/^\d+[.)]\s+/, '')
+          .trim();
+        var safeLine = escapeHtml(normalizedLine);
+        if (/^[^.!?]{2,60}:$/.test(normalizedLine)) {
           html.push('<h4>' + safeLine + '</h4>');
         } else {
           html.push('<p>' + safeLine + '</p>');
         }
       });
-      flushList();
       return html.join('');
     }
 
@@ -2364,6 +2340,12 @@
     });
 
     if (!sources.length) list.appendChild(createElement('div', 'documents-responses-empty', 'Нет файлов для анализа.'));
+    var firstSourceButton = list.querySelector('.documents-brief-item');
+    if (firstSourceButton) {
+      window.setTimeout(function() {
+        firstSourceButton.click();
+      }, 0);
+    }
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() { modal.remove(); });
 
