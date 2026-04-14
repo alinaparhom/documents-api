@@ -1824,6 +1824,7 @@
     let recognition = null;
     let recognitionIsRunning = false;
     let speechSupported = false;
+    let suppressVoiceEndStatus = false;
 
     renderFiles(filesList, files);
 
@@ -1875,51 +1876,66 @@
     const SpeechRecognitionClass = globalScope.SpeechRecognition || globalScope.webkitSpeechRecognition;
     if (typeof SpeechRecognitionClass === 'function') {
       speechSupported = true;
-      recognition = new SpeechRecognitionClass();
-      recognition.lang = 'ru-RU';
-      recognition.interimResults = true;
-      recognition.continuous = false;
-      recognition.onresult = (event) => {
-        const list = event && event.results ? event.results : [];
-        let finalText = '';
-        let interimText = '';
-        for (let index = event.resultIndex || 0; index < list.length; index += 1) {
-          const current = list[index];
-          if (!current || !current[0]) continue;
-          const transcript = normalize(current[0].transcript);
-          if (!transcript) continue;
-          if (current.isFinal) {
-            finalText += (finalText ? ' ' : '') + transcript;
-          } else {
-            interimText += (interimText ? ' ' : '') + transcript;
+      const bindRecognitionHandlers = (instance) => {
+        if (!instance) return;
+        instance.lang = 'ru-RU';
+        instance.interimResults = true;
+        instance.continuous = false;
+        instance.maxAlternatives = 1;
+        instance.onresult = (event) => {
+          const list = event && event.results ? event.results : [];
+          let finalText = '';
+          let interimText = '';
+          for (let index = event.resultIndex || 0; index < list.length; index += 1) {
+            const current = list[index];
+            if (!current || !current[0]) continue;
+            const transcript = normalize(current[0].transcript);
+            if (!transcript) continue;
+            if (current.isFinal) {
+              finalText += (finalText ? ' ' : '') + transcript;
+            } else {
+              interimText += (interimText ? ' ' : '') + transcript;
+            }
           }
-        }
-        if (finalText) {
-          appendPromptText(finalText);
-        }
-        if (interimText) {
-          status.textContent = `Распознано: ${interimText}`;
-        }
+          if (finalText) {
+            appendPromptText(finalText);
+          }
+          if (interimText) {
+            status.textContent = `Распознано: ${interimText}`;
+          }
+        };
+        instance.onerror = (event) => {
+          const errorCode = normalize(event && event.error);
+          suppressVoiceEndStatus = true;
+          setVoiceState(false);
+          if (errorCode === 'aborted') {
+            status.textContent = 'Голосовой ввод остановлен.';
+            return;
+          }
+          if (errorCode === 'no-speech') {
+            status.textContent = 'Речь не распознана. Скажите запрос ещё раз.';
+            return;
+          }
+          if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
+            status.textContent = 'Нет доступа к микрофону. Разрешите доступ в Telegram и попробуйте снова.';
+            return;
+          }
+          if (errorCode === 'audio-capture') {
+            status.textContent = 'Микрофон не найден. Проверьте устройство.';
+            return;
+          }
+          status.textContent = 'Ошибка голосового ввода. Попробуйте ещё раз.';
+        };
+        instance.onend = () => {
+          setVoiceState(false);
+          if (!isSending && !suppressVoiceEndStatus) {
+            status.textContent = 'Голосовой ввод завершён.';
+          }
+          suppressVoiceEndStatus = false;
+        };
       };
-      recognition.onerror = (event) => {
-        const errorCode = normalize(event && event.error);
-        setVoiceState(false);
-        if (errorCode === 'aborted') {
-          status.textContent = 'Голосовой ввод остановлен.';
-          return;
-        }
-        if (errorCode === 'no-speech') {
-          status.textContent = 'Речь не распознана. Скажите запрос ещё раз.';
-          return;
-        }
-        status.textContent = 'Не удалось распознать голос. Можно повторить.';
-      };
-      recognition.onend = () => {
-        setVoiceState(false);
-        if (!isSending) {
-          status.textContent = 'Голосовой ввод завершён.';
-        }
-      };
+      recognition = new SpeechRecognitionClass();
+      bindRecognitionHandlers(recognition);
     } else if (voiceButton) {
       voiceButton.disabled = true;
       voiceButton.title = 'Голосовой ввод не поддерживается в этом устройстве.';
@@ -1931,14 +1947,32 @@
         return;
       }
       if (recognitionIsRunning) {
+        suppressVoiceEndStatus = true;
         recognition.stop();
         setVoiceState(false);
         return;
       }
       try {
+        suppressVoiceEndStatus = false;
         recognition.start();
         setVoiceState(true);
-      } catch (_) {
+      } catch (error) {
+        const message = normalize(error && error.message).toLowerCase();
+        if (message.includes('already started')) {
+          try {
+            recognition.stop();
+          } catch (_) {}
+          setTimeout(() => {
+            try {
+              suppressVoiceEndStatus = false;
+              recognition.start();
+              setVoiceState(true);
+            } catch (_) {
+              status.textContent = 'Не удалось перезапустить голосовой ввод. Попробуйте ещё раз.';
+            }
+          }, 120);
+          return;
+        }
         status.textContent = 'Не удалось включить микрофон. Проверьте доступ к нему.';
       }
     });
