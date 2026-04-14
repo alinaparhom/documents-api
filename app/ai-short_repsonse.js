@@ -662,7 +662,7 @@ export function createTelegramBriefAi(deps = {}) {
     container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
   }
 
-  return function openTelegramBriefModal(task, statusHandler) {
+  return function openTelegramBriefModal(task, statusHandler, options = {}) {
     ensureTelegramBriefModalStyle();
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -694,6 +694,8 @@ export function createTelegramBriefAi(deps = {}) {
     const metaNode = modal.querySelector('[data-meta]');
     const sources = [];
     let activeRequestId = 0;
+    const preferredFileName = normalizeValue(options && options.preferredFileName);
+    const autoStart = Boolean(options && options.autoStart);
 
     const setStatus = (message, tone = 'idle') => {
       if (!statusNode) return;
@@ -704,7 +706,15 @@ export function createTelegramBriefAi(deps = {}) {
     (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
       const name = getAttachmentName(file, index + 1);
       const url = resolveFileFetchUrl(file);
-      if (url) sources.push({ label: name, url, type: 'file' });
+      if (url) {
+        sources.push({
+          label: name,
+          url,
+          type: 'file',
+          fileRef: file,
+          aiBrief: toBriefSummaryText(file && file.aiBrief),
+        });
+      }
     });
 
     const activate = (button) => Array.from(list.querySelectorAll('.appdosc-brief-ai__item')).forEach((el) => el.classList.toggle('is-active', el === button));
@@ -722,6 +732,7 @@ export function createTelegramBriefAi(deps = {}) {
     modal.querySelector('[data-close]').addEventListener('click', close);
     document.addEventListener('keydown', onEscClose);
 
+    const sourceButtons = [];
     sources.forEach((source) => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -738,6 +749,14 @@ export function createTelegramBriefAi(deps = {}) {
       button.addEventListener('click', async () => {
         const requestId = ++activeRequestId;
         activate(button);
+        if (source.aiBrief) {
+          renderTelegramBriefPreview(preview, { summary: source.aiBrief, model: 'saved' });
+          setStatus(`Кратко ИИ уже сохранено: ${source.label}`, 'success');
+          if (metaNode) {
+            metaNode.textContent = 'Источник: сохранённый brief из файла';
+          }
+          return;
+        }
         try {
           button.disabled = true;
           const modeLabel = 'Vision';
@@ -746,6 +765,13 @@ export function createTelegramBriefAi(deps = {}) {
           const startedAt = Date.now();
           const aiPayload = await requestTelegramVisionByFile(source, setStatus);
           if (requestId !== activeRequestId) return;
+          const summaryText = toBriefSummaryText(aiPayload && aiPayload.summary) || extractTelegramPlainAiBriefText(aiPayload);
+          if (summaryText) {
+            source.aiBrief = summaryText;
+            if (source.fileRef && typeof source.fileRef === 'object') {
+              source.fileRef.aiBrief = summaryText;
+            }
+          }
           renderTelegramBriefPreview(preview, aiPayload);
           setStatus('Готово. Краткий вывод получен через Vision.', 'success');
           if (metaNode) {
@@ -768,6 +794,7 @@ export function createTelegramBriefAi(deps = {}) {
         }
       });
       list.appendChild(button);
+      sourceButtons.push({ source, button });
     });
 
     if (!sources.length) {
@@ -776,5 +803,14 @@ export function createTelegramBriefAi(deps = {}) {
     }
 
     document.body.appendChild(modal);
+    if (autoStart && sourceButtons.length) {
+      const preferred = sourceButtons.find(({ source }) => normalizeValue(source && source.label) === preferredFileName)
+        || sourceButtons[0];
+      if (preferred && preferred.button) {
+        setTimeout(() => {
+          preferred.button.click();
+        }, 0);
+      }
+    }
   };
 }

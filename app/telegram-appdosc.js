@@ -581,9 +581,9 @@ async function openAiDialogSafely(context = {}) {
   }
 }
 
-function openTelegramBriefModal(task, statusHandler) {
+function openTelegramBriefModal(task, statusHandler, options = {}) {
   try {
-    telegramBriefModalFactory(task, statusHandler);
+    telegramBriefModalFactory(task, statusHandler, options);
   } catch (error) {
     if (typeof statusHandler === 'function') {
       statusHandler('error', 'Не удалось открыть Кратко ИИ. Обновите страницу.');
@@ -2625,7 +2625,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief>Кратко ИИ</button>
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
@@ -2686,7 +2685,6 @@ function initElements() {
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
-  elements.viewerBrief = document.querySelector('[data-viewer-brief]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
 
   logIosStage('elements_initialized', {
@@ -3944,11 +3942,6 @@ function createCard(task, index, anchorRegistry) {
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
   }
-  const briefButton = card.querySelector('[data-card-brief]');
-  if (briefButton) {
-    briefButton.addEventListener('click', () => openTelegramBriefModal(task, setStatus));
-  }
-
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -4624,22 +4617,6 @@ function populateCardFiles(card, files) {
     } else {
       element.removeAttribute('title');
     }
-    const actions = document.createElement('span');
-    actions.className = 'appdosc-card__file-actions';
-    const previewButton = document.createElement('button');
-    previewButton.type = 'button';
-    previewButton.className = 'appdosc-card__file-action';
-    previewButton.textContent = 'Просмотр';
-    previewButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const resolvedUrl = resolveDocumentUrl(normalizeValue(file.url) || normalizeValue(file.storedName));
-      if (resolvedUrl) {
-        openExternalDocument(resolvedUrl);
-      }
-    });
-    actions.appendChild(previewButton);
-    element.appendChild(actions);
     container.appendChild(element);
   });
 
@@ -7916,22 +7893,6 @@ function updateViewerDownloadState(file) {
   const hasFile = Boolean(file && (file.isSummary || file.resolvedUrl || file.url || file.previewUrl));
   elements.viewerDownload.disabled = !hasFile;
   elements.viewerDownload.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
-  updateViewerBriefState(file);
-}
-
-function updateViewerBriefState(file) {
-  if (!elements.viewerBrief) {
-    return;
-  }
-  const hasFile = Boolean(file && !file.isSummary);
-  elements.viewerBrief.disabled = !hasFile;
-  elements.viewerBrief.hidden = !hasFile;
-  elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
-  if (hasFile && !normalizeValue(file && file.aiBrief)) {
-    elements.viewerBrief.title = 'ИИ-кратко отсутствует, покажем прочерк';
-  } else {
-    elements.viewerBrief.removeAttribute('title');
-  }
 }
 
 function canDeleteResponseFromViewer(file) {
@@ -8162,14 +8123,17 @@ async function handleViewerDeleteResponseClick() {
   }
 }
 
-function handleViewerBriefClick() {
-  const file = getViewerFileToDownload();
+function handleViewerFileBriefClick(file, task) {
   if (!file || file.isSummary) {
     return;
   }
-  const fileName = getAttachmentName(file) || 'Файл';
-  const briefText = normalizeValue(file.aiBrief) || '—';
-  openTelegramFileAiBriefModal(fileName, briefText);
+  openTelegramBriefModal({
+    ...(task && typeof task === 'object' ? task : {}),
+    files: [file],
+  }, setStatus, {
+    preferredFileName: getAttachmentName(file) || '',
+    autoStart: true,
+  });
 }
 
 async function handleViewerDownloadClick() {
@@ -9945,6 +9909,11 @@ function renderViewerTabs(files, task) {
   updateViewerFileOwnerState(viewerTabsState.activeFile);
 
   files.forEach((file, index) => {
+    const tabItem = document.createElement('div');
+    tabItem.style.display = 'inline-flex';
+    tabItem.style.alignItems = 'center';
+    tabItem.style.gap = '6px';
+
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-viewer__tab';
@@ -9955,7 +9924,24 @@ function renderViewerTabs(files, task) {
     button.setAttribute('role', 'tab');
     button.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
     button.addEventListener('click', () => handleViewerTabClick(index, task));
-    elements.viewerTabsList.appendChild(button);
+    tabItem.appendChild(button);
+    if (!file.isSummary) {
+      const briefButton = document.createElement('button');
+      briefButton.type = 'button';
+      briefButton.className = 'appdosc-viewer__control';
+      briefButton.textContent = 'Кратко - ИИ';
+      briefButton.style.padding = '6px 9px';
+      briefButton.style.fontSize = '12px';
+      briefButton.style.whiteSpace = 'nowrap';
+      briefButton.setAttribute('aria-label', `Кратко ИИ: ${button.textContent}`);
+      briefButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        handleViewerFileBriefClick(file, task);
+      });
+      tabItem.appendChild(briefButton);
+    }
+    elements.viewerTabsList.appendChild(tabItem);
     viewerTabsState.buttons.push(button);
   });
 }
@@ -15046,9 +15032,6 @@ function attachEvents() {
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
-  }
-  if (elements.viewerBrief) {
-    elements.viewerBrief.addEventListener('click', handleViewerBriefClick);
   }
   if (elements.viewerDeleteResponse) {
     elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
