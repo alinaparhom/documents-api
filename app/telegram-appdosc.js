@@ -4618,22 +4618,6 @@ function populateCardFiles(card, files) {
     } else {
       element.removeAttribute('title');
     }
-    const actions = document.createElement('span');
-    actions.className = 'appdosc-card__file-actions';
-    const previewButton = document.createElement('button');
-    previewButton.type = 'button';
-    previewButton.className = 'appdosc-card__file-action';
-    previewButton.textContent = 'Просмотр';
-    previewButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const resolvedUrl = resolveDocumentUrl(normalizeValue(file.url) || normalizeValue(file.storedName));
-      if (resolvedUrl) {
-        openExternalDocument(resolvedUrl);
-      }
-    });
-    actions.appendChild(previewButton);
-    element.appendChild(actions);
     container.appendChild(element);
   });
 
@@ -8242,6 +8226,7 @@ async function generateViewerFileAiBrief(file, fileName) {
   }
 
   setActionButtonLoading(elements.viewerBrief, true);
+  const stopViewerBriefLoading = startViewerBriefLoadingAnimation();
   const source = {
     label: fileName || getAttachmentName(file) || 'Файл',
     url: resolveFileFetchUrl(file),
@@ -8277,7 +8262,46 @@ async function generateViewerFileAiBrief(file, fileName) {
     setStatus('error', `Кратко ИИ: ${error instanceof Error ? error.message : 'неизвестная ошибка'}`);
   } finally {
     setActionButtonLoading(elements.viewerBrief, false);
+    stopViewerBriefLoading();
   }
+}
+
+function startViewerBriefLoadingAnimation() {
+  if (!elements.viewerBrief) {
+    return () => {};
+  }
+  const button = elements.viewerBrief;
+  const initialText = button.textContent || 'Кратко - ИИ';
+  const initialTitle = button.getAttribute('title') || '';
+  const initialBackground = button.style.background;
+  const initialBorderColor = button.style.borderColor;
+  const initialColor = button.style.color;
+  let frame = 0;
+
+  button.setAttribute('aria-busy', 'true');
+  button.style.background = 'linear-gradient(135deg, rgba(239,246,255,.96), rgba(224,242,254,.95))';
+  button.style.borderColor = 'rgba(59,130,246,.55)';
+  button.style.color = '#1d4ed8';
+
+  const timerId = window.setInterval(() => {
+    frame = (frame + 1) % 4;
+    const dots = '.'.repeat(frame);
+    button.textContent = `⏳ Кратко ИИ${dots}`;
+  }, 260);
+
+  return () => {
+    window.clearInterval(timerId);
+    button.textContent = initialText;
+    button.style.background = initialBackground;
+    button.style.borderColor = initialBorderColor;
+    button.style.color = initialColor;
+    if (initialTitle) {
+      button.setAttribute('title', initialTitle);
+    } else {
+      button.removeAttribute('title');
+    }
+    button.setAttribute('aria-busy', 'false');
+  };
 }
 
 async function handleViewerDownloadClick() {
