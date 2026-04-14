@@ -1204,7 +1204,7 @@
         <div class="tg-ai-generated-preview__head">
           <div>
             <div class="tg-ai-generated-preview__title">Предварительный просмотр</div>
-            <div class="tg-ai-generated-preview__hint">Локальная копия документа как в файле</div>
+            <div class="tg-ai-generated-preview__hint">Открытие документа через Office Viewer</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
             <div class="tg-ai-generated-preview__zoom">
@@ -1230,18 +1230,18 @@
           <iframe class="tg-ai-generated-preview__frame" title="Office Web Viewer" data-preview-frame></iframe>
           <div class="tg-ai-generated-preview__loading" data-preview-loading>
             <div class="tg-ai-generated-preview__loading-card">
-              <div class="tg-ai-generated-preview__loading-title">Готовим локальный предпросмотр…</div>
-              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Рендерим документ прямо в браузере.</div>
+              <div class="tg-ai-generated-preview__loading-title">Открываем документ…</div>
+              <div class="tg-ai-generated-preview__loading-sub" data-loading-sub>Запускаем Office Viewer.</div>
               <div class="tg-ai-generated-preview__bar"></div>
               <div class="tg-ai-generated-preview__steps">
                 <div class="tg-ai-generated-preview__step tg-ai-generated-preview__step--active" data-step="1"><span class="tg-ai-generated-preview__step-dot"></span><span>1. Подготовка файла</span></div>
-                <div class="tg-ai-generated-preview__step" data-step="2"><span class="tg-ai-generated-preview__step-dot"></span><span>2. Подключение движка</span></div>
-                <div class="tg-ai-generated-preview__step" data-step="3"><span class="tg-ai-generated-preview__step-dot"></span><span>3. Отрисовка документа</span></div>
+                <div class="tg-ai-generated-preview__step" data-step="2"><span class="tg-ai-generated-preview__step-dot"></span><span>2. Открытие Office Viewer</span></div>
+                <div class="tg-ai-generated-preview__step" data-step="3"><span class="tg-ai-generated-preview__step-dot"></span><span>3. Проверка загрузки</span></div>
               </div>
             </div>
           </div>
         </div>
-        <div class="tg-ai-generated-preview__status" data-preview-status>Подготовка предпросмотра…</div>
+        <div class="tg-ai-generated-preview__status" data-preview-status>Открываем документ через Office Viewer…</div>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -1429,7 +1429,7 @@
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
     }
     localBtn?.addEventListener('click', () => { toggleMenu(false); openLocalPreview(); });
-    officeBtn?.addEventListener('click', () => {
+    const openOfficePreview = () => {
       toggleMenu(false);
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
@@ -1460,6 +1460,9 @@
           .catch((error) => {
             statusNode.textContent = (error && error.message) || 'Не удалось открыть через «Просмотреть». Пробуем Office Viewer…';
             if (frameNode) {
+              if (loadingNode) loadingNode.style.display = 'none';
+              if (docNode) docNode.style.display = 'none';
+              if (viewportNode) viewportNode.style.display = 'none';
               frameNode.style.display = '';
               frameNode.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
             }
@@ -1507,9 +1510,17 @@
           : 'Office Viewer не загрузился. Попробуйте открыть файл через «Скачать».';
       }, 6500);
       statusNode.textContent = 'Открываем через Office Viewer…';
-    });
+    };
 
-    await openLocalPreview();
+    officeBtn?.addEventListener('click', openOfficePreview);
+
+    if (canUseOfficeViewer) {
+      setStep(2, 'Открываем Office Viewer...');
+      openOfficePreview();
+      setTimeout(() => setStep(3, 'Проверяем загрузку...'), 500);
+    } else {
+      await openLocalPreview();
+    }
   }
 
   function openTemplateAnswerEditor(context = {}) {
