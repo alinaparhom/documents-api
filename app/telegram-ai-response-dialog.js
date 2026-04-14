@@ -1268,6 +1268,9 @@
       fileName: generatedFileName,
     }).filter((url) => /^https?:\/\//i.test(url));
     const task = context && context.task ? context.task : {};
+    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
+      ? window.__APPDOSC_OPEN_FILES_VIEWER__
+      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     let zoom = 1;
@@ -1407,15 +1410,36 @@
         const fallbackTimer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          const opened = openExternalOffice(officeUrl);
-          if (opened) {
-            if (loadingNode) loadingNode.style.display = 'none';
-            statusNode.textContent = 'Office Viewer открыт внешне.';
-            resolve(true);
+          const viewerFile = {
+            name: generatedFileName || 'answer.docx',
+            originalName: generatedFileName || 'answer.docx',
+            storedName: generatedFileName || 'answer.docx',
+            url: sourceUrl,
+            resolvedUrl: toAbsoluteUrl(sourceUrl),
+            previewUrl: sourceUrl,
+            fileUrl: sourceUrl,
+            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            kind: 'office',
+          };
+          if (openFilesViewer) {
+            Promise.resolve(openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }))
+              .then(() => {
+                if (loadingNode) loadingNode.style.display = 'none';
+                statusNode.textContent = 'Открыто через «Просмотреть».';
+                resolve(true);
+              })
+              .catch(() => {
+                const opened = openExternalOffice(officeUrl);
+                if (loadingNode) loadingNode.style.display = 'none';
+                statusNode.textContent = opened ? 'Office Viewer открыт внешне.' : 'Не удалось открыть документ.';
+                resolve(opened);
+              });
             return;
           }
+          const opened = openExternalOffice(officeUrl);
           if (loadingNode) loadingNode.style.display = 'none';
-          resolve(false);
+          statusNode.textContent = opened ? 'Office Viewer открыт внешне.' : 'Не удалось открыть документ.';
+          resolve(opened);
         }, 5500);
         if (!frameNode) {
           clearTimeout(fallbackTimer);
