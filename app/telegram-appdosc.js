@@ -2625,7 +2625,7 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief>Кратко ИИ</button>
+      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief hidden>Кратко ИИ</button>
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
@@ -4624,22 +4624,6 @@ function populateCardFiles(card, files) {
     } else {
       element.removeAttribute('title');
     }
-    const actions = document.createElement('span');
-    actions.className = 'appdosc-card__file-actions';
-    const previewButton = document.createElement('button');
-    previewButton.type = 'button';
-    previewButton.className = 'appdosc-card__file-action';
-    previewButton.textContent = 'Просмотр';
-    previewButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const resolvedUrl = resolveDocumentUrl(normalizeValue(file.url) || normalizeValue(file.storedName));
-      if (resolvedUrl) {
-        openExternalDocument(resolvedUrl);
-      }
-    });
-    actions.appendChild(previewButton);
-    element.appendChild(actions);
     container.appendChild(element);
   });
 
