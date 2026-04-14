@@ -1266,12 +1266,6 @@
     const previewUrl = normalize(previewPayload.previewUrl);
     const officeSourceUrl = toAbsoluteUrl(previewUrl);
     const task = context && context.task ? context.task : {};
-    const openViewerFile = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
-      ? window.__APPDOSC_OPEN_VIEWER_FILE__
-      : null;
-    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
     const fallbackBlob = previewPayload.blob instanceof Blob ? previewPayload.blob : null;
     const blobUrl = fallbackBlob ? URL.createObjectURL(fallbackBlob) : '';
     let zoom = 1;
@@ -1423,7 +1417,7 @@
       }
     };
 
-    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl) || Boolean((openViewerFile || openFilesViewer) && previewUrl);
+    const canUseOfficeViewer = /^https?:\/\//i.test(officeSourceUrl);
     if (officeBtn && !canUseOfficeViewer) {
       officeBtn.disabled = true;
       officeBtn.title = 'Office Viewer доступен только по публичной HTTPS ссылке';
@@ -1433,40 +1427,6 @@
       toggleMenu(false);
       if (!canUseOfficeViewer) {
         statusNode.textContent = 'Office Viewer недоступен: нужна публичная ссылка на файл.';
-        return;
-      }
-      if ((openViewerFile || openFilesViewer) && previewUrl) {
-        statusNode.textContent = 'Открываем как в режиме «Просмотреть»…';
-        const fileName = normalize(previewPayload.fileName) || 'template-answer.docx';
-        const viewerFile = {
-          name: fileName,
-          originalName: fileName,
-          storedName: fileName,
-          url: previewUrl,
-          resolvedUrl: toAbsoluteUrl(previewUrl),
-          previewUrl,
-          fileUrl: previewUrl,
-          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          kind: 'office',
-        };
-        Promise.resolve(
-          openViewerFile
-            ? openViewerFile(viewerFile, task || {}, { notify: true, hasMultiple: false })
-            : openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }),
-        )
-          .then(() => {
-            statusNode.textContent = 'Документ открыт через логику «Просмотреть».';
-          })
-          .catch((error) => {
-            statusNode.textContent = (error && error.message) || 'Не удалось открыть через «Просмотреть». Пробуем Office Viewer…';
-            if (frameNode) {
-              if (loadingNode) loadingNode.style.display = 'none';
-              if (docNode) docNode.style.display = 'none';
-              if (viewportNode) viewportNode.style.display = 'none';
-              frameNode.style.display = '';
-              frameNode.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
-            }
-          });
         return;
       }
       const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
@@ -1521,53 +1481,6 @@
     } else {
       await openLocalPreview();
     }
-  }
-
-  async function openGeneratedDocxFast(previewPayload, context = {}) {
-    if (!previewPayload || typeof previewPayload !== 'object') throw new Error('empty_preview_payload');
-    const previewUrl = normalize(previewPayload.previewUrl);
-    const officeSourceUrl = toAbsoluteUrl(previewUrl);
-    const task = context && context.task ? context.task : {};
-    const fileName = normalize(previewPayload.fileName) || 'template-answer.docx';
-    const openViewerFile = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_VIEWER_FILE__ === 'function'
-      ? window.__APPDOSC_OPEN_VIEWER_FILE__
-      : null;
-    const openFilesViewer = typeof window !== 'undefined' && typeof window.__APPDOSC_OPEN_FILES_VIEWER__ === 'function'
-      ? window.__APPDOSC_OPEN_FILES_VIEWER__
-      : null;
-
-    if ((openViewerFile || openFilesViewer) && previewUrl) {
-      const viewerFile = {
-        name: fileName,
-        originalName: fileName,
-        storedName: fileName,
-        url: previewUrl,
-        resolvedUrl: officeSourceUrl,
-        previewUrl,
-        fileUrl: previewUrl,
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        kind: 'office',
-      };
-      await Promise.resolve(
-        openViewerFile
-          ? openViewerFile(viewerFile, task || {}, { notify: true, hasMultiple: false })
-          : openFilesViewer([viewerFile], task || {}, { notify: true, hasMultiple: false }),
-      );
-      return true;
-    }
-
-    if (!/^https?:\/\//i.test(officeSourceUrl)) return false;
-    const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
-    const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
-    if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
-      telegramWebApp.openLink(officeUrl);
-      return true;
-    }
-    if (typeof window !== 'undefined' && typeof window.open === 'function') {
-      window.open(officeUrl, '_blank', 'noopener');
-      return true;
-    }
-    return false;
   }
 
   function openTemplateAnswerEditor(context = {}) {
@@ -1683,12 +1596,9 @@
           templateFileName: templateConfig.templateFileName,
         });
         close();
-        if (onStatus) onStatus('Открываем результат через Office Viewer...');
-        const openedFast = await openGeneratedDocxFast(previewPayload, { task });
-        if (!openedFast) {
-          await openGeneratedDocxViaExistingPreview(previewPayload, { task });
-        }
-        if (onStatus) onStatus('Готово: документ открыт через Office Viewer.');
+        if (onStatus) onStatus('Открываем результат в отдельном окне...');
+        await openGeneratedDocxViaExistingPreview(previewPayload, { task });
+        if (onStatus) onStatus('Готово: документ открыт, доступны скачивание и прикрепление.');
       } catch (error) {
         renderError((error && error.message) || 'Не удалось сформировать документ.');
         if (onStatus) onStatus('Ошибка генерации документа.');
