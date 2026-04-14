@@ -793,9 +793,11 @@
       .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px)}
       .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(241,245,249,.92));box-shadow:0 20px 50px rgba(15,23,42,.22)}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
+      .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
       .tg-ai-chat__title{font-size:16px;font-weight:800;color:#0f172a}
       .tg-ai-chat__sub{font-size:12px;color:#64748b;margin-top:2px}
       .tg-ai-chat__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.9);color:#0f172a;border-radius:11px;padding:6px 11px;min-height:34px;font-weight:700}
+      .tg-ai-chat__head-btn{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);color:#0f172a;border-radius:11px;padding:0 10px;min-height:34px;font-size:12px;font-weight:700}
       .tg-ai-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
       .tg-ai-chat__bubble{max-width:92%;padding:9px 11px;border-radius:13px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
@@ -804,6 +806,7 @@
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
+      .tg-ai-chat__toggle--ghost{display:flex;align-items:center;justify-content:center;opacity:.55;pointer-events:none}
       .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
       .tg-ai-chat__input-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:end}
       .tg-ai-chat__input{min-height:52px;max-height:156px;border:1px solid rgba(148,163,184,.35);border-radius:14px;background:rgba(255,255,255,.98);padding:10px 12px;color:#0f172a;font-size:14px;line-height:1.4;resize:none;outline:none}
@@ -900,7 +903,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1768,14 +1771,21 @@
         <div class="tg-ai-chat__head">
           <div>
             <div class="tg-ai-chat__title">Ответ с помощью ИИ</div>
-          <div class="tg-ai-chat__sub">Выберите файлы, режим и введите запрос (текстом или голосом)</div>
+            <div class="tg-ai-chat__sub">Выберите файлы, режим и введите запрос (текстом или голосом)</div>
           </div>
-          <button type="button" class="tg-ai-chat__close" data-close>✕</button>
+          <div class="tg-ai-chat__head-actions">
+            <button type="button" class="tg-ai-chat__head-btn" data-template-btn>Шаблон</button>
+            <button type="button" class="tg-ai-chat__close" data-close>✕</button>
+          </div>
         </div>
         <div class="tg-ai-chat__messages" data-messages>
           <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Выберите файлы, режим ответа и напишите задачу. Можно нажать 🎤 и продиктовать.</div>
         </div>
         <div class="tg-ai-chat__status" data-status>Выберите режим, добавьте запрос и нажмите «Отправить».</div>
+        <div class="tg-ai-chat__files" data-files hidden>
+          <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
+          <div class="tg-ai-chat__files-list" data-files-list></div>
+        </div>
         <div class="tg-ai-chat__composer">
           <div class="tg-ai-chat__toolbar">
             <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
@@ -1783,17 +1793,13 @@
               <option value="" selected>🎯 Выберите режим</option>
               ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${escapeHtml(item.value)}">🎯 ${escapeHtml(item.label)}</option>`).join('')}
             </select>
-            <button type="button" class="tg-ai-chat__toggle" data-template-btn>Шаблон</button>
+            <span class="tg-ai-chat__toggle tg-ai-chat__toggle--ghost" aria-hidden="true">Ввод</span>
           </div>
           <div class="tg-ai-chat__input-row">
             <textarea class="tg-ai-chat__input" data-prompt-input rows="2" placeholder="Например: Подготовь деловой ответ на претензию по этому документу"></textarea>
             <button type="button" class="tg-ai-chat__icon-btn" data-voice-btn aria-label="Голосовой ввод">🎤</button>
             <button type="button" class="tg-ai-chat__send" data-send-btn>Отправить</button>
           </div>
-        </div>
-        <div class="tg-ai-chat__files" data-files>
-          <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
-          <div class="tg-ai-chat__files-list" data-files-list></div>
         </div>
         <div class="tg-ai-chat__meta" data-meta></div>
       </div>
@@ -1805,6 +1811,7 @@
     const status = overlay.querySelector('[data-status]');
     const filesPanel = overlay.querySelector('[data-files]');
     const filesList = overlay.querySelector('[data-files-list]');
+    const filesToggleButton = overlay.querySelector('[data-files-toggle]');
     const meta = overlay.querySelector('[data-meta]');
     const styleSelect = overlay.querySelector('[data-style-select]');
     const templateButton = overlay.querySelector('[data-template-btn]');
@@ -1828,8 +1835,15 @@
     };
     overlay.querySelector('[data-close]')?.addEventListener('click', close);
 
-    overlay.querySelector('[data-files-toggle]')?.addEventListener('click', () => {
+    const updateFilesToggleLabel = () => {
+      if (!filesToggleButton) return;
+      filesToggleButton.textContent = selected.size ? `📎 Файлы (${selected.size})` : '📎 Файлы';
+    };
+
+    filesToggleButton?.addEventListener('click', () => {
+      if (!filesPanel) return;
       filesPanel.hidden = !filesPanel.hidden;
+      status.textContent = filesPanel.hidden ? 'Панель файлов скрыта.' : 'Выберите нужные файлы (по умолчанию ничего не выбрано).';
     });
 
     const setComposerDisabled = (disabled) => {
@@ -1887,12 +1901,24 @@
           status.textContent = `Распознано: ${interimText}`;
         }
       };
-      recognition.onerror = () => {
+      recognition.onerror = (event) => {
+        const errorCode = normalize(event && event.error);
         setVoiceState(false);
-        status.textContent = 'Голосовой ввод прерван. Можно повторить.';
+        if (errorCode === 'aborted') {
+          status.textContent = 'Голосовой ввод остановлен.';
+          return;
+        }
+        if (errorCode === 'no-speech') {
+          status.textContent = 'Речь не распознана. Скажите запрос ещё раз.';
+          return;
+        }
+        status.textContent = 'Не удалось распознать голос. Можно повторить.';
       };
       recognition.onend = () => {
         setVoiceState(false);
+        if (!isSending) {
+          status.textContent = 'Голосовой ввод завершён.';
+        }
       };
     } else if (voiceButton) {
       voiceButton.disabled = true;
@@ -2022,6 +2048,7 @@
       if (!key) return;
       if (target.checked) selected.add(key);
       else selected.delete(key);
+      updateFilesToggleLabel();
       status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
     });
 
@@ -2038,6 +2065,8 @@
         },
       });
     });
+
+    updateFilesToggleLabel();
 
   };
 }(typeof window !== 'undefined' ? window : globalThis));
