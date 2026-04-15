@@ -623,6 +623,7 @@
     templateName: null,
     templateMeta: null,
     templateOpenButton: null,
+    templateDownloadButton: null,
     templateUploadButton: null,
     templateUploadInput: null,
     templateCloseButton: null
@@ -5790,13 +5791,16 @@
     templateCard.appendChild(templateName);
     templateCard.appendChild(templateMeta);
     var templateActions = createElement('div', 'documents-template-modal__actions');
-    var templateOpenButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--primary', 'Открыть в Office Viewer');
+    var templateOpenButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--primary', 'Просмотреть');
     templateOpenButton.type = 'button';
+    var templateDownloadButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Скачать шаблон');
+    templateDownloadButton.type = 'button';
     var templateUploadButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Загрузить новый шаблон');
     templateUploadButton.type = 'button';
     var templateCloseButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Закрыть');
     templateCloseButton.type = 'button';
     templateActions.appendChild(templateOpenButton);
+    templateActions.appendChild(templateDownloadButton);
     templateActions.appendChild(templateUploadButton);
     templateActions.appendChild(templateCloseButton);
     var templateUploadInput = document.createElement('input');
@@ -5833,6 +5837,7 @@
     adminElements.templateName = templateName;
     adminElements.templateMeta = templateMeta;
     adminElements.templateOpenButton = templateOpenButton;
+    adminElements.templateDownloadButton = templateDownloadButton;
     adminElements.templateUploadButton = templateUploadButton;
     adminElements.templateUploadInput = templateUploadInput;
     adminElements.templateCloseButton = templateCloseButton;
@@ -5873,6 +5878,10 @@
 
     templateOpenButton.addEventListener('click', function() {
       openTemplateInOfficeViewer();
+    });
+
+    templateDownloadButton.addEventListener('click', function() {
+      downloadCurrentTemplate();
     });
 
     templateUploadButton.addEventListener('click', function() {
@@ -6596,6 +6605,9 @@
     if (adminElements.templateOpenButton) {
       adminElements.templateOpenButton.disabled = !templateState.exists || templateState.loading || templateState.uploading;
     }
+    if (adminElements.templateDownloadButton) {
+      adminElements.templateDownloadButton.disabled = !templateState.exists || templateState.loading || templateState.uploading;
+    }
     if (adminElements.templateUploadButton) {
       adminElements.templateUploadButton.disabled = templateState.loading || templateState.uploading;
       adminElements.templateUploadButton.textContent = templateState.uploading ? 'Загрузка…' : 'Загрузить новый шаблон';
@@ -6660,8 +6672,50 @@
     try {
       window.open(templateState.viewerUrl, '_blank', 'noopener,noreferrer');
     } catch (error) {
-      setAdminTemplateStatus('Не удалось открыть Office Viewer.', 'error');
+      setAdminTemplateStatus('Не удалось открыть файл для просмотра.', 'error');
     }
+  }
+
+  function downloadCurrentTemplate() {
+    var templateState = ensureAdminTemplateState();
+    if (!templateState.exists || !templateState.templateUrl) {
+      setAdminTemplateStatus('Сначала загрузите шаблон .docx.', 'error');
+      return;
+    }
+
+    var templateName = String(templateState.fileName || 'template.docx');
+    setAdminTemplateStatus('Подготавливаем скачивание шаблона…', 'info');
+
+    fetch(templateState.templateUrl, {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    })
+      .then(function(response) {
+        if (!response || !response.ok) {
+          throw new Error('Не удалось скачать шаблон.');
+        }
+        return response.blob();
+      })
+      .then(function(blob) {
+        var objectUrl = URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = templateName;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(function() {
+          if (link.parentNode) {
+            link.parentNode.removeChild(link);
+          }
+          URL.revokeObjectURL(objectUrl);
+        }, 0);
+        setAdminTemplateStatus('Шаблон скачивается.', 'success');
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : 'Не удалось скачать шаблон.';
+        setAdminTemplateStatus(message, 'error');
+      });
   }
 
   function uploadOrganizationTemplate(file) {
