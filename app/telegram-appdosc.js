@@ -1,5 +1,12 @@
-import { createPdfViewer } from './apppdf.js';
-import { createTelegramBriefAi } from './ai-short_repsonse.js';
+// Пробрасываем версионный параметр из URL текущего модуля в зависимости,
+// чтобы браузер не отдал закэшированный старый apppdf.js без нужных экспортов.
+const _moduleV = new URL(import.meta.url).searchParams.get('v');
+const _vSuffix = _moduleV ? '?v=' + encodeURIComponent(_moduleV) : '';
+const { createPdfViewer, preloadPdfjs } = await import('./apppdf.js' + _vSuffix);
+const { createTelegramBriefAi } = await import('./ai-short_repsonse.js' + _vSuffix);
+
+// Начинаем загрузку pdf.js как можно раньше, чтобы он был готов к моменту открытия документа
+preloadPdfjs();
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
@@ -13,6 +20,11 @@ const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
 const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
+const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
+const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 3 * 1000;
+const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 1500;
+const ENABLE_TASK_PDF_WARMUP = true;
+const pdfFetchTimeoutUrls = new Set();
 
 function normalizePdfBinaryCacheKey(url) {
   const normalized = normalizeValue(url);
@@ -91,24 +103,262 @@ function setTaskPdfBinaryCacheEntry(url, entry) {
   return nextEntry;
 }
 
-async function fetchPdfBinaryForViewer(previewUrl) {
+function clearTaskPdfBinaryCachePromiseByKey(cacheKey) {
+  if (!cacheKey) {
+    return;
+  }
+  const current = taskPdfBinaryCache.get(cacheKey);
+  if (!current || !current.promise) {
+    return;
+  }
+  const { promise, ...rest } = current;
+  taskPdfBinaryCache.set(cacheKey, rest);
+}
+
+function createPdfRequestId() {
+  const randomPart = Math.random().toString(36).slice(2, 10);
+  return `pdf_${Date.now().toString(36)}_${randomPart}`;
+}
+
+function ensurePdfTimingDiagnostics(details, fallback = {}) {
+  const input = details && typeof details === 'object' && !Array.isArray(details) ? { ...details } : {};
+  const fallbackData = fallback && typeof fallback === 'object' && !Array.isArray(fallback) ? fallback : {};
+  const resolvedSource = input.source === 'warmup' ? 'warmup' : (fallbackData.source === 'warmup' ? 'warmup' : 'user_click');
+  const requestId = normalizeValue(input.requestId) || normalizeValue(fallbackData.requestId) || createPdfRequestId();
+  const traceId = normalizeValue(input.traceId) || normalizeValue(fallbackData.traceId) || requestId;
+  const cacheKey = normalizeValue(input.cacheKey) || normalizeValue(fallbackData.cacheKey) || '';
+  const fetchStartedAt = typeof input.fetchStartedAt === 'number'
+    ? input.fetchStartedAt
+    : (typeof fallbackData.fetchStartedAt === 'number' ? fallbackData.fetchStartedAt : 0);
+  const responseReceivedAt = typeof input.responseReceivedAt === 'number'
+    ? input.responseReceivedAt
+    : (typeof fallbackData.responseReceivedAt === 'number' ? fallbackData.responseReceivedAt : 0);
+  const arrayBufferReadyAt = typeof input.arrayBufferReadyAt === 'number'
+    ? input.arrayBufferReadyAt
+    : (typeof fallbackData.arrayBufferReadyAt === 'number' ? fallbackData.arrayBufferReadyAt : 0);
+
+  return {
+    ...input,
+    requestId,
+    traceId,
+    source: resolvedSource,
+    fetchStartedAt,
+    responseReceivedAt,
+    arrayBufferReadyAt,
+    ttfbMs: typeof input.ttfbMs === 'number' ? input.ttfbMs : (typeof fallbackData.ttfbMs === 'number' ? fallbackData.ttfbMs : 0),
+    downloadMs: typeof input.downloadMs === 'number' ? input.downloadMs : (typeof fallbackData.downloadMs === 'number' ? fallbackData.downloadMs : 0),
+    cacheKey,
+    waitedExistingPromise: typeof input.waitedExistingPromise === 'boolean'
+      ? input.waitedExistingPromise
+      : Boolean(fallbackData.waitedExistingPromise),
+    waitedExistingPromiseDurationMs: typeof input.waitedExistingPromiseDurationMs === 'number'
+      ? input.waitedExistingPromiseDurationMs
+      : (typeof fallbackData.waitedExistingPromiseDurationMs === 'number' ? fallbackData.waitedExistingPromiseDurationMs : 0),
+    responseUrl: normalizeValue(input.responseUrl) || normalizeValue(fallbackData.responseUrl) || '',
+    'content-length': normalizeValue(input['content-length']) || normalizeValue(input.contentLength) || normalizeValue(fallbackData['content-length']) || normalizeValue(fallbackData.contentLength) || '',
+  };
+}
+
+async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', requestId = '', options = {}) {
+  const requestSource = source === 'warmup' ? 'warmup' : 'user_click';
+  const normalizedRequestId = normalizeValue(requestId) || createPdfRequestId();
+  const traceId = normalizeValue(options && options.traceId) || normalizedRequestId;
+  const diagnosticsContext = options && options.diagnosticsContext && typeof options.diagnosticsContext === 'object'
+    ? options.diagnosticsContext
+    : {};
+  const fetchTimeoutMs = requestSource === 'warmup'
+    ? TASK_PDF_FETCH_TIMEOUT_MS_WARMUP
+    : TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK;
   const sameOrigin = isSameOriginUrl(previewUrl);
   const cachedEntry = getTaskPdfBinaryCacheEntry(previewUrl);
+  const cacheKey = normalizePdfBinaryCacheKey(previewUrl);
   if (cachedEntry && cachedEntry.arrayBuffer) {
-    return { ...cachedEntry, fromCache: true, sameOrigin };
+    const cachedRequestId = cachedEntry.requestId || normalizedRequestId;
+    return {
+      ...cachedEntry,
+      requestId: cachedRequestId,
+      traceId: cachedEntry.traceId || cachedRequestId,
+      source: requestSource,
+      fromCache: true,
+      cacheHitArrayBuffer: true,
+      cacheKey,
+      sameOrigin,
+      fetchStartedAt: typeof cachedEntry.fetchStartedAt === 'number' ? cachedEntry.fetchStartedAt : 0,
+      waitedExistingPromise: false,
+      waitedExistingPromiseDurationMs: 0,
+      existingPromiseSource: '',
+    };
   }
   if (cachedEntry && cachedEntry.promise) {
-    const awaited = await cachedEntry.promise;
-    return { ...awaited, fromCache: true, sameOrigin };
+    const existingPromiseSource = cachedEntry && cachedEntry.source ? cachedEntry.source : '';
+    if (requestSource === 'user_click' && existingPromiseSource === 'warmup') {
+      clearTaskPdfBinaryCachePromiseByKey(cacheKey);
+      logClientEvent('task_view_pdf_diagnostics', {
+        prefix: 'Просмотр2',
+        step: 'fetch:skip_warmup_promise',
+        details: {
+          url: previewUrl,
+          requestId: normalizedRequestId,
+          traceId,
+          source: requestSource,
+          cacheKey,
+          waitedExistingPromise: false,
+          waitedExistingPromiseDurationMs: 0,
+          existingPromiseSource,
+          reason: 'user_click_priority',
+        },
+        requestId: normalizedRequestId,
+        traceId,
+        source: requestSource,
+        cacheKey,
+        waitedExistingPromise: false,
+        waitedExistingPromiseDurationMs: 0,
+        existingPromiseSource,
+        reason: 'user_click_priority',
+      }, { keepalive: true });
+    } else {
+    const waitStartedAt = Date.now();
+    let awaited = null;
+    let timedOut = false;
+    if (requestSource === 'user_click') {
+      let sharedPromiseTimeoutId = null;
+      const sharedPromiseTimeout = new Promise((_, reject) => {
+        sharedPromiseTimeoutId = window.setTimeout(() => {
+          const timeoutError = new Error('shared_promise_timeout');
+          timeoutError.name = 'SharedPromiseTimeoutError';
+          timeoutError.code = 'shared_promise_timeout';
+          reject(timeoutError);
+        }, TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS);
+      });
+      try {
+        awaited = await Promise.race([cachedEntry.promise, sharedPromiseTimeout]);
+      } catch (error) {
+        if (error && (error.code === 'shared_promise_timeout' || error.name === 'SharedPromiseTimeoutError')) {
+          timedOut = true;
+        } else {
+          throw error;
+        }
+      } finally {
+        if (sharedPromiseTimeoutId !== null) {
+          window.clearTimeout(sharedPromiseTimeoutId);
+        }
+      }
+    } else {
+      awaited = await cachedEntry.promise;
+    }
+
+    const waitEndedAt = Date.now();
+    const waitedExistingPromiseDurationMs = Math.max(0, waitEndedAt - waitStartedAt);
+
+    if (timedOut) {
+      clearTaskPdfBinaryCachePromiseByKey(cacheKey);
+      logClientEvent('task_view_pdf_diagnostics', {
+        prefix: 'Просмотр2',
+        step: 'fetch:shared_promise_timeout',
+        details: {
+          url: previewUrl,
+          requestId: normalizedRequestId,
+          traceId,
+          source: requestSource,
+          cacheKey,
+          waitedMs: waitedExistingPromiseDurationMs,
+          waitedExistingPromise: true,
+          existingPromiseSource: cachedEntry && cachedEntry.source ? cachedEntry.source : '',
+        },
+        requestId: normalizedRequestId,
+        traceId,
+        source: requestSource,
+        cacheKey,
+        waitedMs: waitedExistingPromiseDurationMs,
+      }, { keepalive: true });
+    } else {
+      const awaitedRequestId = awaited && awaited.requestId
+        ? awaited.requestId
+        : (cachedEntry.requestId || normalizedRequestId);
+      const awaitedTraceId = awaited && awaited.traceId ? awaited.traceId : awaitedRequestId;
+      const awaitedContentLength = awaited && awaited.contentLength ? awaited.contentLength : '';
+      const existingPromiseSource = cachedEntry && cachedEntry.source
+        ? cachedEntry.source
+        : (awaited && awaited.source ? awaited.source : '');
+      logClientEvent('task_view_pdf_diagnostics', {
+        prefix: 'Просмотр2',
+        step: 'fetch:wait_existing_promise',
+        details: {
+          url: previewUrl,
+          requestId: awaitedRequestId,
+          traceId: awaitedTraceId,
+          source: requestSource,
+          cacheKey,
+          cacheHitArrayBuffer: false,
+          waitedExistingPromise: true,
+          waitedExistingPromiseDurationMs,
+          existingPromiseSource,
+          fetchDurationMs: awaited && typeof awaited.fetchDurationMs === 'number' ? awaited.fetchDurationMs : 0,
+          ttfbMs: awaited && typeof awaited.ttfbMs === 'number' ? awaited.ttfbMs : 0,
+          downloadMs: awaited && typeof awaited.downloadMs === 'number' ? awaited.downloadMs : 0,
+          responseUrl: awaited && awaited.responseUrl ? awaited.responseUrl : previewUrl,
+          'content-length': awaitedContentLength,
+          requestedUrl: previewUrl,
+          awaitedResponseUrl: awaited && awaited.responseUrl ? awaited.responseUrl : '',
+          awaitedSource: awaited && awaited.source ? awaited.source : requestSource,
+          fetchStartedAt: awaited && typeof awaited.fetchStartedAt === 'number' ? awaited.fetchStartedAt : 0,
+        },
+        requestId: awaitedRequestId,
+        traceId: awaitedTraceId,
+        source: requestSource,
+        cacheKey,
+        fetchDurationMs: awaited && typeof awaited.fetchDurationMs === 'number' ? awaited.fetchDurationMs : 0,
+        responseUrl: awaited && awaited.responseUrl ? awaited.responseUrl : previewUrl,
+        'content-length': awaitedContentLength,
+        requestedUrl: previewUrl,
+        awaitedResponseUrl: awaited && awaited.responseUrl ? awaited.responseUrl : '',
+        awaitedSource: awaited && awaited.source ? awaited.source : requestSource,
+        fetchStartedAt: awaited && typeof awaited.fetchStartedAt === 'number' ? awaited.fetchStartedAt : 0,
+        requestStartedAt: awaited && typeof awaited.requestStartedAt === 'number' ? awaited.requestStartedAt : 0,
+        responseReceivedAt: awaited && typeof awaited.responseReceivedAt === 'number' ? awaited.responseReceivedAt : 0,
+        arrayBufferReadyAt: awaited && typeof awaited.arrayBufferReadyAt === 'number' ? awaited.arrayBufferReadyAt : 0,
+        cacheHitArrayBuffer: false,
+        waitedExistingPromise: true,
+        waitedExistingPromiseDurationMs,
+        existingPromiseSource,
+        ttfbMs: awaited && typeof awaited.ttfbMs === 'number' ? awaited.ttfbMs : 0,
+        downloadMs: awaited && typeof awaited.downloadMs === 'number' ? awaited.downloadMs : 0,
+      }, { keepalive: true });
+      return {
+        ...awaited,
+        requestId: awaitedRequestId,
+        traceId: awaitedTraceId,
+        source: requestSource,
+        fromCache: true,
+        cacheHitArrayBuffer: false,
+        cacheKey,
+        sameOrigin,
+        waitedExistingPromise: true,
+        waitedExistingPromiseDurationMs,
+        existingPromiseSource,
+      };
+    }
+    }
   }
 
-  const fetchStartedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+  const requestStartedAt = Date.now();
+  const fetchStartedAt = requestStartedAt;
+  const fetchStartedAtPerf = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
     ? performance.now()
     : Date.now();
+  const abortController = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeoutId = window.setTimeout(() => {
+    if (abortController) {
+      abortController.abort('fetch_timeout');
+    }
+  }, fetchTimeoutMs);
   const requestPromise = fetch(previewUrl, {
     credentials: sameOrigin ? 'include' : 'omit',
-    cache: sameOrigin ? 'default' : 'no-store',
+    cache: sameOrigin ? 'no-cache' : 'no-store',
+    ...(abortController ? { signal: abortController.signal } : {}),
   }).then(async (response) => {
+    window.clearTimeout(timeoutId);
+    const responseReceivedAt = Date.now();
     const fetchRespondedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
       ? performance.now()
       : Date.now();
@@ -118,6 +368,12 @@ async function fetchPdfBinaryForViewer(previewUrl) {
       throw error;
     }
     const arrayBuffer = await response.arrayBuffer();
+    const arrayBufferReadyAt = Date.now();
+    const arrayBufferReadyAtPerf = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
+    const ttfbMs = Math.max(0, Math.round(fetchRespondedAt - fetchStartedAtPerf));
+    const downloadMs = Math.max(0, Math.round(arrayBufferReadyAtPerf - fetchRespondedAt));
     const result = {
       status: response.status,
       statusText: response.statusText,
@@ -127,31 +383,94 @@ async function fetchPdfBinaryForViewer(previewUrl) {
       headers: collectResponseHeaders(response),
       contentType: response.headers ? response.headers.get('content-type') : '',
       contentLength: response.headers ? response.headers.get('content-length') : '',
-      fetchDurationMs: Math.max(0, Math.round(fetchRespondedAt - fetchStartedAt)),
+      fetchDurationMs: ttfbMs,
+      ttfbMs,
+      downloadMs,
       sameOrigin,
       cacheMode: sameOrigin ? 'default' : 'no-store',
       resourceTiming: getFetchResourceTimingSample(response.url || previewUrl),
       connectionInfo: getConnectionDiagnostics(),
       arrayBuffer,
       byteLength: arrayBuffer ? arrayBuffer.byteLength : 0,
+      requestId: normalizedRequestId,
+      traceId,
+      source: requestSource,
+      cacheKey,
+      requestStartedAt,
+      fetchStartedAt,
+      responseReceivedAt,
+      arrayBufferReadyAt,
+      waitedExistingPromise: false,
+      waitedExistingPromiseDurationMs: 0,
+      existingPromiseSource: '',
+      cacheHitArrayBuffer: false,
     };
     setTaskPdfBinaryCacheEntry(previewUrl, result);
     return result;
+  }).catch((error) => {
+    window.clearTimeout(timeoutId);
+    const isTimeoutError = Boolean(error && (error.name === 'AbortError' || error === 'fetch_timeout' || error.message === 'fetch_timeout'));
+    if (!isTimeoutError) {
+      throw error;
+    }
+    const timeoutError = new Error('fetch_timeout');
+    timeoutError.name = 'FetchTimeoutError';
+    timeoutError.code = 'fetch_timeout';
+    logClientEvent('task_view_pdf_diagnostics', {
+      ...diagnosticsContext,
+      prefix: 'Просмотр2',
+      step: 'fetch:timeout',
+      details: {
+        ...diagnosticsContext,
+        url: previewUrl,
+        requestId: normalizedRequestId,
+        traceId,
+        source: requestSource,
+        cacheKey,
+        waitedMs: fetchTimeoutMs,
+      },
+      requestId: normalizedRequestId,
+      traceId,
+      source: requestSource,
+      cacheKey,
+      waitedMs: fetchTimeoutMs,
+    }, { keepalive: true });
+    clearTaskPdfBinaryCachePromiseByKey(cacheKey);
+    pdfFetchTimeoutUrls.add(normalizePdfBinaryCacheKey(previewUrl));
+    throw timeoutError;
   }).finally(() => {
+    window.clearTimeout(timeoutId);
     const key = normalizePdfBinaryCacheKey(previewUrl);
     if (!key) {
       return;
     }
-    const current = taskPdfBinaryCache.get(key);
-    if (current && current.promise) {
-      const { promise, ...rest } = current;
-      taskPdfBinaryCache.set(key, rest);
-    }
+    clearTaskPdfBinaryCachePromiseByKey(key);
   });
 
-  setTaskPdfBinaryCacheEntry(previewUrl, { promise: requestPromise });
+  setTaskPdfBinaryCacheEntry(previewUrl, {
+    promise: requestPromise,
+    requestId: normalizedRequestId,
+    traceId,
+    source: requestSource,
+    cacheKey,
+    requestStartedAt,
+    fetchStartedAt,
+  });
   const loaded = await requestPromise;
-  return { ...loaded, fromCache: false, sameOrigin };
+  return {
+    ...loaded,
+    requestId: loaded.requestId || normalizedRequestId,
+    traceId: loaded.traceId || traceId,
+    source: requestSource,
+    fromCache: false,
+    cacheHitArrayBuffer: false,
+    cacheKey,
+    sameOrigin,
+    fetchStartedAt: typeof loaded.fetchStartedAt === 'number' ? loaded.fetchStartedAt : fetchStartedAt,
+    waitedExistingPromise: false,
+    waitedExistingPromiseDurationMs: 0,
+    existingPromiseSource: '',
+  };
 }
 
 function buildTaskAttachmentPreviewCacheKey(task, file) {
@@ -183,7 +502,7 @@ function ensureAiDialogScriptLoaded() {
   if (!aiDialogLoader) {
     aiDialogLoader = (async () => {
       try {
-        await import('./telegram-ai-response-dialog.js');
+        await import('./telegram-ai-response-dialog.js' + _vSuffix);
         if (typeof window.openAiResponseDialog === 'function') {
           return window.openAiResponseDialog;
         }
@@ -315,8 +634,14 @@ const ALLOWED_LOG_EVENTS = new Set([
   'task_view_watch_tab_click',
   'task_view_watch_tab_success',
   'task_view_watch_tab_error',
+  'task_view_watch_tab_finish',
+  'task_view_watch_tab_skip_busy',
+  'task_view_watch_tab_cache_hit',
+  'task_view_watch_tab_cache_save',
   'task_view_inline_headers',
   'task_view_pdf_diagnostics',
+  'task_view_pdf_render_result',
+  'task_view_pdf_page_count',
   'task_view_resolve',
   'task_view_stage',
   'task_assign_error',
@@ -811,6 +1136,9 @@ const viewerTabsState = {
   taskId: null,
   task: null,
   activeFile: null,
+  switching: false,
+  pendingIndex: null,
+  renderedCache: new Map(),
 };
 
 const docLoadTracker = {
@@ -820,6 +1148,7 @@ const docLoadTracker = {
   fileType: '',
   meta: {},
   timerInterval: null,
+  loaderToken: null,
 };
 const viewerOpenMetrics = {
   sessionOpenId: 0,
@@ -868,16 +1197,37 @@ function docLoadFinish(error) {
   if (!docLoadTracker.startTime) return;
   const totalMs = Math.round(performance.now() - docLoadTracker.startTime);
   docLoadStep(error ? 'ошибка' : 'готово');
+  const rawMeta = docLoadTracker.meta && typeof docLoadTracker.meta === 'object' ? docLoadTracker.meta : {};
+  const docMeta = ensurePdfTimingDiagnostics(rawMeta, rawMeta);
   sendDocLoadLog({
+    eventName: 'mini_app_doc_load_timing',
     event: error ? 'load_error' : 'load_complete',
     fileName: docLoadTracker.fileName,
     fileType: docLoadTracker.fileType,
     timings: docLoadTracker.stepTimings,
     totalMs,
     error: error ? (error.message || String(error)) : undefined,
-    meta: docLoadTracker.meta && typeof docLoadTracker.meta === 'object' ? docLoadTracker.meta : undefined,
+    meta: docMeta,
+    source: docMeta.source,
+    requestId: docMeta.requestId,
+    traceId: docMeta.traceId,
+    fetchStartedAt: docMeta.fetchStartedAt,
+    responseReceivedAt: docMeta.responseReceivedAt,
+    arrayBufferReadyAt: docMeta.arrayBufferReadyAt,
+    cacheKey: docMeta.fetchCacheKey || docMeta.cacheKey || '',
+    cacheHitArrayBuffer: typeof docMeta.cacheHitArrayBuffer === 'boolean' ? docMeta.cacheHitArrayBuffer : undefined,
+    waitedExistingPromise: docMeta.waitedExistingPromise,
+    waitedExistingPromiseDurationMs: docMeta.waitedExistingPromiseDurationMs,
+    existingPromiseSource: docMeta.existingPromiseSource || '',
+    fetchDurationMs: typeof docMeta.fetchDurationMs === 'number' ? docMeta.fetchDurationMs : undefined,
+    ttfbMs: docMeta.ttfbMs,
+    downloadMs: docMeta.downloadMs,
+    responseUrl: docMeta.responseUrl,
+    'content-length': docMeta['content-length'] || docMeta.fetchContentLength || '',
+    requestStartedAt: typeof docMeta.requestStartedAt === 'number' ? docMeta.requestStartedAt : undefined,
     telegramId: (state && state.telegram && state.telegram.id) ? String(state.telegram.id) : '',
     platform: runtimeEnvironment.webAppPlatform || runtimeEnvironment.platform || '',
+    taskFilter: formatTaskFiltersForLog(state && state.taskFilter !== undefined ? state.taskFilter : []),
   });
   docLoadTracker.startTime = 0;
 }
@@ -922,7 +1272,9 @@ function sendDocLoadLog(payload) {
 
 function showViewerLoader(fileName) {
   const loader = document.querySelector('[data-viewer-loader]');
-  if (!loader) return;
+  if (!loader) return null;
+  const token = `loader_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  docLoadTracker.loaderToken = token;
   const titleEl = loader.querySelector('[data-viewer-loader-title]');
   const stepEl = loader.querySelector('[data-viewer-loader-step]');
   const barEl = loader.querySelector('[data-viewer-loader-bar]');
@@ -935,25 +1287,34 @@ function showViewerLoader(fileName) {
   const start = performance.now();
   if (docLoadTracker.timerInterval) clearInterval(docLoadTracker.timerInterval);
   docLoadTracker.timerInterval = setInterval(() => {
-    if (loader.hidden) { clearInterval(docLoadTracker.timerInterval); docLoadTracker.timerInterval = null; return; }
+    if (loader.hidden || docLoadTracker.loaderToken !== token) {
+      clearInterval(docLoadTracker.timerInterval);
+      docLoadTracker.timerInterval = null;
+      return;
+    }
     const elapsed = Math.round((performance.now() - start) / 1000);
     if (timeEl) timeEl.textContent = elapsed > 0 ? `${elapsed} сек` : '';
   }, 500);
+  return token;
 }
 
-function updateViewerLoaderStep(step, progress) {
+function updateViewerLoaderStep(step, progress, token = docLoadTracker.loaderToken) {
   const loader = document.querySelector('[data-viewer-loader]');
-  if (!loader || loader.hidden) return;
+  if (!loader || loader.hidden || (token && docLoadTracker.loaderToken && token !== docLoadTracker.loaderToken)) return;
   const stepEl = loader.querySelector('[data-viewer-loader-step]');
   const barEl = loader.querySelector('[data-viewer-loader-bar]');
   if (stepEl && step) stepEl.textContent = step;
   if (barEl && typeof progress === 'number') barEl.style.width = `${Math.min(100, Math.max(0, progress))}%`;
 }
 
-function hideViewerLoader() {
+function hideViewerLoader(token = docLoadTracker.loaderToken) {
+  if (token && docLoadTracker.loaderToken && token !== docLoadTracker.loaderToken) {
+    return;
+  }
   const loader = document.querySelector('[data-viewer-loader]');
   if (loader) loader.hidden = true;
   if (docLoadTracker.timerInterval) { clearInterval(docLoadTracker.timerInterval); docLoadTracker.timerInterval = null; }
+  docLoadTracker.loaderToken = null;
 }
 
 function ensureIosDiagnosticsState(forceEnable = false) {
@@ -1281,8 +1642,19 @@ function logClientEvent(eventName, details, options) {
   }
 
   const normalizedDetails = prepareLogDetails(details);
-  if (normalizedDetails && typeof normalizedDetails === 'object' && !Array.isArray(normalizedDetails)) {
-    annotateEventWithEnvironment(normalizedDetails);
+  let finalDetails = normalizedDetails;
+  if (normalizedEvent === 'task_view_pdf_diagnostics'
+    && normalizedDetails
+    && typeof normalizedDetails === 'object'
+    && !Array.isArray(normalizedDetails)) {
+    const enriched = ensurePdfTimingDiagnostics(normalizedDetails, normalizedDetails);
+    if (enriched.details && typeof enriched.details === 'object' && !Array.isArray(enriched.details)) {
+      enriched.details = ensurePdfTimingDiagnostics(enriched.details, enriched);
+    }
+    finalDetails = enriched;
+  }
+  if (finalDetails && typeof finalDetails === 'object' && !Array.isArray(finalDetails)) {
+    annotateEventWithEnvironment(finalDetails);
   }
 
   const payload = {
@@ -1290,8 +1662,8 @@ function logClientEvent(eventName, details, options) {
     timestamp: new Date().toISOString(),
   };
 
-  if (normalizedDetails !== undefined) {
-    payload.details = normalizedDetails;
+  if (finalDetails !== undefined) {
+    payload.details = finalDetails;
   }
 
   const context = buildClientEventContext();
@@ -2242,6 +2614,10 @@ const FALLBACK_CARD_TEMPLATE = `
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
   </div>
+  <div class="appdosc-card__resolution" data-field="aiBrief">
+    <div class="appdosc-card__block-title">Кратко от ИИ</div>
+    <div class="appdosc-card__block-text" data-field="aiBriefText"></div>
+  </div>
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
     <div class="appdosc-card__deadline">
@@ -2249,7 +2625,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief>Кратко ИИ</button>
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
@@ -2308,7 +2683,10 @@ function initElements() {
   elements.taskSelector = document.querySelector('[data-task-select]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
+  elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
+  elements.viewerBrief = document.querySelector('[data-viewer-brief]');
+  elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
 
   logIosStage('elements_initialized', {
     cardsContainer: Boolean(elements.cardsContainer),
@@ -2316,6 +2694,9 @@ function initElements() {
     placeholderFound: Boolean(elements.placeholder),
   });
   updateViewerDownloadState(null);
+  updateViewerBriefState(null);
+  updateViewerDeleteState(null);
+  updateViewerFileOwnerState(null);
 }
 
 function initTelegram() {
@@ -2782,6 +3163,7 @@ async function loadTasks(force = false) {
       tasks: state.tasks.length,
       durationMs: Date.now() - startedAt,
     });
+    preGenerateTaskSummaries();
   } catch (error) {
     if (error && error.name === 'AbortError') {
       return;
@@ -3514,6 +3896,39 @@ function createCard(task, index, anchorRegistry) {
   });
   toggleSection(card, '[data-field="resolution"]', hasResolution);
 
+  const aiBriefContainer = card.querySelector('[data-field="aiBriefText"]');
+  const aiBriefFiles = Array.isArray(task.files) ? task.files : [];
+  if (aiBriefContainer) {
+    aiBriefContainer.textContent = '';
+    if (aiBriefFiles.length) {
+      aiBriefFiles.forEach((file, index) => {
+        const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
+        const aiBriefText = normalizeBriefText(file && file.aiBrief);
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(148,163,184,.32);';
+        const label = document.createElement('span');
+        label.style.cssText = 'font-size:12px;line-height:1.35;color:#1e293b;word-break:break-word;';
+        label.textContent = fileName;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'appdosc-card__action';
+        btn.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
+        btn.textContent = 'Кратко ИИ';
+        btn.disabled = !aiBriefText;
+        if (!aiBriefText) {
+          btn.title = 'Кратко ИИ пока отсутствует';
+        }
+        btn.addEventListener('click', () => openTelegramFileAiBriefModal(fileName, aiBriefText || '—'));
+        row.appendChild(label);
+        row.appendChild(btn);
+        aiBriefContainer.appendChild(row);
+      });
+    } else {
+      aiBriefContainer.textContent = '—';
+    }
+  }
+  toggleSection(card, '[data-field="aiBrief"]', true);
+
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
   });
@@ -3528,11 +3943,6 @@ function createCard(task, index, anchorRegistry) {
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
   }
-  const briefButton = card.querySelector('[data-card-brief]');
-  if (briefButton) {
-    briefButton.addEventListener('click', () => openTelegramBriefModal(task, setStatus));
-  }
-
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -4116,6 +4526,34 @@ function toggleSection(card, selector, shouldShow) {
   section.hidden = !shouldShow;
 }
 
+function openTelegramFileAiBriefModal(fileName, briefText) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:4000;background:rgba(15,23,42,.42);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:10px;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'width:min(760px,100%);max-height:84vh;overflow:auto;border-radius:18px;padding:14px;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.95));border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 40px rgba(15,23,42,.24);';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:15px;font-weight:700;color:#0f172a;margin-bottom:8px;';
+  title.textContent = fileName || 'Файл';
+  const text = document.createElement('pre');
+  text.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;tab-size:4;font:500 13px/1.65 Inter,system-ui,sans-serif;color:#1e293b;background:rgba(248,250,252,.95);border-radius:12px;padding:14px;border:1px solid rgba(203,213,225,.72);';
+  text.textContent = briefText || '—';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = 'Закрыть';
+  closeButton.style.cssText = 'margin-top:12px;padding:8px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.45);background:#fff;color:#0f172a;font-weight:600;';
+  closeButton.addEventListener('click', () => overlay.remove());
+  panel.appendChild(title);
+  panel.appendChild(text);
+  panel.appendChild(closeButton);
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      overlay.remove();
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
 function applyRegistrationDateHeader(card, registrationDate) {
   if (!(card instanceof HTMLElement)) {
     return;
@@ -4167,12 +4605,14 @@ function populateCardFiles(card, files) {
 
   const maxToShow = 3;
   safeFiles.slice(0, maxToShow).forEach((file) => {
-    const element = document.createElement('span');
+    const element = document.createElement('div');
     element.className = 'appdosc-card__file';
     const displayName = normalizeValue(file.originalName)
       || normalizeValue(file.storedName)
       || 'Файл';
-    element.textContent = displayName;
+    const title = document.createElement('span');
+    title.textContent = displayName;
+    element.appendChild(title);
     if (displayName) {
       element.title = displayName;
     } else {
@@ -4471,12 +4911,32 @@ function prewarmMiniAppPdfResources() {
     loadMiniAppPdfFontBytes().catch(() => null);
   };
 
-  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(() => run(), { timeout: 1200 });
+  run();
+}
+
+function preGenerateTaskSummaries() {
+  if (!Array.isArray(state.tasks) || !state.tasks.length) {
     return;
   }
-
-  setTimeout(run, 180);
+  const MAX_PREGENERATE = 5;
+  const tasks = state.tasks.slice(0, MAX_PREGENERATE);
+  let index = 0;
+  const scheduleNext = () => {
+    if (index >= tasks.length) {
+      return;
+    }
+    const task = tasks[index++];
+    if (!task || (task.summaryPdf && task.summaryBlobUrl)) {
+      scheduleNext();
+      return;
+    }
+    ensureTaskSummaryPreview(task, null)
+      .then(() => {
+        setTimeout(scheduleNext, 30);
+      })
+      .catch(() => scheduleNext());
+  };
+  setTimeout(scheduleNext, 0);
 }
 
 function sanitizePdfText(font, text) {
@@ -4751,6 +5211,7 @@ function buildTaskSummaryRows(task, attachments) {
         description += ` (${metaParts.join(' • ')})`;
       }
       lines.push(description);
+      lines.push('   Кратко ИИ: кнопка в карточке');
     });
     attachmentsText = lines.join('\n');
   }
@@ -4774,6 +5235,59 @@ function buildTaskSummaryRows(task, attachments) {
     { label: 'Статус', value: normalizeValueString(getTaskStatusValue(task)) || '—' },
     { label: 'Файлы', value: attachmentsText },
   ];
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildSummaryHtml(task) {
+  const rows = buildTaskSummaryRows(task, task.files || []);
+  const org = task.organization ? escapeHtml(task.organization) : '';
+  const now = formatPdfDateTime(new Date());
+  let html = '<div class="appdosc-summary">';
+  html += '<div class="appdosc-summary__header">';
+  html += '<h2 class="appdosc-summary__title">Карточка документа</h2>';
+  html += '<p class="appdosc-summary__meta">';
+  if (org) {
+    html += 'Организация: ' + org + '<br>';
+  }
+  html += 'Сформировано: ' + escapeHtml(now);
+  html += '</p></div>';
+  html += '<div class="appdosc-summary__rows">';
+  rows.forEach(function (row) {
+    const isInstruction = row.label === 'Поручения';
+    const rowClass = 'appdosc-summary__row' + (isInstruction ? ' appdosc-summary__row--instructions' : '');
+    html += '<div class="' + rowClass + '">';
+    html += '<div class="appdosc-summary__label">' + escapeHtml(row.label) + '</div>';
+    html += '<div class="appdosc-summary__value">' + escapeHtml(row.value) + '</div>';
+    html += '</div>';
+  });
+  html += '</div></div>';
+  return html;
+}
+
+function buildSummaryText(task) {
+  const rows = buildTaskSummaryRows(task, task.files || []);
+  const org = task.organization ? String(task.organization).trim() : '';
+  const now = formatPdfDateTime(new Date());
+  const lines = [];
+  lines.push('Карточка документа');
+  lines.push('');
+  if (org) {
+    lines.push('Организация: ' + org);
+  }
+  lines.push('Сформировано: ' + now);
+  lines.push('');
+  rows.forEach(function (row) {
+    lines.push(row.label + ': ' + row.value);
+  });
+  return lines.join('\n');
 }
 
 function sanitizePdfFileName(value) {
@@ -4872,7 +5386,15 @@ function resolveFileFetchUrl(file) {
   if (!resolved) {
     return '';
   }
-  return appendCacheBuster(toAbsoluteUrl(resolved));
+  const absoluteUrl = toAbsoluteUrl(resolved);
+  const extension = getFileExtension(
+    (file && (file.name || file.originalName || file.storedName || file.url || file.previewUrl))
+    || absoluteUrl
+  );
+  if (extension === 'pdf' || absoluteUrl.toLowerCase().includes('.pdf')) {
+    return absoluteUrl;
+  }
+  return appendCacheBuster(absoluteUrl);
 }
 
 function buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file, errorMessage, fileUrl) {
@@ -5186,35 +5708,55 @@ async function appendTaskAttachmentPages(pdfDoc, PDFLib, fonts, colors, margin, 
 
 async function createPdfDocumentWithFonts(PDFLib, task = null) {
   const totalStart = performance.now();
-  const pdfDoc = await PDFLib.PDFDocument.create();
+
   const fontkitStartedAt = performance.now();
+  let fontkitInstance = null;
+  let fontBytesResult = null;
+  let pdfDoc = null;
   try {
-    const fontkitInstance = await ensureMiniAppPdfFontkit();
-    if (fontkitInstance && typeof pdfDoc.registerFontkit === 'function') {
-      pdfDoc.registerFontkit(fontkitInstance);
+    const results = await Promise.all([
+      PDFLib.PDFDocument.create(),
+      ensureMiniAppPdfFontkit().catch(() => null),
+      loadMiniAppPdfFontBytes(),
+    ]);
+    pdfDoc = results[0];
+    fontkitInstance = results[1];
+    fontBytesResult = results[2];
+  } catch (initError) {
+    if (!pdfDoc) {
+      pdfDoc = await PDFLib.PDFDocument.create();
     }
-    logTaskViewStage(task, 'summary_fontkit_ready', {
+    logTaskViewStage(task, 'summary_parallel_init_error', {
       durationMs: Math.round(performance.now() - fontkitStartedAt),
-      enabled: Boolean(fontkitInstance),
-    });
-  } catch (error) {
-    logTaskViewStage(task, 'summary_fontkit_failed', {
-      durationMs: Math.round(performance.now() - fontkitStartedAt),
-      error: stageErrorToText(error),
+      error: stageErrorToText(initError),
     });
   }
+
+  if (fontkitInstance && typeof pdfDoc.registerFontkit === 'function') {
+    pdfDoc.registerFontkit(fontkitInstance);
+  }
+  logTaskViewStage(task, 'summary_fontkit_ready', {
+    durationMs: Math.round(performance.now() - fontkitStartedAt),
+    enabled: Boolean(fontkitInstance),
+  });
 
   let fonts;
   const fontsStartedAt = performance.now();
   try {
-    const fontBytes = await loadMiniAppPdfFontBytes();
+    if (!fontBytesResult) {
+      fontBytesResult = await loadMiniAppPdfFontBytes();
+    }
+    const embedResults = await Promise.all([
+      pdfDoc.embedFont(fontBytesResult.regular, { subset: false }),
+      pdfDoc.embedFont(fontBytesResult.bold, { subset: false }),
+    ]);
     fonts = {
-      regular: await pdfDoc.embedFont(fontBytes.regular, { subset: true }),
-      bold: await pdfDoc.embedFont(fontBytes.bold, { subset: true }),
+      regular: embedResults[0],
+      bold: embedResults[1],
     };
     logTaskViewStage(task, 'summary_fonts_embedded', {
       durationMs: Math.round(performance.now() - fontsStartedAt),
-      strategy: 'custom',
+      strategy: 'custom_parallel',
     });
   } catch (error) {
     fonts = {
@@ -5382,7 +5924,11 @@ async function generateTaskSummaryPdf(task) {
   logTaskViewStage(task, 'summary_generate_done', {
     totalMs: Math.round(performance.now() - generationStartedAt),
   });
-  return new Blob([pdfBytes], { type: 'application/pdf' });
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  blob.__bimmaxArrayBuffer = pdfBytes.buffer.byteLength === pdfBytes.byteLength
+    ? pdfBytes.buffer
+    : pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteOffset + pdfBytes.byteLength);
+  return blob;
 }
 
 async function generateTaskAttachmentPdf(task, file) {
@@ -5580,9 +6126,25 @@ async function ensureTaskSummaryPreview(task, file) {
       remoteUrl: cacheTarget.summaryRemoteUrl || '',
     };
   }
+  if (task && task !== cacheTarget && task.summaryPdf && task.summaryBlobUrl) {
+    logTaskViewStage(task, 'summary_preview_cache_hit_task');
+    cacheTarget.summaryPdf = task.summaryPdf;
+    cacheTarget.summaryBlobUrl = task.summaryBlobUrl;
+    cacheTarget.summaryRemoteUrl = task.summaryRemoteUrl || '';
+    cacheTarget.summaryArrayBuffer = task.summaryArrayBuffer || null;
+    return {
+      ...task.summaryPdf,
+      previewUrl: task.summaryRemoteUrl || task.summaryBlobUrl,
+      remoteUrl: task.summaryRemoteUrl || '',
+    };
+  }
   if (cacheTarget.summaryPdfPromise) {
     logTaskViewStage(task, 'summary_preview_wait_existing_promise');
     return cacheTarget.summaryPdfPromise;
+  }
+  if (task && task !== cacheTarget && task.summaryPdfPromise) {
+    logTaskViewStage(task, 'summary_preview_wait_task_promise');
+    return task.summaryPdfPromise;
   }
   const summaryPrepareStartedAt = performance.now();
   logTaskViewStage(task, 'summary_preview_prepare_start');
@@ -5600,6 +6162,9 @@ async function ensureTaskSummaryPreview(task, file) {
         blob,
         fileName: buildSummaryPdfFileName(task),
       };
+      if (blob && blob.__bimmaxArrayBuffer) {
+        cacheTarget.summaryArrayBuffer = blob.__bimmaxArrayBuffer;
+      }
       if (!cacheTarget.summaryBlobUrl) {
         cacheTarget.summaryBlobUrl = URL.createObjectURL(blob);
       }
@@ -5963,6 +6528,10 @@ function resolveTaskViewerFiles(task) {
       previewUrl,
       name: displayName,
       kind,
+      storedName: normalizeValue(file.storedName),
+      originalName: normalizeValue(file.originalName),
+      sourceUrl: normalizeValue(file.url),
+      aiBrief: normalizeBriefText(file.aiBrief),
     });
   });
 
@@ -6323,6 +6892,93 @@ function stageErrorToText(error) {
   return String(error);
 }
 
+const TASK_VIEW_WATCH_SLOW_OPERATION_MS = 3000;
+
+function createTaskViewTraceId() {
+  const randomPart = Math.random().toString(36).slice(2, 8);
+  return `tab_${Date.now().toString(36)}_${randomPart}`;
+}
+
+function extractTaskViewErrorMeta(error) {
+  if (!error) {
+    return {};
+  }
+  const httpStatus = Number.isFinite(error.responseStatus)
+    ? error.responseStatus
+    : (Number.isFinite(error.status) ? error.status : 0);
+  return {
+    errorName: normalizeValue(error.name) || '',
+    errorCode: normalizeValue(error.code) || '',
+    errorMessage: normalizeValue(error.message) || String(error),
+    errorStack: normalizeValue(error.stack) || '',
+    httpStatus,
+    httpStatusText: normalizeValue(error.responseStatusText) || normalizeValue(error.statusText) || '',
+    httpUrl: normalizeValue(error.responseUrl) || normalizeValue(error.url) || '',
+    httpMethod: normalizeValue(error.method) || '',
+    httpHeaders: error && typeof error.responseHeaders === 'object' ? error.responseHeaders : null,
+  };
+}
+
+function classifyTaskViewResultByError(error) {
+  if (!error) {
+    return 'success';
+  }
+  const code = normalizeValue(error.code).toLowerCase();
+  const name = normalizeValue(error.name).toLowerCase();
+  if (code.includes('timeout') || name.includes('timeout')) {
+    return 'timeout';
+  }
+  if (code.includes('abort') || code.includes('cancel') || name === 'aborterror' || name.includes('cancel')) {
+    return 'cancelled';
+  }
+  return 'error';
+}
+
+function startTaskViewTracePhase(task, traceContext, phase, extra = {}) {
+  if (!traceContext || !traceContext.traceId || !phase) {
+    return;
+  }
+  if (!traceContext.phaseStartedAt) {
+    traceContext.phaseStartedAt = {};
+  }
+  traceContext.phase = phase;
+  traceContext.phaseStartedAt[phase] = performance.now();
+  logViewWatchEvent('task_view_watch_phase_start', task, {
+    traceId: traceContext.traceId,
+    phase,
+    ...extra,
+  });
+}
+
+function endTaskViewTracePhase(task, traceContext, phase, extra = {}, status = 'end') {
+  if (!traceContext || !traceContext.traceId || !phase) {
+    return 0;
+  }
+  const startedAt = traceContext.phaseStartedAt && typeof traceContext.phaseStartedAt[phase] === 'number'
+    ? traceContext.phaseStartedAt[phase]
+    : performance.now();
+  const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
+  traceContext.phase = `${phase}:${status}`;
+  const eventName = status === 'error' ? 'task_view_watch_phase_error' : 'task_view_watch_phase_end';
+  logViewWatchEvent(eventName, task, {
+    traceId: traceContext.traceId,
+    phase,
+    elapsedMs,
+    ...extra,
+  });
+  if (elapsedMs > TASK_VIEW_WATCH_SLOW_OPERATION_MS) {
+    logViewWatchEvent('task_view_watch_warning', task, {
+      traceId: traceContext.traceId,
+      phase,
+      elapsedMs,
+      warningType: 'slow_operation',
+      thresholdMs: TASK_VIEW_WATCH_SLOW_OPERATION_MS,
+      ...extra,
+    });
+  }
+  return elapsedMs;
+}
+
 function startEventLoopLagProbe(task, probeName, intervalMs = 120) {
   if (typeof window === 'undefined' || typeof performance === 'undefined') {
     return () => ({ maxLagMs: 0, samples: 0, totalMs: 0 });
@@ -6403,11 +7059,103 @@ function waitForPdfRenderStatus(viewer, timeoutMs = 2000) {
   });
 }
 
-async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
+function buildPdfDiagnosticsRequiredFields(task, traceContext = null, data = {}) {
+  const extra = data && typeof data === 'object' ? data : {};
+  const taskFilter = state && Object.prototype.hasOwnProperty.call(state, 'taskFilter')
+    ? formatTaskFiltersForLog(state.taskFilter)
+    : '';
+  const platform = normalizeValue(
+    (state && state.telegram && state.telegram.platform)
+      || runtimeEnvironment.webAppPlatform
+      || runtimeEnvironment.platform
+      || '',
+  ) || '';
+  const webAppPlatform = normalizeValue(runtimeEnvironment.webAppPlatform || '') || '';
+  const traceId = normalizeValue(extra.traceId)
+    || normalizeValue(traceContext && traceContext.traceId)
+    || createTaskViewTraceId();
+  return {
+    ...buildTaskViewLogDetails(task, {}),
+    traceId,
+    taskId: normalizeValue(extra.taskId)
+      || normalizeValue(traceContext && traceContext.taskId)
+      || normalizeValue(task && task.id ? String(task.id) : '')
+      || '',
+    fileName: normalizeValue(extra.fileName)
+      || normalizeValue(traceContext && traceContext.fileName)
+      || '',
+    rawUrl: normalizeValue(extra.rawUrl)
+      || normalizeValue(traceContext && traceContext.rawUrl)
+      || '',
+    resolvedUrl: normalizeValue(extra.resolvedUrl)
+      || normalizeValue(traceContext && traceContext.resolvedUrl)
+      || '',
+    previewUrl: normalizeValue(extra.previewUrl)
+      || normalizeValue(traceContext && traceContext.previewUrl)
+      || '',
+    attempt: Number.isFinite(extra.attempt)
+      ? extra.attempt
+      : (Number.isFinite(traceContext && traceContext.attempt) ? traceContext.attempt : 0),
+    openSessionId: Number.isFinite(extra.openSessionId)
+      ? extra.openSessionId
+      : (Number.isFinite(traceContext && traceContext.openSessionId) ? traceContext.openSessionId : 0),
+    taskFilter,
+    platform,
+    webAppPlatform,
+  };
+}
+
+async function openPdfInline(previewUrl, fileName, task, viewerOptions, traceContext = null) {
   const baseDetails = buildTaskViewLogDetails(task, {
     fileName: fileName || '',
     resolvedUrl: previewUrl,
   });
+
+  const preloadedArrayBuffer = viewerOptions && viewerOptions.preloadedArrayBuffer
+    ? viewerOptions.preloadedArrayBuffer
+    : null;
+  if (preloadedArrayBuffer) {
+    logClientEvent('task_view_inline_start', { ...baseDetails, preloaded: true });
+    logViewerDebug('inline:start_preloaded', baseDetails);
+    try {
+      const byteLength = preloadedArrayBuffer.byteLength || 0;
+      docLoadStep('arrayBuffer готов (preloaded): ' + byteLength + ' байт');
+      docLoadSetMeta({ fileSizeBytes: byteLength });
+      updateViewerLoaderStep('Загрузка PDF-движка…', 72);
+      docLoadStep('ожидание pdf.js движка');
+      try { await preloadPdfjs(); } catch (_e) { /* не критично */ }
+      docLoadStep('pdf.js движок готов');
+      updateViewerLoaderStep('Рендеринг PDF…', 80);
+      const viewer = pdfViewerInstance;
+      if (viewer && typeof viewer.open === 'function') {
+        docLoadStep('viewer.open начало');
+        startTaskViewTracePhase(task, traceContext, 'viewer.open', {
+          strategy: 'pdf_inline_preloaded',
+          fileName: fileName || '',
+        });
+        const effectiveViewerOptions = { ...(viewerOptions || {}), forceCanvas: true, isPdf: true };
+        const mode = viewer.open(
+          previewUrl,
+          fileName || 'Документ',
+          effectiveViewerOptions,
+          preloadedArrayBuffer,
+        );
+        if (mode) {
+          endTaskViewTracePhase(task, traceContext, 'viewer.open', {
+            strategy: 'pdf_inline_preloaded',
+            mode,
+          });
+          docLoadStep('viewer.open успех');
+          logClientEvent('task_view_inline_mode', { ...baseDetails, mode, strategy: 'pdf_inline_preloaded' });
+          return mode;
+        }
+      }
+    } catch (error) {
+      logViewerDebug('inline:preloaded_error', {
+        error: error && error.message ? error.message : String(error),
+      });
+    }
+  }
 
   logClientEvent('task_view_inline_start', baseDetails);
   logClientEvent('task_view_fetch_start', baseDetails);
@@ -6421,9 +7169,21 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
   try {
     updateViewerLoaderStep('Скачивание PDF…', 45);
     docLoadStep('fetch pdf начало');
-    const fetchPayload = await fetchPdfBinaryForViewer(previewUrl);
+    const requestId = createPdfRequestId();
+    startTaskViewTracePhase(task, traceContext, 'fetch', {
+      fileName: fileName || '',
+      previewUrl: previewUrl || '',
+    });
+    const fetchPayload = await fetchPdfBinaryForViewer(previewUrl, 'user_click', requestId, {
+      traceId: traceContext && traceContext.traceId ? traceContext.traceId : '',
+      diagnosticsContext: buildPdfDiagnosticsRequiredFields(task, traceContext, {
+        fileName: fileName || '',
+        previewUrl: previewUrl || '',
+      }),
+    });
     const contentType = fetchPayload.contentType || '';
     const contentLength = fetchPayload.contentLength || '';
+    const traceId = fetchPayload.traceId || fetchPayload.requestId || requestId;
     docLoadStep(`fetch pdf ответ: ${fetchPayload.status}${fetchPayload.fromCache ? ' (cache)' : ''}`);
 
     logClientEvent('task_view_fetch_success', {
@@ -6440,13 +7200,66 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
     const resourceTiming = fetchPayload.resourceTiming || null;
     const connectionInfo = fetchPayload.connectionInfo || null;
     const fetchDurationMs = typeof fetchPayload.fetchDurationMs === 'number' ? fetchPayload.fetchDurationMs : 0;
+    const requestStartedAt = typeof fetchPayload.requestStartedAt === 'number' ? fetchPayload.requestStartedAt : 0;
+    const fetchStartedAt = typeof fetchPayload.fetchStartedAt === 'number' ? fetchPayload.fetchStartedAt : requestStartedAt;
+    const responseReceivedAt = typeof fetchPayload.responseReceivedAt === 'number' ? fetchPayload.responseReceivedAt : 0;
+    const arrayBufferReadyAt = typeof fetchPayload.arrayBufferReadyAt === 'number' ? fetchPayload.arrayBufferReadyAt : 0;
+    const responseElapsedMs = fetchStartedAt && responseReceivedAt
+      ? Math.max(0, Math.round(responseReceivedAt - fetchStartedAt))
+      : 0;
+    logViewWatchEvent('task_view_watch_phase_end', task, {
+      traceId: traceContext && traceContext.traceId ? traceContext.traceId : '',
+      phase: 'fetch_response',
+      elapsedMs: responseElapsedMs,
+      status: fetchPayload && fetchPayload.status ? fetchPayload.status : 0,
+      responseUrl: fetchPayload && fetchPayload.responseUrl ? fetchPayload.responseUrl : previewUrl,
+    });
+    endTaskViewTracePhase(task, traceContext, 'fetch', {
+      step: 'arrayBuffer_ready',
+      status: fetchPayload && fetchPayload.status ? fetchPayload.status : 0,
+      responseUrl: fetchPayload && fetchPayload.responseUrl ? fetchPayload.responseUrl : previewUrl,
+    });
+    const ttfbMs = typeof fetchPayload.ttfbMs === 'number' ? fetchPayload.ttfbMs : 0;
+    const downloadMs = typeof fetchPayload.downloadMs === 'number' ? fetchPayload.downloadMs : 0;
+    const cacheHitArrayBuffer = Boolean(fetchPayload.cacheHitArrayBuffer);
+    const waitedExistingPromise = Boolean(fetchPayload.waitedExistingPromise);
+    const waitedExistingPromiseDurationMs = typeof fetchPayload.waitedExistingPromiseDurationMs === 'number'
+      ? fetchPayload.waitedExistingPromiseDurationMs
+      : 0;
+    const existingPromiseSource = fetchPayload.existingPromiseSource || '';
+    const fetchCacheKey = fetchPayload.cacheKey || normalizePdfBinaryCacheKey(previewUrl);
+    const source = fetchPayload.source === 'warmup' ? 'warmup' : 'user_click';
+    const responseUrl = fetchPayload.responseUrl || previewUrl;
+    if (cacheHitArrayBuffer) {
+      docLoadStep('мгновенный cache hit');
+    } else if (waitedExistingPromise) {
+      docLoadStep('ожидание warmup promise');
+    }
     docLoadSetMeta({
       fetchStatus: fetchPayload.status,
       fetchDurationMs,
+      ttfbMs,
+      downloadMs,
       fetchFromCache: Boolean(fetchPayload.fromCache),
+      cacheHitArrayBuffer,
       fetchContentType: contentType || '',
       fetchContentLength: contentLength || '',
       fetchCacheMode: fetchPayload.cacheMode || '',
+      fetchSharedPromise: waitedExistingPromise,
+      fetchSharedPromiseWaitMs: waitedExistingPromiseDurationMs,
+      fetchCacheKey,
+      requestId: fetchPayload.requestId || requestId,
+      traceId,
+      source,
+      responseUrl,
+      'content-length': contentLength || '',
+      fetchStartedAt,
+      requestStartedAt,
+      responseReceivedAt,
+      arrayBufferReadyAt,
+      existingPromiseSource,
+      waitedExistingPromise,
+      waitedExistingPromiseDurationMs,
     });
     logViewerDebugDeep('inline:fetch_headers', {
       url: fetchPayload.responseUrl || previewUrl,
@@ -6466,7 +7279,9 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
       prefix: 'Просмотр2',
       step: 'inline:fetch_diagnostics',
       details: {
-        url: fetchPayload.responseUrl || previewUrl,
+        url: responseUrl,
+        requestId: fetchPayload.requestId || requestId,
+        traceId,
         status: fetchPayload.status,
         statusText: fetchPayload.statusText,
         redirected: fetchPayload.redirected,
@@ -6476,11 +7291,40 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
         sameOrigin: fetchPayload.sameOrigin,
         cacheMode: fetchPayload.cacheMode || 'default',
         fromCache: Boolean(fetchPayload.fromCache),
+        cacheHitArrayBuffer,
+        cacheKey: fetchCacheKey,
+        source,
+        responseUrl,
+        'content-length': contentLength || '',
+        fetchStartedAt,
+        requestStartedAt,
+        responseReceivedAt,
+        arrayBufferReadyAt,
+        existingPromiseSource,
+        waitedExistingPromise,
+        waitedExistingPromiseDurationMs,
+        ttfbMs,
+        downloadMs,
         resourceTiming,
         connectionInfo,
       },
-      source: 'fetch',
+      requestId: fetchPayload.requestId || requestId,
+      traceId,
+      source,
+      cacheKey: fetchCacheKey,
+      fetchDurationMs,
+      responseUrl,
+      'content-length': contentLength || '',
+      fetchStartedAt,
       activeFile: fileName || '',
+      requestStartedAt,
+      responseReceivedAt,
+      arrayBufferReadyAt,
+      cacheHitArrayBuffer,
+      existingPromiseSource,
+      waitedExistingPromise,
+      ttfbMs,
+      downloadMs,
     }, { keepalive: true });
     const arrayBuffer = fetchPayload.arrayBuffer;
     const byteLength = typeof fetchPayload.byteLength === 'number'
@@ -6490,7 +7334,15 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
       fileSizeBytes: byteLength,
     });
     docLoadStep('arrayBuffer готов: ' + byteLength + ' байт');
-    updateViewerLoaderStep('Подготовка рендеринга…', 70);
+    updateViewerLoaderStep('Загрузка PDF-движка…', 72);
+    docLoadStep('ожидание pdf.js движка');
+    try {
+      await preloadPdfjs();
+    } catch (e) {
+      // ошибка предзагрузки не критична, loadPdfDocument повторит попытку
+    }
+    docLoadStep('pdf.js движок готов');
+    updateViewerLoaderStep('Подготовка рендеринга…', 75);
     const viewer = pdfViewerInstance;
     const viewerReady = viewer && typeof viewer.isReady === 'function' ? viewer.isReady() : false;
     const shouldPassData = true;
@@ -6529,6 +7381,10 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
     if (viewer && typeof viewer.open === 'function') {
       updateViewerLoaderStep('Рендеринг PDF…', 80);
       docLoadStep('viewer.open начало');
+      startTaskViewTracePhase(task, traceContext, 'viewer.open', {
+        strategy: 'pdf_inline',
+        fileName: fileName || '',
+      });
       const effectiveViewerOptions = viewerOptions
         ? { ...viewerOptions, forceCanvas: true, isPdf: true }
         : { forceCanvas: true, isPdf: true };
@@ -6545,6 +7401,10 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
         shouldPassData ? arrayBuffer : undefined,
       );
       if (mode) {
+        endTaskViewTracePhase(task, traceContext, 'viewer.open', {
+          strategy: 'pdf_inline',
+          mode,
+        });
         docLoadSetMeta({
           inlineMode: mode,
         });
@@ -6552,24 +7412,36 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
         if (runtimeEnvironment.isIos) {
           updateViewerLoaderStep('Ожидание рендеринга iOS…', 90);
           docLoadStep('ожидание ios рендеринга');
-          const renderStatus = await waitForPdfRenderStatus(viewer, 2200);
-          docLoadStep('ios рендеринг: ' + (renderStatus && renderStatus.status ? renderStatus.status : 'нет данных'));
-          const hasTotalPages = renderStatus && typeof renderStatus.totalPages === 'number';
-          const hasRenderedPages = renderStatus && typeof renderStatus.renderedPages === 'number';
-          const incompletePages = hasTotalPages
-            && hasRenderedPages
-            && renderStatus.totalPages > 0
-            && renderStatus.renderedPages < renderStatus.totalPages;
-          const incompleteStatus = renderStatus && renderStatus.status && renderStatus.status !== 'complete';
-          if (incompletePages || incompleteStatus) {
+          const loadPromise = typeof viewer.getPdfLoadPromise === 'function' ? viewer.getPdfLoadPromise() : null;
+          let renderOk = false;
+          if (loadPromise) {
+            try {
+              const loadTimeout = new Promise((resolve) => { setTimeout(() => resolve(false), 8000); });
+              renderOk = await Promise.race([loadPromise, loadTimeout]);
+            } catch (error) {
+              renderOk = false;
+            }
+          } else {
+            const renderStatus = await waitForPdfRenderStatus(viewer, 10000);
+            renderOk = renderStatus && renderStatus.status === 'complete';
+          }
+          docLoadStep('ios рендеринг: ' + (renderOk ? 'complete' : 'incomplete'));
+          if (!renderOk) {
+            const renderStatus = typeof viewer.getPdfRenderStatus === 'function' ? viewer.getPdfRenderStatus() : null;
+            const hasPartialRender = renderStatus
+              && typeof renderStatus.renderedPages === 'number'
+              && renderStatus.renderedPages > 0;
             logViewerDebug('inline:ios_render_incomplete', renderStatus);
             logViewerDebugDeep('inline:ios_render_incomplete', {
               ...baseDetails,
               renderStatus,
-              incompletePages,
-              incompleteStatus,
+              hasPartialRender,
             });
-            return null;
+            if (hasPartialRender) {
+              docLoadStep('ios рендеринг: частичный, отображаем');
+            } else {
+              return null;
+            }
           }
         }
         updateViewerLoaderStep('Готово', 100);
@@ -6586,8 +7458,20 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
       }
     }
 
+    endTaskViewTracePhase(task, traceContext, 'viewer.open', {
+      strategy: 'pdf_inline',
+      reason: 'inline_viewer_unavailable',
+    }, 'error');
     throw new Error('inline_viewer_unavailable');
   } catch (error) {
+    endTaskViewTracePhase(task, traceContext, 'fetch', extractTaskViewErrorMeta(error), 'error');
+    endTaskViewTracePhase(task, traceContext, 'viewer.open', extractTaskViewErrorMeta(error), 'error');
+    const timeoutError = Boolean(error && (
+      error.code === 'fetch_timeout'
+      || error.code === 'shared_promise_timeout'
+      || error.name === 'FetchTimeoutError'
+      || error.name === 'SharedPromiseTimeoutError'
+    ));
     const status = typeof error.responseStatus === 'number' ? error.responseStatus : 0;
     if (status) {
       logClientEvent('task_view_fetch_error', {
@@ -6599,20 +7483,41 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions) {
     logClientEvent('task_view_inline_error', {
       ...baseDetails,
       error: error && error.message ? error.message : String(error),
+      ...extractTaskViewErrorMeta(error),
     });
     docLoadSetMeta({
       inlineError: error && error.message ? error.message : String(error),
     });
+    if (timeoutError) {
+      updateViewerLoaderStep('Сеть медленная, пробуем повторно…', 66);
+      setStatus('warning', 'Сеть медленная, пробуем повторно через безопасный режим…');
+    }
     logViewerDebug('inline:error', error);
     logViewerDebugDeep('inline:error', {
       message: error && error.message ? error.message : String(error),
       name: error && error.name ? error.name : '',
     });
+    const inlineErrorContext = buildPdfDiagnosticsRequiredFields(task, traceContext, {
+      fileName: fileName || '',
+      previewUrl: previewUrl || '',
+    });
+    logClientEvent('task_view_pdf_diagnostics', {
+      ...inlineErrorContext,
+      prefix: 'Просмотр2',
+      step: 'inline:error',
+      details: {
+        ...inlineErrorContext,
+        error: error && error.message ? error.message : String(error),
+        ...extractTaskViewErrorMeta(error),
+      },
+      error: error && error.message ? error.message : String(error),
+      ...extractTaskViewErrorMeta(error),
+    }, { keepalive: true });
     return null;
   }
 }
 
-async function openInlineFrame(previewUrl, fileName, baseDetails, viewerOptions) {
+async function openInlineFrame(previewUrl, fileName, baseDetails, viewerOptions, traceContext = null, task = null) {
   const viewer = pdfViewerInstance;
   if (!viewer || typeof viewer.open !== 'function') {
     return null;
@@ -6630,19 +7535,65 @@ async function openInlineFrame(previewUrl, fileName, baseDetails, viewerOptions)
   });
   updateViewerLoaderStep('Загрузка через iframe…', 80);
   docLoadStep('frame open начало');
+  startTaskViewTracePhase(task, traceContext, 'viewer.open', {
+    strategy: 'frame',
+    previewUrl: previewUrl || '',
+  });
   const mode = viewer.open(previewUrl, fileName || 'Документ', viewerOptions);
   if (mode) {
+    endTaskViewTracePhase(task, traceContext, 'viewer.open', {
+      strategy: 'frame',
+      mode,
+    });
     docLoadStep('frame open успех');
     updateViewerLoaderStep('Готово', 100);
     logClientEvent('task_view_inline_mode', { ...baseDetails, mode, strategy: 'frame' });
     logClientEvent('task_view_inline_success', { ...baseDetails, mode });
     logViewerDebug('inline:frame_success', { mode, url: previewUrl });
     logViewerDebugDeep('inline:frame_success', { mode, url: previewUrl });
+    const frameOpenContext = buildPdfDiagnosticsRequiredFields(task, traceContext, {
+      fileName: fileName || '',
+      previewUrl: previewUrl || '',
+      resolvedUrl: baseDetails && baseDetails.resolvedUrl ? baseDetails.resolvedUrl : '',
+    });
+    logClientEvent('task_view_pdf_diagnostics', {
+      ...frameOpenContext,
+      prefix: 'Просмотр2',
+      step: 'frame open',
+      details: {
+        ...frameOpenContext,
+        mode,
+        success: true,
+      },
+      mode,
+      success: true,
+    }, { keepalive: true });
     return mode;
   }
 
+  endTaskViewTracePhase(task, traceContext, 'viewer.open', {
+    strategy: 'frame',
+    reason: 'frame_unavailable',
+  }, 'error');
   logViewerDebug('inline:frame_unavailable', { url: previewUrl });
   logViewerDebugDeep('inline:frame_unavailable', { url: previewUrl });
+  const frameOpenContext = buildPdfDiagnosticsRequiredFields(task, traceContext, {
+    fileName: fileName || '',
+    previewUrl: previewUrl || '',
+    resolvedUrl: baseDetails && baseDetails.resolvedUrl ? baseDetails.resolvedUrl : '',
+  });
+  logClientEvent('task_view_pdf_diagnostics', {
+    ...frameOpenContext,
+    prefix: 'Просмотр2',
+    step: 'frame open',
+    details: {
+      ...frameOpenContext,
+      success: false,
+      reason: 'frame_unavailable',
+    },
+    success: false,
+    reason: 'frame_unavailable',
+  }, { keepalive: true });
   return null;
 }
 
@@ -6713,7 +7664,7 @@ async function detectPdfByContentType(previewUrl, baseDetails) {
   return { isPdf: false, contentType: '', checked: false };
 }
 
-async function openInlineBlob(previewUrl, fileName, baseDetails, viewerOptions) {
+async function openInlineBlob(previewUrl, fileName, baseDetails, viewerOptions, traceContext = null, task = null) {
   logClientEvent('task_view_fetch_start', baseDetails);
   logClientEvent('task_view_inline_attempt', {
     ...baseDetails,
@@ -6739,6 +7690,11 @@ async function openInlineBlob(previewUrl, fileName, baseDetails, viewerOptions) 
   try {
     updateViewerLoaderStep('Скачивание файла…', 45);
     docLoadStep('fetch blob начало');
+    const fetchStartedAt = performance.now();
+    startTaskViewTracePhase(task, traceContext, 'fetch', {
+      strategy: 'blob',
+      previewUrl: previewUrl || '',
+    });
     const response = await fetch(previewUrl, {
       credentials: isSameOrigin ? 'include' : 'omit',
       cache: 'no-store',
@@ -6748,11 +7704,25 @@ async function openInlineBlob(previewUrl, fileName, baseDetails, viewerOptions) 
       throw new Error(`http_${response.status}`);
     }
     docLoadStep('fetch blob ответ: ' + response.status);
+    logViewWatchEvent('task_view_watch_phase_end', task, {
+      traceId: traceContext && traceContext.traceId ? traceContext.traceId : '',
+      phase: 'fetch_response',
+      elapsedMs: Math.max(0, Math.round(performance.now() - fetchStartedAt)),
+      strategy: 'blob',
+      status: response.status,
+      responseUrl: response.url || previewUrl,
+    });
 
     updateViewerLoaderStep('Чтение данных…', 60);
     docLoadStep('чтение blob');
     const responseHeaders = collectResponseHeaders(response);
     const blob = await response.blob();
+    endTaskViewTracePhase(task, traceContext, 'fetch', {
+      strategy: 'blob',
+      step: 'arrayBuffer_ready',
+      status: response.status,
+      responseUrl: response.url || previewUrl,
+    });
     docLoadStep('blob готов: ' + blob.size + ' байт');
     updateViewerLoaderStep('Подготовка рендеринга…', 75);
     const blobUrl = URL.createObjectURL(blob);
@@ -6798,6 +7768,10 @@ async function openInlineBlob(previewUrl, fileName, baseDetails, viewerOptions) 
     if (viewer && typeof viewer.open === 'function') {
       updateViewerLoaderStep('Рендеринг документа…', 85);
       docLoadStep('viewer.open blob начало');
+      startTaskViewTracePhase(task, traceContext, 'viewer.open', {
+        strategy: 'blob',
+        previewUrl: previewUrl || '',
+      });
       logViewerDebugDeep('inline:blob_viewer_open', {
         url: previewUrl,
         fileName: fileName || '',
@@ -6806,6 +7780,10 @@ async function openInlineBlob(previewUrl, fileName, baseDetails, viewerOptions) 
       });
       const mode = viewer.open(blobUrl, fileName || 'Документ', effectiveViewerOptions);
       if (mode) {
+        endTaskViewTracePhase(task, traceContext, 'viewer.open', {
+          strategy: 'blob',
+          mode,
+        });
         docLoadStep('viewer.open blob успех');
         updateViewerLoaderStep('Готово', 100);
         revokeObjectUrlLater(blobUrl);
@@ -6829,13 +7807,26 @@ async function openInlineBlob(previewUrl, fileName, baseDetails, viewerOptions) 
         });
         return mode;
       }
+      endTaskViewTracePhase(task, traceContext, 'viewer.open', {
+        strategy: 'blob',
+        reason: 'viewer_open_empty_mode',
+      }, 'error');
     }
 
     URL.revokeObjectURL(blobUrl);
   } catch (error) {
+    endTaskViewTracePhase(task, traceContext, 'fetch', {
+      strategy: 'blob',
+      ...extractTaskViewErrorMeta(error),
+    }, 'error');
+    endTaskViewTracePhase(task, traceContext, 'viewer.open', {
+      strategy: 'blob',
+      ...extractTaskViewErrorMeta(error),
+    }, 'error');
     logClientEvent('task_view_fetch_error', {
       ...baseDetails,
       error: error && error.message ? error.message : String(error),
+      ...extractTaskViewErrorMeta(error),
     });
     logViewerDebug('inline:blob_error', error);
     logViewerDebugDeep('inline:blob_error', {
@@ -6903,9 +7894,414 @@ function updateViewerDownloadState(file) {
   if (!elements.viewerDownload) {
     return;
   }
-  const hasFile = Boolean(file && (file.resolvedUrl || file.url || file.previewUrl));
+  const hasFile = Boolean(file && (file.isSummary || file.resolvedUrl || file.url || file.previewUrl));
   elements.viewerDownload.disabled = !hasFile;
   elements.viewerDownload.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  updateViewerBriefState(file);
+}
+
+function updateViewerBriefState(file) {
+  if (!elements.viewerBrief) {
+    return;
+  }
+  const hasFile = Boolean(file && !file.isSummary);
+  elements.viewerBrief.disabled = !hasFile;
+  elements.viewerBrief.hidden = !hasFile;
+  elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  if (hasFile && !normalizeBriefText(file && file.aiBrief)) {
+    elements.viewerBrief.title = 'ИИ-кратко отсутствует — рассчитаем после нажатия';
+  } else {
+    elements.viewerBrief.removeAttribute('title');
+  }
+}
+
+function canDeleteResponseFromViewer(file) {
+  if (!file || typeof file !== 'object' || !file.isResponse) {
+    return false;
+  }
+  if (!normalizeValue(file.storedName)) {
+    return false;
+  }
+  return isResponseOwnedByCurrentUser(file);
+}
+
+function updateViewerDeleteState(file) {
+  if (!elements.viewerDeleteResponse) {
+    return;
+  }
+  const canDelete = canDeleteResponseFromViewer(file);
+  elements.viewerDeleteResponse.hidden = !canDelete;
+  elements.viewerDeleteResponse.disabled = !canDelete;
+  elements.viewerDeleteResponse.setAttribute('aria-disabled', canDelete ? 'false' : 'true');
+}
+
+function findResponsibleNameInAccessByFile(file) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = new Set();
+  const nameCandidates = new Set();
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.add(normalized);
+    }
+  };
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      nameCandidates.add(normalized);
+    }
+  };
+
+  pushId(file.uploadedById);
+  pushId(file.uploadedByTelegram);
+  pushId(file.uploadedByLogin);
+  pushId(file.uploadedBy);
+  pushName(file.uploadedByName);
+  pushName(file.uploadedBy);
+
+  const uploadedByKey = normalizeValue(file.uploadedByKey);
+  if (uploadedByKey) {
+    if (uploadedByKey.startsWith('id:')) {
+      pushId(uploadedByKey.slice(3));
+    } else if (uploadedByKey.startsWith('name:')) {
+      pushName(uploadedByKey.slice(5));
+    } else {
+      pushId(uploadedByKey);
+      pushName(uploadedByKey);
+    }
+  }
+
+  const ids = Array.from(idCandidates);
+  const names = Array.from(nameCandidates);
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
+function resolveViewerFileOwnerLabel(file) {
+  if (!file || typeof file !== 'object' || !file.isResponse) {
+    return '';
+  }
+
+  const mappedResponsible = findResponsibleNameInAccessByFile(file);
+  if (mappedResponsible) {
+    return mappedResponsible;
+  }
+
+  const byName = normalizeValue(file.uploadedBy);
+  if (byName) {
+    return byName;
+  }
+
+  const byKey = normalizeValue(file.uploadedByKey);
+  if (!byKey) {
+    return '';
+  }
+
+  if (byKey.startsWith('name:')) {
+    return normalizeValue(byKey.slice(5));
+  }
+  if (byKey.startsWith('id:')) {
+    return `ID ${normalizeValue(byKey.slice(3))}`;
+  }
+  return byKey;
+}
+
+function updateViewerFileOwnerState(file) {
+  if (!elements.viewerFileOwner) {
+    return;
+  }
+  const owner = resolveViewerFileOwnerLabel(file);
+  if (!owner) {
+    elements.viewerFileOwner.textContent = '';
+    elements.viewerFileOwner.hidden = true;
+    return;
+  }
+  elements.viewerFileOwner.textContent = `👤 ${owner}`;
+  elements.viewerFileOwner.hidden = false;
+}
+
+async function deleteTaskResponseFile(task, file) {
+  if (!task || typeof task !== 'object') {
+    throw new Error('Не удалось определить задачу.');
+  }
+
+  const documentId = normalizeValue(task.id);
+  const organization = getTaskOrganization(task);
+  const storedName = normalizeValue(file && file.storedName);
+  if (!documentId || !organization || !storedName) {
+    throw new Error('Не удалось определить ответ для удаления.');
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const response = await fetch(`/docs.php?action=response_delete&organization=${encodeURIComponent(organization)}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify({
+      action: 'response_delete',
+      organization,
+      documentId,
+      storedName,
+    }),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_) {
+    data = null;
+  }
+  if (!response.ok || !data || data.success !== true) {
+    throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
+  }
+
+  await loadTasks(true);
+  return data;
+}
+
+async function handleViewerDeleteResponseClick() {
+  const file = getViewerFileToDownload();
+  const task = viewerTabsState.task;
+  if (!canDeleteResponseFromViewer(file) || !task) {
+    return;
+  }
+  if (!window.confirm('Удалить этот ответ?')) {
+    return;
+  }
+
+  if (elements.viewerDeleteResponse) {
+    elements.viewerDeleteResponse.disabled = true;
+  }
+
+  try {
+    const result = await deleteTaskResponseFile(task, file);
+    const currentFiles = Array.isArray(viewerTabsState.files) ? viewerTabsState.files : [];
+    const nextFiles = currentFiles.filter((item) => normalizeValue(item && item.storedName) !== normalizeValue(file.storedName));
+
+    if (!nextFiles.length) {
+      renderViewerTabs([], task);
+      viewerTabsState.activeFile = null;
+      updateViewerDownloadState(null);
+      updateViewerDeleteState(null);
+      updateViewerFileOwnerState(null);
+      setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
+      return;
+    }
+
+    const nextIndex = Math.min(viewerTabsState.activeIndex, nextFiles.length - 1);
+    renderViewerTabs(nextFiles, task);
+    await handleViewerTabClick(nextIndex, task);
+    setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
+  } catch (error) {
+    setStatus('error', `Не удалось удалить ответ: ${error && error.message ? error.message : 'неизвестная ошибка'}`);
+  } finally {
+    updateViewerFileOwnerState(getViewerFileToDownload());
+    updateViewerDeleteState(getViewerFileToDownload());
+  }
+}
+
+function handleViewerBriefClick() {
+  const file = getViewerFileToDownload();
+  if (!file || file.isSummary) {
+    return;
+  }
+  const fileName = getAttachmentName(file) || 'Файл';
+  const briefText = normalizeBriefText(file.aiBrief);
+  if (briefText) {
+    openTelegramFileAiBriefModal(fileName, briefText);
+    return;
+  }
+  void generateViewerFileAiBrief(file, fileName);
+}
+
+function findTaskFileByViewerFile(task, file) {
+  if (!task || !Array.isArray(task.files) || !file) {
+    return null;
+  }
+  const storedName = normalizeValue(file.storedName);
+  const originalName = normalizeValue(file.originalName);
+  const url = normalizeValue(file.url);
+  return task.files.find((candidate) => {
+    if (!candidate || typeof candidate !== 'object') {
+      return false;
+    }
+    const sameStored = storedName && normalizeValue(candidate.storedName) === storedName;
+    const sameOriginal = originalName && normalizeValue(candidate.originalName) === originalName;
+    const sameUrl = url && normalizeValue(candidate.url) === url;
+    return Boolean(sameStored || sameOriginal || sameUrl);
+  }) || null;
+}
+
+async function persistViewerFileAiBrief(task, file, briefText) {
+  const documentId = normalizeValue(task && task.id);
+  const organization = getTaskOrganization(task);
+  if (!documentId || !organization) {
+    return false;
+  }
+
+  const payload = {
+    ...buildRequestBody({ includeInitData: false, includeNameTokens: false }),
+    action: 'mini_app_update_task',
+    updateType: 'file_brief',
+    organization,
+    documentId,
+    aiBrief: briefText,
+    fileStoredName: normalizeValue(file && file.storedName),
+    fileOriginalName: normalizeValue(file && file.originalName),
+    fileUrl: normalizeValue(file && (file.sourceUrl || file.url)),
+  };
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const response = await fetch('/docs.php?action=mini_app_update_task', {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || data.success !== true) {
+    throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
+  }
+  return true;
+}
+
+async function generateViewerFileAiBrief(file, fileName) {
+  if (!elements.viewerBrief || elements.viewerBrief.dataset.loading === 'true') {
+    return;
+  }
+  const task = viewerTabsState.task;
+  if (!task) {
+    setStatus('warning', 'Не удалось определить задачу для краткого ИИ.');
+    return;
+  }
+  if (!telegramBriefModalFactory || typeof telegramBriefModalFactory.requestBriefForSource !== 'function') {
+    setStatus('error', 'Модуль Кратко ИИ не загружен.');
+    return;
+  }
+
+  setActionButtonLoading(elements.viewerBrief, true);
+  const stopViewerBriefLoading = startViewerBriefLoadingAnimation();
+  const source = {
+    label: fileName || getAttachmentName(file) || 'Файл',
+    url: resolveFileFetchUrl(file),
+    fileObject: file && file.fileObject instanceof File ? file.fileObject : null,
+  };
+
+  try {
+    setStatus('info', 'Кратко ИИ: подготавливаю файл...');
+    const result = await telegramBriefModalFactory.requestBriefForSource(source, (message, tone) => {
+      setStatus(tone === 'error' ? 'error' : 'info', `Кратко ИИ: ${message}`);
+    });
+    const nextBrief = normalizeBriefText(result && result.summary);
+    if (!nextBrief) {
+      throw new Error('ИИ вернул пустой краткий ответ.');
+    }
+
+    file.aiBrief = nextBrief;
+    const taskFile = findTaskFileByViewerFile(task, file);
+    if (taskFile) {
+      taskFile.aiBrief = nextBrief;
+    }
+
+    try {
+      await persistViewerFileAiBrief(task, file, nextBrief);
+    } catch (error) {
+      setStatus('warning', `Кратко ИИ сохранено локально: ${error instanceof Error ? error.message : 'ошибка сохранения'}`);
+    }
+
+    updateViewerBriefState(file);
+    openTelegramFileAiBriefModal(fileName, nextBrief);
+    setStatus('success', 'Кратко ИИ готово.');
+  } catch (error) {
+    setStatus('error', `Кратко ИИ: ${error instanceof Error ? error.message : 'неизвестная ошибка'}`);
+  } finally {
+    setActionButtonLoading(elements.viewerBrief, false);
+    stopViewerBriefLoading();
+  }
+}
+
+function startViewerBriefLoadingAnimation() {
+  if (!elements.viewerBrief) {
+    return () => {};
+  }
+  const button = elements.viewerBrief;
+  const initialText = button.textContent || 'Кратко - ИИ';
+  const initialTitle = button.getAttribute('title') || '';
+  const initialBackground = button.style.background;
+  const initialBorderColor = button.style.borderColor;
+  const initialColor = button.style.color;
+  let frame = 0;
+
+  button.setAttribute('aria-busy', 'true');
+  button.style.background = 'linear-gradient(135deg, rgba(239,246,255,.96), rgba(224,242,254,.95))';
+  button.style.borderColor = 'rgba(59,130,246,.55)';
+  button.style.color = '#1d4ed8';
+
+  const timerId = window.setInterval(() => {
+    frame = (frame + 1) % 4;
+    const dots = '.'.repeat(frame);
+    button.textContent = `⏳ Кратко ИИ${dots}`;
+  }, 260);
+
+  return () => {
+    window.clearInterval(timerId);
+    button.textContent = initialText;
+    button.style.background = initialBackground;
+    button.style.borderColor = initialBorderColor;
+    button.style.color = initialColor;
+    if (initialTitle) {
+      button.setAttribute('title', initialTitle);
+    } else {
+      button.removeAttribute('title');
+    }
+    button.setAttribute('aria-busy', 'false');
+  };
 }
 
 async function handleViewerDownloadClick() {
@@ -6927,6 +8323,19 @@ async function handleViewerDownloadClick() {
 
   const isSummary = Boolean(file.isSummary);
   let fileName = getAttachmentName(file);
+
+  if (isSummary && pdfViewerInstance && pdfViewerInstance._viewerMode === 'html') {
+    const summaryText = buildSummaryText(task);
+    const txtBlob = new Blob([summaryText], { type: 'text/plain;charset=utf-8' });
+    const txtName = 'Общее.txt';
+    logDownloadConsole('summary_txt_download', { fileName: txtName });
+    sendDownloadLog('viewer_download_click', { fileName: txtName, method: 'summary_txt' });
+    downloadBlob(txtBlob, txtName);
+    setStatus('info', 'Файл «Общее.txt» скачан.');
+    sendDownloadLog('viewer_download_success', { fileName: txtName, method: 'summary_txt' });
+    return;
+  }
+
   if (isSummary) {
     try {
       const summaryPreview = await ensureTaskSummaryPreview(task, file);
@@ -7170,9 +8579,22 @@ async function handleViewerDownloadClick() {
   }
 }
 
-async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, viewerOptions = {}) {
+async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, viewerOptions = {}, traceContext = null) {
+  if (traceContext) {
+    traceContext.rawUrl = rawUrl || traceContext.rawUrl || '';
+    traceContext.fileName = fileName || traceContext.fileName || '';
+  }
+  startTaskViewTracePhase(task, traceContext, 'resolve_url', {
+    rawUrl: rawUrl || '',
+    preferredPreviewUrl: preferredPreviewUrl || '',
+  });
   const resolvedUrl = resolveDocumentUrl(rawUrl || preferredPreviewUrl);
   if (!resolvedUrl) {
+    endTaskViewTracePhase(task, traceContext, 'resolve_url', {
+      reason: 'invalid_url',
+      rawUrl: rawUrl || '',
+      preferredPreviewUrl: preferredPreviewUrl || '',
+    }, 'error');
     logViewerModeDecision('none', 'invalid_url', { rawUrl: rawUrl || '', previewUrl: preferredPreviewUrl || '' });
     return { mode: false };
   }
@@ -7184,6 +8606,16 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     fileName: fileName || '',
     resolvedUrl: absolutePreviewUrl,
   });
+  if (traceContext) {
+    traceContext.rawUrl = rawUrl || traceContext.rawUrl || '';
+    traceContext.resolvedUrl = resolvedUrl || traceContext.resolvedUrl || '';
+    traceContext.previewUrl = absolutePreviewUrl;
+    traceContext.fileName = fileName || traceContext.fileName || '';
+  }
+  endTaskViewTracePhase(task, traceContext, 'resolve_url', {
+    resolvedUrl,
+    previewUrl: absolutePreviewUrl,
+  });
   const forceFrameRequested = Boolean(viewerOptions && viewerOptions.forceFrame);
   const extension = getFileExtension(fileName || resolvedUrl);
   const normalizedPreview = absolutePreviewUrl.toLowerCase();
@@ -7192,9 +8624,27 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
   const knownExtension = Boolean(extension && (knownPdfByExtension || IMAGE_EXTENSIONS.has(extension) || VIDEO_EXTENSIONS.has(extension) || OFFICE_EXTENSIONS.has(extension)));
   updateViewerLoaderStep('Определение типа файла…', 35);
   docLoadStep('определение типа');
-  const contentTypeCheck = knownExtension
-    ? { isPdf: knownPdfByExtension, contentType: '', checked: false }
-    : await detectPdfByContentType(absolutePreviewUrl, baseDetails);
+  startTaskViewTracePhase(task, traceContext, 'detect_type', {
+    previewUrl: absolutePreviewUrl,
+    extension,
+  });
+  let contentTypeCheck = { isPdf: knownPdfByExtension, contentType: '', checked: false };
+  try {
+    contentTypeCheck = knownExtension
+      ? { isPdf: knownPdfByExtension, contentType: '', checked: false }
+      : await detectPdfByContentType(absolutePreviewUrl, baseDetails);
+  } catch (error) {
+    endTaskViewTracePhase(task, traceContext, 'detect_type', {
+      previewUrl: absolutePreviewUrl,
+      ...extractTaskViewErrorMeta(error),
+    }, 'error');
+    throw error;
+  }
+  endTaskViewTracePhase(task, traceContext, 'detect_type', {
+    previewUrl: absolutePreviewUrl,
+    contentType: contentTypeCheck && contentTypeCheck.contentType ? contentTypeCheck.contentType : '',
+    checked: Boolean(contentTypeCheck && contentTypeCheck.checked),
+  });
   const isPdf = knownPdfByExtension
     || Boolean(contentTypeCheck && contentTypeCheck.isPdf);
   docLoadStep('тип определён: ' + (isPdf ? 'pdf' : extension || 'другой'));
@@ -7260,11 +8710,67 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     platform: isWebPlatform,
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
   });
+  const logExternalPromptDiagnostics = (reason = '') => {
+    const externalPromptContext = buildPdfDiagnosticsRequiredFields(task, traceContext, {
+      fileName: fileName || '',
+      rawUrl: rawUrl || '',
+      resolvedUrl: resolvedUrl || '',
+      previewUrl: absolutePreviewUrl || '',
+    });
+    logClientEvent('task_view_pdf_diagnostics', {
+      ...externalPromptContext,
+      prefix: 'Просмотр2',
+      step: 'external_prompt',
+      details: {
+        ...externalPromptContext,
+        reason: reason || 'pdf_inline_failed_external_prompt',
+      },
+      reason: reason || 'pdf_inline_failed_external_prompt',
+    }, { keepalive: true });
+  };
 
   if (isPdf && isWebPlatform) {
+    const webFetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
+    const webPreviouslyTimedOut = webFetchCacheKey && pdfFetchTimeoutUrls.has(webFetchCacheKey);
+    if (webPreviouslyTimedOut) {
+      logViewFlow('inline:web_skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl, platform: 'telegram_web' });
+      startTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'web_frame_cached_timeout',
+        previewUrl: absolutePreviewUrl,
+      });
+      const cachedWebFrameMode = await openInlineFrame(
+        absolutePreviewUrl,
+        fileName,
+        baseDetails,
+        { ...viewerOptions, forceFrame: true },
+        traceContext,
+        task,
+      );
+      if (cachedWebFrameMode) {
+        endTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'web_frame_cached_timeout',
+          mode: cachedWebFrameMode,
+        });
+        logClientEvent('task_view_inline_mode', {
+          ...baseDetails,
+          mode: cachedWebFrameMode,
+          strategy: 'web_frame_cached_timeout',
+        });
+        logViewerModeDecision(cachedWebFrameMode, 'web_frame_cached_timeout', {
+          ...modeDecisionBase,
+          url: absolutePreviewUrl,
+          platform: 'telegram_web',
+        });
+        return { mode: cachedWebFrameMode };
+      }
+      endTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'web_frame_cached_timeout',
+        reason: 'frame_unavailable',
+      }, 'error');
+    }
     logViewFlow('inline:try', { previewUrl: absolutePreviewUrl, platform: 'telegram_web' });
     logViewerDebugDeep('inline:try', { previewUrl: absolutePreviewUrl, platform: 'telegram_web' });
-    const inlineMode = await openPdfInline(absolutePreviewUrl, fileName, task, pdfViewerOptions);
+    const inlineMode = await openPdfInline(absolutePreviewUrl, fileName, task, pdfViewerOptions, traceContext);
     if (inlineMode) {
       logClientEvent('task_view_inline_mode', { ...baseDetails, mode: inlineMode, strategy: 'pdf_inline' });
       logViewerDebugDeep('inline:success', { mode: inlineMode, url: absolutePreviewUrl, platform: 'telegram_web' });
@@ -7277,13 +8783,23 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     }
     logViewerDebug('inline:fallback', { previewUrl: absolutePreviewUrl, reason: 'inline_failed' });
     logViewerDebugDeep('inline:fallback', { previewUrl: absolutePreviewUrl, reason: 'inline_failed' });
+    startTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'pdf_frame_fallback',
+      previewUrl: absolutePreviewUrl,
+    });
     const frameMode = await openInlineFrame(
       absolutePreviewUrl,
       fileName,
       baseDetails,
       { ...viewerOptions, forceFrame: true },
+      traceContext,
+      task,
     );
     if (frameMode) {
+      endTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'pdf_frame_fallback',
+        mode: frameMode,
+      });
       logClientEvent('task_view_inline_mode', {
         ...baseDetails,
         mode: frameMode,
@@ -7301,26 +8817,211 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
       });
       return { mode: frameMode };
     }
+    endTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'pdf_frame_fallback',
+      reason: 'frame_unavailable',
+    }, 'error');
+    startTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'external_prompt',
+      previewUrl: absolutePreviewUrl,
+    });
     setStatusAction(
       'error',
       'Не удалось отрисовать PDF. Откройте файл в новой вкладке.',
       'Открыть в новой вкладке',
       () => openExternalDocument(absolutePreviewUrl),
     );
+    endTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'external_prompt',
+      mode: 'external_prompt',
+    });
     logViewerModeDecision('external', 'pdf_inline_failed_external_prompt', {
       ...modeDecisionBase,
       url: absolutePreviewUrl,
       platform: 'telegram_web',
     });
+    logExternalPromptDiagnostics('pdf_inline_failed_external_prompt');
     return { mode: 'external_prompt' };
   }
 
   if (isPdf) {
+    if (runtimeEnvironment.isIos) {
+      const fetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
+      const previouslyTimedOut = fetchCacheKey && pdfFetchTimeoutUrls.has(fetchCacheKey);
+      if (previouslyTimedOut) {
+        logViewFlow('inline:ios_skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl });
+        logViewerDebugDeep('inline:ios_skip_fetch_timeout_cached', {
+          previewUrl: absolutePreviewUrl,
+          reason: 'fetch_previously_timed_out',
+        });
+        startTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'ios_frame_cached_timeout',
+          previewUrl: absolutePreviewUrl,
+        });
+        const cachedFrameMode = await openInlineFrame(
+          absolutePreviewUrl,
+          fileName,
+          baseDetails,
+          { ...viewerOptions, isPdf: true, forceFrame: true },
+          traceContext,
+          task,
+        );
+        if (cachedFrameMode) {
+          endTaskViewTracePhase(task, traceContext, 'fallback', {
+            strategy: 'ios_frame_cached_timeout',
+            mode: cachedFrameMode,
+          });
+          logClientEvent('task_view_inline_mode', {
+            ...baseDetails,
+            mode: cachedFrameMode,
+            strategy: 'ios_frame_cached_timeout',
+          });
+          logViewerModeDecision(cachedFrameMode, 'ios_frame_cached_timeout', {
+            ...modeDecisionBase,
+            url: absolutePreviewUrl,
+          });
+          return { mode: cachedFrameMode };
+        }
+        endTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'ios_frame_cached_timeout',
+          reason: 'frame_unavailable',
+        }, 'error');
+      }
+      logViewFlow('inline:ios_canvas_first', { previewUrl: absolutePreviewUrl });
+      logViewerDebugDeep('inline:ios_canvas_first', { previewUrl: absolutePreviewUrl, reason: 'ios_use_canvas' });
+      startTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'ios_canvas_first',
+        previewUrl: absolutePreviewUrl,
+      });
+      const iosInlineMode = await openPdfInline(absolutePreviewUrl, fileName, task, pdfViewerOptions, traceContext);
+      if (iosInlineMode) {
+        const iosRenderStatus = typeof pdfViewerInstance.getPdfRenderStatus === 'function'
+          ? pdfViewerInstance.getPdfRenderStatus()
+          : null;
+        const iosHasTotalPages = iosRenderStatus && typeof iosRenderStatus.totalPages === 'number';
+        const iosHasRenderedPages = iosRenderStatus && typeof iosRenderStatus.renderedPages === 'number';
+        const iosIncompletePages = iosHasTotalPages
+          && iosHasRenderedPages
+          && iosRenderStatus.totalPages > 0
+          && iosRenderStatus.renderedPages < iosRenderStatus.totalPages;
+        if (iosIncompletePages) {
+          logViewerDebug('inline:ios_render_incomplete', iosRenderStatus);
+          logClientEvent('task_view_inline_mode', {
+            ...baseDetails,
+            mode: iosInlineMode,
+            strategy: 'ios_canvas_first_incomplete',
+            renderStatus: iosRenderStatus,
+          });
+        }
+        endTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'ios_canvas_first',
+          mode: iosInlineMode,
+        });
+        logClientEvent('task_view_inline_mode', {
+          ...baseDetails,
+          mode: iosInlineMode,
+          strategy: 'ios_canvas_first',
+        });
+        logViewerModeDecision(iosInlineMode, 'ios_canvas_first', {
+          ...modeDecisionBase,
+          url: absolutePreviewUrl,
+        });
+        return { mode: iosInlineMode };
+      }
+      endTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'ios_canvas_first',
+        reason: 'canvas_failed',
+      }, 'error');
+      logViewerDebug('inline:ios_canvas_fallback_frame', { previewUrl: absolutePreviewUrl, reason: 'canvas_failed' });
+      startTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'ios_frame_fallback',
+        previewUrl: absolutePreviewUrl,
+      });
+      const iosFrameMode = await openInlineFrame(
+        absolutePreviewUrl,
+        fileName,
+        baseDetails,
+        { ...viewerOptions, isPdf: true, forceFrame: true },
+        traceContext,
+        task,
+      );
+      if (iosFrameMode) {
+        endTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'ios_frame_fallback',
+          mode: iosFrameMode,
+        });
+        logClientEvent('task_view_inline_mode', {
+          ...baseDetails,
+          mode: iosFrameMode,
+          strategy: 'ios_frame_fallback',
+        });
+        logViewerModeDecision(iosFrameMode, 'ios_frame_fallback', {
+          ...modeDecisionBase,
+          url: absolutePreviewUrl,
+        });
+        return { mode: iosFrameMode };
+      }
+      endTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'ios_frame_fallback',
+        reason: 'frame_unavailable',
+      }, 'error');
+      setStatusAction(
+        'error',
+        'Не удалось отрисовать PDF. Откройте файл в новой вкладке.',
+        'Открыть в новой вкладке',
+        () => openExternalDocument(absolutePreviewUrl),
+      );
+      logViewerModeDecision('external', 'ios_canvas_and_frame_failed', {
+        ...modeDecisionBase,
+        url: absolutePreviewUrl,
+      });
+      logExternalPromptDiagnostics('ios_canvas_and_frame_failed');
+      return { mode: 'external_prompt' };
+    }
+    const otherFetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
+    const otherPreviouslyTimedOut = otherFetchCacheKey && pdfFetchTimeoutUrls.has(otherFetchCacheKey);
+    if (otherPreviouslyTimedOut) {
+      logViewFlow('inline:skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl });
+      startTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'frame_cached_timeout',
+        previewUrl: absolutePreviewUrl,
+      });
+      const cachedOtherFrameMode = await openInlineFrame(
+        absolutePreviewUrl,
+        fileName,
+        baseDetails,
+        { ...viewerOptions, isPdf: true, forceFrame: true },
+        traceContext,
+        task,
+      );
+      if (cachedOtherFrameMode) {
+        endTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'frame_cached_timeout',
+          mode: cachedOtherFrameMode,
+        });
+        logClientEvent('task_view_inline_mode', {
+          ...baseDetails,
+          mode: cachedOtherFrameMode,
+          strategy: 'frame_cached_timeout',
+        });
+        logViewerModeDecision(cachedOtherFrameMode, 'frame_cached_timeout', {
+          ...modeDecisionBase,
+          url: absolutePreviewUrl,
+        });
+        return { mode: cachedOtherFrameMode };
+      }
+      endTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'frame_cached_timeout',
+        reason: 'frame_unavailable',
+      }, 'error');
+    }
     logViewFlow('inline:try', { previewUrl: absolutePreviewUrl });
     logViewerDebugDeep('inline:try', { previewUrl: absolutePreviewUrl });
-    const inlineMode = await openPdfInline(absolutePreviewUrl, fileName, task, pdfViewerOptions);
+    const inlineMode = await openPdfInline(absolutePreviewUrl, fileName, task, pdfViewerOptions, traceContext);
     if (inlineMode) {
-      const renderStatus = await waitForPdfRenderStatus(pdfViewerInstance, 1600);
+      const renderStatus = typeof pdfViewerInstance.getPdfRenderStatus === 'function'
+        ? pdfViewerInstance.getPdfRenderStatus()
+        : null;
       const hasTotalPages = renderStatus && typeof renderStatus.totalPages === 'number';
       const hasRenderedPages = renderStatus && typeof renderStatus.renderedPages === 'number';
       const incompletePages = hasTotalPages
@@ -7334,13 +9035,23 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
           renderStatus,
           incompletePages,
         });
+        startTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'pdf_frame_incomplete',
+          previewUrl: absolutePreviewUrl,
+        });
         const frameMode = await openInlineFrame(
           absolutePreviewUrl,
           fileName,
           baseDetails,
           { ...viewerOptions, isPdf: true, forceFrame: true },
+          traceContext,
+          task,
         );
         if (frameMode) {
+          endTaskViewTracePhase(task, traceContext, 'fallback', {
+            strategy: 'pdf_frame_incomplete',
+            mode: frameMode,
+          });
           logClientEvent('task_view_inline_mode', {
             ...baseDetails,
             mode: frameMode,
@@ -7357,6 +9068,14 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
           });
           return { mode: frameMode };
         }
+        endTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'pdf_frame_incomplete',
+          reason: 'frame_unavailable',
+        }, 'error');
+        startTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'external_prompt',
+          previewUrl: absolutePreviewUrl,
+        });
         logViewerDebug('inline:render_incomplete_fallback_failed', renderStatus);
         logViewerDebugDeep('inline:render_incomplete_fallback_failed', {
           ...baseDetails,
@@ -7368,10 +9087,15 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
           'Открыть в новой вкладке',
           () => openExternalDocument(absolutePreviewUrl),
         );
+        endTaskViewTracePhase(task, traceContext, 'fallback', {
+          strategy: 'external_prompt',
+          mode: 'external_prompt',
+        });
         logViewerModeDecision('external', 'pdf_inline_failed_external_prompt', {
           ...modeDecisionBase,
           url: absolutePreviewUrl,
         });
+        logExternalPromptDiagnostics('pdf_inline_failed_external_prompt');
         return { mode: 'external_prompt' };
       }
       logClientEvent('task_view_inline_mode', { ...baseDetails, mode: inlineMode, strategy: 'pdf_inline' });
@@ -7381,13 +9105,23 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     }
     logViewerDebug('inline:fallback', { previewUrl: absolutePreviewUrl, reason: 'inline_failed' });
     logViewerDebugDeep('inline:fallback', { previewUrl: absolutePreviewUrl, reason: 'inline_failed' });
+    startTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'pdf_frame_fallback',
+      previewUrl: absolutePreviewUrl,
+    });
     const frameMode = await openInlineFrame(
       absolutePreviewUrl,
       fileName,
       baseDetails,
       { ...viewerOptions, isPdf: true, forceFrame: true },
+      traceContext,
+      task,
     );
     if (frameMode) {
+      endTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'pdf_frame_fallback',
+        mode: frameMode,
+      });
       logClientEvent('task_view_inline_mode', { ...baseDetails, mode: frameMode, strategy: 'pdf_frame_fallback' });
       logViewerDebugDeep('inline:frame_fallback', {
         mode: frameMode,
@@ -7397,29 +9131,52 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
       logViewerModeDecision(frameMode, 'pdf_inline_failed_frame', { ...modeDecisionBase, url: absolutePreviewUrl });
       return { mode: frameMode };
     }
+    endTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'pdf_frame_fallback',
+      reason: 'frame_unavailable',
+    }, 'error');
+    startTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'external_prompt',
+      previewUrl: absolutePreviewUrl,
+    });
     setStatusAction(
       'error',
       'Не удалось отрисовать PDF. Откройте файл в новой вкладке.',
       'Открыть в новой вкладке',
       () => openExternalDocument(absolutePreviewUrl),
     );
+    endTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'external_prompt',
+      mode: 'external_prompt',
+    });
     logViewerModeDecision('external', 'pdf_inline_failed_external_prompt', {
       ...modeDecisionBase,
       url: absolutePreviewUrl,
     });
+    logExternalPromptDiagnostics('pdf_inline_failed_external_prompt');
     return { mode: 'external_prompt' };
   }
 
   if (!isPdf && shouldForceFrame) {
     logViewFlow('inline:force_frame', { previewUrl: absolutePreviewUrl });
     logViewerDebugDeep('inline:force_frame', { previewUrl: absolutePreviewUrl });
+    startTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'force_frame',
+      previewUrl: absolutePreviewUrl,
+    });
     const frameMode = await openInlineFrame(
       absolutePreviewUrl,
       fileName,
       baseDetails,
       { ...effectiveViewerOptions, forceFrame: true },
+      traceContext,
+      task,
     );
     if (frameMode) {
+      endTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'force_frame',
+        mode: frameMode,
+      });
       logViewFlow('open:inline-viewer', { mode: frameMode, url: absolutePreviewUrl });
       logClientEvent('task_view_inline_mode', { ...baseDetails, mode: frameMode, strategy: 'force_frame' });
       logViewerDebugDeep('open:inline-viewer', { mode: frameMode, url: absolutePreviewUrl });
@@ -7429,14 +9186,31 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
       });
       return { mode: frameMode };
     }
+    endTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'force_frame',
+      reason: 'frame_unavailable',
+    }, 'error');
   }
 
   logClientEvent('task_view_inline_start', baseDetails);
-  const inlineMode = await openInlineBlob(absolutePreviewUrl, fileName, baseDetails, effectiveViewerOptions);
+  const inlineMode = await openInlineBlob(absolutePreviewUrl, fileName, baseDetails, effectiveViewerOptions, traceContext, task);
   const canUseInlineFrame = shouldForceFrame || (!disallowFrameForPdf && !disallowFrameForWeb);
+  if (!inlineMode && canUseInlineFrame) {
+    startTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'inline_frame_fallback',
+      previewUrl: absolutePreviewUrl,
+    });
+  }
   const frameMode = !inlineMode && canUseInlineFrame
-    ? await openInlineFrame(absolutePreviewUrl, fileName, baseDetails, effectiveViewerOptions)
+    ? await openInlineFrame(absolutePreviewUrl, fileName, baseDetails, effectiveViewerOptions, traceContext, task)
     : null;
+  if (!inlineMode && canUseInlineFrame) {
+    endTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'inline_frame_fallback',
+      mode: frameMode || '',
+      reason: frameMode ? '' : 'frame_unavailable',
+    }, frameMode ? 'end' : 'error');
+  }
   const resolvedInlineMode = inlineMode || frameMode;
 
   if (resolvedInlineMode) {
@@ -7456,8 +9230,16 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
   }
 
   if (resolvedInlineMode === null) {
+    startTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'external_open',
+      previewUrl: absolutePreviewUrl,
+    });
     const externalMode = openExternalDocument(absolutePreviewUrl);
     if (externalMode) {
+      endTaskViewTracePhase(task, traceContext, 'fallback', {
+        strategy: 'external_open',
+        mode: externalMode,
+      });
       logViewFlow('open:external', { mode: externalMode, url: absolutePreviewUrl });
       logViewerDebugDeep('open:external', { mode: externalMode, url: absolutePreviewUrl });
       logViewerModeDecision(externalMode, 'inline_unavailable_external', {
@@ -7467,6 +9249,10 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
       });
       return { mode: externalMode };
     }
+    endTaskViewTracePhase(task, traceContext, 'fallback', {
+      strategy: 'external_open',
+      reason: 'external_unavailable',
+    }, 'error');
   }
 
   logViewFlow('open:failed', 'inline_unavailable');
@@ -7495,11 +9281,26 @@ function setViewerTabActive(index) {
     }
     const isActive = buttonIndex === index;
     button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    button.dataset.active = isActive ? 'true' : 'false';
   });
 }
 
+function setViewerTabLoading(index, isLoading) {
+  const button = viewerTabsState.buttons[index];
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+  if (isLoading) {
+    button.dataset.loading = 'true';
+    button.setAttribute('aria-busy', 'true');
+    return;
+  }
+  delete button.dataset.loading;
+  button.removeAttribute('aria-busy');
+}
+
 async function openViewerFile(file, task, options = {}) {
-  const { notify = true, hasMultiple = false } = options;
+  const { notify = true, hasMultiple = false, traceContext = null } = options;
   const openStartedAt = performance.now();
   const openSessionId = ++viewerOpenMetrics.sessionOpenId;
   logClientEvent('task_view_open_start', {
@@ -7515,12 +9316,82 @@ async function openViewerFile(file, task, options = {}) {
   let rawUrl = '';
   let fileName = '';
   let isOfficePreview = false;
+  let cachedSummaryArrayBuffer = null;
   if (isSummary) {
     logTaskViewStage(task, 'open_viewer_prepare_summary_start', {
       fileName: file && file.name ? file.name : '',
+      mode: 'html_fast',
     });
+    docLoadStep('генерация html-сводки');
+    const htmlBuildStart = performance.now();
+    const summaryHtml = buildSummaryHtml(task);
+    const htmlBuildMs = Math.round(performance.now() - htmlBuildStart);
+    docLoadStep('html-сводка готова (' + htmlBuildMs + 'мс)');
+    logTaskViewStage(task, 'open_viewer_summary_html_built', {
+      buildMs: htmlBuildMs,
+      htmlLength: summaryHtml.length,
+    });
+    fileName = SUMMARY_FILE_PDF_NAME;
+    const viewer = pdfViewerInstance;
+    if (viewer && typeof viewer.openHtml === 'function') {
+      const htmlOpenStart = performance.now();
+      const htmlMode = viewer.openHtml(summaryHtml, 'Общее');
+      const htmlOpenMs = Math.round(performance.now() - htmlOpenStart);
+      docLoadStep('viewer.openHtml (' + htmlOpenMs + 'мс)');
+      logTaskViewStage(task, 'open_viewer_summary_html_rendered', {
+        mode: htmlMode,
+        openMs: htmlOpenMs,
+      });
+      if (htmlMode) {
+        const totalMs = Math.round(performance.now() - openStartedAt);
+        docLoadStep('готово');
+        docLoadSetMeta({
+          openMode: htmlMode,
+          openTotalMs: totalMs,
+          renderStrategy: 'html_fast',
+        });
+        const summaryMetricKey = buildViewerOpenMetricKey(task, file, '');
+        const summaryOpenAttempt = summaryMetricKey ? ((viewerOpenMetrics.fileAttempts.get(summaryMetricKey) || 0) + 1) : 1;
+        if (summaryMetricKey) {
+          viewerOpenMetrics.fileAttempts.set(summaryMetricKey, summaryOpenAttempt);
+        }
+        logTaskViewStage(task, 'open_viewer_profile_done', {
+          openSessionId,
+          openAttempt: summaryOpenAttempt,
+          mode: htmlMode,
+          totalMs,
+          renderStrategy: 'html_fast',
+        });
+        viewerTabsState.activeFile = file;
+        updateViewerDownloadState(file);
+        logClientEvent('task_view_open', {
+          ...buildTaskViewLogDetails(task),
+          fileName: file.name,
+          mode: htmlMode,
+          renderStrategy: 'html_fast',
+          htmlBuildMs,
+          htmlOpenMs,
+          totalMs,
+        });
+        if (notify) {
+          setStatus('info', hasMultiple
+            ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
+            : 'Сводка открыта.');
+        }
+        void ensureTaskSummaryPreview(task, file).catch(function (err) {
+          logTaskViewStage(task, 'summary_pdf_background_error', {
+            error: err && err.message ? err.message : String(err),
+          });
+        });
+        return { mode: htmlMode };
+      }
+    }
+    logTaskViewStage(task, 'open_viewer_summary_html_fallback_pdf', {
+      reason: 'openHtml not available',
+    });
+    docLoadStep('html недоступен, fallback на pdf');
     updateViewerLoaderStep('Генерация сводки…', 10);
-    docLoadStep('генерация сводки');
+    docLoadStep('генерация сводки (pdf fallback)');
     preview = await ensureTaskSummaryPreview(task, file);
     logTaskViewStage(task, 'open_viewer_prepare_summary_done', {
       fileName: preview && preview.fileName ? preview.fileName : '',
@@ -7529,6 +9400,12 @@ async function openViewerFile(file, task, options = {}) {
     fileName = preview.fileName;
     file.previewUrl = preview.previewUrl;
     file.resolvedUrl = preview.previewUrl;
+    const cacheSource = file && typeof file === 'object' ? file : task;
+    if (cacheSource && cacheSource.summaryArrayBuffer) {
+      cachedSummaryArrayBuffer = cacheSource.summaryArrayBuffer;
+    } else if (task && task.summaryArrayBuffer) {
+      cachedSummaryArrayBuffer = task.summaryArrayBuffer;
+    }
     docLoadStep('сводка готова');
   } else if (isOffice || isHeic) {
     logTaskViewStage(task, 'open_viewer_prepare_office_start', {
@@ -7593,6 +9470,10 @@ async function openViewerFile(file, task, options = {}) {
 
   updateViewerLoaderStep('Загрузка файла…', 30);
   docLoadStep('открытие документа');
+  if (traceContext) {
+    traceContext.fileName = fileName || (file && file.name ? file.name : '');
+    traceContext.previewUrl = rawUrl || traceContext.previewUrl || '';
+  }
 
   const desktopImageExternalUrl = file && file.kind === 'image' && isTelegramDesktopPlatform() && preview
     ? preview.remoteUrl
@@ -7606,6 +9487,12 @@ async function openViewerFile(file, task, options = {}) {
   const memoryBefore = getJsMemorySnapshot();
   if (metricKey) {
     viewerOpenMetrics.fileAttempts.set(metricKey, openAttempt);
+  }
+  if (traceContext) {
+    traceContext.openSessionId = openSessionId;
+    traceContext.attempt = openAttempt;
+    traceContext.taskId = task && task.id ? String(task.id) : (traceContext.taskId || '');
+    traceContext.rawUrl = rawUrl || traceContext.rawUrl || '';
   }
   docLoadSetMeta({
     openSessionId,
@@ -7628,12 +9515,17 @@ async function openViewerFile(file, task, options = {}) {
     hasMultiple,
     sinceStartMs: Math.round(performance.now() - openStartedAt),
   });
+  const viewerOpts = shouldForceFrame ? { kind: file.kind, forceFrame: true } : { kind: file.kind };
+  if (cachedSummaryArrayBuffer) {
+    viewerOpts.preloadedArrayBuffer = cachedSummaryArrayBuffer;
+  }
   const { mode } = await openDocumentLink(
     rawUrl,
     fileName,
     task,
     rawUrl,
-    shouldForceFrame ? { kind: file.kind, forceFrame: true } : { kind: file.kind },
+    viewerOpts,
+    traceContext,
   );
 
   if (mode === 'inline' || mode === 'window' || mode === 'telegram' || mode === 'external_prompt') {
@@ -7650,6 +9542,39 @@ async function openViewerFile(file, task, options = {}) {
     });
     viewerTabsState.activeFile = file;
     updateViewerDownloadState(file);
+    updateViewerDeleteState(file);
+    updateViewerFileOwnerState(file);
+    if (isPdf && mode === 'inline') {
+      try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
+      // Счётчик страниц может быть 0, если PDF ещё загружается — обновим после загрузки
+      try {
+        const viewer = pdfViewerInstance;
+        if (viewer && typeof viewer.getPdfLoadPromise === 'function') {
+          const loadPromise = viewer.getPdfLoadPromise();
+          if (loadPromise && typeof loadPromise.then === 'function') {
+            loadPromise.then(() => {
+              try { updatePdfTabPageCount(); } catch (_e2) { /* не критично */ }
+              // Логируем результат рендера PDF в Просмотреть.log
+              try {
+                const renderStatus = typeof viewer.getPdfRenderStatus === 'function'
+                  ? viewer.getPdfRenderStatus() : {};
+                const pageCount = typeof viewer.getPageCount === 'function'
+                  ? viewer.getPageCount() : 0;
+                logClientEvent('task_view_pdf_render_result', {
+                  ...buildTaskViewLogDetails(task),
+                  fileName: file.name,
+                  resolvedUrl: file.resolvedUrl || file.url,
+                  renderStatus: renderStatus.status || 'unknown',
+                  renderedPages: renderStatus.renderedPages || 0,
+                  totalPages: renderStatus.totalPages || pageCount,
+                  usingCanvas: renderStatus.usingCanvas || false,
+                });
+              } catch (_e3) { /* не критично */ }
+            }).catch(() => {});
+          }
+        }
+      } catch (_e) { /* не критично */ }
+    }
     logClientEvent('task_view_open', {
       ...buildTaskViewLogDetails(task),
       fileName: file.name,
@@ -7733,6 +9658,31 @@ async function openViewerFile(file, task, options = {}) {
   throw new Error('viewer_open_failed');
 }
 
+async function openFilesViaStandardViewer(files, task = {}, options = {}) {
+  const list = Array.isArray(files) ? files.filter(Boolean) : [];
+  if (!list.length) {
+    throw new Error('Нет файлов для просмотра.');
+  }
+  const firstFile = list[0];
+  const displayName = firstFile.name || 'Документ';
+  showViewerLoader(displayName);
+  docLoadStart(displayName, firstFile.kind || '');
+  docLoadStep('подготовка файлов');
+  renderViewerTabs(list, task || {});
+  docLoadStep('открытие файла');
+  await openViewerFile(firstFile, task || {}, { notify: true, hasMultiple: list.length > 1, ...options });
+  return true;
+}
+
+if (typeof window !== 'undefined') {
+  window.__APPDOSC_OPEN_VIEWER_FILE__ = async function openViewerFromExternalContext(file, task, options = {}) {
+    return openViewerFile(file, task, options);
+  };
+  window.__APPDOSC_OPEN_FILES_VIEWER__ = async function openFilesViewerFromExternalContext(files, task, options = {}) {
+    return openFilesViaStandardViewer(files, task, options);
+  };
+}
+
 function warmupTaskPdfFiles(task, files, skipFile) {
   if (!Array.isArray(files) || files.length < 2) {
     return;
@@ -7741,26 +9691,144 @@ function warmupTaskPdfFiles(task, files, skipFile) {
   if (!queue.length) {
     return;
   }
-  const maxWarmups = 3;
+  const isMobilePlatform = runtimeEnvironment.isIos
+    || /android/i.test(String(runtimeEnvironment.webAppPlatform || ''))
+    || /iphone|ipad|ipod|android|mobile/i.test(String(navigator.userAgent || ''));
+  const maxWarmups = isMobilePlatform ? 1 : 2;
   queue.slice(0, maxWarmups).forEach((file, index) => {
     const rawUrl = resolveFileFetchUrl(file);
     if (!rawUrl) {
       return;
     }
-    const plannedDelayMs = 180 + index * 140;
+    const plannedDelayMs = isMobilePlatform
+      ? (1200 + index * 700)
+      : (400 + index * 260);
     window.setTimeout(() => {
-      fetchPdfBinaryForViewer(rawUrl)
+      const requestId = createPdfRequestId();
+      const cacheKey = normalizePdfBinaryCacheKey(rawUrl);
+      const fetchStartedAt = Date.now();
+      logClientEvent('task_view_pdf_diagnostics', {
+        ...buildTaskViewLogDetails(task),
+        prefix: 'Просмотр2',
+        step: 'warmup_start',
+        source: 'warmup',
+        requestId,
+        traceId: requestId,
+        cacheKey,
+        responseUrl: rawUrl,
+        fetchStartedAt,
+      }, { keepalive: true });
+      fetchPdfBinaryForViewer(rawUrl, 'warmup', requestId)
         .then((payload) => {
+          const warmupSource = payload && payload.source === 'warmup' ? 'warmup' : 'user_click';
+          const responseReceivedAt = payload && typeof payload.responseReceivedAt === 'number' ? payload.responseReceivedAt : 0;
+          const arrayBufferReadyAt = payload && typeof payload.arrayBufferReadyAt === 'number' ? payload.arrayBufferReadyAt : 0;
+          const responseUrl = payload && payload.responseUrl ? payload.responseUrl : rawUrl;
+          const contentLength = payload && payload.contentLength ? payload.contentLength : '';
+          const waitedExistingPromiseDurationMs = payload && typeof payload.waitedExistingPromiseDurationMs === 'number'
+            ? payload.waitedExistingPromiseDurationMs
+            : 0;
+          logClientEvent('task_view_pdf_diagnostics', {
+            ...buildTaskViewLogDetails(task),
+            prefix: 'Просмотр2',
+            step: 'warmup_response',
+            source: warmupSource,
+            requestId: payload && payload.requestId ? payload.requestId : requestId,
+            traceId: payload && payload.traceId ? payload.traceId : requestId,
+            cacheKey: payload && payload.cacheKey ? payload.cacheKey : cacheKey,
+            waitedExistingPromise: Boolean(payload && payload.waitedExistingPromise),
+            waitedExistingPromiseDurationMs,
+            ttfbMs: payload && typeof payload.ttfbMs === 'number' ? payload.ttfbMs : 0,
+            downloadMs: payload && typeof payload.downloadMs === 'number' ? payload.downloadMs : 0,
+            fetchStartedAt: payload && typeof payload.fetchStartedAt === 'number' ? payload.fetchStartedAt : fetchStartedAt,
+            responseReceivedAt,
+            arrayBufferReadyAt,
+            responseUrl,
+            'content-length': contentLength,
+          }, { keepalive: true });
           logTaskViewStage(task, 'pdf_warmup_ready', {
             fileName: getAttachmentName(file, index + 1),
             size: payload && typeof payload.byteLength === 'number' ? payload.byteLength : 0,
             fromCache: Boolean(payload && payload.fromCache),
+            requestId: payload && payload.requestId ? payload.requestId : requestId,
+            traceId: payload && payload.traceId ? payload.traceId : requestId,
+            source: warmupSource,
+            cacheKey: payload && payload.cacheKey ? payload.cacheKey : normalizePdfBinaryCacheKey(rawUrl),
+            cacheHitArrayBuffer: Boolean(payload && payload.cacheHitArrayBuffer),
+            waitedExistingPromise: Boolean(payload && payload.waitedExistingPromise),
+            waitedExistingPromiseDurationMs: payload && typeof payload.waitedExistingPromiseDurationMs === 'number'
+              ? payload.waitedExistingPromiseDurationMs
+              : 0,
+            existingPromiseSource: payload && payload.existingPromiseSource ? payload.existingPromiseSource : '',
+            fetchDurationMs: payload && typeof payload.fetchDurationMs === 'number' ? payload.fetchDurationMs : 0,
+            ttfbMs: payload && typeof payload.ttfbMs === 'number' ? payload.ttfbMs : 0,
+            downloadMs: payload && typeof payload.downloadMs === 'number' ? payload.downloadMs : 0,
+            responseUrl,
+            'content-length': contentLength,
+            fetchStartedAt: payload && typeof payload.fetchStartedAt === 'number' ? payload.fetchStartedAt : fetchStartedAt,
+            responseReceivedAt,
+            arrayBufferReadyAt,
+          });
+          logClientEvent('task_view_pdf_diagnostics', {
+            ...buildTaskViewLogDetails(task),
+            prefix: 'Просмотр2',
+            step: 'warmup_done',
+            source: warmupSource,
+            requestId: payload && payload.requestId ? payload.requestId : requestId,
+            traceId: payload && payload.traceId ? payload.traceId : requestId,
+            cacheKey: payload && payload.cacheKey ? payload.cacheKey : cacheKey,
+            waitedExistingPromise: Boolean(payload && payload.waitedExistingPromise),
+            waitedExistingPromiseDurationMs,
+            ttfbMs: payload && typeof payload.ttfbMs === 'number' ? payload.ttfbMs : 0,
+            downloadMs: payload && typeof payload.downloadMs === 'number' ? payload.downloadMs : 0,
+            fetchStartedAt: payload && typeof payload.fetchStartedAt === 'number' ? payload.fetchStartedAt : fetchStartedAt,
+            responseReceivedAt,
+            arrayBufferReadyAt,
+            responseUrl,
+            'content-length': contentLength,
           });
         })
         .catch((error) => {
+          logClientEvent('task_view_pdf_diagnostics', {
+            ...buildTaskViewLogDetails(task),
+            prefix: 'Просмотр2',
+            step: 'warmup_error',
+            source: 'warmup',
+            requestId,
+            traceId: requestId,
+            cacheKey,
+            waitedExistingPromise: false,
+            waitedExistingPromiseDurationMs: 0,
+            ttfbMs: 0,
+            downloadMs: 0,
+            fetchStartedAt,
+            responseReceivedAt: 0,
+            arrayBufferReadyAt: 0,
+            responseUrl: rawUrl,
+            'content-length': '',
+            details: {
+              error: error && error.message ? error.message : String(error),
+            },
+          }, { keepalive: true });
           logTaskViewStage(task, 'pdf_warmup_error', {
             fileName: getAttachmentName(file, index + 1),
             error: error && error.message ? error.message : String(error),
+            requestId,
+            traceId: requestId,
+            source: 'warmup',
+            cacheKey,
+            cacheHitArrayBuffer: false,
+            waitedExistingPromise: false,
+            waitedExistingPromiseDurationMs: 0,
+            existingPromiseSource: '',
+            fetchDurationMs: 0,
+            ttfbMs: 0,
+            downloadMs: 0,
+            responseUrl: rawUrl,
+            'content-length': '',
+            fetchStartedAt,
+            responseReceivedAt: 0,
+            arrayBufferReadyAt: 0,
           });
         });
     }, plannedDelayMs);
@@ -7768,44 +9836,168 @@ function warmupTaskPdfFiles(task, files, skipFile) {
 }
 
 async function handleViewerTabClick(index, task) {
-  if (viewerTabsState.activeIndex === index) {
+  if (viewerTabsState.activeIndex === index && !viewerTabsState.switching) {
     return;
   }
 
   const file = viewerTabsState.files[index];
-  const button = viewerTabsState.buttons[index];
   if (!file) {
     return;
   }
 
-  if (button) {
-    button.disabled = true;
+  if (viewerTabsState.switching) {
+    viewerTabsState.pendingIndex = index;
+    logViewWatchEvent('task_view_watch_tab_skip_busy', task, {
+      tabIndex: index,
+      fileName: file.name || `Файл ${index + 1}`,
+      currentActiveIndex: viewerTabsState.activeIndex,
+      reason: 'switching_in_progress',
+    });
+    return;
   }
+
+  viewerTabsState.switching = true;
+  viewerTabsState.pendingIndex = null;
 
   const displayName = file.name || `Файл ${index + 1}`;
   const startedAt = performance.now();
+  const traceContext = {
+    traceId: createTaskViewTraceId(),
+    startedAt,
+    phase: 'tab_click_init',
+    phaseStartedAt: {},
+    taskId: task && task.id ? String(task.id) : '',
+    fileName: displayName,
+    previewUrl: file && (file.previewUrl || file.resolvedUrl || file.url) ? (file.previewUrl || file.resolvedUrl || file.url) : '',
+  };
   logViewWatchEvent('task_view_watch_tab_click', task, {
     tabIndex: index,
     fileName: displayName,
     fileKind: file && file.kind ? file.kind : '',
+    traceId: traceContext.traceId,
+    previousActiveIndex: viewerTabsState.activeIndex,
   });
-  showViewerLoader(displayName);
+  const previousActiveIndex = viewerTabsState.activeIndex;
+
+  const viewer = pdfViewerInstance;
+  if (viewer && typeof viewer.captureRenderedContent === 'function') {
+    const snapshot = viewer.captureRenderedContent();
+    if (snapshot) {
+      viewerTabsState.renderedCache.set(previousActiveIndex, snapshot);
+      logViewWatchEvent('task_view_watch_tab_cache_save', task, {
+        tabIndex: previousActiveIndex,
+        fileName: viewerTabsState.files[previousActiveIndex]
+          ? (viewerTabsState.files[previousActiveIndex].name || '')
+          : '',
+        mode: snapshot.mode,
+        traceId: traceContext.traceId,
+      });
+    }
+  }
+
+  const cachedSnapshot = viewerTabsState.renderedCache.get(index);
+  if (cachedSnapshot && viewer && typeof viewer.restoreRenderedContent === 'function') {
+    const restoreStart = performance.now();
+    const restored = viewer.restoreRenderedContent(cachedSnapshot, displayName);
+    if (restored) {
+      viewerTabsState.renderedCache.delete(index);
+      setViewerTabActive(index);
+      viewerTabsState.activeFile = file;
+      updateViewerDownloadState(file);
+      updateViewerDeleteState(file);
+      updateViewerFileOwnerState(file);
+      try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
+      const restoreMs = Math.round(performance.now() - restoreStart);
+      logViewWatchEvent('task_view_watch_tab_cache_hit', task, {
+        tabIndex: index,
+        fileName: displayName,
+        fileKind: file && file.kind ? file.kind : '',
+        mode: cachedSnapshot.mode,
+        restoreMs,
+        traceId: traceContext.traceId,
+      });
+      logViewWatchEvent('task_view_watch_tab_success', task, {
+        tabIndex: index,
+        fileName: displayName,
+        fileKind: file && file.kind ? file.kind : '',
+        openMs: Math.round(performance.now() - startedAt),
+        traceId: traceContext.traceId,
+        finalMode: 'inline',
+        fromCache: true,
+      });
+      logViewWatchEvent('task_view_watch_tab_finish', task, {
+        result: 'success',
+        finalMode: 'inline',
+        totalMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        traceId: traceContext.traceId,
+        taskId: traceContext.taskId || '',
+        fileName: displayName,
+        previewUrl: traceContext.previewUrl || '',
+        phase: 'cache_restore',
+        fromCache: true,
+      });
+      viewerTabsState.switching = false;
+      const pendingIdx = viewerTabsState.pendingIndex;
+      viewerTabsState.pendingIndex = null;
+      if (pendingIdx !== null && pendingIdx !== viewerTabsState.activeIndex) {
+        handleViewerTabClick(pendingIdx, task);
+      }
+      return;
+    }
+  }
+
+  setViewerTabActive(index);
+  setViewerTabLoading(index, true);
+  const loaderToken = showViewerLoader(displayName);
   docLoadStart(displayName, file.kind || '');
   docLoadStep('переключение вкладки');
+  let result = 'success';
+  let phase = traceContext.phase;
+  let openError = null;
+  let finalMode = 'failed';
 
   try {
-    await openViewerFile(file, task, { notify: false });
-    setViewerTabActive(index);
+    const openResult = await openViewerFile(file, task, { notify: false, traceContext });
+    const rawMode = openResult && openResult.mode ? String(openResult.mode) : '';
+    if (rawMode === 'inline') {
+      finalMode = 'inline';
+    } else if (rawMode === 'frame' || rawMode === 'window' || rawMode === 'telegram') {
+      finalMode = 'frame';
+    } else if (rawMode === 'external_prompt') {
+      finalMode = 'external_prompt';
+    } else {
+      finalMode = 'failed';
+    }
     viewerTabsState.activeFile = file;
     updateViewerDownloadState(file);
+    updateViewerDeleteState(file);
+    updateViewerFileOwnerState(file);
+    // Обновить кол-во страниц после загрузки PDF
+    try {
+      updatePdfTabPageCount();
+      const viewer = pdfViewerInstance;
+      if (viewer && typeof viewer.getPdfLoadPromise === 'function') {
+        const lp = viewer.getPdfLoadPromise();
+        if (lp && typeof lp.then === 'function') {
+          lp.then(() => { try { updatePdfTabPageCount(); } catch (_e) {} }).catch(() => {});
+        }
+      }
+    } catch (_e) { /* не критично */ }
     logViewWatchEvent('task_view_watch_tab_success', task, {
       tabIndex: index,
       fileName: displayName,
       fileKind: file && file.kind ? file.kind : '',
       openMs: Math.round(performance.now() - startedAt),
+      traceId: traceContext.traceId,
+      finalMode,
     });
     docLoadFinish();
   } catch (error) {
+    openError = error;
+    result = classifyTaskViewResultByError(error);
+    finalMode = 'failed';
+    phase = traceContext.phase || phase;
+    setViewerTabActive(previousActiveIndex);
     setStatus('error', 'Не удалось открыть файл. Попробуйте позже.');
     logViewWatchEvent('task_view_watch_tab_error', task, {
       tabIndex: index,
@@ -7813,12 +10005,29 @@ async function handleViewerTabClick(index, task) {
       fileKind: file && file.kind ? file.kind : '',
       openMs: Math.round(performance.now() - startedAt),
       error: stageErrorToText(error),
+      traceId: traceContext.traceId,
+      ...extractTaskViewErrorMeta(error),
     });
     docLoadFinish(error);
   } finally {
-    hideViewerLoader();
-    if (button) {
-      button.disabled = false;
+    logViewWatchEvent('task_view_watch_tab_finish', task, {
+      result,
+      finalMode,
+      totalMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      traceId: traceContext.traceId,
+      taskId: traceContext.taskId || '',
+      fileName: traceContext.fileName || displayName,
+      previewUrl: traceContext.previewUrl || '',
+      phase: traceContext.phase || phase || 'unknown',
+      ...(openError ? extractTaskViewErrorMeta(openError) : {}),
+    });
+    setViewerTabLoading(index, false);
+    hideViewerLoader(loaderToken);
+    viewerTabsState.switching = false;
+    const pendingIdx = viewerTabsState.pendingIndex;
+    viewerTabsState.pendingIndex = null;
+    if (pendingIdx !== null && pendingIdx !== viewerTabsState.activeIndex) {
+      handleViewerTabClick(pendingIdx, task);
     }
   }
 }
@@ -7827,6 +10036,8 @@ function renderViewerTabs(files, task) {
   if (!elements.viewerTabs || !elements.viewerTabsList) {
     viewerTabsState.activeFile = files && files.length ? files[0] : null;
     updateViewerDownloadState(viewerTabsState.activeFile);
+    updateViewerDeleteState(viewerTabsState.activeFile);
+    updateViewerFileOwnerState(viewerTabsState.activeFile);
     return;
   }
 
@@ -7835,6 +10046,10 @@ function renderViewerTabs(files, task) {
   }
 
   elements.viewerTabsList.innerHTML = '';
+
+  viewerTabsState.switching = false;
+  viewerTabsState.pendingIndex = null;
+  viewerTabsState.renderedCache.clear();
 
   if (!Array.isArray(files) || files.length <= 1) {
     elements.viewerTabs.hidden = true;
@@ -7845,6 +10060,8 @@ function renderViewerTabs(files, task) {
     viewerTabsState.task = task || null;
     viewerTabsState.activeFile = files && files.length ? files[0] : null;
     updateViewerDownloadState(viewerTabsState.activeFile);
+    updateViewerDeleteState(viewerTabsState.activeFile);
+    updateViewerFileOwnerState(viewerTabsState.activeFile);
     return;
   }
 
@@ -7856,6 +10073,8 @@ function renderViewerTabs(files, task) {
   viewerTabsState.task = task || null;
   viewerTabsState.activeFile = files && files.length ? files[0] : null;
   updateViewerDownloadState(viewerTabsState.activeFile);
+  updateViewerDeleteState(viewerTabsState.activeFile);
+  updateViewerFileOwnerState(viewerTabsState.activeFile);
 
   files.forEach((file, index) => {
     const button = document.createElement('button');
@@ -7870,6 +10089,63 @@ function renderViewerTabs(files, task) {
     button.addEventListener('click', () => handleViewerTabClick(index, task));
     elements.viewerTabsList.appendChild(button);
     viewerTabsState.buttons.push(button);
+  });
+}
+
+function updatePdfTabPageCount() {
+  if (!pdfViewerInstance || typeof pdfViewerInstance.getPageCount !== 'function') {
+    return;
+  }
+  // Проверяем, что PDF действительно загружен, а не содержит данные предыдущего документа
+  const renderStatus = typeof pdfViewerInstance.getPdfRenderStatus === 'function'
+    ? pdfViewerInstance.getPdfRenderStatus()
+    : null;
+  const statusValue = renderStatus && renderStatus.status ? renderStatus.status : '';
+  if (statusValue === 'idle' || statusValue === 'pending') {
+    return;
+  }
+  const pageCount = pdfViewerInstance.getPageCount();
+  if (!pageCount || pageCount <= 0) {
+    return;
+  }
+  const files = viewerTabsState.files;
+  const buttons = viewerTabsState.buttons;
+  if (!Array.isArray(files) || !Array.isArray(buttons)) {
+    return;
+  }
+  // Обновляем счётчик только для активной PDF-вкладки, чтобы не применить
+  // количество страниц текущего документа к другим PDF-файлам
+  const activeIndex = viewerTabsState.activeIndex;
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i];
+    if (!file || file.isSummary) {
+      continue;
+    }
+    const name = file.name || '';
+    const lowerName = name.toLowerCase();
+    if (lowerName.endsWith('.pdf') && buttons[i]) {
+      if (i === activeIndex) {
+        const pageLabel = pageCount === 1 ? '1 стр.' : pageCount + ' стр.';
+        buttons[i].textContent = name + ' (' + pageLabel + ')';
+        buttons[i].title = name + ' (' + pageLabel + ')';
+      } else if (!buttons[i].dataset.pageCountSet) {
+        // Для неактивных вкладок не перезаписываем — оставляем как есть
+      }
+    }
+  }
+  // Помечаем, что для активной вкладки кол-во страниц было установлено
+  if (activeIndex >= 0 && activeIndex < buttons.length && buttons[activeIndex]) {
+    buttons[activeIndex].dataset.pageCountSet = '1';
+  }
+  // Логируем результат определения кол-ва страниц для диагностики
+  logClientEvent('task_view_pdf_page_count', {
+    pageCount,
+    activeIndex,
+    renderStatus: statusValue,
+    renderedPages: renderStatus ? renderStatus.renderedPages : 0,
+    totalPages: renderStatus ? renderStatus.totalPages : 0,
+    fileName: files[activeIndex] ? (files[activeIndex].name || '') : '',
+    taskId: viewerTabsState.taskId || '',
   });
 }
 
@@ -7948,7 +10224,9 @@ async function handleCardView(button, task) {
     });
     docLoadStep('открытие файла');
     await openViewerFile(firstFile, task, { notify: true, hasMultiple: files.length > 1 });
-    warmupTaskPdfFiles(task, files, firstFile);
+    if (ENABLE_TASK_PDF_WARMUP) {
+      warmupTaskPdfFiles(task, files, firstFile);
+    }
     logViewWatchEvent('task_view_watch_open_success', task, {
       firstFileName: firstFile && firstFile.name ? firstFile.name : '',
       firstFileKind: firstFile && firstFile.kind ? firstFile.kind : '',
@@ -8763,6 +11041,12 @@ function normalizeValue(value) {
   return string && string !== '—' ? string : '';
 }
 
+function normalizeBriefText(value) {
+  const source = value === null || value === undefined ? '' : String(value);
+  const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '');
+  return normalized.trim() ? normalized : '';
+}
+
 function normalizeAssignmentComment(value) {
   if (value === null || value === undefined) {
     return '';
@@ -9215,6 +11499,176 @@ function getDirectorsForOrganization(organization) {
   return Array.isArray(list) ? list : [];
 }
 
+const settingsDocsResponsibleCache = new Map();
+
+function normalizeSettingsDocsEntries(payload) {
+  if (!payload) {
+    return [];
+  }
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload.responsibles)) {
+    return payload.responsibles;
+  }
+  if (payload.settings && Array.isArray(payload.settings.responsibles)) {
+    return payload.settings.responsibles;
+  }
+  if (Array.isArray(payload.block1)) {
+    return payload.block1;
+  }
+  return [];
+}
+
+async function getResponsibleFromSettingsDocs(organization, telegramId) {
+  const orgKey = getOrganizationKey(organization);
+  const tgKey = normalizeIdentifier(telegramId);
+  if (!orgKey || !tgKey || typeof fetch !== 'function') {
+    return '';
+  }
+
+  const cacheKey = `${orgKey}::${tgKey}`;
+  if (settingsDocsResponsibleCache.has(cacheKey)) {
+    return settingsDocsResponsibleCache.get(cacheKey) || '';
+  }
+
+  const orgVariants = Array.from(new Set([
+    String(organization || '').trim(),
+    orgKey,
+    encodeURIComponent(String(organization || '').trim()),
+    encodeURIComponent(orgKey),
+  ].filter(Boolean)));
+
+  const urlCandidates = [];
+  orgVariants.forEach((value) => {
+    urlCandidates.push(`/documents/${value}/settingsdocs.json`);
+    urlCandidates.push(`/documents/${value}/settings.json`);
+  });
+
+  for (const url of urlCandidates) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const response = await fetch(url, { credentials: 'include', cache: 'no-store' });
+      if (!response.ok) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const payload = await response.json();
+      const entries = normalizeSettingsDocsEntries(payload);
+      if (!entries.length) {
+        continue;
+      }
+      const match = entries.find((entry) => normalizeIdentifier(entry && entry.telegram) === tgKey);
+      const responsible = normalizeValue(match && match.responsible);
+      if (responsible) {
+        settingsDocsResponsibleCache.set(cacheKey, responsible);
+        return responsible;
+      }
+    } catch (_) {
+      // ignore and try next url
+    }
+  }
+
+  settingsDocsResponsibleCache.set(cacheKey, '');
+  return '';
+}
+
+function getCurrentUserResponsibleFromTask(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return '';
+  }
+
+  const pools = [];
+  if (Array.isArray(task.responsibles)) {
+    pools.push(...task.responsibles);
+  }
+  if (Array.isArray(task.subordinates)) {
+    pools.push(...task.subordinates);
+  }
+  if (Array.isArray(task.directors)) {
+    pools.push(...task.directors);
+  }
+
+  for (const entry of pools) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserResponsibleFromAccess() {
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = [];
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.push(normalized);
+    }
+  };
+
+  pushId(state.telegram.id);
+  pushId(state.telegram.chatId);
+
+  const ids = Array.from(new Set(idCandidates));
+  const names = [];
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
 function getUserIdentifierCandidates() {
   const idCandidates = [];
   const nameCandidates = [];
@@ -9239,6 +11693,11 @@ function getUserIdentifierCandidates() {
 
   pushName(state.telegram.fullName);
   pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+
+  const responsibleName = getCurrentUserResponsibleFromAccess();
+  if (responsibleName) {
+    pushName(responsibleName);
+  }
 
   return {
     ids: Array.from(new Set(idCandidates)),
@@ -12726,6 +15185,12 @@ function attachEvents() {
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
   }
+  if (elements.viewerBrief) {
+    elements.viewerBrief.addEventListener('click', handleViewerBriefClick);
+  }
+  if (elements.viewerDeleteResponse) {
+    elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
+  }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -12917,6 +15382,9 @@ function bootstrap() {
   attachGlobalErrorHandlers();
   initElements();
   pdfViewerInstance = createPdfViewer(document);
+  if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
+    pdfViewerInstance.preload();
+  }
   attachPdfDiagnostics();
   readAssetVersionInfo();
   initTelegram();
@@ -13235,6 +15703,9 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       name: displayName,
       kind,
       isResponse: true,
+      storedName: normalizeValue(file.storedName),
+      uploadedByKey: normalizeValue(file.uploadedByKey),
+      uploadedBy: findResponsibleNameInAccessByFile(file) || normalizeValue(file.uploadedBy),
     });
   });
 
@@ -13260,20 +15731,8 @@ function isResponseOwnedByCurrentUser(file) {
   if (!file || typeof file !== 'object') {
     return false;
   }
-  const userKeys = new Set();
-  const { ids, names } = getUserIdentifierCandidates();
-  ids.forEach((value) => {
-    const key = buildAssignmentDirectoryKey(value);
-    if (key) {
-      userKeys.add(key);
-    }
-  });
-  names.forEach((value) => {
-    const key = buildAssignmentDirectoryKey(value);
-    if (key) {
-      userKeys.add(key);
-    }
-  });
+
+  const userKeys = collectCurrentUserOwnershipKeys();
   if (!userKeys.size) {
     return false;
   }
@@ -13284,6 +15743,82 @@ function isResponseOwnedByCurrentUser(file) {
     }
   }
   return false;
+}
+
+function collectCurrentUserOwnershipKeys() {
+  const userKeys = new Set();
+  const pushKey = (value) => {
+    const raw = normalizeValue(value).toLowerCase();
+    if (raw) {
+      userKeys.add(raw);
+    }
+    const key = buildAssignmentDirectoryKey(value);
+    if (key) {
+      userKeys.add(key);
+    }
+    if (raw.startsWith('id:')) {
+      const idValue = buildAssignmentDirectoryKey(raw.slice(3));
+      if (idValue) {
+        userKeys.add(idValue);
+      }
+    }
+    if (raw.startsWith('name:')) {
+      const nameValue = buildAssignmentDirectoryKey(raw.slice(5));
+      if (nameValue) {
+        userKeys.add(nameValue);
+      }
+    }
+  };
+
+  const responsibleName = normalizeValue(getCurrentUserResponsibleFromAccess());
+  if (responsibleName) {
+    pushKey(responsibleName);
+    pushKey(`name:${responsibleName.toLowerCase()}`);
+  }
+
+  const accessPools = [];
+  if (state.access && typeof state.access === 'object') {
+    const groups = [
+      state.access.responsibles,
+      state.access.subordinates,
+      state.access.directors,
+    ];
+    groups.forEach((group) => {
+      if (!group || typeof group !== 'object') {
+        return;
+      }
+      Object.values(group).forEach((entries) => {
+        if (Array.isArray(entries)) {
+          accessPools.push(...entries);
+        }
+      });
+    });
+  }
+
+  const normalizedResponsible = normalizeName(responsibleName);
+  accessPools.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    const entryName = normalizeName(entry.responsible || entry.name || entry.fullName || entry.displayName);
+    if (!normalizedResponsible || !entryName || entryName !== normalizedResponsible) {
+      return;
+    }
+    [
+      entry.id,
+      entry.telegram,
+      entry.chatId,
+      entry.email,
+      entry.number,
+      entry.login,
+      entry.responsible,
+      entry.name,
+      entry.fullName,
+      entry.displayName,
+    ].forEach(pushKey);
+  });
+
+  return userKeys;
 }
 
 function buildResponseViewButtonLabel(count) {
@@ -13793,7 +16328,7 @@ function taskUserCanUploadResponse(task, entry) {
   return entryMatchesUser(entry, ids, names);
 }
 
-async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '') {
+async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '', ownerEntry = null) {
   if (!task || typeof task !== 'object') {
     sendResponseViewerLog('response_upload_failed', {
       reason: 'task_missing',
@@ -13909,7 +16444,8 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
 
   await loadTasks(true);
   if (typeof setStatus === 'function') {
-    setStatus('success', data.message || 'Ответ загружен.');
+    const baseMessage = data.message || 'Ответ загружен.';
+    setStatus('success', baseMessage);
   }
 
   sendResponseViewerLog('response_upload_success', {
@@ -13923,6 +16459,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     })),
     hasResponseMessage: Boolean(responseMessage),
     responseMessageLength: responseMessage.length,
+    uploadedBy: '',
   });
 
   return data;
@@ -14009,10 +16546,19 @@ function createResponseUploadControls(task, entry, setStatus) {
 
   const textInput = document.createElement('textarea');
   textInput.className = 'appdosc-card__assign-response-text';
-  textInput.placeholder = 'Текстовый ответ к задаче (сохранится как .txt)';
+  textInput.placeholder = 'Ввести текст ответа';
   textInput.maxLength = 12000;
   textInput.rows = 3;
   let editingTextResponse = null;
+
+  const applyAutoHeight = (textarea) => {
+    if (!textarea) {
+      return;
+    }
+    textarea.style.overflow = 'hidden';
+    textarea.style.height = '0px';
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 48)}px`;
+  };
 
   const responseFiles = Array.isArray(task && task.responses) ? task.responses : [];
   const editableTxtCandidates = responseFiles.filter((file) => isTextResponseFile(file) && isResponseOwnedByCurrentUser(file));
@@ -14072,6 +16618,7 @@ function createResponseUploadControls(task, entry, setStatus) {
   textInput.addEventListener('input', () => {
     const length = String(textInput.value || '').length;
     textCounter.textContent = `${length} / 12000`;
+    applyAutoHeight(textInput);
   });
   textInput.dispatchEvent(new Event('input'));
 
@@ -14089,10 +16636,11 @@ function createResponseUploadControls(task, entry, setStatus) {
     meta.textContent = `Файлов выбрано: ${files.length}`;
 
     try {
-      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '');
+      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '', entry);
       meta.textContent = files.length > 1 ? 'Ответы загружены' : 'Ответ загружен';
       textInput.value = '';
       textCounter.textContent = '0 / 12000';
+      applyAutoHeight(textInput);
     } catch (error) {
       sendResponseViewerLog('response_upload_failed', {
         reason: 'client_exception',
@@ -14140,12 +16688,13 @@ function createResponseUploadControls(task, entry, setStatus) {
         await updateTaskResponseText(task, normalizeValue(editingTextResponse.storedName), messageValue, setStatus);
         meta.textContent = 'Текстовый ответ обновлён';
       } else {
-        await uploadTaskResponseFiles(task, [], setStatus, messageValue);
+        await uploadTaskResponseFiles(task, [], setStatus, messageValue, entry);
         meta.textContent = 'Текстовый ответ сохранён';
       }
       textInput.value = '';
       editingTextResponse = null;
       textCounter.textContent = '0 / 12000';
+      applyAutoHeight(textInput);
     } catch (error) {
       meta.textContent = 'Сохранение не удалось';
       if (typeof setStatus === 'function') {
@@ -14481,6 +17030,13 @@ function setupAssignmentControls(card, task) {
     if (comment) {
       commentInput.value = comment;
     }
+    const resizeCommentInput = () => {
+      commentInput.style.overflow = 'hidden';
+      commentInput.style.height = '0px';
+      commentInput.style.height = `${Math.max(commentInput.scrollHeight, 48)}px`;
+    };
+    commentInput.addEventListener('input', resizeCommentInput);
+    requestAnimationFrame(() => requestAnimationFrame(resizeCommentInput));
     info.appendChild(commentInput);
 
     const instructionBlock = document.createElement('div');
@@ -14531,8 +17087,19 @@ function setupAssignmentControls(card, task) {
     refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton).catch(() => {});
 
     responseViewButton.addEventListener('click', async () => {
-      await refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton);
-      openResponseViewerForEntry(responseViewButton, task, entryData, value);
+      if (responseViewButton.dataset.loading === 'true') {
+        return;
+      }
+
+      setActionButtonLoading(responseViewButton, true);
+      try {
+        await refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton);
+        await openResponseViewerForEntry(responseViewButton, task, entryData, value);
+      } finally {
+        if (responseViewButton.dataset.loading === 'true') {
+          setActionButtonLoading(responseViewButton, false);
+        }
+      }
     });
     info.appendChild(responseViewButton);
 
@@ -15243,6 +17810,13 @@ function setupSubordinateControls(card, task) {
     if (comment) {
       commentInput.value = comment;
     }
+    const resizeCommentInput = () => {
+      commentInput.style.overflow = 'hidden';
+      commentInput.style.height = '0px';
+      commentInput.style.height = `${Math.max(commentInput.scrollHeight, 48)}px`;
+    };
+    commentInput.addEventListener('input', resizeCommentInput);
+    requestAnimationFrame(() => requestAnimationFrame(resizeCommentInput));
     info.appendChild(commentInput);
 
     const deadline = document.createElement('div');
@@ -15278,8 +17852,19 @@ function setupSubordinateControls(card, task) {
     refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton).catch(() => {});
 
     responseViewButton.addEventListener('click', async () => {
-      await refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton);
-      openResponseViewerForEntry(responseViewButton, task, entryData, value);
+      if (responseViewButton.dataset.loading === 'true') {
+        return;
+      }
+
+      setActionButtonLoading(responseViewButton, true);
+      try {
+        await refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton);
+        await openResponseViewerForEntry(responseViewButton, task, entryData, value);
+      } finally {
+        if (responseViewButton.dataset.loading === 'true') {
+          setActionButtonLoading(responseViewButton, false);
+        }
+      }
     });
     info.appendChild(responseViewButton);
 
@@ -15665,4 +18250,4 @@ function setupSubordinateControls(card, task) {
     organization,
     available: assignmentCandidates.length,
   });
-}
+}Error('viewer_open_failed');

@@ -131,6 +131,62 @@ function getEnvPaths(): array
     ];
 }
 
+function buildPublicBaseDirFromScript(): string
+{
+    $scriptName = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    $dirName = str_replace('\\', '/', dirname($scriptName));
+    $dirName = trim($dirName);
+    if ($dirName === '' || $dirName === '.' || $dirName === DIRECTORY_SEPARATOR) {
+        return '';
+    }
+    return '/' . trim($dirName, '/');
+}
+
+function saveGeneratedFileAndBuildUrl(string $sourcePath, string $extension): array
+{
+    $safeExt = strtolower(trim($extension));
+    if ($safeExt !== 'docx' && $safeExt !== 'pdf') {
+        $safeExt = 'docx';
+    }
+    $targetDir = __DIR__ . '/app/tmp/generated';
+    if (!is_dir($targetDir)) {
+        @mkdir($targetDir, 0775, true);
+    }
+    if (!is_dir($targetDir) || !is_writable($targetDir)) {
+        return ['ok' => false, 'error' => 'Папка временных файлов недоступна для записи'];
+    }
+
+    $now = time();
+    foreach ((array)glob($targetDir . '/*') as $oldFile) {
+        if (!is_string($oldFile) || !is_file($oldFile)) {
+            continue;
+        }
+        $mtime = (int)@filemtime($oldFile);
+        if ($mtime > 0 && ($now - $mtime) > 7200) {
+            @unlink($oldFile);
+        }
+    }
+
+    $fileName = 'generated-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.' . $safeExt;
+    $targetPath = $targetDir . '/' . $fileName;
+    if (!@copy($sourcePath, $targetPath)) {
+        return ['ok' => false, 'error' => 'Не удалось сохранить сгенерированный файл'];
+    }
+
+    $baseDir = buildPublicBaseDirFromScript();
+    $publicUrl = ($baseDir !== '' ? $baseDir : '') . '/app/tmp/generated/' . rawurlencode($fileName);
+    if ($publicUrl === '' || $publicUrl[0] !== '/') {
+        $publicUrl = '/' . ltrim($publicUrl, '/');
+    }
+
+    return [
+        'ok' => true,
+        'path' => $targetPath,
+        'url' => $publicUrl,
+        'fileName' => $fileName,
+    ];
+}
+
 function normalizeUploadedFiles(string $field): array
 {
     if (!isset($_FILES[$field])) {
@@ -870,7 +926,7 @@ function xmlEscape(string $value): string
 function normalizeDocText(string $value): string
 {
     $normalized = str_replace(["\r\n", "\r"], "\n", $value);
-    return trim($normalized);
+    return rtrim($normalized);
 }
 
 function textToWordParagraphsXml(string $text): string
@@ -881,6 +937,86 @@ function textToWordParagraphsXml(string $text): string
         $chunks[] = '<w:p><w:r><w:t xml:space="preserve">' . xmlEscape($line) . '</w:t></w:r></w:p>';
     }
     return implode('', $chunks);
+}
+
+function replaceMarkerParagraphWithAnswerXml(string $xml, string $marker, string $answerText): array
+{
+    if ($xml === '' || $marker === '') {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $dom = new DOMDocument();
+    $loaded = @$dom->loadXML($xml, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET);
+    if (!$loaded) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+    $paragraphs = $xpath->query('//w:p[.//w:t]');
+    if (!$paragraphs || $paragraphs->length === 0) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $markerLen = mb_strlen($marker, 'UTF-8');
+    $normalizedAnswer = normalizeDocText($answerText);
+    $replaced = false;
+
+    for ($i = $paragraphs->length - 1; $i >= 0; $i -= 1) {
+        $paragraph = $paragraphs->item($i);
+        if (!$paragraph instanceof DOMElement) {
+            continue;
+        }
+        $textNodes = $xpath->query('.//w:t', $paragraph);
+        if (!$textNodes || $textNodes->length === 0) {
+            continue;
+        }
+
+        $paragraphText = '';
+        for ($j = 0; $j < $textNodes->length; $j += 1) {
+            $node = $textNodes->item($j);
+            if ($node instanceof DOMElement) {
+                $paragraphText .= (string)$node->nodeValue;
+            }
+        }
+        $markerPos = mb_strpos($paragraphText, $marker, 0, 'UTF-8');
+        if ($markerPos === false) {
+            continue;
+        }
+
+        $beforeMarker = mb_substr($paragraphText, 0, (int)$markerPos, 'UTF-8');
+        $afterMarker = mb_substr($paragraphText, (int)$markerPos + $markerLen, null, 'UTF-8');
+        $mergedText = $beforeMarker . $normalizedAnswer . $afterMarker;
+        $lines = explode("\n", $mergedText);
+        if (!$lines) {
+            $lines = [''];
+        }
+
+        $pPrNode = $xpath->query('./w:pPr', $paragraph)->item(0);
+        $pPrXml = $pPrNode instanceof DOMNode ? ($dom->saveXML($pPrNode) ?: '') : '';
+        $rPrNode = $xpath->query('.//w:r/w:rPr', $paragraph)->item(0);
+        $rPrXml = $rPrNode instanceof DOMNode ? ($dom->saveXML($rPrNode) ?: '') : '';
+
+        $fragment = $dom->createDocumentFragment();
+        $paragraphXmlChunks = [];
+        foreach ($lines as $line) {
+            $paragraphXmlChunks[] = '<w:p>' . $pPrXml . '<w:r>' . $rPrXml . '<w:t xml:space="preserve">' . xmlEscape($line) . '</w:t></w:r></w:p>';
+        }
+        $fragment->appendXML(implode('', $paragraphXmlChunks));
+
+        $parent = $paragraph->parentNode;
+        if ($parent instanceof DOMNode) {
+            $parent->replaceChild($fragment, $paragraph);
+            $replaced = true;
+        }
+    }
+
+    if (!$replaced) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $newXml = $dom->saveXML($dom->documentElement);
+    return ['xml' => is_string($newXml) ? $newXml : $xml, 'replaced' => true];
 }
 
 function replaceDocxPlaceholders(string $templatePath, string $outputPath, array $replacements): bool
@@ -910,9 +1046,27 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
         $updated = $content;
         foreach ($replacements as $search => $replace) {
-            $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape($replace));
+            $replaceValue = (string)$replace;
+            if ($search === '[АДРЕСАТ]' && $replaceValue !== '' && !preg_match('/^\s/u', $replaceValue)) {
+                $replaceValue = ' ' . $replaceValue;
+            }
+            if ($search === '[ОТВЕТ ИИ]') {
+                $markerParagraphResult = replaceMarkerParagraphWithAnswerXml($updated, (string)$search, $replaceValue);
+                if (is_array($markerParagraphResult) && !empty($markerParagraphResult['replaced']) && isset($markerParagraphResult['xml'])) {
+                    $updated = (string)$markerParagraphResult['xml'];
+                    $replacedAny = true;
+                    continue;
+                }
+            }
+            $escaped = str_replace("\n", '</w:t><w:br/><w:t xml:space="preserve">', xmlEscape($replaceValue));
             if (strpos($updated, $search) !== false) {
                 $updated = str_replace($search, $escaped, $updated);
+                $replacedAny = true;
+                continue;
+            }
+            $crossRunResult = replacePlaceholderAcrossWordTextRuns($updated, (string)$search, $replaceValue);
+            if (is_array($crossRunResult) && !empty($crossRunResult['replaced']) && isset($crossRunResult['xml'])) {
+                $updated = (string)$crossRunResult['xml'];
                 $replacedAny = true;
             }
         }
@@ -921,16 +1075,156 @@ function replaceDocxPlaceholders(string $templatePath, string $outputPath, array
         }
     }
 
-    if (!$replacedAny && isset($replacements['[ОТВЕТ_ИИ]'])) {
-        $docXml = $zip->getFromName('word/document.xml');
-        if (is_string($docXml) && $docXml !== '' && str_contains($docXml, '</w:body>')) {
-            $appendXml = textToWordParagraphsXml((string)$replacements['[ОТВЕТ_ИИ]']);
-            $docXml = str_replace('</w:body>', $appendXml . '</w:body>', $docXml);
-            $zip->addFromString('word/document.xml', $docXml);
-        }
+    $fallbackAnswer = isset($replacements['[ОТВЕТ ИИ]']) ? (string)$replacements['[ОТВЕТ ИИ]'] : '';
+    if (!$replacedAny && $fallbackAnswer !== '') {
+        $zip->close();
+        return false;
     }
 
     return $zip->close();
+}
+
+function replacePlaceholderAcrossWordTextRuns(string $xml, string $search, string $replace): array
+{
+    if ($xml === '' || $search === '') {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $dom = new DOMDocument();
+    $loaded = @$dom->loadXML($xml, LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET);
+    if (!$loaded) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+    $textNodes = $xpath->query('//w:t');
+    if (!$textNodes || $textNodes->length === 0) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $fullText = '';
+    $map = [];
+    for ($i = 0; $i < $textNodes->length; $i += 1) {
+        $node = $textNodes->item($i);
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+        $value = (string)$node->nodeValue;
+        $start = mb_strlen($fullText, 'UTF-8');
+        $fullText .= $value;
+        $end = mb_strlen($fullText, 'UTF-8');
+        $map[] = ['node' => $node, 'start' => $start, 'end' => $end];
+    }
+    if (!$map || mb_strpos($fullText, $search, 0, 'UTF-8') === false) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $matches = [];
+    $cursor = 0;
+    $searchLen = mb_strlen($search, 'UTF-8');
+    while ($cursor <= mb_strlen($fullText, 'UTF-8')) {
+        $index = mb_strpos($fullText, $search, $cursor, 'UTF-8');
+        if ($index === false) {
+            break;
+        }
+        $matches[] = ['start' => $index, 'end' => $index + $searchLen];
+        $cursor = $index + $searchLen;
+    }
+    if (!$matches) {
+        return ['xml' => $xml, 'replaced' => false];
+    }
+
+    $lineBreakToken = '__DOCX_LINE_BREAK__';
+    while (mb_strpos($replace, $lineBreakToken, 0, 'UTF-8') !== false) {
+        $lineBreakToken .= '_X';
+    }
+    $replaceText = str_replace(["\r\n", "\r"], "\n", $replace);
+    $replaceText = str_replace("\n", $lineBreakToken, $replaceText);
+    for ($m = count($matches) - 1; $m >= 0; $m -= 1) {
+        $match = $matches[$m];
+        $startInfo = null;
+        $endInfo = null;
+        foreach ($map as $item) {
+            if ($startInfo === null && $match['start'] >= $item['start'] && $match['start'] <= $item['end']) {
+                $startInfo = $item;
+            }
+            if ($endInfo === null && $match['end'] >= $item['start'] && $match['end'] <= $item['end']) {
+                $endInfo = $item;
+            }
+            if ($startInfo && $endInfo) {
+                break;
+            }
+        }
+        if (!$startInfo || !$endInfo) {
+            continue;
+        }
+        $startNode = $startInfo['node'];
+        $endNode = $endInfo['node'];
+        $startOffset = max(0, $match['start'] - $startInfo['start']);
+        $endOffset = max(0, $match['end'] - $endInfo['start']);
+
+        $startValue = (string)$startNode->nodeValue;
+        $endValue = (string)$endNode->nodeValue;
+        $startPrefix = mb_substr($startValue, 0, $startOffset, 'UTF-8');
+        $endSuffix = mb_substr($endValue, $endOffset, null, 'UTF-8');
+
+        if ($startNode->isSameNode($endNode)) {
+            $singleValue = $startPrefix . $replaceText . $endSuffix;
+            $startNode->nodeValue = $singleValue;
+            if (preg_match('/^\s|\s$/u', $singleValue)) {
+                $startNode->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
+            } else {
+                $startNode->removeAttribute('xml:space');
+            }
+            continue;
+        }
+
+        $startValueUpdated = $startPrefix . $replaceText;
+        $startNode->nodeValue = $startValueUpdated;
+        if (preg_match('/^\s|\s$/u', $startValueUpdated)) {
+            $startNode->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
+        } else {
+            $startNode->removeAttribute('xml:space');
+        }
+        $passedStart = false;
+        foreach ($map as $item) {
+            $node = $item['node'];
+            if ($node->isSameNode($startNode)) {
+                $passedStart = true;
+                continue;
+            }
+            if (!$passedStart) {
+                continue;
+            }
+            if ($node->isSameNode($endNode)) {
+                $node->nodeValue = $endSuffix;
+                if (preg_match('/^\s|\s$/u', $endSuffix)) {
+                    $node->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
+                } else {
+                    $node->removeAttribute('xml:space');
+                }
+                break;
+            }
+            $node->nodeValue = '';
+            $node->removeAttribute('xml:space');
+        }
+    }
+
+    $newXml = $dom->saveXML($dom->documentElement);
+    if (!is_string($newXml)) {
+        return ['xml' => $xml, 'replaced' => true];
+    }
+
+    if (str_contains($newXml, $lineBreakToken)) {
+        $newXml = str_replace(
+            $lineBreakToken,
+            '</w:t><w:br/><w:t xml:space="preserve">',
+            $newXml
+        );
+    }
+
+    return ['xml' => $newXml, 'replaced' => true];
 }
 
 function createPdfFromText(string $outputPath, string $documentTitle, string $answerText): bool
@@ -1117,6 +1411,28 @@ function resolveTemplatePath(string $fileName, array $extraDirectories = []): st
     }
 
     return '';
+}
+
+function resolveTemplateCustomPath(string $customPath): string
+{
+    $path = trim($customPath);
+    if ($path === '') {
+        return '';
+    }
+    $decoded = rawurldecode($path);
+    $normalized = str_replace('\\', '/', $decoded);
+    if (preg_match('#\.\.#', $normalized)) {
+        return '';
+    }
+    $documentRoot = isset($_SERVER['DOCUMENT_ROOT']) ? rtrim((string)$_SERVER['DOCUMENT_ROOT'], '/') : '';
+    $candidate = $normalized;
+    if (str_starts_with($candidate, '/') && $documentRoot !== '') {
+        $candidate = $documentRoot . $candidate;
+    }
+    if ($candidate === '' || !is_file($candidate)) {
+        return '';
+    }
+    return $candidate;
 }
 
 function looksLikeJsonText(string $value): bool
@@ -1316,15 +1632,49 @@ $requestedModel = trim((string)($_POST['model'] ?? ''));
 $action = trim((string)($_POST['action'] ?? ''));
 $extractedTextsRaw = isset($_POST['extractedTexts']) ? (string)$_POST['extractedTexts'] : '';
 
-if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html') {
+if ($action !== '' && $action !== 'ai_response_analyze' && $action !== 'ocr_extract' && $action !== 'generate_document' && $action !== 'generate_from_html' && $action !== 'delete_generated_temp') {
     logApiDocs('warn', 'Invalid action', ['action' => $action]);
     jsonResponse(400, ['ok' => false, 'error' => 'Неверный action']);
+}
+
+if ($action === 'delete_generated_temp') {
+    $rawFileName = trim((string)($_POST['fileName'] ?? ''));
+    $rawUrl = trim((string)($_POST['url'] ?? ''));
+    $candidate = $rawFileName;
+    if ($candidate === '' && $rawUrl !== '') {
+        $pathFromUrl = (string)parse_url($rawUrl, PHP_URL_PATH);
+        $candidate = basename($pathFromUrl);
+    }
+    $candidate = basename($candidate);
+    if ($candidate === '' || !preg_match('/^[a-zA-Z0-9._-]{1,160}$/', $candidate)) {
+        jsonResponse(400, ['ok' => false, 'error' => 'Некорректное имя файла']);
+    }
+    $targetDir = __DIR__ . '/app/tmp/generated';
+    $targetPath = $targetDir . '/' . $candidate;
+    $realDir = realpath($targetDir);
+    $realFile = realpath($targetPath);
+    if (!$realDir || !$realFile || !str_starts_with($realFile, $realDir . DIRECTORY_SEPARATOR)) {
+        jsonResponse(404, ['ok' => true, 'deleted' => false]);
+    }
+    if (!is_file($realFile)) {
+        jsonResponse(200, ['ok' => true, 'deleted' => false]);
+    }
+    $deleted = @unlink($realFile);
+    jsonResponse(200, ['ok' => true, 'deleted' => (bool)$deleted]);
 }
 
 if ($action === 'generate_document') {
     $format = strtolower(trim((string)($_POST['format'] ?? 'docx')));
     $answerText = normalizeDocText((string)($_POST['answer'] ?? ''));
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
+    $templateDay = normalizeDocText((string)($_POST['templateDay'] ?? ''));
+    $templateMonth = normalizeDocText((string)($_POST['templateMonth'] ?? ''));
+    $templateYear = normalizeDocText((string)($_POST['templateYear'] ?? ''));
+    $templateNumber = normalizeDocText((string)($_POST['templateNumber'] ?? ''));
+    $templateAddressee = normalizeDocText((string)($_POST['templateAddressee'] ?? ''));
+    $organizationName = trim((string)($_POST['organization'] ?? ''));
+    $templateFileNameFromRequest = trim((string)($_POST['templateFileName'] ?? ''));
+    $responseMode = strtolower(trim((string)($_POST['responseMode'] ?? '')));
 
     if ($answerText === '') {
         jsonResponse(400, ['ok' => false, 'error' => 'Нет текста ответа']);
@@ -1336,7 +1686,21 @@ if ($action === 'generate_document') {
         jsonResponse(400, ['ok' => false, 'error' => 'Неподдерживаемый формат']);
     }
 
-    $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? $_POST['templatePath'] ?? ''));
+    $templateDirFromRequest = trim((string)($_POST['templateDir'] ?? ''));
+    $templatePathFromRequest = trim((string)($_POST['templatePath'] ?? ''));
+    $templateDocxCustomPath = resolveTemplateCustomPath($templatePathFromRequest);
+    if ($templateDocxCustomPath === '' && $organizationName !== '') {
+        $orgTemplateRelativePath = '/documents/' . rawurlencode($organizationName) . '/' . rawurlencode($organizationName . '_template.docx');
+        $templateDocxCustomPath = resolveTemplateCustomPath($orgTemplateRelativePath);
+    }
+    if ($templateDocxCustomPath === '' && $templateFileNameFromRequest !== '') {
+        $safeFileName = basename(rawurldecode($templateFileNameFromRequest));
+        $safeFileName = preg_replace('/[^A-Za-zА-Яа-я0-9._-]/u', '', (string)$safeFileName);
+        if (is_string($safeFileName) && $safeFileName !== '') {
+            $templateDirCandidate = $templatePathFromRequest !== '' ? dirname($templatePathFromRequest) : '';
+            $templateDocxCustomPath = resolveTemplateCustomPath(rtrim((string)$templateDirCandidate, '/') . '/' . $safeFileName);
+        }
+    }
     $extraTemplateDirs = array_filter([
         trim((string)($env['DOCUMENT_TEMPLATE_DIR'] ?? '')),
         trim((string)($env['DOC_TEMPLATES_DIR'] ?? '')),
@@ -1346,7 +1710,7 @@ if ($action === 'generate_document') {
         return is_string($value) && $value !== '';
     });
 
-    $templateDocxPath = resolveTemplatePath('template.docx', $extraTemplateDirs);
+    $templateDocxPath = $templateDocxCustomPath !== '' ? $templateDocxCustomPath : resolveTemplatePath('template.docx', $extraTemplateDirs);
     $templatePdfPath = resolveTemplatePath('template.pdf', $extraTemplateDirs);
     if (!is_file($templateDocxPath) && !is_file($templatePdfPath)) {
         jsonResponse(500, ['ok' => false, 'error' => 'Шаблоны не найдены. Проверьте: /js/documents/app/templates/, /js/documents/templates/ или переменную окружения DOCUMENT_TEMPLATE_DIR']);
@@ -1362,12 +1726,40 @@ if ($action === 'generate_document') {
             @unlink($tmpFile);
             jsonResponse(500, ['ok' => false, 'error' => 'DOCX шаблон не найден. Добавьте template.docx в /js/documents/app/templates/, /js/documents/templates/ или укажите DOCUMENT_TEMPLATE_DIR']);
         }
-        if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, [
-            '[ОТВЕТ_ИИ]' => $answerText,
+        $docxReplacements = [
+            '[ОТВЕТ ИИ]' => $answerText,
             '[DOCUMENT_TITLE]' => $documentTitle,
-        ])) {
+        ];
+        if ($templateDay !== '') {
+            $docxReplacements['[ДЕНЬ]'] = $templateDay;
+        }
+        if ($templateMonth !== '') {
+            $docxReplacements['[МЕСЯЦ]'] = $templateMonth;
+        }
+        $docxReplacements['[ГОД]'] = $templateYear !== '' ? $templateYear : date('Y');
+        if ($templateNumber !== '') {
+            $docxReplacements['[НОМЕР]'] = $templateNumber;
+        }
+        if ($templateAddressee !== '') {
+            $docxReplacements['[АДРЕСАТ]'] = $templateAddressee;
+        }
+        if (!replaceDocxPlaceholders($templateDocxPath, $tmpFile, $docxReplacements)) {
             @unlink($tmpFile);
-            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX на основе шаблона']);
+            jsonResponse(500, ['ok' => false, 'error' => 'Не удалось сформировать DOCX: проверьте, что в шаблоне есть метка [ОТВЕТ ИИ]']);
+        }
+        if ($responseMode === 'json_url') {
+            $saved = saveGeneratedFileAndBuildUrl($tmpFile, 'docx');
+            if (!($saved['ok'] ?? false)) {
+                @unlink($tmpFile);
+                jsonResponse(500, ['ok' => false, 'error' => (string)($saved['error'] ?? 'Не удалось сохранить файл')]);
+            }
+            @unlink($tmpFile);
+            jsonResponse(200, [
+                'ok' => true,
+                'url' => (string)($saved['url'] ?? ''),
+                'fileName' => (string)($saved['fileName'] ?? 'answer.docx'),
+                'format' => 'docx',
+            ]);
         }
         header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         header('Content-Disposition: attachment; filename="answer.docx"');
@@ -1383,6 +1775,24 @@ if ($action === 'generate_document') {
                 @unlink($tmpFile);
                 jsonResponse(500, ['ok' => false, 'error' => 'PDF экспорт недоступен: установите tecnickcom/tcpdf или добавьте template.pdf в директорию шаблонов']);
             }
+        }
+        if ($responseMode === 'json_url') {
+            $saved = saveGeneratedFileAndBuildUrl($tmpFile, 'pdf');
+            if (!($saved['ok'] ?? false)) {
+                if ($tmpFile !== $templatePdfPath) {
+                    @unlink($tmpFile);
+                }
+                jsonResponse(500, ['ok' => false, 'error' => (string)($saved['error'] ?? 'Не удалось сохранить файл')]);
+            }
+            if ($tmpFile !== $templatePdfPath) {
+                @unlink($tmpFile);
+            }
+            jsonResponse(200, [
+                'ok' => true,
+                'url' => (string)($saved['url'] ?? ''),
+                'fileName' => (string)($saved['fileName'] ?? 'answer.pdf'),
+                'format' => 'pdf',
+            ]);
         }
         header('Content-Type: application/pdf');
         header('Content-Disposition: attachment; filename="answer.pdf"');
@@ -1707,7 +2117,9 @@ $systemMessage = "Ты помощник по деловой переписке �
   . ($styleExampleInstruction !== '' ? ($styleExampleInstruction . ' ') : '')
   . $behaviorInstruction . ' Решение decision должно быть строго одним из: approve, reject, need_clarification. Поля risks и required_actions верни массивами строк. '
   . 'При наличии requirements из OCR обязательно опирайся на них и сформируй решение по этим пунктам. '
-  . 'Поле response — это только готовый официальный ответ на письмо без служебных фраз, без повторения задания пользователя, без строк "Решение ИИ:", "Причина:", "Действия:".';
+  . 'Поле response — это только готовый официальный ответ на письмо без служебных фраз, без повторения задания пользователя, без строк "Решение ИИ:", "Причина:", "Действия:". '
+  . 'Не добавляй приветствия, обращения, подписи, имена, должности, реквизиты и номера счетов, если этого прямо не требует запрос. '
+  . 'Ответ должен быть в формате основного текста для вставки в документ.';
 
 $userPayload = [
     'documentTitle' => $documentTitle,

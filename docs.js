@@ -616,7 +616,17 @@
     logList: null,
     logTextarea: null,
     logCopyButton: null,
-    logCloseButton: null
+    logCloseButton: null,
+    templateButton: null,
+    templateModal: null,
+    templateStatus: null,
+    templateName: null,
+    templateMeta: null,
+    templateOpenButton: null,
+    templateDownloadButton: null,
+    templateUploadButton: null,
+    templateUploadInput: null,
+    templateCloseButton: null
   };
   var clockState = {
     container: null,
@@ -1130,6 +1140,19 @@
         visible: false,
         promise: null,
         lastLoadedAt: 0
+      },
+      template: {
+        exists: false,
+        fileName: '',
+        templateUrl: '',
+        viewerUrl: '',
+        size: 0,
+        updatedAt: '',
+        loading: false,
+        uploading: false,
+        error: '',
+        visible: false,
+        promise: null
       }
     },
     resizeTimer: null,
@@ -2255,6 +2278,180 @@
     return '';
   }
 
+  function normalizeAiBriefText(text) {
+    return String(text || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\u0000/g, '')
+      .trim();
+  }
+
+  function formatAiBriefForStorage(text) {
+    var normalized = normalizeAiBriefText(text || '');
+    if (!normalized) {
+      return '';
+    }
+    return normalized
+      .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
+      .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
+      .replace(/\n{3,}/g, '\n\n');
+  }
+
+  function getAttachmentAiBrief(file) {
+    if (!file || typeof file !== 'object') {
+      return '';
+    }
+    return formatAiBriefForStorage(file.aiBrief || '');
+  }
+
+  function findDocumentFileForAiBrief(documentData, source) {
+    if (!documentData || !Array.isArray(documentData.files) || !source) {
+      return null;
+    }
+    var sourceStoredName = normalizeTextInputValue(source.storedName || '');
+    var sourceOriginalName = normalizeTextInputValue(source.originalName || '');
+    var sourceUrl = normalizeTextInputValue(source.url || '');
+    var sourceUrlFile = sourceUrl ? normalizeTextInputValue(sourceUrl.split('/').pop() || '') : '';
+    for (var i = 0; i < documentData.files.length; i += 1) {
+      var candidate = documentData.files[i];
+      if (!candidate || typeof candidate !== 'object') {
+        continue;
+      }
+      var storedName = normalizeTextInputValue(candidate.storedName || '');
+      var originalName = normalizeTextInputValue(candidate.originalName || '');
+      var fileUrl = normalizeTextInputValue(candidate.url || '');
+      var fileUrlName = fileUrl ? normalizeTextInputValue(fileUrl.split('/').pop() || '') : '';
+      if (sourceStoredName && storedName && sourceStoredName === storedName) {
+        return candidate;
+      }
+      if (sourceOriginalName && originalName && sourceOriginalName === originalName) {
+        return candidate;
+      }
+      if (sourceUrlFile && fileUrlName && sourceUrlFile === fileUrlName) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function persistDocumentFileAiBrief(documentData, source, briefText) {
+    var nextBrief = formatAiBriefForStorage(briefText || '');
+    if (!documentData || !documentData.id || !nextBrief || !state.organization) {
+      return Promise.resolve(false);
+    }
+    var matchedFile = findDocumentFileForAiBrief(documentData, source);
+    var fileStoredName = normalizeTextInputValue(
+      (source && source.storedName) || (matchedFile && matchedFile.storedName) || ''
+    );
+    var fileOriginalName = normalizeTextInputValue(
+      (source && source.originalName) || (matchedFile && matchedFile.originalName) || ''
+    );
+    var fileUrl = normalizeTextInputValue(
+      (source && source.url) || (matchedFile && matchedFile.url) || ''
+    );
+    if (!fileStoredName && !fileOriginalName && !fileUrl) {
+      return Promise.resolve(false);
+    }
+
+    if (matchedFile) {
+      matchedFile.aiBrief = nextBrief;
+    }
+
+    var payload = {
+      action: 'mini_app_update_task',
+      organization: state.organization,
+      documentId: documentData.id,
+      updateType: 'file_brief',
+      aiBrief: nextBrief,
+      fileStoredName: fileStoredName,
+      fileOriginalName: fileOriginalName,
+      fileUrl: fileUrl
+    };
+    mergeTelegramUserId(payload);
+
+    return fetch(buildApiUrl('mini_app_update_task', { organization: state.organization }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        updateStateFromPayload(data);
+        return true;
+      });
+  }
+
+  function extractAiBriefFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return '';
+    }
+    var text = normalizeAiBriefText(payload.summary || '');
+    if (!text) {
+      text = normalizeAiBriefText(extractPlainAiBriefText(payload));
+    }
+    if (!text) {
+      text = normalizeAiBriefText(buildAiConclusionFromPayload(payload, ''));
+    }
+    return formatAiBriefForStorage(text);
+  }
+
+  async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress, onItemResolved) {
+    var batchFiles = Array.isArray(files) ? files : [];
+    var result = [];
+    var requestFromBriefModule = null;
+    try {
+      await ensureAiResponseModalScript();
+      if (typeof window !== 'undefined' && typeof window.requestDocumentsAiBriefByFileSource === 'function') {
+        requestFromBriefModule = window.requestDocumentsAiBriefByFileSource;
+      }
+    } catch (_) {}
+
+    for (var i = 0; i < batchFiles.length; i += 1) {
+      var file = batchFiles[i];
+      var briefText = '';
+      if (typeof onProgress === 'function') {
+        onProgress(i, batchFiles.length, file);
+      }
+      try {
+        var source = {
+          fileObject: file,
+          label: file && file.name ? file.name : ('Файл ' + (i + 1))
+        };
+        if (typeof requestFromBriefModule === 'function') {
+          var modulePayload = await requestFromBriefModule(source, function() {});
+          briefText = normalizeAiBriefText(modulePayload && modulePayload.summary ? modulePayload.summary : '');
+        }
+        if (!briefText) {
+          var payload = await requestAiBriefSummaryByAttachment(source, apiUrl, 'paid');
+          briefText = extractAiBriefFromPayload(payload);
+        }
+      } catch (error) {
+        try {
+          var fallbackSource = {
+            fileObject: file,
+            label: file && file.name ? file.name : ('Файл ' + (i + 1))
+          };
+          var fallbackPayload = await requestAiBriefSummaryByAttachment(fallbackSource, apiUrl, 'paid');
+          briefText = extractAiBriefFromPayload(fallbackPayload);
+        } catch (fallbackError) {
+          docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
+            fileName: file && file.name ? file.name : '',
+            message: fallbackError && fallbackError.message ? fallbackError.message : (error && error.message ? error.message : String(error || ''))
+          });
+        }
+      }
+      briefText = formatAiBriefForStorage(briefText);
+      if (typeof onItemResolved === 'function') {
+        onItemResolved(file, briefText, i, batchFiles.length);
+      }
+      result.push(briefText);
+    }
+    if (typeof onProgress === 'function') {
+      onProgress(batchFiles.length, batchFiles.length, null);
+    }
+    return result;
+  }
+
 
   function getDirectAiAnalyzeUrl(apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
@@ -2602,6 +2799,7 @@
     var titleWrap = createElement('div', '');
     titleWrap.appendChild(createElement('div', 'documents-brief-title', 'Вывод'));
     titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', 'Нажмите файл, получите OCR-текст, затем отправьте его в ИИ.'));
+    titleWrap.appendChild(createElement('div', 'documents-brief-subtitle', '⚠️ ИИ анализирует только первые 5 страниц документа.'));
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-brief-body');
     var list = createElement('div', 'documents-brief-list');
@@ -5393,10 +5591,47 @@
     }
   }
 
+  function ensureAdminTemplateStyles() {
+    if (document.getElementById('documents-admin-template-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-admin-template-style';
+    style.textContent = '' +
+      '.documents-admin__template-button{margin-right:8px;}' +
+      '.documents-template-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
+      '.documents-template-modal.is-visible{display:flex;}' +
+      '.documents-template-modal__panel{width:min(560px,100%);max-height:min(88vh,760px);overflow:auto;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:flex;flex-direction:column;gap:14px;}' +
+      '.documents-template-modal__title{margin:0;font-size:20px;font-weight:700;color:#0f172a;}' +
+      '.documents-template-modal__subtitle{margin:0;color:#64748b;font-size:13px;line-height:1.45;}' +
+      '.documents-template-modal__card{border:1px solid rgba(148,163,184,0.3);border-radius:16px;padding:14px;background:rgba(255,255,255,0.72);display:flex;flex-direction:column;gap:8px;}' +
+      '.documents-template-modal__name{font-size:15px;font-weight:700;color:#0f172a;word-break:break-word;}' +
+      '.documents-template-modal__meta{font-size:12px;color:#64748b;word-break:break-word;}' +
+      '.documents-template-modal__status{display:none;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:600;background:rgba(59,130,246,0.12);color:#1d4ed8;}' +
+      '.documents-template-modal__status.is-visible{display:block;}' +
+      '.documents-template-modal__status--error{background:rgba(239,68,68,0.14);color:#b91c1c;}' +
+      '.documents-template-modal__status--success{background:rgba(16,185,129,0.15);color:#047857;}' +
+      '.documents-template-modal__actions{display:flex;flex-wrap:wrap;gap:10px;}' +
+      '.documents-template-modal__button{border:none;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:600;cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, opacity .2s ease;}' +
+      '.documents-template-modal__button:disabled{opacity:0.6;cursor:default;transform:none;box-shadow:none;}' +
+      '.documents-template-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
+      '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
+      '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
+      '@media (max-width: 720px){' +
+      '.documents-template-modal{padding:8px;align-items:flex-end;}' +
+      '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
+      '.documents-template-modal__actions{display:grid;grid-template-columns:1fr;}' +
+      '.documents-template-modal__button{width:100%;}' +
+      '}' +
+      '';
+    document.head.appendChild(style);
+  }
+
   function ensureAdminModal() {
     if (adminElements.modal) {
       return;
     }
+    ensureAdminTemplateStyles();
 
     var modal = createElement('div', 'documents-admin');
     modal.id = 'documents-admin';
@@ -5421,6 +5656,10 @@
     message.setAttribute('role', 'status');
     message.setAttribute('aria-live', 'polite');
     headerActions.appendChild(message);
+
+    var templateButton = createElement('button', 'documents-admin__log-button documents-admin__template-button', 'Шаблон');
+    templateButton.type = 'button';
+    headerActions.appendChild(templateButton);
 
     var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
     logButton.type = 'button';
@@ -5536,6 +5775,47 @@
     dialog.appendChild(footer);
 
     modal.appendChild(dialog);
+
+    var templateModal = createElement('div', 'documents-template-modal');
+    templateModal.setAttribute('aria-hidden', 'true');
+    var templatePanel = createElement('div', 'documents-template-modal__panel');
+    templatePanel.setAttribute('role', 'dialog');
+    templatePanel.setAttribute('aria-modal', 'true');
+    var templateTitle = createElement('h3', 'documents-template-modal__title', 'Шаблон организации');
+    var templateSubtitle = createElement('p', 'documents-template-modal__subtitle', 'Здесь можно посмотреть текущий шаблон и загрузить новый файл .docx. Замена выполняется безопасно с индикатором прогресса.');
+    var templateStatus = createElement('div', 'documents-template-modal__status');
+    templateStatus.setAttribute('role', 'status');
+    var templateCard = createElement('div', 'documents-template-modal__card');
+    var templateName = createElement('div', 'documents-template-modal__name', 'Загружаем…');
+    var templateMeta = createElement('div', 'documents-template-modal__meta', '');
+    templateCard.appendChild(templateName);
+    templateCard.appendChild(templateMeta);
+    var templateActions = createElement('div', 'documents-template-modal__actions');
+    var templateOpenButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--primary', 'Просмотреть');
+    templateOpenButton.type = 'button';
+    var templateDownloadButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Скачать шаблон');
+    templateDownloadButton.type = 'button';
+    var templateUploadButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Загрузить новый шаблон');
+    templateUploadButton.type = 'button';
+    var templateCloseButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Закрыть');
+    templateCloseButton.type = 'button';
+    templateActions.appendChild(templateOpenButton);
+    templateActions.appendChild(templateDownloadButton);
+    templateActions.appendChild(templateUploadButton);
+    templateActions.appendChild(templateCloseButton);
+    var templateUploadInput = document.createElement('input');
+    templateUploadInput.type = 'file';
+    templateUploadInput.accept = '.doc,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword';
+    templateUploadInput.style.display = 'none';
+    templatePanel.appendChild(templateTitle);
+    templatePanel.appendChild(templateSubtitle);
+    templatePanel.appendChild(templateStatus);
+    templatePanel.appendChild(templateCard);
+    templatePanel.appendChild(templateActions);
+    templatePanel.appendChild(templateUploadInput);
+    templateModal.appendChild(templatePanel);
+    document.body.appendChild(templateModal);
+
     document.body.appendChild(modal);
 
     adminElements.modal = modal;
@@ -5545,12 +5825,22 @@
     adminElements.saveButton = saveButton;
     adminElements.closeButton = closeButton;
     adminElements.logButton = logButton;
+    adminElements.templateButton = templateButton;
     adminElements.logPanel = logPanel;
     adminElements.logStatus = logStatus;
     adminElements.logList = logList;
     adminElements.logTextarea = logTextarea;
     adminElements.logCopyButton = logCopy;
     adminElements.logCloseButton = logClose;
+    adminElements.templateModal = templateModal;
+    adminElements.templateStatus = templateStatus;
+    adminElements.templateName = templateName;
+    adminElements.templateMeta = templateMeta;
+    adminElements.templateOpenButton = templateOpenButton;
+    adminElements.templateDownloadButton = templateDownloadButton;
+    adminElements.templateUploadButton = templateUploadButton;
+    adminElements.templateUploadInput = templateUploadInput;
+    adminElements.templateCloseButton = templateCloseButton;
 
     closeButton.addEventListener('click', function() {
       closeAdminModal();
@@ -5558,6 +5848,10 @@
 
     dismiss.addEventListener('click', function() {
       closeAdminModal();
+    });
+
+    templateButton.addEventListener('click', function() {
+      openAdminTemplateModal();
     });
 
     logButton.addEventListener('click', function() {
@@ -5570,6 +5864,40 @@
 
     logCopy.addEventListener('click', function() {
       copyAdminLogToClipboard();
+    });
+
+    templateCloseButton.addEventListener('click', function() {
+      closeAdminTemplateModal();
+    });
+
+    templateModal.addEventListener('click', function(event) {
+      if (event.target === templateModal) {
+        closeAdminTemplateModal();
+      }
+    });
+
+    templateOpenButton.addEventListener('click', function() {
+      openTemplateInOfficeViewer();
+    });
+
+    templateDownloadButton.addEventListener('click', function() {
+      downloadCurrentTemplate();
+    });
+
+    templateUploadButton.addEventListener('click', function() {
+      if (adminElements.templateUploadInput && !state.admin.template.uploading) {
+        adminElements.templateUploadInput.click();
+      }
+    });
+
+    templateUploadInput.addEventListener('change', function(event) {
+      var fileList = event && event.target && event.target.files ? event.target.files : [];
+      var file = fileList && fileList[0] ? fileList[0] : null;
+      if (!file) {
+        return;
+      }
+      uploadOrganizationTemplate(file);
+      templateUploadInput.value = '';
     });
 
     saveButton.addEventListener('click', function() {
@@ -6190,6 +6518,291 @@
     }
   }
 
+  function ensureAdminTemplateState() {
+    if (!state.admin.template) {
+      state.admin.template = {
+        exists: false,
+        fileName: '',
+        templateUrl: '',
+        viewerUrl: '',
+        size: 0,
+        updatedAt: '',
+        loading: false,
+        uploading: false,
+        error: '',
+        visible: false,
+        promise: null
+      };
+    }
+    return state.admin.template;
+  }
+
+  function formatTemplateSize(size) {
+    var bytes = Number(size);
+    if (!isFinite(bytes) || bytes <= 0) {
+      return '';
+    }
+    if (bytes < 1024) {
+      return bytes + ' Б';
+    }
+    if (bytes < 1024 * 1024) {
+      return (bytes / 1024).toFixed(1).replace('.0', '') + ' КБ';
+    }
+    return (bytes / (1024 * 1024)).toFixed(1).replace('.0', '') + ' МБ';
+  }
+
+  function setAdminTemplateStatus(text, type) {
+    ensureAdminModal();
+    if (!adminElements.templateStatus) {
+      return;
+    }
+    var status = adminElements.templateStatus;
+    status.textContent = text || '';
+    status.classList.toggle('is-visible', Boolean(text));
+    status.classList.remove('documents-template-modal__status--error', 'documents-template-modal__status--success');
+    if (type === 'error') {
+      status.classList.add('documents-template-modal__status--error');
+    } else if (type === 'success') {
+      status.classList.add('documents-template-modal__status--success');
+    }
+  }
+
+  function updateAdminTemplatePanel() {
+    ensureAdminModal();
+    var templateState = ensureAdminTemplateState();
+    if (adminElements.templateButton) {
+      adminElements.templateButton.disabled = !state.organization;
+    }
+    if (!adminElements.templateName || !adminElements.templateMeta) {
+      return;
+    }
+    if (templateState.loading) {
+      adminElements.templateName.textContent = 'Загружаем данные шаблона…';
+      adminElements.templateMeta.textContent = 'Пожалуйста, подождите.';
+      setAdminTemplateStatus('Получаем текущий шаблон…', 'info');
+    } else if (templateState.error) {
+      adminElements.templateName.textContent = 'Не удалось получить шаблон';
+      adminElements.templateMeta.textContent = templateState.error;
+      setAdminTemplateStatus(templateState.error, 'error');
+    } else if (templateState.exists) {
+      adminElements.templateName.textContent = templateState.fileName || 'Шаблон организации';
+      var metaParts = [];
+      var formattedSize = formatTemplateSize(templateState.size);
+      if (formattedSize) {
+        metaParts.push('Размер: ' + formattedSize);
+      }
+      if (templateState.updatedAt) {
+        metaParts.push('Обновлён: ' + formatAdminLogTimestamp(templateState.updatedAt));
+      }
+      metaParts.push('Путь: /documents/' + encodeURIComponent(state.organization || '') + '/' + encodeURIComponent((state.organization || '') + '_template.docx'));
+      adminElements.templateMeta.textContent = metaParts.join(' • ');
+      setAdminTemplateStatus(templateState.uploading ? 'Загрузка шаблона…' : 'Текущий шаблон готов к просмотру.', 'success');
+    } else {
+      adminElements.templateName.textContent = 'Шаблон ещё не загружен';
+      adminElements.templateMeta.textContent = 'Загрузите .docx файл — он будет сохранён как шаблон организации.';
+      setAdminTemplateStatus('Файл шаблона не найден. Загрузите новый.', 'info');
+    }
+    if (adminElements.templateOpenButton) {
+      adminElements.templateOpenButton.disabled = !templateState.exists || templateState.loading || templateState.uploading;
+    }
+    if (adminElements.templateDownloadButton) {
+      adminElements.templateDownloadButton.disabled = !templateState.exists || templateState.loading || templateState.uploading;
+    }
+    if (adminElements.templateUploadButton) {
+      adminElements.templateUploadButton.disabled = templateState.loading || templateState.uploading;
+      adminElements.templateUploadButton.textContent = templateState.uploading ? 'Загрузка…' : 'Загрузить новый шаблон';
+    }
+  }
+
+  function fetchAdminTemplate(options) {
+    var templateState = ensureAdminTemplateState();
+    var force = options && options.force;
+    if (!state.organization) {
+      templateState.error = 'Сначала выберите организацию.';
+      updateAdminTemplatePanel();
+      return Promise.reject(new Error(templateState.error));
+    }
+    if (templateState.loading && templateState.promise) {
+      return templateState.promise;
+    }
+    if (!force && templateState.exists && !templateState.error) {
+      return Promise.resolve(templateState);
+    }
+    templateState.loading = true;
+    templateState.error = '';
+    updateAdminTemplatePanel();
+    var request = fetch(buildApiUrl('get_organization_template', {
+      organization: state.organization
+    }), {
+      credentials: 'same-origin'
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        var payload = data && data.template && typeof data.template === 'object' ? data.template : {};
+        templateState.exists = payload.exists === true;
+        templateState.fileName = payload.fileName ? String(payload.fileName) : '';
+        templateState.templateUrl = payload.templateUrl ? String(payload.templateUrl) : '';
+        templateState.viewerUrl = payload.viewerUrl ? String(payload.viewerUrl) : '';
+        templateState.size = payload.size ? Number(payload.size) : 0;
+        templateState.updatedAt = payload.updatedAt ? String(payload.updatedAt) : '';
+        templateState.error = '';
+        updateAdminTemplatePanel();
+        return templateState;
+      })
+      .catch(function(error) {
+        templateState.error = error && error.message ? error.message : 'Не удалось загрузить данные шаблона.';
+        updateAdminTemplatePanel();
+        throw error;
+      })
+      .finally(function() {
+        templateState.loading = false;
+        templateState.promise = null;
+        updateAdminTemplatePanel();
+      });
+    templateState.promise = request;
+    return request;
+  }
+
+  function openTemplateInOfficeViewer() {
+    var templateState = ensureAdminTemplateState();
+    if (!templateState.exists || !templateState.viewerUrl) {
+      setAdminTemplateStatus('Сначала загрузите шаблон .docx.', 'error');
+      return;
+    }
+    try {
+      window.open(templateState.viewerUrl, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setAdminTemplateStatus('Не удалось открыть файл для просмотра.', 'error');
+    }
+  }
+
+  function downloadCurrentTemplate() {
+    var templateState = ensureAdminTemplateState();
+    if (!templateState.exists || !templateState.templateUrl) {
+      setAdminTemplateStatus('Сначала загрузите шаблон .docx.', 'error');
+      return;
+    }
+
+    var templateName = String(templateState.fileName || 'template.docx');
+    setAdminTemplateStatus('Подготавливаем скачивание шаблона…', 'info');
+
+    fetch(templateState.templateUrl, {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    })
+      .then(function(response) {
+        if (!response || !response.ok) {
+          throw new Error('Не удалось скачать шаблон.');
+        }
+        return response.blob();
+      })
+      .then(function(blob) {
+        var objectUrl = URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = templateName;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(function() {
+          if (link.parentNode) {
+            link.parentNode.removeChild(link);
+          }
+          URL.revokeObjectURL(objectUrl);
+        }, 0);
+        setAdminTemplateStatus('Шаблон скачивается.', 'success');
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : 'Не удалось скачать шаблон.';
+        setAdminTemplateStatus(message, 'error');
+      });
+  }
+
+  function uploadOrganizationTemplate(file) {
+    var templateState = ensureAdminTemplateState();
+    if (!file || typeof file !== 'object' || !file.name) {
+      setAdminTemplateStatus('Файл не выбран.', 'error');
+      return;
+    }
+    var name = file.name ? String(file.name).toLowerCase() : '';
+    if (name.slice(-5) !== '.docx' && name.slice(-4) !== '.doc') {
+      setAdminTemplateStatus('Поддерживаются только файлы .docx или .doc.', 'error');
+      return;
+    }
+    templateState.uploading = true;
+    templateState.error = '';
+    updateAdminTemplatePanel();
+    setAdminTemplateStatus('Подготавливаем файл к загрузке…', 'info');
+    var formData = new FormData();
+    formData.append('action', 'upload_organization_template');
+    formData.append('organization', state.organization || '');
+    formData.append('template', file, file.name || 'template.docx');
+    appendTelegramUserIdToFormData(formData);
+    uploadFormDataWithProgress(buildApiUrl('upload_organization_template'), formData, function(progress) {
+      if (!progress || !progress.lengthComputable || progress.total <= 0) {
+        setAdminTemplateStatus('Загрузка шаблона…', 'info');
+        return;
+      }
+      var percent = Math.round((progress.loaded / progress.total) * 100);
+      setAdminTemplateStatus('Загрузка шаблона: ' + percent + '%', 'info');
+    })
+      .then(handleResponseData)
+      .then(function() {
+        setAdminTemplateStatus('Шаблон успешно обновлён.', 'success');
+        return fetchAdminTemplate({ force: true });
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : 'Не удалось загрузить шаблон.';
+        setAdminTemplateStatus(message, 'error');
+      })
+      .finally(function() {
+        templateState.uploading = false;
+        updateAdminTemplatePanel();
+      });
+
+    function handleResponseData(data) {
+      if (!data || typeof data !== 'object') {
+        return {};
+      }
+      if (data.error) {
+        throw new Error(String(data.error));
+      }
+      return data;
+    }
+  }
+
+  function openAdminTemplateModal() {
+    ensureAdminModal();
+    var templateState = ensureAdminTemplateState();
+    if (!state.organization) {
+      setAdminTemplateStatus('Сначала выберите организацию.', 'error');
+      return;
+    }
+    templateState.visible = true;
+    if (adminElements.templateModal) {
+      adminElements.templateModal.classList.add('is-visible');
+      adminElements.templateModal.setAttribute('aria-hidden', 'false');
+    }
+    updateAdminTemplatePanel();
+    fetchAdminTemplate({ force: true }).catch(function(error) {
+      docsLogger.warn('Не удалось загрузить шаблон организации:', error);
+    });
+  }
+
+  function closeAdminTemplateModal(options) {
+    ensureAdminModal();
+    var templateState = ensureAdminTemplateState();
+    templateState.visible = false;
+    if (adminElements.templateModal) {
+      adminElements.templateModal.classList.remove('is-visible');
+      adminElements.templateModal.setAttribute('aria-hidden', 'true');
+    }
+    var shouldRestoreFocus = !(options && options.skipFocus);
+    if (shouldRestoreFocus && adminElements.templateButton && typeof adminElements.templateButton.focus === 'function') {
+      adminElements.templateButton.focus();
+    }
+  }
+
   function ensureAdminUserLogState() {
     if (!state.admin.userLog) {
       state.admin.userLog = {
@@ -6528,7 +7141,10 @@
     ensureAdminModal();
     lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     ensureAdminUserLogState().visible = false;
+    ensureAdminTemplateState().visible = false;
+    closeAdminTemplateModal({ skipFocus: true });
     updateAdminLogPanel();
+    updateAdminTemplatePanel();
     adminElements.modal.classList.add('is-visible');
     adminElements.modal.setAttribute('aria-hidden', 'false');
     document.addEventListener('keydown', handleAdminKeydown, true);
@@ -6549,7 +7165,9 @@
     adminElements.modal.setAttribute('aria-hidden', 'true');
     document.removeEventListener('keydown', handleAdminKeydown, true);
     ensureAdminUserLogState().visible = false;
+    ensureAdminTemplateState().visible = false;
     updateAdminLogPanel();
+    closeAdminTemplateModal({ skipFocus: true });
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
     }
@@ -6559,7 +7177,9 @@
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      if (ensureAdminUserLogState().visible) {
+      if (ensureAdminTemplateState().visible) {
+        closeAdminTemplateModal();
+      } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
       } else {
         closeAdminModal();
@@ -7890,6 +8510,7 @@
         var file = attachmentsList[i];
         var fileName = getAttachmentName(file, i + 1);
         lines.push((i + 1) + '. ' + fileName);
+        lines.push('   Кратко ИИ: кнопка рядом с файлом');
       }
       attachmentsText = lines.join('\n');
     }
@@ -11986,6 +12607,7 @@
     var filesList = createElement('div', 'documents-files__list');
     if (attachments.length) {
       attachments.forEach(function(file) {
+        var itemWrap = createElement('div', 'documents-file-item');
         var link = createElement('a', 'documents-file-link', getAttachmentName(file));
         link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
         link.target = '_blank';
@@ -12004,7 +12626,8 @@
           event.preventDefault();
           handleAttachmentPreview(doc, file, link);
         });
-        filesList.appendChild(link);
+        itemWrap.appendChild(link);
+        filesList.appendChild(itemWrap);
       });
     } else {
       filesList.textContent = '—';
@@ -12036,6 +12659,40 @@
       openResponseModal(doc);
     });
     actions.appendChild(responseButton);
+
+    var briefActionButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
+    briefActionButton.type = 'button';
+    briefActionButton.disabled = !attachments.length;
+    if (!attachments.length) {
+      briefActionButton.title = 'Нет прикреплённых файлов.';
+    }
+    briefActionButton.addEventListener('click', function() {
+      if (!attachments.length) {
+        return;
+      }
+      var linkedFiles = attachments.map(function(file) {
+        return {
+          name: getAttachmentName(file),
+          url: resolveAttachmentUrl(file, { bustCache: true }) || '',
+          storedName: file && file.storedName ? String(file.storedName) : '',
+          originalName: file && file.originalName ? String(file.originalName) : '',
+          aiBrief: getAttachmentAiBrief(file)
+        };
+      }).filter(function(file) {
+        return Boolean(file && file.url);
+      });
+      openAiBriefSummaryModal({
+        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
+        showMessage: showMessage,
+        documentData: doc || {},
+        linkedFiles: linkedFiles,
+        pendingFiles: [],
+        onBriefReady: function(source, briefText) {
+          return persistDocumentFileAiBrief(doc, source, briefText);
+        }
+      });
+    });
+    actions.appendChild(briefActionButton);
 
     var hasAttachments = Array.isArray(doc.files) && doc.files.length;
     var viewEntry = findCurrentUserViewEntry(doc);
@@ -13115,8 +13772,6 @@
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
     var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
-    var aiBriefButton = createElement('button', 'documents-button documents-button--ai', 'Кратко ИИ');
-    var aiConclusionButton = createElement('button', 'documents-button documents-button--ai', 'Вывод');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -13140,6 +13795,16 @@
     hiddenInput.type = 'file';
     hiddenInput.multiple = true;
     hiddenInput.hidden = true;
+    var isResponseModalClosed = false;
+
+    function closeResponseModal() {
+      if (isResponseModalClosed) {
+        return;
+      }
+      isResponseModalClosed = true;
+      window.removeEventListener('documents:response-attached', handleResponseAttachedEvent);
+      closeModal(modal);
+    }
 
     function syncCurrentDoc() {
       currentDoc = findDocumentById(doc.id) || currentDoc || doc;
@@ -13408,8 +14073,6 @@
         saveButton.disabled = true;
         addButton.disabled = true;
         aiButton.disabled = true;
-        aiBriefButton.disabled = true;
-        aiConclusionButton.disabled = true;
         closeButton.disabled = true;
         return fetch(buildApiUrl('response_text_update', { organization: state.organization }), {
           method: 'POST',
@@ -13437,8 +14100,6 @@
             saveButton.disabled = false;
             addButton.disabled = false;
             aiButton.disabled = false;
-            aiBriefButton.disabled = false;
-            aiConclusionButton.disabled = false;
             closeButton.disabled = false;
           });
       }
@@ -13451,8 +14112,6 @@
       saveButton.disabled = true;
       addButton.disabled = true;
       aiButton.disabled = true;
-      aiBriefButton.disabled = true;
-      aiConclusionButton.disabled = true;
       closeButton.disabled = true;
       var formData = new FormData();
       formData.append('action', 'response_upload');
@@ -13485,10 +14144,31 @@
           saveButton.disabled = false;
           addButton.disabled = false;
           aiButton.disabled = false;
-          aiBriefButton.disabled = false;
-          aiConclusionButton.disabled = false;
           closeButton.disabled = false;
         });
+    }
+
+    function handleResponseAttachedEvent(event) {
+      if (isResponseModalClosed) {
+        return;
+      }
+      var detail = event && event.detail && typeof event.detail === 'object' ? event.detail : null;
+      if (!detail) {
+        return;
+      }
+      var attachedDocumentId = String(detail.documentId || '').trim();
+      if (!attachedDocumentId || attachedDocumentId !== String(doc.id)) {
+        return;
+      }
+      refreshRegistrySilently()
+        .then(function() {
+          if (isResponseModalClosed) {
+            return;
+          }
+          syncCurrentDoc();
+          renderTable();
+        })
+        .catch(function() {});
     }
 
     hiddenInput.addEventListener('change', function(event) {
@@ -13566,15 +14246,7 @@
       });
     });
 
-    function ensureAiModeSelectorStyles() {
-      if (document.getElementById('documents-ai-mode-selector-style')) {
-        return;
-      }
-      var style = document.createElement('style');
-      style.id = 'documents-ai-mode-selector-style';
-      style.textContent = '.documents-ai-mode-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.45);backdrop-filter:blur(8px);z-index:4000;padding:12px}.documents-ai-mode-panel{width:min(420px,100%);background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 44px rgba(15,23,42,.2);backdrop-filter:blur(16px);border-radius:22px;padding:18px}.documents-ai-mode-title{font-size:18px;font-weight:700;color:#0f172a}.documents-ai-mode-sub{margin-top:4px;font-size:13px;color:#475569}.documents-ai-mode-actions{margin-top:14px;display:grid;gap:10px}.documents-ai-mode-btn{border:1px solid rgba(203,213,225,.95);background:rgba(255,255,255,.92);color:#0f172a;padding:12px 14px;border-radius:14px;font-size:14px;font-weight:600;text-align:left;cursor:pointer}.documents-ai-mode-btn--vip{background:linear-gradient(135deg,rgba(236,253,245,.94),rgba(219,234,254,.94));border-color:rgba(125,211,252,.7)}.documents-ai-mode-close{margin-top:10px;width:100%;border:none;background:transparent;color:#64748b;font-size:13px;padding:8px;cursor:pointer}';
-      document.head.appendChild(style);
-    }
+
 
     var vipAiPaidScriptPromise = null;
 
@@ -13687,40 +14359,16 @@
       };
     }
 
-    function openAiModeSelector() {
-      ensureAiModeSelectorStyles();
-      var overlay = createElement('div', 'documents-ai-mode-overlay');
-      var panel = createElement('div', 'documents-ai-mode-panel');
-      panel.innerHTML = '<div class="documents-ai-mode-title">Выберите режим ИИ</div><div class="documents-ai-mode-sub">Бесплатный режим останется без изменений.</div>';
-      var actions = createElement('div', 'documents-ai-mode-actions');
-      var freeBtn = createElement('button', 'documents-ai-mode-btn', '🤍 Бесплатный ИИ');
-      var vipBtn = createElement('button', 'documents-ai-mode-btn documents-ai-mode-btn--vip', '💎 VIP ИИ (платный)');
-      var cancelBtn = createElement('button', 'documents-ai-mode-close', 'Отмена');
-      [freeBtn, vipBtn, cancelBtn].forEach(function(btn) { btn.type = 'button'; });
-      freeBtn.addEventListener('click', function() {
-        closeModal(overlay);
-        openAiResponseModal(buildAiDialogPayload());
-      });
-      vipBtn.addEventListener('click', function() {
-        closeModal(overlay);
-        openVipAiModal();
-      });
-      cancelBtn.addEventListener('click', function() { closeModal(overlay); });
-      overlay.addEventListener('click', function(event) {
-        if (event.target === overlay) {
-          closeModal(overlay);
-        }
-      });
-      actions.appendChild(freeBtn);
-      actions.appendChild(vipBtn);
-      panel.appendChild(actions);
-      panel.appendChild(cancelBtn);
-      overlay.appendChild(panel);
-      document.body.appendChild(overlay);
+    function setVipButtonLoading(active, text) {
+      if (!aiButton) return;
+      aiButton.disabled = Boolean(active);
+      aiButton.classList.toggle('is-loading', Boolean(active));
+      aiButton.textContent = active ? String(text || 'Открываем ИИ…') : 'Ответ с помощью ИИ';
     }
 
     function openVipAiModal() {
       var payload = buildAiDialogPayload();
+      setVipButtonLoading(true, 'Открываем ИИ…');
       ensureVipAiPaidScript()
         .then(function(openModal) {
           openModal({
@@ -13734,70 +14382,29 @@
         })
         .catch(function(error) {
           showMessage('error', error && error.message ? error.message : 'Не удалось открыть VIP ИИ.');
+        })
+        .finally(function() {
+          setVipButtonLoading(false);
         });
     }
 
     aiButton.type = 'button';
     aiButton.addEventListener('click', function() {
-      openAiModeSelector();
-    });
-    aiBriefButton.type = 'button';
-    aiBriefButton.addEventListener('click', function() {
-      var linkedFiles = [];
-      if (currentDoc && Array.isArray(currentDoc.files)) {
-        linkedFiles = currentDoc.files.map(function(file) {
-          return {
-            name: getAttachmentName(file),
-            url: resolveAttachmentUrl(file, { bustCache: true }) || ''
-          };
-        }).filter(function(file) {
-          return Boolean(file && file.url);
-        });
-      }
-      openAiBriefSummaryModal({
-        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
-        showMessage: showMessage,
-        documentData: currentDoc || doc || {},
-        pendingFiles: pendingFiles.slice(),
-        linkedFiles: linkedFiles
-      });
-    });
-    aiConclusionButton.type = 'button';
-    aiConclusionButton.addEventListener('click', function() {
-      var linkedFiles = [];
-      if (currentDoc && Array.isArray(currentDoc.files)) {
-        linkedFiles = currentDoc.files.map(function(file) {
-          return {
-            name: getAttachmentName(file),
-            url: resolveAttachmentUrl(file, { bustCache: true }) || ''
-          };
-        }).filter(function(file) {
-          return Boolean(file && file.url);
-        });
-      }
-      openAiConclusionModal({
-        apiUrl: (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php'),
-        showMessage: showMessage,
-        documentData: currentDoc || doc || {},
-        pendingFiles: pendingFiles.slice(),
-        linkedFiles: linkedFiles
-      });
+      openVipAiModal();
     });
 
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
-      closeModal(modal);
+      closeResponseModal();
     });
 
     modal.addEventListener('click', function(event) {
       if (event.target === modal) {
-        closeModal(modal);
+        closeResponseModal();
       }
     });
 
     headerActions.appendChild(aiButton);
-    headerActions.appendChild(aiBriefButton);
-    headerActions.appendChild(aiConclusionButton);
     headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
@@ -13820,6 +14427,7 @@
     panel.appendChild(hiddenInput);
     modal.appendChild(panel);
     document.body.appendChild(modal);
+    window.addEventListener('documents:response-attached', handleResponseAttachedEvent);
     renderTable();
     updateMessageCounter();
     dropzone.focus({ preventScroll: true });
@@ -13986,6 +14594,51 @@
       var modal = document.querySelector('.documents-modal');
       closeModal(modal);
     }
+  }
+
+  function openAttachmentAiBriefModal(fileName, briefText) {
+    var overlay = createElement('div', 'documents-modal');
+    var shell = createElement('div', 'documents-modal__shell documents-modal__shell--narrow');
+    var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
+    var title = createElement('h3', 'documents-modal__title', 'Кратко от ИИ');
+    var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', function() {
+      closeModal(overlay);
+    });
+    var actions = createElement('div', 'documents-modal__actions');
+    actions.appendChild(closeButton);
+    header.appendChild(title);
+    header.appendChild(actions);
+    var body = createElement('div', 'documents-form');
+    var fileHint = createElement('div', 'documents-form__hint', 'Файл: ' + (fileName || 'Файл'));
+    var resultTitle = createElement('div', 'documents-form__hint', 'Результат анализа');
+    var resultBox = document.createElement('pre');
+    resultBox.className = 'documents-conclusion-preview';
+    resultBox.style.whiteSpace = 'pre-wrap';
+    resultBox.style.lineHeight = '1.6';
+    resultBox.style.fontSize = '14px';
+    resultBox.style.padding = '14px';
+    resultBox.style.borderRadius = '14px';
+    resultBox.style.background = 'rgba(248, 250, 252, 0.9)';
+    resultBox.style.border = '1px solid rgba(203, 213, 225, 0.7)';
+    resultBox.style.fontFamily = 'Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    resultBox.style.tabSize = '4';
+    resultBox.style.overflow = 'auto';
+    resultBox.style.margin = '0';
+    resultBox.textContent = briefText || 'Пустой ответ от ИИ.';
+    body.appendChild(fileHint);
+    body.appendChild(resultTitle);
+    body.appendChild(resultBox);
+    shell.appendChild(header);
+    shell.appendChild(body);
+    overlay.appendChild(shell);
+    overlay.addEventListener('click', function(event) {
+      if (event.target === overlay) {
+        closeModal(overlay);
+      }
+    });
+    document.body.appendChild(overlay);
   }
 
   function openDocumentForm(doc) {
@@ -14212,8 +14865,58 @@
 
       var attachmentsDataTransfer = new DataTransfer();
       var attachmentsStore = [];
+      var pendingAiBriefByFileKey = Object.create(null);
+      var pendingAiBriefPromises = Object.create(null);
       var existingAttachments = Array.isArray(doc && doc.files) ? doc.files.slice() : [];
       var removedAttachmentKeys = Object.create(null);
+
+      function buildLocalFileKey(file) {
+        if (!file) {
+          return '';
+        }
+        var name = file.name ? String(file.name) : '';
+        var size = typeof file.size === 'number' ? String(file.size) : '';
+        var modified = typeof file.lastModified === 'number' ? String(file.lastModified) : '';
+        return [name, size, modified].join('::');
+      }
+
+      function openAiBriefPreviewModal(fileName, briefText) {
+        openAttachmentAiBriefModal(fileName, briefText);
+      }
+
+      function scheduleAiBriefForFile(file, force) {
+        var key = buildLocalFileKey(file);
+        if (!key) {
+          return;
+        }
+        var currentState = pendingAiBriefByFileKey[key];
+        if (!force && currentState && currentState.status === 'ready' && normalizeAiBriefText(currentState.text || '')) {
+          return;
+        }
+        if (pendingAiBriefPromises[key]) {
+          return;
+        }
+        pendingAiBriefByFileKey[key] = { status: 'loading', text: '', error: '' };
+        renderAttachmentsSummary(attachmentsStore);
+        var apiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+        pendingAiBriefPromises[key] = prepareAiBriefsForBatchFiles([file], apiUrl, null, function(_file, briefText) {
+          pendingAiBriefByFileKey[key] = {
+            status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
+            text: normalizeAiBriefText(briefText || ''),
+            error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
+          };
+          renderAttachmentsSummary(attachmentsStore);
+        }).catch(function(error) {
+          pendingAiBriefByFileKey[key] = {
+            status: 'error',
+            text: '',
+            error: error && error.message ? String(error.message) : 'Ошибка ИИ'
+          };
+          renderAttachmentsSummary(attachmentsStore);
+        }).finally(function() {
+          delete pendingAiBriefPromises[key];
+        });
+      }
 
       function logFilesDiagnostics(action, details) {
         if (typeof sendClientDiagnostics !== 'function') {
@@ -14376,6 +15079,7 @@
           newGroup.appendChild(newTitle);
           var newList = createElement('div', 'documents-file__group-list');
           files.forEach(function(file, index) {
+            var itemWrap = createElement('div', 'documents-file__item');
             var badge = buildAttachmentBadge(file.name, {
               variant: 'new',
               removable: true,
@@ -14385,6 +15089,10 @@
                 }
                 var beforeCount = attachmentsStore.length;
                 attachmentsStore.splice(index, 1);
+                var removedKey = buildLocalFileKey(file);
+                if (removedKey && pendingAiBriefByFileKey[removedKey]) {
+                  delete pendingAiBriefByFileKey[removedKey];
+                }
                 syncAttachmentsInput();
                 logFilesDiagnostics('remove-new', {
                   name: file.name,
@@ -14395,7 +15103,37 @@
                 renderAttachmentsSummary(attachmentsStore);
               }
             });
-            newList.appendChild(badge);
+            itemWrap.appendChild(badge);
+            var fileKey = buildLocalFileKey(file);
+            var briefState = fileKey ? pendingAiBriefByFileKey[fileKey] : null;
+            var briefText = normalizeAiBriefText(briefState && briefState.text ? briefState.text : '');
+            if (briefState && briefState.status === 'loading') {
+              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '⏳ Кратко ИИ: анализирую файл...'));
+            }
+            if (briefState && briefState.status === 'error' && !briefText) {
+              var errorLine = createElement('div', 'documents-file__brief-preview', '⚠️ Кратко ИИ: ' + (briefState.error || 'не удалось получить ответ'));
+              itemWrap.appendChild(errorLine);
+              var retryButton = createElement('button', 'documents-button documents-button--secondary', 'Повторить ИИ');
+              retryButton.type = 'button';
+              retryButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                scheduleAiBriefForFile(file, true);
+              });
+              itemWrap.appendChild(retryButton);
+            }
+            if (briefText) {
+              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '✅ Кратко ИИ готово'));
+              var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Кратко ИИ');
+              viewButton.type = 'button';
+              viewButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                openAiBriefPreviewModal(file && file.name ? file.name : 'Файл', briefText);
+              });
+              itemWrap.appendChild(viewButton);
+            }
+            newList.appendChild(itemWrap);
           });
           newGroup.appendChild(newList);
           attachmentsSummary.appendChild(newGroup);
@@ -14413,11 +15151,14 @@
       function syncAttachments(files, append, source) {
         if (!append) {
           attachmentsStore = [];
+          pendingAiBriefByFileKey = Object.create(null);
+          pendingAiBriefPromises = Object.create(null);
         }
 
         var currentFiles = attachmentsStore.slice();
         var addedCount = 0;
         var duplicateCount = 0;
+        var addedFiles = [];
         var incomingNames = [];
         var duplicateNames = [];
 
@@ -14434,6 +15175,7 @@
           if (!isDuplicate) {
             currentFiles.push(file);
             addedCount += 1;
+            addedFiles.push(file);
           } else {
             duplicateCount += 1;
             duplicateNames.push(file.name);
@@ -14441,8 +15183,23 @@
         });
 
         attachmentsStore = currentFiles.slice();
+        var activeKeys = Object.create(null);
+        attachmentsStore.forEach(function(file) {
+          var key = buildLocalFileKey(file);
+          if (key) {
+            activeKeys[key] = true;
+          }
+        });
+        Object.keys(pendingAiBriefByFileKey).forEach(function(key) {
+          if (!activeKeys[key]) {
+            delete pendingAiBriefByFileKey[key];
+          }
+        });
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
+        addedFiles.forEach(function(file) {
+          scheduleAiBriefForFile(file, false);
+        });
 
         logFilesDiagnostics('sync', {
           source: source || 'unknown',
@@ -14821,26 +15578,48 @@
               var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
-                  var batchFormData = new FormData();
-                  batchFormData.append('action', 'update');
-                  batchFormData.append('organization', state.organization);
-                  batchFormData.append('documentId', createdOrUpdatedDocumentId);
-                  batch.forEach(function(file) {
-                    batchFormData.append('attachments[]', file);
-                  });
-                  appendTelegramUserIdToFormData(batchFormData);
-
-                  return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
-                    var progressInsideBatch = 0;
-                    if (progress && progress.lengthComputable && progress.total > 0) {
-                      progressInsideBatch = progress.loaded / progress.total;
+                  var aiApiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+                  return prepareAiBriefsForBatchFiles(batch, aiApiUrl, function(done, total) {
+                    if (!total) {
+                      return;
                     }
-                    var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
-                    var uploadPercent = 35 + Math.round(overallProgress * 60);
-                    uploadPercent = Math.max(35, Math.min(95, uploadPercent));
-                    updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
-                  }).then(function(batchData) {
-                    updateStateFromPayload(batchData);
+                    var batchAiProgress = (done / total) / Math.max(1, batches.length);
+                    var aiPercent = 35 + Math.round(((batchIndex / Math.max(1, batches.length)) + batchAiProgress) * 28);
+                    aiPercent = Math.max(35, Math.min(88, aiPercent));
+                    updateUploadProgress(aiPercent, 'Кратко ИИ: ' + done + '/' + total + ' (' + (batchIndex + 1) + '/' + batches.length + ')', 'is-stage-processing');
+                  }, function(file, briefText) {
+                    var fileKey = buildLocalFileKey(file);
+                    if (fileKey) {
+                      pendingAiBriefByFileKey[fileKey] = {
+                        status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
+                        text: normalizeAiBriefText(briefText || ''),
+                        error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
+                      };
+                    }
+                    renderAttachmentsSummary(attachmentsStore);
+                  }).then(function(aiBriefs) {
+                    var batchFormData = new FormData();
+                    batchFormData.append('action', 'update');
+                    batchFormData.append('organization', state.organization);
+                    batchFormData.append('documentId', createdOrUpdatedDocumentId);
+                    batch.forEach(function(file, fileIndex) {
+                      batchFormData.append('attachments[]', file);
+                      batchFormData.append('attachmentsAiBrief[]', aiBriefs && aiBriefs[fileIndex] ? String(aiBriefs[fileIndex]) : '');
+                    });
+                    appendTelegramUserIdToFormData(batchFormData);
+
+                    return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
+                      var progressInsideBatch = 0;
+                      if (progress && progress.lengthComputable && progress.total > 0) {
+                        progressInsideBatch = progress.loaded / progress.total;
+                      }
+                      var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
+                      var uploadPercent = 65 + Math.round(overallProgress * 30);
+                      uploadPercent = Math.max(65, Math.min(95, uploadPercent));
+                      updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
+                    }).then(function(batchData) {
+                      updateStateFromPayload(batchData);
+                    });
                   });
                 });
               }, Promise.resolve());

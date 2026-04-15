@@ -3,6 +3,14 @@ const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
 const BRIEF_SUMMARY_PROMPT = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
+const BRIEF_PDF_SOURCES = [
+  { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
+  { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
+  { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+  { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
+];
+const BRIEF_DEFAULT_PDF_WORKER_SRC = BRIEF_PDF_SOURCES[0].worker;
+const BRIEF_PDF_PAGE_LIMIT = 5;
 
 export function createTelegramBriefAi(deps = {}) {
   const {
@@ -81,16 +89,16 @@ export function createTelegramBriefAi(deps = {}) {
 
   function ensureBriefPdfJsLoaded() {
     if (typeof window !== 'undefined' && window.pdfjsLib) {
+      if (window.pdfjsLib.GlobalWorkerOptions) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = BRIEF_DEFAULT_PDF_WORKER_SRC;
+      }
+      window.__briefPdfWorkerSrc = BRIEF_DEFAULT_PDF_WORKER_SRC;
       return Promise.resolve(window.pdfjsLib);
     }
     if (briefPdfJsLoader) {
       return briefPdfJsLoader;
     }
-    const sources = [
-      { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
-      { script: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
-      { script: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
-    ];
+    const sources = BRIEF_PDF_SOURCES;
     briefPdfJsLoader = new Promise((resolve, reject) => {
       let index = 0;
       const tryNext = () => {
@@ -135,7 +143,7 @@ export function createTelegramBriefAi(deps = {}) {
     try {
       const pdfjsLib = await ensureBriefPdfJsLoaded();
       if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || BRIEF_DEFAULT_PDF_WORKER_SRC;
       }
       const bytes = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: bytes });
@@ -196,7 +204,7 @@ export function createTelegramBriefAi(deps = {}) {
         pages.add(single);
       }
     });
-    return Array.from(pages).slice(0, 3);
+    return Array.from(pages).slice(0, BRIEF_PDF_PAGE_LIMIT);
   }
 
   function chunkItems(items, size) {
@@ -262,18 +270,19 @@ export function createTelegramBriefAi(deps = {}) {
       onProgress('Открываю PDF...', 5);
       const pdfjsLib = await ensureBriefPdfJsLoaded();
       if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || '/pdf/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__briefPdfWorkerSrc || BRIEF_DEFAULT_PDF_WORKER_SRC;
       }
       const bytes = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: bytes });
       const pdf = await loadingTask.promise;
       const totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
-      const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+      const pages = Array.from({ length: Math.min(totalPages, BRIEF_PDF_PAGE_LIMIT) }, (_, i) => i + 1);
+      const pagesLabel = `${pages.length}/${totalPages}`;
       const images = [];
       for (let index = 0; index < pages.length; index += 1) {
         const pageNumber = pages[index];
-        onProgress(`Рендер страницы ${pageNumber}/${totalPages}...`, Math.round(((index + 1) / pages.length) * 90));
+        onProgress(`Рендер страницы ${pageNumber} (первые ${pagesLabel})...`, Math.round(((index + 1) / pages.length) * 90));
         // eslint-disable-next-line no-await-in-loop
         const page = await pdf.getPage(pageNumber);
         const viewport = page.getViewport({ scale: 1.25 });
@@ -291,7 +300,7 @@ export function createTelegramBriefAi(deps = {}) {
         const dataUrl = await readBlobAsDataUrl(blob);
         images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
       }
-      return { kind: 'multimodal', messageText: 'Проанализируй содержимое этого PDF', images, totalPages, selectedPages: pages };
+      return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images, totalPages, selectedPages: pages };
     }
 
     if (isText) {
@@ -653,7 +662,7 @@ export function createTelegramBriefAi(deps = {}) {
     container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
   }
 
-  return function openTelegramBriefModal(task, statusHandler) {
+  const openTelegramBriefModal = function openTelegramBriefModal(task, statusHandler) {
     ensureTelegramBriefModalStyle();
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -666,6 +675,7 @@ export function createTelegramBriefAi(deps = {}) {
             <div class="appdosc-brief-ai__title">Кратко ИИ</div>
             <div class="appdosc-brief-ai__sub">Файл → OCR → api-groq-paid.php → краткий вывод</div>
             <div class="appdosc-brief-ai__hint">Vision режим активен: 1) Нажмите файл → 2) Получите краткое решение.</div>
+            <div class="appdosc-brief-ai__hint">⚠️ ИИ анализирует только первые 5 страниц документа.</div>
           </div>
           <button type="button" class="appdosc-brief-ai__close" data-close>✕</button>
         </div>
@@ -767,4 +777,22 @@ export function createTelegramBriefAi(deps = {}) {
 
     document.body.appendChild(modal);
   };
+
+  openTelegramBriefModal.requestBriefForSource = async function requestBriefForSource(source, onStatus) {
+    const setStatus = typeof onStatus === 'function'
+      ? onStatus
+      : () => {};
+    const payload = await requestTelegramVisionByFile(source, (message, tone) => {
+      setStatus(message, tone || 'loading');
+    });
+    return {
+      summary: toBriefSummaryText(payload && payload.summary),
+      model: normalizeValue(payload && payload.model),
+      timeMs: Number(payload && payload.timeMs) || 0,
+      warning: normalizeValue(payload && payload.warning),
+      raw: payload,
+    };
+  };
+
+  return openTelegramBriefModal;
 }
