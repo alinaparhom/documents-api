@@ -1375,7 +1375,7 @@
         <div class="tg-ai-template-editor__head">
           <div>
             <div class="tg-ai-template-editor__title">Заполнение шаблона</div>
-            <div class="tg-ai-template-editor__sub">Проверьте текст ИИ и заполните дату, номер и адресата • ${escapeHtml(templateConfig.compactTemplateLabel)}</div>
+            <div class="tg-ai-template-editor__sub">Проверьте текст ИИ и заполните дату, год, номер и адресата • ${escapeHtml(templateConfig.compactTemplateLabel)}</div>
           </div>
           <button type="button" class="tg-ai-template-editor__close" data-action="cancel">Закрыть</button>
         </div>
@@ -1426,7 +1426,7 @@
     const errorNode = overlay.querySelector('[data-template-error]');
     if (dayInput) dayInput.value = normalize(storedTemplateMeta.day);
     if (monthInput) monthInput.value = normalize(storedTemplateMeta.month);
-    if (yearInput) yearInput.value = normalize(storedTemplateMeta.year);
+    if (yearInput) yearInput.value = normalize(storedTemplateMeta.year) || String(new Date().getFullYear());
     if (numberInput) numberInput.value = normalize(storedTemplateMeta.number);
     if (addresseeInput) addresseeInput.value = normalize(storedTemplateMeta.addressee);
     if (textInput) textInput.value = aiText;

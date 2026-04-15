@@ -666,7 +666,7 @@
   }
 
   async function detectTemplateMarkers(templateConfig) {
-    var defaults = { hasYear: false };
+    var defaults = { hasYear: true, inspected: false };
     try {
       var templateCandidates = getTemplateDocxCandidates(templateConfig);
       var templateUrl = await resolveFirstAvailableUrl(templateCandidates) || templateCandidates[0];
@@ -676,12 +676,33 @@
       var zipLib = await ensureJsZipLoaded();
       var buffer = await response.arrayBuffer();
       var zip = await zipLib.loadAsync(buffer);
-      var docXml = zip.file('word/document.xml');
-      if (!docXml) return defaults;
-      var xmlText = await docXml.async('text');
-      var compactText = String(xmlText || '').replace(/<[^>]*>/g, '').replace(/\s+/g, '').toUpperCase();
+      var markerSource = '';
+      zip.forEach(function(path, file) {
+        if (file && !file.dir && /^word\/.+\.xml$/i.test(String(path || ''))) {
+          markerSource += '\n' + path;
+        }
+      });
+      var targetPaths = markerSource
+        .split('\n')
+        .map(function(item) { return String(item || '').trim(); })
+        .filter(Boolean);
+      if (!targetPaths.length) targetPaths = ['word/document.xml'];
+      var compactText = '';
+      var rawText = '';
+      for (var idx = 0; idx < targetPaths.length; idx += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        var xmlFile = zip.file(targetPaths[idx]);
+        if (!xmlFile) continue;
+        // eslint-disable-next-line no-await-in-loop
+        var xmlText = await xmlFile.async('text');
+        var normalized = String(xmlText || '').toUpperCase();
+        rawText += normalized;
+        compactText += normalized.replace(/<[^>]*>/g, '').replace(/\s+/g, '');
+      }
+      var hasYearMarker = compactText.indexOf('[ГОД]') !== -1 || rawText.indexOf('[ГОД]') !== -1;
       return {
-        hasYear: compactText.indexOf('[ГОД]') !== -1
+        hasYear: hasYearMarker,
+        inspected: true
       };
     } catch (_) {
       return defaults;
@@ -1321,7 +1342,7 @@
     var compactTemplateInfo = escapeHtmlInline(templateLabel.length > 38 ? (templateLabel.slice(0, 35) + '...') : templateLabel);
     var overlay = document.createElement('div');
     overlay.className = 'docx-template-modal';
-    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Заполните поля как в документе и сразу отредактируйте текст ответа. Визуализация ниже имитирует реальный лист: заполните дату, адресата, номер и внесите правки в ответ ИИ.</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__paper"><div class="docx-template-modal__paper-head"><div class="docx-template-modal__paper-title">Черновик документа · ' + compactTemplateInfo + '</div><div class="docx-template-modal__paper-chip">Режим заполнения</div></div><div class="docx-template-modal__line-grid"><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Дата</span><span class="docx-template-modal__date-pack"><input class="docx-template-modal__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09"><input class="docx-template-modal__input" data-template-month type="text" placeholder="апреля"></span></label><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Номер</span><input class="docx-template-modal__input" data-template-number type="text" placeholder="12/Д"></label>' + (templateMarkers.hasYear ? '<label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Год</span><input class="docx-template-modal__input" data-template-year type="text" inputmode="numeric" maxlength="4" placeholder="' + String(new Date().getFullYear()) + '"></label>' : '') + '<label class="docx-template-modal__line docx-template-modal__line--full"><span class="docx-template-modal__field-label">Адресат</span><input class="docx-template-modal__input" data-template-addressee type="text" placeholder="ООО «Компания»"></label></div><label class="docx-template-modal__line"><span class="docx-template-modal__textarea-label">Текст ответа ИИ (можно редактировать)</span><div class="docx-template-modal__editor"><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea></div></label></div><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div><div class="docx-template-modal__busy" data-template-busy><div class="docx-template-modal__busy-card"><div class="docx-template-modal__busy-title">Формируем документ…</div><div class="docx-template-modal__busy-sub">Подождите, готовим файл и открываем предпросмотр.</div><div class="docx-template-modal__busy-spinner" aria-hidden="true"></div></div></div></div>';
+    overlay.innerHTML = '<div class="docx-template-modal__panel" role="dialog" aria-modal="true" aria-label="Редактор ответа ИИ для шаблона"><div class="docx-template-modal__head"><div><div class="docx-template-modal__title">Ответ ИИ для шаблона</div><div class="docx-template-modal__sub">Заполните поля как в документе и сразу отредактируйте текст ответа. Визуализация ниже имитирует реальный лист: заполните дату, год, адресата, номер и внесите правки в ответ ИИ.</div></div><button class="docx-template-modal__close" type="button" aria-label="Закрыть">×</button></div><div class="docx-template-modal__body"><div class="docx-template-modal__paper"><div class="docx-template-modal__paper-head"><div class="docx-template-modal__paper-title">Черновик документа · ' + compactTemplateInfo + '</div><div class="docx-template-modal__paper-chip">Режим заполнения</div></div><div class="docx-template-modal__line-grid"><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Дата</span><span class="docx-template-modal__date-pack"><input class="docx-template-modal__input" data-template-day type="text" inputmode="numeric" maxlength="2" placeholder="09"><input class="docx-template-modal__input" data-template-month type="text" placeholder="апреля"></span></label><label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Номер</span><input class="docx-template-modal__input" data-template-number type="text" placeholder="12/Д"></label>' + (templateMarkers.hasYear ? '<label class="docx-template-modal__line"><span class="docx-template-modal__field-label">Год</span><input class="docx-template-modal__input" data-template-year type="text" inputmode="numeric" maxlength="4" placeholder="' + String(new Date().getFullYear()) + '"></label>' : '') + '<label class="docx-template-modal__line docx-template-modal__line--full"><span class="docx-template-modal__field-label">Адресат</span><input class="docx-template-modal__input" data-template-addressee type="text" placeholder="ООО «Компания»"></label></div><label class="docx-template-modal__line"><span class="docx-template-modal__textarea-label">Текст ответа ИИ (можно редактировать)</span><div class="docx-template-modal__editor"><textarea class="docx-template-modal__textarea" spellcheck="true"></textarea></div></label></div><div class="docx-template-modal__error" aria-live="polite"></div></div><div class="docx-template-modal__foot"><button type="button" class="docx-template-modal__btn" data-action="cancel">Отмена</button><button type="button" class="docx-template-modal__btn docx-template-modal__btn--primary" data-action="done">Готово</button></div><div class="docx-template-modal__busy" data-template-busy><div class="docx-template-modal__busy-card"><div class="docx-template-modal__busy-title">Формируем документ…</div><div class="docx-template-modal__busy-sub">Подождите, готовим файл и открываем предпросмотр.</div><div class="docx-template-modal__busy-spinner" aria-hidden="true"></div></div></div></div>';
     document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
     var textarea = overlay.querySelector('.docx-template-modal__textarea');
@@ -1338,7 +1359,7 @@
     var storedTemplateMeta = window.DOCUMENTS_TEMPLATE_META && typeof window.DOCUMENTS_TEMPLATE_META === 'object' ? window.DOCUMENTS_TEMPLATE_META : {};
     if (dayInput) dayInput.value = String(storedTemplateMeta.day || '').trim();
     if (monthInput) monthInput.value = String(storedTemplateMeta.month || '').trim();
-    if (yearInput) yearInput.value = String(storedTemplateMeta.year || '').trim();
+    if (yearInput) yearInput.value = String(storedTemplateMeta.year || '').trim() || String(new Date().getFullYear());
     if (numberInput) numberInput.value = String(storedTemplateMeta.number || '').trim();
     if (addresseeInput) addresseeInput.value = String(storedTemplateMeta.addressee || '');
     var previousButtonText = triggerButton ? triggerButton.textContent : '';
