@@ -666,7 +666,7 @@
   }
 
   async function detectTemplateMarkers(templateConfig) {
-    var defaults = { hasYear: false };
+    var defaults = { hasYear: true, inspected: false };
     try {
       var templateCandidates = getTemplateDocxCandidates(templateConfig);
       var templateUrl = await resolveFirstAvailableUrl(templateCandidates) || templateCandidates[0];
@@ -678,7 +678,7 @@
       var zip = await zipLib.loadAsync(buffer);
       var markerSource = '';
       zip.forEach(function(path, file) {
-        if (file && !file.dir && /^word\/(document|header\d+|footer\d+)\.xml$/i.test(String(path || ''))) {
+        if (file && !file.dir && /^word\/.+\.xml$/i.test(String(path || ''))) {
           markerSource += '\n' + path;
         }
       });
@@ -686,20 +686,23 @@
         .split('\n')
         .map(function(item) { return String(item || '').trim(); })
         .filter(Boolean);
-      if (!targetPaths.length) {
-        targetPaths = ['word/document.xml'];
-      }
+      if (!targetPaths.length) targetPaths = ['word/document.xml'];
       var compactText = '';
+      var rawText = '';
       for (var idx = 0; idx < targetPaths.length; idx += 1) {
         // eslint-disable-next-line no-await-in-loop
         var xmlFile = zip.file(targetPaths[idx]);
         if (!xmlFile) continue;
         // eslint-disable-next-line no-await-in-loop
         var xmlText = await xmlFile.async('text');
-        compactText += String(xmlText || '').replace(/<[^>]*>/g, '').replace(/\s+/g, '').toUpperCase();
+        var normalized = String(xmlText || '').toUpperCase();
+        rawText += normalized;
+        compactText += normalized.replace(/<[^>]*>/g, '').replace(/\s+/g, '');
       }
+      var hasYearMarker = compactText.indexOf('[ГОД]') !== -1 || rawText.indexOf('[ГОД]') !== -1;
       return {
-        hasYear: compactText.indexOf('[ГОД]') !== -1
+        hasYear: hasYearMarker,
+        inspected: true
       };
     } catch (_) {
       return defaults;
