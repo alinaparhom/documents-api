@@ -3155,6 +3155,16 @@ function get_settings_path(string $folder): string
     return DOCUMENTS_ROOT . '/' . $folder . '/' . SETTINGS_FILENAME;
 }
 
+function docs_get_organization_template_filename(string $folder): string
+{
+    return $folder . '_template.docx';
+}
+
+function docs_get_organization_template_path(string $folder): string
+{
+    return DOCUMENTS_ROOT . '/' . $folder . '/' . docs_get_organization_template_filename($folder);
+}
+
 function docs_sanitize_admin_object_name(string $organization): string
 {
     $sanitized = preg_replace('/[^a-zA-Z0-9А-Яа-яЁё._-]/u', '_', $organization);
@@ -13500,6 +13510,109 @@ switch ($action) {
         }
 
         respond_success($responsePayload);
+        break;
+
+    case 'get_organization_template':
+        if ($method !== 'GET') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($_GET['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        docs_require_admin_session($accessContext);
+
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $templateName = docs_get_organization_template_filename($folder);
+        $templatePath = docs_get_organization_template_path($folder);
+        $publicPath = '/' . build_public_path($folder, $templateName);
+        $viewerUrl = 'https://view.officeapps.live.com/op/view.aspx?src='
+            . rawurlencode(docs_resolve_application_base_url() . $publicPath);
+        $exists = is_file($templatePath);
+
+        respond_success([
+            'organization' => $organization,
+            'template' => [
+                'exists' => $exists,
+                'fileName' => $templateName,
+                'templateUrl' => $exists ? $publicPath : '',
+                'viewerUrl' => $exists ? $viewerUrl : '',
+                'size' => $exists ? (int) (@filesize($templatePath) ?: 0) : 0,
+                'updatedAt' => $exists ? date('c', (int) @filemtime($templatePath)) : '',
+            ],
+        ]);
+        break;
+
+    case 'upload_organization_template':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        docs_require_admin_session($accessContext);
+
+        if (!isset($_FILES['template']) || !is_array($_FILES['template'])) {
+            respond_error('Файл шаблона не передан.');
+        }
+
+        $templateFile = $_FILES['template'];
+        $uploadError = isset($templateFile['error']) ? (int) $templateFile['error'] : UPLOAD_ERR_NO_FILE;
+        if ($uploadError !== UPLOAD_ERR_OK) {
+            respond_error('Ошибка загрузки файла шаблона.', 400, ['uploadError' => $uploadError]);
+        }
+
+        $tmpName = isset($templateFile['tmp_name']) ? (string) $templateFile['tmp_name'] : '';
+        if ($tmpName === '' || !is_uploaded_file($tmpName)) {
+            respond_error('Не удалось обработать загруженный файл.', 400);
+        }
+
+        $originalName = isset($templateFile['name']) ? (string) $templateFile['name'] : '';
+        $extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
+        if ($extension !== 'docx' && $extension !== 'doc') {
+            respond_error('Разрешены только файлы .docx или .doc.', 400);
+        }
+
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $targetDir = DOCUMENTS_ROOT . '/' . $folder;
+        if (!is_dir($targetDir) && !@mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
+            respond_error('Не удалось создать папку организации.', 500);
+        }
+
+        $templateName = docs_get_organization_template_filename($folder);
+        $targetPath = docs_get_organization_template_path($folder);
+
+        if (!@move_uploaded_file($tmpName, $targetPath)) {
+            respond_error('Не удалось сохранить шаблон.', 500);
+        }
+
+        @chmod($targetPath, 0664);
+
+        $publicPath = '/' . build_public_path($folder, $templateName);
+        $viewerUrl = 'https://view.officeapps.live.com/op/view.aspx?src='
+            . rawurlencode(docs_resolve_application_base_url() . $publicPath);
+
+        respond_success([
+            'organization' => $organization,
+            'message' => 'Шаблон успешно обновлён.',
+            'template' => [
+                'exists' => true,
+                'fileName' => $templateName,
+                'templateUrl' => $publicPath,
+                'viewerUrl' => $viewerUrl,
+                'size' => (int) (@filesize($targetPath) ?: 0),
+                'updatedAt' => date('c', (int) @filemtime($targetPath)),
+            ],
+        ]);
         break;
 
     case 'get_admin_settings':
