@@ -676,10 +676,28 @@
       var zipLib = await ensureJsZipLoaded();
       var buffer = await response.arrayBuffer();
       var zip = await zipLib.loadAsync(buffer);
-      var docXml = zip.file('word/document.xml');
-      if (!docXml) return defaults;
-      var xmlText = await docXml.async('text');
-      var compactText = String(xmlText || '').replace(/<[^>]*>/g, '').replace(/\s+/g, '').toUpperCase();
+      var markerSource = '';
+      zip.forEach(function(path, file) {
+        if (file && !file.dir && /^word\/(document|header\d+|footer\d+)\.xml$/i.test(String(path || ''))) {
+          markerSource += '\n' + path;
+        }
+      });
+      var targetPaths = markerSource
+        .split('\n')
+        .map(function(item) { return String(item || '').trim(); })
+        .filter(Boolean);
+      if (!targetPaths.length) {
+        targetPaths = ['word/document.xml'];
+      }
+      var compactText = '';
+      for (var idx = 0; idx < targetPaths.length; idx += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        var xmlFile = zip.file(targetPaths[idx]);
+        if (!xmlFile) continue;
+        // eslint-disable-next-line no-await-in-loop
+        var xmlText = await xmlFile.async('text');
+        compactText += String(xmlText || '').replace(/<[^>]*>/g, '').replace(/\s+/g, '').toUpperCase();
+      }
       return {
         hasYear: compactText.indexOf('[ГОД]') !== -1
       };
