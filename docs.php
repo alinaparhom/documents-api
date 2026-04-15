@@ -13526,19 +13526,26 @@ switch ($action) {
         $templateName = docs_get_organization_template_filename($folder);
         $templatePath = docs_get_organization_template_path($folder);
         $publicPath = '/' . build_public_path($folder, $templateName);
-        $viewerUrl = 'https://view.officeapps.live.com/op/view.aspx?src='
-            . rawurlencode(docs_resolve_application_base_url() . $publicPath);
         $exists = is_file($templatePath);
+        $templateMtime = $exists ? (int) (@filemtime($templatePath) ?: time()) : 0;
+        $cacheStamp = $templateMtime > 0 ? (string) $templateMtime : (string) time();
+        $versionedPublicPath = $exists
+            ? $publicPath . (strpos($publicPath, '?') === false ? '?' : '&') . 'v=' . rawurlencode($cacheStamp)
+            : '';
+        $viewerUrl = $exists
+            ? 'https://view.officeapps.live.com/op/view.aspx?src='
+                . rawurlencode(docs_resolve_application_base_url() . $versionedPublicPath)
+            : '';
 
         respond_success([
             'organization' => $organization,
             'template' => [
                 'exists' => $exists,
                 'fileName' => $templateName,
-                'templateUrl' => $exists ? $publicPath : '',
-                'viewerUrl' => $exists ? $viewerUrl : '',
+                'templateUrl' => $versionedPublicPath,
+                'viewerUrl' => $viewerUrl,
                 'size' => $exists ? (int) (@filesize($templatePath) ?: 0) : 0,
-                'updatedAt' => $exists ? date('c', (int) @filemtime($templatePath)) : '',
+                'updatedAt' => $exists ? date('c', $templateMtime) : '',
             ],
         ]);
         break;
@@ -13598,8 +13605,11 @@ switch ($action) {
         @chmod($targetPath, 0664);
 
         $publicPath = '/' . build_public_path($folder, $templateName);
+        $templateMtime = (int) (@filemtime($targetPath) ?: time());
+        $cacheStamp = $templateMtime > 0 ? (string) $templateMtime : (string) time();
+        $versionedPublicPath = $publicPath . (strpos($publicPath, '?') === false ? '?' : '&') . 'v=' . rawurlencode($cacheStamp);
         $viewerUrl = 'https://view.officeapps.live.com/op/view.aspx?src='
-            . rawurlencode(docs_resolve_application_base_url() . $publicPath);
+            . rawurlencode(docs_resolve_application_base_url() . $versionedPublicPath);
 
         respond_success([
             'organization' => $organization,
@@ -13607,10 +13617,10 @@ switch ($action) {
             'template' => [
                 'exists' => true,
                 'fileName' => $templateName,
-                'templateUrl' => $publicPath,
+                'templateUrl' => $versionedPublicPath,
                 'viewerUrl' => $viewerUrl,
                 'size' => (int) (@filesize($targetPath) ?: 0),
-                'updatedAt' => date('c', (int) @filemtime($targetPath)),
+                'updatedAt' => date('c', $templateMtime),
             ],
         ]);
         break;

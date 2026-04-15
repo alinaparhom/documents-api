@@ -5790,7 +5790,7 @@
     templateCard.appendChild(templateName);
     templateCard.appendChild(templateMeta);
     var templateActions = createElement('div', 'documents-template-modal__actions');
-    var templateOpenButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--primary', 'Открыть в Office Viewer');
+    var templateOpenButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--primary', 'Просмотреть');
     templateOpenButton.type = 'button';
     var templateUploadButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Загрузить новый шаблон');
     templateUploadButton.type = 'button';
@@ -6660,7 +6660,7 @@
     try {
       window.open(templateState.viewerUrl, '_blank', 'noopener,noreferrer');
     } catch (error) {
-      setAdminTemplateStatus('Не удалось открыть Office Viewer.', 'error');
+      setAdminTemplateStatus('Не удалось открыть файл для просмотра.', 'error');
     }
   }
 
