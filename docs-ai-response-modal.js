@@ -29,6 +29,7 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
+  var briefJsZipLoader = null;
   var DEFAULT_AI_BEHAVIOR = 'ТЫ — ИИ В РЕЖИМЕ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».\n'    + '\n'    + 'ЦЕЛЬ: ДАТЬ ГОТОВЫЙ ДЕЛОВОЙ ТЕКСТ ОТВЕТА ДЛЯ ВСТАВКИ В ДОКУМЕНТ.\n'    + '\n'    + '=== ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ===\n'    + '1. СЧИТАЙ, ЧТО ТЫ СОТРУДНИК ОРГАНИЗАЦИИ, КОТОРОЙ ПРИШЁЛ ЭТОТ ФАЙЛ ИЛИ НАБОР ФАЙЛОВ.\n'    + '2. УЧИТЫВАЙ ВЕСЬ ДОСТУПНЫЙ КОНТЕКСТ ФАЙЛОВ ЦЕЛИКОМ, НЕ ВЫБИРАЙ ОТРЫВКИ ВЫБОРОЧНО.\n'    + '3. ПИШИ СУГУБО ПО ДЕЛУ, В ДЕЛОВОМ СТИЛЕ, БЕЗ ВЫДУМАННЫХ ФАКТОВ И ПРЕДПОЛОЖЕНИЙ.\n'    + '4. СОБЛЮДАЙ ЗАКОН И ОБЩЕПРИНЯТЫЕ НОРМЫ ДЕЛОВОЙ КОММУНИКАЦИИ.\n'    + '5. ПЕРЕД ОТВЕТОМ ПЕРЕПРОВЕРЬ СЕБЯ: ЛОГИКА, ТОЧНОСТЬ, НЕПРОТИВОРЕЧИВОСТЬ.\n'    + '6. ЕСЛИ В КОНТЕКСТЕ НЕТ НУЖНОЙ КОМПЕТЕНЦИИ ИЛИ ДАННЫХ — ПРЯМО НАПИШИ ОБ ЭТОМ В ОТВЕТЕ.\n'    + '\n'    + '=== ФОРМАТ ВЫВОДА ===\n'    + '- ТОЛЬКО ГОТОВЫЙ ТЕКСТ ОТВЕТА БЕЗ МЕТА-КОММЕНТАРИЕВ.\n'    + '- БЕЗ ПРИВЕТСТВИЯ, БЕЗ ПОДПИСИ, БЕЗ РЕКВИЗИТОВ, БЕЗ СТРОКИ «[ВАШЕ ФИО]» И БЕЗ ФРАЗ ТИПА «С УВАЖЕНИЕМ».\n';
 
   var STYLE_OPTIONS = [
@@ -1861,6 +1862,58 @@
     return window.XLSX;
   }
 
+  async function ensureBriefJsZipLoaded() {
+    if (window.JSZip && typeof window.JSZip.loadAsync === 'function') {
+      return window.JSZip;
+    }
+    if (briefJsZipLoader) {
+      return briefJsZipLoader;
+    }
+    briefJsZipLoader = new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+      script.async = true;
+      script.onload = function() {
+        if (window.JSZip && typeof window.JSZip.loadAsync === 'function') {
+          resolve(window.JSZip);
+          return;
+        }
+        reject(new Error('JSZip библиотека не инициализирована.'));
+      };
+      script.onerror = function() { reject(new Error('Не удалось загрузить JSZip библиотеку.')); };
+      document.head.appendChild(script);
+    }).catch(function(error) {
+      briefJsZipLoader = null;
+      throw error;
+    });
+    return briefJsZipLoader;
+  }
+
+  async function detectTemplateYearMarkerByUrl(templateUrl) {
+    var url = String(templateUrl || '').trim();
+    if (!url) {
+      return false;
+    }
+    try {
+      var zipLib = await ensureBriefJsZipLoaded();
+      var response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+      if (!response || !response.ok) {
+        return false;
+      }
+      var buffer = await response.arrayBuffer();
+      var zip = await zipLib.loadAsync(buffer);
+      var docXml = zip.file('word/document.xml');
+      if (!docXml) {
+        return false;
+      }
+      var xmlText = await docXml.async('text');
+      var compactXml = String(xmlText || '').replace(/<[^>]*>/g, '').replace(/\s+/g, '').toUpperCase();
+      return compactXml.indexOf('[ГОД]') !== -1;
+    } catch (error) {
+      return false;
+    }
+  }
+
   function ensureBriefPdfJsLoaded() {
     if (typeof window !== 'undefined' && window.pdfjsLib) {
       return Promise.resolve(window.pdfjsLib);
@@ -2646,6 +2699,8 @@
     var insertAiTextButton = createElement('button', 'ai-chat-modal__export-btn', 'Вставить текст ИИ');
     var fullPreviewButton = createElement('button', 'ai-chat-modal__export-btn', 'Полный предпросмотр');
     var templateMarkerInput = createElement('input', 'ai-chat-modal__input');
+    var templateYearField = createElement('label', 'ai-chat-modal__field');
+    var templateYearInput = createElement('input', 'ai-chat-modal__input');
     var templateFileMeta = createElement('div', 'ai-chat-template-file-meta', 'Шаблон: по умолчанию');
     var templateFileInput = document.createElement('input');
     templateUploadButton.type = 'button';
@@ -2654,12 +2709,21 @@
     templateMarkerInput.type = 'text';
     templateMarkerInput.value = 'Текст';
     templateMarkerInput.style.display = 'none';
+    templateYearInput.type = 'text';
+    templateYearInput.inputMode = 'numeric';
+    templateYearInput.maxLength = 4;
+    templateYearInput.placeholder = String(new Date().getFullYear());
+    templateYearInput.value = String(new Date().getFullYear());
+    templateYearField.appendChild(createElement('span', '', 'Год'));
+    templateYearField.appendChild(templateYearInput);
+    templateYearField.style.display = 'none';
     templateFileInput.type = 'file';
     templateFileInput.accept = '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     templateFileInput.style.display = 'none';
     templateTopActions.appendChild(templateUploadButton);
     templateTopActions.appendChild(insertAiTextButton);
     templateTopActions.appendChild(fullPreviewButton);
+    templateTopActions.appendChild(templateYearField);
     templateTopActions.appendChild(templateFileMeta);
     templateTopActions.appendChild(templateMarkerInput);
     templateTopActions.appendChild(templateFileInput);
@@ -2733,7 +2797,8 @@
       docxUrl: '',
       pdfUrl: '',
       editedText: '',
-      customTemplateObjectUrl: ''
+      customTemplateObjectUrl: '',
+      hasYearMarker: false
     };
     window.templateEditorInstance = templateEditorInstance;
     var templateDocxCandidates = [
@@ -3022,6 +3087,11 @@
       if (!templateState.customTemplateObjectUrl) {
         templateFileMeta.textContent = 'Шаблон: по умолчанию';
       }
+      templateState.hasYearMarker = await detectTemplateYearMarkerByUrl(templateState.docxUrl);
+      templateYearField.style.display = templateState.hasYearMarker ? '' : 'none';
+      if (templateState.hasYearMarker && !String(templateYearInput.value || '').trim()) {
+        templateYearInput.value = String(new Date().getFullYear());
+      }
       templateState.docxLoaded = true;
     }
 
@@ -3059,6 +3129,9 @@
         formData.append('format', format);
         formData.append('html', structuredHtml);
         formData.append('documentTitle', config.documentTitle || 'template');
+        if (templateState.hasYearMarker) {
+          formData.append('templateYear', String(templateYearInput.value || '').trim() || String(new Date().getFullYear()));
+        }
         formData.append('placeholders', JSON.stringify([markerValue, '{{AI_RESPONSE}}', '[AI_RESPONSE]', '{AI_RESPONSE}', '[[AI_RESPONSE]]']));
         if (state.templateFile && state.templateFile.fileObject) {
           formData.append('templateFile', state.templateFile.fileObject, state.templateFile.fileObject.name || 'template.docx');
