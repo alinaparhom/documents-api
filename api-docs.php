@@ -1669,6 +1669,7 @@ if ($action === 'generate_document') {
     $documentTitle = trim((string)($_POST['documentTitle'] ?? ''));
     $templateDay = normalizeDocText((string)($_POST['templateDay'] ?? ''));
     $templateMonth = normalizeDocText((string)($_POST['templateMonth'] ?? ''));
+    $templateYear = normalizeDocText((string)($_POST['templateYear'] ?? ''));
     $templateNumber = normalizeDocText((string)($_POST['templateNumber'] ?? ''));
     $templateAddressee = normalizeDocText((string)($_POST['templateAddressee'] ?? ''));
     $organizationName = trim((string)($_POST['organization'] ?? ''));
@@ -1735,6 +1736,7 @@ if ($action === 'generate_document') {
         if ($templateMonth !== '') {
             $docxReplacements['[МЕСЯЦ]'] = $templateMonth;
         }
+        $docxReplacements['[ГОД]'] = $templateYear !== '' ? $templateYear : date('Y');
         if ($templateNumber !== '') {
             $docxReplacements['[НОМЕР]'] = $templateNumber;
         }
