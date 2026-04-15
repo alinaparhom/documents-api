@@ -502,7 +502,7 @@ function ensureAiDialogScriptLoaded() {
   if (!aiDialogLoader) {
     aiDialogLoader = (async () => {
       try {
-        await import('./telegram-ai-response-dialog.js');
+        await import('./telegram-ai-response-dialog.js' + _vSuffix);
         if (typeof window.openAiResponseDialog === 'function') {
           return window.openAiResponseDialog;
         }
