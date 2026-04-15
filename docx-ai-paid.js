@@ -10,7 +10,7 @@
   ].join('\n');
   var RESPONSE_OUTPUT_DIRECTIVE = [
     'СИСТЕМНЫЙ РЕЖИМ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».',
-    'Верни только готовый текст ответа для вставки в документ: без приветствия, без подписи, без реквизитов и без фраз типа «С уважением».',
+    'Верни только готовый текст ответа для вставки в документ: без приветствия, без подписи, без реквизитов, без фраз типа «С уважением» и без строк вида «[Ваше ФИО]».',
     'Считай, что ты сотрудник организации, получившей этот файл или набор файлов, и отвечаешь официально в деловом стиле.',
     'Обязательно учитывай весь доступный контекст файлов целиком, не придумывай факты и не выходи за рамки данных.',
     'Ответ должен соответствовать законодательству и общепринятым нормам деловой коммуникации.',
@@ -71,6 +71,23 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function sanitizeAssistantFinalText(value) {
+    var normalizedText = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    if (!normalizedText) return '';
+    var lines = normalizedText.split('\n');
+    var signatureLinePattern = /^\s*(с\s+уважением[,.!:\-\s]*|с\s+наилучшими\s+пожеланиями[,.!:\-\s]*|подпись|реквизиты?|контакты?|тел\.?|e-?mail|(?:\[)?ваше\s+фио(?:\])?|фио|руководитель\b|директор\b|генеральный\s+директор\b|исполнитель\b)/i;
+    var cutIndex = lines.length;
+    for (var index = lines.length - 1; index >= 0; index -= 1) {
+      var current = String(lines[index] || '').trim();
+      if (!current) continue;
+      if (signatureLinePattern.test(current)) {
+        cutIndex = index;
+      }
+    }
+    var cleaned = lines.slice(0, cutIndex).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    return cleaned || '';
   }
 
   function ensureVipAiModalStyles() {
@@ -845,7 +862,7 @@
         var content = createElement('div', 'documents-vip-ai__msg-content');
         content.innerHTML = formatAiTextToHtml(text);
         message.appendChild(content);
-        var normalizedAssistant = String(text || '').trim();
+        var normalizedAssistant = sanitizeAssistantFinalText(text) || String(text || '').trim();
         if (normalizedAssistant && normalizedAssistant !== '⏳ Обрабатываю запрос...') {
           window.DOCUMENTS_LAST_AI_ANSWER = normalizedAssistant;
           if (templateButton) templateButton.disabled = false;
@@ -967,7 +984,7 @@
           });
         })
         .then(function(data) {
-          var aiText = String((data && data.response) || (data && data.answer) || '').trim() || 'Пустой ответ.';
+          var aiText = sanitizeAssistantFinalText((data && data.response) || (data && data.answer) || '') || 'Пустой ответ.';
           window.DOCUMENTS_LAST_AI_ANSWER = aiText;
           if (templateButton) templateButton.disabled = false;
           pushChat('assistant', aiText);
@@ -1317,7 +1334,10 @@
         textarea.focus();
         return;
       }
-      var aiText = aiTextRaw.replace(/[ \t]+$/gm, '');
+      var aiText = sanitizeAssistantFinalText(aiTextRaw.replace(/[ \t]+$/gm, ''));
+      if (textarea && aiText) {
+        textarea.value = aiText;
+      }
       var defaultTemplateFieldValue = '_____';
       var rawDayValue = dayInput ? String(dayInput.value || '').trim() : '';
       var rawMonthValue = monthInput ? String(monthInput.value || '').trim() : '';

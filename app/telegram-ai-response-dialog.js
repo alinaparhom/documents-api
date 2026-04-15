@@ -17,7 +17,7 @@
   ];
   let briefPdfJsLoader = null;
   const RESPONSE_OUTPUT_DIRECTIVE = `СИСТЕМНЫЙ РЕЖИМ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».
-Верни только готовый текст ответа для вставки в документ: без приветствия, без подписи, без реквизитов и без фраз типа «С уважением».
+Верни только готовый текст ответа для вставки в документ: без приветствия, без подписи, без реквизитов, без фраз типа «С уважением» и без строк вида «[Ваше ФИО]».
 Считай, что ты сотрудник организации, получившей этот файл или набор файлов, и отвечаешь официально в деловом стиле.
 Обязательно учитывай весь доступный контекст файлов целиком, не придумывай факты и не выходи за рамки данных.
 Ответ должен соответствовать законодательству и общепринятым нормам деловой коммуникации.
@@ -69,6 +69,27 @@
 
   function normalize(value) {
     return String(value || '').trim();
+  }
+
+  function sanitizeAssistantFinalText(value) {
+    const normalizedText = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    if (!normalizedText) return '';
+    const lines = normalizedText.split('\n');
+    const signatureLinePattern = /^\s*(с\s+уважением[,.!:\-\s]*|с\s+наилучшими\s+пожеланиями[,.!:\-\s]*|подпись|реквизиты?|контакты?|тел\.?|e-?mail|(?:\[)?ваше\s+фио(?:\])?|фио|руководитель\b|директор\b|генеральный\s+директор\b|исполнитель\b)/i;
+    let cutIndex = lines.length;
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const current = String(lines[index] || '').trim();
+      if (!current) continue;
+      if (signatureLinePattern.test(current)) {
+        cutIndex = index;
+      }
+    }
+    const cleaned = lines
+      .slice(0, cutIndex)
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return cleaned || '';
   }
 
   function resolveAuthorizedUserName(globalObject) {
@@ -1361,7 +1382,11 @@
     };
     doneButton?.addEventListener('click', async () => {
       const answerRaw = String(textInput && textInput.value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      const answer = answerRaw.trim();
+      const answerSanitized = sanitizeAssistantFinalText(answerRaw);
+      if (textInput && answerSanitized !== answerRaw.trim()) {
+        textInput.value = answerSanitized;
+      }
+      const answer = answerSanitized.trim();
       const defaultTemplateFieldValue = '_____';
       const day = normalize(dayInput && dayInput.value) || defaultTemplateFieldValue;
       const month = normalize(monthInput && monthInput.value) || defaultTemplateFieldValue;
@@ -1797,9 +1822,10 @@
       const loadingBubble = createLoadingBubble(messages);
 
       try {
-        const answer = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: styleMeta.prompt, selectedFiles }, (message) => {
+        const answerRaw = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: styleMeta.prompt, selectedFiles }, (message) => {
           status.textContent = message;
         });
+        const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
         lastAiAnswer = answer;
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
