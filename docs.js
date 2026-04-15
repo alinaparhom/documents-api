@@ -616,7 +616,16 @@
     logList: null,
     logTextarea: null,
     logCopyButton: null,
-    logCloseButton: null
+    logCloseButton: null,
+    templateButton: null,
+    templateModal: null,
+    templateStatus: null,
+    templateName: null,
+    templateMeta: null,
+    templateOpenButton: null,
+    templateUploadButton: null,
+    templateUploadInput: null,
+    templateCloseButton: null
   };
   var clockState = {
     container: null,
@@ -1130,6 +1139,19 @@
         visible: false,
         promise: null,
         lastLoadedAt: 0
+      },
+      template: {
+        exists: false,
+        fileName: '',
+        templateUrl: '',
+        viewerUrl: '',
+        size: 0,
+        updatedAt: '',
+        loading: false,
+        uploading: false,
+        error: '',
+        visible: false,
+        promise: null
       }
     },
     resizeTimer: null,
@@ -5568,10 +5590,47 @@
     }
   }
 
+  function ensureAdminTemplateStyles() {
+    if (document.getElementById('documents-admin-template-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-admin-template-style';
+    style.textContent = '' +
+      '.documents-admin__template-button{margin-right:8px;}' +
+      '.documents-template-modal{position:fixed;inset:0;z-index:1900;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,0.32);backdrop-filter:blur(10px);}' +
+      '.documents-template-modal.is-visible{display:flex;}' +
+      '.documents-template-modal__panel{width:min(560px,100%);max-height:min(88vh,760px);overflow:auto;border-radius:22px;background:linear-gradient(165deg, rgba(255,255,255,0.96), rgba(248,250,252,0.92));border:1px solid rgba(255,255,255,0.95);box-shadow:0 28px 60px rgba(15,23,42,0.22);padding:18px;display:flex;flex-direction:column;gap:14px;}' +
+      '.documents-template-modal__title{margin:0;font-size:20px;font-weight:700;color:#0f172a;}' +
+      '.documents-template-modal__subtitle{margin:0;color:#64748b;font-size:13px;line-height:1.45;}' +
+      '.documents-template-modal__card{border:1px solid rgba(148,163,184,0.3);border-radius:16px;padding:14px;background:rgba(255,255,255,0.72);display:flex;flex-direction:column;gap:8px;}' +
+      '.documents-template-modal__name{font-size:15px;font-weight:700;color:#0f172a;word-break:break-word;}' +
+      '.documents-template-modal__meta{font-size:12px;color:#64748b;word-break:break-word;}' +
+      '.documents-template-modal__status{display:none;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:600;background:rgba(59,130,246,0.12);color:#1d4ed8;}' +
+      '.documents-template-modal__status.is-visible{display:block;}' +
+      '.documents-template-modal__status--error{background:rgba(239,68,68,0.14);color:#b91c1c;}' +
+      '.documents-template-modal__status--success{background:rgba(16,185,129,0.15);color:#047857;}' +
+      '.documents-template-modal__actions{display:flex;flex-wrap:wrap;gap:10px;}' +
+      '.documents-template-modal__button{border:none;border-radius:12px;padding:11px 14px;font-size:14px;font-weight:600;cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, opacity .2s ease;}' +
+      '.documents-template-modal__button:disabled{opacity:0.6;cursor:default;transform:none;box-shadow:none;}' +
+      '.documents-template-modal__button--primary{background:linear-gradient(120deg,#2563eb,#38bdf8);color:#fff;box-shadow:0 16px 28px rgba(37,99,235,0.28);}' +
+      '.documents-template-modal__button--secondary{background:rgba(148,163,184,0.18);color:#0f172a;}' +
+      '.documents-template-modal__button:hover:not(:disabled){transform:translateY(-1px);}' +
+      '@media (max-width: 720px){' +
+      '.documents-template-modal{padding:8px;align-items:flex-end;}' +
+      '.documents-template-modal__panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;padding:14px;}' +
+      '.documents-template-modal__actions{display:grid;grid-template-columns:1fr;}' +
+      '.documents-template-modal__button{width:100%;}' +
+      '}' +
+      '';
+    document.head.appendChild(style);
+  }
+
   function ensureAdminModal() {
     if (adminElements.modal) {
       return;
     }
+    ensureAdminTemplateStyles();
 
     var modal = createElement('div', 'documents-admin');
     modal.id = 'documents-admin';
@@ -5596,6 +5655,10 @@
     message.setAttribute('role', 'status');
     message.setAttribute('aria-live', 'polite');
     headerActions.appendChild(message);
+
+    var templateButton = createElement('button', 'documents-admin__log-button documents-admin__template-button', 'Шаблон');
+    templateButton.type = 'button';
+    headerActions.appendChild(templateButton);
 
     var logButton = createElement('button', 'documents-admin__log-button', 'Журнал мини-приложения');
     logButton.type = 'button';
@@ -5711,6 +5774,44 @@
     dialog.appendChild(footer);
 
     modal.appendChild(dialog);
+
+    var templateModal = createElement('div', 'documents-template-modal');
+    templateModal.setAttribute('aria-hidden', 'true');
+    var templatePanel = createElement('div', 'documents-template-modal__panel');
+    templatePanel.setAttribute('role', 'dialog');
+    templatePanel.setAttribute('aria-modal', 'true');
+    var templateTitle = createElement('h3', 'documents-template-modal__title', 'Шаблон организации');
+    var templateSubtitle = createElement('p', 'documents-template-modal__subtitle', 'Здесь можно посмотреть текущий шаблон и загрузить новый файл .docx. Замена выполняется безопасно с индикатором прогресса.');
+    var templateStatus = createElement('div', 'documents-template-modal__status');
+    templateStatus.setAttribute('role', 'status');
+    var templateCard = createElement('div', 'documents-template-modal__card');
+    var templateName = createElement('div', 'documents-template-modal__name', 'Загружаем…');
+    var templateMeta = createElement('div', 'documents-template-modal__meta', '');
+    templateCard.appendChild(templateName);
+    templateCard.appendChild(templateMeta);
+    var templateActions = createElement('div', 'documents-template-modal__actions');
+    var templateOpenButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--primary', 'Открыть в Office Viewer');
+    templateOpenButton.type = 'button';
+    var templateUploadButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Загрузить новый шаблон');
+    templateUploadButton.type = 'button';
+    var templateCloseButton = createElement('button', 'documents-template-modal__button documents-template-modal__button--secondary', 'Закрыть');
+    templateCloseButton.type = 'button';
+    templateActions.appendChild(templateOpenButton);
+    templateActions.appendChild(templateUploadButton);
+    templateActions.appendChild(templateCloseButton);
+    var templateUploadInput = document.createElement('input');
+    templateUploadInput.type = 'file';
+    templateUploadInput.accept = '.doc,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword';
+    templateUploadInput.style.display = 'none';
+    templatePanel.appendChild(templateTitle);
+    templatePanel.appendChild(templateSubtitle);
+    templatePanel.appendChild(templateStatus);
+    templatePanel.appendChild(templateCard);
+    templatePanel.appendChild(templateActions);
+    templatePanel.appendChild(templateUploadInput);
+    templateModal.appendChild(templatePanel);
+    document.body.appendChild(templateModal);
+
     document.body.appendChild(modal);
 
     adminElements.modal = modal;
@@ -5720,12 +5821,21 @@
     adminElements.saveButton = saveButton;
     adminElements.closeButton = closeButton;
     adminElements.logButton = logButton;
+    adminElements.templateButton = templateButton;
     adminElements.logPanel = logPanel;
     adminElements.logStatus = logStatus;
     adminElements.logList = logList;
     adminElements.logTextarea = logTextarea;
     adminElements.logCopyButton = logCopy;
     adminElements.logCloseButton = logClose;
+    adminElements.templateModal = templateModal;
+    adminElements.templateStatus = templateStatus;
+    adminElements.templateName = templateName;
+    adminElements.templateMeta = templateMeta;
+    adminElements.templateOpenButton = templateOpenButton;
+    adminElements.templateUploadButton = templateUploadButton;
+    adminElements.templateUploadInput = templateUploadInput;
+    adminElements.templateCloseButton = templateCloseButton;
 
     closeButton.addEventListener('click', function() {
       closeAdminModal();
@@ -5733,6 +5843,10 @@
 
     dismiss.addEventListener('click', function() {
       closeAdminModal();
+    });
+
+    templateButton.addEventListener('click', function() {
+      openAdminTemplateModal();
     });
 
     logButton.addEventListener('click', function() {
@@ -5745,6 +5859,36 @@
 
     logCopy.addEventListener('click', function() {
       copyAdminLogToClipboard();
+    });
+
+    templateCloseButton.addEventListener('click', function() {
+      closeAdminTemplateModal();
+    });
+
+    templateModal.addEventListener('click', function(event) {
+      if (event.target === templateModal) {
+        closeAdminTemplateModal();
+      }
+    });
+
+    templateOpenButton.addEventListener('click', function() {
+      openTemplateInOfficeViewer();
+    });
+
+    templateUploadButton.addEventListener('click', function() {
+      if (adminElements.templateUploadInput && !state.admin.template.uploading) {
+        adminElements.templateUploadInput.click();
+      }
+    });
+
+    templateUploadInput.addEventListener('change', function(event) {
+      var fileList = event && event.target && event.target.files ? event.target.files : [];
+      var file = fileList && fileList[0] ? fileList[0] : null;
+      if (!file) {
+        return;
+      }
+      uploadOrganizationTemplate(file);
+      templateUploadInput.value = '';
     });
 
     saveButton.addEventListener('click', function() {
@@ -6365,6 +6509,246 @@
     }
   }
 
+  function ensureAdminTemplateState() {
+    if (!state.admin.template) {
+      state.admin.template = {
+        exists: false,
+        fileName: '',
+        templateUrl: '',
+        viewerUrl: '',
+        size: 0,
+        updatedAt: '',
+        loading: false,
+        uploading: false,
+        error: '',
+        visible: false,
+        promise: null
+      };
+    }
+    return state.admin.template;
+  }
+
+  function formatTemplateSize(size) {
+    var bytes = Number(size);
+    if (!isFinite(bytes) || bytes <= 0) {
+      return '';
+    }
+    if (bytes < 1024) {
+      return bytes + ' Б';
+    }
+    if (bytes < 1024 * 1024) {
+      return (bytes / 1024).toFixed(1).replace('.0', '') + ' КБ';
+    }
+    return (bytes / (1024 * 1024)).toFixed(1).replace('.0', '') + ' МБ';
+  }
+
+  function setAdminTemplateStatus(text, type) {
+    ensureAdminModal();
+    if (!adminElements.templateStatus) {
+      return;
+    }
+    var status = adminElements.templateStatus;
+    status.textContent = text || '';
+    status.classList.toggle('is-visible', Boolean(text));
+    status.classList.remove('documents-template-modal__status--error', 'documents-template-modal__status--success');
+    if (type === 'error') {
+      status.classList.add('documents-template-modal__status--error');
+    } else if (type === 'success') {
+      status.classList.add('documents-template-modal__status--success');
+    }
+  }
+
+  function updateAdminTemplatePanel() {
+    ensureAdminModal();
+    var templateState = ensureAdminTemplateState();
+    if (adminElements.templateButton) {
+      adminElements.templateButton.disabled = !state.organization;
+    }
+    if (!adminElements.templateName || !adminElements.templateMeta) {
+      return;
+    }
+    if (templateState.loading) {
+      adminElements.templateName.textContent = 'Загружаем данные шаблона…';
+      adminElements.templateMeta.textContent = 'Пожалуйста, подождите.';
+      setAdminTemplateStatus('Получаем текущий шаблон…', 'info');
+    } else if (templateState.error) {
+      adminElements.templateName.textContent = 'Не удалось получить шаблон';
+      adminElements.templateMeta.textContent = templateState.error;
+      setAdminTemplateStatus(templateState.error, 'error');
+    } else if (templateState.exists) {
+      adminElements.templateName.textContent = templateState.fileName || 'Шаблон организации';
+      var metaParts = [];
+      var formattedSize = formatTemplateSize(templateState.size);
+      if (formattedSize) {
+        metaParts.push('Размер: ' + formattedSize);
+      }
+      if (templateState.updatedAt) {
+        metaParts.push('Обновлён: ' + formatAdminLogTimestamp(templateState.updatedAt));
+      }
+      metaParts.push('Путь: /documents/' + encodeURIComponent(state.organization || '') + '/' + encodeURIComponent((state.organization || '') + '_template.docx'));
+      adminElements.templateMeta.textContent = metaParts.join(' • ');
+      setAdminTemplateStatus(templateState.uploading ? 'Загрузка шаблона…' : 'Текущий шаблон готов к просмотру.', 'success');
+    } else {
+      adminElements.templateName.textContent = 'Шаблон ещё не загружен';
+      adminElements.templateMeta.textContent = 'Загрузите .docx файл — он будет сохранён как шаблон организации.';
+      setAdminTemplateStatus('Файл шаблона не найден. Загрузите новый.', 'info');
+    }
+    if (adminElements.templateOpenButton) {
+      adminElements.templateOpenButton.disabled = !templateState.exists || templateState.loading || templateState.uploading;
+    }
+    if (adminElements.templateUploadButton) {
+      adminElements.templateUploadButton.disabled = templateState.loading || templateState.uploading;
+      adminElements.templateUploadButton.textContent = templateState.uploading ? 'Загрузка…' : 'Загрузить новый шаблон';
+    }
+  }
+
+  function fetchAdminTemplate(options) {
+    var templateState = ensureAdminTemplateState();
+    var force = options && options.force;
+    if (!state.organization) {
+      templateState.error = 'Сначала выберите организацию.';
+      updateAdminTemplatePanel();
+      return Promise.reject(new Error(templateState.error));
+    }
+    if (templateState.loading && templateState.promise) {
+      return templateState.promise;
+    }
+    if (!force && templateState.exists && !templateState.error) {
+      return Promise.resolve(templateState);
+    }
+    templateState.loading = true;
+    templateState.error = '';
+    updateAdminTemplatePanel();
+    var request = fetch(buildApiUrl('get_organization_template', {
+      organization: state.organization
+    }), {
+      credentials: 'same-origin'
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        var payload = data && data.template && typeof data.template === 'object' ? data.template : {};
+        templateState.exists = payload.exists === true;
+        templateState.fileName = payload.fileName ? String(payload.fileName) : '';
+        templateState.templateUrl = payload.templateUrl ? String(payload.templateUrl) : '';
+        templateState.viewerUrl = payload.viewerUrl ? String(payload.viewerUrl) : '';
+        templateState.size = payload.size ? Number(payload.size) : 0;
+        templateState.updatedAt = payload.updatedAt ? String(payload.updatedAt) : '';
+        templateState.error = '';
+        updateAdminTemplatePanel();
+        return templateState;
+      })
+      .catch(function(error) {
+        templateState.error = error && error.message ? error.message : 'Не удалось загрузить данные шаблона.';
+        updateAdminTemplatePanel();
+        throw error;
+      })
+      .finally(function() {
+        templateState.loading = false;
+        templateState.promise = null;
+        updateAdminTemplatePanel();
+      });
+    templateState.promise = request;
+    return request;
+  }
+
+  function openTemplateInOfficeViewer() {
+    var templateState = ensureAdminTemplateState();
+    if (!templateState.exists || !templateState.viewerUrl) {
+      setAdminTemplateStatus('Сначала загрузите шаблон .docx.', 'error');
+      return;
+    }
+    try {
+      window.open(templateState.viewerUrl, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setAdminTemplateStatus('Не удалось открыть Office Viewer.', 'error');
+    }
+  }
+
+  function uploadOrganizationTemplate(file) {
+    var templateState = ensureAdminTemplateState();
+    if (!file || typeof file !== 'object' || !file.name) {
+      setAdminTemplateStatus('Файл не выбран.', 'error');
+      return;
+    }
+    var name = file.name ? String(file.name).toLowerCase() : '';
+    if (name.slice(-5) !== '.docx' && name.slice(-4) !== '.doc') {
+      setAdminTemplateStatus('Поддерживаются только файлы .docx или .doc.', 'error');
+      return;
+    }
+    templateState.uploading = true;
+    templateState.error = '';
+    updateAdminTemplatePanel();
+    setAdminTemplateStatus('Подготавливаем файл к загрузке…', 'info');
+    var formData = new FormData();
+    formData.append('action', 'upload_organization_template');
+    formData.append('organization', state.organization || '');
+    formData.append('template', file, file.name || 'template.docx');
+    appendTelegramUserIdToFormData(formData);
+    uploadFormDataWithProgress(buildApiUrl('upload_organization_template'), formData, function(progress) {
+      if (!progress || !progress.lengthComputable || progress.total <= 0) {
+        setAdminTemplateStatus('Загрузка шаблона…', 'info');
+        return;
+      }
+      var percent = Math.round((progress.loaded / progress.total) * 100);
+      setAdminTemplateStatus('Загрузка шаблона: ' + percent + '%', 'info');
+    })
+      .then(handleResponseData)
+      .then(function() {
+        setAdminTemplateStatus('Шаблон успешно обновлён.', 'success');
+        return fetchAdminTemplate({ force: true });
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : 'Не удалось загрузить шаблон.';
+        setAdminTemplateStatus(message, 'error');
+      })
+      .finally(function() {
+        templateState.uploading = false;
+        updateAdminTemplatePanel();
+      });
+
+    function handleResponseData(data) {
+      if (!data || typeof data !== 'object') {
+        return {};
+      }
+      if (data.error) {
+        throw new Error(String(data.error));
+      }
+      return data;
+    }
+  }
+
+  function openAdminTemplateModal() {
+    ensureAdminModal();
+    var templateState = ensureAdminTemplateState();
+    if (!state.organization) {
+      setAdminTemplateStatus('Сначала выберите организацию.', 'error');
+      return;
+    }
+    templateState.visible = true;
+    if (adminElements.templateModal) {
+      adminElements.templateModal.classList.add('is-visible');
+      adminElements.templateModal.setAttribute('aria-hidden', 'false');
+    }
+    updateAdminTemplatePanel();
+    fetchAdminTemplate({ force: true }).catch(function(error) {
+      docsLogger.warn('Не удалось загрузить шаблон организации:', error);
+    });
+  }
+
+  function closeAdminTemplateModal(options) {
+    ensureAdminModal();
+    var templateState = ensureAdminTemplateState();
+    templateState.visible = false;
+    if (adminElements.templateModal) {
+      adminElements.templateModal.classList.remove('is-visible');
+      adminElements.templateModal.setAttribute('aria-hidden', 'true');
+    }
+    var shouldRestoreFocus = !(options && options.skipFocus);
+    if (shouldRestoreFocus && adminElements.templateButton && typeof adminElements.templateButton.focus === 'function') {
+      adminElements.templateButton.focus();
+    }
+  }
+
   function ensureAdminUserLogState() {
     if (!state.admin.userLog) {
       state.admin.userLog = {
@@ -6703,7 +7087,10 @@
     ensureAdminModal();
     lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     ensureAdminUserLogState().visible = false;
+    ensureAdminTemplateState().visible = false;
+    closeAdminTemplateModal({ skipFocus: true });
     updateAdminLogPanel();
+    updateAdminTemplatePanel();
     adminElements.modal.classList.add('is-visible');
     adminElements.modal.setAttribute('aria-hidden', 'false');
     document.addEventListener('keydown', handleAdminKeydown, true);
@@ -6724,7 +7111,9 @@
     adminElements.modal.setAttribute('aria-hidden', 'true');
     document.removeEventListener('keydown', handleAdminKeydown, true);
     ensureAdminUserLogState().visible = false;
+    ensureAdminTemplateState().visible = false;
     updateAdminLogPanel();
+    closeAdminTemplateModal({ skipFocus: true });
     if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
       lastFocusedElement.focus();
     }
@@ -6734,7 +7123,9 @@
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      if (ensureAdminUserLogState().visible) {
+      if (ensureAdminTemplateState().visible) {
+        closeAdminTemplateModal();
+      } else if (ensureAdminUserLogState().visible) {
         closeAdminLogPanel();
       } else {
         closeAdminModal();
