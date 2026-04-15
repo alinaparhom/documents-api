@@ -66,6 +66,7 @@
     }
   };
   const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
+  let jsZipLoaderPromise = null;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -277,6 +278,55 @@
       return list.find((item) => String(item).startsWith('/app/')) || list[0];
     }
     return list[0];
+  }
+
+  function getTemplateMarkerValue(marker) {
+    return String(marker || '').trim().toUpperCase();
+  }
+
+  async function ensureJsZipLoaded() {
+    if (typeof window !== 'undefined' && window.JSZip && typeof window.JSZip.loadAsync === 'function') {
+      return window.JSZip;
+    }
+    if (!jsZipLoaderPromise) {
+      jsZipLoaderPromise = loadBriefScript(
+        'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+        () => Boolean(window.JSZip && typeof window.JSZip.loadAsync === 'function'),
+      )
+        .then(() => window.JSZip)
+        .catch((error) => {
+          jsZipLoaderPromise = null;
+          throw error;
+        });
+    }
+    return jsZipLoaderPromise;
+  }
+
+  async function detectTemplateMarkers(task = {}) {
+    const defaults = { hasYear: false };
+    try {
+      const templateConfig = buildOrganizationTemplateConfig(task);
+      const candidates = [
+        templateConfig.templatePath,
+        ...getTemplateDocxCandidates(),
+      ];
+      const templateUrl = await resolveFirstAvailableUrl(candidates) || pickPreferredTemplateDocxUrl(candidates);
+      if (!templateUrl) return defaults;
+      const JSZipLib = await ensureJsZipLoaded();
+      const response = await fetchWithTimeout(templateUrl, { credentials: 'include', cache: 'no-store' }, 12000);
+      if (!response || !response.ok) return defaults;
+      const buffer = await response.arrayBuffer();
+      const zip = await JSZipLib.loadAsync(buffer);
+      const documentXmlFile = zip.file('word/document.xml');
+      if (!documentXmlFile) return defaults;
+      const xml = await documentXmlFile.async('text');
+      const compactXml = String(xml || '').replace(/<[^>]*>/g, '').replace(/\s+/g, '');
+      return {
+        hasYear: compactXml.includes(getTemplateMarkerValue('[ГОД]')),
+      };
+    } catch (_) {
+      return defaults;
+    }
   }
 
   function buildFileUrlCandidates(file) {
@@ -864,6 +914,7 @@
       formData.append('answer', String(answerText || ''));
       formData.append('templateDay', String(meta.day || ''));
       formData.append('templateMonth', String(meta.month || ''));
+      formData.append('templateYear', String(meta.year || ''));
       formData.append('templateNumber', String(meta.number || ''));
       formData.append('templateAddressee', String(meta.addressee || ''));
       if (meta.organization) formData.append('organization', String(meta.organization || ''));
@@ -1307,11 +1358,12 @@
     }
   }
 
-  function openTemplateAnswerEditor(context = {}) {
+  async function openTemplateAnswerEditor(context = {}) {
     if (document.querySelector('.tg-ai-template-editor')) return;
     const aiText = normalize(context && context.aiAnswer) || DEFAULT_TEMPLATE_ANSWER_TEXT;
     const task = context && context.task ? context.task : {};
     const templateConfig = buildOrganizationTemplateConfig(task);
+    const templateMarkers = await detectTemplateMarkers(task);
     const onStatus = typeof context.onStatus === 'function' ? context.onStatus : null;
     const storedTemplateMeta = globalScope && globalScope.DOCUMENTS_TEMPLATE_META && typeof globalScope.DOCUMENTS_TEMPLATE_META === 'object'
       ? globalScope.DOCUMENTS_TEMPLATE_META
@@ -1340,6 +1392,12 @@
               <span class="tg-ai-template-editor__label">Номер</span>
               <input class="tg-ai-template-editor__input" data-template-number type="text" placeholder="12/Д">
             </label>
+            ${templateMarkers.hasYear ? `
+            <label class="tg-ai-template-editor__field">
+              <span class="tg-ai-template-editor__label">Год</span>
+              <input class="tg-ai-template-editor__input" data-template-year type="text" inputmode="numeric" maxlength="4" placeholder="${new Date().getFullYear()}">
+            </label>
+            ` : ''}
             <label class="tg-ai-template-editor__field tg-ai-template-editor__field--full">
               <span class="tg-ai-template-editor__label">Адресат</span>
               <input class="tg-ai-template-editor__input" data-template-addressee type="text" placeholder="ООО «Компания»">
@@ -1360,6 +1418,7 @@
     document.body.appendChild(overlay);
     const dayInput = overlay.querySelector('[data-template-day]');
     const monthInput = overlay.querySelector('[data-template-month]');
+    const yearInput = overlay.querySelector('[data-template-year]');
     const numberInput = overlay.querySelector('[data-template-number]');
     const addresseeInput = overlay.querySelector('[data-template-addressee]');
     const textInput = overlay.querySelector('[data-template-answer]');
@@ -1367,6 +1426,7 @@
     const errorNode = overlay.querySelector('[data-template-error]');
     if (dayInput) dayInput.value = normalize(storedTemplateMeta.day);
     if (monthInput) monthInput.value = normalize(storedTemplateMeta.month);
+    if (yearInput) yearInput.value = normalize(storedTemplateMeta.year);
     if (numberInput) numberInput.value = normalize(storedTemplateMeta.number);
     if (addresseeInput) addresseeInput.value = normalize(storedTemplateMeta.addressee);
     if (textInput) textInput.value = aiText;
@@ -1391,6 +1451,8 @@
       const day = normalize(dayInput && dayInput.value) || defaultTemplateFieldValue;
       const month = normalize(monthInput && monthInput.value) || defaultTemplateFieldValue;
       const number = normalize(numberInput && numberInput.value) || defaultTemplateFieldValue;
+      const currentYear = String(new Date().getFullYear());
+      const year = normalize(yearInput && yearInput.value) || currentYear;
       const addresseeRaw = String(addresseeInput && addresseeInput.value || '').replace(/\s+$/g, '');
       const addressee = normalize(addresseeRaw) || defaultTemplateFieldValue;
       if (!answer) {
@@ -1400,7 +1462,7 @@
       const addresseeTemplateValue = /^\s/.test(addressee) ? addressee : (`\u00A0${addressee}`);
       if (globalScope) {
         globalScope.DOCUMENTS_LAST_AI_ANSWER = answer;
-        globalScope.DOCUMENTS_TEMPLATE_META = { day, month, number, addressee: addresseeRaw };
+        globalScope.DOCUMENTS_TEMPLATE_META = { day, month, year, number, addressee: addresseeRaw };
       }
       renderError('');
       if (doneButton) {
@@ -1412,11 +1474,13 @@
         const preparedAnswer = answer
           .replace(/\[ДЕНЬ\]/g, day)
           .replace(/\[МЕСЯЦ\]/g, month)
+          .replace(/\[ГОД\]/g, year)
           .replace(/\[НОМЕР\]/g, number)
           .replace(/\[АДРЕСАТ\]/g, addresseeTemplateValue);
         const previewPayload = await generateDocxFromTemplateViaApi(preparedAnswer, {
           day,
           month,
+          year,
           number,
           addressee: addresseeTemplateValue,
           organization: templateConfig.organization,
