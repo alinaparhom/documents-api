@@ -3913,7 +3913,7 @@ function createCard(task, index, anchorRegistry) {
         btn.type = 'button';
         btn.className = 'appdosc-card__action';
         btn.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
-        btn.textContent = 'Кратко ИИ';
+        btn.textContent = '🤖 Кратко';
         btn.disabled = !aiBriefText;
         if (!aiBriefText) {
           btn.title = 'Кратко ИИ пока отсутствует';
@@ -8271,7 +8271,7 @@ function startViewerBriefLoadingAnimation() {
     return () => {};
   }
   const button = elements.viewerBrief;
-  const initialText = button.textContent || 'Кратко - ИИ';
+  const initialText = button.textContent || '🤖';
   const initialTitle = button.getAttribute('title') || '';
   const initialBackground = button.style.background;
   const initialBorderColor = button.style.borderColor;
@@ -8286,7 +8286,7 @@ function startViewerBriefLoadingAnimation() {
   const timerId = window.setInterval(() => {
     frame = (frame + 1) % 4;
     const dots = '.'.repeat(frame);
-    button.textContent = `⏳ Кратко ИИ${dots}`;
+    button.textContent = `🤖${dots}`;
   }, 260);
 
   return () => {
