@@ -8271,7 +8271,7 @@ function startViewerBriefLoadingAnimation() {
     return () => {};
   }
   const button = elements.viewerBrief;
-  const initialText = button.textContent || '🤖';
+  const initialText = button.textContent || '🤖 AI';
   const initialTitle = button.getAttribute('title') || '';
   const initialBackground = button.style.background;
   const initialBorderColor = button.style.borderColor;
@@ -8286,7 +8286,7 @@ function startViewerBriefLoadingAnimation() {
   const timerId = window.setInterval(() => {
     frame = (frame + 1) % 4;
     const dots = '.'.repeat(frame);
-    button.textContent = `🤖${dots}`;
+    button.textContent = `🤖 AI${dots}`;
   }, 260);
 
   return () => {
