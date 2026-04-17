@@ -939,6 +939,18 @@ function textToWordParagraphsXml(string $text): string
     return implode('', $chunks);
 }
 
+function stripBoldFromRunPropertiesXml(string $rPrXml): string
+{
+    if ($rPrXml === '') {
+        return '';
+    }
+    $cleaned = preg_replace('/<w:b(?:\s+[^>]*)?\/>/u', '', $rPrXml);
+    $cleaned = preg_replace('/<w:b(?:\s+[^>]*)?>.*?<\/w:b>/su', '', (string)$cleaned);
+    $cleaned = preg_replace('/<w:bCs(?:\s+[^>]*)?\/>/u', '', (string)$cleaned);
+    $cleaned = preg_replace('/<w:bCs(?:\s+[^>]*)?>.*?<\/w:bCs>/su', '', (string)$cleaned);
+    return is_string($cleaned) ? $cleaned : $rPrXml;
+}
+
 function replaceMarkerParagraphWithAnswerXml(string $xml, string $marker, string $answerText): array
 {
     if ($xml === '' || $marker === '') {
@@ -996,6 +1008,7 @@ function replaceMarkerParagraphWithAnswerXml(string $xml, string $marker, string
         $pPrXml = $pPrNode instanceof DOMNode ? ($dom->saveXML($pPrNode) ?: '') : '';
         $rPrNode = $xpath->query('.//w:r/w:rPr', $paragraph)->item(0);
         $rPrXml = $rPrNode instanceof DOMNode ? ($dom->saveXML($rPrNode) ?: '') : '';
+        $rPrXml = stripBoldFromRunPropertiesXml($rPrXml);
 
         $fragment = $dom->createDocumentFragment();
         $paragraphXmlChunks = [];
