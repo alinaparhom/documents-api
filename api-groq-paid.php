@@ -635,6 +635,22 @@ function getResponseAiSystemPrompt(): string
         . "- Не упоминай OCR, ограничения чтения файлов и технические детали.\n";
 }
 
+function getResponseAiStyleInstruction(string $style): string
+{
+    $normalized = strtolower(trim($style));
+
+    return match ($normalized) {
+        'aggressive' => "Стиль: уверенный и напористый деловой тон.\n"
+            . "Короткие чёткие формулировки.\n"
+            . "Без грубости, давления и конфликтной лексики.",
+        'calm' => "Стиль: спокойный, дипломатичный и доброжелательный деловой тон.\n"
+            . "Мягкие формулировки, фокус на конструктивном решении.\n"
+            . "Без излишней эмоциональности.",
+        'neutral' => '',
+        default => '',
+    };
+}
+
 function buildExtractedTextsFromFiles(array $files): array
 {
     $entries = [];
@@ -750,18 +766,12 @@ function handleAnalyzePaidAction(array $env): void
             $ocrText .= ($ocrText !== '' ? "\n\n" : '') . '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $chunk;
         }
 
-        // Читаем system prompt из входящего payload (если клиент его прислал).
-        $systemPrompt = '';
-        foreach ($messages as $message) {
-            if (is_array($message) && (string)($message['role'] ?? '') === 'system') {
-                $systemPrompt = trim((string)($message['content'] ?? ''));
-                if ($systemPrompt !== '') {
-                    break;
-                }
-            }
-        }
-        if ($systemPrompt === '') {
-            $systemPrompt = getResponseAiSystemPrompt();
+        // Источник истины для system prompt — только серверный шаблон.
+        $styleFromClient = trim((string)($visionPayload['style'] ?? requestStringField('style', 'neutral')));
+        $systemPrompt = getResponseAiSystemPrompt();
+        $styleInstruction = getResponseAiStyleInstruction($styleFromClient);
+        if ($styleInstruction !== '') {
+            $systemPrompt .= "\n" . $styleInstruction;
         }
 
         // 1) Vision-этап: извлекаем сырой текст из изображений/PDF «как есть».
