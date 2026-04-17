@@ -51,6 +51,33 @@
     return cleaned || '';
   }
 
+  function stripMarkdownInlineFormatting(value) {
+    const text = String(value || '');
+    if (!text) return '';
+    return text
+      .replace(/(\*\*|__)(.*?)\1/g, '$2')
+      .replace(/(^|[\s(])(\*|_)([^*_]+?)\2(?=[\s),.!?:;]|$)/g, '$1$3')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '$1');
+  }
+
+  function shouldRetryVisionRequest(error) {
+    const message = normalize(error && error.message).toLowerCase();
+    if (!message) return false;
+    return [
+      'timeout',
+      'timed out',
+      'abort',
+      'network',
+      'failed to fetch',
+      'не удалось загрузить файл',
+      'ошибка vision запроса',
+      'не вернул итоговый текст',
+      'service unavailable',
+      'gateway',
+    ].some((token) => message.includes(token));
+  }
+
   function resolveAuthorizedUserName(globalObject) {
     const webAppUser = globalObject
       && globalObject.Telegram
@@ -1855,10 +1882,37 @@
       const loadingBubble = createLoadingBubble(messages);
 
       try {
-        const answerRaw = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: '', tone: styleMeta.value, selectedFiles }, (message) => {
-          status.textContent = message;
-        });
-        const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
+        let answerRaw = '';
+        let lastError = null;
+        const maxAttempts = 2;
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          try {
+            answerRaw = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: '', tone: styleMeta.value, selectedFiles }, (message) => {
+              const prefix = maxAttempts > 1 ? `Попытка ${attempt}/${maxAttempts}. ` : '';
+              status.textContent = `${prefix}${message}`;
+            });
+            if (normalize(answerRaw)) {
+              lastError = null;
+              break;
+            }
+            lastError = new Error('Vision не вернул итоговый текст.');
+          } catch (error) {
+            lastError = error;
+          }
+          if (attempt < maxAttempts && shouldRetryVisionRequest(lastError)) {
+            status.textContent = 'Повторяем запрос к ИИ…';
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((resolve) => setTimeout(resolve, 450));
+            continue;
+          }
+          if (lastError) {
+            throw lastError;
+          }
+        }
+        if (!normalize(answerRaw) && lastError) {
+          throw lastError;
+        }
+        const answer = stripMarkdownInlineFormatting(sanitizeAssistantFinalText(answerRaw)) || 'Пустой ответ.';
         lastAiAnswer = answer;
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
