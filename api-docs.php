@@ -929,6 +929,21 @@ function normalizeDocText(string $value): string
     return rtrim($normalized);
 }
 
+function stripBoldFromRunPropertiesXml(string $rPrXml): string
+{
+    if ($rPrXml === '') {
+        return '';
+    }
+
+    $withoutBold = preg_replace('/<w:b(?:\\s[^>]*)?\\/>/u', '', $rPrXml);
+    if (!is_string($withoutBold)) {
+        $withoutBold = $rPrXml;
+    }
+
+    $withoutBoldCs = preg_replace('/<w:bCs(?:\\s[^>]*)?\\/>/u', '', $withoutBold);
+    return is_string($withoutBoldCs) ? $withoutBoldCs : $withoutBold;
+}
+
 function textToWordParagraphsXml(string $text): string
 {
     $lines = explode("\n", normalizeDocText($text));
@@ -995,24 +1010,8 @@ function replaceMarkerParagraphWithAnswerXml(string $xml, string $marker, string
         $pPrNode = $xpath->query('./w:pPr', $paragraph)->item(0);
         $pPrXml = $pPrNode instanceof DOMNode ? ($dom->saveXML($pPrNode) ?: '') : '';
         $rPrNode = $xpath->query('.//w:r/w:rPr', $paragraph)->item(0);
-        $rPrXml = '';
-        if ($rPrNode instanceof DOMElement) {
-            $rPrClone = $rPrNode->cloneNode(true);
-            if ($rPrClone instanceof DOMElement) {
-                foreach (['b', 'bCs'] as $boldTag) {
-                    $boldNodes = $xpath->query('.//w:' . $boldTag, $rPrClone);
-                    if ($boldNodes instanceof DOMNodeList) {
-                        for ($bn = $boldNodes->length - 1; $bn >= 0; $bn -= 1) {
-                            $boldNode = $boldNodes->item($bn);
-                            if ($boldNode instanceof DOMNode && $boldNode->parentNode instanceof DOMNode) {
-                                $boldNode->parentNode->removeChild($boldNode);
-                            }
-                        }
-                    }
-                }
-                $rPrXml = $dom->saveXML($rPrClone) ?: '';
-            }
-        }
+        $rPrXmlRaw = $rPrNode instanceof DOMNode ? ($dom->saveXML($rPrNode) ?: '') : '';
+        $rPrXml = stripBoldFromRunPropertiesXml($rPrXmlRaw);
 
         $fragment = $dom->createDocumentFragment();
         $paragraphXmlChunks = [];
