@@ -495,6 +495,29 @@ function cloneTaskAttachmentPreviewCacheEntry(entry) {
 }
 
 function ensureAiDialogScriptLoaded() {
+  if (!window.DOCS_AI_PROMPTS || typeof window.DOCS_AI_PROMPTS !== 'object') {
+    window.DOCS_AI_PROMPTS = Object.freeze({
+      version: 'prompt-catalog-v1',
+      RESPONSE_OUTPUT_DIRECTIVE: { v1: '' },
+      VISION_QUALITY_DIRECTIVE: { v1: '' },
+      SYSTEM_TONE_PROMPTS: {
+        neutral: { value: 'neutral', label: 'Нейтральный', prompt: 'СТИЛЬ ОТВЕТА: Нейтральный деловой.\nПиши ровно, без эмоций и оценок.' },
+        aggressive: { value: 'aggressive', label: 'Агрессивный', prompt: 'СТИЛЬ ОТВЕТА: Жёсткий деловой.\nПиши прямолинейно, коротко и требовательно, без грубости и нарушений деловой этики.' },
+        calm: { value: 'calm', label: 'Спокойный', prompt: 'СТИЛЬ ОТВЕТА: Спокойный деловой.\nПиши мягко и понятно, но строго по делу.' },
+        neutral_enhanced: { value: 'neutral_enhanced', label: 'Нейтральный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Нейтральный деловой (усиленный).\nМаксимальная точность формулировок, структурный и строгий тон.' },
+        aggressive_enhanced: { value: 'aggressive_enhanced', label: 'Агрессивный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Жёсткий деловой (усиленный).\nМаксимально короткие и твёрдые формулировки, без эмоциональных вставок.' },
+        calm_enhanced: { value: 'calm_enhanced', label: 'Спокойный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Спокойный деловой (усиленный).\nПиши вежливо и понятно, сохраняя официальную точность.' }
+      },
+      DEFAULT_RESPONSE_FORMAT_LIMITS: {
+        response: { temperature: 0.2, max_tokens: 1800 },
+        response_extended: { temperature: 0.2, max_tokens: 2000 },
+        summary: { temperature: 0.3, max_tokens: 800, top_p: 0.85 },
+        vision_extract: { temperature: 0, max_tokens: 2000 }
+      },
+      DEFAULT_KEYS: { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'neutral_enhanced' }
+    });
+  }
+
   if (window && typeof window.openAiResponseDialog === 'function') {
     return Promise.resolve(window.openAiResponseDialog);
   }

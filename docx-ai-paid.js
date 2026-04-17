@@ -1,68 +1,33 @@
 (function() {
   var VISION_BATCH_SIZE = 5;
   var AI_PDF_PAGE_LIMIT = 5;
-  var VISION_QUALITY_DIRECTIVE = [
-    'Сформируй сильный итоговый ответ по задаче пользователя, а не пересказ документа.',
-    'Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".',
-    'Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.',
-    'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.',
-    'Пиши только основной текст: без шапки, без подписи, без блоков "С уважением" и без реквизитов.'
-  ].join('\n');
-  var RESPONSE_OUTPUT_DIRECTIVE = [
-    'СИСТЕМНЫЙ РЕЖИМ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».',
-    'Верни только готовый текст ответа для вставки в документ: без приветствия, без подписи, без реквизитов, без фраз типа «С уважением» и без строк вида «[Ваше ФИО]».',
-    'Считай, что ты сотрудник организации, получившей этот файл или набор файлов, и отвечаешь официально в деловом стиле.',
-    'Обязательно учитывай весь доступный контекст файлов целиком, не придумывай факты и не выходи за рамки данных.',
-    'Ответ должен соответствовать законодательству и общепринятым нормам деловой коммуникации.',
-    'Перед финальным выводом перепроверь формулировки на точность, логичность и отсутствие противоречий.',
-    'Если в контексте нет достаточной информации или компетенции для уверенного вывода — прямо укажи это в ответе.'
-  ].join('\n');
+  var PROMPTS_CATALOG = (typeof window !== 'undefined' && window.DOCS_AI_PROMPTS) ? window.DOCS_AI_PROMPTS : null;
+  var DEFAULT_PROMPT_KEYS = PROMPTS_CATALOG && PROMPTS_CATALOG.DEFAULT_KEYS ? PROMPTS_CATALOG.DEFAULT_KEYS : {
+    response_mode: 'v1',
+    vision_quality_mode: 'v1',
+    tone: 'neutral_enhanced'
+  };
 
   var briefPdfJsLoader = null;
   var jsZipLoaderPromise = null;
   var docxPreviewHtmlCache = (typeof WeakMap === 'function') ? new WeakMap() : null;
-  var SYSTEM_TONE_PROMPTS = {
-    neutral: {
-      value: 'neutral',
-      label: 'Нейтральный',
-      prompt: `СТИЛЬ ОТВЕТА: Нейтральный деловой.
-Пиши ровно, без эмоций и оценок.`
-    },
-    aggressive: {
-      value: 'aggressive',
-      label: 'Агрессивный',
-      prompt: `СТИЛЬ ОТВЕТА: Жёсткий деловой.
-Пиши прямолинейно, коротко и требовательно, без грубости и нарушений деловой этики.`
-    },
-    calm: {
-      value: 'calm',
-      label: 'Спокойный',
-      prompt: `СТИЛЬ ОТВЕТА: Спокойный деловой.
-Пиши мягко и понятно, но строго по делу.`
-    },
-    neutral_enhanced: {
-      value: 'neutral_enhanced',
-      label: 'Нейтральный (усиленный)',
-      prompt: `СТИЛЬ ОТВЕТА: Нейтральный деловой (усиленный).
-Максимальная точность формулировок, структурный и строгий тон.`
-    },
-    aggressive_enhanced: {
-      value: 'aggressive_enhanced',
-      label: 'Агрессивный (усиленный)',
-      prompt: `СТИЛЬ ОТВЕТА: Жёсткий деловой (усиленный).
-Максимально короткие и твёрдые формулировки, без эмоциональных вставок.`
-    },
-    calm_enhanced: {
-      value: 'calm_enhanced',
-      label: 'Спокойный (усиленный)',
-      prompt: `СТИЛЬ ОТВЕТА: Спокойный деловой (усиленный).
-Пиши вежливо и понятно, сохраняя официальную точность.`
-    }
-  };
+  var SYSTEM_TONE_PROMPTS = PROMPTS_CATALOG && PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
+    ? PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
+    : {
+      neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' }
+    };
   var VIP_RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
 
   function resolveVipStyle(styleValue) {
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
+  }
+
+  function appendPromptSelection(formData, toneValue) {
+    if (!(formData instanceof FormData)) return;
+    var tone = typeof toneValue === 'string' && toneValue.trim() ? toneValue.trim() : (DEFAULT_PROMPT_KEYS.tone || 'neutral');
+    formData.append('response_mode', DEFAULT_PROMPT_KEYS.response_mode || 'v1');
+    formData.append('vision_quality_mode', DEFAULT_PROMPT_KEYS.vision_quality_mode || 'v1');
+    formData.append('tone', tone);
   }
 
   function escapeHtmlInline(value) {
@@ -330,7 +295,7 @@
   function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus) {
     var entries = Array.isArray(selectedEntries) ? selectedEntries : [];
     var styleMeta = resolveVipStyle(selectedStyle);
-    var preparedPrompt = [promptText, styleMeta && styleMeta.prompt ? styleMeta.prompt : '', VISION_QUALITY_DIRECTIVE, RESPONSE_OUTPUT_DIRECTIVE, 'Верни готовый ответ на письмо. Не пиши анализ.']
+    var preparedPrompt = [promptText, 'Верни готовый ответ на письмо. Не пиши анализ.']
       .filter(Boolean)
       .join('\n\n');
     var images = [];
@@ -373,6 +338,7 @@
           formData.append('mode', 'paid');
           formData.append('vision_mode', '1');
           formData.append('prompt', preparedPrompt);
+          appendPromptSelection(formData, (styleMeta && styleMeta.value));
           formData.append('extractedTexts', JSON.stringify(extractedTexts));
           return formData;
         }, 0).then(function(result) {
@@ -398,6 +364,7 @@
             formData.append('mode', 'paid');
             formData.append('vision_mode', '1');
             formData.append('prompt', preparedPrompt);
+            appendPromptSelection(formData, (styleMeta && styleMeta.value));
             if (extractedTexts.length && batchIndex === 0) {
               formData.append('extractedTexts', JSON.stringify(extractedTexts));
             }
@@ -407,7 +374,7 @@
               temperature: 0.6,
               messages: [{
                 role: 'system',
-                content: styleMeta && styleMeta.prompt ? styleMeta.prompt : ''
+                content: ''
               }, {
                 role: 'user',
                 content: [{ type: 'text', text: preparedPrompt + '\n\nБлок ' + (batchIndex + 1) + '/' + batches.length + '.' }]
@@ -440,6 +407,7 @@
           formData.append('mode', 'paid');
           formData.append('vision_mode', '1');
           formData.append('prompt', [preparedPrompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
+          appendPromptSelection(formData, (styleMeta && styleMeta.value));
           formData.append('extractedTexts', JSON.stringify([{
             name: 'vision-batches.txt',
             type: 'text/plain',
@@ -563,14 +531,11 @@
       return 'Файл: ' + (item.name || 'Без имени') + '\nOCR:\n' + (item.ocrText || '');
     }).join('\n\n---\n\n').slice(0, 50000);
     var finalPrompt = String(promptText || '');
-    if (styleMeta && styleMeta.prompt) {
-      finalPrompt = (finalPrompt ? (finalPrompt + '\n\n') : '') + styleMeta.prompt;
-    }
-    finalPrompt = [finalPrompt, RESPONSE_OUTPUT_DIRECTIVE].filter(Boolean).join('\n\n');
     if (payloadContext.ocrSummary) {
       finalPrompt += '\n\nOCR контекст по каждому файлу:\n' + payloadContext.ocrSummary;
     }
     formData.append('prompt', finalPrompt.slice(0, 70000));
+    appendPromptSelection(formData, (styleMeta && styleMeta.value));
     formData.append('context', JSON.stringify(payloadContext));
     return formData;
   }
