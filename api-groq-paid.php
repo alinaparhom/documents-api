@@ -776,6 +776,22 @@ function normalizeAiOutputText(string $text): string
     return trim($normalized);
 }
 
+function getResponseAiStyleInstruction(string $style): string
+{
+    $normalized = strtolower(trim($style));
+
+    return match ($normalized) {
+        'aggressive' => "Стиль: уверенный и напористый деловой тон.\n"
+            . "Короткие чёткие формулировки.\n"
+            . "Без грубости, давления и конфликтной лексики.",
+        'calm' => "Стиль: спокойный, дипломатичный и доброжелательный деловой тон.\n"
+            . "Мягкие формулировки, фокус на конструктивном решении.\n"
+            . "Без излишней эмоциональности.",
+        'neutral' => '',
+        default => '',
+    };
+}
+
 function buildExtractedTextsFromFiles(array $files): array
 {
     $entries = [];
