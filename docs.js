@@ -2217,20 +2217,26 @@
         participants = 'Отправитель: ' + (sender || 'не найден') + '; Получатель: ' + (recipient || 'не найден');
       }
     }
+    var summaryItems = collectBriefSentences(analysis || sourceText, 3)
+      .map(normalizeSentence)
+      .filter(Boolean)
+      .slice(0, 3);
+    if (!summaryItems.length && analysis) {
+      summaryItems = [analysis];
+    }
+    var recommendationItems = cleanedRequirements.length
+      ? cleanedRequirements.slice(0, 3)
+      : cleanedActions.slice(0, 3);
+    var conclusionText = normalizeSentence((cleanedActions[0] || cleanedRequirements[0] || analysis || 'Нужно уточнить детали письма перед отправкой ответа.'));
     return [
-      'Краткий вывод ИИ',
+      'Краткое содержание',
+      summaryItems.length ? summaryItems.map(function(item) { return '• ' + item; }).join('\n') : '• Не удалось выделить содержание.',
       '',
-      'О чем файл',
-      analysis,
+      'Рекомендации',
+      recommendationItems.length ? recommendationItems.map(function(item) { return '• ' + item; }).join('\n') : '• Уточните данные письма и ключевые требования.',
       '',
-      'Кто прислал / кому',
-      participants || 'Не удалось точно определить отправителя и получателя.',
-      '',
-      'Важные детали',
-      cleanedActions.length ? cleanedActions.map(function(item) { return '• ' + item; }).join('\n') : '• ИИ не выделил важные детали.',
-      '',
-      'Что сделать дальше',
-      cleanedRequirements.length ? cleanedRequirements.map(function(item) { return '• ' + item; }).join('\n') : '• ИИ не вернул шаги по документу.'
+      'Итог',
+      conclusionText
     ].join('\n');
   }
 
@@ -2726,7 +2732,7 @@
       throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
     }
     if (!isMeaningfulAiBriefPayload(payload)) {
-      throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
+      throw new Error('ИИ не вернул осмысленный краткий вывод. Повторите запрос.');
     }
     return payload;
   }
@@ -13771,7 +13777,7 @@
     var header = createElement('div', 'documents-responses-header');
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
-    var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
+    var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ ИИ');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -14289,7 +14295,7 @@
           }
           if (index >= candidates.length) {
             vipAiPaidScriptPromise = null;
-            reject(new Error('Не удалось загрузить модуль VIP ИИ. Проверьте путь к docx-ai-paid.js.'));
+            reject(new Error('Не удалось загрузить модуль Ответ ИИ. Проверьте путь к docx-ai-paid.js.'));
             return;
           }
           var src = candidates[index] + '?v=' + encodeURIComponent(version);
@@ -14363,7 +14369,7 @@
       if (!aiButton) return;
       aiButton.disabled = Boolean(active);
       aiButton.classList.toggle('is-loading', Boolean(active));
-      aiButton.textContent = active ? String(text || 'Открываем ИИ…') : 'Ответ с помощью ИИ';
+      aiButton.textContent = active ? String(text || 'Открываем ИИ…') : 'Ответ ИИ';
     }
 
     function openVipAiModal() {
@@ -14381,7 +14387,7 @@
           });
         })
         .catch(function(error) {
-          showMessage('error', error && error.message ? error.message : 'Не удалось открыть VIP ИИ.');
+          showMessage('error', error && error.message ? error.message : 'Не удалось открыть Ответ ИИ.');
         })
         .finally(function() {
           setVipButtonLoading(false);
