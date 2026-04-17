@@ -995,7 +995,24 @@ function replaceMarkerParagraphWithAnswerXml(string $xml, string $marker, string
         $pPrNode = $xpath->query('./w:pPr', $paragraph)->item(0);
         $pPrXml = $pPrNode instanceof DOMNode ? ($dom->saveXML($pPrNode) ?: '') : '';
         $rPrNode = $xpath->query('.//w:r/w:rPr', $paragraph)->item(0);
-        $rPrXml = $rPrNode instanceof DOMNode ? ($dom->saveXML($rPrNode) ?: '') : '';
+        $rPrXml = '';
+        if ($rPrNode instanceof DOMElement) {
+            $rPrClone = $rPrNode->cloneNode(true);
+            if ($rPrClone instanceof DOMElement) {
+                foreach (['b', 'bCs'] as $boldTag) {
+                    $boldNodes = $xpath->query('.//w:' . $boldTag, $rPrClone);
+                    if ($boldNodes instanceof DOMNodeList) {
+                        for ($bn = $boldNodes->length - 1; $bn >= 0; $bn -= 1) {
+                            $boldNode = $boldNodes->item($bn);
+                            if ($boldNode instanceof DOMNode && $boldNode->parentNode instanceof DOMNode) {
+                                $boldNode->parentNode->removeChild($boldNode);
+                            }
+                        }
+                    }
+                }
+                $rPrXml = $dom->saveXML($rPrClone) ?: '';
+            }
+        }
 
         $fragment = $dom->createDocumentFragment();
         $paragraphXmlChunks = [];
