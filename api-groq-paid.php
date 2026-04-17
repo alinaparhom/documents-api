@@ -38,6 +38,11 @@ function getServerAiPromptsCatalog(): array
                 'Ответ должен соответствовать законодательству и общепринятым нормам деловой коммуникации.',
                 'Перед финальным выводом перепроверь формулировки на точность, логичность и отсутствие противоречий.',
                 'Если в контексте нет достаточной информации или компетенции для уверенного вывода — прямо укажи это в ответе.',
+                'Пиши ответ строго от лица организации, которой направили документы.',
+                'Формат ответа должен быть структурным и практичным: абзацы с пустой строкой между смысловыми блоками.',
+                'Не используй Markdown, символы разметки (#, *, -, ```), таблицы и декоративные маркеры.',
+                'Допускаются только обычные нумерованные пункты в виде "1.", "2.", "3." внутри обычного текста.',
+                'Сохраняй полезность: сначала итоговая позиция, затем конкретные действия, затем при необходимости запрос недостающих данных.',
             ]),
         ],
         'VISION_QUALITY_DIRECTIVE' => [
@@ -47,6 +52,7 @@ function getServerAiPromptsCatalog(): array
                 'Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.',
                 'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.',
                 'Пиши только основной текст: без шапки, без подписи, без блоков "С уважением" и без реквизитов.',
+                'Соблюдай структурный формат: короткие абзацы, переносы строк между блоками, без Markdown.',
             ]),
         ],
         'SYSTEM_TONE_PROMPTS' => [
@@ -749,6 +755,27 @@ function getResponseAiSystemPrompt(string $responseMode = 'v1', string $tone = '
     return trim($baseDirective . ($toneText !== '' ? ("\n\n" . $toneText) : ''));
 }
 
+function normalizeAiOutputText(string $text): string
+{
+    $normalized = str_replace(["\r\n", "\r"], "\n", trim($text));
+    if ($normalized === '') {
+        return '';
+    }
+
+    // Удаляем типичные markdown-маркеры и декоративные символы.
+    $normalized = preg_replace('/^\s{0,3}(#{1,6}\s*)/m', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/^\s{0,3}([>*•]\s+)/m', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/^\s{0,3}[-*]\s+(?!\d+\.)/m', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/```[\s\S]*?```/m', '', $normalized) ?? $normalized;
+    $normalized = str_replace(['**', '__', '`'], '', $normalized);
+
+    // Нормализуем слишком частые пустые строки и пробелы.
+    $normalized = preg_replace("/[ \t]+\n/", "\n", $normalized) ?? $normalized;
+    $normalized = preg_replace("/\n{3,}/", "\n\n", $normalized) ?? $normalized;
+
+    return trim($normalized);
+}
+
 function buildExtractedTextsFromFiles(array $files): array
 {
     $entries = [];
@@ -950,7 +977,7 @@ function handleAnalyzePaidAction(array $env): void
             respond((int)($analysisResult['status'] ?? 502), ['ok' => false, 'error' => (string)($analysisResult['error'] ?? 'Ошибка текстового анализа')]);
         }
         $analysisDecoded = (array)($analysisResult['raw'] ?? []);
-        $answer = trim((string)($analysisDecoded['choices'][0]['message']['content'] ?? ''));
+        $answer = normalizeAiOutputText((string)($analysisDecoded['choices'][0]['message']['content'] ?? ''));
         if ($answer === '') {
             respond(502, ['ok' => false, 'error' => 'Пустой ответ от текстовой модели после Vision OCR']);
         }
@@ -1136,7 +1163,7 @@ function handleAnalyzePaidAction(array $env): void
     }
 
     $decoded = (array)($groqResult['raw'] ?? []);
-    $answer = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    $answer = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($answer === '') {
         respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq']);
     }
@@ -1222,7 +1249,7 @@ function handleGenerateSummaryAction(array $env): void
     }
 
     $decoded = (array)($groqResult['raw'] ?? []);
-    $summary = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    $summary = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($summary === '') {
         respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
     }
@@ -1345,7 +1372,7 @@ function handleGenerateResponseAction(array $env): void
     }
 
     $decoded = (array)($groqResult['raw'] ?? []);
-    $responseText = trim((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    $responseText = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($responseText === '') {
         respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq']);
     }
