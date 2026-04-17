@@ -1246,6 +1246,9 @@
         </div>
         <div class="tg-ai-generated-preview__body">
           <iframe class="tg-ai-generated-preview__frame" data-preview-frame title="Предпросмотр DOCX через Office Viewer"></iframe>
+          <div class="tg-ai-generated-preview__viewport" data-preview-doc-viewport hidden>
+            <div class="tg-ai-generated-preview__doc" data-preview-doc></div>
+          </div>
           <div class="tg-ai-generated-preview__loading" data-preview-loading>
             <div class="tg-ai-generated-preview__loading-card">
               <div class="tg-ai-generated-preview__loading-title">Открываем документ…</div>
@@ -1259,6 +1262,8 @@
     `;
     document.body.appendChild(overlay);
     const frameNode = overlay.querySelector('[data-preview-frame]');
+    const localDocViewportNode = overlay.querySelector('[data-preview-doc-viewport]');
+    const localDocNode = overlay.querySelector('[data-preview-doc]');
     const statusNode = overlay.querySelector('[data-preview-status]');
     const loadingNode = overlay.querySelector('[data-preview-loading]');
     const loadingSubNode = overlay.querySelector('[data-loading-sub]');
@@ -1346,11 +1351,36 @@
       if (loadingSubNode) loadingSubNode.textContent = 'Шаг 2/2: Открываем Office Viewer…';
       const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(publicUrl)}`;
       frameNode.src = officeViewerUrl;
+      if (localDocViewportNode) localDocViewportNode.hidden = true;
       if (loadingNode) loadingNode.style.display = 'none';
       statusNode.textContent = `Готово: ${generatedFileName || 'документ'} открыт через Office Viewer.`;
     } catch (error) {
-      if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = `Не удалось открыть документ: ${(error && error.message) || 'ошибка предпросмотра'}. Скачайте файл или проверьте, что ссылка публичная.`;
+      try {
+        if (loadingSubNode) loadingSubNode.textContent = 'URL закрыт. Пробуем локальный предпросмотр…';
+        const docxBlob = await resolveGeneratedDocxBlob(previewPayload);
+        const renderer = await ensureDocxPreviewLibrariesLoaded();
+        if (!localDocNode || !frameNode) {
+          throw new Error('Контейнер локального предпросмотра недоступен.');
+        }
+        localDocNode.innerHTML = '';
+        // eslint-disable-next-line no-undef
+        await renderer.renderAsync(docxBlob, localDocNode, null, {
+          className: 'docx',
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          breakPages: true,
+        });
+        frameNode.style.display = 'none';
+        if (localDocViewportNode) localDocViewportNode.hidden = false;
+        if (loadingNode) loadingNode.style.display = 'none';
+        statusNode.textContent = `Готово: ${generatedFileName || 'документ'} открыт в локальном предпросмотре.`;
+      } catch (fallbackError) {
+        if (loadingNode) loadingNode.style.display = 'none';
+        const primaryErrorMessage = (error && error.message) || 'ошибка предпросмотра';
+        const fallbackErrorMessage = (fallbackError && fallbackError.message) || 'локальный предпросмотр недоступен';
+        statusNode.textContent = `Не удалось открыть документ: ${primaryErrorMessage}. Резервный просмотр тоже не сработал: ${fallbackErrorMessage}. Нажмите «Скачать».`;
+      }
     }
   }
 
