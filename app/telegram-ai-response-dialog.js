@@ -1049,8 +1049,31 @@
 
   async function downloadGeneratedPreviewFile(previewPayload) {
     const fileName = normalize(previewPayload && previewPayload.fileName) || 'template-answer.docx';
+    const safeFileName = normalize(fileName.split('/').pop());
+    const directDownloadUrl = safeFileName
+      ? `https://bimmax.pro/js/documents/app/tmp/generated/${encodeURIComponent(safeFileName)}`
+      : '';
     const sourceUrl = normalize(previewPayload && previewPayload.previewUrl);
     const fallbackBlob = previewPayload && previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+    if (directDownloadUrl) {
+      const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+      if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
+        try {
+          telegramWebApp.openLink(directDownloadUrl);
+          return true;
+        } catch (_) {}
+      }
+      try {
+        const link = document.createElement('a');
+        link.href = directDownloadUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return true;
+      } catch (_) {}
+    }
     if (fallbackBlob && fallbackBlob.size) {
       const blobUrl = URL.createObjectURL(fallbackBlob);
       const link = document.createElement('a');

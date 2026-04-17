@@ -929,21 +929,6 @@ function normalizeDocText(string $value): string
     return rtrim($normalized);
 }
 
-function stripBoldFromRunPropertiesXml(string $rPrXml): string
-{
-    if ($rPrXml === '') {
-        return '';
-    }
-
-    $withoutBold = preg_replace('/<w:b(?:\\s[^>]*)?\\/>/u', '', $rPrXml);
-    if (!is_string($withoutBold)) {
-        $withoutBold = $rPrXml;
-    }
-
-    $withoutBoldCs = preg_replace('/<w:bCs(?:\\s[^>]*)?\\/>/u', '', $withoutBold);
-    return is_string($withoutBoldCs) ? $withoutBoldCs : $withoutBold;
-}
-
 function textToWordParagraphsXml(string $text): string
 {
     $lines = explode("\n", normalizeDocText($text));
@@ -1009,9 +994,7 @@ function replaceMarkerParagraphWithAnswerXml(string $xml, string $marker, string
 
         $pPrNode = $xpath->query('./w:pPr', $paragraph)->item(0);
         $pPrXml = $pPrNode instanceof DOMNode ? ($dom->saveXML($pPrNode) ?: '') : '';
-        $rPrNode = $xpath->query('.//w:r/w:rPr', $paragraph)->item(0);
-        $rPrXmlRaw = $rPrNode instanceof DOMNode ? ($dom->saveXML($rPrNode) ?: '') : '';
-        $rPrXml = stripBoldFromRunPropertiesXml($rPrXmlRaw);
+        $rPrXml = '';
 
         $fragment = $dom->createDocumentFragment();
         $paragraphXmlChunks = [];
