@@ -994,13 +994,12 @@ function replaceMarkerParagraphWithAnswerXml(string $xml, string $marker, string
 
         $pPrNode = $xpath->query('./w:pPr', $paragraph)->item(0);
         $pPrXml = $pPrNode instanceof DOMNode ? ($dom->saveXML($pPrNode) ?: '') : '';
-        $rPrNode = $xpath->query('.//w:r/w:rPr', $paragraph)->item(0);
-        $rPrXml = $rPrNode instanceof DOMNode ? ($dom->saveXML($rPrNode) ?: '') : '';
+        $plainAnswerRunPropsXml = '<w:rPr><w:b w:val="0"/><w:bCs w:val="0"/></w:rPr>';
 
         $fragment = $dom->createDocumentFragment();
         $paragraphXmlChunks = [];
         foreach ($lines as $line) {
-            $paragraphXmlChunks[] = '<w:p>' . $pPrXml . '<w:r>' . $rPrXml . '<w:t xml:space="preserve">' . xmlEscape($line) . '</w:t></w:r></w:p>';
+            $paragraphXmlChunks[] = '<w:p>' . $pPrXml . '<w:r>' . $plainAnswerRunPropsXml . '<w:t xml:space="preserve">' . xmlEscape($line) . '</w:t></w:r></w:p>';
         }
         $fragment->appendXML(implode('', $paragraphXmlChunks));
 
