@@ -1633,7 +1633,7 @@
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">
           <div>
-            <div class="tg-ai-chat__title">Ответ с помощью ИИ</div>
+            <div class="tg-ai-chat__title">Ответ ИИ</div>
             <div class="tg-ai-chat__sub">Выберите файлы, режим и введите запрос (текстом или голосом)</div>
           </div>
           <div class="tg-ai-chat__head-actions">

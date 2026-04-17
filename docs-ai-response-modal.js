@@ -43,11 +43,7 @@
     { value: 'detailed', label: 'Подробно' },
     { value: 'brief', label: 'Кратко (ИИ анализирует только первые 5 страниц PDF)' }
   ];
-  var AI_MODE_OPTIONS = [
-    { value: 'free', label: 'Бесплатный ИИ' },
-    { value: 'paid', label: 'VIP ИИ (платный)' }
-  ];
-  var DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
+    var DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
   var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
   var VISION_BATCH_SIZE = 4;
@@ -263,10 +259,8 @@
       .finally(function () { clearTimeout(timer); });
   }
 
-  function resolveRequestMode(state) {
-    return state && state.contextDetail === 'brief'
-      ? 'paid'
-      : ((state && state.aiMode) === 'paid' ? 'paid' : 'free');
+  function resolveRequestMode() {
+    return 'paid';
   }
 
   async function resolvePaidSourceFiles(state, config) {
@@ -2338,7 +2332,7 @@
         .concat(normalizeExternalFiles(config.linkedFiles || [], 'linked')),
       models: FALLBACK_MODEL_OPTIONS.slice(),
       model: FALLBACK_MODEL_OPTIONS[0].value,
-      aiMode: 'free',
+      aiMode: 'paid',
       visionMode: false,
       responseStyle: STYLE_OPTIONS[0].value,
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
@@ -2369,7 +2363,7 @@
     var panel = createElement('div', 'ai-chat-modal__panel');
     var header = createElement('div', 'ai-chat-modal__header');
     var titleWrap = createElement('div');
-    titleWrap.appendChild(createElement('div', 'ai-chat-modal__title', 'Ответ с помощью ИИ'));
+    titleWrap.appendChild(createElement('div', 'ai-chat-modal__title', 'Ответ ИИ'));
     titleWrap.appendChild(createElement('div', 'ai-chat-modal__subtitle', config.documentTitle ? ('Документ: ' + config.documentTitle) : 'Документ не указан'));
 
     var closeButton = createElement('button', 'ai-chat-modal__close', '×');
@@ -2403,20 +2397,10 @@
     var modelField = createElement('label', 'ai-chat-modal__field');
     modelField.appendChild(createElement('span', '', 'Модель'));
     var modelSelect = createElement('select', 'ai-chat-modal__select');
-    var modeField = createElement('label', 'ai-chat-modal__field');
-    modeField.appendChild(createElement('span', '', 'Режим ИИ'));
-    var modeSelect = createElement('select', 'ai-chat-modal__select');
-    AI_MODE_OPTIONS.forEach(function (opt) {
-      var option = document.createElement('option');
-      option.value = opt.value;
-      option.textContent = opt.label;
-      modeSelect.appendChild(option);
-    });
     if (state.contextDetail === 'brief') {
       state.aiMode = 'paid';
     }
     state.aiMode = 'paid';
-    modeSelect.value = state.aiMode;
     var visionField = createElement('label', 'ai-chat-modal__field');
     visionField.appendChild(createElement('span', '', 'Vision'));
     var visionCheckbox = document.createElement('input');
@@ -2460,7 +2444,7 @@
       state.lastErrorTs = now;
       messages.appendChild(createMessage('assistant', normalized, true));
     }
-    messages.appendChild(createMessage('assistant', 'Привет! Выберите стиль ответа — и я сразу подготовлю вариант.'));
+    messages.appendChild(createMessage('assistant', 'Готовлю только аналитический ответ на входящее письмо: без пересказа и без выдуманных фактов.'));
 
     var composer = createElement('div', 'ai-chat-modal__composer');
     var sendButton = createElement('button', 'ai-chat-modal__send', 'Отправить в ИИ');
@@ -3258,7 +3242,7 @@
         sendButton.textContent = 'Vision анализ';
         return;
       }
-      sendButton.textContent = requestMode === 'paid' ? 'Получить ответ' : 'Отправить в ИИ';
+      sendButton.textContent = 'Получить ответ';
     }
 
     function setLoading(loading) {
@@ -3534,7 +3518,7 @@
         var responseMode = String(payload && payload.mode ? payload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
         var responseTime = Number(payload && payload.timeMs) > 0 ? Number(payload.timeMs) : (Date.now() - requestStartedAt);
         var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload.tokensUsed) : 0;
-        messages.appendChild(createMessage('assistant', 'ℹ️ Режим: ' + (responseMode === 'paid' ? 'VIP' : 'Free') + ' • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—')));
+        messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—')));
         state.lastAssistantMessage = String(finalResponse || '');
       } catch (error) {
         logAiError(error, { model: state.model, responseStyle: state.responseStyle });
@@ -3563,7 +3547,7 @@
             var retryMode = String(secondPayload && secondPayload.mode ? secondPayload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
             var retryTime = Number(secondPayload && secondPayload.timeMs) > 0 ? Number(secondPayload.timeMs) : (Date.now() - requestStartedAt);
             var retryTokens = Number(secondPayload && secondPayload.tokensUsed) > 0 ? Number(secondPayload.tokensUsed) : 0;
-            messages.appendChild(createMessage('assistant', 'ℹ️ Режим: ' + (retryMode === 'paid' ? 'VIP' : 'Free') + ' • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—')));
+            messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—')));
             state.lastAssistantMessage = String(retryText || '');
             setLoading(false);
             messages.scrollTop = messages.scrollHeight;
@@ -3610,23 +3594,11 @@
         sendMessage();
       }
     });
-    modeSelect.addEventListener('change', function () {
-      state.aiMode = modeSelect.value === 'paid' ? 'paid' : 'free';
-      if (state.aiMode !== 'paid' && state.visionMode) {
-        state.visionMode = false;
-        visionCheckbox.checked = false;
-      }
-      if (state.contextDetail === 'brief' && state.aiMode !== 'paid') {
-        appendAssistantErrorOnce('Режим «Кратко» работает через VIP модель.');
-      }
-      refreshSendButtonLabel();
-    });
     visionCheckbox.addEventListener('change', function () {
       state.visionMode = Boolean(visionCheckbox.checked);
       if (state.visionMode) {
         state.aiMode = 'paid';
-        modeSelect.value = 'paid';
-        appendAssistantErrorOnce('Vision активирован: анализ изображений/PDF пойдёт через VIP ИИ.');
+        appendAssistantErrorOnce('Vision активирован: анализ изображений/PDF включён.');
       }
       refreshSendButtonLabel();
     });
@@ -3634,7 +3606,6 @@
       state.contextDetail = contextDetailSelect.value === 'brief' ? 'brief' : 'detailed';
       if (state.contextDetail === 'brief') {
         state.aiMode = 'paid';
-        modeSelect.value = 'paid';
       }
       updateContextUsageHint();
       refreshSendButtonLabel();
@@ -3734,7 +3705,6 @@
     filesBox.appendChild(extractAllButton);
 
     modelField.appendChild(modelSelect);
-    modeField.appendChild(modeSelect);
     styleField.appendChild(styleSelect);
     topBar.appendChild(filesBox);
 

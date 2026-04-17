@@ -2,7 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
-const BRIEF_SUMMARY_PROMPT = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
+const BRIEF_SUMMARY_PROMPT = 'Сделай очень краткий вывод по документу: 1) краткое содержание, 2) рекомендации, 3) итог. Не более 6 коротких пунктов и только по фактам из текста.';
 const BRIEF_PDF_SOURCES = [
   { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
   { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
@@ -45,13 +45,13 @@ export function createTelegramBriefAi(deps = {}) {
         return { endpoint, response, payload };
       } catch (error) {
         lastError = error && error.name === 'AbortError'
-          ? new Error('Сервер Платного ИИ не ответил за 90 сек. Повторите попытку.')
+          ? new Error('Сервер ИИ не ответил за 90 сек. Повторите попытку.')
           : error;
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
       }
     }
-    throw lastError || new Error('Не удалось отправить файл в платный ИИ.');
+    throw lastError || new Error('Не удалось отправить файл в ИИ.');
   }
 
   function ensureTelegramBriefModalStyle() {
@@ -603,7 +603,7 @@ export function createTelegramBriefAi(deps = {}) {
       fileForVip = source.fileObject;
     } else {
       if (!fileUrl) {
-        throw new Error('Не найден URL файла для VIP режима.');
+        throw new Error('Не найден URL файла для режима Кратко ИИ.');
       }
       try {
         const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
@@ -642,7 +642,7 @@ export function createTelegramBriefAi(deps = {}) {
       throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
     }
     if (!hasMeaningfulTelegramBriefPayload(payload)) {
-      throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
+      throw new Error('ИИ не вернул осмысленный краткий вывод. Повторите запрос.');
     }
     return payload;
   }
