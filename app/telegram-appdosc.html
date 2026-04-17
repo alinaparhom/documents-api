@@ -140,6 +140,77 @@
     <noscript>
       <link rel="stylesheet" href="/css/telegram-appdosc.css" />
     </noscript>
+    <style>
+      .appdosc-viewer__controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .appdosc-viewer__control {
+        min-width: 40px;
+        min-height: 40px;
+        border-radius: 12px;
+      }
+
+      .appdosc-viewer__control--fit {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+
+      .appdosc-viewer__fit-icon {
+        width: 20px;
+        height: 20px;
+        display: block;
+      }
+
+      .appdosc-viewer__zoom-group {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.32);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        overflow: hidden;
+      }
+
+      .appdosc-viewer__zoom-group .appdosc-viewer__control {
+        border-radius: 0;
+        min-width: 40px;
+      }
+
+      .appdosc-viewer__zoom-group .appdosc-viewer__control + .appdosc-viewer__control {
+        border-left: 1px solid rgba(0, 0, 0, 0.1);
+      }
+
+      .appdosc-viewer__control--close {
+        color: #fff;
+        background: linear-gradient(135deg, #ff4d67 0%, #d90429 100%);
+        border-color: rgba(178, 0, 28, 0.55);
+      }
+
+      @media (max-width: 520px) {
+        .appdosc-viewer__controls {
+          gap: 6px;
+        }
+
+        .appdosc-viewer__control {
+          min-width: 36px;
+          min-height: 36px;
+          border-radius: 10px;
+          font-size: 15px;
+        }
+
+        .appdosc-viewer__fit-icon {
+          width: 18px;
+          height: 18px;
+        }
+      }
+    </style>
   </head>
   <body>
     <div class="appdosc" data-app>
@@ -365,32 +436,37 @@
             </button>
             <button
               type="button"
-              class="appdosc-viewer__control"
+              class="appdosc-viewer__control appdosc-viewer__control--fit"
               data-viewer-fit
               aria-label="Вписать в экран"
               title="Вписать в экран"
             >
-           <i class="fas fa-edit"></i>
+              <svg class="appdosc-viewer__fit-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                <path d="M3 3l6 6M21 3l-6 6M3 21l6-6M21 21l-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
             </button>
+            <div class="appdosc-viewer__zoom-group" role="group" aria-label="Управление масштабом">
+              <button
+                type="button"
+                class="appdosc-viewer__control"
+                data-viewer-zoom-out
+                aria-label="Уменьшить масштаб"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                class="appdosc-viewer__control"
+                data-viewer-zoom-in
+                aria-label="Увеличить масштаб"
+              >
+                +
+              </button>
+            </div>
             <button
               type="button"
-              class="appdosc-viewer__control"
-              data-viewer-zoom-out
-              aria-label="Уменьшить масштаб"
-            >
-              −
-            </button>
-            <button
-              type="button"
-              class="appdosc-viewer__control"
-              data-viewer-zoom-in
-              aria-label="Увеличить масштаб"
-            >
-              +
-            </button>
-            <button
-              type="button"
-              class="appdosc-viewer__control"
+              class="appdosc-viewer__control appdosc-viewer__control--close"
               data-viewer-close
               aria-label="Закрыть просмотр"
               title="Закрыть"
