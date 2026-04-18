@@ -652,35 +652,57 @@
     const images = [];
     const extractedTexts = [];
     const fileErrors = [];
-
-    for (let index = 0; index < selectedFiles.length; index += 1) {
-      const currentFile = selectedFiles[index];
-      const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-      onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
-      let blobFile = null;
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        blobFile = await loadSelectedFileAsBlob(currentFile);
-      } catch (error) {
-        const failMessage = normalize(error && error.message) || 'Не удалось загрузить файл.';
-        fileErrors.push(`${fileLabel}: ${failMessage}`);
-        onStatus(`${fileLabel}: ошибка загрузки, продолжаю с остальными файлами...`, 'loading');
-        continue;
+    const preparedResults = new Array(selectedFiles.length);
+    const queue = selectedFiles.map((currentFile, index) => ({ currentFile, index }));
+    const maxConcurrency = isIosClient() ? 2 : 3;
+    const workers = Array.from({ length: Math.max(1, Math.min(maxConcurrency, queue.length)) }, () => (async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (!item) {
+          break;
+        }
+        const { currentFile, index } = item;
+        const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
+        onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
+        let blobFile = null;
+        try {
+          blobFile = await loadSelectedFileAsBlob(currentFile);
+        } catch (error) {
+          const failMessage = normalize(error && error.message) || 'Не удалось загрузить файл.';
+          preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
+          onStatus(`${fileLabel}: ошибка загрузки, продолжаю с остальными файлами...`, 'loading');
+          continue;
+        }
+        const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
+        try {
+          const prepared = await withTimeout(
+            buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading')),
+            FILE_PREPARE_TIMEOUT_MS,
+            'Превышено время обработки файла.',
+          );
+          preparedResults[index] = { prepared, sourceFile, fileLabel };
+        } catch (error) {
+          const failMessage = normalize(error && error.message) || 'Не удалось подготовить файл.';
+          preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
+          onStatus(`${fileLabel}: обработка слишком долгая, файл пропущен.`, 'loading');
+        }
       }
-      const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
-      let prepared = null;
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        prepared = await withTimeout(
-          buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading')),
-          FILE_PREPARE_TIMEOUT_MS,
-          'Превышено время обработки файла.',
-        );
-      } catch (error) {
-        const failMessage = normalize(error && error.message) || 'Не удалось подготовить файл.';
-        fileErrors.push(`${fileLabel}: ${failMessage}`);
-        onStatus(`${fileLabel}: обработка слишком долгая, файл пропущен.`, 'loading');
-        continue;
+    })());
+    await Promise.all(workers);
+
+    preparedResults.forEach((result) => {
+      if (!result) {
+        return;
+      }
+      if (result.error) {
+        fileErrors.push(result.error);
+        return;
+      }
+      const prepared = result.prepared;
+      const sourceFile = result.sourceFile;
+      const fileLabel = result.fileLabel;
+      if (!prepared) {
+        return;
       }
       if (prepared.kind === 'multimodal') {
         images.push(...(Array.isArray(prepared.images) ? prepared.images : []));
@@ -689,12 +711,12 @@
         if (text) {
           extractedTexts.push({
             name: prepared.fileName || fileLabel,
-            type: sourceFile.type || 'text/plain',
+            type: (sourceFile && sourceFile.type) || 'text/plain',
             text: text.slice(0, 60000),
           });
         }
       }
-    }
+    });
 
     if (!images.length) {
       if (!extractedTexts.length) {
