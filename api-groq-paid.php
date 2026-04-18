@@ -41,7 +41,8 @@ function getServerAiPromptsCatalog(): array
                 'Пиши ответ строго от лица организации, которой направили документы.',
                 'Формат ответа должен быть структурным и практичным: абзацы с пустой строкой между смысловыми блоками.',
                 'Не используй Markdown, символы разметки (#, *, -, ```), таблицы и декоративные маркеры.',
-                'Допускаются только обычные нумерованные пункты в виде "1.", "2.", "3." внутри обычного текста.',
+                'Пиши обычными абзацами без автоматической нумерации строк.',
+                'Нумерацию "1.", "2.", "3." используй только если пользователь явно просит перечисление пунктов/этапов.',
                 'Сохраняй полезность: сначала итоговая позиция, затем конкретные действия, затем при необходимости запрос недостающих данных.',
             ]),
         ],
@@ -52,7 +53,29 @@ function getServerAiPromptsCatalog(): array
                 'Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.',
                 'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.',
                 'Пиши только основной текст: без шапки, без подписи, без блоков "С уважением" и без реквизитов.',
-                'Соблюдай структурный формат: короткие абзацы, переносы строк между блоками, без Markdown.',
+                'Соблюдай структурный формат: короткие абзацы, переносы строк между блоками, без Markdown и без автонумерации.',
+            ]),
+        ],
+        'ASSISTANT_SCENARIO_DIRECTIVE' => [
+            'brief_ai' => implode("\n", [
+                'СЦЕНАРИЙ: «Краткий ИИ».',
+                'Верни краткий итог по сути вопроса и документам.',
+                'Фокус: минимум воды, максимум пользы.',
+                'Если данных мало — коротко укажи, чего не хватает.',
+            ]),
+            'response_ai' => implode("\n", [
+                'СЦЕНАРИЙ: «Ответ с помощью ИИ».',
+                'Ты полностью формируешь итоговый ответ с нуля на основе файлов и запроса пользователя.',
+                'Опирайся только на данные из контекста. Не добавляй неподтверждённые факты.',
+                'Если данных недостаточно — явно укажи, чего не хватает для уверенного ответа.',
+            ]),
+            'improve_ai' => implode("\n", [
+                'СЦЕНАРИЙ: «Улучшение ответа ИИ».',
+                'Пользователь передал свой черновик: ты не создаёшь ответ с нуля.',
+                'Твоя задача — отредактировать и улучшить черновик: стиль, грамматика, структура, ясность.',
+                'Сохрани смысл, намерение и позицию пользователя без подмены содержания.',
+                'Учитывай контекст файлов только для точности формулировок и устранения противоречий.',
+                'Не добавляй новых фактов, требований или выводов, которых нет в черновике и документах.',
             ]),
         ],
         'SYSTEM_TONE_PROMPTS' => [
@@ -73,6 +96,7 @@ function getServerAiPromptsCatalog(): array
             'response_mode' => 'v1',
             'vision_quality_mode' => 'v1',
             'tone' => 'neutral_enhanced',
+            'assistant_mode' => 'response_ai',
         ],
     ];
 
@@ -96,16 +120,28 @@ function resolveServerTonePrompt(string $toneKey): array
     return is_array($tones['neutral'] ?? null) ? $tones['neutral'] : ['value' => 'neutral', 'label' => 'Нейтральный', 'prompt' => ''];
 }
 
-function buildServerPromptVersion(string $responseMode, string $visionQualityMode, string $tone): string
+function resolveServerAssistantMode(string $requestedMode, string $fallbackMode = 'response_ai'): string
+{
+    $catalog = getServerAiPromptsCatalog();
+    $map = is_array($catalog['ASSISTANT_SCENARIO_DIRECTIVE'] ?? null) ? $catalog['ASSISTANT_SCENARIO_DIRECTIVE'] : [];
+    if (array_key_exists($requestedMode, $map)) {
+        return $requestedMode;
+    }
+    return array_key_exists($fallbackMode, $map) ? $fallbackMode : 'response_ai';
+}
+
+function buildServerPromptVersion(string $responseMode, string $visionQualityMode, string $tone, string $assistantMode): string
 {
     $catalog = getServerAiPromptsCatalog();
     $resolvedResponseMode = resolveServerPromptKey('RESPONSE_OUTPUT_DIRECTIVE', $responseMode, 'v1');
     $resolvedVisionMode = resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $visionQualityMode, 'v1');
     $resolvedTone = resolveServerTonePrompt($tone);
+    $resolvedAssistantMode = resolveServerAssistantMode($assistantMode, 'response_ai');
     return (string)($catalog['version'] ?? 'prompt-catalog-v1')
         . ':response=' . $resolvedResponseMode
         . ',vision=' . $resolvedVisionMode
-        . ',tone=' . (string)($resolvedTone['value'] ?? 'neutral');
+        . ',tone=' . (string)($resolvedTone['value'] ?? 'neutral')
+        . ',assistant=' . $resolvedAssistantMode;
 }
 
 function normalizePromptKey(string $value): string
@@ -125,21 +161,25 @@ function resolvePromptSelectionFromRequest(): array
     $defaultResponseMode = normalizePromptKey((string)($defaults['response_mode'] ?? 'v1'));
     $defaultVisionMode = normalizePromptKey((string)($defaults['vision_quality_mode'] ?? 'v1'));
     $defaultTone = normalizePromptKey((string)($defaults['tone'] ?? 'neutral'));
+    $defaultAssistantMode = normalizePromptKey((string)($defaults['assistant_mode'] ?? 'response_ai'));
 
     $requestedResponseMode = normalizePromptKey(requestStringField('response_mode', $defaultResponseMode !== '' ? $defaultResponseMode : 'v1'));
     $requestedVisionMode = normalizePromptKey(requestStringField('vision_quality_mode', $defaultVisionMode !== '' ? $defaultVisionMode : 'v1'));
     $requestedTone = normalizePromptKey(requestStringField('tone', $defaultTone !== '' ? $defaultTone : 'neutral'));
+    $requestedAssistantMode = normalizePromptKey(requestStringField('assistant_mode', $defaultAssistantMode !== '' ? $defaultAssistantMode : 'response_ai'));
 
     $responseMode = resolveServerPromptKey('RESPONSE_OUTPUT_DIRECTIVE', $requestedResponseMode, $defaultResponseMode !== '' ? $defaultResponseMode : 'v1');
     $visionQualityMode = resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $requestedVisionMode, $defaultVisionMode !== '' ? $defaultVisionMode : 'v1');
     $toneMeta = resolveServerTonePrompt($requestedTone !== '' ? $requestedTone : ($defaultTone !== '' ? $defaultTone : 'neutral'));
     $tone = normalizePromptKey((string)($toneMeta['value'] ?? 'neutral'));
+    $assistantMode = resolveServerAssistantMode($requestedAssistantMode, $defaultAssistantMode !== '' ? $defaultAssistantMode : 'response_ai');
 
     return [
         'response_mode' => $responseMode,
         'vision_quality_mode' => $visionQualityMode,
         'tone' => $tone !== '' ? $tone : 'neutral',
-        'promptVersion' => buildServerPromptVersion($responseMode, $visionQualityMode, $tone !== '' ? $tone : 'neutral'),
+        'assistant_mode' => $assistantMode,
+        'promptVersion' => buildServerPromptVersion($responseMode, $visionQualityMode, $tone !== '' ? $tone : 'neutral', $assistantMode),
     ];
 }
 
@@ -744,15 +784,40 @@ function getBriefAiSystemPrompt(): string
         . "- Если данных мало, прямо укажи, каких данных не хватает в 1 коротком пункте.\n";
 }
 
-function getResponseAiSystemPrompt(string $responseMode = 'v1', string $tone = 'neutral'): string
+function getResponseAiSystemPrompt(string $responseMode = 'v1', string $tone = 'neutral', string $assistantMode = 'response_ai'): string
 {
     $catalog = getServerAiPromptsCatalog();
     $responseMap = is_array($catalog['RESPONSE_OUTPUT_DIRECTIVE'] ?? null) ? $catalog['RESPONSE_OUTPUT_DIRECTIVE'] : [];
+    $scenarioMap = is_array($catalog['ASSISTANT_SCENARIO_DIRECTIVE'] ?? null) ? $catalog['ASSISTANT_SCENARIO_DIRECTIVE'] : [];
     $resolvedMode = resolveServerPromptKey('RESPONSE_OUTPUT_DIRECTIVE', trim($responseMode), 'v1');
+    $resolvedAssistantMode = resolveServerAssistantMode(trim($assistantMode), 'response_ai');
     $tonePrompt = resolveServerTonePrompt(trim($tone));
     $baseDirective = trim((string)($responseMap[$resolvedMode] ?? ''));
+    $scenarioDirective = trim((string)($scenarioMap[$resolvedAssistantMode] ?? ''));
     $toneText = trim((string)($tonePrompt['prompt'] ?? ''));
-    return trim($baseDirective . ($toneText !== '' ? ("\n\n" . $toneText) : ''));
+    $parts = array_values(array_filter([$baseDirective, $scenarioDirective, $toneText], static fn($item): bool => trim((string)$item) !== ''));
+    return trim(implode("\n\n", $parts));
+}
+
+function buildEffectiveUserPrompt(string $userPrompt, string $assistantMode): string
+{
+    $mode = resolveServerAssistantMode(trim($assistantMode), 'response_ai');
+    $rawPrompt = trim($userPrompt);
+
+    if ($mode === 'brief_ai') {
+        $base = $rawPrompt !== '' ? $rawPrompt : 'Сделай краткий итог по документам.';
+        return $base . "\n\nВерни результат кратко: суть, 2-4 коротких абзаца, итог. Без автонумерации.";
+    }
+
+    if ($mode === 'improve_ai') {
+        $base = $rawPrompt !== '' ? $rawPrompt : 'Черновик отсутствует.';
+        return "Черновик пользователя:\n" . $base
+            . "\n\nОтредактируй черновик: улучши стиль, структуру и грамматику."
+            . "\nСохрани исходный смысл и намерение."
+            . "\nНе придумывай новые факты. Верни только финальный текст ответа.";
+    }
+
+    return $rawPrompt !== '' ? $rawPrompt : 'Подготовь официальный ответ по документам.';
 }
 
 function normalizeAiOutputText(string $text): string
@@ -879,10 +944,9 @@ function handleAnalyzePaidAction(array $env): void
     $responseMode = (string)$promptSelection['response_mode'];
     $visionQualityMode = (string)$promptSelection['vision_quality_mode'];
     $tone = (string)$promptSelection['tone'];
+    $assistantMode = (string)$promptSelection['assistant_mode'];
     $promptVersion = (string)$promptSelection['promptVersion'];
-    if ($userPrompt === '') {
-        $userPrompt = 'Прими решение по приложенным документам.';
-    }
+    $effectiveUserPrompt = buildEffectiveUserPrompt($userPrompt, $assistantMode);
     if ($rawVisionPayload !== '') {
         $visionPayload = json_decode($rawVisionPayload, true);
         if (!is_array($visionPayload)) {
@@ -923,7 +987,7 @@ function handleAnalyzePaidAction(array $env): void
             }
         }
         if ($systemPrompt === '') {
-            $systemPrompt = getResponseAiSystemPrompt($responseMode, $tone);
+            $systemPrompt = getResponseAiSystemPrompt($responseMode, $tone, $assistantMode);
         }
 
         // 1) Vision-этап: извлекаем сырой текст из изображений/PDF «как есть».
@@ -983,7 +1047,7 @@ function handleAnalyzePaidAction(array $env): void
             'model' => resolveModel($env),
             'messages' => [
                 ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user', 'content' => trim(($userPrompt !== '' ? $userPrompt : 'Подготовь готовый ответ по документам.') . "\n\n" . (string)(getServerAiPromptsCatalog()['VISION_QUALITY_DIRECTIVE'][resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $visionQualityMode, 'v1')] ?? '') . "\n\nТекст документов:\n" . $combinedDocText)],
+                ['role' => 'user', 'content' => trim($effectiveUserPrompt . "\n\n" . (string)(getServerAiPromptsCatalog()['VISION_QUALITY_DIRECTIVE'][resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $visionQualityMode, 'v1')] ?? '') . "\n\nТекст документов:\n" . $combinedDocText)],
             ],
             'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response_extended']['max_tokens'] ?? 2000),
             'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response_extended']['temperature'] ?? 0.2),
@@ -1011,6 +1075,7 @@ function handleAnalyzePaidAction(array $env): void
                 'response_mode' => $responseMode,
                 'vision_quality_mode' => $visionQualityMode,
                 'tone' => $tone,
+                'assistant_mode' => $assistantMode,
             ],
         ]);
     }
@@ -1132,9 +1197,10 @@ function handleAnalyzePaidAction(array $env): void
     }
 
     $model = resolveModel($env);
-    $systemMessagePaid = getResponseAiSystemPrompt($responseMode, $tone);
+    $assistantMode = (string)$promptSelection['assistant_mode'];
+    $systemMessagePaid = getResponseAiSystemPrompt($responseMode, $tone, $assistantMode);
 
-    $textPayload = $userPrompt;
+    $textPayload = $effectiveUserPrompt;
     if ($limitedContextNotice !== '') {
         $textPayload .= "\n\n" . $limitedContextNotice;
     }
@@ -1194,6 +1260,7 @@ function handleAnalyzePaidAction(array $env): void
             'response_mode' => $responseMode,
             'vision_quality_mode' => $visionQualityMode,
             'tone' => $tone,
+            'assistant_mode' => $assistantMode,
         ],
     ]);
 }
@@ -1205,6 +1272,7 @@ function handleGenerateSummaryAction(array $env): void
     $responseMode = (string)$promptSelection['response_mode'];
     $visionQualityMode = (string)$promptSelection['vision_quality_mode'];
     $tone = (string)$promptSelection['tone'];
+    $assistantMode = (string)$promptSelection['assistant_mode'];
     $promptVersion = (string)$promptSelection['promptVersion'];
     if ($apiKey === '') {
         respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
@@ -1281,6 +1349,7 @@ function handleGenerateSummaryAction(array $env): void
             'response_mode' => $responseMode,
             'vision_quality_mode' => $visionQualityMode,
             'tone' => $tone,
+            'assistant_mode' => $assistantMode,
         ],
     ]);
 }
@@ -1363,13 +1432,12 @@ function handleGenerateResponseAction(array $env): void
     $responseMode = (string)$promptSelection['response_mode'];
     $visionQualityMode = (string)$promptSelection['vision_quality_mode'];
     $tone = (string)$promptSelection['tone'];
+    $assistantMode = (string)$promptSelection['assistant_mode'];
     $promptVersion = (string)$promptSelection['promptVersion'];
-    if ($userPrompt === '') {
-        $userPrompt = 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
-    }
+    $effectiveUserPrompt = buildEffectiveUserPrompt($userPrompt, $assistantMode);
 
     $model = resolveModel($env);
-    $systemMessage = getResponseAiSystemPrompt($responseMode, $tone);
+    $systemMessage = getResponseAiSystemPrompt($responseMode, $tone, $assistantMode);
 
     $requestPayload = [
         'model' => $model,
@@ -1377,7 +1445,7 @@ function handleGenerateResponseAction(array $env): void
         'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response_extended']['max_tokens'] ?? 2000),
         'messages' => [
             ['role' => 'system', 'content' => $systemMessage],
-            ['role' => 'user', 'content' => trim(($userPrompt !== '' ? $userPrompt : 'Сформируй итоговый готовый ответ по документам.') . "\n\n" . (string)(getServerAiPromptsCatalog()['VISION_QUALITY_DIRECTIVE'][resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $visionQualityMode, 'v1')] ?? '') . "\n\nТекст документов:\n\n" . $fullText)],
+            ['role' => 'user', 'content' => trim($effectiveUserPrompt . "\n\n" . (string)(getServerAiPromptsCatalog()['VISION_QUALITY_DIRECTIVE'][resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $visionQualityMode, 'v1')] ?? '') . "\n\nТекст документов:\n\n" . $fullText)],
         ],
     ];
 
@@ -1404,6 +1472,7 @@ function handleGenerateResponseAction(array $env): void
             'response_mode' => $responseMode,
             'vision_quality_mode' => $visionQualityMode,
             'tone' => $tone,
+            'assistant_mode' => $assistantMode,
         ],
     ]);
 }

@@ -28,6 +28,22 @@
     ? PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
     : { neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' } };
   const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
+  const RESPONSE_GENERATION_MODES = {
+    improve_ai: {
+      value: 'improve_ai',
+      label: 'Ответ',
+      icon: '🧠',
+      hint: 'Вы пишете черновик, ИИ улучшает его по файлам.',
+      placeholder: 'Напишите или продиктуйте ваш черновик ответа — ИИ аккуратно улучшит текст.',
+    },
+    response_ai: {
+      value: 'response_ai',
+      label: 'Ответ ИИ',
+      icon: '🤖',
+      hint: 'ИИ сам подготовит ответ на основе файлов.',
+      placeholder: 'Например: Подготовь деловой ответ на претензию по этому документу',
+    },
+  };
   let jsZipLoaderPromise = null;
   const loadedFileCache = new Map();
 
@@ -115,12 +131,14 @@
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
   }
 
-  function appendPromptSelection(formData, toneValue) {
+  function appendPromptSelection(formData, toneValue, assistantModeValue) {
     if (!(formData instanceof FormData)) return;
     const resolvedTone = normalize(toneValue) || DEFAULT_PROMPT_KEYS.tone || 'neutral';
+    const resolvedAssistantMode = normalize(assistantModeValue) || RESPONSE_GENERATION_MODES.response_ai.value;
     formData.append('response_mode', DEFAULT_PROMPT_KEYS.response_mode || 'v1');
     formData.append('vision_quality_mode', DEFAULT_PROMPT_KEYS.vision_quality_mode || 'v1');
     formData.append('tone', resolvedTone);
+    formData.append('assistant_mode', resolvedAssistantMode);
   }
 
   function getGroqResponseEndpoints() {
@@ -672,7 +690,7 @@
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
-        appendPromptSelection(formData, payload.tone);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         formData.append('extractedTexts', JSON.stringify(extractedTexts));
         return formData;
       });
@@ -699,7 +717,7 @@
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
-        appendPromptSelection(formData, payload.tone);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         if (extractedTexts.length && batchIndex === 0) {
           formData.append('extractedTexts', JSON.stringify(extractedTexts));
         }
@@ -744,7 +762,7 @@
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
-        appendPromptSelection(formData, payload.tone);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         formData.append('extractedTexts', JSON.stringify([{
           name: 'vision-batches.txt',
           type: 'text/plain',
@@ -828,9 +846,10 @@
       .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px)}
       .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(241,245,249,.92));box-shadow:0 20px 50px rgba(15,23,42,.22)}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
+      .tg-ai-chat__head-main{display:grid;gap:7px;min-width:0}
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
       .tg-ai-chat__title{font-size:16px;font-weight:800;color:#0f172a}
-      .tg-ai-chat__sub{font-size:12px;color:#64748b;margin-top:2px}
+      .tg-ai-chat__sub{font-size:11px;color:#64748b;margin-top:1px;line-height:1.35}
       .tg-ai-chat__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.9);color:#0f172a;border-radius:11px;padding:6px 11px;min-height:34px;font-weight:700}
       .tg-ai-chat__head-btn{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);color:#0f172a;border-radius:11px;padding:0 10px;min-height:34px;font-size:12px;font-weight:700}
       .tg-ai-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
@@ -841,6 +860,10 @@
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
       .tg-ai-chat__toolbar--compact{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .tg-ai-chat__mode-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border:1px solid rgba(191,219,254,.85);border-radius:12px;background:rgba(239,246,255,.72);backdrop-filter:blur(6px)}
+      .tg-ai-chat__mode-switch--head{width:min(360px,100%)}
+      .tg-ai-chat__mode-btn{min-height:34px;border:none;border-radius:9px;background:transparent;color:#334155;font-size:11px;font-weight:700;padding:0 8px;white-space:nowrap}
+      .tg-ai-chat__mode-btn[data-active="true"]{background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.28)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
       .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
       .tg-ai-chat__input-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:end}
@@ -938,7 +961,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1727,9 +1750,13 @@
     overlay.innerHTML = `
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">
-          <div>
+          <div class="tg-ai-chat__head-main">
             <div class="tg-ai-chat__title">Ответ ИИ</div>
             <div class="tg-ai-chat__sub">Выберите файлы, режим и введите запрос (текстом или голосом)</div>
+            <div class="tg-ai-chat__mode-switch tg-ai-chat__mode-switch--head" role="tablist" aria-label="Режим генерации ответа">
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="improve_ai">${RESPONSE_GENERATION_MODES.improve_ai.icon} ${RESPONSE_GENERATION_MODES.improve_ai.label}</button>
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="response_ai" data-active="true">${RESPONSE_GENERATION_MODES.response_ai.icon} ${RESPONSE_GENERATION_MODES.response_ai.label}</button>
+            </div>
           </div>
           <div class="tg-ai-chat__head-actions">
             <button type="button" class="tg-ai-chat__head-btn" data-template-btn>Шаблон</button>
@@ -1771,6 +1798,7 @@
     const filesToggleButton = overlay.querySelector('[data-files-toggle]');
     const meta = overlay.querySelector('[data-meta]');
     const styleSelect = overlay.querySelector('[data-style-select]');
+    const modeButtons = Array.from(overlay.querySelectorAll('[data-response-mode]'));
     const templateButton = overlay.querySelector('[data-template-btn]');
     const promptInput = overlay.querySelector('[data-prompt-input]');
     const sendButton = overlay.querySelector('[data-send-btn]');
@@ -1782,6 +1810,7 @@
     let recognitionIsRunning = false;
     let speechSupported = false;
     let suppressVoiceEndStatus = false;
+    let currentResponseMode = RESPONSE_GENERATION_MODES.response_ai.value;
 
     renderFiles(filesList, files);
     // Прогреваем зависимости заранее, чтобы первый запуск был стабильнее.
@@ -1813,6 +1842,25 @@
       if (promptInput) promptInput.disabled = disabled;
       if (sendButton) sendButton.disabled = disabled;
       if (voiceButton) voiceButton.disabled = disabled || !speechSupported;
+      modeButtons.forEach((button) => {
+        button.disabled = disabled;
+      });
+    };
+
+    const applyResponseModeUi = (modeValue) => {
+      const nextMode = RESPONSE_GENERATION_MODES[modeValue] ? modeValue : RESPONSE_GENERATION_MODES.response_ai.value;
+      currentResponseMode = nextMode;
+      modeButtons.forEach((button) => {
+        const isActive = normalize(button.dataset.responseMode) === nextMode;
+        button.dataset.active = isActive ? 'true' : 'false';
+      });
+      const modeMeta = RESPONSE_GENERATION_MODES[nextMode];
+      if (promptInput && modeMeta && modeMeta.placeholder) {
+        promptInput.placeholder = modeMeta.placeholder;
+      }
+      if (status && modeMeta) {
+        status.textContent = `${modeMeta.icon} ${modeMeta.hint}`;
+      }
     };
 
     const appendPromptText = (chunk) => {
@@ -1944,6 +1992,15 @@
       promptInput.style.height = `${Math.min(Math.max(promptInput.scrollHeight, 52), 156)}px`;
     });
     promptInput?.dispatchEvent(new Event('input'));
+    applyResponseModeUi(currentResponseMode);
+
+    modeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        if (isSending) return;
+        const nextMode = normalize(button.dataset.responseMode);
+        applyResponseModeUi(nextMode);
+      });
+    });
 
     async function sendByCurrentStyle() {
       if (isSending) return;
@@ -1954,7 +2011,9 @@
       }
       const userPrompt = normalize(promptInput && promptInput.value);
       if (!userPrompt) {
-        status.textContent = 'Введите запрос для ИИ или продиктуйте его голосом.';
+        status.textContent = currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value
+          ? 'В режиме «Ответ» нужен ваш черновик (текстом или голосом).'
+          : 'Введите запрос для ИИ или продиктуйте его голосом.';
         return;
       }
       const styleIndexFromSelect = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
@@ -1962,8 +2021,7 @@
         styleIndex = styleIndexFromSelect;
       }
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
-      const prompt = `Задача пользователя: ${userPrompt}\n\nПодготовь готовый текст ответа по выбранным файлам для вставки в документ: только суть, без приветствия и реквизитов.`;
-      const effectivePrompt = prompt;
+      const effectivePrompt = userPrompt;
       const selectedFiles = Array.from(selected)
         .map((key) => files[Number(key)])
         .filter(Boolean);
@@ -1985,7 +2043,13 @@
       const loadingBubble = createLoadingBubble(messages);
 
       try {
-        const answerRaw = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: '', tone: styleMeta.value, selectedFiles }, (message) => {
+        const answerRaw = await requestTelegramVisionResponse({
+          prompt: effectivePrompt,
+          systemPrompt: '',
+          tone: styleMeta.value,
+          assistantMode: currentResponseMode,
+          selectedFiles,
+        }, (message) => {
           status.textContent = message;
         });
         const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
@@ -1996,6 +2060,7 @@
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
           <span class="tg-ai-chat__chip">Режим: vision</span>
+          <span class="tg-ai-chat__chip">Сценарий: ${currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value ? 'Ответ (редактирование)' : 'Ответ ИИ'}</span>
           <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
