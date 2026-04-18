@@ -1,7 +1,7 @@
 (function initTelegramAiResponseDialog(globalScope) {
   if (!globalScope || typeof document === 'undefined') return;
 
-  const STYLE_ID = 'tg-ai-response-dialog-style-v1';
+  const STYLE_ID = 'tg-ai-response-dialog-style-v2';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
   const FILE_FETCH_TIMEOUT_MS = 10000;
@@ -32,7 +32,7 @@
     improve_ai: {
       value: 'improve_ai',
       label: 'Ответ',
-      icon: '🧠',
+      icon: '✏️',
       hint: 'Вы пишете черновик, ИИ улучшает его по файлам.',
       placeholder: 'Напишите или продиктуйте ваш черновик ответа — ИИ аккуратно улучшит текст.',
     },
@@ -843,8 +843,24 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px)}
-      .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(241,245,249,.92));box-shadow:0 20px 50px rgba(15,23,42,.22)}
+      :root{
+        --tg-bg-gradient:linear-gradient(145deg,rgba(255,255,255,.98),rgba(248,250,252,.96));
+        --tg-accent:#2563eb;
+        --tg-accent-hover:#1d4ed8;
+        --tg-accent-glow:rgba(37,99,235,.2);
+        --tg-border:rgba(203,213,225,.5);
+        --tg-shadow-sm:0 10px 25px -5px rgba(0,0,0,.05),0 8px 10px -6px rgba(0,0,0,.02);
+        --tg-shadow-md:0 20px 35px -12px rgba(0,0,0,.12);
+        --tg-shadow-lg:0 25px 50px -12px rgba(0,0,0,.25);
+      }
+      @keyframes tg-fade-in{from{opacity:0;backdrop-filter:blur(0)}to{opacity:1;backdrop-filter:blur(10px)}}
+      @keyframes tg-scale-in{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
+      .tg-ai-chat__messages::-webkit-scrollbar,.tg-ai-chat__files-list::-webkit-scrollbar,.tg-ai-template-editor__body::-webkit-scrollbar,.tg-ai-generated-preview__viewport::-webkit-scrollbar{width:5px;height:5px}
+      .tg-ai-chat__messages::-webkit-scrollbar-track,.tg-ai-chat__files-list::-webkit-scrollbar-track,.tg-ai-template-editor__body::-webkit-scrollbar-track,.tg-ai-generated-preview__viewport::-webkit-scrollbar-track{background:rgba(203,213,225,.3);border-radius:10px}
+      .tg-ai-chat__messages::-webkit-scrollbar-thumb,.tg-ai-chat__files-list::-webkit-scrollbar-thumb,.tg-ai-template-editor__body::-webkit-scrollbar-thumb,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:10px}
+      .tg-ai-chat__messages::-webkit-scrollbar-thumb:hover,.tg-ai-chat__files-list::-webkit-scrollbar-thumb:hover,.tg-ai-template-editor__body::-webkit-scrollbar-thumb:hover,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb:hover{background:#64748b}
+      .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px);animation:tg-fade-in .25s ease}
+      .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:var(--tg-bg-gradient);box-shadow:0 20px 50px rgba(15,23,42,.22);animation:tg-scale-in .2s cubic-bezier(.2,.9,.4,1.1)}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
       .tg-ai-chat__head-main{display:grid;gap:7px;min-width:0}
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
@@ -1751,7 +1767,7 @@
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">
           <div class="tg-ai-chat__head-main">
-            <div class="tg-ai-chat__title">Ответ ИИ</div>
+            <div class="tg-ai-chat__title">✨ Ответ ИИ</div>
             <div class="tg-ai-chat__sub">Выберите файлы, режим и введите запрос (текстом или голосом)</div>
             <div class="tg-ai-chat__mode-switch tg-ai-chat__mode-switch--head" role="tablist" aria-label="Режим генерации ответа">
               <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="improve_ai">${RESPONSE_GENERATION_MODES.improve_ai.icon} ${RESPONSE_GENERATION_MODES.improve_ai.label}</button>
@@ -1759,7 +1775,7 @@
             </div>
           </div>
           <div class="tg-ai-chat__head-actions">
-            <button type="button" class="tg-ai-chat__head-btn" data-template-btn>Шаблон</button>
+            <button type="button" class="tg-ai-chat__head-btn" data-template-btn>📄 Шаблон</button>
             <button type="button" class="tg-ai-chat__close" data-close>✕</button>
           </div>
         </div>
