@@ -4,6 +4,11 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
+  const FILE_FETCH_TIMEOUT_MS = 7000;
+  const FILE_FETCH_RETRIES = 1;
+  const FILE_FETCH_TOTAL_TIMEOUT_MS = 20000;
+  const FILE_FETCH_MAX_CANDIDATES = 4;
+  const FILE_PREPARE_TIMEOUT_MS = 25000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const VISION_BATCH_SIZE = 5;
@@ -297,9 +302,11 @@
 
   function buildFileUrlCandidates(file) {
     const sourceValues = [
+      file && file.previewBlobUrl,
       file && file.resolvedUrl,
       file && file.previewUrl,
       file && file.url,
+      file && file.sourceUrl,
       file && file.downloadUrl,
       file && file.fileUrl,
       file && file.file,
@@ -319,6 +326,44 @@
       }
     });
     return Array.from(new Set(candidates.filter(Boolean)));
+  }
+
+  function appendCacheBuster(url) {
+    const normalized = normalize(url);
+    if (!normalized) return '';
+    try {
+      const parsed = new URL(normalized, window.location.origin);
+      parsed.searchParams.set('v', String(Date.now()));
+      return parsed.toString();
+    } catch (_) {
+      const separator = normalized.includes('?') ? '&' : '?';
+      return `${normalized}${separator}v=${Date.now()}`;
+    }
+  }
+
+  function withTimeout(promise, timeoutMs, timeoutMessage) {
+    const timeout = Math.max(1000, Number(timeoutMs) || 1000);
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        reject(new Error(timeoutMessage || 'Истекло время ожидания.'));
+      }, timeout);
+      Promise.resolve(promise)
+        .then((value) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(value);
+        })
+        .catch((error) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
   }
 
   function isImageLike(name, type) {
@@ -563,16 +608,37 @@
     const systemPrompt = normalize(payload.systemPrompt);
     const images = [];
     const extractedTexts = [];
+    const fileErrors = [];
 
     for (let index = 0; index < selectedFiles.length; index += 1) {
       const currentFile = selectedFiles[index];
       const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
       onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
-      // eslint-disable-next-line no-await-in-loop
-      const blobFile = await loadSelectedFileAsBlob(currentFile);
+      let blobFile = null;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        blobFile = await loadSelectedFileAsBlob(currentFile);
+      } catch (error) {
+        const failMessage = normalize(error && error.message) || 'Не удалось загрузить файл.';
+        fileErrors.push(`${fileLabel}: ${failMessage}`);
+        onStatus(`${fileLabel}: ошибка загрузки, продолжаю с остальными файлами...`, 'loading');
+        continue;
+      }
       const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
-      // eslint-disable-next-line no-await-in-loop
-      const prepared = await buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading'));
+      let prepared = null;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        prepared = await withTimeout(
+          buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading')),
+          FILE_PREPARE_TIMEOUT_MS,
+          'Превышено время обработки файла.',
+        );
+      } catch (error) {
+        const failMessage = normalize(error && error.message) || 'Не удалось подготовить файл.';
+        fileErrors.push(`${fileLabel}: ${failMessage}`);
+        onStatus(`${fileLabel}: обработка слишком долгая, файл пропущен.`, 'loading');
+        continue;
+      }
       if (prepared.kind === 'multimodal') {
         images.push(...(Array.isArray(prepared.images) ? prepared.images : []));
       } else if (prepared.kind === 'text') {
@@ -589,7 +655,8 @@
 
     if (!images.length) {
       if (!extractedTexts.length) {
-        throw new Error('Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.');
+        const details = fileErrors.length ? ` Ошибки: ${fileErrors.slice(0, 2).join('; ')}` : '';
+        throw new Error(`Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.${details}`);
       }
       onStatus('Vision: отправляю извлечённый текст (DOCX/TXT) в ИИ...', 'loading');
       const textOnlyRequest = await postGroqResponseWithFallback(() => {
@@ -686,6 +753,9 @@
     if (!finalSummary) {
       throw new Error('Vision не вернул итоговый текст.');
     }
+    if (fileErrors.length) {
+      finalSummary += `\n\n⚠️ Не удалось обработать часть файлов (${fileErrors.length}).`;
+    }
     return finalSummary;
   }
 
@@ -693,26 +763,44 @@
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
     }
-    const candidates = buildFileUrlCandidates(file);
-    if (!candidates.length) {
+    const baseCandidates = buildFileUrlCandidates(file);
+    const candidates = [];
+    baseCandidates.forEach((candidate) => {
+      if (!candidate) return;
+      candidates.push(candidate);
+      if (!candidate.startsWith('blob:') && !candidate.startsWith('data:')) {
+        candidates.push(appendCacheBuster(candidate));
+      }
+    });
+    const limitedCandidates = Array.from(new Set(candidates.filter(Boolean))).slice(0, FILE_FETCH_MAX_CANDIDATES);
+    if (!limitedCandidates.length) {
       throw new Error('Не найден URL файла.');
     }
+    const startedAt = Date.now();
     let lastStatus = 0;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const url = candidates[index];
-      let response = null;
-      try {
-        response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, 25000);
-      } catch (error) {
-        continue;
+    for (let attempt = 0; attempt <= FILE_FETCH_RETRIES; attempt += 1) {
+      for (let index = 0; index < limitedCandidates.length; index += 1) {
+        if ((Date.now() - startedAt) > FILE_FETCH_TOTAL_TIMEOUT_MS) {
+          throw new Error('Превышено время загрузки файла.');
+        }
+        const url = limitedCandidates[index];
+        let response = null;
+        try {
+          response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, FILE_FETCH_TIMEOUT_MS);
+        } catch (error) {
+          continue;
+        }
+        if (!response || !response.ok) {
+          lastStatus = Number(response && response.status) || lastStatus;
+          continue;
+        }
+        const blob = await response.blob();
+        const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
+        return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
       }
-      if (!response || !response.ok) {
-        lastStatus = Number(response && response.status) || lastStatus;
-        continue;
+      if (attempt < FILE_FETCH_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
       }
-      const blob = await response.blob();
-      const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
-      return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
     }
     throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
   }
