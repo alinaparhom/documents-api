@@ -846,9 +846,10 @@
       .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px)}
       .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(241,245,249,.92));box-shadow:0 20px 50px rgba(15,23,42,.22)}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
+      .tg-ai-chat__head-main{display:grid;gap:7px;min-width:0}
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
       .tg-ai-chat__title{font-size:16px;font-weight:800;color:#0f172a}
-      .tg-ai-chat__sub{font-size:12px;color:#64748b;margin-top:2px}
+      .tg-ai-chat__sub{font-size:11px;color:#64748b;margin-top:1px;line-height:1.35}
       .tg-ai-chat__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.9);color:#0f172a;border-radius:11px;padding:6px 11px;min-height:34px;font-weight:700}
       .tg-ai-chat__head-btn{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);color:#0f172a;border-radius:11px;padding:0 10px;min-height:34px;font-size:12px;font-weight:700}
       .tg-ai-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
@@ -859,8 +860,9 @@
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
       .tg-ai-chat__toolbar--compact{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .tg-ai-chat__mode-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border:1px solid rgba(191,219,254,.85);border-radius:14px;background:rgba(239,246,255,.72);backdrop-filter:blur(6px)}
-      .tg-ai-chat__mode-btn{min-height:38px;border:none;border-radius:11px;background:transparent;color:#334155;font-size:12px;font-weight:700;padding:0 10px}
+      .tg-ai-chat__mode-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border:1px solid rgba(191,219,254,.85);border-radius:12px;background:rgba(239,246,255,.72);backdrop-filter:blur(6px)}
+      .tg-ai-chat__mode-switch--head{width:min(360px,100%)}
+      .tg-ai-chat__mode-btn{min-height:34px;border:none;border-radius:9px;background:transparent;color:#334155;font-size:11px;font-weight:700;padding:0 8px;white-space:nowrap}
       .tg-ai-chat__mode-btn[data-active="true"]{background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.28)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
       .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
@@ -959,7 +961,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1748,9 +1750,13 @@
     overlay.innerHTML = `
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">
-          <div>
+          <div class="tg-ai-chat__head-main">
             <div class="tg-ai-chat__title">Ответ ИИ</div>
             <div class="tg-ai-chat__sub">Выберите файлы, режим и введите запрос (текстом или голосом)</div>
+            <div class="tg-ai-chat__mode-switch tg-ai-chat__mode-switch--head" role="tablist" aria-label="Режим генерации ответа">
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="improve_ai">${RESPONSE_GENERATION_MODES.improve_ai.icon} ${RESPONSE_GENERATION_MODES.improve_ai.label}</button>
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="response_ai" data-active="true">${RESPONSE_GENERATION_MODES.response_ai.icon} ${RESPONSE_GENERATION_MODES.response_ai.label}</button>
+            </div>
           </div>
           <div class="tg-ai-chat__head-actions">
             <button type="button" class="tg-ai-chat__head-btn" data-template-btn>Шаблон</button>
@@ -1767,10 +1773,6 @@
         </div>
         <div class="tg-ai-chat__composer">
           <div class="tg-ai-chat__toolbar tg-ai-chat__toolbar--compact">
-            <div class="tg-ai-chat__mode-switch" role="tablist" aria-label="Режим генерации ответа">
-              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="improve_ai">${RESPONSE_GENERATION_MODES.improve_ai.icon} ${RESPONSE_GENERATION_MODES.improve_ai.label}</button>
-              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="response_ai" data-active="true">${RESPONSE_GENERATION_MODES.response_ai.icon} ${RESPONSE_GENERATION_MODES.response_ai.label}</button>
-            </div>
             <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
             <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
               <option value="" selected>🎯 Выберите режим</option>
