@@ -4,8 +4,9 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v2';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
-  const FILE_FETCH_TIMEOUT_MS = 10000;
+  const FILE_FETCH_TIMEOUT_MS = 12000;
   const FILE_FETCH_RETRIES = 1;
+  const FILE_FETCH_RETRIES_IOS = 3;
   const FILE_FETCH_MAX_CANDIDATES = 8;
   const FILE_PREPARE_TIMEOUT_MS = 35000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
@@ -49,6 +50,18 @@
 
   function normalize(value) {
     return String(value || '').trim();
+  }
+
+  function isIosClient() {
+    try {
+      const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
+      const platform = String((globalScope && globalScope.navigator && globalScope.navigator.platform) || '');
+      const touchPoints = Number((globalScope && globalScope.navigator && globalScope.navigator.maxTouchPoints) || 0);
+      const isTouchMac = /Mac/i.test(platform) && touchPoints > 1;
+      return /iPad|iPhone|iPod/i.test(ua) || isTouchMac;
+    } catch (_) {
+      return false;
+    }
   }
 
   function getFileCacheKey(file) {
@@ -800,8 +813,9 @@
       throw new Error('Не найден URL файла.');
     }
     const rounds = [baseCandidates, cacheBustedCandidates];
+    const retries = isIosClient() ? FILE_FETCH_RETRIES_IOS : FILE_FETCH_RETRIES;
     let lastStatus = 0;
-    for (let attempt = 0; attempt <= FILE_FETCH_RETRIES; attempt += 1) {
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
       const urls = rounds[Math.min(attempt, rounds.length - 1)];
       for (let index = 0; index < urls.length; index += 1) {
         const url = urls[index];
@@ -822,8 +836,9 @@
         if (file && typeof file === 'object') file.fileObject = readyFile;
         return readyFile;
       }
-      if (attempt < FILE_FETCH_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
+      if (attempt < retries) {
+        const delayMs = isIosClient() ? (320 * (attempt + 1)) : 250;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
     throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
