@@ -2484,10 +2484,29 @@ function toggleStatusFilterSelection(currentFilters, filter) {
     return normalizeTaskFilters(currentFilters);
   }
   const current = normalizeTaskFilters(currentFilters);
-  if (current.includes(normalizedTarget)) {
-    return current.filter((value) => value !== normalizedTarget);
+  const isTargetOverdue = normalizedTarget === 'overdue';
+  const isTargetStatus = isStatusFilter(normalizedTarget);
+
+  if (isTargetOverdue) {
+    if (current.includes(normalizedTarget)) {
+      return current.filter((value) => value !== normalizedTarget);
+    }
+    return [...current, normalizedTarget];
   }
-  return [...current, normalizedTarget];
+
+  if (!isTargetStatus) {
+    if (current.includes(normalizedTarget)) {
+      return current.filter((value) => value !== normalizedTarget);
+    }
+    return [...current, normalizedTarget];
+  }
+
+  const withoutStatuses = current.filter((value) => !isStatusFilter(value));
+  const wasSelected = current.includes(normalizedTarget);
+  if (wasSelected) {
+    return withoutStatuses;
+  }
+  return [...withoutStatuses, normalizedTarget];
 }
 
 function setAssigneeFilterSelection(currentFilters, targetFilter) {
@@ -15171,6 +15190,21 @@ function handleSummaryBadgeClick(filter) {
     return;
   }
 
+  if (state.entryTaskId) {
+    state.entryTaskId = '';
+    if (!state.entryTaskLog || typeof state.entryTaskLog !== 'object') {
+      state.entryTaskLog = { resolved: false, matched: false, expanded: false };
+    }
+    state.entryTaskLog.resolved = false;
+    state.entryTaskLog.expanded = false;
+    logEntryTaskEvent('entry_task_focus_cleared', {
+      source: 'status_filter_click',
+      targetFilter: normalizedTarget || DEFAULT_TASK_FILTER,
+      previousFilter: formatTaskFiltersForLog(previousFilters),
+      nextFilter: formatTaskFiltersForLog(nextFilters),
+    });
+  }
+
   state.taskFilter = nextFilters;
   state.selectedCardAnchor = '';
   updateVisibleTasks();
@@ -15916,6 +15950,42 @@ async function fetchLatestTaskSnapshot(task) {
   return null;
 }
 
+async function resolveTaskForAiDialog(task) {
+  if (!task || typeof task !== 'object') {
+    return task;
+  }
+
+  const isIosClient = Boolean(runtimeEnvironment && runtimeEnvironment.isIos);
+  const maxAttempts = isIosClient ? 3 : 1;
+  let latestTask = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    latestTask = await fetchLatestTaskSnapshot(task);
+    const files = Array.isArray(latestTask && latestTask.files) ? latestTask.files : [];
+    if (latestTask && files.length > 0) {
+      break;
+    }
+    if (attempt < maxAttempts - 1) {
+      // На iOS файлы иногда появляются с задержкой после смены статуса/фильтра.
+      // Делаем короткий backoff, чтобы снизить вероятность 404 на первом запросе.
+      const waitMs = 220 * (attempt + 1);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+
+  if (!latestTask || typeof latestTask !== 'object') {
+    return task;
+  }
+
+  return {
+    ...task,
+    ...latestTask,
+    files: Array.isArray(latestTask.files) ? latestTask.files : (Array.isArray(task.files) ? task.files : []),
+    responses: Array.isArray(latestTask.responses) ? latestTask.responses : (Array.isArray(task.responses) ? task.responses : []),
+  };
+}
+
 async function refreshResponseCounterForEntry(counterElement, task, entry, fallbackValue = '', buttonElement = null) {
   if (!task) {
     return;
@@ -16630,12 +16700,29 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  aiButton.addEventListener('click', () => {
-    openAiDialogSafely({
-      task,
-      entry,
-      onStatus: setStatus,
-    });
+  aiButton.addEventListener('click', async () => {
+    if (aiButton.disabled) {
+      return;
+    }
+    aiButton.disabled = true;
+    try {
+      if (typeof setStatus === 'function' && runtimeEnvironment.isIos) {
+        setStatus('info', 'Подготавливаем файлы для ИИ...');
+      }
+      const taskForDialog = await Promise.race([
+        resolveTaskForAiDialog(task),
+        new Promise((resolve) => {
+          setTimeout(() => resolve(task), 260);
+        }),
+      ]);
+      openAiDialogSafely({
+        task: taskForDialog,
+        entry,
+        onStatus: setStatus,
+      });
+    } finally {
+      aiButton.disabled = false;
+    }
   });
 
   textInput.addEventListener('input', () => {
