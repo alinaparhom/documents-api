@@ -16709,7 +16709,12 @@ function createResponseUploadControls(task, entry, setStatus) {
       if (typeof setStatus === 'function' && runtimeEnvironment.isIos) {
         setStatus('info', 'Подготавливаем файлы для ИИ...');
       }
-      const taskForDialog = await resolveTaskForAiDialog(task);
+      const taskForDialog = await Promise.race([
+        resolveTaskForAiDialog(task),
+        new Promise((resolve) => {
+          setTimeout(() => resolve(task), 260);
+        }),
+      ]);
       openAiDialogSafely({
         task: taskForDialog,
         entry,

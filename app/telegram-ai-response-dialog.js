@@ -7,6 +7,7 @@
   const FILE_FETCH_TIMEOUT_MS = 12000;
   const FILE_FETCH_RETRIES = 1;
   const FILE_FETCH_RETRIES_IOS = 3;
+  const FILE_FETCH_TIMEOUT_STEPS_IOS = [2800, 4200, 6200, 9000];
   const FILE_FETCH_MAX_CANDIDATES = 8;
   const FILE_PREPARE_TIMEOUT_MS = 35000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
@@ -817,15 +818,19 @@
       throw new Error('Не найден URL файла.');
     }
     const rounds = [baseCandidates, cacheBustedCandidates];
-    const retries = isIosClient() ? FILE_FETCH_RETRIES_IOS : FILE_FETCH_RETRIES;
+    const iosClient = isIosClient();
+    const retries = iosClient ? FILE_FETCH_RETRIES_IOS : FILE_FETCH_RETRIES;
     let lastStatus = 0;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const urls = rounds[Math.min(attempt, rounds.length - 1)];
+      const timeoutMs = iosClient
+        ? (FILE_FETCH_TIMEOUT_STEPS_IOS[Math.min(attempt, FILE_FETCH_TIMEOUT_STEPS_IOS.length - 1)] || FILE_FETCH_TIMEOUT_MS)
+        : FILE_FETCH_TIMEOUT_MS;
       for (let index = 0; index < urls.length; index += 1) {
         const url = urls[index];
         let response = null;
         try {
-          response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, FILE_FETCH_TIMEOUT_MS);
+          response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, timeoutMs);
         } catch (error) {
           continue;
         }
@@ -841,7 +846,7 @@
         return readyFile;
       }
       if (attempt < retries) {
-        const delayMs = isIosClient() ? (320 * (attempt + 1)) : 250;
+        const delayMs = iosClient ? (220 * (attempt + 1)) : 200;
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
@@ -2130,28 +2135,23 @@
       }
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
       const effectivePrompt = userPrompt;
-      const selectedFiles = Array.from(selected)
+      const selectedKeys = Array.from(selected)
+        .filter((key) => fileWarmupState.get(key) !== 'error');
+      const selectedFiles = selectedKeys
         .map((key) => files[Number(key)])
         .filter(Boolean);
 
       if (!selectedFiles.length) {
-        createBubble(messages, 'Выберите хотя бы один файл в меню «📎 Файлы».', 'assistant');
-        status.textContent = 'Нет выбранных файлов.';
+        createBubble(messages, 'Выберите хотя бы один файл без ошибок в меню «📎 Файлы».', 'assistant');
+        status.textContent = 'Нет доступных файлов для отправки.';
         return;
       }
 
-      const pendingWarmups = Array.from(selected)
+      const pendingWarmups = selectedKeys
         .map((key) => fileWarmupPromises.get(key))
         .filter(Boolean);
       if (pendingWarmups.length) {
-        status.textContent = 'Подготавливаю выбранные файлы...';
-        await Promise.allSettled(pendingWarmups);
-      }
-      const failedWarmup = Array.from(selected).some((key) => fileWarmupState.get(key) === 'error');
-      if (failedWarmup) {
-        status.textContent = 'Часть файлов не загрузилась. Снимите проблемный файл и попробуйте снова.';
-        createBubble(messages, '⚠️ Не удалось загрузить один или несколько файлов. Попробуйте выбрать их снова.', 'assistant');
-        return;
+        status.textContent = 'Отправляю запрос, недостающие файлы догружаются...';
       }
 
       isSending = true;
