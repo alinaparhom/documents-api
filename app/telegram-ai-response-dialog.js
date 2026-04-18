@@ -4,11 +4,10 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v1';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
-  const FILE_FETCH_TIMEOUT_MS = 7000;
+  const FILE_FETCH_TIMEOUT_MS = 10000;
   const FILE_FETCH_RETRIES = 1;
-  const FILE_FETCH_TOTAL_TIMEOUT_MS = 20000;
-  const FILE_FETCH_MAX_CANDIDATES = 4;
-  const FILE_PREPARE_TIMEOUT_MS = 25000;
+  const FILE_FETCH_MAX_CANDIDATES = 8;
+  const FILE_PREPARE_TIMEOUT_MS = 35000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const VISION_BATCH_SIZE = 5;
@@ -763,27 +762,19 @@
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
     }
-    const baseCandidates = buildFileUrlCandidates(file);
-    const candidates = [];
-    baseCandidates.forEach((candidate) => {
-      if (!candidate) return;
-      candidates.push(candidate);
-      if (!candidate.startsWith('blob:') && !candidate.startsWith('data:')) {
-        candidates.push(appendCacheBuster(candidate));
-      }
-    });
-    const limitedCandidates = Array.from(new Set(candidates.filter(Boolean))).slice(0, FILE_FETCH_MAX_CANDIDATES);
-    if (!limitedCandidates.length) {
+    const baseCandidates = Array.from(new Set(buildFileUrlCandidates(file).filter(Boolean))).slice(0, FILE_FETCH_MAX_CANDIDATES);
+    const cacheBustedCandidates = baseCandidates.map((url) => (
+      url.startsWith('blob:') || url.startsWith('data:') ? url : appendCacheBuster(url)
+    ));
+    if (!baseCandidates.length) {
       throw new Error('Не найден URL файла.');
     }
-    const startedAt = Date.now();
+    const rounds = [baseCandidates, cacheBustedCandidates];
     let lastStatus = 0;
     for (let attempt = 0; attempt <= FILE_FETCH_RETRIES; attempt += 1) {
-      for (let index = 0; index < limitedCandidates.length; index += 1) {
-        if ((Date.now() - startedAt) > FILE_FETCH_TOTAL_TIMEOUT_MS) {
-          throw new Error('Превышено время загрузки файла.');
-        }
-        const url = limitedCandidates[index];
+      const urls = rounds[Math.min(attempt, rounds.length - 1)];
+      for (let index = 0; index < urls.length; index += 1) {
+        const url = urls[index];
         let response = null;
         try {
           response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, FILE_FETCH_TIMEOUT_MS);
@@ -799,7 +790,7 @@
         return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
       }
       if (attempt < FILE_FETCH_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
     }
     throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
