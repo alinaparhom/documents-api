@@ -2777,18 +2777,20 @@
     var openFromModule = window.openDocumentsAiBriefSummaryModal;
     if (typeof openFromModule === 'function') {
       openFromModule(options);
-      return;
+      return Promise.resolve(true);
     }
-    ensureAiResponseModalScript()
+    return ensureAiResponseModalScript()
       .then(function() {
         if (typeof window.openDocumentsAiBriefSummaryModal !== 'function') {
           throw new Error('Модуль «Кратко ИИ» не инициализирован.');
         }
         window.openDocumentsAiBriefSummaryModal(options);
+        return true;
       })
       .catch(function(error) {
         var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : showMessage;
         showStatusMessage('error', error && error.message ? error.message : 'Не удалось открыть «Кратко ИИ».');
+        return false;
       });
   }
 
@@ -12676,6 +12678,13 @@
       if (!attachments.length) {
         return;
       }
+      if (briefActionButton.dataset.loading === '1') {
+        return;
+      }
+      var defaultBriefLabel = 'Кратко ИИ';
+      briefActionButton.dataset.loading = '1';
+      briefActionButton.disabled = true;
+      briefActionButton.textContent = '⏳ Открываю...';
       var linkedFiles = attachments.map(function(file) {
         return {
           name: getAttachmentName(file),
@@ -12696,6 +12705,10 @@
         onBriefReady: function(source, briefText) {
           return persistDocumentFileAiBrief(doc, source, briefText);
         }
+      }).finally(function() {
+        briefActionButton.dataset.loading = '0';
+        briefActionButton.textContent = defaultBriefLabel;
+        briefActionButton.disabled = !attachments.length;
       });
     });
     actions.appendChild(briefActionButton);
