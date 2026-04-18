@@ -29,9 +29,17 @@
     : { neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' } };
   const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
   let jsZipLoaderPromise = null;
+  const loadedFileCache = new Map();
 
   function normalize(value) {
     return String(value || '').trim();
+  }
+
+  function getFileCacheKey(file) {
+    const name = normalize(file && (file.storedName || file.originalName || file.name));
+    const url = normalize(file && (file.resolvedUrl || file.previewUrl || file.url || file.sourceUrl));
+    const size = Number(file && (file.size || file.fileSize)) || 0;
+    return `${name}|${url}|${size}`;
   }
 
   function sanitizeAssistantFinalText(value) {
@@ -762,6 +770,10 @@
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
     }
+    const cacheKey = getFileCacheKey(file);
+    if (cacheKey && loadedFileCache.has(cacheKey)) {
+      return loadedFileCache.get(cacheKey);
+    }
     const baseCandidates = Array.from(new Set(buildFileUrlCandidates(file).filter(Boolean))).slice(0, FILE_FETCH_MAX_CANDIDATES);
     const cacheBustedCandidates = baseCandidates.map((url) => (
       url.startsWith('blob:') || url.startsWith('data:') ? url : appendCacheBuster(url)
@@ -787,13 +799,25 @@
         }
         const blob = await response.blob();
         const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
-        return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        const readyFile = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        if (cacheKey) loadedFileCache.set(cacheKey, readyFile);
+        if (file && typeof file === 'object') file.fileObject = readyFile;
+        return readyFile;
       }
       if (attempt < FILE_FETCH_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
     }
     throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
+  }
+
+  function preloadSelectedFile(file, onStatus) {
+    if (!file || typeof file !== 'object') return;
+    loadSelectedFileAsBlob(file).catch(() => {
+      if (typeof onStatus === 'function') {
+        onStatus('Некоторые файлы загружаются медленно, продолжаю подготовку...', 'loading');
+      }
+    });
   }
 
   function ensureStyles() {
@@ -1760,6 +1784,10 @@
     let suppressVoiceEndStatus = false;
 
     renderFiles(filesList, files);
+    // Прогреваем зависимости заранее, чтобы первый запуск был стабильнее.
+    ensureBriefPdfJsLoaded().catch(() => {});
+    ensureMammothLoaded().catch(() => {});
+    ensureXlsxLoaded().catch(() => {});
 
     const close = () => {
       if (recognitionIsRunning && recognition) {
@@ -2016,6 +2044,12 @@
       if (!key) return;
       if (target.checked) selected.add(key);
       else selected.delete(key);
+      if (target.checked) {
+        const selectedFile = files[Number(key)];
+        preloadSelectedFile(selectedFile, (message) => {
+          status.textContent = message;
+        });
+      }
       updateFilesToggleLabel();
       status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
     });
