@@ -29,15 +29,15 @@
     : { neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' } };
   const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
   const RESPONSE_GENERATION_MODES = {
-    user_draft: {
-      value: 'user_draft',
+    improve_ai: {
+      value: 'improve_ai',
       label: 'Ответ',
       icon: '🧠',
       hint: 'Вы пишете черновик, ИИ улучшает его по файлам.',
       placeholder: 'Напишите или продиктуйте ваш черновик ответа — ИИ аккуратно улучшит текст.',
     },
-    ai_full: {
-      value: 'ai_full',
+    response_ai: {
+      value: 'response_ai',
       label: 'Ответ ИИ',
       icon: '🤖',
       hint: 'ИИ сам подготовит ответ на основе файлов.',
@@ -134,7 +134,7 @@
   function appendPromptSelection(formData, toneValue, assistantModeValue) {
     if (!(formData instanceof FormData)) return;
     const resolvedTone = normalize(toneValue) || DEFAULT_PROMPT_KEYS.tone || 'neutral';
-    const resolvedAssistantMode = normalize(assistantModeValue) || RESPONSE_GENERATION_MODES.ai_full.value;
+    const resolvedAssistantMode = normalize(assistantModeValue) || RESPONSE_GENERATION_MODES.response_ai.value;
     formData.append('response_mode', DEFAULT_PROMPT_KEYS.response_mode || 'v1');
     formData.append('vision_quality_mode', DEFAULT_PROMPT_KEYS.vision_quality_mode || 'v1');
     formData.append('tone', resolvedTone);
@@ -1768,8 +1768,8 @@
         <div class="tg-ai-chat__composer">
           <div class="tg-ai-chat__toolbar tg-ai-chat__toolbar--compact">
             <div class="tg-ai-chat__mode-switch" role="tablist" aria-label="Режим генерации ответа">
-              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="user_draft">${RESPONSE_GENERATION_MODES.user_draft.icon} ${RESPONSE_GENERATION_MODES.user_draft.label}</button>
-              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="ai_full" data-active="true">${RESPONSE_GENERATION_MODES.ai_full.icon} ${RESPONSE_GENERATION_MODES.ai_full.label}</button>
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="improve_ai">${RESPONSE_GENERATION_MODES.improve_ai.icon} ${RESPONSE_GENERATION_MODES.improve_ai.label}</button>
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="response_ai" data-active="true">${RESPONSE_GENERATION_MODES.response_ai.icon} ${RESPONSE_GENERATION_MODES.response_ai.label}</button>
             </div>
             <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
             <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
@@ -1808,7 +1808,7 @@
     let recognitionIsRunning = false;
     let speechSupported = false;
     let suppressVoiceEndStatus = false;
-    let currentResponseMode = RESPONSE_GENERATION_MODES.ai_full.value;
+    let currentResponseMode = RESPONSE_GENERATION_MODES.response_ai.value;
 
     renderFiles(filesList, files);
     // Прогреваем зависимости заранее, чтобы первый запуск был стабильнее.
@@ -1846,7 +1846,7 @@
     };
 
     const applyResponseModeUi = (modeValue) => {
-      const nextMode = RESPONSE_GENERATION_MODES[modeValue] ? modeValue : RESPONSE_GENERATION_MODES.ai_full.value;
+      const nextMode = RESPONSE_GENERATION_MODES[modeValue] ? modeValue : RESPONSE_GENERATION_MODES.response_ai.value;
       currentResponseMode = nextMode;
       modeButtons.forEach((button) => {
         const isActive = normalize(button.dataset.responseMode) === nextMode;
@@ -2009,7 +2009,7 @@
       }
       const userPrompt = normalize(promptInput && promptInput.value);
       if (!userPrompt) {
-        status.textContent = currentResponseMode === RESPONSE_GENERATION_MODES.user_draft.value
+        status.textContent = currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value
           ? 'В режиме «Ответ» нужен ваш черновик (текстом или голосом).'
           : 'Введите запрос для ИИ или продиктуйте его голосом.';
         return;
@@ -2019,17 +2019,7 @@
         styleIndex = styleIndexFromSelect;
       }
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
-      const prompt = currentResponseMode === RESPONSE_GENERATION_MODES.user_draft.value
-        ? [
-          `Черновик пользователя:\n${userPrompt}`,
-          'Улучши этот текст, но НЕ пиши ответ с нуля.',
-          'Сохрани исходный смысл, намерение и позицию пользователя.',
-          'Исправь стиль, грамматику и структуру. Сделай текст аккуратным и готовым к отправке.',
-          'Учитывай контекст выбранных файлов. Если данных не хватает — не добавляй вымышленные факты.',
-          'Верни только финальный текст ответа без пояснений, приветствий и подписи.',
-        ].join('\n\n')
-        : `Задача пользователя: ${userPrompt}\n\nПодготовь готовый текст ответа по выбранным файлам для вставки в документ: только суть, без приветствия и реквизитов.`;
-      const effectivePrompt = prompt;
+      const effectivePrompt = userPrompt;
       const selectedFiles = Array.from(selected)
         .map((key) => files[Number(key)])
         .filter(Boolean);
@@ -2068,7 +2058,7 @@
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
           <span class="tg-ai-chat__chip">Режим: vision</span>
-          <span class="tg-ai-chat__chip">Сценарий: ${currentResponseMode === RESPONSE_GENERATION_MODES.user_draft.value ? 'Ответ (редактирование)' : 'Ответ ИИ'}</span>
+          <span class="tg-ai-chat__chip">Сценарий: ${currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value ? 'Ответ (редактирование)' : 'Ответ ИИ'}</span>
           <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
