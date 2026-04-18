@@ -140,6 +140,10 @@
       .replace(/'/g, '&#39;');
   }
 
+  function escapeSelectorAttribute(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  }
+
   function getResponseStyleMeta(styleValue) {
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
   }
@@ -844,13 +848,17 @@
     throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
   }
 
-  function preloadSelectedFile(file, onStatus) {
-    if (!file || typeof file !== 'object') return;
-    loadSelectedFileAsBlob(file).catch(() => {
+  async function preloadSelectedFile(file, onStatus) {
+    if (!file || typeof file !== 'object') return false;
+    try {
+      await loadSelectedFileAsBlob(file);
+      return true;
+    } catch (_) {
       if (typeof onStatus === 'function') {
         onStatus('Некоторые файлы загружаются медленно, продолжаю подготовку...', 'loading');
       }
-    });
+      return false;
+    }
   }
 
   function ensureStyles() {
@@ -909,7 +917,15 @@
       .tg-ai-chat__files[hidden]{display:none}
       .tg-ai-chat__files-title{font-size:12px;color:#64748b;margin:0 0 8px}
       .tg-ai-chat__files-list{display:flex;flex-wrap:wrap;gap:6px;max-height:156px;overflow:auto}
-      .tg-ai-chat__file{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:999px;font-size:12px;color:#334155}
+      .tg-ai-chat__file{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:999px;font-size:12px;color:#334155;transition:all .2s ease}
+      .tg-ai-chat__file-name{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tg-ai-chat__file-state{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:999px;font-size:11px;font-weight:800;background:rgba(148,163,184,.18);color:#64748b}
+      .tg-ai-chat__file[data-state="loading"]{border-color:rgba(59,130,246,.42);background:rgba(239,246,255,.92)}
+      .tg-ai-chat__file[data-state="loading"] .tg-ai-chat__file-state{background:rgba(59,130,246,.16);color:#2563eb}
+      .tg-ai-chat__file[data-state="ready"]{border-color:rgba(16,185,129,.35);background:rgba(236,253,245,.92)}
+      .tg-ai-chat__file[data-state="ready"] .tg-ai-chat__file-state{background:rgba(16,185,129,.16);color:#047857}
+      .tg-ai-chat__file[data-state="error"]{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.95)}
+      .tg-ai-chat__file[data-state="error"] .tg-ai-chat__file-state{background:rgba(239,68,68,.16);color:#b91c1c}
       .tg-ai-chat__file input{accent-color:#2563eb}
       .tg-ai-chat__meta{display:flex;flex-wrap:wrap;gap:7px;padding:7px 12px;border-top:1px solid rgba(226,232,240,.7);background:rgba(255,255,255,.88)}
       .tg-ai-chat__chip{padding:4px 8px;border:1px solid rgba(203,213,225,.95);border-radius:999px;background:#fff;font-size:12px;color:#334155}
@@ -1683,7 +1699,13 @@
       const name = normalize(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
       const hasUrl = buildFileUrlCandidates(file).length > 0;
       const disabled = hasUrl ? '' : 'disabled';
-      return `<label class="tg-ai-chat__file"><input type="checkbox" data-file-index="${index}" ${disabled}><span>${escapeHtml(name)}</span></label>`;
+      return `
+        <label class="tg-ai-chat__file" data-file-index="${index}" data-state="idle">
+          <input type="checkbox" data-file-index="${index}" ${disabled}>
+          <span class="tg-ai-chat__file-name">${escapeHtml(name)}</span>
+          <span class="tg-ai-chat__file-state" data-file-state>○</span>
+        </label>
+      `;
     }).join('');
   }
 
@@ -1822,6 +1844,9 @@
     document.body.appendChild(overlay);
 
     const selected = new Set();
+    const fileWarmupState = new Map();
+    const fileWarmupPromises = new Map();
+    const fileWarmupRequestId = new Map();
     const messages = overlay.querySelector('[data-messages]');
     const status = overlay.querySelector('[data-status]');
     const filesPanel = overlay.querySelector('[data-files]');
@@ -1859,7 +1884,59 @@
 
     const updateFilesToggleLabel = () => {
       if (!filesToggleButton) return;
-      filesToggleButton.textContent = selected.size ? `📎 Файлы (${selected.size})` : '📎 Файлы';
+      let readyCount = 0;
+      selected.forEach((key) => {
+        if (fileWarmupState.get(key) === 'ready') readyCount += 1;
+      });
+      filesToggleButton.textContent = selected.size
+        ? `📎 Файлы (${readyCount}/${selected.size})`
+        : '📎 Файлы';
+    };
+
+    const setFileState = (key, stateValue) => {
+      const state = normalize(stateValue) || 'idle';
+      fileWarmupState.set(key, state);
+      const label = filesList && filesList.querySelector(`[data-file-index="${escapeSelectorAttribute(key)}"]`);
+      if (label instanceof HTMLElement) {
+        label.dataset.state = state;
+        const stateNode = label.querySelector('[data-file-state]');
+        if (stateNode) {
+          if (state === 'loading') stateNode.textContent = '…';
+          else if (state === 'ready') stateNode.textContent = '✓';
+          else if (state === 'error') stateNode.textContent = '!';
+          else stateNode.textContent = '○';
+        }
+      }
+      updateFilesToggleLabel();
+    };
+
+    const warmupFileByKey = (key) => {
+      const normalizedKey = normalize(key);
+      if (!normalizedKey || !selected.has(normalizedKey)) return;
+      const selectedFile = files[Number(normalizedKey)];
+      if (!selectedFile) return;
+      const requestId = (fileWarmupRequestId.get(normalizedKey) || 0) + 1;
+      fileWarmupRequestId.set(normalizedKey, requestId);
+      setFileState(normalizedKey, 'loading');
+      const promise = preloadSelectedFile(selectedFile, (message) => {
+        status.textContent = message;
+      }).then((ok) => {
+        if (!selected.has(normalizedKey)) return ok;
+        if (fileWarmupRequestId.get(normalizedKey) !== requestId) return ok;
+        setFileState(normalizedKey, ok ? 'ready' : 'error');
+        return ok;
+      }).catch(() => {
+        if (selected.has(normalizedKey) && fileWarmupRequestId.get(normalizedKey) === requestId) {
+          setFileState(normalizedKey, 'error');
+        }
+        return false;
+      }).finally(() => {
+        const currentPromise = fileWarmupPromises.get(normalizedKey);
+        if (currentPromise === promise) {
+          fileWarmupPromises.delete(normalizedKey);
+        }
+      });
+      fileWarmupPromises.set(normalizedKey, promise);
     };
 
     filesToggleButton?.addEventListener('click', () => {
@@ -2063,6 +2140,20 @@
         return;
       }
 
+      const pendingWarmups = Array.from(selected)
+        .map((key) => fileWarmupPromises.get(key))
+        .filter(Boolean);
+      if (pendingWarmups.length) {
+        status.textContent = 'Подготавливаю выбранные файлы...';
+        await Promise.allSettled(pendingWarmups);
+      }
+      const failedWarmup = Array.from(selected).some((key) => fileWarmupState.get(key) === 'error');
+      if (failedWarmup) {
+        status.textContent = 'Часть файлов не загрузилась. Снимите проблемный файл и попробуйте снова.';
+        createBubble(messages, '⚠️ Не удалось загрузить один или несколько файлов. Попробуйте выбрать их снова.', 'assistant');
+        return;
+      }
+
       isSending = true;
       setComposerDisabled(true);
       if (filesPanel) filesPanel.hidden = true;
@@ -2138,16 +2229,26 @@
       if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
       const key = normalize(target.dataset.fileIndex);
       if (!key) return;
-      if (target.checked) selected.add(key);
-      else selected.delete(key);
       if (target.checked) {
-        const selectedFile = files[Number(key)];
-        preloadSelectedFile(selectedFile, (message) => {
-          status.textContent = message;
-        });
+        selected.add(key);
+        warmupFileByKey(key);
+      } else {
+        selected.delete(key);
+        fileWarmupPromises.delete(key);
+        fileWarmupRequestId.delete(key);
+        setFileState(key, 'idle');
+      }
+      if (target.checked) {
+        status.textContent = 'Подготавливаю файл...';
       }
       updateFilesToggleLabel();
-      status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
+      let readyCount = 0;
+      selected.forEach((selectedKey) => {
+        if (fileWarmupState.get(selectedKey) === 'ready') readyCount += 1;
+      });
+      status.textContent = selected.size
+        ? `Выбрано файлов: ${selected.size} • готово: ${readyCount}`
+        : 'Можно выбрать файлы для более точного ответа.';
     });
 
     templateButton?.addEventListener('click', async () => {
