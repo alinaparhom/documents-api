@@ -55,6 +55,22 @@ function getServerAiPromptsCatalog(): array
                 'Соблюдай структурный формат: короткие абзацы, переносы строк между блоками, без Markdown.',
             ]),
         ],
+        'ASSISTANT_SCENARIO_DIRECTIVE' => [
+            'ai_full' => implode("\n", [
+                'СЦЕНАРИЙ: «Ответ ИИ».',
+                'Ты полностью формируешь итоговый ответ с нуля на основе файлов и запроса пользователя.',
+                'Опирайся только на данные из контекста. Не добавляй неподтверждённые факты.',
+                'Если данных недостаточно — явно укажи, чего не хватает для уверенного ответа.',
+            ]),
+            'user_draft' => implode("\n", [
+                'СЦЕНАРИЙ: «Ответ».',
+                'Пользователь передал свой черновик: ты не создаёшь ответ с нуля.',
+                'Твоя задача — отредактировать и улучшить черновик: стиль, грамматика, структура, ясность.',
+                'Сохрани смысл, намерение и позицию пользователя без подмены содержания.',
+                'Учитывай контекст файлов только для точности формулировок и устранения противоречий.',
+                'Не добавляй новых фактов, требований или выводов, которых нет в черновике и документах.',
+            ]),
+        ],
         'SYSTEM_TONE_PROMPTS' => [
             'neutral' => ['value' => 'neutral', 'label' => 'Нейтральный', 'prompt' => "СТИЛЬ ОТВЕТА: Нейтральный деловой.\nПиши ровно, без эмоций и оценок."],
             'aggressive' => ['value' => 'aggressive', 'label' => 'Агрессивный', 'prompt' => "СТИЛЬ ОТВЕТА: Жёсткий деловой.\nПиши прямолинейно, коротко и требовательно, без грубости и нарушений деловой этики."],
@@ -73,6 +89,7 @@ function getServerAiPromptsCatalog(): array
             'response_mode' => 'v1',
             'vision_quality_mode' => 'v1',
             'tone' => 'neutral_enhanced',
+            'assistant_mode' => 'ai_full',
         ],
     ];
 
@@ -96,16 +113,28 @@ function resolveServerTonePrompt(string $toneKey): array
     return is_array($tones['neutral'] ?? null) ? $tones['neutral'] : ['value' => 'neutral', 'label' => 'Нейтральный', 'prompt' => ''];
 }
 
-function buildServerPromptVersion(string $responseMode, string $visionQualityMode, string $tone): string
+function resolveServerAssistantMode(string $requestedMode, string $fallbackMode = 'ai_full'): string
+{
+    $catalog = getServerAiPromptsCatalog();
+    $map = is_array($catalog['ASSISTANT_SCENARIO_DIRECTIVE'] ?? null) ? $catalog['ASSISTANT_SCENARIO_DIRECTIVE'] : [];
+    if (array_key_exists($requestedMode, $map)) {
+        return $requestedMode;
+    }
+    return array_key_exists($fallbackMode, $map) ? $fallbackMode : 'ai_full';
+}
+
+function buildServerPromptVersion(string $responseMode, string $visionQualityMode, string $tone, string $assistantMode): string
 {
     $catalog = getServerAiPromptsCatalog();
     $resolvedResponseMode = resolveServerPromptKey('RESPONSE_OUTPUT_DIRECTIVE', $responseMode, 'v1');
     $resolvedVisionMode = resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $visionQualityMode, 'v1');
     $resolvedTone = resolveServerTonePrompt($tone);
+    $resolvedAssistantMode = resolveServerAssistantMode($assistantMode, 'ai_full');
     return (string)($catalog['version'] ?? 'prompt-catalog-v1')
         . ':response=' . $resolvedResponseMode
         . ',vision=' . $resolvedVisionMode
-        . ',tone=' . (string)($resolvedTone['value'] ?? 'neutral');
+        . ',tone=' . (string)($resolvedTone['value'] ?? 'neutral')
+        . ',assistant=' . $resolvedAssistantMode;
 }
 
 function normalizePromptKey(string $value): string
@@ -125,21 +154,25 @@ function resolvePromptSelectionFromRequest(): array
     $defaultResponseMode = normalizePromptKey((string)($defaults['response_mode'] ?? 'v1'));
     $defaultVisionMode = normalizePromptKey((string)($defaults['vision_quality_mode'] ?? 'v1'));
     $defaultTone = normalizePromptKey((string)($defaults['tone'] ?? 'neutral'));
+    $defaultAssistantMode = normalizePromptKey((string)($defaults['assistant_mode'] ?? 'ai_full'));
 
     $requestedResponseMode = normalizePromptKey(requestStringField('response_mode', $defaultResponseMode !== '' ? $defaultResponseMode : 'v1'));
     $requestedVisionMode = normalizePromptKey(requestStringField('vision_quality_mode', $defaultVisionMode !== '' ? $defaultVisionMode : 'v1'));
     $requestedTone = normalizePromptKey(requestStringField('tone', $defaultTone !== '' ? $defaultTone : 'neutral'));
+    $requestedAssistantMode = normalizePromptKey(requestStringField('assistant_mode', $defaultAssistantMode !== '' ? $defaultAssistantMode : 'ai_full'));
 
     $responseMode = resolveServerPromptKey('RESPONSE_OUTPUT_DIRECTIVE', $requestedResponseMode, $defaultResponseMode !== '' ? $defaultResponseMode : 'v1');
     $visionQualityMode = resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $requestedVisionMode, $defaultVisionMode !== '' ? $defaultVisionMode : 'v1');
     $toneMeta = resolveServerTonePrompt($requestedTone !== '' ? $requestedTone : ($defaultTone !== '' ? $defaultTone : 'neutral'));
     $tone = normalizePromptKey((string)($toneMeta['value'] ?? 'neutral'));
+    $assistantMode = resolveServerAssistantMode($requestedAssistantMode, $defaultAssistantMode !== '' ? $defaultAssistantMode : 'ai_full');
 
     return [
         'response_mode' => $responseMode,
         'vision_quality_mode' => $visionQualityMode,
         'tone' => $tone !== '' ? $tone : 'neutral',
-        'promptVersion' => buildServerPromptVersion($responseMode, $visionQualityMode, $tone !== '' ? $tone : 'neutral'),
+        'assistant_mode' => $assistantMode,
+        'promptVersion' => buildServerPromptVersion($responseMode, $visionQualityMode, $tone !== '' ? $tone : 'neutral', $assistantMode),
     ];
 }
 
@@ -744,15 +777,19 @@ function getBriefAiSystemPrompt(): string
         . "- Если данных мало, прямо укажи, каких данных не хватает в 1 коротком пункте.\n";
 }
 
-function getResponseAiSystemPrompt(string $responseMode = 'v1', string $tone = 'neutral'): string
+function getResponseAiSystemPrompt(string $responseMode = 'v1', string $tone = 'neutral', string $assistantMode = 'ai_full'): string
 {
     $catalog = getServerAiPromptsCatalog();
     $responseMap = is_array($catalog['RESPONSE_OUTPUT_DIRECTIVE'] ?? null) ? $catalog['RESPONSE_OUTPUT_DIRECTIVE'] : [];
+    $scenarioMap = is_array($catalog['ASSISTANT_SCENARIO_DIRECTIVE'] ?? null) ? $catalog['ASSISTANT_SCENARIO_DIRECTIVE'] : [];
     $resolvedMode = resolveServerPromptKey('RESPONSE_OUTPUT_DIRECTIVE', trim($responseMode), 'v1');
+    $resolvedAssistantMode = resolveServerAssistantMode(trim($assistantMode), 'ai_full');
     $tonePrompt = resolveServerTonePrompt(trim($tone));
     $baseDirective = trim((string)($responseMap[$resolvedMode] ?? ''));
+    $scenarioDirective = trim((string)($scenarioMap[$resolvedAssistantMode] ?? ''));
     $toneText = trim((string)($tonePrompt['prompt'] ?? ''));
-    return trim($baseDirective . ($toneText !== '' ? ("\n\n" . $toneText) : ''));
+    $parts = array_values(array_filter([$baseDirective, $scenarioDirective, $toneText], static fn($item): bool => trim((string)$item) !== ''));
+    return trim(implode("\n\n", $parts));
 }
 
 function normalizeAiOutputText(string $text): string
@@ -879,6 +916,7 @@ function handleAnalyzePaidAction(array $env): void
     $responseMode = (string)$promptSelection['response_mode'];
     $visionQualityMode = (string)$promptSelection['vision_quality_mode'];
     $tone = (string)$promptSelection['tone'];
+    $assistantMode = (string)$promptSelection['assistant_mode'];
     $promptVersion = (string)$promptSelection['promptVersion'];
     if ($userPrompt === '') {
         $userPrompt = 'Прими решение по приложенным документам.';
@@ -923,7 +961,7 @@ function handleAnalyzePaidAction(array $env): void
             }
         }
         if ($systemPrompt === '') {
-            $systemPrompt = getResponseAiSystemPrompt($responseMode, $tone);
+            $systemPrompt = getResponseAiSystemPrompt($responseMode, $tone, $assistantMode);
         }
 
         // 1) Vision-этап: извлекаем сырой текст из изображений/PDF «как есть».
@@ -1011,6 +1049,7 @@ function handleAnalyzePaidAction(array $env): void
                 'response_mode' => $responseMode,
                 'vision_quality_mode' => $visionQualityMode,
                 'tone' => $tone,
+                'assistant_mode' => $assistantMode,
             ],
         ]);
     }
@@ -1132,7 +1171,8 @@ function handleAnalyzePaidAction(array $env): void
     }
 
     $model = resolveModel($env);
-    $systemMessagePaid = getResponseAiSystemPrompt($responseMode, $tone);
+    $assistantMode = (string)$promptSelection['assistant_mode'];
+    $systemMessagePaid = getResponseAiSystemPrompt($responseMode, $tone, $assistantMode);
 
     $textPayload = $userPrompt;
     if ($limitedContextNotice !== '') {
@@ -1194,6 +1234,7 @@ function handleAnalyzePaidAction(array $env): void
             'response_mode' => $responseMode,
             'vision_quality_mode' => $visionQualityMode,
             'tone' => $tone,
+            'assistant_mode' => $assistantMode,
         ],
     ]);
 }
@@ -1205,6 +1246,7 @@ function handleGenerateSummaryAction(array $env): void
     $responseMode = (string)$promptSelection['response_mode'];
     $visionQualityMode = (string)$promptSelection['vision_quality_mode'];
     $tone = (string)$promptSelection['tone'];
+    $assistantMode = (string)$promptSelection['assistant_mode'];
     $promptVersion = (string)$promptSelection['promptVersion'];
     if ($apiKey === '') {
         respond(500, ['ok' => false, 'error' => 'Не найден GROQ_API_KEY в окружении или .env']);
@@ -1281,6 +1323,7 @@ function handleGenerateSummaryAction(array $env): void
             'response_mode' => $responseMode,
             'vision_quality_mode' => $visionQualityMode,
             'tone' => $tone,
+            'assistant_mode' => $assistantMode,
         ],
     ]);
 }
@@ -1363,13 +1406,14 @@ function handleGenerateResponseAction(array $env): void
     $responseMode = (string)$promptSelection['response_mode'];
     $visionQualityMode = (string)$promptSelection['vision_quality_mode'];
     $tone = (string)$promptSelection['tone'];
+    $assistantMode = (string)$promptSelection['assistant_mode'];
     $promptVersion = (string)$promptSelection['promptVersion'];
     if ($userPrompt === '') {
         $userPrompt = 'Подготовь официальный ответ по тексту вложений в деловом стиле.';
     }
 
     $model = resolveModel($env);
-    $systemMessage = getResponseAiSystemPrompt($responseMode, $tone);
+    $systemMessage = getResponseAiSystemPrompt($responseMode, $tone, $assistantMode);
 
     $requestPayload = [
         'model' => $model,
@@ -1404,6 +1448,7 @@ function handleGenerateResponseAction(array $env): void
             'response_mode' => $responseMode,
             'vision_quality_mode' => $visionQualityMode,
             'tone' => $tone,
+            'assistant_mode' => $assistantMode,
         ],
     ]);
 }

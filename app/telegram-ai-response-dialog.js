@@ -28,6 +28,22 @@
     ? PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
     : { neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' } };
   const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
+  const RESPONSE_GENERATION_MODES = {
+    user_draft: {
+      value: 'user_draft',
+      label: 'Ответ',
+      icon: '🧠',
+      hint: 'Вы пишете черновик, ИИ улучшает его по файлам.',
+      placeholder: 'Напишите или продиктуйте ваш черновик ответа — ИИ аккуратно улучшит текст.',
+    },
+    ai_full: {
+      value: 'ai_full',
+      label: 'Ответ ИИ',
+      icon: '🤖',
+      hint: 'ИИ сам подготовит ответ на основе файлов.',
+      placeholder: 'Например: Подготовь деловой ответ на претензию по этому документу',
+    },
+  };
   let jsZipLoaderPromise = null;
   const loadedFileCache = new Map();
 
@@ -115,12 +131,14 @@
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
   }
 
-  function appendPromptSelection(formData, toneValue) {
+  function appendPromptSelection(formData, toneValue, assistantModeValue) {
     if (!(formData instanceof FormData)) return;
     const resolvedTone = normalize(toneValue) || DEFAULT_PROMPT_KEYS.tone || 'neutral';
+    const resolvedAssistantMode = normalize(assistantModeValue) || RESPONSE_GENERATION_MODES.ai_full.value;
     formData.append('response_mode', DEFAULT_PROMPT_KEYS.response_mode || 'v1');
     formData.append('vision_quality_mode', DEFAULT_PROMPT_KEYS.vision_quality_mode || 'v1');
     formData.append('tone', resolvedTone);
+    formData.append('assistant_mode', resolvedAssistantMode);
   }
 
   function getGroqResponseEndpoints() {
@@ -672,7 +690,7 @@
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
-        appendPromptSelection(formData, payload.tone);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         formData.append('extractedTexts', JSON.stringify(extractedTexts));
         return formData;
       });
@@ -699,7 +717,7 @@
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
-        appendPromptSelection(formData, payload.tone);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         if (extractedTexts.length && batchIndex === 0) {
           formData.append('extractedTexts', JSON.stringify(extractedTexts));
         }
@@ -744,7 +762,7 @@
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
-        appendPromptSelection(formData, payload.tone);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         formData.append('extractedTexts', JSON.stringify([{
           name: 'vision-batches.txt',
           type: 'text/plain',
@@ -841,6 +859,9 @@
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
       .tg-ai-chat__toolbar--compact{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .tg-ai-chat__mode-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border:1px solid rgba(191,219,254,.85);border-radius:14px;background:rgba(239,246,255,.72);backdrop-filter:blur(6px)}
+      .tg-ai-chat__mode-btn{min-height:38px;border:none;border-radius:11px;background:transparent;color:#334155;font-size:12px;font-weight:700;padding:0 10px}
+      .tg-ai-chat__mode-btn[data-active="true"]{background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.28)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
       .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
       .tg-ai-chat__input-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:end}
@@ -1746,6 +1767,10 @@
         </div>
         <div class="tg-ai-chat__composer">
           <div class="tg-ai-chat__toolbar tg-ai-chat__toolbar--compact">
+            <div class="tg-ai-chat__mode-switch" role="tablist" aria-label="Режим генерации ответа">
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="user_draft">${RESPONSE_GENERATION_MODES.user_draft.icon} ${RESPONSE_GENERATION_MODES.user_draft.label}</button>
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="ai_full" data-active="true">${RESPONSE_GENERATION_MODES.ai_full.icon} ${RESPONSE_GENERATION_MODES.ai_full.label}</button>
+            </div>
             <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
             <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
               <option value="" selected>🎯 Выберите режим</option>
@@ -1771,6 +1796,7 @@
     const filesToggleButton = overlay.querySelector('[data-files-toggle]');
     const meta = overlay.querySelector('[data-meta]');
     const styleSelect = overlay.querySelector('[data-style-select]');
+    const modeButtons = Array.from(overlay.querySelectorAll('[data-response-mode]'));
     const templateButton = overlay.querySelector('[data-template-btn]');
     const promptInput = overlay.querySelector('[data-prompt-input]');
     const sendButton = overlay.querySelector('[data-send-btn]');
@@ -1782,6 +1808,7 @@
     let recognitionIsRunning = false;
     let speechSupported = false;
     let suppressVoiceEndStatus = false;
+    let currentResponseMode = RESPONSE_GENERATION_MODES.ai_full.value;
 
     renderFiles(filesList, files);
     // Прогреваем зависимости заранее, чтобы первый запуск был стабильнее.
@@ -1813,6 +1840,25 @@
       if (promptInput) promptInput.disabled = disabled;
       if (sendButton) sendButton.disabled = disabled;
       if (voiceButton) voiceButton.disabled = disabled || !speechSupported;
+      modeButtons.forEach((button) => {
+        button.disabled = disabled;
+      });
+    };
+
+    const applyResponseModeUi = (modeValue) => {
+      const nextMode = RESPONSE_GENERATION_MODES[modeValue] ? modeValue : RESPONSE_GENERATION_MODES.ai_full.value;
+      currentResponseMode = nextMode;
+      modeButtons.forEach((button) => {
+        const isActive = normalize(button.dataset.responseMode) === nextMode;
+        button.dataset.active = isActive ? 'true' : 'false';
+      });
+      const modeMeta = RESPONSE_GENERATION_MODES[nextMode];
+      if (promptInput && modeMeta && modeMeta.placeholder) {
+        promptInput.placeholder = modeMeta.placeholder;
+      }
+      if (status && modeMeta) {
+        status.textContent = `${modeMeta.icon} ${modeMeta.hint}`;
+      }
     };
 
     const appendPromptText = (chunk) => {
@@ -1944,6 +1990,15 @@
       promptInput.style.height = `${Math.min(Math.max(promptInput.scrollHeight, 52), 156)}px`;
     });
     promptInput?.dispatchEvent(new Event('input'));
+    applyResponseModeUi(currentResponseMode);
+
+    modeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        if (isSending) return;
+        const nextMode = normalize(button.dataset.responseMode);
+        applyResponseModeUi(nextMode);
+      });
+    });
 
     async function sendByCurrentStyle() {
       if (isSending) return;
@@ -1954,7 +2009,9 @@
       }
       const userPrompt = normalize(promptInput && promptInput.value);
       if (!userPrompt) {
-        status.textContent = 'Введите запрос для ИИ или продиктуйте его голосом.';
+        status.textContent = currentResponseMode === RESPONSE_GENERATION_MODES.user_draft.value
+          ? 'В режиме «Ответ» нужен ваш черновик (текстом или голосом).'
+          : 'Введите запрос для ИИ или продиктуйте его голосом.';
         return;
       }
       const styleIndexFromSelect = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
@@ -1962,7 +2019,16 @@
         styleIndex = styleIndexFromSelect;
       }
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
-      const prompt = `Задача пользователя: ${userPrompt}\n\nПодготовь готовый текст ответа по выбранным файлам для вставки в документ: только суть, без приветствия и реквизитов.`;
+      const prompt = currentResponseMode === RESPONSE_GENERATION_MODES.user_draft.value
+        ? [
+          `Черновик пользователя:\n${userPrompt}`,
+          'Улучши этот текст, но НЕ пиши ответ с нуля.',
+          'Сохрани исходный смысл, намерение и позицию пользователя.',
+          'Исправь стиль, грамматику и структуру. Сделай текст аккуратным и готовым к отправке.',
+          'Учитывай контекст выбранных файлов. Если данных не хватает — не добавляй вымышленные факты.',
+          'Верни только финальный текст ответа без пояснений, приветствий и подписи.',
+        ].join('\n\n')
+        : `Задача пользователя: ${userPrompt}\n\nПодготовь готовый текст ответа по выбранным файлам для вставки в документ: только суть, без приветствия и реквизитов.`;
       const effectivePrompt = prompt;
       const selectedFiles = Array.from(selected)
         .map((key) => files[Number(key)])
@@ -1985,7 +2051,13 @@
       const loadingBubble = createLoadingBubble(messages);
 
       try {
-        const answerRaw = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: '', tone: styleMeta.value, selectedFiles }, (message) => {
+        const answerRaw = await requestTelegramVisionResponse({
+          prompt: effectivePrompt,
+          systemPrompt: '',
+          tone: styleMeta.value,
+          assistantMode: currentResponseMode,
+          selectedFiles,
+        }, (message) => {
           status.textContent = message;
         });
         const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
@@ -1996,6 +2068,7 @@
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
           <span class="tg-ai-chat__chip">Режим: vision</span>
+          <span class="tg-ai-chat__chip">Сценарий: ${currentResponseMode === RESPONSE_GENERATION_MODES.user_draft.value ? 'Ответ (редактирование)' : 'Ответ ИИ'}</span>
           <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
