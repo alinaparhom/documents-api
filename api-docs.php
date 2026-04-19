@@ -142,6 +142,42 @@ function buildPublicBaseDirFromScript(): string
     return '/' . trim($dirName, '/');
 }
 
+function buildPublicAbsoluteUrl(string $path): string
+{
+    $normalizedPath = '/' . ltrim(trim($path), '/');
+    $https = strtolower((string)($_SERVER['HTTPS'] ?? ''));
+    $scheme = ($https === 'on' || $https === '1') ? 'https' : 'http';
+    $forwardedProto = strtolower(trim((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')));
+    if ($forwardedProto === 'https' || $forwardedProto === 'http') {
+        $scheme = $forwardedProto;
+    }
+
+    $host = trim((string)($_SERVER['HTTP_HOST'] ?? ''));
+    if ($host === '') {
+        $host = trim((string)($_SERVER['SERVER_NAME'] ?? ''));
+    }
+    $host = preg_replace('/[^a-z0-9\.\-:\[\]]/iu', '', (string)$host);
+    if (!is_string($host) || $host === '') {
+        return '';
+    }
+
+    $absoluteUrl = $scheme . '://' . $host . $normalizedPath;
+    if (filter_var($absoluteUrl, FILTER_VALIDATE_URL) === false) {
+        return '';
+    }
+
+    $urlHost = strtolower((string)parse_url($absoluteUrl, PHP_URL_HOST));
+    if ($urlHost === '' || $urlHost === 'localhost') {
+        return '';
+    }
+    if (filter_var($urlHost, FILTER_VALIDATE_IP) !== false) {
+        if (!filter_var($urlHost, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+            return '';
+        }
+    }
+    return $absoluteUrl;
+}
+
 function saveGeneratedFileAndBuildUrl(string $sourcePath, string $extension): array
 {
     $safeExt = strtolower(trim($extension));
@@ -174,9 +210,14 @@ function saveGeneratedFileAndBuildUrl(string $sourcePath, string $extension): ar
     }
 
     $baseDir = buildPublicBaseDirFromScript();
-    $publicUrl = ($baseDir !== '' ? $baseDir : '') . '/app/tmp/generated/' . rawurlencode($fileName);
-    if ($publicUrl === '' || $publicUrl[0] !== '/') {
-        $publicUrl = '/' . ltrim($publicUrl, '/');
+    $publicPath = ($baseDir !== '' ? $baseDir : '') . '/app/tmp/generated/' . rawurlencode($fileName);
+    if ($publicPath === '' || $publicPath[0] !== '/') {
+        $publicPath = '/' . ltrim($publicPath, '/');
+    }
+    $publicUrl = buildPublicAbsoluteUrl($publicPath);
+    if ($publicUrl === '') {
+        @unlink($targetPath);
+        return ['ok' => false, 'error' => 'Не удалось сформировать публичный URL сгенерированного файла'];
     }
 
     return [

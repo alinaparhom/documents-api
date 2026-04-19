@@ -1244,103 +1244,30 @@
     setTimeout(() => toast.remove(), 3500);
   }
 
-  function buildGeneratedDocxUrlCandidates(previewPayload, options = {}) {
-    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
-    const fileName = normalize(previewPayload && previewPayload.fileName);
-    const safeFileName = normalize(fileName.split('/').pop());
-    const organization = normalize(options && options.organization).replace(/^\/+|\/+$/g, '');
-    const directGeneratedUrl = safeFileName ? `/js/documents/tmp/generated/${encodeURIComponent(safeFileName)}` : '';
-    const directOrganizationGeneratedUrl = (organization && safeFileName)
-      ? `/js/documents/${encodeURIComponent(organization)}/tmp/generated/${encodeURIComponent(safeFileName)}`
-      : '';
-    const exactPublicBaseCandidates = [
-      normalize(globalScope && globalScope.TG_GENERATED_DOCX_PUBLIC_BASE),
-      'https://bimmax.pro/documents/app/tmp/generated/generated/',
-      'https://bimmax.pro/documents/app/tmp/generated/',
-    ].filter(Boolean);
-    const exactPublicUrls = safeFileName
-      ? exactPublicBaseCandidates.map((base) => `${String(base).replace(/\/+$/g, '')}/${encodeURIComponent(safeFileName)}`)
-      : [];
-    const mappedTmpUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
-    const mappedLegacyTmpUrl = previewUrl ? previewUrl.replace(/\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
-    const mappedExactGeneratedUrl = previewUrl
-      ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/app/tmp/generated/generated/')
-      : '';
-    return Array.from(new Set([
-      previewUrl,
-      ...exactPublicUrls,
-      mappedExactGeneratedUrl,
-      directOrganizationGeneratedUrl,
-      directGeneratedUrl,
-      mappedTmpUrl,
-      mappedLegacyTmpUrl,
-    ].filter(Boolean))).map((url) => toAbsoluteUrl(url));
-  }
-
-  async function resolvePublicDocxUrlForOffice(previewPayload, options = {}) {
-    const candidates = buildGeneratedDocxUrlCandidates(previewPayload, options);
-    if (!candidates.length) {
-      throw new Error('Не удалось получить ссылку на DOCX.');
-    }
-    let lastStatus = 0;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = normalize(candidates[index]);
-      if (!/^https?:\/\//i.test(candidate)) continue;
-      try {
-        const response = await fetchWithTimeout(candidate, {
-          method: 'HEAD',
-          credentials: 'omit',
-          cache: 'no-store',
-        }, 12000);
-        if (!response || !response.ok) {
-          lastStatus = response ? response.status : 0;
-          continue;
-        }
-        return candidate;
-      } catch (_) {}
-      try {
-        const fallbackResponse = await fetchWithTimeout(candidate, {
-          method: 'GET',
-          credentials: 'omit',
-          cache: 'no-store',
-          headers: { Range: 'bytes=0-0' },
-        }, 12000);
-        if (!fallbackResponse || !fallbackResponse.ok) {
-          lastStatus = fallbackResponse ? fallbackResponse.status : lastStatus;
-          continue;
-        }
-        return candidate;
-      } catch (_) {}
-    }
-    throw new Error(`URL документа недоступен публично (${lastStatus || 'no_public_access'}).`);
-  }
-
   async function resolveGeneratedDocxBlob(previewPayload) {
     if (previewPayload && previewPayload.blob instanceof Blob) {
       return previewPayload.blob;
     }
-    const candidates = buildGeneratedDocxUrlCandidates(previewPayload);
-    if (!candidates.length) {
+    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
+    if (!previewUrl) {
       throw new Error('Не удалось получить файл документа для предпросмотра.');
     }
-    let lastStatus = 0;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const url = candidates[index];
-      try {
-        const response = await fetchWithTimeout(url, {
-          method: 'GET',
-          credentials: 'same-origin',
-          cache: 'no-store',
-        }, 30000);
-        if (!response || !response.ok) {
-          lastStatus = response ? response.status : 0;
-          continue;
-        }
-        const blob = await response.blob();
-        if (blob && blob.size) return blob;
-      } catch (_) {}
+    const url = toAbsoluteUrl(previewUrl);
+    try {
+      const response = await fetchWithTimeout(url, {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store',
+      }, 30000);
+      if (!response || !response.ok) {
+        throw new Error(`no_response_${response ? response.status : 0}`);
+      }
+      const blob = await response.blob();
+      if (blob && blob.size) return blob;
+    } catch (_) {
+      throw new Error('Не удалось скачать документ для предпросмотра.');
     }
-    throw new Error(`Не удалось скачать документ для предпросмотра (${lastStatus || 'no_response'}).`);
+    throw new Error('Не удалось скачать документ для предпросмотра.');
   }
 
   async function downloadGeneratedPreviewFile(previewPayload) {
@@ -1632,17 +1559,19 @@
     }
 
     try {
-      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 1/2: Проверяем URL документа…';
-      statusNode.textContent = 'Подготовка просмотра через Office Viewer…';
-      const publicUrl = await resolvePublicDocxUrlForOffice(previewPayload);
-      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 2/2: Открываем Office Viewer…';
-      const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(publicUrl)}`;
+      const officeSourceUrl = toAbsoluteUrl(normalize(previewPayload.previewUrl));
+      if (!officeSourceUrl || !/^https?:\/\//i.test(officeSourceUrl)) {
+        throw new Error('Некорректная ссылка на документ.');
+      }
+      if (loadingSubNode) loadingSubNode.textContent = 'Открываем Office Viewer…';
+      statusNode.textContent = 'Открываем документ…';
+      const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
       frameNode.src = officeViewerUrl;
       if (loadingNode) loadingNode.style.display = 'none';
       statusNode.textContent = `Готово: ${generatedFileName || 'документ'} открыт через Office Viewer.`;
     } catch (error) {
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = `Не удалось открыть документ: ${(error && error.message) || 'ошибка предпросмотра'}. Скачайте файл или проверьте, что ссылка публичная.`;
+      statusNode.textContent = 'Не удалось открыть документ. Проверьте ссылку и попробуйте снова.';
     }
   }
 
