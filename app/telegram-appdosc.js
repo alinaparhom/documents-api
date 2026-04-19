@@ -15998,11 +15998,28 @@ async function fetchLatestTaskSnapshot(task, options = {}) {
       }
     }
 
-    const canUseLegacyFallback = response.status === 404 || response.status === 405 || response.status === 400;
+    let canUseLegacyFallback = response.status === 404 || response.status === 405;
+    if (!canUseLegacyFallback && response.status === 400) {
+      try {
+        const payload = await response.clone().json();
+        const message = normalizeValue(payload && (payload.message || payload.error || payload.reason || ''));
+        const normalizedMessage = message.toLowerCase();
+        if (normalizedMessage.includes('неизвест') && normalizedMessage.includes('действ')) {
+          canUseLegacyFallback = true;
+        }
+        if (normalizedMessage.includes('unknown') && normalizedMessage.includes('action')) {
+          canUseLegacyFallback = true;
+        }
+      } catch (_) {
+        canUseLegacyFallback = false;
+      }
+    }
+
     if (canUseLegacyFallback) {
       const legacy = await fetchLatestTaskSnapshotFallbackFromList(task);
       return { snapshot: legacy, status: legacy ? 'legacy' : 'legacy_failed' };
     }
+
     return { snapshot: null, status: 'unavailable' };
   } catch (error) {
     const isTimeout = Boolean(error && (error.name === 'AbortError' || error.code === 'abort'));
@@ -17303,8 +17320,6 @@ function setupAssignmentControls(card, task) {
       false,
       responseViewButton
     );
-    refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton).catch(() => {});
-
     responseViewButton.addEventListener('click', async () => {
       if (responseViewButton.dataset.loading === 'true') {
         return;
@@ -18068,8 +18083,6 @@ function setupSubordinateControls(card, task) {
       false,
       responseViewButton
     );
-    refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton).catch(() => {});
-
     responseViewButton.addEventListener('click', async () => {
       if (responseViewButton.dataset.loading === 'true') {
         return;
