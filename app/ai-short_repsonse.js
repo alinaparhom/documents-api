@@ -2,7 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
-const BRIEF_SUMMARY_PROMPT = 'Сделай очень краткий вывод по документу: 1) краткое содержание, 2) рекомендации, 3) итог. Не более 6 коротких пунктов и только по фактам из текста.';
+const BRIEF_SUMMARY_PROMPT = 'Сделай очень краткий вывод по документу в формате: 1) От кого письмо, 2) Кому письмо, 3) Краткое содержание. Только факты из текста, краткое содержание — 2-4 коротких пункта.';
 const BRIEF_PDF_SOURCES = [
   { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
   { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },

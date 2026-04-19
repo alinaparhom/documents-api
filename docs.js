@@ -2210,12 +2210,19 @@
         .filter(Boolean)
         .slice(1, 4);
     }
+    var sender = '';
+    var recipient = '';
     if (!participants) {
-      var sender = extractPartyByLabel(sourceText, ['отправитель', 'от кого', 'исполнитель']);
-      var recipient = extractPartyByLabel(sourceText, ['получатель', 'кому', 'заказчик']);
+      sender = extractPartyByLabel(sourceText, ['отправитель', 'от кого', 'исполнитель']);
+      recipient = extractPartyByLabel(sourceText, ['получатель', 'кому', 'заказчик']);
       if (sender || recipient) {
         participants = 'Отправитель: ' + (sender || 'не найден') + '; Получатель: ' + (recipient || 'не найден');
       }
+    } else {
+      var senderMatch = String(participants).match(/отправител[ья]\s*:\s*([^;\n\r]+)/i);
+      var recipientMatch = String(participants).match(/получател[ья]\s*:\s*([^;\n\r]+)/i);
+      sender = senderMatch && senderMatch[1] ? String(senderMatch[1]).trim() : '';
+      recipient = recipientMatch && recipientMatch[1] ? String(recipientMatch[1]).trim() : '';
     }
     var summaryItems = collectBriefSentences(analysis || sourceText, 3)
       .map(normalizeSentence)
@@ -2224,19 +2231,15 @@
     if (!summaryItems.length && analysis) {
       summaryItems = [analysis];
     }
-    var recommendationItems = cleanedRequirements.length
-      ? cleanedRequirements.slice(0, 3)
-      : cleanedActions.slice(0, 3);
-    var conclusionText = normalizeSentence((cleanedActions[0] || cleanedRequirements[0] || analysis || 'Нужно уточнить детали письма перед отправкой ответа.'));
     return [
+      'От кого письмо',
+      sender || 'не найдено',
+      '',
+      'Кому письмо',
+      recipient || 'не найдено',
+      '',
       'Краткое содержание',
       summaryItems.length ? summaryItems.map(function(item) { return '• ' + item; }).join('\n') : '• Не удалось выделить содержание.',
-      '',
-      'Рекомендации',
-      recommendationItems.length ? recommendationItems.map(function(item) { return '• ' + item; }).join('\n') : '• Уточните данные письма и ключевые требования.',
-      '',
-      'Итог',
-      conclusionText
     ].join('\n');
   }
 
