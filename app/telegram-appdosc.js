@@ -11091,52 +11091,22 @@ function normalizeBriefText(value) {
   const source = value === null || value === undefined ? '' : String(value);
   const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
   if (!normalized) return '';
-  const extractParty = (labels) => {
-    const escaped = (Array.isArray(labels) ? labels : [])
-      .map((label) => String(label || '').trim())
-      .filter(Boolean)
-      .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    if (!escaped.length) return '';
-    const match = normalized.match(new RegExp(`(?:^|\\n)\\s*(?:${escaped.join('|')})\\s*[:\\-]\\s*([^\\n\\r;]+)`, 'i'));
-    return match && match[1] ? String(match[1]).trim() : '';
-  };
-  const sender = extractParty(['от кого письмо', 'отправитель', 'от кого']);
-  const recipientByLabel = extractParty(['кому письмо', 'получатель', 'кому', 'адресат']);
-  const recipientByGreeting = !recipientByLabel
-    ? ((normalized.match(/уважаем[а-я]+\s+([^,\n.!?]{3,80})/i) || [])[1] || '').trim()
-    : '';
-  const recipient = recipientByLabel || recipientByGreeting;
-  const body = normalized
-    .replace(/(?:^|\n)\s*(от кого письмо|отправитель|от кого)\s*[:\-]\s*[^\n\r]*/gi, '')
-    .replace(/(?:^|\n)\s*(кому письмо|получатель|кому|адресат)\s*[:\-]\s*[^\n\r]*/gi, '')
-    .replace(/(?:^|\n)\s*(краткое содержание|рекомендации|итог)\s*[:\-]?\s*/gi, '\n')
+  const compact = normalized
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
     .trim();
-  const points = [];
-  const seen = new Set();
-  const chunks = body.replace(/\s+/g, ' ').match(/[^.!?]+[.!?]?/g) || [];
-  for (let index = 0; index < chunks.length; index += 1) {
-    const item = String(chunks[index] || '')
-      .replace(/^\s*(?:[-•]|\d+[.)])\s*/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!item || item.length < 25) continue;
-    if (/^(уважаем|добрый день|с уважением)/i.test(item)) continue;
-    const key = item.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    points.push(item.replace(/[.;,\s]+$/g, ''));
-    if (points.length >= 3) break;
+  if (/От кого письмо[\s\S]*Кому письмо[\s\S]*Краткое содержание/i.test(compact)) {
+    return compact;
   }
   return [
     'От кого письмо',
-    sender || 'не указано',
+    'не указано',
     '',
     'Кому письмо',
-    recipient || 'не указано',
+    'не указано',
     '',
     'Краткое содержание',
-    (points.length ? points : ['Не удалось выделить суть письма']).map((item) => `• ${item}`).join('\n'),
+    `• ${compact.slice(0, 280)}`,
   ].join('\n');
 }
 

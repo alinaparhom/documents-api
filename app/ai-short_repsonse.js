@@ -22,65 +22,25 @@ export function createTelegramBriefAi(deps = {}) {
 
   let briefPdfJsLoader = null;
 
-  function extractPartyByLabels(text, labels = []) {
-    const safeText = normalizeValue(text);
-    if (!safeText) return '';
-    const escaped = labels
-      .map((label) => String(label || '').trim())
-      .filter(Boolean)
-      .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    if (!escaped.length) return '';
-    const match = safeText.match(new RegExp(`(?:^|\\n)\\s*(?:${escaped.join('|')})\\s*[:\\-]\\s*([^\\n\\r;]+)`, 'i'));
-    return match && match[1] ? String(match[1]).trim() : '';
-  }
-
-  function extractBriefPoints(text, maxItems = 3) {
-    const normalized = normalizeValue(text).replace(/\s+/g, ' ');
-    if (!normalized) return [];
-    const chunks = normalized.match(/[^.!?]+[.!?]?/g) || [];
-    const result = [];
-    const seen = new Set();
-    for (let index = 0; index < chunks.length; index += 1) {
-      const item = String(chunks[index] || '')
-        .replace(/^\s*(?:[-•]|\d+[.)])\s*/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!item || item.length < 25) continue;
-      if (/^(уважаем|добрый день|с уважением)/i.test(item)) continue;
-      const key = item.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      result.push(item.replace(/[.;,\s]+$/g, ''));
-      if (result.length >= maxItems) break;
-    }
-    return result;
-  }
-
   function toBriefSummaryText(value) {
     const text = normalizeValue(value).replace(/\r\n/g, '\n');
     if (!text) return '';
-    const sender = extractPartyByLabels(text, ['от кого письмо', 'отправитель', 'от кого']);
-    const recipientByLabel = extractPartyByLabels(text, ['кому письмо', 'получатель', 'кому', 'адресат']);
-    const recipientByGreeting = !recipientByLabel
-      ? ((text.match(/уважаем[а-я]+\s+([^,\n.!?]{3,80})/i) || [])[1] || '').trim()
-      : '';
-    const recipient = recipientByLabel || recipientByGreeting;
-    const cleanedBody = text
-      .replace(/(?:^|\n)\s*(от кого письмо|отправитель|от кого)\s*[:\-]\s*[^\n\r]*/gi, '')
-      .replace(/(?:^|\n)\s*(кому письмо|получатель|кому|адресат)\s*[:\-]\s*[^\n\r]*/gi, '')
-      .replace(/(?:^|\n)\s*(краткое содержание|рекомендации|итог)\s*[:\-]?\s*/gi, '\n')
+    const normalized = text
       .replace(/\n{3,}/g, '\n\n')
+      .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
       .trim();
-    const points = extractBriefPoints(cleanedBody || text, 3);
+    if (/От кого письмо[\s\S]*Кому письмо[\s\S]*Краткое содержание/i.test(normalized)) {
+      return normalized;
+    }
     return [
       'От кого письмо',
-      sender || 'не указано',
+      'не указано',
       '',
       'Кому письмо',
-      recipient || 'не указано',
+      'не указано',
       '',
       'Краткое содержание',
-      (points.length ? points : ['Не удалось выделить суть письма']).map((item) => `• ${item}`).join('\n'),
+      `• ${normalized.slice(0, 280)}`,
     ].join('\n');
   }
 

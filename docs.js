@@ -2294,73 +2294,26 @@
       .trim();
   }
 
-  function extractAiBriefParty(text, labels) {
-    var safeText = normalizeAiBriefText(text || '');
-    if (!safeText) return '';
-    var escaped = (Array.isArray(labels) ? labels : [])
-      .map(function(label) { return String(label || '').trim(); })
-      .filter(Boolean)
-      .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
-    if (!escaped.length) return '';
-    var pattern = new RegExp('(?:^|\\n)\\s*(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r;]+)', 'i');
-    var match = safeText.match(pattern);
-    return match && match[1] ? String(match[1]).trim() : '';
-  }
-
-  function collectCompactBriefPoints(text, limit) {
-    var maxItems = Number(limit) > 0 ? Number(limit) : 3;
-    var source = normalizeAiBriefText(text || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!source) return [];
-    var rawItems = source.match(/[^.!?]+[.!?]?/g) || [];
-    var seen = {};
-    var result = [];
-    for (var i = 0; i < rawItems.length; i += 1) {
-      var item = String(rawItems[i] || '')
-        .replace(/^\s*(?:[-•]|\d+[.)])\s*/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!item) continue;
-      if (item.length < 25) continue;
-      if (/^(уважаем|добрый день|с уважением)/i.test(item)) continue;
-      var key = item.toLowerCase();
-      if (seen[key]) continue;
-      seen[key] = true;
-      result.push(item.replace(/[.;,\s]+$/g, ''));
-      if (result.length >= maxItems) break;
-    }
-    return result;
-  }
-
   function toCompactAiBrief(text) {
     var normalized = normalizeAiBriefText(text || '');
     if (!normalized) return '';
-    var sender = extractAiBriefParty(normalized, ['от кого письмо', 'отправитель', 'от кого', 'кто прислал']);
-    var recipient = extractAiBriefParty(normalized, ['кому письмо', 'получатель', 'кому', 'адресат']);
-    if (!recipient) {
-      var greetingMatch = normalized.match(/уважаем[а-я]+\s+([^,\n.!?]{3,80})/i);
-      recipient = greetingMatch && greetingMatch[1] ? String(greetingMatch[1]).trim() : '';
-    }
-    var body = normalized
-      .replace(/(?:^|\n)\s*(от кого письмо|отправитель|от кого|кто прислал)\s*[:\-]\s*[^\n\r]*/gi, '')
-      .replace(/(?:^|\n)\s*(кому письмо|получатель|кому|адресат)\s*[:\-]\s*[^\n\r]*/gi, '')
-      .replace(/(?:^|\n)\s*(краткое содержание|рекомендации|итог)\s*[:\-]?\s*/gi, '\n')
+    var formatted = normalized
       .replace(/\n{3,}/g, '\n\n')
+      .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
       .trim();
-    var summaryItems = collectCompactBriefPoints(body || normalized, 3);
-    if (!summaryItems.length) {
-      summaryItems = [normalizeAiBriefText(normalized).slice(0, 280)];
+    var hasTemplate = /От кого письмо[\s\S]*Кому письмо[\s\S]*Краткое содержание/i.test(formatted);
+    if (hasTemplate) {
+      return formatted;
     }
     return [
       'От кого письмо',
-      sender || 'не указано',
+      'не указано',
       '',
       'Кому письмо',
-      recipient || 'не указано',
+      'не указано',
       '',
       'Краткое содержание',
-      summaryItems.map(function(item) { return '• ' + item; }).join('\n')
+      '• ' + normalizeAiBriefText(formatted).slice(0, 280)
     ].join('\n');
   }
 

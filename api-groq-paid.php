@@ -772,16 +772,19 @@ function callGroqTranscription(string $tmpPath, string $fileName, string $mime, 
 function getBriefAiSystemPrompt(): string
 {
     return "Ты — ИИ в режиме «Кратко ИИ».\n\n"
-        . "Сформируй очень короткий и точный результат строго в структуре:\n"
-        . "1) От кого письмо\n"
-        . "2) Кому письмо\n"
-        . "3) Краткое содержание\n\n"
-        . "Ограничения:\n"
-        . "- Только факты из переданного текста, без выдумок.\n"
-        . "- Для полей «От кого письмо» и «Кому письмо» дай по одной короткой строке.\n"
-        . "- В «Кратком содержании» 2-4 коротких пункта по сути.\n"
-        . "- Без технических комментариев, без шапки/подписи, без воды.\n"
-        . "- Если данных мало, пиши «не указано» и коротко поясни в содержании.\n";
+        . "Верни ответ СТРОГО в шаблоне ниже, без любых дополнительных строк:\n\n"
+        . "От кого письмо\n"
+        . "<одно короткое значение или 'не указано'>\n\n"
+        . "Кому письмо\n"
+        . "<одно короткое значение или 'не указано'>\n\n"
+        . "Краткое содержание\n"
+        . "• <пункт 1>\n"
+        . "• <пункт 2>\n"
+        . "• <пункт 3 при необходимости>\n\n"
+        . "Правила:\n"
+        . "- Только факты из текста, без выдумок.\n"
+        . "- В «Краткое содержание» 2-4 коротких пункта.\n"
+        . "- Не включай приветствие, подпись, номера строк, вступления и выводы.\n";
 }
 
 function getResponseAiSystemPrompt(string $responseMode = 'v1', string $tone = 'neutral', string $assistantMode = 'response_ai'): string
@@ -839,6 +842,40 @@ function normalizeAiOutputText(string $text): string
     $normalized = preg_replace("/\n{3,}/", "\n\n", $normalized) ?? $normalized;
 
     return trim($normalized);
+}
+
+function briefAiOutputLooksFormatted(string $text): bool
+{
+    $normalized = trim(str_replace(["\r\n", "\r"], "\n", $text));
+    if ($normalized === '') {
+        return false;
+    }
+    $hasFrom = preg_match('/(?:^|\n)От кого письмо\s*(?:\n|$)/ui', $normalized) === 1;
+    $hasTo = preg_match('/(?:^|\n)Кому письмо\s*(?:\n|$)/ui', $normalized) === 1;
+    $hasSummary = preg_match('/(?:^|\n)Краткое содержание\s*(?:\n|$)/ui', $normalized) === 1;
+    $hasBullets = preg_match('/(?:^|\n)\s*[•\-]\s+/u', $normalized) === 1;
+    return $hasFrom && $hasTo && $hasSummary && $hasBullets;
+}
+
+function rewriteBriefAiOutputToFormat(string $rawText, string $model, string $apiKey): string
+{
+    $rewritePayload = [
+        'model' => $model,
+        'temperature' => 0.1,
+        'max_tokens' => 420,
+        'top_p' => 0.9,
+        'messages' => [
+            ['role' => 'system', 'content' => getBriefAiSystemPrompt()],
+            ['role' => 'user', 'content' => "Приведи этот текст строго к шаблону «От кого письмо / Кому письмо / Краткое содержание».\n\n" . trim($rawText)],
+        ],
+    ];
+    $rewriteResult = callGroqChat($rewritePayload, $apiKey);
+    if (($rewriteResult['ok'] ?? false) !== true) {
+        return trim($rawText);
+    }
+    $decoded = (array)($rewriteResult['raw'] ?? []);
+    $normalized = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    return $normalized !== '' ? $normalized : trim($rawText);
 }
 
 function getResponseAiStyleInstruction(string $style): string
@@ -1336,6 +1373,9 @@ function handleGenerateSummaryAction(array $env): void
     $summary = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($summary === '') {
         respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
+    }
+    if (!briefAiOutputLooksFormatted($summary)) {
+        $summary = rewriteBriefAiOutputToFormat($summary, $model, $apiKey);
     }
 
     respond(200, [
