@@ -17,7 +17,6 @@ const MAX_TEXT_CHUNKS_TOTAL = 30;
 const MAX_TEXT_PAYLOAD_CHARS = 90000;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const SUMMARY_PAGE_LIMIT = 5;
-const SUMMARY_VISION_EXTRACT_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
@@ -843,38 +842,6 @@ function normalizeAiOutputText(string $text): string
     return trim($normalized);
 }
 
-function isStrictBriefSummary(string $text): bool
-{
-    $normalized = normalizeAiOutputText($text);
-    if ($normalized === '') {
-        return false;
-    }
-    $lines = preg_split('/\n+/u', $normalized) ?: [];
-    if (count($lines) < 3) {
-        return false;
-    }
-    if (!preg_match('/^Кто\s+прислал\s*:/ui', trim((string)($lines[0] ?? '')))) {
-        return false;
-    }
-    if (!preg_match('/^Кому\s+прислал\s*:/ui', trim((string)($lines[1] ?? '')))) {
-        return false;
-    }
-    if (!preg_match('/^Что\s+изложено\s+в\s+документе\s*:/ui', trim((string)($lines[2] ?? '')))) {
-        return false;
-    }
-
-    $body = trim(implode(' ', array_slice($lines, 2)));
-    $body = preg_replace('/^Что\s+изложено\s+в\s+документе\s*:\s*/ui', '', $body) ?? $body;
-    $sentences = preg_split('/(?<=[\.\!\?])\s+/u', trim($body)) ?: [];
-    $count = 0;
-    foreach ($sentences as $sentence) {
-        if (trim((string)$sentence) !== '') {
-            $count += 1;
-        }
-    }
-    return $count >= 3 && $count <= 6;
-}
-
 function getResponseAiStyleInstruction(string $style): string
 {
     $normalized = strtolower(trim($style));
@@ -1339,33 +1306,11 @@ function handleGenerateSummaryAction(array $env): void
             continue;
         }
         $name = trim((string)($entry['name'] ?? 'Документ'));
-        $entryType = trim((string)($entry['type'] ?? ''));
-        $summaryParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n"
-            . 'Тип: ' . ($entryType !== '' ? $entryType : 'unknown') . "\n"
-            . $text;
+        $summaryParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $text;
     }
     $fullText = trim(implode("\n\n", $summaryParts));
     if ($fullText === '') {
         respond(422, ['ok' => false, 'error' => 'Текст документов пустой, summary сформировать невозможно.']);
-    }
-
-    $extractPayload = [
-        'model' => SUMMARY_VISION_EXTRACT_MODEL,
-        'temperature' => 0.0,
-        'max_tokens' => 2000,
-        'messages' => [
-            ['role' => 'system', 'content' => 'Ты модуль извлечения текста. Верни чистый, короткий и структурированный текст документа без выводов и рекомендаций.'],
-            ['role' => 'user', 'content' => "Извлеки и нормализуй текст по входным документам. Для PDF учитывай только первые " . SUMMARY_PAGE_LIMIT . " страниц. Для текстовых документов верни текст как есть.\n\n" . $fullText],
-        ],
-    ];
-    $extractResult = callGroqChat($extractPayload, $apiKey);
-    if (($extractResult['ok'] ?? false) !== true) {
-        respond((int)($extractResult['status'] ?? 502), ['ok' => false, 'error' => (string)($extractResult['error'] ?? 'Ошибка этапа извлечения текста через LLM')]);
-    }
-    $extractDecoded = (array)($extractResult['raw'] ?? []);
-    $normalizedDocText = normalizeAiOutputText((string)($extractDecoded['choices'][0]['message']['content'] ?? ''));
-    if ($normalizedDocText === '') {
-        respond(502, ['ok' => false, 'error' => 'LLM-этап извлечения текста вернул пустой результат']);
     }
 
     $model = resolveModel($env);
@@ -1376,21 +1321,21 @@ function handleGenerateSummaryAction(array $env): void
         . "Формат:\n"
         . "Кто прислал: <значение или 'не указано'>\n"
         . "Кому прислал: <значение или 'не указано'>\n"
-        . "Что изложено в документе: <3-6 предложений по сути документа>\n"
+        . "Что изложено в документе: <3-6 коротких предложений по сути документа>\n"
         . "Правила:\n"
         . "- Только факты из текста документа.\n"
         . "- Никакого markdown, списков, заголовков, пояснений.\n"
-        . "- Ответ не должен быть большим: коротко и по делу.\n"
+        . "- Пиши коротко и по делу, без воды.\n"
         . "- Анализ PDF только по первым " . SUMMARY_PAGE_LIMIT . " страницам.";
 
     $requestPayload = [
         'model' => $model,
-        'temperature' => 0.2,
-        'max_tokens' => 450,
+        'temperature' => 0.15,
+        'max_tokens' => 260,
         'top_p' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['top_p'] ?? 0.85),
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],
-            ['role' => 'user', 'content' => "Документ для анализа:\n\n" . $normalizedDocText],
+            ['role' => 'user', 'content' => "Документ для анализа:\n\n" . $fullText],
         ],
     ];
 
@@ -1404,26 +1349,6 @@ function handleGenerateSummaryAction(array $env): void
     $summary = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($summary === '') {
         respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
-    }
-
-    if (!isStrictBriefSummary($summary)) {
-        $formatFixPayload = [
-            'model' => $model,
-            'temperature' => 0.1,
-            'max_tokens' => 450,
-            'messages' => [
-                ['role' => 'system', 'content' => "Преобразуй текст строго в формат:\nКто прислал: ...\nКому прислал: ...\nЧто изложено в документе: ...\nТретья строка должна содержать 3-6 предложений. Ничего лишнего не добавляй."],
-                ['role' => 'user', 'content' => "Преобразуй в требуемый формат:\n\n" . $summary],
-            ],
-        ];
-        $formatFixResult = callGroqChat($formatFixPayload, $apiKey);
-        if (($formatFixResult['ok'] ?? false) === true) {
-            $formatFixDecoded = (array)($formatFixResult['raw'] ?? []);
-            $fixed = normalizeAiOutputText((string)($formatFixDecoded['choices'][0]['message']['content'] ?? ''));
-            if ($fixed !== '') {
-                $summary = $fixed;
-            }
-        }
     }
 
     respond(200, [

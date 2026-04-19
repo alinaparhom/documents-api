@@ -2296,10 +2296,12 @@
     if (!normalized) {
       return '';
     }
-    return normalized
+    var formatted = normalized
       .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
       .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
       .replace(/\n{3,}/g, '\n\n');
+    var compactLines = formatted.split('\n').filter(function(line) { return String(line || '').trim() !== ''; }).slice(0, 5);
+    return compactLines.join('\n').slice(0, 700).trim();
   }
 
   function getAttachmentAiBrief(file) {
@@ -2549,7 +2551,7 @@
       return Promise.reject(new Error('Текст для анализа пустой.'));
     }
     var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var textLimits = [12000, 7000, 3500, 1800];
+    var textLimits = [6000, 3000, 1500];
     function requestWithLimit(limitIndex) {
       var safeIndex = Math.max(0, Math.min(limitIndex, textLimits.length - 1));
       var textLimit = textLimits[safeIndex];
