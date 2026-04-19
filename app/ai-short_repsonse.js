@@ -2,7 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
-const BRIEF_SUMMARY_PROMPT = 'Сделай очень краткий вывод по документу: 1) краткое содержание, 2) рекомендации, 3) итог. Не более 6 коротких пунктов и только по фактам из текста.';
+const BRIEF_SUMMARY_PROMPT = 'Сделай «Кратко ИИ» строго в формате: Кто прислал файл: ...; Кому прислали файл: ...; Суть файла: ... . Если данных нет, пиши: не указано в документе.';
 const BRIEF_PDF_SOURCES = [
   { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
   { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
@@ -24,7 +24,35 @@ export function createTelegramBriefAi(deps = {}) {
 
   function toBriefSummaryText(value) {
     const text = normalizeValue(value);
-    return text || '';
+    if (!text) return '';
+    const normalized = String(text).replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
+    if (!normalized) return '';
+    const extractLine = (labels) => {
+      const escaped = (Array.isArray(labels) ? labels : [])
+        .map((label) => String(label || '').trim())
+        .filter(Boolean)
+        .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      if (!escaped.length) return '';
+      const pattern = new RegExp(`(?:^|\\n)\\s*(?:${escaped.join('|')})\\s*[:\\-]\\s*([^\\n\\r]+)`, 'i');
+      const match = normalized.match(pattern);
+      return match && match[1] ? String(match[1]).trim() : '';
+    };
+    let essence = extractLine(['Суть файла', 'Краткое содержание', 'Итог']);
+    if (!essence) {
+      const lines = normalized.split('\n');
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = String(lines[index] || '').trim();
+        if (line) {
+          essence = line;
+          break;
+        }
+      }
+    }
+    return [
+      `Кто прислал файл: ${extractLine(['Кто прислал файл', 'Отправитель', 'От кого']) || 'не указано в документе'}`,
+      `Кому прислали файл: ${extractLine(['Кому прислали файл', 'Получатель', 'Кому']) || 'не указано в документе'}`,
+      `Суть файла: ${essence || 'не указано в документе'}`,
+    ].join('\n');
   }
 
   async function postGroqPaidWithFallback(createFormData) {

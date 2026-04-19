@@ -49,6 +49,7 @@
   var VISION_BATCH_SIZE = 4;
   var AI_PDF_PAGE_LIMIT = 5;
   var BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
+  var BRIEF_SUMMARY_PROMPT = 'Сделай «Кратко ИИ» строго в формате: Кто прислал файл: ...; Кому прислали файл: ...; Суть файла: ... . Если данных нет, пиши: не указано в документе.';
   var briefPdfJsLoader = null;
 
   function createElement(tag, className, text) {
@@ -1820,7 +1821,38 @@
   }
 
   function briefToSummaryText(value) {
-    return briefNormalizeValue(value) || '';
+    var text = briefNormalizeValue(value);
+    if (!text) return '';
+    var normalized = String(text).replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
+    if (!normalized) return '';
+
+    function extractLine(labels) {
+      var escaped = (Array.isArray(labels) ? labels : [])
+        .map(function(label) { return String(label || '').trim(); })
+        .filter(Boolean)
+        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+      if (!escaped.length) return '';
+      var pattern = new RegExp('(?:^|\\n)\\s*(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r]+)', 'i');
+      var match = normalized.match(pattern);
+      return match && match[1] ? String(match[1]).trim() : '';
+    }
+
+    var essence = extractLine(['Суть файла', 'Краткое содержание', 'Итог']);
+    if (!essence) {
+      var lines = normalized.split('\n');
+      for (var index = 0; index < lines.length; index += 1) {
+        var line = String(lines[index] || '').trim();
+        if (line) {
+          essence = line;
+          break;
+        }
+      }
+    }
+    return [
+      'Кто прислал файл: ' + (extractLine(['Кто прислал файл', 'Отправитель', 'От кого']) || 'не указано в документе'),
+      'Кому прислали файл: ' + (extractLine(['Кому прислали файл', 'Получатель', 'Кому']) || 'не указано в документе'),
+      'Суть файла: ' + (essence || 'не указано в документе')
+    ].join('\n');
   }
 
   function readBriefFileAsText(file) {
@@ -2083,7 +2115,7 @@
     }
 
     var prepared = await buildBriefVisionPayloadFromFile(file, function(message) { setStatus(message, 'loading'); });
-    var prompt = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
+    var prompt = BRIEF_SUMMARY_PROMPT;
 
     if (prepared.kind === 'text') {
       var text = briefNormalizeValue(prepared.extractedText);

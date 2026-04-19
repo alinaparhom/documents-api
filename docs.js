@@ -2217,26 +2217,45 @@
         participants = 'Отправитель: ' + (sender || 'не найден') + '; Получатель: ' + (recipient || 'не найден');
       }
     }
-    var summaryItems = collectBriefSentences(analysis || sourceText, 3)
-      .map(normalizeSentence)
-      .filter(Boolean)
-      .slice(0, 3);
-    if (!summaryItems.length && analysis) {
-      summaryItems = [analysis];
+    function extractFieldFromText(text, labels) {
+      var safeText = String(text || '');
+      if (!safeText) return '';
+      var escaped = (Array.isArray(labels) ? labels : [])
+        .map(function(label) { return String(label || '').trim(); })
+        .filter(Boolean)
+        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+      if (!escaped.length) return '';
+      var pattern = new RegExp('(?:^|\\n)\\s*(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r]+)', 'i');
+      var match = safeText.match(pattern);
+      return match && match[1] ? normalizeSentence(match[1]) : '';
     }
-    var recommendationItems = cleanedRequirements.length
-      ? cleanedRequirements.slice(0, 3)
-      : cleanedActions.slice(0, 3);
-    var conclusionText = normalizeSentence((cleanedActions[0] || cleanedRequirements[0] || analysis || 'Нужно уточнить детали письма перед отправкой ответа.'));
+
+    function pickFirstValue(values, fallback) {
+      var list = Array.isArray(values) ? values : [];
+      for (var idx = 0; idx < list.length; idx += 1) {
+        var value = normalizeSentence(list[idx]);
+        if (value) return value;
+      }
+      return fallback;
+    }
+
+    var senderText = extractFieldFromText(participants, ['кто прислал файл', 'отправитель', 'от кого'])
+      || extractFieldFromText(sourceText, ['кто прислал файл', 'отправитель', 'от кого', 'исполнитель'])
+      || 'не указано в документе';
+    var recipientText = extractFieldFromText(participants, ['кому прислали файл', 'получатель', 'кому'])
+      || extractFieldFromText(sourceText, ['кому прислали файл', 'получатель', 'кому', 'заказчик'])
+      || 'не указано в документе';
+    var essenceText = pickFirstValue([
+      analysis,
+      cleanedActions[0],
+      cleanedRequirements[0],
+      collectBriefSentences(sourceText, 1)[0]
+    ], 'не указано в документе');
+
     return [
-      'Краткое содержание',
-      summaryItems.length ? summaryItems.map(function(item) { return '• ' + item; }).join('\n') : '• Не удалось выделить содержание.',
-      '',
-      'Рекомендации',
-      recommendationItems.length ? recommendationItems.map(function(item) { return '• ' + item; }).join('\n') : '• Уточните данные письма и ключевые требования.',
-      '',
-      'Итог',
-      conclusionText
+      'Кто прислал файл: ' + senderText,
+      'Кому прислали файл: ' + recipientText,
+      'Суть файла: ' + essenceText
     ].join('\n');
   }
 
@@ -2296,10 +2315,43 @@
     if (!normalized) {
       return '';
     }
-    return normalized
+    var formatted = normalized
       .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
       .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
       .replace(/\n{3,}/g, '\n\n');
+
+    function extractLine(labelVariants) {
+      var escaped = (Array.isArray(labelVariants) ? labelVariants : [])
+        .map(function(label) { return String(label || '').trim(); })
+        .filter(Boolean)
+        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+      if (!escaped.length) return '';
+      var pattern = new RegExp('(?:^|\\n)\\s*(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r]+)', 'i');
+      var match = formatted.match(pattern);
+      return match && match[1] ? String(match[1]).trim() : '';
+    }
+
+    var sender = extractLine(['Кто прислал файл', 'Отправитель', 'От кого']);
+    var recipient = extractLine(['Кому прислали файл', 'Получатель', 'Кому']);
+    var essence = extractLine(['Суть файла', 'Краткое содержание', 'Итог']);
+    if (!essence) {
+      var firstLine = '';
+      var lines = formatted.split('\n');
+      for (var i = 0; i < lines.length; i += 1) {
+        var line = String(lines[i] || '').trim();
+        if (line) {
+          firstLine = line;
+          break;
+        }
+      }
+      essence = firstLine || '';
+    }
+
+    return [
+      'Кто прислал файл: ' + (sender || 'не указано в документе'),
+      'Кому прислали файл: ' + (recipient || 'не указано в документе'),
+      'Суть файла: ' + (essence || 'не указано в документе')
+    ].join('\n');
   }
 
   function getAttachmentAiBrief(file) {
@@ -14642,7 +14694,7 @@
     var overlay = createElement('div', 'documents-modal');
     var shell = createElement('div', 'documents-modal__shell documents-modal__shell--narrow');
     var header = createElement('div', 'documents-modal__header documents-modal__header--compact');
-    var title = createElement('h3', 'documents-modal__title', 'Кратко от ИИ');
+    var title = createElement('h3', 'documents-modal__title', 'Кратко ИИ');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     closeButton.type = 'button';
     closeButton.addEventListener('click', function() {
