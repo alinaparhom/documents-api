@@ -2069,7 +2069,7 @@
     return text;
   }
 
-  async function requestBriefVisionByFile(source, setStatus) {
+  async function requestBriefForSource(source, setStatus) {
     var file = source && source.fileObject instanceof File ? source.fileObject : null;
     var fileName = briefNormalizeValue(source && source.label) || 'vision-file';
     var fileUrl = briefNormalizeValue(source && source.url);
@@ -2104,102 +2104,40 @@
       return { summary: briefToSummaryText(textPayload.summary || textPayload.response), model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
     }
 
-    var images = Array.isArray(prepared.images) ? prepared.images : [];
-    var imageBatches = chunkItems(images, 5);
-    var partialAnswers = [];
     var startedAt = Date.now();
     var ocrText = '';
 
-    try {
-      setStatus('Распознаю текст (OCR) из файла...', 'loading');
-      ocrText = await requestBriefOcrByFile(file, file.name || fileName);
-    } catch (_) {
-      ocrText = '';
+    setStatus('Распознаю текст (OCR) из файла...', 'loading');
+    ocrText = await requestBriefOcrByFile(file, file.name || fileName);
+    if (!briefNormalizeValue(ocrText)) {
+      throw new Error('OCR не вернул текст для выбранного файла.');
     }
 
-    if (!imageBatches.length && ocrText) {
-      var fallbackRequest = await postBriefGroqPaidWithFallback(function() {
-        var formData = new FormData();
-        formData.append('action', 'generate_summary');
-        formData.append('mode', 'paid');
-        formData.append('vision_mode', '1');
-        formData.append('prompt', prompt);
-        formData.append('extractedTexts', JSON.stringify([{
-          name: file.name || fileName,
-          type: file.type || 'text/plain',
-          text: String(ocrText).slice(0, 70000)
-        }]));
-        return formData;
-      });
-      var fallbackPayload = fallbackRequest && fallbackRequest.payload;
-      if (!fallbackRequest.response.ok || !fallbackPayload || fallbackPayload.ok !== true) {
-        throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
-      }
-      return {
-        summary: briefToSummaryText(fallbackPayload.summary || fallbackPayload.response),
-        model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
-        timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
-        warning: ''
-      };
+    var request = await postBriefGroqPaidWithFallback(function() {
+      var formData = new FormData();
+      formData.append('action', 'generate_summary');
+      formData.append('mode', 'paid');
+      formData.append('vision_mode', '1');
+      formData.append('prompt', prompt);
+      formData.append('extractedTexts', JSON.stringify([{
+        name: file.name || fileName,
+        type: file.type || 'text/plain',
+        text: String(ocrText).slice(0, 70000)
+      }]));
+      return formData;
+    });
+    var payload = request && request.payload;
+    if (!request.response.ok || !payload || payload.ok !== true) {
+      throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
     }
-
-    for (var batchIndex = 0; batchIndex < imageBatches.length; batchIndex += 1) {
-      var currentBatch = imageBatches[batchIndex];
-      setStatus('Vision: анализ блока ' + (batchIndex + 1) + '/' + imageBatches.length + ' (' + currentBatch.length + ' стр.)...', 'loading');
-      var request = await postBriefGroqPaidWithFallback(function() {
-        var formData = new FormData();
-        formData.append('action', 'analyze_paid');
-        formData.append('mode', 'paid');
-        formData.append('vision_mode', '1');
-        formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
-        if (ocrText && batchIndex === 0) {
-          formData.append('extractedTexts', JSON.stringify([{
-            name: file.name || fileName,
-            type: file.type || 'text/plain',
-            text: String(ocrText).slice(0, 70000)
-          }]));
-        }
-        formData.append('vision_payload', JSON.stringify({
-          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-          max_tokens: 1000,
-          temperature: 0.7,
-          messages: [{ role: 'user', content: [{ type: 'text', text: (prepared.messageText || 'Проанализируй содержимое этого файла') + '\\n\\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }].concat(currentBatch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; })) }]
-        }));
-        currentBatch.forEach(function(item, index) {
-          var data = String(item.dataUrl || '');
-          var base64 = data.indexOf(',') >= 0 ? data.split(',')[1] : data;
-          var mimeType = item.mime || 'image/jpeg';
-          var blob = new Blob([Uint8Array.from(atob(base64), function(ch) { return ch.charCodeAt(0); })], { type: mimeType });
-          formData.append('files', blob, item.fileName || ('vision-' + (batchIndex + 1) + '-' + (index + 1) + '.jpg'));
-        });
-        return formData;
-      });
-      var payload = request && request.payload;
-      if (!request.response.ok || !payload || payload.ok !== true) {
-        throw new Error((payload && payload.error) || ('Ошибка Vision запроса (блок ' + (batchIndex + 1) + ').'));
-      }
-      partialAnswers.push(briefToSummaryText(payload.response || payload.summary));
-    }
-
-    var finalSummary = briefToSummaryText(partialAnswers.join('\\n\\n').trim());
-    if (partialAnswers.length > 1) {
-      setStatus('Vision: объединяю результаты всех блоков...', 'loading');
-      var mergeRequest = await postBriefGroqPaidWithFallback(function() {
-        var formData = new FormData();
-        formData.append('action', 'generate_summary');
-        formData.append('mode', 'paid');
-        formData.append('vision_mode', '1');
-        formData.append('prompt', prompt);
-        formData.append('extractedTexts', JSON.stringify([{ name: file.name || fileName, type: 'text/plain', text: partialAnswers.map(function(item, idx) { return 'Блок ' + (idx + 1) + '/' + partialAnswers.length + ':\\n' + item; }).join('\\n\\n') }]));
-        return formData;
-      });
-      var mergePayload = mergeRequest && mergeRequest.payload;
-      if (mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
-        finalSummary = briefToSummaryText(mergePayload.summary || mergePayload.response) || finalSummary;
-      }
-    }
-    if (!finalSummary) throw new Error('Vision не вернул итоговый текст.');
-    return { summary: finalSummary, model: 'meta-llama/llama-4-scout-17b-16e-instruct', timeMs: Date.now() - startedAt };
+    var summary = briefToSummaryText(payload.summary || payload.response);
+    if (!summary) throw new Error('Vision не вернул итоговый текст.');
+    return {
+      summary: summary,
+      model: payload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
+      timeMs: payload.durationMs || payload.timeMs || (Date.now() - startedAt),
+      warning: briefNormalizeValue(prepared.warning)
+    };
   }
 
   function ensureBriefModalStyle() {
@@ -2281,7 +2219,7 @@
         setPreviewLoading(true);
         setPreviewText('⏳ Обрабатываю файл...');
         var startedAt = Date.now();
-        requestBriefVisionByFile(source, function(message) { setPreviewText(message || '⏳ Обрабатываю файл...'); })
+        requestBriefForSource(source, function(message) { setPreviewText(message || '⏳ Обрабатываю файл...'); })
           .then(function(aiPayload) {
           var summaryText = String(aiPayload && aiPayload.summary ? aiPayload.summary : '').trim();
           setPreviewText(summaryText || 'Пустой ответ от ИИ.');
@@ -3754,6 +3692,7 @@
   if (typeof window !== 'undefined') {
     window.openDocumentsAiResponseModal = openDocumentsAiResponseModal;
     window.openDocumentsAiBriefSummaryModal = openDocumentsAiBriefSummaryModal;
-    window.requestDocumentsAiBriefByFileSource = requestBriefVisionByFile;
+    window.requestDocumentsAiBriefForSource = requestBriefForSource;
+    window.requestDocumentsAiBriefByFileSource = requestBriefForSource;
   }
 })();
