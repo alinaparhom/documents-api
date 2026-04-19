@@ -2159,11 +2159,7 @@
       const effectivePrompt = userPrompt;
       const selectedKeys = Array.from(selected)
         .filter((key) => fileWarmupState.get(key) !== 'error');
-      const selectedFiles = selectedKeys
-        .map((key) => files[Number(key)])
-        .filter(Boolean);
-
-      if (!selectedFiles.length) {
+      if (!selectedKeys.length) {
         createBubble(messages, 'Выберите хотя бы один файл без ошибок в меню «📎 Файлы».', 'assistant');
         status.textContent = 'Нет доступных файлов для отправки.';
         return;
@@ -2172,21 +2168,40 @@
       const pendingWarmups = selectedKeys
         .map((key) => fileWarmupPromises.get(key))
         .filter(Boolean);
-      if (pendingWarmups.length) {
-        status.textContent = 'Отправляю запрос, недостающие файлы догружаются...';
-      }
 
       isSending = true;
       setComposerDisabled(true);
       if (filesPanel) filesPanel.hidden = true;
-      lastAiAnswer = '';
-      meta.innerHTML = '';
-      createBubble(messages, userPrompt, 'user');
-      status.textContent = 'Vision: готовим файлы...';
-      const startedAt = Date.now();
-      const loadingBubble = createLoadingBubble(messages);
-
       try {
+        if (pendingWarmups.length) {
+          status.textContent = 'Догружаю файлы перед отправкой...';
+          await Promise.allSettled(pendingWarmups);
+        }
+
+        const readySelectedKeys = selectedKeys
+          .filter((key) => fileWarmupState.get(key) === 'ready');
+        const skippedFilesCount = Math.max(0, selectedKeys.length - readySelectedKeys.length);
+        const selectedFiles = readySelectedKeys
+          .map((key) => files[Number(key)])
+          .filter(Boolean);
+
+        if (!selectedFiles.length) {
+          const emptyReadyMessage = 'Нет готовых файлов для отправки.';
+          createBubble(messages, emptyReadyMessage, 'assistant');
+          status.textContent = emptyReadyMessage;
+          return;
+        }
+
+        lastAiAnswer = '';
+        meta.innerHTML = '';
+        createBubble(messages, userPrompt, 'user');
+        if (skippedFilesCount > 0) {
+          createBubble(messages, `${skippedFilesCount} файлов пропущено.`, 'assistant');
+        }
+        status.textContent = 'Отправляю запрос...';
+        const startedAt = Date.now();
+        const loadingBubble = createLoadingBubble(messages);
+
         const answerRaw = await requestTelegramVisionResponse({
           prompt: effectivePrompt,
           systemPrompt: '',
@@ -2210,10 +2225,13 @@
           <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
         `;
-        status.textContent = 'Данные переданы.';
+        status.textContent = skippedFilesCount > 0
+          ? `Данные переданы. ${skippedFilesCount} файлов пропущено.`
+          : 'Данные переданы.';
       } catch (error) {
         lastAiAnswer = '';
-        if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
+        const loadingNode = messages && messages.querySelector ? messages.querySelector('.tg-ai-chat__bubble--loading') : null;
+        if (loadingNode && loadingNode.parentNode) loadingNode.remove();
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
         status.textContent = 'Ошибка передачи.';
       } finally {
