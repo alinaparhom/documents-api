@@ -887,6 +887,61 @@ function trimToFirstPdfPages(string $text, int $pageLimit = SUMMARY_PAGE_LIMIT):
     return trim(substr($normalized, 0, $allowedUntilOffset));
 }
 
+function enforceBriefSummaryFormat(string $raw): string
+{
+    $text = normalizeAiOutputText($raw);
+    if ($text === '') {
+        return '';
+    }
+
+    $sender = 'не указано';
+    $recipient = 'не указано';
+    $summary = '';
+
+    $lines = preg_split('/\n+/u', $text) ?: [];
+    foreach ($lines as $line) {
+        $trimmed = trim((string)$line);
+        if ($trimmed === '') {
+            continue;
+        }
+        if (preg_match('/^Кто\s*прислал\s*:\s*(.+)$/ui', $trimmed, $m)) {
+            $candidate = trim((string)($m[1] ?? ''));
+            if ($candidate !== '') {
+                $sender = mb_substr($candidate, 0, 120);
+            }
+            continue;
+        }
+        if (preg_match('/^Кому\s*прислал\s*:\s*(.+)$/ui', $trimmed, $m)) {
+            $candidate = trim((string)($m[1] ?? ''));
+            if ($candidate !== '') {
+                $recipient = mb_substr($candidate, 0, 120);
+            }
+            continue;
+        }
+        if (preg_match('/^Краткое\s*содержание\s*:\s*(.+)$/ui', $trimmed, $m)) {
+            $candidate = trim((string)($m[1] ?? ''));
+            if ($candidate !== '') {
+                $summary = $candidate;
+            }
+            continue;
+        }
+        if ($summary === '') {
+            $summary = $trimmed;
+        }
+    }
+
+    if ($summary === '') {
+        $summary = 'Недостаточно данных для краткого содержания.';
+    }
+    $summary = preg_replace('/\s+/u', ' ', $summary) ?? $summary;
+    $summary = trim((string)$summary);
+    $summary = mb_substr($summary, 0, 260);
+
+    return "Кто прислал: {$sender}\n"
+        . "Кому прислал: {$recipient}\n"
+        . "Краткое содержание: {$summary}";
+}
+
 function getResponseAiStyleInstruction(string $style): string
 {
     $normalized = strtolower(trim($style));
@@ -1390,21 +1445,24 @@ function handleGenerateSummaryAction(array $env): void
     }
 
     $model = resolveModel($env);
-    $summarySystemMessage = "Ты — ИИ-анализатор документов.\n"
+    $summarySystemMessage = "Ты — ИИ для режима «Кратко ИИ».\n"
+        . "Сформируй очень короткое содержание документа, а не официальный ответ на документ.\n"
+        . "Запрещено писать письмо-ответ, резолюцию, инструкции исполнителю и деловую переписку.\n"
         . "Сформируй ответ СТРОГО в 3 строки и без любых дополнительных блоков.\n"
         . "Формат:\n"
         . "Кто прислал: <значение или 'не указано'>\n"
         . "Кому прислал: <значение или 'не указано'>\n"
-        . "Краткое содержание: <1-3 коротких предложения о главной мысли документа>\n"
+        . "Краткое содержание: <1-2 коротких предложения о сути документа>\n"
         . "Правила:\n"
         . "- Только факты из текста документа.\n"
         . "- Никакого markdown, списков, заголовков, пояснений.\n"
+        . "- Не более 260 символов в строке «Краткое содержание».\n"
         . "- Анализ PDF только по первым " . SUMMARY_PAGE_LIMIT . " страницам.";
 
     $requestPayload = [
         'model' => $model,
-        'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['temperature'] ?? 0.3),
-        'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['max_tokens'] ?? 800),
+        'temperature' => 0.1,
+        'max_tokens' => 220,
         'top_p' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['top_p'] ?? 0.85),
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],
@@ -1419,7 +1477,7 @@ function handleGenerateSummaryAction(array $env): void
     }
 
     $decoded = (array)($groqResult['raw'] ?? []);
-    $summary = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    $summary = enforceBriefSummaryFormat((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($summary === '') {
         respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
     }
