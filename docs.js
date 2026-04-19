@@ -2232,14 +2232,10 @@
       summaryItems = [analysis];
     }
     return [
-      'От кого письмо',
-      sender || 'не найдено',
-      '',
-      'Кому письмо',
-      recipient || 'не найдено',
-      '',
-      'Краткое содержание',
-      summaryItems.length ? summaryItems.map(function(item) { return '• ' + item; }).join('\n') : '• Не удалось выделить содержание.',
+      'От кого письмо: ' + (sender || 'не указано'),
+      'Кому письмо: ' + (recipient || 'не указано'),
+      'Краткое содержание:',
+      summaryItems.length ? summaryItems.map(function(item) { return '- ' + item; }).join('\n') : '- Не удалось выделить содержание.',
     ].join('\n');
   }
 
@@ -2299,10 +2295,7 @@
     if (!normalized) {
       return '';
     }
-    return normalized
-      .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
-      .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
-      .replace(/\n{3,}/g, '\n\n');
+    return normalized;
   }
 
   function getAttachmentAiBrief(file) {
