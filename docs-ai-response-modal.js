@@ -81,7 +81,7 @@
     { value: 'paid', label: 'VIP ИИ (платный)' }
   ];
   var DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
-  var GROQ_PAID_ENDPOINTS = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+  var GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   var GROQ_PDF_UNSUPPORTED_MODELS = ['llama-3.1-8b-instant'];
   var VISION_BATCH_SIZE = 4;
   var BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
