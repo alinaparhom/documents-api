@@ -11406,6 +11406,173 @@ switch ($action) {
         docs_handle_mini_app_doc_load_log($method);
         break;
 
+    case 'mini_app_task_snapshot':
+        $requestContext = docs_build_request_user_context();
+        $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+        if (strtoupper($method) !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $telegramInitDataContext = [];
+        if (isset($requestContext['telegramInitData']) && is_array($requestContext['telegramInitData'])) {
+            $telegramInitDataContext = $requestContext['telegramInitData'];
+        }
+        if (!empty($telegramInitDataContext['present']) && empty($telegramInitDataContext['valid'])) {
+            respond_error('Не удалось подтвердить данные Telegram. Откройте мини-приложение заново из чата с ботом.', 401, [
+                'telegramInitDataError' => isset($telegramInitDataContext['error']) ? (string) $telegramInitDataContext['error'] : 'invalid',
+                'telegramInitDataPresent' => true,
+                'requiresTelegramReauth' => true,
+            ]);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $organization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        if ($organization === '') {
+            respond_error('Не указана организация.', 400);
+        }
+
+        $taskId = sanitize_text_field((string) ($payload['taskId'] ?? ($payload['documentId'] ?? '')), 200);
+        if ($taskId === '') {
+            respond_error('Не указан идентификатор задачи.', 400);
+        }
+
+        $filter = $requestContext['filter'] ?? null;
+        $sources = [];
+        if (!empty($_GET) && is_array($_GET)) {
+            $sources[] = $_GET;
+        }
+        if (!empty($_POST) && is_array($_POST)) {
+            $sources[] = $_POST;
+        }
+        if (!empty($payload)) {
+            $sources[] = $payload;
+        }
+        if (isset($requestContext['raw']) && is_array($requestContext['raw']) && !empty($requestContext['raw'])) {
+            $sources[] = $requestContext['raw'];
+        }
+        foreach ($sources as $source) {
+            $candidate = extract_assignee_filter_from_array($source);
+            if ($candidate === null || empty($candidate)) {
+                continue;
+            }
+            if ($filter === null) {
+                $filter = $candidate;
+                continue;
+            }
+
+            if (isset($candidate['ids']) && is_array($candidate['ids'])) {
+                $existingIds = isset($filter['ids']) && is_array($filter['ids']) ? $filter['ids'] : [];
+                $filter['ids'] = array_values(array_unique(array_merge($existingIds, $candidate['ids'])));
+            }
+            if (empty($filter['username']) && !empty($candidate['username'])) {
+                $filter['username'] = $candidate['username'];
+            }
+            if (empty($filter['nameTokens']) && !empty($candidate['nameTokens']) && is_array($candidate['nameTokens'])) {
+                $filter['nameTokens'] = $candidate['nameTokens'];
+            }
+        }
+
+        $folder = sanitize_folder_name($organization);
+        $records = load_registry($folder);
+        $settings = load_admin_settings($folder);
+        $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles'])
+            ? $settings['responsibles']
+            : [];
+        $directors = isset($settings['block2']) && is_array($settings['block2'])
+            ? $settings['block2']
+            : [];
+        $prepared = docs_prepare_records_for_response($records, $organization, $folder);
+        $responsiblesWithCounts = docs_enrich_responsibles_with_counts(
+            $responsibles,
+            is_array($prepared) ? $prepared : []
+        );
+
+        $sessionAuth = docs_get_session_auth();
+        $canManageOrganizationInstructions = docs_user_can_manage_instructions(
+            $organization,
+            $requestContext,
+            is_array($sessionAuth) ? $sessionAuth : null,
+            $directors
+        );
+        $isDirectorForOrganization = $canManageOrganizationInstructions
+            || (!empty($directors) && docs_user_is_block2_member($directors, $requestContext));
+
+        $target = null;
+        foreach ($prepared as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            if ((string) ($record['id'] ?? '') === $taskId) {
+                $target = $record;
+                break;
+            }
+        }
+
+        if (!is_array($target)) {
+            respond_error('Задача не найдена.', 404);
+        }
+
+        if (!$isDirectorForOrganization) {
+            $filterIds = [];
+            if (is_array($filter) && isset($filter['ids']) && is_array($filter['ids'])) {
+                $filterIds = array_values(array_filter(array_map(static function ($value) {
+                    $normalized = normalize_identifier_value($value);
+
+                    return $normalized !== '' ? $normalized : null;
+                }, $filter['ids'])));
+                $filter['ids'] = $filterIds;
+            }
+
+            if ($filter === null || empty($filterIds)) {
+                respond_error('Не удалось определить Telegram ID. Откройте мини-приложение из Telegram.', 400, [
+                    'requiresTelegramId' => true,
+                ]);
+            }
+
+            $visible = filter_documents_for_assignee([$target], $filter, $responsiblesWithCounts);
+            if (empty($visible)) {
+                respond_error('Задача недоступна.', 403);
+            }
+            $target = $visible[0];
+        }
+
+        $snapshotUpdatedAt = '';
+        $updatedCandidates = [
+            $target['updatedAt'] ?? null,
+            $target['lastUpdatedAt'] ?? null,
+            $target['modifiedAt'] ?? null,
+            $target['statusUpdatedAt'] ?? null,
+            $target['completedAt'] ?? null,
+            $target['createdAt'] ?? null,
+        ];
+        foreach ($updatedCandidates as $candidate) {
+            if ($candidate === null) {
+                continue;
+            }
+            $normalizedCandidate = trim((string) $candidate);
+            if ($normalizedCandidate !== '') {
+                $snapshotUpdatedAt = $normalizedCandidate;
+                break;
+            }
+        }
+
+        respond_success([
+            'taskId' => $taskId,
+            'organization' => $organization,
+            'files' => isset($target['files']) && is_array($target['files']) ? array_values($target['files']) : [],
+            'responses' => isset($target['responses']) && is_array($target['responses']) ? array_values($target['responses']) : [],
+            'updatedAt' => $snapshotUpdatedAt,
+            'generatedAt' => date('c'),
+        ]);
+        break;
+
     case 'mini_app_tasks':
         $requestContext = docs_build_request_user_context();
         $sessionAuth = docs_get_session_auth();
