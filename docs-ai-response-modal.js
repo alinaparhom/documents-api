@@ -1823,6 +1823,18 @@
     return briefNormalizeValue(value) || '';
   }
 
+  function buildBriefFallbackTextFromSource(sourceText) {
+    var compact = briefNormalizeValue(sourceText).replace(/\s+/g, ' ');
+    var base = compact ? compact.slice(0, 220) : 'Недостаточно данных в ответе модели.';
+    return [
+      'От кого письмо: не указано',
+      'Кому письмо: не указано',
+      'Краткое содержание:',
+      '- ' + base,
+      '- Нужна повторная генерация для уточнения.'
+    ].join('\n');
+  }
+
   function readBriefFileAsText(file) {
     return new Promise(function(resolve, reject) {
       var reader = new FileReader();
@@ -2119,7 +2131,11 @@
       if (!textRequest.response.ok || !textPayload || textPayload.ok !== true) {
         throw new Error((textPayload && textPayload.error) || 'Ошибка запроса Vision режима.');
       }
-      return { summary: briefToSummaryText(textPayload.summary || textPayload.response), model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
+      var textSummary = briefToSummaryText(textPayload.summary || textPayload.response);
+      if (!textSummary) {
+        textSummary = buildBriefFallbackTextFromSource(text);
+      }
+      return { summary: textSummary, model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
     }
 
     var startedAt = Date.now();
@@ -2152,7 +2168,9 @@
       throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
     }
     var summary = briefToSummaryText(payload.summary || payload.response);
-    if (!summary) throw new Error('Vision не вернул итоговый текст.');
+    if (!summary) {
+      summary = buildBriefFallbackTextFromSource(ocrText);
+    }
     return {
       summary: summary,
       model: payload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',

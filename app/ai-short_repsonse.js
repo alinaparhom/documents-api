@@ -27,6 +27,18 @@ export function createTelegramBriefAi(deps = {}) {
     return text || '';
   }
 
+  function buildBriefFallbackTextFromSource(sourceText) {
+    const compact = normalizeValue(sourceText).replace(/\s+/g, ' ');
+    const base = compact ? compact.slice(0, 220) : 'Недостаточно данных в ответе модели.';
+    return [
+      'От кого письмо: не указано',
+      'Кому письмо: не указано',
+      'Краткое содержание:',
+      `- ${base}`,
+      '- Нужна повторная генерация для уточнения.',
+    ].join('\n');
+  }
+
   async function postGroqPaidWithFallback(createFormData) {
     let lastError = null;
     for (let index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
@@ -382,8 +394,12 @@ export function createTelegramBriefAi(deps = {}) {
       if (!request.response.ok || !payload || payload.ok !== true) {
         throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
       }
+      let summary = toBriefSummaryText(payload.summary || payload.response);
+      if (!summary) {
+        summary = buildBriefFallbackTextFromSource(text);
+      }
       return {
-        summary: toBriefSummaryText(payload.summary || payload.response),
+        summary,
         model: payload.model,
         timeMs: payload.durationMs || payload.timeMs,
         warning: prepared.warning || '',
@@ -416,8 +432,10 @@ export function createTelegramBriefAi(deps = {}) {
     if (!request.response.ok || !payload || payload.ok !== true) {
       throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
     }
-    const summary = toBriefSummaryText(payload.summary || payload.response);
-    if (!summary) throw new Error('Vision не вернул итоговый текст.');
+    let summary = toBriefSummaryText(payload.summary || payload.response);
+    if (!summary) {
+      summary = buildBriefFallbackTextFromSource(ocrText);
+    }
     return {
       summary,
       model: payload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',

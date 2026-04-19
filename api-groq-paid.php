@@ -19,6 +19,7 @@ const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
+const BRIEF_RESULT_MAX_CHARS = 850;
 
 function getServerAiPromptsCatalog(): array
 {
@@ -771,17 +772,65 @@ function callGroqTranscription(string $tmpPath, string $fileName, string $mime, 
 
 function getBriefAiSystemPrompt(): string
 {
-    return "Ты — ИИ в режиме «Кратко ИИ».\n\n"
-        . "Сформируй очень короткий и точный результат строго в структуре:\n"
-        . "1) От кого письмо\n"
-        . "2) Кому письмо\n"
-        . "3) Краткое содержание\n\n"
+    return "Ты — ИИ в режиме «Кратко ИИ».\n"
+        . "Верни только финальный текст без пояснений.\n\n"
+        . "Строгий формат вывода (без отклонений):\n"
+        . "строка 1: От кого письмо: ...\n"
+        . "строка 2: Кому письмо: ...\n"
+        . "блок 3:\n"
+        . "Краткое содержание:\n"
+        . "- пункт 1\n"
+        . "- пункт 2\n"
+        . "(допустимо 2-4 коротких пункта)\n\n"
         . "Ограничения:\n"
         . "- Только факты из переданного текста, без выдумок.\n"
-        . "- Для полей «От кого письмо» и «Кому письмо» дай по одной короткой строке.\n"
-        . "- В «Кратком содержании» 2-4 коротких пункта по сути.\n"
-        . "- Без технических комментариев, без шапки/подписи, без воды.\n"
-        . "- Если данных мало, пиши «не указано» и коротко поясни в содержании.\n";
+        . "- Если данные о сторонах не найдены, пиши «не указано».\n"
+        . "- Пиши максимально кратко: небольшой конечный текст.\n"
+        . "- Без markdown, без нумерации, без шапки/подписи, без технических комментариев.\n";
+}
+
+function buildBriefSummaryFallback(string $sourceText): string
+{
+    $normalized = trim(preg_replace('/\s+/u', ' ', str_replace(["\r\n", "\r"], "\n", $sourceText)) ?? '');
+    $sender = 'не указано';
+    $recipient = 'не указано';
+
+    if (preg_match('/(?:от кого|отправител[ья]|from)\s*[:\-]\s*([^\n\.;]{2,120})/iu', $sourceText, $match)) {
+        $sender = trim((string)($match[1] ?? '')) ?: $sender;
+    }
+    if (preg_match('/(?:кому|получател[ья]|to)\s*[:\-]\s*([^\n\.;]{2,120})/iu', $sourceText, $match)) {
+        $recipient = trim((string)($match[1] ?? '')) ?: $recipient;
+    }
+
+    $sentences = preg_split('/(?<=[.!?])\s+/u', $normalized) ?: [];
+    $items = [];
+    foreach ($sentences as $sentence) {
+        $line = trim((string)$sentence);
+        if ($line === '') {
+            continue;
+        }
+        if (mb_strlen($line) > 180) {
+            $line = trim((string)mb_substr($line, 0, 177)) . '...';
+        }
+        $items[] = $line;
+        if (count($items) >= 2) {
+            break;
+        }
+    }
+    if (!$items) {
+        $items = ['Недостаточно данных в ответе модели.'];
+    }
+
+    $result = "От кого письмо: {$sender}\n"
+        . "Кому письмо: {$recipient}\n"
+        . "Краткое содержание:\n"
+        . implode("\n", array_map(static fn(string $item): string => '- ' . $item, array_slice($items, 0, 4)));
+
+    if (mb_strlen($result) > BRIEF_RESULT_MAX_CHARS) {
+        $result = trim((string)mb_substr($result, 0, BRIEF_RESULT_MAX_CHARS - 3)) . '...';
+    }
+
+    return trim($result);
 }
 
 function getResponseAiSystemPrompt(string $responseMode = 'v1', string $tone = 'neutral', string $assistantMode = 'response_ai'): string
@@ -838,6 +887,17 @@ function normalizeAiOutputText(string $text): string
     $normalized = preg_replace("/[ \t]+\n/", "\n", $normalized) ?? $normalized;
     $normalized = preg_replace("/\n{3,}/", "\n\n", $normalized) ?? $normalized;
 
+    return trim($normalized);
+}
+
+function normalizeBriefAiOutputText(string $text): string
+{
+    $normalized = str_replace(["\r\n", "\r"], "\n", trim($text));
+    if ($normalized === '') {
+        return '';
+    }
+    $normalized = preg_replace("/[ \t]+\n/", "\n", $normalized) ?? $normalized;
+    $normalized = preg_replace("/\n{3,}/", "\n\n", $normalized) ?? $normalized;
     return trim($normalized);
 }
 
@@ -1318,11 +1378,11 @@ function handleGenerateSummaryAction(array $env): void
     $requestPayload = [
         'model' => $model,
         'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['temperature'] ?? 0.3),
-        'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['max_tokens'] ?? 800),
+        'max_tokens' => min(280, (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['max_tokens'] ?? 800)),
         'top_p' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['top_p'] ?? 0.85),
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],
-            ['role' => 'user', 'content' => "Сделай краткий ИИ-вывод в формате: От кого письмо / Кому письмо / Краткое содержание.\n\n" . $fullText],
+            ['role' => 'user', 'content' => "Сделай очень короткий вывод строго в формате:\nОт кого письмо: ...\nКому письмо: ...\nКраткое содержание:\n- пункт\n- пункт\n(2-4 пункта)\n\n" . $fullText],
         ],
     ];
 
@@ -1333,9 +1393,12 @@ function handleGenerateSummaryAction(array $env): void
     }
 
     $decoded = (array)($groqResult['raw'] ?? []);
-    $summary = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
+    $summary = normalizeBriefAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($summary === '') {
-        respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
+        $summary = buildBriefSummaryFallback($fullText);
+    }
+    if (mb_strlen($summary) > BRIEF_RESULT_MAX_CHARS) {
+        $summary = trim((string)mb_substr($summary, 0, BRIEF_RESULT_MAX_CHARS - 3)) . '...';
     }
 
     respond(200, [
