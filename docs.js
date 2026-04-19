@@ -2163,10 +2163,48 @@
     if (!normalized) {
       return '';
     }
-    return normalized
+    var prepared = normalized
       .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
       .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
       .replace(/\n{3,}/g, '\n\n');
+
+    function extractLineByLabels(source, labelVariants) {
+      var safeText = String(source || '');
+      var escaped = (Array.isArray(labelVariants) ? labelVariants : [])
+        .map(function(label) { return String(label || '').trim(); })
+        .filter(Boolean)
+        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+      if (!safeText || !escaped.length) return '';
+      var pattern = new RegExp('(?:^|\\n)\\s*(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r]+)', 'i');
+      var match = safeText.match(pattern);
+      return match && match[1] ? String(match[1]).trim() : '';
+    }
+
+    function extractEssenceText(source) {
+      var fromLabel = extractLineByLabels(source, ['Суть файла', 'Краткое содержание', 'Итог']);
+      if (fromLabel) return fromLabel;
+      var lines = String(source || '')
+        .split('\n')
+        .map(function(line) { return String(line || '').trim(); })
+        .filter(Boolean);
+      for (var i = 0; i < lines.length; i += 1) {
+        var line = lines[i];
+        if (!/^(кто прислал файл|кому прислали файл|краткое содержание|рекомендации|итог)\b/i.test(line)) {
+          return line.replace(/^[•\-]\s*/, '');
+        }
+      }
+      return '';
+    }
+
+    var sender = extractLineByLabels(prepared, ['Кто прислал файл', 'Отправитель', 'От кого']);
+    var recipient = extractLineByLabels(prepared, ['Кому прислали файл', 'Получатель', 'Кому']);
+    var essence = extractEssenceText(prepared);
+
+    return [
+      'Кто прислал файл: ' + (sender || 'не указано в документе'),
+      'Кому прислали файл: ' + (recipient || 'не указано в документе'),
+      'Суть файла: ' + (essence || 'не указано в документе')
+    ].join('\n');
   }
 
   function getAttachmentAiBrief(file) {
