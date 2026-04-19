@@ -2410,8 +2410,12 @@
     var requestFromBriefModule = null;
     try {
       await ensureAiResponseModalScript();
-      if (typeof window !== 'undefined' && typeof window.requestDocumentsAiBriefByFileSource === 'function') {
-        requestFromBriefModule = window.requestDocumentsAiBriefByFileSource;
+      if (typeof window !== 'undefined') {
+        if (typeof window.requestDocumentsAiBriefForSource === 'function') {
+          requestFromBriefModule = window.requestDocumentsAiBriefForSource;
+        } else if (typeof window.requestDocumentsAiBriefByFileSource === 'function') {
+          requestFromBriefModule = window.requestDocumentsAiBriefByFileSource;
+        }
       }
     } catch (_) {}
 
@@ -2429,25 +2433,16 @@
         if (typeof requestFromBriefModule === 'function') {
           var modulePayload = await requestFromBriefModule(source, function() {});
           briefText = normalizeAiBriefText(modulePayload && modulePayload.summary ? modulePayload.summary : '');
-        }
-        if (!briefText) {
-          var payload = await requestAiBriefSummaryByAttachment(source, apiUrl, 'paid');
+        } else {
+          var ocrText = await requestOcrTextForSource(source, apiUrl);
+          var payload = await requestAiBriefSummaryForText(source, ocrText, apiUrl, 'paid');
           briefText = extractAiBriefFromPayload(payload);
         }
       } catch (error) {
-        try {
-          var fallbackSource = {
-            fileObject: file,
-            label: file && file.name ? file.name : ('Файл ' + (i + 1))
-          };
-          var fallbackPayload = await requestAiBriefSummaryByAttachment(fallbackSource, apiUrl, 'paid');
-          briefText = extractAiBriefFromPayload(fallbackPayload);
-        } catch (fallbackError) {
-          docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
-            fileName: file && file.name ? file.name : '',
-            message: fallbackError && fallbackError.message ? fallbackError.message : (error && error.message ? error.message : String(error || ''))
-          });
-        }
+        docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
+          fileName: file && file.name ? file.name : '',
+          message: error && error.message ? error.message : String(error || '')
+        });
       }
       briefText = formatAiBriefForStorage(briefText);
       if (typeof onItemResolved === 'function') {
@@ -2461,11 +2456,6 @@
     return result;
   }
 
-
-  function getDirectAiAnalyzeUrl(apiUrl) {
-    var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
-    return String(endpoint).replace(/[?&]action=ai_response_analyze$/i, '') + '?action=ai_response_analyze';
-  }
 
   function getDirectAiSummaryUrl(apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
@@ -2608,171 +2598,6 @@
       });
     }
     return requestWithLimit(0);
-  }
-
-  var briefPdfJsLoader = null;
-  function ensureBriefPdfJsLoaded() {
-    if (typeof window !== 'undefined' && window.pdfjsLib) {
-      return Promise.resolve(window.pdfjsLib);
-    }
-    if (briefPdfJsLoader) {
-      return briefPdfJsLoader;
-    }
-    briefPdfJsLoader = new Promise(function(resolve, reject) {
-      var script = document.createElement('script');
-      script.src = '/pdf/pdf.min.js';
-      script.onload = function() {
-        if (window.pdfjsLib) {
-          resolve(window.pdfjsLib);
-        } else {
-          reject(new Error('pdfjsLib не найден'));
-        }
-      };
-      script.onerror = function() { reject(new Error('Не удалось загрузить PDF библиотеку')); };
-      document.head.appendChild(script);
-    });
-    return briefPdfJsLoader;
-  }
-
-  async function convertPdfToImageFileForBrief(file, fallbackName) {
-    var fileName = String(fallbackName || (file && file.name) || 'brief-file');
-    var isPdf = file && ((file.type && String(file.type).toLowerCase() === 'application/pdf') || /\.pdf$/i.test(fileName));
-    if (!isPdf || !file) {
-      return file;
-    }
-    try {
-      var pdfjsLib = await ensureBriefPdfJsLoaded();
-      if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.js';
-      }
-      var bytes = await file.arrayBuffer();
-      var loadingTask = pdfjsLib.getDocument({ data: bytes });
-      var pdf = await loadingTask.promise;
-      var page = await pdf.getPage(1);
-      var viewport = page.getViewport({ scale: 2 });
-      var canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.floor(viewport.width));
-      canvas.height = Math.max(1, Math.floor(viewport.height));
-      var ctx = canvas.getContext('2d');
-      if (!ctx) return file;
-      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-      var blob = await new Promise(function(resolve) {
-        canvas.toBlob(function(nextBlob) { resolve(nextBlob); }, 'image/jpeg', 0.9);
-      });
-      if (!blob) return file;
-      return new File([blob], fileName.replace(/\.pdf$/i, '') + '.jpg', { type: 'image/jpeg' });
-    } catch (_) {
-      return file;
-    }
-  }
-
-  function postGroqPaidForBrief(createFormData) {
-    var endpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
-    var lastError = null;
-    return endpoints.reduce(function(chain, endpoint) {
-      return chain.catch(function() {
-        console.log('[AI][groq-paid-brief] Отправка запроса', {
-          endpoint: endpoint,
-          ts: new Date().toISOString()
-        });
-        return fetch(endpoint, {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: createFormData()
-        }).then(function(response) {
-          if (response.status === 404 || response.status === 405) {
-            throw new Error('ENDPOINT_UNAVAILABLE');
-          }
-          return response.json().catch(function() { return null; }).then(function(payload) {
-            return { response: response, payload: payload };
-          });
-        });
-      });
-    }, Promise.reject(new Error('INIT'))).catch(function(error) {
-      lastError = error;
-      throw lastError;
-    });
-  }
-
-  async function requestAiBriefSummaryForFileDirect(source, apiUrl) {
-    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var fileForVip = null;
-    var extractedText = '';
-    if (source && source.fileObject instanceof File) {
-      fileForVip = source.fileObject;
-    } else if (source && source.url) {
-      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
-      if (fetched.ok) {
-        var blob = await fetched.blob();
-        var fileName = sourceLabel || 'brief-file';
-        fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-      }
-    }
-    extractedText = await requestOcrTextForSource(source, apiUrl);
-    if (!String(extractedText || '').trim()) {
-      throw new Error('OCR не вернул текст для выбранного файла.');
-    }
-    if (!(fileForVip instanceof File)) {
-      throw new Error('Не удалось подготовить файл для платного ИИ.');
-    }
-    fileForVip = await convertPdfToImageFileForBrief(fileForVip, sourceLabel);
-    var request = await postGroqPaidForBrief(function() {
-      var formData = new FormData();
-      formData.append('action', 'generate_summary');
-      formData.append('files', fileForVip, fileForVip.name || sourceLabel);
-      if (String(extractedText || '').trim()) {
-        formData.append('extractedTexts', JSON.stringify([{
-          name: sourceLabel,
-          type: 'text/plain',
-          text: String(extractedText).slice(0, 16000)
-        }]));
-      }
-      return formData;
-    });
-    var response = request && request.response;
-    var payload = request && request.payload;
-    if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
-    }
-    if (!isMeaningfulAiBriefPayload(payload)) {
-      throw new Error('ИИ не вернул осмысленный краткий вывод. Повторите запрос.');
-    }
-    return payload;
-  }
-
-  async function requestAiBriefSummaryByAttachment(source, apiUrl, aiMode) {
-    var sourceLabel = source && source.label ? String(source.label) : 'Файл';
-    var fileForSummary = null;
-    if (source && source.fileObject instanceof File) {
-      fileForSummary = source.fileObject;
-    } else if (source && source.url) {
-      var fetched = await fetch(String(source.url), { credentials: 'same-origin' });
-      if (fetched.ok) {
-        var blob = await fetched.blob();
-        var fileName = sourceLabel || 'brief-file';
-        fileForSummary = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-      }
-    }
-    if (!(fileForSummary instanceof File)) {
-      throw new Error('Не удалось подготовить файл для краткого вывода.');
-    }
-    var endpoint = getDirectAiSummaryUrl(apiUrl);
-    var formData = new FormData();
-    formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
-    formData.append('attachment', fileForSummary, fileForSummary.name || sourceLabel);
-    var response = await fetch(endpoint, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData
-    });
-    var payload = await response.json().catch(function() { return null; });
-    if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
-    }
-    if (!isMeaningfulAiBriefPayload(payload)) {
-      throw new Error('ИИ не вернул осмысленный summary. Повторите запрос.');
-    }
-    return payload;
   }
 
   function openAiBriefSummaryModal(config) {
