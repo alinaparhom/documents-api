@@ -11089,8 +11089,41 @@ function normalizeValue(value) {
 
 function normalizeBriefText(value) {
   const source = value === null || value === undefined ? '' : String(value);
-  const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '');
-  return normalized.trim() ? normalized : '';
+  const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
+  if (!normalized) return '';
+  const extractParty = (labels) => {
+    const escaped = (Array.isArray(labels) ? labels : [])
+      .map((label) => String(label || '').trim())
+      .filter(Boolean)
+      .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (!escaped.length) return '';
+    const match = normalized.match(new RegExp(`(?:^|\\n)\\s*(?:${escaped.join('|')})\\s*[:\\-]\\s*([^\\n\\r;]+)`, 'i'));
+    return match && match[1] ? String(match[1]).trim() : '';
+  };
+  const sender = extractParty(['от кого письмо', 'отправитель', 'от кого']);
+  const recipient = extractParty(['кому письмо', 'получатель', 'кому', 'адресат']);
+  const body = normalized
+    .replace(/(?:^|\n)\s*(от кого письмо|отправитель|от кого)\s*[:\-]\s*[^\n\r]*/gi, '')
+    .replace(/(?:^|\n)\s*(кому письмо|получатель|кому|адресат)\s*[:\-]\s*[^\n\r]*/gi, '')
+    .replace(/(?:^|\n)\s*(краткое содержание|рекомендации|итог)\s*[:\-]?\s*/gi, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  const points = body
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[.!?])\s+/)
+    .map((item) => String(item || '').trim().replace(/[.;,\s]+$/g, ''))
+    .filter((item) => item.length >= 8)
+    .slice(0, 3);
+  return [
+    'От кого письмо',
+    sender || 'не указано',
+    '',
+    'Кому письмо',
+    recipient || 'не указано',
+    '',
+    'Краткое содержание',
+    (points.length ? points : ['Не удалось выделить суть письма']).map((item) => `• ${item}`).join('\n'),
+  ].join('\n');
 }
 
 function normalizeAssignmentComment(value) {

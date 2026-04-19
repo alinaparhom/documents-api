@@ -2,7 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
-const BRIEF_SUMMARY_PROMPT = 'Сделай очень краткий вывод по документу: 1) краткое содержание, 2) рекомендации, 3) итог. Не более 6 коротких пунктов и только по фактам из текста.';
+const BRIEF_SUMMARY_PROMPT = 'Сделай очень краткий вывод по документу в формате: 1) От кого письмо, 2) Кому письмо, 3) Краткое содержание. Только факты из текста, краткое содержание — 2-4 коротких пункта.';
 const BRIEF_PDF_SOURCES = [
   { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
   { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
@@ -22,9 +22,50 @@ export function createTelegramBriefAi(deps = {}) {
 
   let briefPdfJsLoader = null;
 
+  function extractPartyByLabels(text, labels = []) {
+    const safeText = normalizeValue(text);
+    if (!safeText) return '';
+    const escaped = labels
+      .map((label) => String(label || '').trim())
+      .filter(Boolean)
+      .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (!escaped.length) return '';
+    const match = safeText.match(new RegExp(`(?:^|\\n)\\s*(?:${escaped.join('|')})\\s*[:\\-]\\s*([^\\n\\r;]+)`, 'i'));
+    return match && match[1] ? String(match[1]).trim() : '';
+  }
+
+  function extractBriefPoints(text, maxItems = 3) {
+    const normalized = normalizeValue(text).replace(/\s+/g, ' ');
+    if (!normalized) return [];
+    return normalized
+      .split(/(?<=[.!?])\s+/)
+      .map((item) => String(item || '').trim().replace(/[.;,\s]+$/g, ''))
+      .filter((item) => item.length >= 8)
+      .slice(0, maxItems);
+  }
+
   function toBriefSummaryText(value) {
-    const text = normalizeValue(value);
-    return text || '';
+    const text = normalizeValue(value).replace(/\r\n/g, '\n');
+    if (!text) return '';
+    const sender = extractPartyByLabels(text, ['от кого письмо', 'отправитель', 'от кого']);
+    const recipient = extractPartyByLabels(text, ['кому письмо', 'получатель', 'кому', 'адресат']);
+    const cleanedBody = text
+      .replace(/(?:^|\n)\s*(от кого письмо|отправитель|от кого)\s*[:\-]\s*[^\n\r]*/gi, '')
+      .replace(/(?:^|\n)\s*(кому письмо|получатель|кому|адресат)\s*[:\-]\s*[^\n\r]*/gi, '')
+      .replace(/(?:^|\n)\s*(краткое содержание|рекомендации|итог)\s*[:\-]?\s*/gi, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    const points = extractBriefPoints(cleanedBody || text, 3);
+    return [
+      'От кого письмо',
+      sender || 'не указано',
+      '',
+      'Кому письмо',
+      recipient || 'не указано',
+      '',
+      'Краткое содержание',
+      (points.length ? points : ['Не удалось выделить суть письма']).map((item) => `• ${item}`).join('\n'),
+    ].join('\n');
   }
 
   async function postGroqPaidWithFallback(createFormData) {
