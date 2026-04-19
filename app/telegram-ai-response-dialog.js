@@ -6,13 +6,20 @@
   const REQUEST_TIMEOUT_MS = 45000;
   const FILE_FETCH_TIMEOUT_MS = 12000;
   const FILE_FETCH_RETRIES = 1;
-  const FILE_FETCH_RETRIES_IOS = 3;
+  const FILE_FETCH_RETRIES_MOBILE = 0;
   const FILE_FETCH_TIMEOUT_STEPS_IOS = [2800, 4200, 6200, 9000];
   const FILE_FETCH_MAX_CANDIDATES = 8;
   const FILE_PREPARE_TIMEOUT_MS = 35000;
+  const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const VISION_BATCH_SIZE = 5;
+  const MAX_FILES_PER_REQUEST = 5;
+  const MAX_FILES_PER_REQUEST_MOBILE = 2;
+  const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+  const MAX_FILE_SIZE_BYTES_MOBILE = 12 * 1024 * 1024;
+  const VISION_CONCURRENCY_DEFAULT = 3;
+  const VISION_CONCURRENCY_MOBILE = 1;
   const AI_PDF_PAGE_LIMIT = 5;
   const PDF_RENDER_SCALE = 1.25;
   const PDF_JPEG_QUALITY = 0.82;
@@ -63,6 +70,42 @@
     } catch (_) {
       return false;
     }
+  }
+
+  function isAndroidClient() {
+    try {
+      const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
+      return /Android/i.test(ua);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isLikelyWebViewClient() {
+    try {
+      const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
+      if (isIosClient()) {
+        return /WebView|Telegram|FBAN|FBAV|Line\//i.test(ua) || (/AppleWebKit/i.test(ua) && !/Safari/i.test(ua));
+      }
+      if (isAndroidClient()) {
+        return /; wv\)|\bwv\b|Version\/[\d.]+|Telegram/i.test(ua);
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function getClientVisionProfile() {
+    const fastMobile = isLikelyWebViewClient();
+    return {
+      isFastMobile: fastMobile,
+      fetchRetries: fastMobile ? FILE_FETCH_RETRIES_MOBILE : FILE_FETCH_RETRIES,
+      prepareTimeoutMs: fastMobile ? FILE_PREPARE_TIMEOUT_MS_MOBILE : FILE_PREPARE_TIMEOUT_MS,
+      maxConcurrency: fastMobile ? VISION_CONCURRENCY_MOBILE : VISION_CONCURRENCY_DEFAULT,
+      maxFilesPerRequest: fastMobile ? MAX_FILES_PER_REQUEST_MOBILE : MAX_FILES_PER_REQUEST,
+      maxFileSizeBytes: fastMobile ? MAX_FILE_SIZE_BYTES_MOBILE : MAX_FILE_SIZE_BYTES,
+    };
   }
 
   function getFileCacheKey(file) {
@@ -421,6 +464,53 @@
     return lowerType.includes('pdf') || /\.pdf$/i.test(lowerName);
   }
 
+  function isTextLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.startsWith('text/') || /\.(txt|md|csv|json|xml|html?)$/i.test(lowerName);
+  }
+
+  function isDocxLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.includes('wordprocessingml.document') || /\.docx$/i.test(lowerName);
+  }
+
+  function isXlsxLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.includes('spreadsheetml') || /\.xlsx$/i.test(lowerName);
+  }
+
+  function isSupportedVisionFile(name, type) {
+    return isImageLike(name, type) || isPdfLike(name, type) || isTextLike(name, type) || isDocxLike(name, type) || isXlsxLike(name, type);
+  }
+
+  function validateFilesBeforeSend(files, profile) {
+    const list = Array.isArray(files) ? files : [];
+    const maxFiles = Number(profile && profile.maxFilesPerRequest) || MAX_FILES_PER_REQUEST;
+    const maxSizeBytes = Number(profile && profile.maxFileSizeBytes) || MAX_FILE_SIZE_BYTES;
+    if (!list.length) {
+      return { ok: false, error: 'Нет готовых файлов для отправки.' };
+    }
+    if (list.length > maxFiles) {
+      return { ok: false, error: 'Выберите меньше файлов' };
+    }
+    for (let index = 0; index < list.length; index += 1) {
+      const file = list[index];
+      const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
+      const fileType = normalize(file && (file.mimeType || file.type || file.contentType));
+      const fileSize = Number(file && (file.size || file.fileSize || (file.fileObject && file.fileObject.size))) || 0;
+      if (!isSupportedVisionFile(fileName, fileType)) {
+        return { ok: false, error: `Неподдерживаемый формат: ${fileName}` };
+      }
+      if (fileSize > maxSizeBytes) {
+        return { ok: false, error: `Файл слишком большой: ${fileName}` };
+      }
+    }
+    return { ok: true };
+  }
+
   function readBlobAsDataUrl(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -646,6 +736,7 @@
   }
 
   async function requestTelegramVisionResponse(payload = {}, onStatus) {
+    const profile = getClientVisionProfile();
     const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
     const prompt = normalize(payload.prompt) || 'Проанализируй документы и предложи готовое решение.';
     const systemPrompt = normalize(payload.systemPrompt);
@@ -654,7 +745,7 @@
     const fileErrors = [];
     const preparedResults = new Array(selectedFiles.length);
     const queue = selectedFiles.map((currentFile, index) => ({ currentFile, index }));
-    const maxConcurrency = isIosClient() ? 2 : 3;
+    const maxConcurrency = profile.maxConcurrency;
     const workers = Array.from({ length: Math.max(1, Math.min(maxConcurrency, queue.length)) }, () => (async () => {
       while (queue.length) {
         const item = queue.shift();
@@ -663,28 +754,29 @@
         }
         const { currentFile, index } = item;
         const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-        onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
+        onStatus('Загрузка', 'loading');
         let blobFile = null;
         try {
           blobFile = await loadSelectedFileAsBlob(currentFile);
         } catch (error) {
           const failMessage = normalize(error && error.message) || 'Не удалось загрузить файл.';
           preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
-          onStatus(`${fileLabel}: ошибка загрузки, продолжаю с остальными файлами...`, 'loading');
+          onStatus('Загрузка', 'loading');
           continue;
         }
         const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
         try {
+          onStatus('Подготовка', 'prepare');
           const prepared = await withTimeout(
-            buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading')),
-            FILE_PREPARE_TIMEOUT_MS,
+            buildVisionPayloadFromFile(sourceFile, () => onStatus('Подготовка', 'prepare')),
+            profile.prepareTimeoutMs,
             'Превышено время обработки файла.',
           );
           preparedResults[index] = { prepared, sourceFile, fileLabel };
         } catch (error) {
           const failMessage = normalize(error && error.message) || 'Не удалось подготовить файл.';
           preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
-          onStatus(`${fileLabel}: обработка слишком долгая, файл пропущен.`, 'loading');
+          onStatus('Подготовка', 'prepare');
         }
       }
     })());
@@ -723,7 +815,7 @@
         const details = fileErrors.length ? ` Ошибки: ${fileErrors.slice(0, 2).join('; ')}` : '';
         throw new Error(`Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.${details}`);
       }
-      onStatus('Vision: отправляю извлечённый текст (DOCX/TXT) в ИИ...', 'loading');
+      onStatus('Ответ', 'answer');
       const textOnlyRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'generate_response');
@@ -749,7 +841,7 @@
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
       const currentBatch = batches[batchIndex];
-      onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
+      onStatus('Ответ', 'answer');
       // eslint-disable-next-line no-await-in-loop
       const request = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
@@ -795,7 +887,7 @@
 
     let finalSummary = partialAnswers.join('\n\n').trim();
     if (partialAnswers.length > 1) {
-      onStatus('Vision: объединяю результаты всех блоков...', 'loading');
+      onStatus('Ответ', 'answer');
       const mergeRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'generate_response');
@@ -825,6 +917,7 @@
   }
 
   async function loadSelectedFileAsBlob(file) {
+    const profile = getClientVisionProfile();
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
     }
@@ -841,7 +934,7 @@
     }
     const rounds = [baseCandidates, cacheBustedCandidates];
     const iosClient = isIosClient();
-    const retries = iosClient ? FILE_FETCH_RETRIES_IOS : FILE_FETCH_RETRIES;
+    const retries = profile.fetchRetries;
     let lastStatus = 0;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const urls = rounds[Math.min(attempt, rounds.length - 1)];
@@ -862,6 +955,9 @@
         }
         const blob = await response.blob();
         const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
+        if (blob.size > profile.maxFileSizeBytes) {
+          throw new Error('Файл слишком большой.');
+        }
         const readyFile = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
         if (cacheKey) loadedFileCache.set(cacheKey, readyFile);
         if (file && typeof file === 'object') file.fileObject = readyFile;
@@ -2139,6 +2235,7 @@
 
     async function sendByCurrentStyle() {
       if (isSending) return;
+      const profile = getClientVisionProfile();
       const selectedStyleValue = normalize(styleSelect && styleSelect.value);
       if (!selectedStyleValue) {
         status.textContent = 'Выберите режим ответа.';
@@ -2160,8 +2257,18 @@
       const selectedKeys = Array.from(selected)
         .filter((key) => fileWarmupState.get(key) !== 'error');
       if (!selectedKeys.length) {
+        if (currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value) {
+          const responseAiMessage = 'Для режима «Ответ ИИ» выберите хотя бы один файл.';
+          createBubble(messages, responseAiMessage, 'assistant');
+          status.textContent = responseAiMessage;
+          return;
+        }
         createBubble(messages, 'Выберите хотя бы один файл без ошибок в меню «📎 Файлы».', 'assistant');
         status.textContent = 'Нет доступных файлов для отправки.';
+        return;
+      }
+      if (selectedKeys.length > profile.maxFilesPerRequest) {
+        status.textContent = 'Выберите меньше файлов';
         return;
       }
 
@@ -2186,9 +2293,16 @@
           .filter(Boolean);
 
         if (!selectedFiles.length) {
-          const emptyReadyMessage = 'Нет готовых файлов для отправки.';
+          const emptyReadyMessage = currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value
+            ? 'Нет готовых файлов для «Ответ ИИ».'
+            : 'Нет готовых файлов для отправки.';
           createBubble(messages, emptyReadyMessage, 'assistant');
           status.textContent = emptyReadyMessage;
+          return;
+        }
+        const prevalidation = validateFilesBeforeSend(selectedFiles, profile);
+        if (!prevalidation.ok) {
+          status.textContent = normalize(prevalidation.error) || 'Проверьте выбранные файлы.';
           return;
         }
 
@@ -2198,7 +2312,7 @@
         if (skippedFilesCount > 0) {
           createBubble(messages, `${skippedFilesCount} файлов пропущено.`, 'assistant');
         }
-        status.textContent = 'Отправляю запрос...';
+        status.textContent = 'Загрузка → Подготовка → Ответ';
         const startedAt = Date.now();
         const loadingBubble = createLoadingBubble(messages);
 
@@ -2209,7 +2323,20 @@
           assistantMode: currentResponseMode,
           selectedFiles,
         }, (message) => {
-          status.textContent = message;
+          const stage = normalize(message).toLowerCase();
+          if (stage === 'загрузка') {
+            status.textContent = 'Загрузка → Подготовка → Ответ';
+            return;
+          }
+          if (stage === 'подготовка') {
+            status.textContent = '✓ Загрузка → Подготовка → Ответ';
+            return;
+          }
+          if (stage === 'ответ') {
+            status.textContent = '✓ Загрузка → ✓ Подготовка → Ответ';
+            return;
+          }
+          status.textContent = 'Загрузка → Подготовка → Ответ';
         });
         const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
         lastAiAnswer = answer;
