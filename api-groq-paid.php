@@ -843,6 +843,38 @@ function normalizeAiOutputText(string $text): string
     return trim($normalized);
 }
 
+function isStrictBriefSummary(string $text): bool
+{
+    $normalized = normalizeAiOutputText($text);
+    if ($normalized === '') {
+        return false;
+    }
+    $lines = preg_split('/\n+/u', $normalized) ?: [];
+    if (count($lines) < 3) {
+        return false;
+    }
+    if (!preg_match('/^Кто\s+прислал\s*:/ui', trim((string)($lines[0] ?? '')))) {
+        return false;
+    }
+    if (!preg_match('/^Кому\s+прислал\s*:/ui', trim((string)($lines[1] ?? '')))) {
+        return false;
+    }
+    if (!preg_match('/^Что\s+изложено\s+в\s+документе\s*:/ui', trim((string)($lines[2] ?? '')))) {
+        return false;
+    }
+
+    $body = trim(implode(' ', array_slice($lines, 2)));
+    $body = preg_replace('/^Что\s+изложено\s+в\s+документе\s*:\s*/ui', '', $body) ?? $body;
+    $sentences = preg_split('/(?<=[\.\!\?])\s+/u', trim($body)) ?: [];
+    $count = 0;
+    foreach ($sentences as $sentence) {
+        if (trim((string)$sentence) !== '') {
+            $count += 1;
+        }
+    }
+    return $count >= 3 && $count <= 6;
+}
+
 function getResponseAiStyleInstruction(string $style): string
 {
     $normalized = strtolower(trim($style));
@@ -1340,11 +1372,11 @@ function handleGenerateSummaryAction(array $env): void
     $summarySystemMessage = "Ты — ИИ для режима «Кратко ИИ».\n"
         . "Сформируй краткое содержание документа, а не официальный ответ на документ.\n"
         . "Запрещено писать письмо-ответ, резолюцию, инструкции исполнителю и деловую переписку.\n"
-        . "Сформируй ответ в 3 строки без лишних блоков.\n"
+        . "Сформируй ответ строго в 3 строки без лишних блоков.\n"
         . "Формат:\n"
         . "Кто прислал: <значение или 'не указано'>\n"
         . "Кому прислал: <значение или 'не указано'>\n"
-        . "Краткое содержание: <1-2 коротких предложения о сути документа>\n"
+        . "Что изложено в документе: <3-6 предложений по сути документа>\n"
         . "Правила:\n"
         . "- Только факты из текста документа.\n"
         . "- Никакого markdown, списков, заголовков, пояснений.\n"
@@ -1353,8 +1385,8 @@ function handleGenerateSummaryAction(array $env): void
 
     $requestPayload = [
         'model' => $model,
-        'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['temperature'] ?? 0.3),
-        'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['max_tokens'] ?? 800),
+        'temperature' => 0.2,
+        'max_tokens' => 450,
         'top_p' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['top_p'] ?? 0.85),
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],
@@ -1372,6 +1404,26 @@ function handleGenerateSummaryAction(array $env): void
     $summary = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($summary === '') {
         respond(502, ['ok' => false, 'error' => 'Пустой summary от Groq']);
+    }
+
+    if (!isStrictBriefSummary($summary)) {
+        $formatFixPayload = [
+            'model' => $model,
+            'temperature' => 0.1,
+            'max_tokens' => 450,
+            'messages' => [
+                ['role' => 'system', 'content' => "Преобразуй текст строго в формат:\nКто прислал: ...\nКому прислал: ...\nЧто изложено в документе: ...\nТретья строка должна содержать 3-6 предложений. Ничего лишнего не добавляй."],
+                ['role' => 'user', 'content' => "Преобразуй в требуемый формат:\n\n" . $summary],
+            ],
+        ];
+        $formatFixResult = callGroqChat($formatFixPayload, $apiKey);
+        if (($formatFixResult['ok'] ?? false) === true) {
+            $formatFixDecoded = (array)($formatFixResult['raw'] ?? []);
+            $fixed = normalizeAiOutputText((string)($formatFixDecoded['choices'][0]['message']['content'] ?? ''));
+            if ($fixed !== '') {
+                $summary = $fixed;
+            }
+        }
     }
 
     respond(200, [
