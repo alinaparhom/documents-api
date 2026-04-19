@@ -11101,19 +11101,33 @@ function normalizeBriefText(value) {
     return match && match[1] ? String(match[1]).trim() : '';
   };
   const sender = extractParty(['от кого письмо', 'отправитель', 'от кого']);
-  const recipient = extractParty(['кому письмо', 'получатель', 'кому', 'адресат']);
+  const recipientByLabel = extractParty(['кому письмо', 'получатель', 'кому', 'адресат']);
+  const recipientByGreeting = !recipientByLabel
+    ? ((normalized.match(/уважаем[а-я]+\s+([^,\n.!?]{3,80})/i) || [])[1] || '').trim()
+    : '';
+  const recipient = recipientByLabel || recipientByGreeting;
   const body = normalized
     .replace(/(?:^|\n)\s*(от кого письмо|отправитель|от кого)\s*[:\-]\s*[^\n\r]*/gi, '')
     .replace(/(?:^|\n)\s*(кому письмо|получатель|кому|адресат)\s*[:\-]\s*[^\n\r]*/gi, '')
     .replace(/(?:^|\n)\s*(краткое содержание|рекомендации|итог)\s*[:\-]?\s*/gi, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  const points = body
-    .replace(/\s+/g, ' ')
-    .split(/(?<=[.!?])\s+/)
-    .map((item) => String(item || '').trim().replace(/[.;,\s]+$/g, ''))
-    .filter((item) => item.length >= 8)
-    .slice(0, 3);
+  const points = [];
+  const seen = new Set();
+  const chunks = body.replace(/\s+/g, ' ').match(/[^.!?]+[.!?]?/g) || [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const item = String(chunks[index] || '')
+      .replace(/^\s*(?:[-•]|\d+[.)])\s*/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!item || item.length < 25) continue;
+    if (/^(уважаем|добрый день|с уважением)/i.test(item)) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    points.push(item.replace(/[.;,\s]+$/g, ''));
+    if (points.length >= 3) break;
+  }
   return [
     'От кого письмо',
     sender || 'не указано',

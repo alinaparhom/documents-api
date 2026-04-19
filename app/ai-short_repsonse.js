@@ -37,18 +37,34 @@ export function createTelegramBriefAi(deps = {}) {
   function extractBriefPoints(text, maxItems = 3) {
     const normalized = normalizeValue(text).replace(/\s+/g, ' ');
     if (!normalized) return [];
-    return normalized
-      .split(/(?<=[.!?])\s+/)
-      .map((item) => String(item || '').trim().replace(/[.;,\s]+$/g, ''))
-      .filter((item) => item.length >= 8)
-      .slice(0, maxItems);
+    const chunks = normalized.match(/[^.!?]+[.!?]?/g) || [];
+    const result = [];
+    const seen = new Set();
+    for (let index = 0; index < chunks.length; index += 1) {
+      const item = String(chunks[index] || '')
+        .replace(/^\s*(?:[-•]|\d+[.)])\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!item || item.length < 25) continue;
+      if (/^(уважаем|добрый день|с уважением)/i.test(item)) continue;
+      const key = item.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(item.replace(/[.;,\s]+$/g, ''));
+      if (result.length >= maxItems) break;
+    }
+    return result;
   }
 
   function toBriefSummaryText(value) {
     const text = normalizeValue(value).replace(/\r\n/g, '\n');
     if (!text) return '';
     const sender = extractPartyByLabels(text, ['от кого письмо', 'отправитель', 'от кого']);
-    const recipient = extractPartyByLabels(text, ['кому письмо', 'получатель', 'кому', 'адресат']);
+    const recipientByLabel = extractPartyByLabels(text, ['кому письмо', 'получатель', 'кому', 'адресат']);
+    const recipientByGreeting = !recipientByLabel
+      ? ((text.match(/уважаем[а-я]+\s+([^,\n.!?]{3,80})/i) || [])[1] || '').trim()
+      : '';
+    const recipient = recipientByLabel || recipientByGreeting;
     const cleanedBody = text
       .replace(/(?:^|\n)\s*(от кого письмо|отправитель|от кого)\s*[:\-]\s*[^\n\r]*/gi, '')
       .replace(/(?:^|\n)\s*(кому письмо|получатель|кому|адресат)\s*[:\-]\s*[^\n\r]*/gi, '')

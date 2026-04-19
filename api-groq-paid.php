@@ -806,7 +806,7 @@ function buildEffectiveUserPrompt(string $userPrompt, string $assistantMode): st
 
     if ($mode === 'brief_ai') {
         $base = $rawPrompt !== '' ? $rawPrompt : 'Сделай краткий итог по документам.';
-        return $base . "\n\nВерни результат кратко: суть, 2-4 коротких абзаца, итог. Без автонумерации.";
+        return $base . "\n\nВерни результат строго в формате: От кого письмо / Кому письмо / Краткое содержание (2-4 коротких пункта).";
     }
 
     if ($mode === 'improve_ai') {
