@@ -1326,12 +1326,13 @@ function handleGenerateSummaryAction(array $env): void
         . "- Только факты из текста документа.\n"
         . "- Никакого markdown, списков, заголовков, пояснений.\n"
         . "- Пиши коротко и по делу, без воды.\n"
+        . "- Не обрывай фразы и предложения на полуслове.\n"
         . "- Анализ PDF только по первым " . SUMMARY_PAGE_LIMIT . " страницам.";
 
     $requestPayload = [
         'model' => $model,
         'temperature' => 0.15,
-        'max_tokens' => 260,
+        'max_tokens' => 600,
         'top_p' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['top_p'] ?? 0.85),
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],

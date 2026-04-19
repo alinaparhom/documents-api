@@ -2296,12 +2296,10 @@
     if (!normalized) {
       return '';
     }
-    var formatted = normalized
+    return normalized
       .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
       .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
       .replace(/\n{3,}/g, '\n\n');
-    var compactLines = formatted.split('\n').filter(function(line) { return String(line || '').trim() !== ''; }).slice(0, 5);
-    return compactLines.join('\n').slice(0, 700).trim();
   }
 
   function getAttachmentAiBrief(file) {
