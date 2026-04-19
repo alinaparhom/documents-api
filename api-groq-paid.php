@@ -16,6 +16,8 @@ const MAX_TEXT_CHARS_PER_CHUNK = 12000;
 const MAX_TEXT_CHUNKS_TOTAL = 30;
 const MAX_TEXT_PAYLOAD_CHARS = 90000;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
+const SUMMARY_PAGE_LIMIT = 5;
+const SUMMARY_VISION_EXTRACT_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
@@ -841,6 +843,50 @@ function normalizeAiOutputText(string $text): string
     return trim($normalized);
 }
 
+function isTextLikeEntryType(string $type): bool
+{
+    $normalized = strtolower(trim($type));
+    if ($normalized === '') {
+        return false;
+    }
+    return str_starts_with($normalized, 'text/')
+        || str_contains($normalized, 'json')
+        || str_contains($normalized, 'xml')
+        || str_contains($normalized, 'html')
+        || str_contains($normalized, 'csv')
+        || str_contains($normalized, 'wordprocessingml')
+        || str_contains($normalized, 'officedocument');
+}
+
+function trimToFirstPdfPages(string $text, int $pageLimit = SUMMARY_PAGE_LIMIT): string
+{
+    $normalized = trim($text);
+    if ($normalized === '' || $pageLimit < 1) {
+        return $normalized;
+    }
+
+    if (!preg_match_all('/Страница\s+(\d+)\s*:/ui', $normalized, $matches, PREG_OFFSET_CAPTURE)) {
+        return $normalized;
+    }
+
+    $markerCount = count($matches[0]);
+    if ($markerCount <= 0) {
+        return $normalized;
+    }
+
+    $allowedUntilOffset = strlen($normalized);
+    for ($index = 0; $index < $markerCount; $index += 1) {
+        $pageNumberRaw = $matches[1][$index][0] ?? '';
+        $pageNumber = (int)$pageNumberRaw;
+        if ($pageNumber > $pageLimit) {
+            $allowedUntilOffset = (int)($matches[0][$index][1] ?? $allowedUntilOffset);
+            break;
+        }
+    }
+
+    return trim(substr($normalized, 0, $allowedUntilOffset));
+}
+
 function getResponseAiStyleInstruction(string $style): string
 {
     $normalized = strtolower(trim($style));
@@ -1296,6 +1342,7 @@ function handleGenerateSummaryAction(array $env): void
     }
 
     $summaryParts = [];
+    $allTextLikeEntries = true;
     foreach ($decodedExtractedTexts as $entry) {
         if (!is_array($entry)) {
             continue;
@@ -1304,16 +1351,55 @@ function handleGenerateSummaryAction(array $env): void
         if ($text === '') {
             continue;
         }
+        $entryType = trim((string)($entry['type'] ?? ''));
+        $entryText = trimToFirstPdfPages($text, SUMMARY_PAGE_LIMIT);
+        if ($entryText === '') {
+            continue;
+        }
+        if (!isTextLikeEntryType($entryType)) {
+            $allTextLikeEntries = false;
+        }
         $name = trim((string)($entry['name'] ?? 'Документ'));
-        $summaryParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $text;
+        $summaryParts[] = '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $entryText;
     }
     $fullText = trim(implode("\n\n", $summaryParts));
     if ($fullText === '') {
         respond(422, ['ok' => false, 'error' => 'Текст документов пустой, summary сформировать невозможно.']);
     }
 
+    $visionModeRequested = (string)($_POST['vision_mode'] ?? '') === '1';
+    $normalizedDocText = $fullText;
+    if ($visionModeRequested && !$allTextLikeEntries) {
+        $extractPayload = [
+            'model' => SUMMARY_VISION_EXTRACT_MODEL,
+            'temperature' => 0.0,
+            'max_tokens' => 2000,
+            'messages' => [
+                ['role' => 'system', 'content' => 'Ты OCR-движок. Верни только чистый текст документа без анализа и комментариев.'],
+                ['role' => 'user', 'content' => "Извлеки и нормализуй текст документа. Анализируй только первые " . SUMMARY_PAGE_LIMIT . " страниц PDF.\n\n" . $fullText],
+            ],
+        ];
+        $extractResult = callGroqChat($extractPayload, $apiKey);
+        if (($extractResult['ok'] ?? false) === true) {
+            $extractDecoded = (array)($extractResult['raw'] ?? []);
+            $extractedByLlm = normalizeAiOutputText((string)($extractDecoded['choices'][0]['message']['content'] ?? ''));
+            if ($extractedByLlm !== '') {
+                $normalizedDocText = $extractedByLlm;
+            }
+        }
+    }
+
     $model = resolveModel($env);
-    $summarySystemMessage = getBriefAiSystemPrompt();
+    $summarySystemMessage = "Ты — ИИ-анализатор документов.\n"
+        . "Сформируй ответ СТРОГО в 3 строки и без любых дополнительных блоков.\n"
+        . "Формат:\n"
+        . "Кто прислал: <значение или 'не указано'>\n"
+        . "Кому прислал: <значение или 'не указано'>\n"
+        . "Краткое содержание: <1-3 коротких предложения о главной мысли документа>\n"
+        . "Правила:\n"
+        . "- Только факты из текста документа.\n"
+        . "- Никакого markdown, списков, заголовков, пояснений.\n"
+        . "- Анализ PDF только по первым " . SUMMARY_PAGE_LIMIT . " страницам.";
 
     $requestPayload = [
         'model' => $model,
@@ -1322,7 +1408,7 @@ function handleGenerateSummaryAction(array $env): void
         'top_p' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['top_p'] ?? 0.85),
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],
-            ['role' => 'user', 'content' => "Сделай краткий ИИ-вывод в формате: Краткое содержание / Рекомендации / Итог.\n\n" . $fullText],
+            ['role' => 'user', 'content' => "Документ для анализа:\n\n" . $normalizedDocText],
         ],
     ];
 
