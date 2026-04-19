@@ -1911,6 +1911,7 @@
     var isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     var isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
     var isText = /\.(txt|json|csv|md)$/i.test(name);
+    var isDoc = /\.doc$/i.test(name);
     var isDocx = /\.docx$/i.test(name);
     var isXlsx = /\.xlsx$/i.test(name);
 
@@ -1954,12 +1955,29 @@
       var text = await readBriefFileAsText(file);
       return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
     }
-    if (isDocx) {
-      onProgress('Извлекаю текст из DOCX...', 35);
-      var mammoth = await ensureMammothLoaded();
-      var arrayBuffer = await file.arrayBuffer();
-      var result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
-      return { kind: 'text', extractedText: String(result && result.value || '').trim(), fileName: file.name || 'document.docx', warning: 'Изображения внутри DOCX не анализируются в Vision режиме.' };
+    if (isDoc || isDocx) {
+      onProgress(isDocx ? 'Извлекаю текст из DOCX...' : 'Пробую извлечь текст из DOC...', 35);
+      var extractedText = '';
+      if (isDocx) {
+        try {
+          var mammoth = await ensureMammothLoaded();
+          var arrayBuffer = await file.arrayBuffer();
+          var result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+          extractedText = String(result && result.value || '').trim();
+        } catch (error) {
+          extractedText = '';
+        }
+      }
+      if (!extractedText) {
+        extractedText = String(await readBriefFileAsText(file) || '').trim();
+      }
+      return {
+        kind: 'text',
+        extractedText: extractedText,
+        fileName: file.name || (isDocx ? 'document.docx' : 'document.doc'),
+        disableOcr: true,
+        warning: 'Для DOC/DOCX используется только прямое извлечение текста (без OCR).'
+      };
     }
     if (isXlsx) {
       onProgress('Извлекаю таблицы из XLSX...', 35);
@@ -1973,7 +1991,7 @@
       });
       return { kind: 'text', extractedText: sheetTexts.join('\\n\\n').trim(), fileName: file.name || 'table.xlsx' };
     }
-    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOC, DOCX, XLSX');
   }
 
   async function postBriefGroqPaidWithFallback(createFormData) {
@@ -2107,6 +2125,9 @@
     var startedAt = Date.now();
     var ocrText = '';
 
+    if (prepared.disableOcr) {
+      throw new Error('Не удалось извлечь текст из DOC/DOCX прямым способом. OCR для этого формата отключён.');
+    }
     setStatus('Распознаю текст (OCR) из файла...', 'loading');
     ocrText = await requestBriefOcrByFile(file, file.name || fileName);
     if (!briefNormalizeValue(ocrText)) {

@@ -209,6 +209,7 @@
     var isTextMime = mime.indexOf('text/') === 0 || mime === 'application/json' || mime === 'application/xml' || mime === 'application/x-yaml';
     var isTextExt = /\.(txt|text|md|markdown|csv|tsv|json|xml|ya?ml|ini|cfg|conf|log|rtf|html?)$/i.test(name);
     var isText = isTextMime || isTextExt;
+    var isDoc = /\.doc$/i.test(name);
     var isDocx = mime.indexOf('wordprocessingml.document') >= 0 || /\.docx$/i.test(name);
     var isXlsx = mime.indexOf('spreadsheetml') >= 0 || /\.xlsx$/i.test(name);
 
@@ -262,14 +263,30 @@
     if (isText) {
       return readFileAsText(file).then(function(text) { return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' }; });
     }
-    if (isDocx) {
-      return ensureMammothLoaded().then(function(mammoth) {
-        return file.arrayBuffer().then(function(arrayBuffer) {
-          return mammoth.extractRawText({ arrayBuffer: arrayBuffer }).then(function(result) {
-            return { kind: 'text', extractedText: String(result && result.value || '').trim(), fileName: file.name || 'document.docx' };
-          });
+    if (isDoc || isDocx) {
+      return Promise.resolve()
+        .then(function() {
+          if (!isDocx) return '';
+          return ensureMammothLoaded().then(function(mammoth) {
+            return file.arrayBuffer().then(function(arrayBuffer) {
+              return mammoth.extractRawText({ arrayBuffer: arrayBuffer }).then(function(result) {
+                return String(result && result.value || '').trim();
+              }).catch(function() { return ''; });
+            });
+          }).catch(function() { return ''; });
+        })
+        .then(function(extractedText) {
+          if (extractedText) return extractedText;
+          return readFileAsText(file).then(function(fallbackText) { return String(fallbackText || '').trim(); });
+        })
+        .then(function(extractedText) {
+          return {
+            kind: 'text',
+            extractedText: extractedText,
+            fileName: file.name || (isDocx ? 'document.docx' : 'document.doc'),
+            disableOcr: true
+          };
         });
-      });
     }
     if (isXlsx) {
       return ensureXlsxLoaded().then(function(XLSX) {
@@ -283,7 +300,7 @@
         });
       });
     }
-    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, текстовые файлы, DOCX, XLSX'));
+    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, текстовые файлы, DOC, DOCX, XLSX'));
   }
 
   function loadEntryAsFile(entry) {
@@ -342,7 +359,7 @@
         if (updateStatus) updateStatus('Vision: отправляю извлечённый текст в ИИ...');
         return postWithFallback(function() {
           var formData = new FormData();
-          formData.append('action', 'generate_response');
+          formData.append('action', 'generate_summary');
           formData.append('mode', 'paid');
           formData.append('vision_mode', '1');
           formData.append('prompt', preparedPrompt);
@@ -411,7 +428,7 @@
         if (updateStatus) updateStatus('Vision: объединяю результаты...');
         return postWithFallback(function() {
           var formData = new FormData();
-          formData.append('action', 'generate_response');
+          formData.append('action', 'generate_summary');
           formData.append('mode', 'paid');
           formData.append('vision_mode', '1');
           formData.append('prompt', [preparedPrompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
