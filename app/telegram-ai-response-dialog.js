@@ -654,6 +654,7 @@
     const isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
     const isText = mime.startsWith('text/') || /\.(txt|md|csv|json|xml|html?)$/i.test(name);
+    const isDoc = /\.doc$/i.test(name);
     const isDocx = mime.includes('wordprocessingml.document') || /\.docx$/i.test(name);
     const isXlsx = mime.includes('spreadsheetml') || /\.xlsx$/i.test(name);
 
@@ -706,16 +707,28 @@
       return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
     }
 
-    if (isDocx) {
-      onProgress('Извлекаю текст из DOCX...', 35);
-      const mammoth = await ensureMammothLoaded();
-      const arrayBuffer = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer });
+    if (isDoc || isDocx) {
+      onProgress(isDocx ? 'Извлекаю текст из DOCX...' : 'Пробую извлечь текст из DOC...', 35);
+      let extractedText = '';
+      if (isDocx) {
+        try {
+          const mammoth = await ensureMammothLoaded();
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          extractedText = String(result && result.value || '').trim();
+        } catch (error) {
+          extractedText = '';
+        }
+      }
+      if (!extractedText) {
+        extractedText = String(await readFileAsText(file) || '').trim();
+      }
       return {
         kind: 'text',
-        extractedText: String(result && result.value || '').trim(),
-        fileName: file.name || 'document.docx',
-        warning: 'Изображения внутри DOCX не анализируются в Vision режиме.',
+        extractedText,
+        fileName: file.name || (isDocx ? 'document.docx' : 'document.doc'),
+        disableOcr: true,
+        warning: 'Для DOC/DOCX используется только прямое извлечение текста (без OCR).',
       };
     }
 
@@ -732,7 +745,7 @@
       return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
     }
 
-    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOC, DOCX, XLSX');
   }
 
   async function requestTelegramVisionResponse(payload = {}, onStatus) {
@@ -818,7 +831,7 @@
       onStatus('Ответ', 'answer');
       const textOnlyRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
-        formData.append('action', 'generate_response');
+        formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
@@ -833,7 +846,7 @@
           return textOnlySummary;
         }
       }
-      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать DOCX/TXT через Vision pipeline.');
+      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать текстовые файлы через summary pipeline.');
     }
 
     const batches = chunkItems(images, VISION_BATCH_SIZE);
@@ -890,7 +903,7 @@
       onStatus('Ответ', 'answer');
       const mergeRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
-        formData.append('action', 'generate_response');
+        formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));

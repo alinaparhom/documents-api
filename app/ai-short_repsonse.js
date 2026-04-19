@@ -253,6 +253,7 @@ export function createTelegramBriefAi(deps = {}) {
     const isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
     const isText = /\.(txt|json|csv|md)$/i.test(name);
+    const isDoc = /\.doc$/i.test(name);
     const isDocx = /\.docx$/i.test(name);
     const isXlsx = /\.xlsx$/i.test(name);
 
@@ -309,16 +310,28 @@ export function createTelegramBriefAi(deps = {}) {
       return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
     }
 
-    if (isDocx) {
-      onProgress('Извлекаю текст из DOCX...', 35);
-      const mammoth = await ensureMammothLoaded();
-      const arrayBuffer = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer });
+    if (isDoc || isDocx) {
+      onProgress(isDocx ? 'Извлекаю текст из DOCX...' : 'Пробую извлечь текст из DOC...', 35);
+      let extractedText = '';
+      if (isDocx) {
+        try {
+          const mammoth = await ensureMammothLoaded();
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          extractedText = String(result && result.value || '').trim();
+        } catch (error) {
+          extractedText = '';
+        }
+      }
+      if (!extractedText) {
+        extractedText = String(await readFileAsText(file) || '').trim();
+      }
       return {
         kind: 'text',
-        extractedText: String(result && result.value || '').trim(),
-        fileName: file.name || 'document.docx',
-        warning: 'Изображения внутри DOCX не анализируются в Vision режиме.',
+        extractedText,
+        fileName: file.name || (isDocx ? 'document.docx' : 'document.doc'),
+        disableOcr: true,
+        warning: 'Для DOC/DOCX используется только прямое извлечение текста (без OCR).',
       };
     }
 
@@ -335,7 +348,7 @@ export function createTelegramBriefAi(deps = {}) {
       return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
     }
 
-    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOC, DOCX, XLSX');
   }
 
   async function requestBriefForSource(source, setStatus) {
@@ -377,6 +390,9 @@ export function createTelegramBriefAi(deps = {}) {
       };
     }
 
+    if (prepared.disableOcr) {
+      throw new Error('Не удалось извлечь текст из DOC/DOCX прямым способом. OCR для этого формата отключён.');
+    }
     setStatus('Распознаю текст (OCR) из файла...', 'loading');
     const ocrText = await requestTelegramOcrByFile(file, file.name || fileName);
     const startedAt = Date.now();
