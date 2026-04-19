@@ -1823,36 +1823,7 @@
   function briefToSummaryText(value) {
     var text = briefNormalizeValue(value);
     if (!text) return '';
-    var normalized = String(text).replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
-    if (!normalized) return '';
-
-    function extractLine(labels) {
-      var escaped = (Array.isArray(labels) ? labels : [])
-        .map(function(label) { return String(label || '').trim(); })
-        .filter(Boolean)
-        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
-      if (!escaped.length) return '';
-      var pattern = new RegExp('(?:^|\\n)\\s*(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r]+)', 'i');
-      var match = normalized.match(pattern);
-      return match && match[1] ? String(match[1]).trim() : '';
-    }
-
-    var essence = extractLine(['Суть файла', 'Краткое содержание', 'Итог']);
-    if (!essence) {
-      var lines = normalized.split('\n');
-      for (var index = 0; index < lines.length; index += 1) {
-        var line = String(lines[index] || '').trim();
-        if (line) {
-          essence = line;
-          break;
-        }
-      }
-    }
-    return [
-      'Кто прислал файл: ' + (extractLine(['Кто прислал файл', 'Отправитель', 'От кого']) || 'не указано в документе'),
-      'Кому прислали файл: ' + (extractLine(['Кому прислали файл', 'Получатель', 'Кому']) || 'не указано в документе'),
-      'Суть файла: ' + (essence || 'не указано в документе')
-    ].join('\n');
+    return String(text).replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
   }
 
   function readBriefFileAsText(file) {

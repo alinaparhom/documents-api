@@ -25,34 +25,7 @@ export function createTelegramBriefAi(deps = {}) {
   function toBriefSummaryText(value) {
     const text = normalizeValue(value);
     if (!text) return '';
-    const normalized = String(text).replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
-    if (!normalized) return '';
-    const extractLine = (labels) => {
-      const escaped = (Array.isArray(labels) ? labels : [])
-        .map((label) => String(label || '').trim())
-        .filter(Boolean)
-        .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-      if (!escaped.length) return '';
-      const pattern = new RegExp(`(?:^|\\n)\\s*(?:${escaped.join('|')})\\s*[:\\-]\\s*([^\\n\\r]+)`, 'i');
-      const match = normalized.match(pattern);
-      return match && match[1] ? String(match[1]).trim() : '';
-    };
-    let essence = extractLine(['Суть файла', 'Краткое содержание', 'Итог']);
-    if (!essence) {
-      const lines = normalized.split('\n');
-      for (let index = 0; index < lines.length; index += 1) {
-        const line = String(lines[index] || '').trim();
-        if (line) {
-          essence = line;
-          break;
-        }
-      }
-    }
-    return [
-      `Кто прислал файл: ${extractLine(['Кто прислал файл', 'Отправитель', 'От кого']) || 'не указано в документе'}`,
-      `Кому прислали файл: ${extractLine(['Кому прислали файл', 'Получатель', 'Кому']) || 'не указано в документе'}`,
-      `Суть файла: ${essence || 'не указано в документе'}`,
-    ].join('\n');
+    return String(text).replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
   }
 
   async function postGroqPaidWithFallback(createFormData) {

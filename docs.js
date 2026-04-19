@@ -2099,164 +2099,12 @@
 
   function buildAiBriefSummaryText(payload, sourceText) {
     var data = payload && typeof payload === 'object' ? payload : {};
-    var analysis = data.analysis ? String(data.analysis).trim() : '';
-    var responseText = data.response ? String(data.response).trim() : '';
-    var decision = data.decisionBlock && typeof data.decisionBlock === 'object' ? data.decisionBlock : {};
-    var risks = Array.isArray(decision.risks) ? decision.risks : [];
-    var actions = Array.isArray(decision.required_actions) ? decision.required_actions : [];
-    var requirements = Array.isArray(decision.requirements) ? decision.requirements : [];
-    if (!responseText && decision && typeof decision.response === 'string') {
-      responseText = String(decision.response).trim();
+    var directText = normalizeAiBriefText(data.summary || data.response || data.analysis || '');
+    if (directText) {
+      return directText;
     }
-    var participants = '';
-    var cleanedActions = [];
-    var cleanedRequirements = [];
-
-    function normalizeSentence(text) {
-      var value = String(text || '')
-        .replace(/-\s*\n\s*/g, '')
-        .replace(/\s+/g, ' ')
-        .replace(/[.:;,\s]+$/g, '')
-        .trim();
-      if (!value) {
-        return '';
-      }
-      if (value.length < 12) {
-        return '';
-      }
-      if (/^[\d.\-–—\s]+$/.test(value)) {
-        return '';
-      }
-      if (/^(прошу вас|прошу|1|2|3)\b/i.test(value)) {
-        return '';
-      }
-      return value.charAt(0).toUpperCase() + value.slice(1);
-    }
-
-    function isNoisyItem(value, mode) {
-      var text = String(value || '').toLowerCase();
-      if (!text) {
-        return true;
-      }
-      if (/-\s*$/.test(text) || text.indexOf('объек-') !== -1) {
-        return true;
-      }
-      if (text.indexOf('рубл') !== -1 && !/\d/.test(text)) {
-        return true;
-      }
-      if (mode === 'requirements' && /(в настоящее время|прошу вас|принять реш)/.test(text)) {
-        return true;
-      }
-      return false;
-    }
-
-    function sanitizeList(items, maxItems, mode, excludeMap) {
-      var seen = {};
-      return (Array.isArray(items) ? items : [])
-        .map(normalizeSentence)
-        .filter(function(item) {
-          var key = item.toLowerCase();
-          if (!item || seen[key] || (excludeMap && excludeMap[key]) || isNoisyItem(item, mode)) {
-            return false;
-          }
-          seen[key] = true;
-          return true;
-        })
-        .slice(0, maxItems);
-    }
-
-    risks.some(function(item) {
-      var line = String(item || '').trim();
-      if (!line) {
-        return false;
-      }
-      if (/^отправитель\s*:/i.test(line) || /^кто\s+прислал\s*:/i.test(line)) {
-        participants = line;
-        return true;
-      }
-      return false;
-    });
-    function extractPartyByLabel(text, labelVariants) {
-      var safeText = String(text || '');
-      if (!safeText) return '';
-      var escaped = (Array.isArray(labelVariants) ? labelVariants : [])
-        .map(function(label) { return String(label || '').trim(); })
-        .filter(Boolean)
-        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
-      if (!escaped.length) return '';
-      var pattern = new RegExp('(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r;]+)', 'i');
-      var match = safeText.match(pattern);
-      return match && match[1] ? String(match[1]).trim() : '';
-    }
-    var normalizedAnalysis = normalizeSentence(analysis);
-    var normalizedResponse = normalizeSentence(responseText);
-    var sourceSummary = normalizeSentence(collectBriefSentences(sourceText, 3).join('. '));
-    analysis = normalizedAnalysis || normalizedResponse || sourceSummary || 'ИИ не вернул понятный блок «О чем файл».';
-    cleanedActions = sanitizeList(actions, 4, 'actions');
-    var actionsMap = {};
-    cleanedActions.forEach(function(item) {
-      actionsMap[String(item).toLowerCase()] = true;
-    });
-    cleanedRequirements = sanitizeList(requirements, 4, 'requirements', actionsMap);
-    if (!cleanedActions.length) {
-      cleanedActions = collectBriefSentences(sourceText, 6)
-        .map(normalizeSentence)
-        .filter(Boolean)
-        .slice(0, 4);
-    }
-    if (!cleanedRequirements.length) {
-      cleanedRequirements = collectBriefSentences(sourceText, 8)
-        .map(normalizeSentence)
-        .filter(Boolean)
-        .slice(1, 4);
-    }
-    if (!participants) {
-      var sender = extractPartyByLabel(sourceText, ['отправитель', 'от кого', 'исполнитель']);
-      var recipient = extractPartyByLabel(sourceText, ['получатель', 'кому', 'заказчик']);
-      if (sender || recipient) {
-        participants = 'Отправитель: ' + (sender || 'не найден') + '; Получатель: ' + (recipient || 'не найден');
-      }
-    }
-    function extractFieldFromText(text, labels) {
-      var safeText = String(text || '');
-      if (!safeText) return '';
-      var escaped = (Array.isArray(labels) ? labels : [])
-        .map(function(label) { return String(label || '').trim(); })
-        .filter(Boolean)
-        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
-      if (!escaped.length) return '';
-      var pattern = new RegExp('(?:^|\\n)\\s*(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r]+)', 'i');
-      var match = safeText.match(pattern);
-      return match && match[1] ? normalizeSentence(match[1]) : '';
-    }
-
-    function pickFirstValue(values, fallback) {
-      var list = Array.isArray(values) ? values : [];
-      for (var idx = 0; idx < list.length; idx += 1) {
-        var value = normalizeSentence(list[idx]);
-        if (value) return value;
-      }
-      return fallback;
-    }
-
-    var senderText = extractFieldFromText(participants, ['кто прислал файл', 'отправитель', 'от кого'])
-      || extractFieldFromText(sourceText, ['кто прислал файл', 'отправитель', 'от кого', 'исполнитель'])
-      || 'не указано в документе';
-    var recipientText = extractFieldFromText(participants, ['кому прислали файл', 'получатель', 'кому'])
-      || extractFieldFromText(sourceText, ['кому прислали файл', 'получатель', 'кому', 'заказчик'])
-      || 'не указано в документе';
-    var essenceText = pickFirstValue([
-      analysis,
-      cleanedActions[0],
-      cleanedRequirements[0],
-      collectBriefSentences(sourceText, 1)[0]
-    ], 'не указано в документе');
-
-    return [
-      'Кто прислал файл: ' + senderText,
-      'Кому прислали файл: ' + recipientText,
-      'Суть файла: ' + essenceText
-    ].join('\n');
+    var fallbackText = normalizeAiBriefText(sourceText || '');
+    return fallbackText || '';
   }
 
   function isMeaningfulAiBriefPayload(payload) {
@@ -2315,43 +2163,10 @@
     if (!normalized) {
       return '';
     }
-    var formatted = normalized
+    return normalized
       .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
       .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
       .replace(/\n{3,}/g, '\n\n');
-
-    function extractLine(labelVariants) {
-      var escaped = (Array.isArray(labelVariants) ? labelVariants : [])
-        .map(function(label) { return String(label || '').trim(); })
-        .filter(Boolean)
-        .map(function(label) { return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
-      if (!escaped.length) return '';
-      var pattern = new RegExp('(?:^|\\n)\\s*(?:' + escaped.join('|') + ')\\s*[:\\-]\\s*([^\\n\\r]+)', 'i');
-      var match = formatted.match(pattern);
-      return match && match[1] ? String(match[1]).trim() : '';
-    }
-
-    var sender = extractLine(['Кто прислал файл', 'Отправитель', 'От кого']);
-    var recipient = extractLine(['Кому прислали файл', 'Получатель', 'Кому']);
-    var essence = extractLine(['Суть файла', 'Краткое содержание', 'Итог']);
-    if (!essence) {
-      var firstLine = '';
-      var lines = formatted.split('\n');
-      for (var i = 0; i < lines.length; i += 1) {
-        var line = String(lines[i] || '').trim();
-        if (line) {
-          firstLine = line;
-          break;
-        }
-      }
-      essence = firstLine || '';
-    }
-
-    return [
-      'Кто прислал файл: ' + (sender || 'не указано в документе'),
-      'Кому прислали файл: ' + (recipient || 'не указано в документе'),
-      'Суть файла: ' + (essence || 'не указано в документе')
-    ].join('\n');
   }
 
   function getAttachmentAiBrief(file) {
