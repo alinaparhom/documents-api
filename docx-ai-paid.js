@@ -206,9 +206,7 @@
     var name = String(file && file.name || 'document').toLowerCase();
     var isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     var isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
-    var isTextMime = mime.indexOf('text/') === 0 || mime === 'application/json' || mime === 'application/xml' || mime === 'application/x-yaml';
-    var isTextExt = /\.(txt|text|md|markdown|csv|tsv|json|xml|ya?ml|ini|cfg|conf|log|rtf|html?)$/i.test(name);
-    var isText = isTextMime || isTextExt;
+    var isText = mime.indexOf('text/') === 0 || /\.(txt|text|md|markdown|csv|tsv|json|xml|ya?ml|ini|cfg|conf|log|rtf|html?)$/i.test(name);
     var isDoc = /\.doc$/i.test(name);
     var isDocx = mime.indexOf('wordprocessingml.document') >= 0 || /\.docx$/i.test(name);
     var isXlsx = mime.indexOf('spreadsheetml') >= 0 || /\.xlsx$/i.test(name);
@@ -260,10 +258,8 @@
         });
       });
     }
-    if (isText) {
-      return readFileAsText(file).then(function(text) { return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' }; });
-    }
     if (isDoc || isDocx) {
+      if (onProgress) onProgress('Подготавливаю текст из DOC/DOCX...');
       return Promise.resolve()
         .then(function() {
           if (!isDocx) return '';
@@ -280,27 +276,38 @@
           return readFileAsText(file).then(function(fallbackText) { return String(fallbackText || '').trim(); });
         })
         .then(function(extractedText) {
+          if (!extractedText) throw new Error('Не удалось извлечь текст из DOC/DOCX.');
           return {
             kind: 'text',
             extractedText: extractedText,
-            fileName: file.name || (isDocx ? 'document.docx' : 'document.doc'),
-            disableOcr: true
+            fileName: file.name || (isDocx ? 'document.docx' : 'document.doc')
           };
         });
     }
+    if (isText) {
+      if (onProgress) onProgress('Подготавливаю текстовый файл...');
+      return readFileAsText(file).then(function(text) {
+        var extractedText = String(text || '').trim();
+        if (!extractedText) throw new Error('Не удалось прочитать текстовый файл.');
+        return { kind: 'text', extractedText: extractedText, fileName: file.name || 'document.txt' };
+      });
+    }
     if (isXlsx) {
+      if (onProgress) onProgress('Подготавливаю XLSX...');
       return ensureXlsxLoaded().then(function(XLSX) {
         return file.arrayBuffer().then(function(arrayBuffer) {
           var workbook = XLSX.read(arrayBuffer, { type: 'array' });
           var sheetTexts = (workbook && workbook.SheetNames || []).map(function(sheetName) {
             var sheet = workbook.Sheets[sheetName];
-            return '# Лист: ' + sheetName + '\n' + XLSX.utils.sheet_to_csv(sheet);
+            return 'Лист: ' + sheetName + '\n' + XLSX.utils.sheet_to_csv(sheet);
           });
-          return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
+          var extractedText = sheetTexts.join('\n\n').trim();
+          if (!extractedText) throw new Error('Не удалось извлечь данные из XLSX.');
+          return { kind: 'text', extractedText: extractedText, fileName: file.name || 'document.xlsx' };
         });
       });
     }
-    return Promise.reject(new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, текстовые файлы, DOC, DOCX, XLSX'));
+    return Promise.reject(new Error('Поддерживаемые форматы: JPG, PNG, PDF, текстовые файлы, DOC, DOCX, XLSX.'));
   }
 
   function loadEntryAsFile(entry) {
@@ -320,7 +327,7 @@
   function requestVipVisionResponse(promptText, selectedEntries, selectedStyle, updateStatus) {
     var entries = Array.isArray(selectedEntries) ? selectedEntries : [];
     var styleMeta = resolveVipStyle(selectedStyle);
-    var preparedPrompt = [promptText, 'Верни готовый ответ на письмо. Не пиши анализ.']
+    var preparedPrompt = [promptText, 'Ответ строго в формате: "Кто прислал : <кто прислал>, Кому прислали: <кому прислали>, Краткое содержание: <3-6 предложений>". Если нет данных — пиши "не найдено".']
       .filter(Boolean)
       .join('\n\n');
     var images = [];
@@ -346,17 +353,15 @@
             if (prepared.kind === 'multimodal') {
               images = images.concat(prepared.images || []);
             } else if (prepared.kind === 'text' && prepared.extractedText) {
-              extractedTexts.push({ name: prepared.fileName || file.name, type: file.type || 'text/plain', text: String(prepared.extractedText).slice(0, 60000) });
+              extractedTexts.push({ name: prepared.fileName || file.name, type: 'text/plain', text: String(prepared.extractedText).slice(0, 70000) });
             }
           });
         });
       });
     }, Promise.resolve()).then(function() {
       if (!images.length) {
-        if (!extractedTexts.length) {
-          throw new Error('Vision режим поддерживает изображения, PDF, DOCX, XLSX и текстовые документы.');
-        }
-        if (updateStatus) updateStatus('Vision: отправляю извлечённый текст в ИИ...');
+        if (!extractedTexts.length) throw new Error('Не удалось подготовить файлы для анализа.');
+        if (updateStatus) updateStatus('Отправляю текст из DOC/DOCX...');
         return postWithFallback(function() {
           var formData = new FormData();
           formData.append('action', 'generate_summary');
@@ -368,13 +373,14 @@
           return formData;
         }, 0).then(function(result) {
           if (!result.response || !result.response.ok || !result.payload || result.payload.ok !== true) {
-            throw new Error((result.payload && result.payload.error) || 'Не удалось обработать текстовые документы через Vision pipeline.');
+            throw new Error((result.payload && result.payload.error) || 'Ошибка анализа DOC/DOCX.');
           }
-          var textOnlyAnswer = String(result.payload.response || result.payload.summary || '').trim();
-          if (!textOnlyAnswer) {
-            throw new Error('ИИ не вернул ответ для текстовых документов.');
-          }
-          return { ok: true, response: textOnlyAnswer, mode: 'vision-text', model: result.payload.model || '' };
+          return {
+            ok: true,
+            response: String(result.payload.response || result.payload.summary || '').trim(),
+            mode: 'vision-text',
+            model: result.payload.model || ''
+          };
         });
       }
       var batches = chunkItems(images, VISION_BATCH_SIZE);

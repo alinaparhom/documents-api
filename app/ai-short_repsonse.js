@@ -2,7 +2,14 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
-const BRIEF_SUMMARY_PROMPT = 'Сделай очень краткий вывод по документу: 1) краткое содержание, 2) рекомендации, 3) итог. Не более 6 коротких пунктов и только по фактам из текста.';
+const BRIEF_SUMMARY_PROMPT = [
+  'Найди в документе отправителя и получателя.',
+  'Добавь краткое содержание файла на 3-6 предложений.',
+  'Ответ верни строго в формате:',
+  'Кто прислал : <кто прислал>, Кому прислали: <кому прислали>, Краткое содержание: <3-6 предложений>',
+  'Если одно из полей не найдено, подставь "не найдено".',
+  'Без дополнительных комментариев.',
+].join('\n');
 const BRIEF_PDF_SOURCES = [
   { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
   { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
@@ -252,9 +259,10 @@ export function createTelegramBriefAi(deps = {}) {
     const name = String(file.name || 'document').toLowerCase();
     const isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
-    const isText = /\.(txt|json|csv|md)$/i.test(name);
-    const isDocx = /\.docx$/i.test(name);
-    const isXlsx = /\.xlsx$/i.test(name);
+    const isText = mime.startsWith('text/') || /\.(txt|text|md|markdown|csv|tsv|json|xml|ya?ml|ini|cfg|conf|log|rtf|html?)$/i.test(name);
+    const isDoc = /\.doc$/i.test(name);
+    const isDocx = mime.includes('wordprocessingml.document') || /\.docx$/i.test(name);
+    const isXlsx = mime.includes('spreadsheetml') || /\.xlsx$/i.test(name);
 
     if (isImage) {
       onProgress('Подготавливаю изображение...', 100);
@@ -303,39 +311,51 @@ export function createTelegramBriefAi(deps = {}) {
       return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images, totalPages, selectedPages: pages };
     }
 
-    if (isText) {
-      onProgress('Читаю текстовый файл...', 100);
-      const text = await readFileAsText(file);
-      return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
+    if (isDoc || isDocx) {
+      onProgress('Подготавливаю текст из DOC/DOCX...', 45);
+      let extractedText = '';
+      if (isDocx) {
+        try {
+          const mammoth = await ensureMammothLoaded();
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          extractedText = String((result && result.value) || '').trim();
+        } catch (_) {
+          extractedText = '';
+        }
+      }
+      if (!extractedText) {
+        extractedText = String(await readFileAsText(file)).trim();
+      }
+      if (!extractedText) {
+        throw new Error('Не удалось извлечь текст из DOC/DOCX.');
+      }
+      return { kind: 'text', extractedText, fileName: file.name || (isDocx ? 'document.docx' : 'document.doc') };
     }
 
-    if (isDocx) {
-      onProgress('Извлекаю текст из DOCX...', 35);
-      const mammoth = await ensureMammothLoaded();
-      const arrayBuffer = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer });
-      return {
-        kind: 'text',
-        extractedText: String(result && result.value || '').trim(),
-        fileName: file.name || 'document.docx',
-        warning: 'Изображения внутри DOCX не анализируются в Vision режиме.',
-      };
+    if (isText) {
+      onProgress('Подготавливаю текстовый файл...', 45);
+      const extractedText = String(await readFileAsText(file)).trim();
+      if (!extractedText) throw new Error('Не удалось прочитать текстовый файл.');
+      return { kind: 'text', extractedText, fileName: file.name || 'document.txt' };
     }
 
     if (isXlsx) {
-      onProgress('Извлекаю таблицы из XLSX...', 35);
+      onProgress('Подготавливаю XLSX...', 45);
       const XLSX = await ensureXlsxLoaded();
       const arrayBuffer = await file.arrayBuffer();
       const workbook = XLSX.read(arrayBuffer, { type: 'array' });
       const sheetTexts = (workbook && workbook.SheetNames || []).map((sheetName) => {
         const sheet = workbook.Sheets[sheetName];
         const csv = XLSX.utils.sheet_to_csv(sheet);
-        return `# Лист: ${sheetName}\n${csv}`;
+        return `Лист: ${sheetName}\n${csv}`;
       });
-      return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
+      const extractedText = sheetTexts.join('\n\n').trim();
+      if (!extractedText) throw new Error('Не удалось извлечь данные из XLSX.');
+      return { kind: 'text', extractedText, fileName: file.name || 'document.xlsx' };
     }
 
-    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+    throw new Error('Поддерживаемые форматы: JPG, PNG, PDF, текстовые файлы, DOC, DOCX, XLSX.');
   }
 
   async function requestTelegramVisionByFile(source, setStatus) {
@@ -352,69 +372,39 @@ export function createTelegramBriefAi(deps = {}) {
     }
 
     const prepared = await buildVisionPayloadFromFile(file, (message) => setStatus(message, 'loading'));
-
     if (prepared.kind === 'text') {
       const text = normalizeValue(prepared.extractedText);
-      if (!text) throw new Error('Не удалось извлечь текст из файла.');
+      if (!text) throw new Error('Не удалось извлечь текст из DOC/DOCX.');
       const request = await postGroqPaidWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', BRIEF_SUMMARY_PROMPT);
-        formData.append('extractedTexts', JSON.stringify([{ name: prepared.fileName || fileName, type: file.type || 'text/plain', text: text.slice(0, 60000) }]));
+        formData.append('extractedTexts', JSON.stringify([{
+          name: prepared.fileName || fileName,
+          type: 'text/plain',
+          text: text.slice(0, 70000),
+        }]));
         return formData;
       });
       const payload = request && request.payload;
       if (!request.response.ok || !payload || payload.ok !== true) {
-        throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
+        throw new Error((payload && payload.error) || 'Ошибка анализа DOC/DOCX.');
       }
       return {
         summary: toBriefSummaryText(payload.summary || payload.response),
-        model: payload.model,
-        timeMs: payload.durationMs || payload.timeMs,
-        warning: prepared.warning || '',
+        model: payload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        timeMs: payload.durationMs || payload.timeMs || 0,
+        warning: '',
       };
-    }
-
-    let ocrText = '';
-    try {
-      setStatus('Распознаю текст (OCR) из файла...', 'loading');
-      ocrText = await requestTelegramOcrByFile(file, file.name || fileName);
-    } catch (_) {
-      ocrText = '';
     }
 
     const images = Array.isArray(prepared.images) ? prepared.images : [];
     const imageBatches = chunkItems(images, 5);
     const partialAnswers = [];
     const startedAt = Date.now();
-
-    if (!imageBatches.length && ocrText) {
-      const fallbackRequest = await postGroqPaidWithFallback(() => {
-        const formData = new FormData();
-        formData.append('action', 'generate_summary');
-        formData.append('mode', 'paid');
-        formData.append('vision_mode', '1');
-        formData.append('prompt', BRIEF_SUMMARY_PROMPT);
-        formData.append('extractedTexts', JSON.stringify([{
-          name: file.name || fileName,
-          type: file.type || 'text/plain',
-          text: String(ocrText).slice(0, 70000),
-        }]));
-        return formData;
-      });
-      const fallbackPayload = fallbackRequest && fallbackRequest.payload;
-      if (!fallbackRequest.response.ok || !fallbackPayload || fallbackPayload.ok !== true) {
-        throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
-      }
-      return {
-        summary: toBriefSummaryText(fallbackPayload.summary || fallbackPayload.response),
-        model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
-        timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
-        warning: '',
-      };
-    }
+    if (!imageBatches.length) throw new Error('В файле не найдено изображений для Vision-анализа.');
 
     for (let batchIndex = 0; batchIndex < imageBatches.length; batchIndex += 1) {
       const currentBatch = imageBatches[batchIndex];
@@ -426,13 +416,6 @@ export function createTelegramBriefAi(deps = {}) {
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
-        if (ocrText && batchIndex === 0) {
-          formData.append('extractedTexts', JSON.stringify([{
-            name: file.name || fileName,
-            type: file.type || 'text/plain',
-            text: String(ocrText).slice(0, 70000),
-          }]));
-        }
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
           max_tokens: 1000,
@@ -489,7 +472,7 @@ export function createTelegramBriefAi(deps = {}) {
       summary: finalSummary,
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       timeMs: Date.now() - startedAt,
-      warning: ocrText ? '' : 'OCR не вернул текст, ответ построен по изображению.',
+      warning: '',
     };
   }
 
@@ -596,55 +579,14 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   async function requestTelegramBriefAiDirectWithAttachment(source) {
-    const fileName = normalizeValue(source && source.label) || 'brief-file';
-    let fileForVip = null;
-    const fileUrl = normalizeValue(source && source.url);
-    if (source && source.fileObject instanceof File) {
-      fileForVip = source.fileObject;
-    } else {
-      if (!fileUrl) {
-        throw new Error('Не найден URL файла для режима Кратко ИИ.');
-      }
-      try {
-        const fetched = await fetch(fileUrl, { credentials: 'same-origin' });
-        if (!fetched.ok) {
-          throw new Error(`Не удалось загрузить файл (${fetched.status})`);
-        }
-        const blob = await fetched.blob();
-        fileForVip = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-      } catch (_) {
-        fileForVip = null;
-      }
-    }
-    const extractedText = fileForVip
-      ? await requestTelegramOcrByFile(fileForVip, fileForVip.name || fileName)
-      : await requestTelegramOcrByUrl(fileUrl);
-    if (!String(extractedText || '').trim()) {
-      throw new Error('OCR не вернул текст для выбранного файла.');
-    }
-    if (fileForVip) {
-      fileForVip = await convertPdfToImageFileForBrief(fileForVip, fileName);
-    }
-    const request = await postGroqPaidWithFallback(() => {
-      const formData = new FormData();
-      formData.append('action', 'generate_summary');
-      formData.append('mode', 'paid');
-      formData.append('prompt', BRIEF_SUMMARY_PROMPT);
-      if (fileForVip) {
-        formData.append('files', fileForVip, fileForVip.name || fileName);
-      }
-      formData.append('extractedTexts', JSON.stringify([{ name: fileName, type: 'text/plain', text: String(extractedText).slice(0, 16000) }]));
-      return formData;
-    });
-    const response = request && request.response;
-    const payload = request && request.payload;
-    if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error((payload && payload.error) || `Ошибка ИИ (${response ? response.status : 0})`);
-    }
-    if (!hasMeaningfulTelegramBriefPayload(payload)) {
-      throw new Error('ИИ не вернул осмысленный краткий вывод. Повторите запрос.');
-    }
-    return payload;
+    const visionResult = await requestTelegramVisionByFile(source, () => {});
+    return {
+      ok: true,
+      summary: visionResult && visionResult.summary ? visionResult.summary : '',
+      response: visionResult && visionResult.summary ? visionResult.summary : '',
+      model: visionResult && visionResult.model ? visionResult.model : '',
+      durationMs: visionResult && visionResult.timeMs ? visionResult.timeMs : 0,
+    };
   }
 
   function extractTelegramPlainAiBriefText(payload) {
@@ -673,7 +615,7 @@ export function createTelegramBriefAi(deps = {}) {
         <div class="appdosc-brief-ai__header">
           <div>
             <div class="appdosc-brief-ai__title">Кратко ИИ</div>
-            <div class="appdosc-brief-ai__sub">Файл → OCR → api-groq-paid.php → краткий вывод</div>
+            <div class="appdosc-brief-ai__sub">Файл → Vision/текст → api-groq-paid.php (JPG, PNG, PDF, TXT, DOC, DOCX, XLSX)</div>
             <div class="appdosc-brief-ai__hint">Vision режим активен: 1) Нажмите файл → 2) Получите краткое решение.</div>
             <div class="appdosc-brief-ai__hint">⚠️ ИИ анализирует только первые 5 страниц документа.</div>
           </div>
