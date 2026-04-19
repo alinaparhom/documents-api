@@ -10,6 +10,14 @@
   const FILE_FETCH_TIMEOUT_STEPS_IOS = [2800, 4200, 6200, 9000];
   const FILE_FETCH_MAX_CANDIDATES = 8;
   const FILE_PREPARE_TIMEOUT_MS = 35000;
+  const MOBILE_FILE_FETCH_RETRIES = 0;
+  const MOBILE_FILE_PREPARE_TIMEOUT_MS = 18000;
+  const MOBILE_MAX_CONCURRENCY = 2;
+  const MOBILE_MAX_FILES_PER_REQUEST = 2;
+  const DESKTOP_MAX_FILES_PER_REQUEST = 5;
+  const MOBILE_MAX_FILE_SIZE_BYTES = 14 * 1024 * 1024;
+  const DESKTOP_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
+  const SUPPORTED_FILE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'pdf', 'txt', 'md', 'csv', 'json', 'xml', 'html', 'htm', 'docx', 'xlsx'];
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const VISION_BATCH_SIZE = 5;
@@ -63,6 +71,65 @@
     } catch (_) {
       return false;
     }
+  }
+
+  function isAndroidClient() {
+    try {
+      const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
+      return /Android/i.test(ua);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isMobileClient() {
+    return isIosClient() || isAndroidClient();
+  }
+
+  function getVisionClientProfile() {
+    const mobile = isMobileClient();
+    return {
+      mobile,
+      fileFetchRetries: mobile ? MOBILE_FILE_FETCH_RETRIES : FILE_FETCH_RETRIES,
+      filePrepareTimeoutMs: mobile ? MOBILE_FILE_PREPARE_TIMEOUT_MS : FILE_PREPARE_TIMEOUT_MS,
+      maxConcurrency: mobile ? MOBILE_MAX_CONCURRENCY : 3,
+      maxFilesPerRequest: mobile ? MOBILE_MAX_FILES_PER_REQUEST : DESKTOP_MAX_FILES_PER_REQUEST,
+      maxFileSizeBytes: mobile ? MOBILE_MAX_FILE_SIZE_BYTES : DESKTOP_MAX_FILE_SIZE_BYTES,
+    };
+  }
+
+  function isSupportedFileMeta(file) {
+    const fileName = normalize(file && (file.originalName || file.name || file.storedName)).toLowerCase();
+    const extension = fileName.includes('.') ? fileName.split('.').pop() : '';
+    const mime = normalize(file && (file.type || file.mimeType || file.contentType)).toLowerCase();
+    if (SUPPORTED_FILE_EXTENSIONS.includes(extension)) return true;
+    return mime.startsWith('image/jpeg')
+      || mime.startsWith('image/png')
+      || mime === 'application/pdf'
+      || mime.startsWith('text/')
+      || mime.includes('wordprocessingml.document')
+      || mime.includes('spreadsheetml');
+  }
+
+  function validateSelectedFilesBeforeRequest(selectedFiles, profile) {
+    const filesList = Array.isArray(selectedFiles) ? selectedFiles : [];
+    if (!filesList.length) {
+      return { ok: false, reason: 'empty' };
+    }
+    if (filesList.length > (profile.maxFilesPerRequest || DESKTOP_MAX_FILES_PER_REQUEST)) {
+      return { ok: false, reason: 'too_many_files' };
+    }
+    for (let index = 0; index < filesList.length; index += 1) {
+      const file = filesList[index];
+      if (!isSupportedFileMeta(file)) {
+        return { ok: false, reason: 'unsupported_format' };
+      }
+      const size = Number(file && (file.size || file.fileSize)) || 0;
+      if (size > (profile.maxFileSizeBytes || DESKTOP_MAX_FILE_SIZE_BYTES)) {
+        return { ok: false, reason: 'file_too_large' };
+      }
+    }
+    return { ok: true };
   }
 
   function getFileCacheKey(file) {
@@ -647,6 +714,7 @@
 
   async function requestTelegramVisionResponse(payload = {}, onStatus) {
     const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
+    const clientProfile = getVisionClientProfile();
     const prompt = normalize(payload.prompt) || 'Проанализируй документы и предложи готовое решение.';
     const systemPrompt = normalize(payload.systemPrompt);
     const images = [];
@@ -654,7 +722,8 @@
     const fileErrors = [];
     const preparedResults = new Array(selectedFiles.length);
     const queue = selectedFiles.map((currentFile, index) => ({ currentFile, index }));
-    const maxConcurrency = isIosClient() ? 2 : 3;
+    const maxConcurrency = clientProfile.maxConcurrency;
+    onStatus('Загрузка', 'loading');
     const workers = Array.from({ length: Math.max(1, Math.min(maxConcurrency, queue.length)) }, () => (async () => {
       while (queue.length) {
         const item = queue.shift();
@@ -663,28 +732,28 @@
         }
         const { currentFile, index } = item;
         const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-        onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
         let blobFile = null;
         try {
           blobFile = await loadSelectedFileAsBlob(currentFile);
         } catch (error) {
           const failMessage = normalize(error && error.message) || 'Не удалось загрузить файл.';
           preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
-          onStatus(`${fileLabel}: ошибка загрузки, продолжаю с остальными файлами...`, 'loading');
+          onStatus('Загрузка', 'loading');
           continue;
         }
         const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
+        onStatus('Подготовка', 'preparing');
         try {
           const prepared = await withTimeout(
-            buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading')),
-            FILE_PREPARE_TIMEOUT_MS,
+            buildVisionPayloadFromFile(sourceFile, () => onStatus('Подготовка', 'preparing')),
+            clientProfile.filePrepareTimeoutMs,
             'Превышено время обработки файла.',
           );
           preparedResults[index] = { prepared, sourceFile, fileLabel };
         } catch (error) {
           const failMessage = normalize(error && error.message) || 'Не удалось подготовить файл.';
           preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
-          onStatus(`${fileLabel}: обработка слишком долгая, файл пропущен.`, 'loading');
+          onStatus('Подготовка', 'preparing');
         }
       }
     })());
@@ -723,7 +792,7 @@
         const details = fileErrors.length ? ` Ошибки: ${fileErrors.slice(0, 2).join('; ')}` : '';
         throw new Error(`Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.${details}`);
       }
-      onStatus('Vision: отправляю извлечённый текст (DOCX/TXT) в ИИ...', 'loading');
+      onStatus('Ответ', 'responding');
       const textOnlyRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'generate_response');
@@ -749,7 +818,7 @@
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
       const currentBatch = batches[batchIndex];
-      onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
+      onStatus('Ответ', 'responding');
       // eslint-disable-next-line no-await-in-loop
       const request = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
@@ -795,7 +864,7 @@
 
     let finalSummary = partialAnswers.join('\n\n').trim();
     if (partialAnswers.length > 1) {
-      onStatus('Vision: объединяю результаты всех блоков...', 'loading');
+      onStatus('Ответ', 'responding');
       const mergeRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'generate_response');
@@ -841,7 +910,8 @@
     }
     const rounds = [baseCandidates, cacheBustedCandidates];
     const iosClient = isIosClient();
-    const retries = iosClient ? FILE_FETCH_RETRIES_IOS : FILE_FETCH_RETRIES;
+    const clientProfile = getVisionClientProfile();
+    const retries = clientProfile.mobile ? clientProfile.fileFetchRetries : (iosClient ? FILE_FETCH_RETRIES_IOS : FILE_FETCH_RETRIES);
     let lastStatus = 0;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const urls = rounds[Math.min(attempt, rounds.length - 1)];
@@ -2139,6 +2209,7 @@
 
     async function sendByCurrentStyle() {
       if (isSending) return;
+      const clientProfile = getVisionClientProfile();
       const selectedStyleValue = normalize(styleSelect && styleSelect.value);
       if (!selectedStyleValue) {
         status.textContent = 'Выберите режим ответа.';
@@ -2162,18 +2233,49 @@
       const selectedFiles = selectedKeys
         .map((key) => files[Number(key)])
         .filter(Boolean);
+      const readySelectedKeys = selectedKeys
+        .filter((key) => fileWarmupState.get(key) === 'ready');
+      const readySelectedFiles = readySelectedKeys
+        .map((key) => files[Number(key)])
+        .filter(Boolean);
 
       if (!selectedFiles.length) {
         createBubble(messages, 'Выберите хотя бы один файл без ошибок в меню «📎 Файлы».', 'assistant');
         status.textContent = 'Нет доступных файлов для отправки.';
         return;
       }
+      if (currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value && !readySelectedFiles.length) {
+        createBubble(messages, 'Сначала дождитесь готовности хотя бы одного файла.', 'assistant');
+        status.textContent = 'Подготовьте файл и попробуйте снова.';
+        return;
+      }
+      const filesToSend = currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value
+        ? readySelectedFiles
+        : selectedFiles;
+      const validation = validateSelectedFilesBeforeRequest(filesToSend, clientProfile);
+      if (!validation.ok) {
+        if (validation.reason === 'too_many_files') {
+          status.textContent = 'Выберите меньше файлов';
+          createBubble(messages, 'Выберите меньше файлов.', 'assistant');
+          return;
+        }
+        if (validation.reason === 'unsupported_format') {
+          status.textContent = 'Поддерживается не каждый формат файла.';
+          createBubble(messages, 'Неподдерживаемый формат. Используйте JPG, PNG, PDF, TXT, DOCX или XLSX.', 'assistant');
+          return;
+        }
+        if (validation.reason === 'file_too_large') {
+          status.textContent = 'Один из файлов слишком большой.';
+          createBubble(messages, 'Уменьшите размер файла и попробуйте снова.', 'assistant');
+          return;
+        }
+      }
 
       const pendingWarmups = selectedKeys
         .map((key) => fileWarmupPromises.get(key))
         .filter(Boolean);
       if (pendingWarmups.length) {
-        status.textContent = 'Отправляю запрос, недостающие файлы догружаются...';
+        status.textContent = 'Загрузка';
       }
 
       isSending = true;
@@ -2182,7 +2284,7 @@
       lastAiAnswer = '';
       meta.innerHTML = '';
       createBubble(messages, userPrompt, 'user');
-      status.textContent = 'Vision: готовим файлы...';
+      status.textContent = 'Загрузка';
       const startedAt = Date.now();
       const loadingBubble = createLoadingBubble(messages);
 
@@ -2192,9 +2294,17 @@
           systemPrompt: '',
           tone: styleMeta.value,
           assistantMode: currentResponseMode,
-          selectedFiles,
-        }, (message) => {
-          status.textContent = message;
+          selectedFiles: filesToSend,
+        }, (message, stage) => {
+          if (stage === 'responding') {
+            status.textContent = 'Ответ';
+            return;
+          }
+          if (stage === 'preparing') {
+            status.textContent = 'Подготовка';
+            return;
+          }
+          status.textContent = 'Загрузка';
         });
         const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
         lastAiAnswer = answer;
@@ -2206,7 +2316,7 @@
           <span class="tg-ai-chat__chip">Режим: vision</span>
           <span class="tg-ai-chat__chip">Сценарий: ${currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value ? 'Ответ (редактирование)' : 'Ответ ИИ'}</span>
           <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
-          <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
+          <span class="tg-ai-chat__chip">Файлов: ${filesToSend.length}</span>
           <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
         `;
@@ -2249,9 +2359,15 @@
     filesList?.addEventListener('change', (event) => {
       const target = event.target;
       if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+      const clientProfile = getVisionClientProfile();
       const key = normalize(target.dataset.fileIndex);
       if (!key) return;
       if (target.checked) {
+        if (selected.size >= clientProfile.maxFilesPerRequest) {
+          target.checked = false;
+          status.textContent = 'Выберите меньше файлов';
+          return;
+        }
         selected.add(key);
         warmupFileByKey(key);
       } else {
