@@ -650,6 +650,38 @@
       return String(payload.text || '').trim();
     }
 
+    async function extractDocxTextForPaidFile(sourceEntry, fallbackName) {
+      if (!sourceEntry) {
+        return '';
+      }
+      if (sourceEntry.fileObject) {
+        return extractDocxText(sourceEntry.fileObject).catch(function () { return ''; });
+      }
+      var sourceUrl = resolveSourceUrlForOcr(sourceEntry);
+      if (!sourceUrl) {
+        return '';
+      }
+      try {
+        var fetched = await fetch(String(sourceUrl), { credentials: 'same-origin' });
+        if (!fetched.ok) {
+          return '';
+        }
+        var blob = await fetched.blob();
+        var uploadName = String(fallbackName || sourceEntry.name || 'document.docx').trim() || 'document.docx';
+        var blobType = String(blob && blob.type || '').toLowerCase();
+        if (!/\.[a-z0-9]{2,8}$/i.test(uploadName) && (blobType.indexOf('wordprocessingml.document') >= 0 || isDocxLike({ name: uploadName + '.docx', type: blobType }))) {
+          uploadName += '.docx';
+        }
+        var docxBlob = blob;
+        if (typeof File !== 'undefined') {
+          docxBlob = new File([blob], uploadName, { type: blobType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        }
+        return extractDocxText(docxBlob).catch(function () { return ''; });
+      } catch (_) {
+        return '';
+      }
+    }
+
     for (var i = 0; i < sourceFiles.length; i += 1) {
       var sourceEntry = sourceFiles[i];
       if (!sourceEntry) {
@@ -658,9 +690,23 @@
       var sourceName = String(sourceEntry.name || ('document-' + (i + 1))).trim() || ('document-' + (i + 1));
       var sourceText = normalizeContextText(sourceEntry.content || sourceEntry.rawContent || '');
       if (!sourceText) {
-        // eslint-disable-next-line no-await-in-loop
-        var ocrText = await requestOcrTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
-        sourceText = normalizeContextText(ocrText || '');
+        var typeProbe = {
+          name: sourceName,
+          type: String((sourceEntry.fileObject && sourceEntry.fileObject.type) || sourceEntry.type || sourceEntry.mimeType || '')
+        };
+        var isDocxSource = isDocxLike(typeProbe);
+        var isPdfSource = isPdfLike(typeProbe);
+        var isImageSource = isImageLike(typeProbe);
+        var isTextSource = isTextLike(typeProbe);
+        if (isDocxSource) {
+          // eslint-disable-next-line no-await-in-loop
+          var docxText = await extractDocxTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
+          sourceText = normalizeContextText(docxText || '');
+        } else if (isPdfSource || isImageSource || !isTextSource) {
+          // eslint-disable-next-line no-await-in-loop
+          var ocrText = await requestOcrTextForPaidFile(sourceEntry, sourceName).catch(function () { return ''; });
+          sourceText = normalizeContextText(ocrText || '');
+        }
       }
       if (!sourceText) {
         missingSourceNames.push(sourceName);
@@ -672,7 +718,7 @@
     if ((!Array.isArray(paidFiles) || !paidFiles.length) && !mergedSourceChunks.length) {
       throw new Error('Для платного ИИ прикрепите минимум один файл.');
     }
-    if (missingSourceNames.length) {
+    if (missingSourceNames.length && !mergedSourceChunks.length) {
       throw new Error('Не удалось извлечь текст для: ' + missingSourceNames.slice(0, 4).join(', ') + (missingSourceNames.length > 4 ? ' и ещё ' + (missingSourceNames.length - 4) : '') + '.');
     }
     if (!mergedSourceChunks.length) {
