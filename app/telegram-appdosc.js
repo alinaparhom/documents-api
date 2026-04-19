@@ -23,6 +23,7 @@ const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
 const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
 const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 3 * 1000;
 const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 1500;
+const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 1600;
 const ENABLE_TASK_PDF_WARMUP = true;
 const pdfFetchTimeoutUrls = new Set();
 
@@ -696,6 +697,7 @@ const ALLOWED_LOG_EVENTS = new Set([
   'task_view_click',
   'task_view_error',
   'task_view_open',
+  'ai_dialog_blocked_no_fresh_files',
   'tasks_load_error',
   'tasks_load_start',
   'tasks_loaded',
@@ -15950,16 +15952,25 @@ async function fetchLatestTaskSnapshot(task) {
   return null;
 }
 
-async function resolveTaskForAiDialog(task) {
+async function resolveTaskForAiDialog(task, options = {}) {
   if (!task || typeof task !== 'object') {
     return task;
   }
 
+  const startedAt = Date.now();
+  const timeoutMsRaw = Number(options && options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+    ? timeoutMsRaw
+    : AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS;
+  const hardDeadlineAt = startedAt + timeoutMs;
   const isIosClient = Boolean(runtimeEnvironment && runtimeEnvironment.isIos);
   const maxAttempts = isIosClient ? 3 : 1;
   let latestTask = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (Date.now() >= hardDeadlineAt) {
+      break;
+    }
     latestTask = await fetchLatestTaskSnapshot(task);
     const files = Array.isArray(latestTask && latestTask.files) ? latestTask.files : [];
     if (latestTask && files.length > 0) {
@@ -15967,15 +15978,27 @@ async function resolveTaskForAiDialog(task) {
     }
     if (attempt < maxAttempts - 1) {
       // На iOS файлы иногда появляются с задержкой после смены статуса/фильтра.
-      // Делаем короткий backoff, чтобы снизить вероятность 404 на первом запросе.
-      const waitMs = 220 * (attempt + 1);
+      // Делаем backoff в рамках общего лимита, чтобы не открывать диалог на устаревших данных.
+      const plannedWaitMs = 320 * (attempt + 1);
+      const remainingMs = hardDeadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        break;
+      }
+      const waitMs = Math.max(0, Math.min(plannedWaitMs, remainingMs));
+      if (!waitMs) {
+        break;
+      }
       // eslint-disable-next-line no-await-in-loop
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
   }
 
   if (!latestTask || typeof latestTask !== 'object') {
-    return task;
+    return {
+      ...task,
+      files: Array.isArray(task.files) ? task.files : [],
+      responses: Array.isArray(task.responses) ? task.responses : [],
+    };
   }
 
   return {
@@ -16709,12 +16732,23 @@ function createResponseUploadControls(task, entry, setStatus) {
       if (typeof setStatus === 'function' && runtimeEnvironment.isIos) {
         setStatus('info', 'Подготавливаем файлы для ИИ...');
       }
-      const taskForDialog = await Promise.race([
-        resolveTaskForAiDialog(task),
-        new Promise((resolve) => {
-          setTimeout(() => resolve(task), 260);
-        }),
-      ]);
+      const taskForDialog = await resolveTaskForAiDialog(task, {
+        timeoutMs: AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS,
+      });
+      const files = Array.isArray(taskForDialog && taskForDialog.files) ? taskForDialog.files : [];
+      if (!files.length) {
+        if (typeof setStatus === 'function') {
+          setStatus('warning', 'Файлы ещё обновляются, попробуйте через 1–2 секунды.');
+        }
+        logClientEvent('ai_dialog_blocked_no_fresh_files', {
+          taskId: normalizeValue(task && task.id),
+          taskEntryNumber: normalizeValue(task && task.entryNumber),
+          filesCount: 0,
+          timeoutMs: AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS,
+          isIos: runtimeEnvironment && runtimeEnvironment.isIos ? '1' : '0',
+        });
+        return;
+      }
       openAiDialogSafely({
         task: taskForDialog,
         entry,
