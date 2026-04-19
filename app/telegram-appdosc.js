@@ -9,6 +9,7 @@ const { createTelegramBriefAi } = await import('./ai-short_repsonse.js' + _vSuff
 preloadPdfjs();
 
 const API_URL = '/docs.php?action=mini_app_tasks';
+const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
@@ -23,7 +24,8 @@ const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
 const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
 const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 3 * 1000;
 const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 1500;
-const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 1600;
+const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 2500;
+const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
 const ENABLE_TASK_PDF_WARMUP = true;
 const pdfFetchTimeoutUrls = new Set();
 
@@ -15897,7 +15899,7 @@ function renderResponseFilesCounter(counterElement, count, isFresh = false, butt
   }
 }
 
-async function fetchLatestTaskSnapshot(task) {
+async function fetchLatestTaskSnapshotFallbackFromList(task) {
   if (!task || typeof task !== 'object' || typeof fetch !== 'function') {
     return null;
   }
@@ -15952,6 +15954,66 @@ async function fetchLatestTaskSnapshot(task) {
   return null;
 }
 
+async function fetchLatestTaskSnapshot(task, options = {}) {
+  if (!task || typeof task !== 'object' || typeof fetch !== 'function') {
+    return { snapshot: null, status: 'invalid' };
+  }
+
+  const timeoutMsRaw = Number(options && options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : TASK_SNAPSHOT_FETCH_TIMEOUT_MS;
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  try {
+    const response = await fetch(TASK_SNAPSHOT_API_URL, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      cache: 'no-store',
+      signal: controller ? controller.signal : undefined,
+      body: JSON.stringify({
+        ...buildRequestBody(),
+        taskId: normalizeValue(task.id),
+        organization: getTaskOrganization(task),
+      }),
+    });
+
+    if (response.ok) {
+      const payload = await response.json();
+      if (payload && payload.success === true) {
+        const data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
+        return {
+          snapshot: {
+            files: Array.isArray(data.files) ? data.files : [],
+            responses: Array.isArray(data.responses) ? data.responses : [],
+            updatedAt: normalizeValue(data.updatedAt) || normalizeValue(task.updatedAt) || '',
+          },
+          status: 'ok',
+        };
+      }
+    }
+
+    const canUseLegacyFallback = response.status === 404 || response.status === 405 || response.status === 400;
+    if (canUseLegacyFallback) {
+      const legacy = await fetchLatestTaskSnapshotFallbackFromList(task);
+      return { snapshot: legacy, status: legacy ? 'legacy' : 'legacy_failed' };
+    }
+    return { snapshot: null, status: 'unavailable' };
+  } catch (error) {
+    const isTimeout = Boolean(error && (error.name === 'AbortError' || error.code === 'abort'));
+    return { snapshot: null, status: isTimeout ? 'timeout' : 'error' };
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
+
 async function resolveTaskForAiDialog(task, options = {}) {
   if (!task || typeof task !== 'object') {
     return task;
@@ -15966,12 +16028,17 @@ async function resolveTaskForAiDialog(task, options = {}) {
   const isIosClient = Boolean(runtimeEnvironment && runtimeEnvironment.isIos);
   const maxAttempts = isIosClient ? 3 : 1;
   let latestTask = null;
+  let snapshotStatus = 'local';
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (Date.now() >= hardDeadlineAt) {
+      snapshotStatus = 'timeout';
       break;
     }
-    latestTask = await fetchLatestTaskSnapshot(task);
+    const remainingMs = Math.max(200, hardDeadlineAt - Date.now());
+    const snapshotResult = await fetchLatestTaskSnapshot(task, { timeoutMs: remainingMs });
+    latestTask = snapshotResult && snapshotResult.snapshot ? snapshotResult.snapshot : null;
+    snapshotStatus = snapshotResult && snapshotResult.status ? snapshotResult.status : 'error';
     const files = Array.isArray(latestTask && latestTask.files) ? latestTask.files : [];
     if (latestTask && files.length > 0) {
       break;
@@ -15998,6 +16065,7 @@ async function resolveTaskForAiDialog(task, options = {}) {
       ...task,
       files: Array.isArray(task.files) ? task.files : [],
       responses: Array.isArray(task.responses) ? task.responses : [],
+      __aiSnapshotStatus: snapshotStatus,
     };
   }
 
@@ -16006,6 +16074,7 @@ async function resolveTaskForAiDialog(task, options = {}) {
     ...latestTask,
     files: Array.isArray(latestTask.files) ? latestTask.files : (Array.isArray(task.files) ? task.files : []),
     responses: Array.isArray(latestTask.responses) ? latestTask.responses : (Array.isArray(task.responses) ? task.responses : []),
+    __aiSnapshotStatus: snapshotStatus,
   };
 }
 
@@ -16014,8 +16083,11 @@ async function refreshResponseCounterForEntry(counterElement, task, entry, fallb
     return;
   }
 
-  const freshTask = await fetchLatestTaskSnapshot(task);
-  if (freshTask && typeof freshTask === 'object') {
+  const snapshotResult = await fetchLatestTaskSnapshot(task);
+  const freshTask = snapshotResult && snapshotResult.snapshot && typeof snapshotResult.snapshot === 'object'
+    ? snapshotResult.snapshot
+    : null;
+  if (freshTask) {
     task.responses = Array.isArray(freshTask.responses) ? freshTask.responses : [];
   }
 
@@ -16735,6 +16807,9 @@ function createResponseUploadControls(task, entry, setStatus) {
       const taskForDialog = await resolveTaskForAiDialog(task, {
         timeoutMs: AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS,
       });
+      if (typeof setStatus === 'function' && taskForDialog && taskForDialog.__aiSnapshotStatus !== 'ok' && taskForDialog.__aiSnapshotStatus !== 'legacy') {
+        setStatus('info', 'Открываю по локальным данным, часть файлов может появиться позже.');
+      }
       const files = Array.isArray(taskForDialog && taskForDialog.files) ? taskForDialog.files : [];
       if (!files.length) {
         if (typeof setStatus === 'function') {
