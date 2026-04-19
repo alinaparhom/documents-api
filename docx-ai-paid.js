@@ -422,7 +422,7 @@
       .join('\n\n');
     var images = [];
     var extractedTexts = [];
-    var paidEndpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+    var paidEndpoints = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
 
     function postWithFallback(createFormData, endpointIndex) {
       if (endpointIndex >= paidEndpoints.length) return Promise.reject(new Error('Не удалось подключиться к VIP API.'));

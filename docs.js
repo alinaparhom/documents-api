@@ -2461,7 +2461,7 @@
   }
 
   function postGroqPaidForBrief(createFormData) {
-    var endpoints = ['/js/documents/api-groq-paid.php', '/api-groq-paid.php'];
+    var endpoints = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
     var lastError = null;
     return endpoints.reduce(function(chain, endpoint) {
       return chain.catch(function() {
