@@ -15146,35 +15146,6 @@
               }
             });
             itemWrap.appendChild(badge);
-            var fileKey = buildLocalFileKey(file);
-            var briefState = isEditMode && fileKey ? pendingAiBriefByFileKey[fileKey] : null;
-            var briefText = normalizeAiBriefText(briefState && briefState.text ? briefState.text : '');
-            if (briefState && briefState.status === 'loading') {
-              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '⏳ Кратко ИИ: анализирую файл...'));
-            }
-            if (briefState && briefState.status === 'error' && !briefText) {
-              var errorLine = createElement('div', 'documents-file__brief-preview', '⚠️ Кратко ИИ: ' + (briefState.error || 'не удалось получить ответ'));
-              itemWrap.appendChild(errorLine);
-              var retryButton = createElement('button', 'documents-button documents-button--secondary', 'Повторить ИИ');
-              retryButton.type = 'button';
-              retryButton.addEventListener('click', function(event) {
-                event.preventDefault();
-                event.stopPropagation();
-                scheduleAiBriefForFile(file, true);
-              });
-              itemWrap.appendChild(retryButton);
-            }
-            if (briefText) {
-              itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '✅ Кратко ИИ готово'));
-              var viewButton = createElement('button', 'documents-button documents-button--secondary', 'Кратко ИИ');
-              viewButton.type = 'button';
-              viewButton.addEventListener('click', function(event) {
-                event.preventDefault();
-                event.stopPropagation();
-                openAiBriefPreviewModal(file && file.name ? file.name : 'Файл', briefText);
-              });
-              itemWrap.appendChild(viewButton);
-            }
             newList.appendChild(itemWrap);
           });
           newGroup.appendChild(newList);
@@ -15239,11 +15210,6 @@
         });
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
-        if (isEditMode) {
-          addedFiles.forEach(function(file) {
-            scheduleAiBriefForFile(file, false);
-          });
-        }
 
         logFilesDiagnostics('sync', {
           source: source || 'unknown',
@@ -15622,31 +15588,7 @@
               var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
-                  var aiBriefsPromise = Promise.resolve([]);
-                  if (isEditMode) {
-                    var aiApiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-                    aiBriefsPromise = prepareAiBriefsForBatchFiles(batch, aiApiUrl, function(done, total) {
-                      if (!total) {
-                        return;
-                      }
-                      var batchAiProgress = (done / total) / Math.max(1, batches.length);
-                      var aiPercent = 35 + Math.round(((batchIndex / Math.max(1, batches.length)) + batchAiProgress) * 28);
-                      aiPercent = Math.max(35, Math.min(88, aiPercent));
-                      updateUploadProgress(aiPercent, 'Кратко ИИ: ' + done + '/' + total + ' (' + (batchIndex + 1) + '/' + batches.length + ')', 'is-stage-processing');
-                    }, function(file, briefText) {
-                      var fileKey = buildLocalFileKey(file);
-                      if (fileKey) {
-                        pendingAiBriefByFileKey[fileKey] = {
-                          status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
-                          text: normalizeAiBriefText(briefText || ''),
-                          error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
-                        };
-                      }
-                      renderAttachmentsSummary(attachmentsStore);
-                    });
-                  }
-
-                  return aiBriefsPromise.then(function(aiBriefs) {
+                  return Promise.resolve([]).then(function(aiBriefs) {
                     var batchFormData = new FormData();
                     batchFormData.append('action', 'update');
                     batchFormData.append('organization', state.organization);
