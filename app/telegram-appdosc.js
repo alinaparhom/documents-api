@@ -726,7 +726,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Распределено', 'Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -760,8 +760,8 @@ const STATUS_SUMMARY_CONFIG = {
     filter: `${STATUS_FILTER_PREFIX}distributed`,
   },
   accepted: {
-    label: 'Принято в работу',
-    display: 'принято в работу',
+    label: 'В работе',
+    display: 'в работе',
     filter: `${STATUS_FILTER_PREFIX}accepted`,
   },
   review: {
@@ -1964,6 +1964,7 @@ const state = {
     firstName: '',
     lastName: '',
     fullName: '',
+    role: '',
     chatId: '',
     chatType: '',
     languageCode: '',
@@ -2688,7 +2689,7 @@ function initElements() {
   elements.app = document.querySelector('[data-app]');
   elements.refreshButton = document.querySelector('[data-refresh]');
   elements.userName = document.querySelector('[data-user-name]');
-  elements.userId = document.querySelector('[data-user-id]');
+  elements.userRole = document.querySelector('[data-user-role]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
@@ -3395,6 +3396,10 @@ function updateStateFromPayload(payload) {
       state.telegram.firstName = user.firstName ? String(user.firstName) : state.telegram.firstName;
       state.telegram.lastName = user.lastName ? String(user.lastName) : state.telegram.lastName;
     }
+    const userRole = user.position || user.jobTitle || user.title || user.role;
+    if (userRole) {
+      state.telegram.role = String(userRole);
+    }
   }
 
   if (!state.telegram.fullName) {
@@ -3467,9 +3472,9 @@ function updateUserPanel() {
       || 'Неизвестный пользователь';
   }
 
-  if (elements.userId) {
-    const username = state.telegram.username ? String(state.telegram.username).replace(/^@+/, '') : '';
-    elements.userId.textContent = username ? `@${username}` : 'Telegram подключён';
+  if (elements.userRole) {
+    const role = normalizeValue(state.telegram.role);
+    elements.userRole.textContent = role || 'Должность не указана';
   }
 
   updateVersionPanel();
@@ -3495,6 +3500,22 @@ function updateVersionPanel() {
   if (elements.versionPanel) {
     elements.versionPanel.hidden = false;
   }
+}
+
+function formatTaskCountLabel(value) {
+  const count = Number.isFinite(Number(value)) ? Math.abs(Math.trunc(Number(value))) : 0;
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 19) {
+    return 'задач';
+  }
+  if (mod10 === 1) {
+    return 'задача';
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return 'задачи';
+  }
+  return 'задач';
 }
 
 function updateStats() {
@@ -3531,7 +3552,7 @@ function updateStats() {
 
   if (elements.total) {
     const total = Number(displayStats.total) || 0;
-    elements.total.textContent = `${total} задач`;
+    elements.total.textContent = `${total} ${formatTaskCountLabel(total)}`;
     if (directorActive) {
       elements.total.dataset.source = statsSource;
     } else if (elements.total.dataset.source) {
