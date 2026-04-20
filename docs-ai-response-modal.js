@@ -2131,7 +2131,7 @@
       if (!textRequest.response.ok || !textPayload || textPayload.ok !== true) {
         throw new Error((textPayload && textPayload.error) || 'Ошибка запроса Vision режима.');
       }
-      return { summary: briefNormalizeStructuredSummary(textPayload.summary || textPayload.response), model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
+      return { summary: briefToSummaryText(textPayload.summary || textPayload.response), model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
     }
 
     var images = Array.isArray(prepared.images) ? prepared.images : [];
@@ -2169,7 +2169,7 @@
         throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
       }
       return {
-        summary: briefNormalizeStructuredSummary(fallbackPayload.summary || fallbackPayload.response),
+        summary: briefToSummaryText(fallbackPayload.summary || fallbackPayload.response),
         model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
         timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
         warning: ''
@@ -2184,7 +2184,9 @@
         formData.append('action', 'analyze_paid');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
-        formData.append('prompt', prompt);
+        formData.append('prompt', isPdfSource
+          ? 'Извлеки текст с изображений страниц максимально дословно. Ничего не сокращай, не пересказывай и не форматируй.'
+          : prompt);
         if (ocrText && batchIndex === 0) {
           formData.append('extractedTexts', JSON.stringify([{
             name: file.name || fileName,
@@ -2196,7 +2198,9 @@
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
           max_tokens: 700,
           temperature: 0.2,
-          messages: [{ role: 'user', content: [{ type: 'text', text: (prepared.messageText || prompt) + '\\n\\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }].concat(currentBatch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; })) }]
+          messages: [{ role: 'user', content: [{ type: 'text', text: (isPdfSource
+            ? 'Извлеки текст с изображений страниц максимально дословно. Ничего не сокращай и не пересказывай.'
+            : (prepared.messageText || prompt)) + '\\n\\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }].concat(currentBatch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; })) }]
         }));
         currentBatch.forEach(function(item, index) {
           var data = String(item.dataUrl || '');
@@ -2216,7 +2220,7 @@
 
     var finalSummary = briefToSummaryText(partialAnswers.join('\\n\\n').trim());
     if (partialAnswers.length >= 1) {
-      setStatus('Vision: формирую итог строго в формате "Кратко ИИ"...', 'loading');
+      setStatus(isPdfSource ? 'Vision: извлёк текст, формирую краткий итог ИИ...' : 'Vision: формирую итог строго в формате "Кратко ИИ"...', 'loading');
       var mergeRequest = await postBriefGroqPaidWithFallback(function() {
         var formData = new FormData();
         formData.append('action', 'generate_summary');
@@ -2232,7 +2236,7 @@
       }
     }
     if (!finalSummary) throw new Error('Vision не вернул итоговый текст.');
-    return { summary: briefNormalizeStructuredSummary(finalSummary), model: 'meta-llama/llama-4-scout-17b-16e-instruct', timeMs: Date.now() - startedAt };
+    return { summary: briefToSummaryText(finalSummary), model: 'meta-llama/llama-4-scout-17b-16e-instruct', timeMs: Date.now() - startedAt };
   }
 
   function ensureBriefModalStyle() {

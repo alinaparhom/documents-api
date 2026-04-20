@@ -405,7 +405,7 @@ export function createTelegramBriefAi(deps = {}) {
         throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
       }
       return {
-        summary: normalizeStructuredBrief(payload.summary || payload.response),
+        summary: toBriefSummaryText(payload.summary || payload.response),
         model: payload.model,
         timeMs: payload.durationMs || payload.timeMs,
         warning: prepared.warning || '',
@@ -448,7 +448,7 @@ export function createTelegramBriefAi(deps = {}) {
         throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
       }
       return {
-        summary: normalizeStructuredBrief(fallbackPayload.summary || fallbackPayload.response),
+        summary: toBriefSummaryText(fallbackPayload.summary || fallbackPayload.response),
         model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
         timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
         warning: '',
@@ -464,7 +464,9 @@ export function createTelegramBriefAi(deps = {}) {
         formData.append('action', 'analyze_paid');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
-        formData.append('prompt', BRIEF_SUMMARY_PROMPT);
+        formData.append('prompt', isPdfSource
+          ? 'Извлеки текст с изображений страниц максимально дословно. Ничего не сокращай, не пересказывай и не форматируй.'
+          : BRIEF_SUMMARY_PROMPT);
         if (ocrText && batchIndex === 0) {
           formData.append('extractedTexts', JSON.stringify([{
             name: file.name || fileName,
@@ -478,7 +480,7 @@ export function createTelegramBriefAi(deps = {}) {
           temperature: 0.2,
           messages: [{
             role: 'user',
-            content: [{ type: 'text', text: `${prepared.messageText || BRIEF_SUMMARY_PROMPT}\n\nБлок ${batchIndex + 1} из ${imageBatches.length}.` }].concat(
+            content: [{ type: 'text', text: `${isPdfSource ? 'Извлеки текст с изображений страниц максимально дословно. Ничего не сокращай и не пересказывай.' : (prepared.messageText || BRIEF_SUMMARY_PROMPT)}\n\nБлок ${batchIndex + 1} из ${imageBatches.length}.` }].concat(
               currentBatch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
             ),
           }],
@@ -501,7 +503,7 @@ export function createTelegramBriefAi(deps = {}) {
 
     let finalSummary = toBriefSummaryText(partialAnswers.join('\n\n').trim());
     if (partialAnswers.length >= 1) {
-      setStatus('Vision: формирую итог строго в формате "Кратко ИИ"...', 'loading');
+      setStatus(isPdfSource ? 'Vision: извлёк текст, формирую краткий итог ИИ...' : 'Vision: формирую итог строго в формате "Кратко ИИ"...', 'loading');
       const mergeRequest = await postGroqPaidWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'generate_summary');
@@ -525,10 +527,10 @@ export function createTelegramBriefAi(deps = {}) {
       throw new Error('Vision не вернул итоговый текст.');
     }
     return {
-      summary: normalizeStructuredBrief(finalSummary),
+      summary: toBriefSummaryText(finalSummary),
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       timeMs: Date.now() - startedAt,
-      warning: ocrText ? '' : 'OCR не вернул текст, ответ построен по изображению.',
+      warning: isPdfSource || ocrText ? '' : 'OCR не вернул текст, ответ построен по изображению.',
     };
   }
 
@@ -697,7 +699,7 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   function renderTelegramBriefPreview(container, payload) {
-    const summaryText = normalizeStructuredBrief(toBriefSummaryText(payload && payload.summary) || extractTelegramPlainAiBriefText(payload));
+    const summaryText = toBriefSummaryText(payload && payload.summary) || extractTelegramPlainAiBriefText(payload);
     container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
   }
 
