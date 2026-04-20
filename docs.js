@@ -15653,9 +15653,7 @@
                     batchFormData.append('documentId', createdOrUpdatedDocumentId);
                     batch.forEach(function(file, fileIndex) {
                       batchFormData.append('attachments[]', file);
-                      if (isEditMode) {
-                        batchFormData.append('attachmentsAiBrief[]', aiBriefs && aiBriefs[fileIndex] ? String(aiBriefs[fileIndex]) : '');
-                      }
+                      batchFormData.append('attachmentsAiBrief[]', aiBriefs && aiBriefs[fileIndex] ? String(aiBriefs[fileIndex]) : '');
                     });
                     appendTelegramUserIdToFormData(batchFormData);
 
