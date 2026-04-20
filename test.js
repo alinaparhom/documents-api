@@ -13271,16 +13271,50 @@ function setupAssignmentControls(card, task) {
     return;
   }
   const comboWrapper = comboInput.closest('.appdosc-card__assign-selector');
+  const isDarkTheme = (state.telegram.colorScheme || 'light') === 'dark'
+    || document.body.classList.contains('appdosc--dark');
+  const comboPalette = isDarkTheme
+    ? {
+      inputBg: 'rgba(24, 36, 67, 0.82)',
+      inputBorder: 'rgba(124, 166, 255, 0.34)',
+      inputColor: '#ecf3ff',
+      listBg: 'rgba(20, 31, 59, 0.95)',
+      listBorder: 'rgba(118, 163, 255, 0.36)',
+      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    }
+    : {
+      inputBg: 'rgba(255, 255, 255, 0.72)',
+      inputBorder: 'rgba(110, 154, 255, 0.35)',
+      inputColor: '#12325f',
+      listBg: 'rgba(255, 255, 255, 0.92)',
+      listBorder: 'rgba(110, 154, 255, 0.4)',
+      shadow: '0 12px 28px rgba(42, 82, 150, 0.18)',
+      optionBg: 'rgba(255, 255, 255, 0.5)',
+      optionBorder: 'rgba(114, 157, 255, 0.2)',
+      optionColor: '#1c3762',
+      optionHover: 'rgba(134, 180, 255, 0.22)',
+    };
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
+    comboWrapper.style.marginBottom = '2px';
   }
+  comboInput.classList.add('appdosc-card__assign-search--combo');
+  optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   comboInput.style.width = '100%';
-  comboInput.style.minHeight = '42px';
-  comboInput.style.padding = '10px 12px';
+  comboInput.style.minHeight = '40px';
+  comboInput.style.padding = '8px 11px';
   comboInput.style.borderRadius = '12px';
+  comboInput.style.border = `1px solid ${comboPalette.inputBorder}`;
+  comboInput.style.background = comboPalette.inputBg;
+  comboInput.style.color = comboPalette.inputColor;
   comboInput.style.fontSize = '14px';
   comboInput.style.lineHeight = '1.35';
   comboInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  comboInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
   optionsList.hidden = true;
   optionsList.style.position = 'absolute';
   optionsList.style.left = '0';
@@ -13288,15 +13322,16 @@ function setupAssignmentControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '180px';
+  optionsList.style.maxHeight = '168px';
   optionsList.style.overflowY = 'auto';
   optionsList.style.borderRadius = '12px';
-  optionsList.style.border = '1px solid rgba(122, 168, 255, 0.45)';
-  optionsList.style.background = 'rgba(12, 26, 62, 0.96)';
+  optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
+  optionsList.style.background = comboPalette.listBg;
   optionsList.style.backdropFilter = 'blur(10px)';
   optionsList.style.webkitBackdropFilter = 'blur(10px)';
-  optionsList.style.boxShadow = '0 12px 28px rgba(2, 9, 24, 0.42)';
+  optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
+  optionsList.style.webkitOverflowScrolling = 'touch';
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
@@ -13387,7 +13422,7 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!query) {
-      searchMeta.textContent = `Показаны все: ${visibleCount}`;
+      searchMeta.textContent = `Все ответственные: ${visibleCount}`;
       return;
     }
 
@@ -13395,8 +13430,13 @@ function setupAssignmentControls(card, task) {
   };
 
   let visibleAssigneeOptions = [];
+  const setComboExpanded = (expanded) => {
+    comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    comboInput.dataset.expanded = expanded ? 'true' : 'false';
+  };
   const hideOptionsList = () => {
     optionsList.hidden = true;
+    setComboExpanded(false);
   };
 
   const populateComboOptions = () => {
@@ -13428,33 +13468,38 @@ function setupAssignmentControls(card, task) {
 
       const option = document.createElement('button');
       option.type = 'button';
+      option.className = 'appdosc-card__assign-option';
       option.dataset.assigneeValue = value;
       option.textContent = label;
       option.style.width = '100%';
       option.style.textAlign = 'left';
-      option.style.background = 'transparent';
-      option.style.border = 'none';
-      option.style.color = '#f8fbff';
+      option.style.background = comboPalette.optionBg;
+      option.style.border = `1px solid ${comboPalette.optionBorder}`;
+      option.style.color = comboPalette.optionColor;
       option.style.fontSize = '14px';
       option.style.lineHeight = '1.35';
-      option.style.padding = '8px 10px';
-      option.style.borderRadius = '8px';
+      option.style.padding = '7px 10px';
+      option.style.minHeight = '38px';
+      option.style.borderRadius = '9px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      option.style.marginBottom = '3px';
+      option.style.touchAction = 'manipulation';
       option.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         handleAssigneeSelection(value);
       });
       option.addEventListener('mouseenter', () => {
-        option.style.background = 'rgba(63, 141, 255, 0.24)';
+        option.style.background = comboPalette.optionHover;
       });
       option.addEventListener('mouseleave', () => {
-        option.style.background = 'transparent';
+        option.style.background = comboPalette.optionBg;
       });
       optionsList.appendChild(option);
     });
 
     optionsList.hidden = visibleCount === 0;
+    setComboExpanded(visibleCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -13955,6 +14000,7 @@ function setupAssignmentControls(card, task) {
   updateBulkState();
 
   populateComboOptions();
+  hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {
     if (renderedAssignedKeys.has(identifier)) {
@@ -14118,12 +14164,14 @@ function setupAssignmentControls(card, task) {
     populateComboOptions();
     if (wasOpen && visibleAssigneeOptions.length > 0) {
       optionsList.hidden = false;
+      setComboExpanded(true);
     }
   });
 
   comboInput.addEventListener('click', () => {
     populateComboOptions();
     optionsList.hidden = visibleAssigneeOptions.length === 0;
+    setComboExpanded(visibleAssigneeOptions.length > 0);
   });
 
   comboInput.addEventListener('change', () => {
