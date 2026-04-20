@@ -27,6 +27,31 @@ export function createTelegramBriefAi(deps = {}) {
     return text || '';
   }
 
+  function normalizeStructuredBrief(value) {
+    const raw = toBriefSummaryText(value).replace(/\r/g, '');
+    if (!raw) {
+      return 'Кто прислал: не указано.\nКому прислал: не указано.\nКраткое содержание: не указано.';
+    }
+    const senderMatch = raw.match(/кто\s*прислал\s*:\s*([^\n;]+)/i);
+    const receiverMatch = raw.match(/кому\s*прислал\s*:\s*([^\n;]+)/i);
+    const summaryMatch = raw.match(/кратк[оа]е?\s+содержани[ея]\s*:\s*([\s\S]+)/i);
+    const sender = normalizeValue(senderMatch && senderMatch[1]) || 'не указано';
+    const receiver = normalizeValue(receiverMatch && receiverMatch[1]) || 'не указано';
+    let summary = normalizeValue(summaryMatch && summaryMatch[1]);
+
+    if (!summary) {
+      const compact = raw
+        .replace(/кто\s*прислал\s*:[^\n;]+[;\n]?/ig, ' ')
+        .replace(/кому\s*прислал\s*:[^\n;]+[;\n]?/ig, ' ')
+        .replace(/кратк[оа]е?\s+содержани[ея]\s*:/ig, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      summary = compact || 'не указано';
+    }
+
+    return `Кто прислал: ${sender}.\nКому прислал: ${receiver}.\nКраткое содержание: ${summary}`;
+  }
+
   async function postGroqPaidWithFallback(createFormData) {
     let lastError = null;
     for (let index = 0; index < GROQ_PAID_ENDPOINTS.length; index += 1) {
@@ -300,7 +325,13 @@ export function createTelegramBriefAi(deps = {}) {
         const dataUrl = await readBlobAsDataUrl(blob);
         images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
       }
-      return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images, totalPages, selectedPages: pages };
+      return {
+        kind: 'multimodal',
+        messageText: `Сделай краткий вывод строго по шаблону.\n${BRIEF_SUMMARY_PROMPT}\n\nПроанализируй первые 5 страниц этого PDF.`,
+        images,
+        totalPages,
+        selectedPages: pages,
+      };
     }
 
     if (isText) {
@@ -370,19 +401,23 @@ export function createTelegramBriefAi(deps = {}) {
         throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
       }
       return {
-        summary: toBriefSummaryText(payload.summary || payload.response),
+        summary: normalizeStructuredBrief(payload.summary || payload.response),
         model: payload.model,
         timeMs: payload.durationMs || payload.timeMs,
         warning: prepared.warning || '',
       };
     }
 
+    const isPdfSource = String(file && file.type || '').toLowerCase().includes('pdf')
+      || /\.pdf$/i.test(String(file && file.name || ''));
     let ocrText = '';
-    try {
-      setStatus('Распознаю текст (OCR) из файла...', 'loading');
-      ocrText = await requestTelegramOcrByFile(file, file.name || fileName);
-    } catch (_) {
-      ocrText = '';
+    if (!isPdfSource) {
+      try {
+        setStatus('Распознаю текст (OCR) из файла...', 'loading');
+        ocrText = await requestTelegramOcrByFile(file, file.name || fileName);
+      } catch (_) {
+        ocrText = '';
+      }
     }
 
     const images = Array.isArray(prepared.images) ? prepared.images : [];
@@ -409,7 +444,7 @@ export function createTelegramBriefAi(deps = {}) {
         throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
       }
       return {
-        summary: toBriefSummaryText(fallbackPayload.summary || fallbackPayload.response),
+        summary: normalizeStructuredBrief(fallbackPayload.summary || fallbackPayload.response),
         model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
         timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
         warning: '',
@@ -425,7 +460,7 @@ export function createTelegramBriefAi(deps = {}) {
         formData.append('action', 'analyze_paid');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
-        formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
+        formData.append('prompt', BRIEF_SUMMARY_PROMPT);
         if (ocrText && batchIndex === 0) {
           formData.append('extractedTexts', JSON.stringify([{
             name: file.name || fileName,
@@ -435,11 +470,11 @@ export function createTelegramBriefAi(deps = {}) {
         }
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-          max_tokens: 1000,
-          temperature: 0.7,
+          max_tokens: 700,
+          temperature: 0.2,
           messages: [{
             role: 'user',
-            content: [{ type: 'text', text: `${prepared.messageText || 'Проанализируй содержимое этого файла'}\n\nБлок ${batchIndex + 1} из ${imageBatches.length}.` }].concat(
+            content: [{ type: 'text', text: `${prepared.messageText || BRIEF_SUMMARY_PROMPT}\n\nБлок ${batchIndex + 1} из ${imageBatches.length}.` }].concat(
               currentBatch.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))
             ),
           }],
@@ -461,8 +496,8 @@ export function createTelegramBriefAi(deps = {}) {
     }
 
     let finalSummary = toBriefSummaryText(partialAnswers.join('\n\n').trim());
-    if (partialAnswers.length > 1) {
-      setStatus('Vision: объединяю результаты всех блоков...', 'loading');
+    if (partialAnswers.length >= 1) {
+      setStatus('Vision: формирую итог строго в формате "Кратко ИИ"...', 'loading');
       const mergeRequest = await postGroqPaidWithFallback(() => {
         const formData = new FormData();
         formData.append('action', 'generate_summary');
@@ -486,7 +521,7 @@ export function createTelegramBriefAi(deps = {}) {
       throw new Error('Vision не вернул итоговый текст.');
     }
     return {
-      summary: finalSummary,
+      summary: normalizeStructuredBrief(finalSummary),
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       timeMs: Date.now() - startedAt,
       warning: ocrText ? '' : 'OCR не вернул текст, ответ построен по изображению.',
@@ -658,7 +693,7 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   function renderTelegramBriefPreview(container, payload) {
-    const summaryText = toBriefSummaryText(payload && payload.summary) || extractTelegramPlainAiBriefText(payload);
+    const summaryText = normalizeStructuredBrief(toBriefSummaryText(payload && payload.summary) || extractTelegramPlainAiBriefText(payload));
     container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
   }
 
