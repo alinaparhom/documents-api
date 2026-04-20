@@ -2,7 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
-const BRIEF_SUMMARY_PROMPT = 'Сформируй ответ строго в формате: Кто прислал: ...; Кому прислал: ...; Краткое содержание: ... (2–5 предложений). Если данных нет, пиши: не указано. Используй только факты из документа, без домыслов.';
+const BRIEF_SUMMARY_PROMPT = 'Сформируй ответ строго в формате: Кто прислал: ...; Кому прислал: ...; Краткое содержание: ... (2–5 предложений). Кто прислал — это отправитель (от кого письмо), обычно указан в шапке документа. Кому прислал — это получатель и адресаты письма (кому направлен документ). Если данных нет, пиши: не указано. Используй только факты из документа, без домыслов.';
 const BRIEF_PDF_SOURCES = [
   { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
   { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
