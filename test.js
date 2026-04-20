@@ -13542,6 +13542,9 @@ function setupAssignmentControls(card, task) {
     commentInput.placeholder = 'Комментарий для ответственного';
     commentInput.rows = 2;
     commentInput.maxLength = 500;
+    commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    commentInput.style.fontSize = '18px';
+    commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
     }
@@ -13573,6 +13576,13 @@ function setupAssignmentControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
+    deadlineInput.style.width = '100%';
+    deadlineInput.style.minWidth = '0';
+    deadlineInput.style.minHeight = '50px';
+    deadlineInput.style.boxSizing = 'border-box';
+    deadlineInput.style.padding = '12px 14px';
+    deadlineInput.style.borderRadius = '16px';
+    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -14304,6 +14314,9 @@ function setupSubordinateControls(card, task) {
     commentInput.placeholder = 'Комментарий для подчинённого';
     commentInput.rows = 2;
     commentInput.maxLength = 500;
+    commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    commentInput.style.fontSize = '18px';
+    commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
     }
@@ -14320,6 +14333,13 @@ function setupSubordinateControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
+    deadlineInput.style.width = '100%';
+    deadlineInput.style.minWidth = '0';
+    deadlineInput.style.minHeight = '50px';
+    deadlineInput.style.boxSizing = 'border-box';
+    deadlineInput.style.padding = '12px 14px';
+    deadlineInput.style.borderRadius = '16px';
+    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
