@@ -18,7 +18,7 @@ const MAX_TEXT_PAYLOAD_CHARS = 90000;
 const OCR_MAX_PAGES = 0; // 0 = все страницы PDF
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
-const MODEL_TEXT_DEFAULT = 'llama-3.1-8b-instant';
+const MODEL_TEXT_DEFAULT = 'openai/gpt-oss-20b';
 
 function getServerAiPromptsCatalog(): array
 {
@@ -58,10 +58,8 @@ function getServerAiPromptsCatalog(): array
         ],
         'ASSISTANT_SCENARIO_DIRECTIVE' => [
             'brief_ai' => implode("\n", [
-                'СЦЕНАРИЙ: «Краткий ИИ».',
+                'СЦЕНАРИЙ: «Кратко от ИИ».',
                 'Верни краткий итог по сути вопроса и документам.',
-                'Фокус: минимум воды, максимум пользы.',
-                'Если данных мало — коротко укажи, чего не хватает.',
             ]),
             'response_ai' => implode("\n", [
                 'СЦЕНАРИЙ: «Ответ с помощью ИИ».',
@@ -89,7 +87,7 @@ function getServerAiPromptsCatalog(): array
         'DEFAULT_RESPONSE_FORMAT_LIMITS' => [
             'response' => ['temperature' => 0.2, 'max_tokens' => 1800],
             'response_extended' => ['temperature' => 0.2, 'max_tokens' => 2000],
-            'summary' => ['temperature' => 0.3, 'max_tokens' => 800, 'top_p' => 0.85],
+            'summary' => ['temperature' => 0.3, 'max_tokens' => 1800, 'top_p' => 0.85],
             'vision_extract' => ['temperature' => 0.0, 'max_tokens' => 2000],
         ],
         'DEFAULT_KEYS' => [
@@ -772,13 +770,13 @@ function callGroqTranscription(string $tmpPath, string $fileName, string $mime, 
 function getBriefAiSystemPrompt(): string
 {
     return "Сформируй результат строго в формате:\n"
-        . "Кто прислал: ...\n"
-        . "Кому прислал: ...\n"
+        . "Кто прислал файл: ...\n"
+        . "Кому прислали файл: ...\n"
         . "Краткое содержание: ...\n\n"
         . "Правила:\n"
         . "- Используй только факты из документа.\n"
         . "- Если данных нет, пиши: не указано.\n"
-        . "- В поле «Краткое содержание» дай 2–5 предложений.\n"
+        . "- В поле «Краткое содержание» дай не более 6 предложений.\n"
         . "- Без markdown, нумерации и лишних блоков.";
 }
 
