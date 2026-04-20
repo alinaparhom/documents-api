@@ -218,6 +218,61 @@
           height: 18px;
         }
       }
+
+      /* Mobile-safe layout fixes for assignee form block */
+      .appdosc-card__assign-row {
+        width: 100%;
+      }
+
+      .appdosc-card__assign-info {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .appdosc-card__assign-comment-input,
+      .appdosc-card__assign-instruction-select,
+      .appdosc-card__assign-deadline-input {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+
+      .appdosc-card__assign-comment-input {
+        display: block;
+        resize: vertical;
+        min-height: 48px;
+      }
+
+      .appdosc-card__assign-instruction,
+      .appdosc-card__assign-deadline {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .appdosc-card__assign-deadline-label {
+        display: block;
+        margin: 0;
+        line-height: 1.3;
+      }
+
+      .appdosc-card__assign-deadline-input {
+        display: block;
+        min-height: 44px;
+      }
+
+      @media (max-width: 768px) {
+        .appdosc-card__assign-row,
+        .appdosc-card__assign-info,
+        .appdosc-card__assign-actions {
+          width: 100%;
+        }
+
+        .appdosc-card__assign-actions .appdosc-card__action {
+          width: 100%;
+        }
+      }
     </style>
   </head>
   <body>
@@ -227,7 +282,6 @@
           <div class="appdosc__brand-row">
             <div class="appdosc__brand-user">
               <span class="appdosc__user-name" data-user-name>Гость</span>
-              <span class="appdosc__user-id" data-user-id>ID не определён</span>
             </div>
           </div>
         </div>
@@ -588,6 +642,7 @@
           </div>
           <div class="appdosc-card__actions">
             <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
+            <button type="button" class="appdosc-card__action appdosc-card__action--ghost" data-card-hide>Убрать</button>
           </div>
         </footer>
         <div class="appdosc-card__instruction" data-card-instruction hidden>

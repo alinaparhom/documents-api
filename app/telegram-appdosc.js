@@ -1984,6 +1984,7 @@ const state = {
   organizationsChecked: 0,
   tasks: [],
   visibleTasks: [],
+  hiddenTaskKeys: new Set(),
   taskFilter: [],
   access: {
     responsibles: {},
@@ -2672,6 +2673,7 @@ const FALLBACK_CARD_TEMPLATE = `
     </div>
     <div class="appdosc-card__actions">
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
+      <button type="button" class="appdosc-card__action appdosc-card__action--ghost" data-card-hide>Убрать</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
   </footer>
@@ -3467,10 +3469,6 @@ function updateUserPanel() {
       || 'Неизвестный пользователь';
   }
 
-  if (elements.userId) {
-    elements.userId.textContent = state.telegram.id ? `ID: ${state.telegram.id}` : 'ID не определён';
-  }
-
   updateVersionPanel();
 }
 
@@ -3989,6 +3987,20 @@ function createCard(task, index, anchorRegistry) {
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
   }
+  const hideButton = card.querySelector('[data-card-hide]');
+  if (hideButton) {
+    hideButton.addEventListener('click', () => {
+      const hideKey = getTaskHideKey(task);
+      if (!hideKey) {
+        setStatus('error', 'Не удалось скрыть задачу: не найден идентификатор.');
+        return;
+      }
+      state.hiddenTaskKeys.add(hideKey);
+      updateVisibleTasks();
+      render();
+      setStatus('success', 'Задача скрыта.');
+    });
+  }
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -4251,6 +4263,28 @@ function normalizeTaskIdKey(value) {
   return normalized ? normalized.toLowerCase() : '';
 }
 
+function getTaskHideKey(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+
+  const candidates = [
+    task.id,
+    task.entryNumber,
+    task.registryNumber,
+    task.documentNumber,
+  ];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const key = normalizeTaskIdKey(candidates[index]);
+    if (key) {
+      return key;
+    }
+  }
+
+  return '';
+}
+
 function taskMatchesEntryTask(task, targetId) {
   if (!task || typeof task !== 'object') {
     return false;
@@ -4346,6 +4380,13 @@ function updateVisibleTasks() {
 
   if (shouldApplyEntryStatusExclusion(normalizedFilters)) {
     visible = visible.filter(({ task }) => !isTaskExcludedByEntryStatus(task, directorState));
+  }
+
+  if (state.hiddenTaskKeys instanceof Set && state.hiddenTaskKeys.size > 0) {
+    visible = visible.filter(({ task }) => {
+      const hideKey = getTaskHideKey(task);
+      return !hideKey || !state.hiddenTaskKeys.has(hideKey);
+    });
   }
 
   if (directorState.isActive) {
