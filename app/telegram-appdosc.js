@@ -726,7 +726,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Распределено', 'Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -760,8 +760,8 @@ const STATUS_SUMMARY_CONFIG = {
     filter: `${STATUS_FILTER_PREFIX}distributed`,
   },
   accepted: {
-    label: 'Принято в работу',
-    display: 'принято в работу',
+    label: 'В работе',
+    display: 'в работе',
     filter: `${STATUS_FILTER_PREFIX}accepted`,
   },
   review: {
@@ -1964,6 +1964,7 @@ const state = {
     firstName: '',
     lastName: '',
     fullName: '',
+    role: '',
     chatId: '',
     chatType: '',
     languageCode: '',
@@ -2688,7 +2689,7 @@ function initElements() {
   elements.app = document.querySelector('[data-app]');
   elements.refreshButton = document.querySelector('[data-refresh]');
   elements.userName = document.querySelector('[data-user-name]');
-  elements.userId = document.querySelector('[data-user-id]');
+  elements.userRole = document.querySelector('[data-user-role]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
@@ -3198,7 +3199,7 @@ async function loadTasks(force = false) {
       const message = state.error || 'Отрисовка карточек завершилась ошибкой';
       throw new Error(message);
     }
-    setStatus('success', `Найдено задач: ${state.stats.total}`);
+    setStatus('info', `Найдено задач: ${state.stats.total}`);
     logClientEvent('tasks_loaded', {
       total: state.stats.total,
       active: state.stats.active,
@@ -3395,6 +3396,10 @@ function updateStateFromPayload(payload) {
       state.telegram.firstName = user.firstName ? String(user.firstName) : state.telegram.firstName;
       state.telegram.lastName = user.lastName ? String(user.lastName) : state.telegram.lastName;
     }
+    const userRole = user.position || user.jobTitle || user.title || user.role;
+    if (userRole) {
+      state.telegram.role = String(userRole);
+    }
   }
 
   if (!state.telegram.fullName) {
@@ -3467,9 +3472,12 @@ function updateUserPanel() {
       || 'Неизвестный пользователь';
   }
 
-  if (elements.userId) {
-    const username = state.telegram.username ? String(state.telegram.username).replace(/^@+/, '') : '';
-    elements.userId.textContent = username ? `@${username}` : 'Telegram подключён';
+  if (elements.userRole) {
+    const role = normalizeValue(state.telegram.role) || getCurrentUserRoleFromAccess();
+    if (!state.telegram.role && role) {
+      state.telegram.role = role;
+    }
+    elements.userRole.textContent = role ? `Роль: ${role}` : 'Роль: не указана';
   }
 
   updateVersionPanel();
@@ -3495,6 +3503,22 @@ function updateVersionPanel() {
   if (elements.versionPanel) {
     elements.versionPanel.hidden = false;
   }
+}
+
+function formatTaskCountLabel(value) {
+  const count = Number.isFinite(Number(value)) ? Math.abs(Math.trunc(Number(value))) : 0;
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 19) {
+    return 'задач';
+  }
+  if (mod10 === 1) {
+    return 'задача';
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return 'задачи';
+  }
+  return 'задач';
 }
 
 function updateStats() {
@@ -3531,7 +3555,7 @@ function updateStats() {
 
   if (elements.total) {
     const total = Number(displayStats.total) || 0;
-    elements.total.textContent = `${total} задач`;
+    elements.total.textContent = `${total} ${formatTaskCountLabel(total)}`;
     if (directorActive) {
       elements.total.dataset.source = statsSource;
     } else if (elements.total.dataset.source) {
@@ -11720,6 +11744,62 @@ function getCurrentUserResponsibleFromAccess() {
   return '';
 }
 
+function getCurrentUserRoleFromAccess() {
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = [];
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.push(normalized);
+    }
+  };
+
+  pushId(state.telegram.id);
+  pushId(state.telegram.chatId);
+
+  const ids = Array.from(new Set(idCandidates));
+  const names = [];
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const role = normalizeValue(entry.role)
+      || normalizeValue(entry.position)
+      || normalizeValue(entry.jobTitle)
+      || normalizeValue(entry.title);
+    if (role) {
+      return role;
+    }
+  }
+
+  return '';
+}
+
 function getUserIdentifierCandidates() {
   const idCandidates = [];
   const nameCandidates = [];
@@ -17349,7 +17429,7 @@ function setupAssignmentControls(card, task) {
     commentInput.rows = 2;
     commentInput.maxLength = 500;
     commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    commentInput.style.fontSize = '18px';
+    commentInput.style.fontSize = '15px';
     commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
@@ -17945,8 +18025,7 @@ function setupSubordinateControls(card, task) {
   }
 
   const subordinates = getSubordinatesForOrganization(organization);
-  const responsibles = getResponsiblesForOrganization(organization);
-  const assignmentCandidates = buildAssignmentCandidateList(responsibles, subordinates);
+  const assignmentCandidates = buildAssignmentCandidateList([], subordinates);
   const canManageSubordinates = userIsDirectorForOrganization(organization)
     || userIsResponsibleForTask(task)
     || assignmentCandidates.length > 0;
@@ -17963,19 +18042,80 @@ function setupSubordinateControls(card, task) {
   }
 
   const searchInput = container.querySelector('[data-card-subordinate-search]');
+  const optionsList = container.querySelector('[data-card-subordinate-options]');
   const searchMeta = container.querySelector('[data-card-subordinate-search-meta]');
-  const select = container.querySelector('[data-card-subordinate-select]');
   const entriesContainer = container.querySelector('[data-card-subordinate-entries]');
   const bulkButton = container.querySelector('[data-card-subordinate-submit]');
   const bulkCount = container.querySelector('[data-card-subordinate-count]');
-  if (!searchInput || !searchMeta || !select || !entriesContainer || !bulkButton || !bulkCount) {
+  if (!searchInput || !optionsList || !searchMeta || !entriesContainer || !bulkButton || !bulkCount) {
     container.remove();
     return;
   }
 
+  const comboWrapper = searchInput.closest('.appdosc-card__assign-selector');
+  const isDarkTheme = (state.telegram.colorScheme || 'light') === 'dark'
+    || document.body.classList.contains('appdosc--dark');
+  const comboPalette = isDarkTheme
+    ? {
+      inputBg: 'rgba(24, 36, 67, 0.82)',
+      inputBorder: 'rgba(124, 166, 255, 0.34)',
+      inputColor: '#ecf3ff',
+      listBg: 'rgba(20, 31, 59, 0.95)',
+      listBorder: 'rgba(118, 163, 255, 0.36)',
+      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    }
+    : {
+      inputBg: 'rgba(255, 255, 255, 0.72)',
+      inputBorder: 'rgba(110, 154, 255, 0.35)',
+      inputColor: '#12325f',
+      listBg: 'rgba(255, 255, 255, 0.92)',
+      listBorder: 'rgba(110, 154, 255, 0.4)',
+      shadow: '0 12px 28px rgba(42, 82, 150, 0.18)',
+      optionBg: 'rgba(255, 255, 255, 0.5)',
+      optionBorder: 'rgba(114, 157, 255, 0.2)',
+      optionColor: '#1c3762',
+      optionHover: 'rgba(134, 180, 255, 0.22)',
+    };
+  if (comboWrapper) {
+    comboWrapper.style.position = 'relative';
+    comboWrapper.style.marginBottom = '2px';
+  }
+  searchInput.classList.add('appdosc-card__assign-search--combo');
+  optionsList.classList.add('appdosc-card__assign-combo-list--compact');
+  searchInput.style.width = '100%';
+  searchInput.style.minHeight = '40px';
+  searchInput.style.padding = '8px 11px';
+  searchInput.style.borderRadius = '12px';
+  searchInput.style.border = `1px solid ${comboPalette.inputBorder}`;
+  searchInput.style.background = comboPalette.inputBg;
+  searchInput.style.color = comboPalette.inputColor;
+  searchInput.style.fontSize = '14px';
+  searchInput.style.lineHeight = '1.35';
+  searchInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  searchInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
+  optionsList.hidden = true;
+  optionsList.style.position = 'absolute';
+  optionsList.style.left = '0';
+  optionsList.style.right = '0';
+  optionsList.style.top = 'calc(100% + 8px)';
+  optionsList.style.zIndex = '50';
+  optionsList.style.marginTop = '0';
+  optionsList.style.maxHeight = '168px';
+  optionsList.style.overflowY = 'auto';
+  optionsList.style.borderRadius = '12px';
+  optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
+  optionsList.style.background = comboPalette.listBg;
+  optionsList.style.backdropFilter = 'blur(10px)';
+  optionsList.style.webkitBackdropFilter = 'blur(10px)';
+  optionsList.style.boxShadow = comboPalette.shadow;
+  optionsList.style.padding = '4px';
+  optionsList.style.webkitOverflowScrolling = 'touch';
+
   if (!assignmentCandidates.length) {
-    select.disabled = true;
-    select.title = 'Нет доступных подчинённых для назначения';
     searchInput.disabled = true;
     searchMeta.textContent = 'Подчинённые для назначения отсутствуют.';
   }
@@ -18074,16 +18214,19 @@ function setupSubordinateControls(card, task) {
     searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
-  const populateSelectOptions = () => {
-    select.innerHTML = '';
+  let visibleSubordinateOptions = [];
+  const setComboExpanded = (expanded) => {
+    searchInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    searchInput.dataset.expanded = expanded ? 'true' : 'false';
+  };
+  const hideOptionsList = () => {
+    optionsList.hidden = true;
+    setComboExpanded(false);
+  };
 
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Выберите подчинённого';
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
-
+  const populateComboOptions = () => {
+    optionsList.innerHTML = '';
+    visibleSubordinateOptions = [];
     const query = normalizeValue(searchInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
@@ -18105,13 +18248,41 @@ function setupSubordinateControls(card, task) {
       }
 
       visibleCount += 1;
-      const option = document.createElement('option');
-      option.value = value;
+      visibleSubordinateOptions.push({ value, label, entry });
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'appdosc-card__assign-option';
+      option.dataset.subordinateValue = value;
       option.textContent = label;
-      select.appendChild(option);
+      option.style.width = '100%';
+      option.style.textAlign = 'left';
+      option.style.background = comboPalette.optionBg;
+      option.style.border = `1px solid ${comboPalette.optionBorder}`;
+      option.style.color = comboPalette.optionColor;
+      option.style.fontSize = '14px';
+      option.style.lineHeight = '1.35';
+      option.style.padding = '7px 10px';
+      option.style.minHeight = '38px';
+      option.style.borderRadius = '9px';
+      option.style.cursor = 'pointer';
+      option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      option.style.marginBottom = '3px';
+      option.style.touchAction = 'manipulation';
+      option.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        handleSubordinateSelection(value);
+      });
+      option.addEventListener('mouseenter', () => {
+        option.style.background = comboPalette.optionHover;
+      });
+      option.addEventListener('mouseleave', () => {
+        option.style.background = comboPalette.optionBg;
+      });
+      optionsList.appendChild(option);
     });
 
-    select.disabled = visibleCount === 0;
+    optionsList.hidden = visibleCount === 0;
+    setComboExpanded(visibleCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -18184,7 +18355,7 @@ function setupSubordinateControls(card, task) {
     commentInput.rows = 2;
     commentInput.maxLength = 500;
     commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    commentInput.style.fontSize = '18px';
+    commentInput.style.fontSize = '15px';
     commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
@@ -18497,7 +18668,8 @@ function setupSubordinateControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
-  populateSelectOptions();
+  populateComboOptions();
+  hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {
     const directoryEntry = directory.get(identifier);
@@ -18569,12 +18741,13 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('input', () => {
-    populateSelectOptions();
-  });
-
-  select.addEventListener('change', () => {
-    const selectedValue = normalizeValue(select.value);
+  const handleSubordinateSelection = (preferredValue = '') => {
+    const inputValue = normalizeValue(preferredValue || searchInput.value);
+    const selectedOption = visibleSubordinateOptions.find((option) => (
+      normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
+      || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
+    )) || visibleSubordinateOptions[0] || null;
+    const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
       return;
     }
@@ -18583,15 +18756,21 @@ function setupSubordinateControls(card, task) {
     const existingRow = findAssignmentRow(entriesContainer, buildAssignmentRowKey(selectedValue, normalizedValue));
     if (existingRow) {
       existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      select.selectedIndex = 0;
+      searchInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
 
-    let label = '';
-    if (normalizedValue && directory.has(normalizedValue)) {
+    let label = selectedOption ? selectedOption.label : '';
+    if (!label && normalizedValue && directory.has(normalizedValue)) {
       label = directory.get(normalizedValue).label;
-    } else {
-      const matchedEntry = findAssignmentEntryByIdentifier(assignmentCandidates, normalizedValue || selectedValue.toLowerCase());
+    }
+    if (!label) {
+      const matchedEntry = findAssignmentEntryByIdentifier(
+        assignmentCandidates,
+        normalizedValue || selectedValue.toLowerCase(),
+      );
       if (matchedEntry && typeof matchedEntry === 'object') {
         label = buildSubordinateOptionLabel(matchedEntry);
       }
@@ -18601,7 +18780,9 @@ function setupSubordinateControls(card, task) {
     }
 
     let referenceEntry = null;
-    if (normalizedValue && directory.has(normalizedValue)) {
+    if (selectedOption && selectedOption.entry) {
+      referenceEntry = selectedOption.entry;
+    } else if (normalizedValue && directory.has(normalizedValue)) {
       referenceEntry = directory.get(normalizedValue).entry || null;
     }
     if (!referenceEntry) {
@@ -18609,7 +18790,9 @@ function setupSubordinateControls(card, task) {
     }
     if (!resolveEntryTelegramId(referenceEntry)) {
       setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      select.selectedIndex = 0;
+      searchInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
     const matchedEntry = findAssignmentEntryByIdentifier(
@@ -18631,8 +18814,40 @@ function setupSubordinateControls(card, task) {
     if (row) {
       registerRenderedEntry(referenceEntry || matchedEntry, selectedValue, normalizedValue);
     }
+    searchInput.value = '';
+    populateComboOptions();
+    hideOptionsList();
+  };
 
-    select.selectedIndex = 0;
+  searchInput.addEventListener('input', () => {
+    const wasOpen = !optionsList.hidden;
+    populateComboOptions();
+    if (wasOpen && visibleSubordinateOptions.length > 0) {
+      optionsList.hidden = false;
+      setComboExpanded(true);
+    }
+  });
+
+  searchInput.addEventListener('click', () => {
+    populateComboOptions();
+    optionsList.hidden = visibleSubordinateOptions.length === 0;
+    setComboExpanded(visibleSubordinateOptions.length > 0);
+  });
+
+  searchInput.addEventListener('change', () => {
+    handleSubordinateSelection(searchInput.value);
+  });
+
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    handleSubordinateSelection(searchInput.value);
+  });
+
+  searchInput.addEventListener('blur', () => {
+    setTimeout(hideOptionsList, 120);
   });
 
   container.hidden = false;
