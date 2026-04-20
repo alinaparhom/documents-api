@@ -17089,53 +17089,19 @@ function setupAssignmentControls(card, task) {
   currentIdentifiers.forEach(registerAssignedKey);
 
   const updateSearchMeta = (query, visibleCount, totalCount) => {
-    const rowStats = applyUnifiedAssigneeFilter(query);
-    const rowMeta = rowStats.totalRows > 0
-      ? ` • в назначенных: ${rowStats.visibleRows} из ${rowStats.totalRows}`
-      : '';
-
     if (visibleCount <= 0) {
       searchMeta.textContent = query
-        ? `Совпадений в списке нет${rowMeta}. Попробуйте другой запрос.`
+        ? 'Совпадений не найдено. Попробуйте изменить запрос.'
         : 'Нет доступных пользователей для выбора.';
       return;
     }
 
     if (!query) {
-      searchMeta.textContent = `Показаны все: ${visibleCount}${rowMeta}`;
+      searchMeta.textContent = `Показаны все: ${visibleCount}`;
       return;
     }
 
-    searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}${rowMeta}`;
-  };
-
-  const applyUnifiedAssigneeFilter = (queryValue = '') => {
-    const query = normalizeValue(queryValue).toLowerCase();
-    const rows = Array.from(entriesContainer.querySelectorAll('[data-assignee-entry="true"]'));
-    let visibleRows = 0;
-
-    rows.forEach((row) => {
-      const valueText = normalizeValue(row.dataset.assigneeValue).toLowerCase();
-      const normalizedText = normalizeValue(row.dataset.assigneeNormalized).toLowerCase();
-      const nameText = normalizeValue(row.querySelector('.appdosc-card__assign-name')?.textContent).toLowerCase();
-      const commentText = normalizeValue(row.querySelector('.appdosc-card__assign-comment-input')?.value).toLowerCase();
-
-      const matches = !query
-        || valueText.includes(query)
-        || normalizedText.includes(query)
-        || nameText.includes(query)
-        || commentText.includes(query);
-
-      row.hidden = !matches;
-      if (matches) {
-        visibleRows += 1;
-      }
-    });
-
-    return {
-      visibleRows,
-      totalRows: rows.length,
-    };
+    searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
   let visibleAssigneeOptions = [];
