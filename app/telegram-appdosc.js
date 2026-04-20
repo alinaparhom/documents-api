@@ -8194,13 +8194,50 @@ function handleViewerBriefClick() {
   if (!file || file.isSummary) {
     return;
   }
+  const task = viewerTabsState.task;
+  if (!task) {
+    setStatus('warning', 'Не удалось определить задачу для краткого ИИ.');
+    return;
+  }
+  if (!telegramBriefModalFactory) {
+    setStatus('error', 'Модуль Кратко ИИ не загружен.');
+    return;
+  }
   const fileName = getAttachmentName(file) || 'Файл';
   const briefText = normalizeBriefText(file.aiBrief);
   if (briefText) {
     openTelegramFileAiBriefModal(fileName, briefText);
     return;
   }
-  void generateViewerFileAiBrief(file, fileName);
+  openTelegramBriefModal(task, (tone, message) => {
+    setStatus(tone === 'error' ? 'error' : (tone || 'info'), `Кратко ИИ: ${message}`);
+  }, {
+    preferredSource: {
+      storedName: normalizeValue(file.storedName),
+      originalName: normalizeValue(file.originalName),
+      url: resolveFileFetchUrl(file),
+    },
+    onBriefApplied(source, nextBrief) {
+      if (!source || !nextBrief) {
+        return;
+      }
+      const taskFile = findTaskFileByViewerFile(task, {
+        storedName: source.storedName,
+        originalName: source.originalName,
+        url: source.url,
+      });
+      if (taskFile) {
+        taskFile.aiBrief = nextBrief;
+      }
+      if (viewerTabsState.activeFile && findTaskFileByViewerFile(task, viewerTabsState.activeFile) === taskFile) {
+        viewerTabsState.activeFile.aiBrief = nextBrief;
+        updateViewerBriefState(viewerTabsState.activeFile);
+      }
+    },
+    onBriefReady(source, nextBrief) {
+      return persistViewerSourceAiBrief(task, source, nextBrief);
+    },
+  });
 }
 
 function findTaskFileByViewerFile(task, file) {
@@ -8255,6 +8292,16 @@ async function persistViewerFileAiBrief(task, file, briefText) {
     throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
   }
   return true;
+}
+
+async function persistViewerSourceAiBrief(task, source, briefText) {
+  const sourcePayload = source && typeof source === 'object' ? source : {};
+  return persistViewerFileAiBrief(task, {
+    storedName: normalizeValue(sourcePayload.storedName),
+    originalName: normalizeValue(sourcePayload.originalName),
+    sourceUrl: normalizeValue(sourcePayload.url),
+    url: normalizeValue(sourcePayload.url),
+  }, briefText);
 }
 
 async function generateViewerFileAiBrief(file, fileName) {
