@@ -23,37 +23,7 @@ export function createTelegramBriefAi(deps = {}) {
   let briefPdfJsLoader = null;
 
   function toBriefSummaryText(value) {
-    const text = normalizeValue(value);
-    return text || '';
-  }
-
-  function normalizeStructuredBrief(value) {
-    const raw = toBriefSummaryText(value).replace(/\r/g, '');
-    if (!raw) {
-      return 'Кто прислал: не указано.\nКому прислал: не указано.\nКраткое содержание: не указано.';
-    }
-    const senderMatch = raw.match(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:\s*([^\n;]+)/i);
-    const receiverMatch = raw.match(/(?:кому\s*прислал|кому\s*письмо)\s*:\s*([^\n;]+)/i);
-    const summaryMatch = raw.match(/кратк[оа]е?\s+содержани[ея]\s*:\s*([\s\S]+)/i);
-    const sender = normalizeValue(senderMatch && senderMatch[1]).replace(/^[•\-–—\s]+/, '') || 'не указано';
-    const receiver = normalizeValue(receiverMatch && receiverMatch[1]).replace(/^[•\-–—\s]+/, '') || 'не указано';
-    let summary = normalizeValue(summaryMatch && summaryMatch[1]).replace(/^[•\-–—\s]+/, '');
-
-    if (!summary) {
-      const compact = raw
-        .replace(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:[^\n;]+[;\n]?/ig, ' ')
-        .replace(/(?:кому\s*прислал|кому\s*письмо)\s*:[^\n;]+[;\n]?/ig, ' ')
-        .replace(/кратк[оа]е?\s+содержани[ея]\s*:/ig, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      summary = compact || 'не указано';
-    }
-    summary = summary
-      .replace(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:[\s\S]*$/i, '')
-      .replace(/(?:кому\s*прислал|кому\s*письмо)\s*:[\s\S]*$/i, '')
-      .trim() || 'не указано';
-
-    return `Кто прислал: ${sender}.\nКому прислал: ${receiver}.\nКраткое содержание: ${summary}`;
+    return String(value || '');
   }
 
   async function postGroqPaidWithFallback(createFormData) {
@@ -405,7 +375,7 @@ export function createTelegramBriefAi(deps = {}) {
         throw new Error((payload && payload.error) || 'Ошибка запроса Vision режима.');
       }
       return {
-        summary: toBriefSummaryText(payload.summary || payload.response),
+        summary: String(payload.summary || payload.response || ''),
         model: payload.model,
         timeMs: payload.durationMs || payload.timeMs,
         warning: prepared.warning || '',
@@ -448,7 +418,7 @@ export function createTelegramBriefAi(deps = {}) {
         throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
       }
       return {
-        summary: toBriefSummaryText(fallbackPayload.summary || fallbackPayload.response),
+        summary: String(fallbackPayload.summary || fallbackPayload.response || ''),
         model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
         timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
         warning: '',
@@ -498,10 +468,10 @@ export function createTelegramBriefAi(deps = {}) {
       if (!request.response.ok || !payload || payload.ok !== true) {
         throw new Error((payload && payload.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
       }
-      partialAnswers.push(toBriefSummaryText(payload.response || payload.summary));
+      partialAnswers.push(String(payload.response || payload.summary || ''));
     }
 
-    let finalSummary = toBriefSummaryText(partialAnswers.join('\n\n').trim());
+    let finalSummary = String(partialAnswers.join('\n\n') || '');
     if (partialAnswers.length >= 1) {
       setStatus(isPdfSource ? 'Vision: извлёк текст, формирую краткий итог ИИ...' : 'Vision: формирую итог строго в формате "Кратко ИИ"...', 'loading');
       const mergeRequest = await postGroqPaidWithFallback(() => {
@@ -519,7 +489,7 @@ export function createTelegramBriefAi(deps = {}) {
       });
       const mergePayload = mergeRequest && mergeRequest.payload;
       if (mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
-        finalSummary = toBriefSummaryText(mergePayload.summary || mergePayload.response) || finalSummary;
+        finalSummary = String(mergePayload.summary || mergePayload.response || '') || finalSummary;
       }
     }
 
@@ -527,7 +497,7 @@ export function createTelegramBriefAi(deps = {}) {
       throw new Error('Vision не вернул итоговый текст.');
     }
     return {
-      summary: toBriefSummaryText(finalSummary),
+      summary: String(finalSummary || ''),
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       timeMs: Date.now() - startedAt,
       warning: isPdfSource || ocrText ? '' : 'OCR не вернул текст, ответ построен по изображению.',
@@ -699,7 +669,7 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   function renderTelegramBriefPreview(container, payload) {
-    const summaryText = toBriefSummaryText(payload && payload.summary) || extractTelegramPlainAiBriefText(payload);
+    const summaryText = String(payload && payload.summary || '') || extractTelegramPlainAiBriefText(payload);
     container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
   }
 
@@ -827,7 +797,7 @@ export function createTelegramBriefAi(deps = {}) {
       setStatus(message, tone || 'loading');
     });
     return {
-      summary: toBriefSummaryText(payload && payload.summary),
+      summary: String(payload && payload.summary || ''),
       model: normalizeValue(payload && payload.model),
       timeMs: Number(payload && payload.timeMs) || 0,
       warning: normalizeValue(payload && payload.warning),

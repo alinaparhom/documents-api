@@ -1820,33 +1820,7 @@
   }
 
   function briefToSummaryText(value) {
-    return briefNormalizeValue(value) || '';
-  }
-
-  function briefNormalizeStructuredSummary(value) {
-    var raw = briefToSummaryText(value).replace(/\r/g, '');
-    if (!raw) {
-      return 'Кто прислал: не указано.\nКому прислал: не указано.\nКраткое содержание: не указано.';
-    }
-    var senderMatch = raw.match(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:\s*([^\n;]+)/i);
-    var receiverMatch = raw.match(/(?:кому\s*прислал|кому\s*письмо)\s*:\s*([^\n;]+)/i);
-    var summaryMatch = raw.match(/кратк[оа]е?\s+содержани[ея]\s*:\s*([\s\S]+)/i);
-    var sender = briefNormalizeValue(senderMatch && senderMatch[1]).replace(/^[•\-–—\s]+/, '') || 'не указано';
-    var receiver = briefNormalizeValue(receiverMatch && receiverMatch[1]).replace(/^[•\-–—\s]+/, '') || 'не указано';
-    var summary = briefNormalizeValue(summaryMatch && summaryMatch[1]).replace(/^[•\-–—\s]+/, '');
-    if (!summary) {
-      summary = raw
-        .replace(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:[^\n;]+[;\n]?/ig, ' ')
-        .replace(/(?:кому\s*прислал|кому\s*письмо)\s*:[^\n;]+[;\n]?/ig, ' ')
-        .replace(/кратк[оа]е?\s+содержани[ея]\s*:/ig, ' ')
-        .replace(/\s+/g, ' ')
-        .trim() || 'не указано';
-    }
-    summary = summary
-      .replace(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:[\s\S]*$/i, '')
-      .replace(/(?:кому\s*прислал|кому\s*письмо)\s*:[\s\S]*$/i, '')
-      .trim() || 'не указано';
-    return 'Кто прислал: ' + sender + '.\nКому прислал: ' + receiver + '.\nКраткое содержание: ' + summary;
+    return String(value || '');
   }
 
   function readBriefFileAsText(file) {
@@ -2215,10 +2189,10 @@
       if (!request.response.ok || !payload || payload.ok !== true) {
         throw new Error((payload && payload.error) || ('Ошибка Vision запроса (блок ' + (batchIndex + 1) + ').'));
       }
-      partialAnswers.push(briefToSummaryText(payload.response || payload.summary));
+      partialAnswers.push(String(payload.response || payload.summary || ''));
     }
 
-    var finalSummary = briefToSummaryText(partialAnswers.join('\\n\\n').trim());
+    var finalSummary = String(partialAnswers.join('\\n\\n') || '');
     if (partialAnswers.length >= 1) {
       setStatus(isPdfSource ? 'Vision: извлёк текст, формирую краткий итог ИИ...' : 'Vision: формирую итог строго в формате "Кратко ИИ"...', 'loading');
       var mergeRequest = await postBriefGroqPaidWithFallback(function() {
@@ -2232,7 +2206,7 @@
       });
       var mergePayload = mergeRequest && mergeRequest.payload;
       if (mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
-        finalSummary = briefToSummaryText(mergePayload.summary || mergePayload.response) || finalSummary;
+        finalSummary = String(mergePayload.summary || mergePayload.response || '') || finalSummary;
       }
     }
     if (!finalSummary) throw new Error('Vision не вернул итоговый текст.');
