@@ -1823,6 +1823,32 @@
     return briefNormalizeValue(value) || '';
   }
 
+  function briefNormalizeStructuredSummary(value) {
+    var raw = briefToSummaryText(value).replace(/\r/g, '');
+    if (!raw) {
+      return 'Кто прислал: не указано.\nКому прислал: не указано.\nКраткое содержание: не указано.';
+    }
+    var senderMatch = raw.match(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:\s*([^\n;]+)/i);
+    var receiverMatch = raw.match(/(?:кому\s*прислал|кому\s*письмо)\s*:\s*([^\n;]+)/i);
+    var summaryMatch = raw.match(/кратк[оа]е?\s+содержани[ея]\s*:\s*([\s\S]+)/i);
+    var sender = briefNormalizeValue(senderMatch && senderMatch[1]).replace(/^[•\-–—\s]+/, '') || 'не указано';
+    var receiver = briefNormalizeValue(receiverMatch && receiverMatch[1]).replace(/^[•\-–—\s]+/, '') || 'не указано';
+    var summary = briefNormalizeValue(summaryMatch && summaryMatch[1]).replace(/^[•\-–—\s]+/, '');
+    if (!summary) {
+      summary = raw
+        .replace(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:[^\n;]+[;\n]?/ig, ' ')
+        .replace(/(?:кому\s*прислал|кому\s*письмо)\s*:[^\n;]+[;\n]?/ig, ' ')
+        .replace(/кратк[оа]е?\s+содержани[ея]\s*:/ig, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || 'не указано';
+    }
+    summary = summary
+      .replace(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:[\s\S]*$/i, '')
+      .replace(/(?:кому\s*прислал|кому\s*письмо)\s*:[\s\S]*$/i, '')
+      .trim() || 'не указано';
+    return 'Кто прислал: ' + sender + '.\nКому прислал: ' + receiver + '.\nКраткое содержание: ' + summary;
+  }
+
   function readBriefFileAsText(file) {
     return new Promise(function(resolve, reject) {
       var reader = new FileReader();
@@ -1947,7 +1973,11 @@
         var dataUrl = await readBriefBlobAsDataUrl(blob);
         images.push({ dataUrl: dataUrl, fileName: (file.name || 'scan').replace(/\.pdf$/i, '') + '-p' + pageNumber + '.jpg', mime: 'image/jpeg' });
       }
-      return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images: images };
+      return {
+        kind: 'multimodal',
+        messageText: 'Сделай краткий вывод строго по шаблону: Кто прислал, Кому прислал, Краткое содержание (2–5 предложений). Если данных нет — не указано. Проанализируй первые 5 страниц этого PDF.',
+        images: images
+      };
     }
     if (isText) {
       onProgress('Читаю текстовый файл...', 100);
@@ -2083,11 +2113,7 @@
     }
 
     var prepared = await buildBriefVisionPayloadFromFile(file, function(message) { setStatus(message, 'loading'); });
-    var prompt = 'Верни строго 3 строки:
-Кто прислал: ...
-Кому прислал: ...
-Краткое содержание: ... (2–5 предложений)
-Если данных нет — не указано. Только факты из документа.';
+    var prompt = 'Сформируй ответ строго в формате: Кто прислал: ...; Кому прислал: ...; Краткое содержание: ... (2–5 предложений). Если данных нет, пиши: не указано. Используй только факты из документа, без домыслов.';
 
     if (prepared.kind === 'text') {
       var text = briefNormalizeValue(prepared.extractedText);
@@ -2105,7 +2131,7 @@
       if (!textRequest.response.ok || !textPayload || textPayload.ok !== true) {
         throw new Error((textPayload && textPayload.error) || 'Ошибка запроса Vision режима.');
       }
-      return { summary: briefToSummaryText(textPayload.summary || textPayload.response), model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
+      return { summary: briefNormalizeStructuredSummary(textPayload.summary || textPayload.response), model: textPayload.model, timeMs: textPayload.durationMs || textPayload.timeMs };
     }
 
     var images = Array.isArray(prepared.images) ? prepared.images : [];
@@ -2114,11 +2140,14 @@
     var startedAt = Date.now();
     var ocrText = '';
 
-    try {
-      setStatus('Распознаю текст (OCR) из файла...', 'loading');
-      ocrText = await requestBriefOcrByFile(file, file.name || fileName);
-    } catch (_) {
-      ocrText = '';
+    var isPdfSource = String(file && file.type || '').toLowerCase().indexOf('pdf') >= 0 || /\.pdf$/i.test(String(file && file.name || ''));
+    if (!isPdfSource) {
+      try {
+        setStatus('Распознаю текст (OCR) из файла...', 'loading');
+        ocrText = await requestBriefOcrByFile(file, file.name || fileName);
+      } catch (_) {
+        ocrText = '';
+      }
     }
 
     if (!imageBatches.length && ocrText) {
@@ -2140,7 +2169,7 @@
         throw new Error((fallbackPayload && fallbackPayload.error) || 'Ошибка OCR fallback в Vision режиме.');
       }
       return {
-        summary: briefToSummaryText(fallbackPayload.summary || fallbackPayload.response),
+        summary: briefNormalizeStructuredSummary(fallbackPayload.summary || fallbackPayload.response),
         model: fallbackPayload.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
         timeMs: fallbackPayload.durationMs || (Date.now() - startedAt),
         warning: ''
@@ -2155,7 +2184,7 @@
         formData.append('action', 'analyze_paid');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
-        formData.append('prompt', prepared.messageText || 'Проанализируй содержимое этого файла');
+        formData.append('prompt', prompt);
         if (ocrText && batchIndex === 0) {
           formData.append('extractedTexts', JSON.stringify([{
             name: file.name || fileName,
@@ -2165,9 +2194,9 @@
         }
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-          max_tokens: 1000,
-          temperature: 0.7,
-          messages: [{ role: 'user', content: [{ type: 'text', text: (prepared.messageText || 'Проанализируй содержимое этого файла') + '\\n\\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }].concat(currentBatch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; })) }]
+          max_tokens: 700,
+          temperature: 0.2,
+          messages: [{ role: 'user', content: [{ type: 'text', text: (prepared.messageText || prompt) + '\\n\\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }].concat(currentBatch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; })) }]
         }));
         currentBatch.forEach(function(item, index) {
           var data = String(item.dataUrl || '');
@@ -2186,8 +2215,8 @@
     }
 
     var finalSummary = briefToSummaryText(partialAnswers.join('\\n\\n').trim());
-    if (partialAnswers.length > 1) {
-      setStatus('Vision: объединяю результаты всех блоков...', 'loading');
+    if (partialAnswers.length >= 1) {
+      setStatus('Vision: формирую итог строго в формате "Кратко ИИ"...', 'loading');
       var mergeRequest = await postBriefGroqPaidWithFallback(function() {
         var formData = new FormData();
         formData.append('action', 'generate_summary');
@@ -2203,7 +2232,7 @@
       }
     }
     if (!finalSummary) throw new Error('Vision не вернул итоговый текст.');
-    return { summary: finalSummary, model: 'meta-llama/llama-4-scout-17b-16e-instruct', timeMs: Date.now() - startedAt };
+    return { summary: briefNormalizeStructuredSummary(finalSummary), model: 'meta-llama/llama-4-scout-17b-16e-instruct', timeMs: Date.now() - startedAt };
   }
 
   function ensureBriefModalStyle() {

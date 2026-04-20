@@ -32,22 +32,26 @@ export function createTelegramBriefAi(deps = {}) {
     if (!raw) {
       return 'Кто прислал: не указано.\nКому прислал: не указано.\nКраткое содержание: не указано.';
     }
-    const senderMatch = raw.match(/кто\s*прислал\s*:\s*([^\n;]+)/i);
-    const receiverMatch = raw.match(/кому\s*прислал\s*:\s*([^\n;]+)/i);
+    const senderMatch = raw.match(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:\s*([^\n;]+)/i);
+    const receiverMatch = raw.match(/(?:кому\s*прислал|кому\s*письмо)\s*:\s*([^\n;]+)/i);
     const summaryMatch = raw.match(/кратк[оа]е?\s+содержани[ея]\s*:\s*([\s\S]+)/i);
-    const sender = normalizeValue(senderMatch && senderMatch[1]) || 'не указано';
-    const receiver = normalizeValue(receiverMatch && receiverMatch[1]) || 'не указано';
-    let summary = normalizeValue(summaryMatch && summaryMatch[1]);
+    const sender = normalizeValue(senderMatch && senderMatch[1]).replace(/^[•\-–—\s]+/, '') || 'не указано';
+    const receiver = normalizeValue(receiverMatch && receiverMatch[1]).replace(/^[•\-–—\s]+/, '') || 'не указано';
+    let summary = normalizeValue(summaryMatch && summaryMatch[1]).replace(/^[•\-–—\s]+/, '');
 
     if (!summary) {
       const compact = raw
-        .replace(/кто\s*прислал\s*:[^\n;]+[;\n]?/ig, ' ')
-        .replace(/кому\s*прислал\s*:[^\n;]+[;\n]?/ig, ' ')
+        .replace(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:[^\n;]+[;\n]?/ig, ' ')
+        .replace(/(?:кому\s*прислал|кому\s*письмо)\s*:[^\n;]+[;\n]?/ig, ' ')
         .replace(/кратк[оа]е?\s+содержани[ея]\s*:/ig, ' ')
         .replace(/\s+/g, ' ')
         .trim();
       summary = compact || 'не указано';
     }
+    summary = summary
+      .replace(/(?:кто\s*прислал|от\s*кого\s*письмо)\s*:[\s\S]*$/i, '')
+      .replace(/(?:кому\s*прислал|кому\s*письмо)\s*:[\s\S]*$/i, '')
+      .trim() || 'не указано';
 
     return `Кто прислал: ${sender}.\nКому прислал: ${receiver}.\nКраткое содержание: ${summary}`;
   }
