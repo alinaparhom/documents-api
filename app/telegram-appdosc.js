@@ -2673,7 +2673,12 @@ const FALLBACK_CARD_TEMPLATE = `
     </div>
     <div class="appdosc-card__actions">
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
-      <button type="button" class="appdosc-card__action appdosc-card__action--ghost" data-card-hide>Убрать</button>
+      <button
+        type="button"
+        class="appdosc-card__action appdosc-card__action--ghost"
+        data-card-hide
+        title="Скрыть задачу из текущего списка"
+      >Скрыть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
   </footer>
@@ -2690,7 +2695,6 @@ function initElements() {
   elements.app = document.querySelector('[data-app]');
   elements.refreshButton = document.querySelector('[data-refresh]');
   elements.userName = document.querySelector('[data-user-name]');
-  elements.userId = document.querySelector('[data-user-id]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
@@ -3998,7 +4002,7 @@ function createCard(task, index, anchorRegistry) {
       state.hiddenTaskKeys.add(hideKey);
       updateVisibleTasks();
       render();
-      setStatus('success', 'Задача скрыта.');
+      setStatus('success', 'Задача скрыта из списка до обновления страницы.');
     });
   }
   updateCardViewInfo(card, task);
