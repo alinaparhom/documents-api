@@ -773,23 +773,17 @@
           <div class="appdosc-card__assign-label">Назначить подчинённых</div>
           <div class="appdosc-card__assign-controls">
             <label class="appdosc-card__assign-selector">
-              <span class="appdosc-card__assign-selector-label">Выбор подчинённого</span>
+              <span class="appdosc-card__assign-selector-label">Поиск и выбор подчинённого</span>
               <input
                 type="search"
                 class="appdosc-card__assign-search"
                 data-card-subordinate-search
-                placeholder="Поиск по ФИО подчинённого"
-                aria-label="Поиск по ФИО подчинённого"
+                placeholder="Начните вводить ФИО или выберите из списка"
+                aria-label="Поиск и выбор подчинённого"
                 autocomplete="off"
               />
+              <div class="appdosc-card__assign-combo-list" data-card-subordinate-options role="listbox" hidden></div>
               <span class="appdosc-card__assign-search-meta" data-card-subordinate-search-meta></span>
-              <select
-                class="appdosc-card__assign-select"
-                data-card-subordinate-select
-                aria-label="Выбор подчинённого"
-              >
-                <option value="">Выберите подчинённого</option>
-              </select>
             </label>
             <div class="appdosc-card__assign-entries" data-card-subordinate-entries></div>
             <div class="appdosc-card__assign-bulk">
