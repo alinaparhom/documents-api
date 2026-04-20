@@ -2986,9 +2986,9 @@ export function createPdfViewer(root = document) {
           fit: pdfZoomState.fit,
         });
       } else if (viewerMode === 'frame') {
-        applyFrameZoom(zoomState.scale - 0.2);
+        applyFrameZoom(zoomState.scale + 0.2);
       } else {
-        zoomStep(-0.2);
+        zoomStep(0.2);
       }
     });
   }
@@ -3005,9 +3005,9 @@ export function createPdfViewer(root = document) {
           fit: pdfZoomState.fit,
         });
       } else if (viewerMode === 'frame') {
-        applyFrameZoom(zoomState.scale + 0.2);
+        applyFrameZoom(zoomState.scale - 0.2);
       } else {
-        zoomStep(0.2);
+        zoomStep(-0.2);
       }
     });
   }

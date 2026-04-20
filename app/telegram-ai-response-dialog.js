@@ -1,12 +1,25 @@
 (function initTelegramAiResponseDialog(globalScope) {
   if (!globalScope || typeof document === 'undefined') return;
 
-  const STYLE_ID = 'tg-ai-response-dialog-style-v1';
+  const STYLE_ID = 'tg-ai-response-dialog-style-v2';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
+  const FILE_FETCH_TIMEOUT_MS = 12000;
+  const FILE_FETCH_RETRIES = 1;
+  const FILE_FETCH_RETRIES_MOBILE = 0;
+  const FILE_FETCH_TIMEOUT_STEPS_IOS = [2800, 4200, 6200, 9000];
+  const FILE_FETCH_MAX_CANDIDATES = 8;
+  const FILE_PREPARE_TIMEOUT_MS = 35000;
+  const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const VISION_BATCH_SIZE = 5;
+  const MAX_FILES_PER_REQUEST = 5;
+  const MAX_FILES_PER_REQUEST_MOBILE = 2;
+  const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+  const MAX_FILE_SIZE_BYTES_MOBILE = 12 * 1024 * 1024;
+  const VISION_CONCURRENCY_DEFAULT = 3;
+  const VISION_CONCURRENCY_MOBILE = 1;
   const AI_PDF_PAGE_LIMIT = 5;
   const PDF_RENDER_SCALE = 1.25;
   const PDF_JPEG_QUALITY = 0.82;
@@ -16,60 +29,90 @@
     '/pdf/pdf.worker.min.js',
   ];
   let briefPdfJsLoader = null;
-  const RESPONSE_OUTPUT_DIRECTIVE = `СИСТЕМНЫЙ РЕЖИМ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».
-Верни только готовый текст ответа для вставки в документ: без приветствия, без подписи, без реквизитов, без фраз типа «С уважением» и без строк вида «[Ваше ФИО]».
-Считай, что ты сотрудник организации, получившей этот файл или набор файлов, и отвечаешь официально в деловом стиле.
-Обязательно учитывай весь доступный контекст файлов целиком, не придумывай факты и не выходи за рамки данных.
-Ответ должен соответствовать законодательству и общепринятым нормам деловой коммуникации.
-Перед финальным выводом перепроверь формулировки на точность, логичность и отсутствие противоречий.
-Если в контексте нет достаточной информации или компетенции для уверенного вывода — прямо укажи это в ответе.`;
-  const VISION_QUALITY_DIRECTIVE = `Сформируй сильный итоговый ответ по задаче пользователя, а не пересказ документа.
-Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".
-Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.
-Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.`;
-  const SYSTEM_TONE_PROMPTS = {
-    neutral: {
-      value: 'neutral',
-      label: 'Нейтральный',
-      prompt: `СТИЛЬ ОТВЕТА: Нейтральный деловой.
-Пиши ровно, без эмоций и оценок.`
-    },
-    aggressive: {
-      value: 'aggressive',
-      label: 'Агрессивный',
-      prompt: `СТИЛЬ ОТВЕТА: Жёсткий деловой.
-Пиши прямолинейно, коротко и требовательно, без грубости и нарушений деловой этики.`
-    },
-    calm: {
-      value: 'calm',
-      label: 'Спокойный',
-      prompt: `СТИЛЬ ОТВЕТА: Спокойный деловой.
-Пиши мягко и понятно, но строго по делу.`
-    },
-    neutral_enhanced: {
-      value: 'neutral_enhanced',
-      label: 'Нейтральный (усиленный)',
-      prompt: `СТИЛЬ ОТВЕТА: Нейтральный деловой (усиленный).
-Максимальная точность формулировок, структурный и строгий тон.`
-    },
-    aggressive_enhanced: {
-      value: 'aggressive_enhanced',
-      label: 'Агрессивный (усиленный)',
-      prompt: `СТИЛЬ ОТВЕТА: Жёсткий деловой (усиленный).
-Максимально короткие и твёрдые формулировки, без эмоциональных вставок.`
-    },
-    calm_enhanced: {
-      value: 'calm_enhanced',
-      label: 'Спокойный (усиленный)',
-      prompt: `СТИЛЬ ОТВЕТА: Спокойный деловой (усиленный).
-Пиши вежливо и понятно, сохраняя официальную точность.`
-    }
-  };
+  const PROMPTS_CATALOG = globalScope.DOCS_AI_PROMPTS || null;
+  const DEFAULT_PROMPT_KEYS = PROMPTS_CATALOG && PROMPTS_CATALOG.DEFAULT_KEYS
+    ? PROMPTS_CATALOG.DEFAULT_KEYS
+    : { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'neutral_enhanced' };
+  const SYSTEM_TONE_PROMPTS = PROMPTS_CATALOG && PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
+    ? PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
+    : { neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' } };
   const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
+  const RESPONSE_GENERATION_MODES = {
+    improve_ai: {
+      value: 'improve_ai',
+      label: 'Ответ',
+      icon: '✏️',
+      hint: 'Вы пишете черновик, ИИ улучшает его по файлам.',
+      placeholder: 'Напишите или продиктуйте ваш черновик ответа — ИИ аккуратно улучшит текст.',
+    },
+    response_ai: {
+      value: 'response_ai',
+      label: 'Ответ ИИ',
+      icon: '🤖',
+      hint: 'ИИ сам подготовит ответ на основе файлов.',
+      placeholder: 'Например: Подготовь деловой ответ на претензию по этому документу',
+    },
+  };
   let jsZipLoaderPromise = null;
+  const loadedFileCache = new Map();
 
   function normalize(value) {
     return String(value || '').trim();
+  }
+
+  function isIosClient() {
+    try {
+      const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
+      const platform = String((globalScope && globalScope.navigator && globalScope.navigator.platform) || '');
+      const touchPoints = Number((globalScope && globalScope.navigator && globalScope.navigator.maxTouchPoints) || 0);
+      const isTouchMac = /Mac/i.test(platform) && touchPoints > 1;
+      return /iPad|iPhone|iPod/i.test(ua) || isTouchMac;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isAndroidClient() {
+    try {
+      const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
+      return /Android/i.test(ua);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isLikelyWebViewClient() {
+    try {
+      const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
+      if (isIosClient()) {
+        return /WebView|Telegram|FBAN|FBAV|Line\//i.test(ua) || (/AppleWebKit/i.test(ua) && !/Safari/i.test(ua));
+      }
+      if (isAndroidClient()) {
+        return /; wv\)|\bwv\b|Version\/[\d.]+|Telegram/i.test(ua);
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function getClientVisionProfile() {
+    const fastMobile = isLikelyWebViewClient();
+    return {
+      isFastMobile: fastMobile,
+      fetchRetries: fastMobile ? FILE_FETCH_RETRIES_MOBILE : FILE_FETCH_RETRIES,
+      prepareTimeoutMs: fastMobile ? FILE_PREPARE_TIMEOUT_MS_MOBILE : FILE_PREPARE_TIMEOUT_MS,
+      maxConcurrency: fastMobile ? VISION_CONCURRENCY_MOBILE : VISION_CONCURRENCY_DEFAULT,
+      maxFilesPerRequest: fastMobile ? MAX_FILES_PER_REQUEST_MOBILE : MAX_FILES_PER_REQUEST,
+      maxFileSizeBytes: fastMobile ? MAX_FILE_SIZE_BYTES_MOBILE : MAX_FILE_SIZE_BYTES,
+    };
+  }
+
+  function getFileCacheKey(file) {
+    const name = normalize(file && (file.storedName || file.originalName || file.name));
+    const url = normalize(file && (file.resolvedUrl || file.previewUrl || file.url || file.sourceUrl));
+    const size = Number(file && (file.size || file.fileSize)) || 0;
+    return `${name}|${url}|${size}`;
   }
 
   function sanitizeAssistantFinalText(value) {
@@ -141,8 +184,22 @@
       .replace(/'/g, '&#39;');
   }
 
+  function escapeSelectorAttribute(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  }
+
   function getResponseStyleMeta(styleValue) {
     return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
+  }
+
+  function appendPromptSelection(formData, toneValue, assistantModeValue) {
+    if (!(formData instanceof FormData)) return;
+    const resolvedTone = normalize(toneValue) || DEFAULT_PROMPT_KEYS.tone || 'neutral';
+    const resolvedAssistantMode = normalize(assistantModeValue) || RESPONSE_GENERATION_MODES.response_ai.value;
+    formData.append('response_mode', DEFAULT_PROMPT_KEYS.response_mode || 'v1');
+    formData.append('vision_quality_mode', DEFAULT_PROMPT_KEYS.vision_quality_mode || 'v1');
+    formData.append('tone', resolvedTone);
+    formData.append('assistant_mode', resolvedAssistantMode);
   }
 
   function getGroqResponseEndpoints() {
@@ -331,9 +388,11 @@
 
   function buildFileUrlCandidates(file) {
     const sourceValues = [
+      file && file.previewBlobUrl,
       file && file.resolvedUrl,
       file && file.previewUrl,
       file && file.url,
+      file && file.sourceUrl,
       file && file.downloadUrl,
       file && file.fileUrl,
       file && file.file,
@@ -355,6 +414,44 @@
     return Array.from(new Set(candidates.filter(Boolean)));
   }
 
+  function appendCacheBuster(url) {
+    const normalized = normalize(url);
+    if (!normalized) return '';
+    try {
+      const parsed = new URL(normalized, window.location.origin);
+      parsed.searchParams.set('v', String(Date.now()));
+      return parsed.toString();
+    } catch (_) {
+      const separator = normalized.includes('?') ? '&' : '?';
+      return `${normalized}${separator}v=${Date.now()}`;
+    }
+  }
+
+  function withTimeout(promise, timeoutMs, timeoutMessage) {
+    const timeout = Math.max(1000, Number(timeoutMs) || 1000);
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        reject(new Error(timeoutMessage || 'Истекло время ожидания.'));
+      }, timeout);
+      Promise.resolve(promise)
+        .then((value) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(value);
+        })
+        .catch((error) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
+  }
+
   function isImageLike(name, type) {
     const lowerName = normalize(name).toLowerCase();
     const lowerType = normalize(type).toLowerCase();
@@ -365,6 +462,53 @@
     const lowerName = normalize(name).toLowerCase();
     const lowerType = normalize(type).toLowerCase();
     return lowerType.includes('pdf') || /\.pdf$/i.test(lowerName);
+  }
+
+  function isTextLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.startsWith('text/') || /\.(txt|md|csv|json|xml|html?)$/i.test(lowerName);
+  }
+
+  function isDocxLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.includes('wordprocessingml.document') || /\.docx$/i.test(lowerName);
+  }
+
+  function isXlsxLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType.includes('spreadsheetml') || /\.xlsx$/i.test(lowerName);
+  }
+
+  function isSupportedVisionFile(name, type) {
+    return isImageLike(name, type) || isPdfLike(name, type) || isTextLike(name, type) || isDocxLike(name, type) || isXlsxLike(name, type);
+  }
+
+  function validateFilesBeforeSend(files, profile) {
+    const list = Array.isArray(files) ? files : [];
+    const maxFiles = Number(profile && profile.maxFilesPerRequest) || MAX_FILES_PER_REQUEST;
+    const maxSizeBytes = Number(profile && profile.maxFileSizeBytes) || MAX_FILE_SIZE_BYTES;
+    if (!list.length) {
+      return { ok: false, error: 'Нет готовых файлов для отправки.' };
+    }
+    if (list.length > maxFiles) {
+      return { ok: false, error: 'Выберите меньше файлов' };
+    }
+    for (let index = 0; index < list.length; index += 1) {
+      const file = list[index];
+      const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
+      const fileType = normalize(file && (file.mimeType || file.type || file.contentType));
+      const fileSize = Number(file && (file.size || file.fileSize || (file.fileObject && file.fileObject.size))) || 0;
+      if (!isSupportedVisionFile(fileName, fileType)) {
+        return { ok: false, error: `Неподдерживаемый формат: ${fileName}` };
+      }
+      if (fileSize > maxSizeBytes) {
+        return { ok: false, error: `Файл слишком большой: ${fileName}` };
+      }
+    }
+    return { ok: true };
   }
 
   function readBlobAsDataUrl(blob) {
@@ -510,6 +654,7 @@
     const isImage = mime === 'image/jpeg' || mime === 'image/png' || /\.(jpe?g|png)$/i.test(name);
     const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
     const isText = mime.startsWith('text/') || /\.(txt|md|csv|json|xml|html?)$/i.test(name);
+    const isDoc = /\.doc$/i.test(name);
     const isDocx = mime.includes('wordprocessingml.document') || /\.docx$/i.test(name);
     const isXlsx = mime.includes('spreadsheetml') || /\.xlsx$/i.test(name);
 
@@ -562,16 +707,28 @@
       return { kind: 'text', extractedText: text, fileName: file.name || 'text.txt' };
     }
 
-    if (isDocx) {
-      onProgress('Извлекаю текст из DOCX...', 35);
-      const mammoth = await ensureMammothLoaded();
-      const arrayBuffer = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer });
+    if (isDoc || isDocx) {
+      onProgress(isDocx ? 'Извлекаю текст из DOCX...' : 'Пробую извлечь текст из DOC...', 35);
+      let extractedText = '';
+      if (isDocx) {
+        try {
+          const mammoth = await ensureMammothLoaded();
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          extractedText = String(result && result.value || '').trim();
+        } catch (error) {
+          extractedText = '';
+        }
+      }
+      if (!extractedText) {
+        extractedText = String(await readFileAsText(file) || '').trim();
+      }
       return {
         kind: 'text',
-        extractedText: String(result && result.value || '').trim(),
-        fileName: file.name || 'document.docx',
-        warning: 'Изображения внутри DOCX не анализируются в Vision режиме.',
+        extractedText,
+        fileName: file.name || (isDocx ? 'document.docx' : 'document.doc'),
+        disableOcr: true,
+        warning: 'Для DOC/DOCX используется только прямое извлечение текста (без OCR).',
       };
     }
 
@@ -588,25 +745,70 @@
       return { kind: 'text', extractedText: sheetTexts.join('\n\n').trim(), fileName: file.name || 'table.xlsx' };
     }
 
-    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOCX, XLSX');
+    throw new Error('Формат не поддерживается. Поддерживаемые форматы: JPG, PNG, PDF, TXT, DOC, DOCX, XLSX');
   }
 
   async function requestTelegramVisionResponse(payload = {}, onStatus) {
+    const profile = getClientVisionProfile();
     const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
-    const prompt = [normalize(payload.prompt), VISION_QUALITY_DIRECTIVE].filter(Boolean).join('\n\n') || 'Проанализируй документы и предложи готовое решение.';
+    const prompt = normalize(payload.prompt) || 'Проанализируй документы и предложи готовое решение.';
     const systemPrompt = normalize(payload.systemPrompt);
     const images = [];
     const extractedTexts = [];
+    const fileErrors = [];
+    const preparedResults = new Array(selectedFiles.length);
+    const queue = selectedFiles.map((currentFile, index) => ({ currentFile, index }));
+    const maxConcurrency = profile.maxConcurrency;
+    const workers = Array.from({ length: Math.max(1, Math.min(maxConcurrency, queue.length)) }, () => (async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (!item) {
+          break;
+        }
+        const { currentFile, index } = item;
+        const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
+        onStatus('Загрузка', 'loading');
+        let blobFile = null;
+        try {
+          blobFile = await loadSelectedFileAsBlob(currentFile);
+        } catch (error) {
+          const failMessage = normalize(error && error.message) || 'Не удалось загрузить файл.';
+          preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
+          onStatus('Загрузка', 'loading');
+          continue;
+        }
+        const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
+        try {
+          onStatus('Подготовка', 'prepare');
+          const prepared = await withTimeout(
+            buildVisionPayloadFromFile(sourceFile, () => onStatus('Подготовка', 'prepare')),
+            profile.prepareTimeoutMs,
+            'Превышено время обработки файла.',
+          );
+          preparedResults[index] = { prepared, sourceFile, fileLabel };
+        } catch (error) {
+          const failMessage = normalize(error && error.message) || 'Не удалось подготовить файл.';
+          preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
+          onStatus('Подготовка', 'prepare');
+        }
+      }
+    })());
+    await Promise.all(workers);
 
-    for (let index = 0; index < selectedFiles.length; index += 1) {
-      const currentFile = selectedFiles[index];
-      const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-      onStatus(`Vision ${index + 1}/${selectedFiles.length}: ${fileLabel}`, 'loading');
-      // eslint-disable-next-line no-await-in-loop
-      const blobFile = await loadSelectedFileAsBlob(currentFile);
-      const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
-      // eslint-disable-next-line no-await-in-loop
-      const prepared = await buildVisionPayloadFromFile(sourceFile, (message) => onStatus(`${fileLabel}: ${message}`, 'loading'));
+    preparedResults.forEach((result) => {
+      if (!result) {
+        return;
+      }
+      if (result.error) {
+        fileErrors.push(result.error);
+        return;
+      }
+      const prepared = result.prepared;
+      const sourceFile = result.sourceFile;
+      const fileLabel = result.fileLabel;
+      if (!prepared) {
+        return;
+      }
       if (prepared.kind === 'multimodal') {
         images.push(...(Array.isArray(prepared.images) ? prepared.images : []));
       } else if (prepared.kind === 'text') {
@@ -614,24 +816,26 @@
         if (text) {
           extractedTexts.push({
             name: prepared.fileName || fileLabel,
-            type: sourceFile.type || 'text/plain',
+            type: (sourceFile && sourceFile.type) || 'text/plain',
             text: text.slice(0, 60000),
           });
         }
       }
-    }
+    });
 
     if (!images.length) {
       if (!extractedTexts.length) {
-        throw new Error('Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.');
+        const details = fileErrors.length ? ` Ошибки: ${fileErrors.slice(0, 2).join('; ')}` : '';
+        throw new Error(`Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.${details}`);
       }
-      onStatus('Vision: отправляю извлечённый текст (DOCX/TXT) в ИИ...', 'loading');
+      onStatus('Ответ', 'answer');
       const textOnlyRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
-        formData.append('action', 'generate_response');
+        formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         formData.append('extractedTexts', JSON.stringify(extractedTexts));
         return formData;
       });
@@ -642,7 +846,7 @@
           return textOnlySummary;
         }
       }
-      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать DOCX/TXT через Vision pipeline.');
+      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать текстовые файлы через summary pipeline.');
     }
 
     const batches = chunkItems(images, VISION_BATCH_SIZE);
@@ -650,7 +854,7 @@
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
       const currentBatch = batches[batchIndex];
-      onStatus(`Vision: анализ блока ${batchIndex + 1}/${batches.length} (${currentBatch.length} стр.)...`, 'loading');
+      onStatus('Ответ', 'answer');
       // eslint-disable-next-line no-await-in-loop
       const request = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
@@ -658,6 +862,7 @@
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         if (extractedTexts.length && batchIndex === 0) {
           formData.append('extractedTexts', JSON.stringify(extractedTexts));
         }
@@ -695,13 +900,14 @@
 
     let finalSummary = partialAnswers.join('\n\n').trim();
     if (partialAnswers.length > 1) {
-      onStatus('Vision: объединяю результаты всех блоков...', 'loading');
+      onStatus('Ответ', 'answer');
       const mergeRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
-        formData.append('action', 'generate_response');
+        formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
         formData.append('extractedTexts', JSON.stringify([{
           name: 'vision-batches.txt',
           type: 'text/plain',
@@ -717,35 +923,78 @@
     if (!finalSummary) {
       throw new Error('Vision не вернул итоговый текст.');
     }
+    if (fileErrors.length) {
+      finalSummary += `\n\n⚠️ Не удалось обработать часть файлов (${fileErrors.length}).`;
+    }
     return finalSummary;
   }
 
   async function loadSelectedFileAsBlob(file) {
+    const profile = getClientVisionProfile();
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
     }
-    const candidates = buildFileUrlCandidates(file);
-    if (!candidates.length) {
+    const cacheKey = getFileCacheKey(file);
+    if (cacheKey && loadedFileCache.has(cacheKey)) {
+      return loadedFileCache.get(cacheKey);
+    }
+    const baseCandidates = Array.from(new Set(buildFileUrlCandidates(file).filter(Boolean))).slice(0, FILE_FETCH_MAX_CANDIDATES);
+    const cacheBustedCandidates = baseCandidates.map((url) => (
+      url.startsWith('blob:') || url.startsWith('data:') ? url : appendCacheBuster(url)
+    ));
+    if (!baseCandidates.length) {
       throw new Error('Не найден URL файла.');
     }
+    const rounds = [baseCandidates, cacheBustedCandidates];
+    const iosClient = isIosClient();
+    const retries = profile.fetchRetries;
     let lastStatus = 0;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const url = candidates[index];
-      let response = null;
-      try {
-        response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, 25000);
-      } catch (error) {
-        continue;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const urls = rounds[Math.min(attempt, rounds.length - 1)];
+      const timeoutMs = iosClient
+        ? (FILE_FETCH_TIMEOUT_STEPS_IOS[Math.min(attempt, FILE_FETCH_TIMEOUT_STEPS_IOS.length - 1)] || FILE_FETCH_TIMEOUT_MS)
+        : FILE_FETCH_TIMEOUT_MS;
+      for (let index = 0; index < urls.length; index += 1) {
+        const url = urls[index];
+        let response = null;
+        try {
+          response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, timeoutMs);
+        } catch (error) {
+          continue;
+        }
+        if (!response || !response.ok) {
+          lastStatus = Number(response && response.status) || lastStatus;
+          continue;
+        }
+        const blob = await response.blob();
+        const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
+        if (blob.size > profile.maxFileSizeBytes) {
+          throw new Error('Файл слишком большой.');
+        }
+        const readyFile = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        if (cacheKey) loadedFileCache.set(cacheKey, readyFile);
+        if (file && typeof file === 'object') file.fileObject = readyFile;
+        return readyFile;
       }
-      if (!response || !response.ok) {
-        lastStatus = Number(response && response.status) || lastStatus;
-        continue;
+      if (attempt < retries) {
+        const delayMs = iosClient ? (220 * (attempt + 1)) : 200;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
-      const blob = await response.blob();
-      const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
-      return new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
     }
     throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
+  }
+
+  async function preloadSelectedFile(file, onStatus) {
+    if (!file || typeof file !== 'object') return false;
+    try {
+      await loadSelectedFileAsBlob(file);
+      return true;
+    } catch (_) {
+      if (typeof onStatus === 'function') {
+        onStatus('Некоторые файлы загружаются медленно, продолжаю подготовку...', 'loading');
+      }
+      return false;
+    }
   }
 
   function ensureStyles() {
@@ -753,12 +1002,29 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px)}
-      .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:linear-gradient(160deg,rgba(255,255,255,.97),rgba(241,245,249,.92));box-shadow:0 20px 50px rgba(15,23,42,.22)}
+      :root{
+        --tg-bg-gradient:linear-gradient(145deg,rgba(255,255,255,.98),rgba(248,250,252,.96));
+        --tg-accent:#2563eb;
+        --tg-accent-hover:#1d4ed8;
+        --tg-accent-glow:rgba(37,99,235,.2);
+        --tg-border:rgba(203,213,225,.5);
+        --tg-shadow-sm:0 10px 25px -5px rgba(0,0,0,.05),0 8px 10px -6px rgba(0,0,0,.02);
+        --tg-shadow-md:0 20px 35px -12px rgba(0,0,0,.12);
+        --tg-shadow-lg:0 25px 50px -12px rgba(0,0,0,.25);
+      }
+      @keyframes tg-fade-in{from{opacity:0;backdrop-filter:blur(0)}to{opacity:1;backdrop-filter:blur(10px)}}
+      @keyframes tg-scale-in{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
+      .tg-ai-chat__messages::-webkit-scrollbar,.tg-ai-chat__files-list::-webkit-scrollbar,.tg-ai-template-editor__body::-webkit-scrollbar,.tg-ai-generated-preview__viewport::-webkit-scrollbar{width:5px;height:5px}
+      .tg-ai-chat__messages::-webkit-scrollbar-track,.tg-ai-chat__files-list::-webkit-scrollbar-track,.tg-ai-template-editor__body::-webkit-scrollbar-track,.tg-ai-generated-preview__viewport::-webkit-scrollbar-track{background:rgba(203,213,225,.3);border-radius:10px}
+      .tg-ai-chat__messages::-webkit-scrollbar-thumb,.tg-ai-chat__files-list::-webkit-scrollbar-thumb,.tg-ai-template-editor__body::-webkit-scrollbar-thumb,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:10px}
+      .tg-ai-chat__messages::-webkit-scrollbar-thumb:hover,.tg-ai-chat__files-list::-webkit-scrollbar-thumb:hover,.tg-ai-template-editor__body::-webkit-scrollbar-thumb:hover,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb:hover{background:#64748b}
+      .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px);animation:tg-fade-in .25s ease}
+      .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:var(--tg-bg-gradient);box-shadow:0 20px 50px rgba(15,23,42,.22);animation:tg-scale-in .2s cubic-bezier(.2,.9,.4,1.1)}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
+      .tg-ai-chat__head-main{display:grid;gap:7px;min-width:0}
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
       .tg-ai-chat__title{font-size:16px;font-weight:800;color:#0f172a}
-      .tg-ai-chat__sub{font-size:12px;color:#64748b;margin-top:2px}
+      .tg-ai-chat__sub{font-size:11px;color:#64748b;margin-top:1px;line-height:1.35}
       .tg-ai-chat__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.9);color:#0f172a;border-radius:11px;padding:6px 11px;min-height:34px;font-weight:700}
       .tg-ai-chat__head-btn{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);color:#0f172a;border-radius:11px;padding:0 10px;min-height:34px;font-size:12px;font-weight:700}
       .tg-ai-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
@@ -769,6 +1035,10 @@
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
       .tg-ai-chat__toolbar--compact{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .tg-ai-chat__mode-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border:1px solid rgba(191,219,254,.85);border-radius:12px;background:rgba(239,246,255,.72);backdrop-filter:blur(6px)}
+      .tg-ai-chat__mode-switch--head{width:min(360px,100%)}
+      .tg-ai-chat__mode-btn{min-height:34px;border:none;border-radius:9px;background:transparent;color:#334155;font-size:11px;font-weight:700;padding:0 8px;white-space:nowrap}
+      .tg-ai-chat__mode-btn[data-active="true"]{background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.28)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
       .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
       .tg-ai-chat__input-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:end}
@@ -783,7 +1053,15 @@
       .tg-ai-chat__files[hidden]{display:none}
       .tg-ai-chat__files-title{font-size:12px;color:#64748b;margin:0 0 8px}
       .tg-ai-chat__files-list{display:flex;flex-wrap:wrap;gap:6px;max-height:156px;overflow:auto}
-      .tg-ai-chat__file{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:999px;font-size:12px;color:#334155}
+      .tg-ai-chat__file{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(203,213,225,.95);background:#fff;border-radius:999px;font-size:12px;color:#334155;transition:all .2s ease}
+      .tg-ai-chat__file-name{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tg-ai-chat__file-state{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:999px;font-size:11px;font-weight:800;background:rgba(148,163,184,.18);color:#64748b}
+      .tg-ai-chat__file[data-state="loading"]{border-color:rgba(59,130,246,.42);background:rgba(239,246,255,.92)}
+      .tg-ai-chat__file[data-state="loading"] .tg-ai-chat__file-state{background:rgba(59,130,246,.16);color:#2563eb}
+      .tg-ai-chat__file[data-state="ready"]{border-color:rgba(16,185,129,.35);background:rgba(236,253,245,.92)}
+      .tg-ai-chat__file[data-state="ready"] .tg-ai-chat__file-state{background:rgba(16,185,129,.16);color:#047857}
+      .tg-ai-chat__file[data-state="error"]{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.95)}
+      .tg-ai-chat__file[data-state="error"] .tg-ai-chat__file-state{background:rgba(239,68,68,.16);color:#b91c1c}
       .tg-ai-chat__file input{accent-color:#2563eb}
       .tg-ai-chat__meta{display:flex;flex-wrap:wrap;gap:7px;padding:7px 12px;border-top:1px solid rgba(226,232,240,.7);background:rgba(255,255,255,.88)}
       .tg-ai-chat__chip{padding:4px 8px;border:1px solid rgba(203,213,225,.95);border-radius:999px;background:#fff;font-size:12px;color:#334155}
@@ -866,7 +1144,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -979,109 +1257,59 @@
     setTimeout(() => toast.remove(), 3500);
   }
 
-  function buildGeneratedDocxUrlCandidates(previewPayload, options = {}) {
-    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
-    const fileName = normalize(previewPayload && previewPayload.fileName);
-    const safeFileName = normalize(fileName.split('/').pop());
-    const organization = normalize(options && options.organization).replace(/^\/+|\/+$/g, '');
-    const directGeneratedUrl = safeFileName ? `/js/documents/tmp/generated/${encodeURIComponent(safeFileName)}` : '';
-    const directOrganizationGeneratedUrl = (organization && safeFileName)
-      ? `/js/documents/${encodeURIComponent(organization)}/tmp/generated/${encodeURIComponent(safeFileName)}`
-      : '';
-    const exactPublicBaseCandidates = [
-      normalize(globalScope && globalScope.TG_GENERATED_DOCX_PUBLIC_BASE),
-      'https://bimmax.pro/documents/app/tmp/generated/generated/',
-      'https://bimmax.pro/documents/app/tmp/generated/',
-    ].filter(Boolean);
-    const exactPublicUrls = safeFileName
-      ? exactPublicBaseCandidates.map((base) => `${String(base).replace(/\/+$/g, '')}/${encodeURIComponent(safeFileName)}`)
-      : [];
-    const mappedTmpUrl = previewUrl ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
-    const mappedLegacyTmpUrl = previewUrl ? previewUrl.replace(/\/tmp\/generated\//i, '/js/documents/tmp/generated/') : '';
-    const mappedExactGeneratedUrl = previewUrl
-      ? previewUrl.replace(/\/app\/tmp\/generated\//i, '/app/tmp/generated/generated/')
-      : '';
-    return Array.from(new Set([
-      previewUrl,
-      ...exactPublicUrls,
-      mappedExactGeneratedUrl,
-      directOrganizationGeneratedUrl,
-      directGeneratedUrl,
-      mappedTmpUrl,
-      mappedLegacyTmpUrl,
-    ].filter(Boolean))).map((url) => toAbsoluteUrl(url));
-  }
-
-  async function resolvePublicDocxUrlForOffice(previewPayload, options = {}) {
-    const candidates = buildGeneratedDocxUrlCandidates(previewPayload, options);
-    if (!candidates.length) {
-      throw new Error('Не удалось получить ссылку на DOCX.');
-    }
-    let lastStatus = 0;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = normalize(candidates[index]);
-      if (!/^https?:\/\//i.test(candidate)) continue;
-      try {
-        const response = await fetchWithTimeout(candidate, {
-          method: 'HEAD',
-          credentials: 'omit',
-          cache: 'no-store',
-        }, 12000);
-        if (!response || !response.ok) {
-          lastStatus = response ? response.status : 0;
-          continue;
-        }
-        return candidate;
-      } catch (_) {}
-      try {
-        const fallbackResponse = await fetchWithTimeout(candidate, {
-          method: 'GET',
-          credentials: 'omit',
-          cache: 'no-store',
-          headers: { Range: 'bytes=0-0' },
-        }, 12000);
-        if (!fallbackResponse || !fallbackResponse.ok) {
-          lastStatus = fallbackResponse ? fallbackResponse.status : lastStatus;
-          continue;
-        }
-        return candidate;
-      } catch (_) {}
-    }
-    throw new Error(`URL документа недоступен публично (${lastStatus || 'no_public_access'}).`);
-  }
-
   async function resolveGeneratedDocxBlob(previewPayload) {
     if (previewPayload && previewPayload.blob instanceof Blob) {
       return previewPayload.blob;
     }
-    const candidates = buildGeneratedDocxUrlCandidates(previewPayload);
-    if (!candidates.length) {
+    const previewUrl = normalize(previewPayload && previewPayload.previewUrl);
+    if (!previewUrl) {
       throw new Error('Не удалось получить файл документа для предпросмотра.');
     }
-    let lastStatus = 0;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const url = candidates[index];
-      try {
-        const response = await fetchWithTimeout(url, {
-          method: 'GET',
-          credentials: 'same-origin',
-          cache: 'no-store',
-        }, 30000);
-        if (!response || !response.ok) {
-          lastStatus = response ? response.status : 0;
-          continue;
-        }
-        const blob = await response.blob();
-        if (blob && blob.size) return blob;
-      } catch (_) {}
+    const url = toAbsoluteUrl(previewUrl);
+    try {
+      const response = await fetchWithTimeout(url, {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store',
+      }, 30000);
+      if (!response || !response.ok) {
+        throw new Error(`no_response_${response ? response.status : 0}`);
+      }
+      const blob = await response.blob();
+      if (blob && blob.size) return blob;
+    } catch (_) {
+      throw new Error('Не удалось скачать документ для предпросмотра.');
     }
-    throw new Error(`Не удалось скачать документ для предпросмотра (${lastStatus || 'no_response'}).`);
+    throw new Error('Не удалось скачать документ для предпросмотра.');
   }
 
   async function downloadGeneratedPreviewFile(previewPayload) {
     const fileName = normalize(previewPayload && previewPayload.fileName) || 'template-answer.docx';
+    const safeFileName = normalize(fileName.split('/').pop());
+    const directDownloadUrl = safeFileName
+      ? `https://bimmax.pro/js/documents/app/tmp/generated/${encodeURIComponent(safeFileName)}`
+      : '';
     const sourceUrl = normalize(previewPayload && previewPayload.previewUrl);
     const fallbackBlob = previewPayload && previewPayload.blob instanceof Blob ? previewPayload.blob : null;
+    if (directDownloadUrl) {
+      const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+      if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
+        try {
+          telegramWebApp.openLink(directDownloadUrl);
+          return true;
+        } catch (_) {}
+      }
+      try {
+        const link = document.createElement('a');
+        link.href = directDownloadUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return true;
+      } catch (_) {}
+    }
     if (fallbackBlob && fallbackBlob.size) {
       const blobUrl = URL.createObjectURL(fallbackBlob);
       const link = document.createElement('a');
@@ -1344,17 +1572,19 @@
     }
 
     try {
-      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 1/2: Проверяем URL документа…';
-      statusNode.textContent = 'Подготовка просмотра через Office Viewer…';
-      const publicUrl = await resolvePublicDocxUrlForOffice(previewPayload);
-      if (loadingSubNode) loadingSubNode.textContent = 'Шаг 2/2: Открываем Office Viewer…';
-      const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(publicUrl)}`;
+      const officeSourceUrl = toAbsoluteUrl(normalize(previewPayload.previewUrl));
+      if (!officeSourceUrl || !/^https?:\/\//i.test(officeSourceUrl)) {
+        throw new Error('Некорректная ссылка на документ.');
+      }
+      if (loadingSubNode) loadingSubNode.textContent = 'Открываем Office Viewer…';
+      statusNode.textContent = 'Открываем документ…';
+      const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(officeSourceUrl)}`;
       frameNode.src = officeViewerUrl;
       if (loadingNode) loadingNode.style.display = 'none';
       statusNode.textContent = `Готово: ${generatedFileName || 'документ'} открыт через Office Viewer.`;
     } catch (error) {
       if (loadingNode) loadingNode.style.display = 'none';
-      statusNode.textContent = `Не удалось открыть документ: ${(error && error.message) || 'ошибка предпросмотра'}. Скачайте файл или проверьте, что ссылка публичная.`;
+      statusNode.textContent = 'Не удалось открыть документ. Проверьте ссылку и попробуйте снова.';
     }
   }
 
@@ -1534,7 +1764,13 @@
       const name = normalize(file && (file.originalName || file.name || file.storedName)) || `Файл ${index + 1}`;
       const hasUrl = buildFileUrlCandidates(file).length > 0;
       const disabled = hasUrl ? '' : 'disabled';
-      return `<label class="tg-ai-chat__file"><input type="checkbox" data-file-index="${index}" ${disabled}><span>${escapeHtml(name)}</span></label>`;
+      return `
+        <label class="tg-ai-chat__file" data-file-index="${index}" data-state="idle">
+          <input type="checkbox" data-file-index="${index}" ${disabled}>
+          <span class="tg-ai-chat__file-name">${escapeHtml(name)}</span>
+          <span class="tg-ai-chat__file-state" data-file-state>○</span>
+        </label>
+      `;
     }).join('');
   }
 
@@ -1632,12 +1868,16 @@
     overlay.innerHTML = `
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">
-          <div>
-            <div class="tg-ai-chat__title">Ответ с помощью ИИ</div>
+          <div class="tg-ai-chat__head-main">
+            <div class="tg-ai-chat__title">✨ Ответ ИИ</div>
             <div class="tg-ai-chat__sub">Выберите файлы, режим и введите запрос (текстом или голосом)</div>
+            <div class="tg-ai-chat__mode-switch tg-ai-chat__mode-switch--head" role="tablist" aria-label="Режим генерации ответа">
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="improve_ai">${RESPONSE_GENERATION_MODES.improve_ai.icon} ${RESPONSE_GENERATION_MODES.improve_ai.label}</button>
+              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="response_ai" data-active="true">${RESPONSE_GENERATION_MODES.response_ai.icon} ${RESPONSE_GENERATION_MODES.response_ai.label}</button>
+            </div>
           </div>
           <div class="tg-ai-chat__head-actions">
-            <button type="button" class="tg-ai-chat__head-btn" data-template-btn>Шаблон</button>
+            <button type="button" class="tg-ai-chat__head-btn" data-template-btn>📄 Шаблон</button>
             <button type="button" class="tg-ai-chat__close" data-close>✕</button>
           </div>
         </div>
@@ -1669,6 +1909,9 @@
     document.body.appendChild(overlay);
 
     const selected = new Set();
+    const fileWarmupState = new Map();
+    const fileWarmupPromises = new Map();
+    const fileWarmupRequestId = new Map();
     const messages = overlay.querySelector('[data-messages]');
     const status = overlay.querySelector('[data-status]');
     const filesPanel = overlay.querySelector('[data-files]');
@@ -1676,6 +1919,7 @@
     const filesToggleButton = overlay.querySelector('[data-files-toggle]');
     const meta = overlay.querySelector('[data-meta]');
     const styleSelect = overlay.querySelector('[data-style-select]');
+    const modeButtons = Array.from(overlay.querySelectorAll('[data-response-mode]'));
     const templateButton = overlay.querySelector('[data-template-btn]');
     const promptInput = overlay.querySelector('[data-prompt-input]');
     const sendButton = overlay.querySelector('[data-send-btn]');
@@ -1687,8 +1931,13 @@
     let recognitionIsRunning = false;
     let speechSupported = false;
     let suppressVoiceEndStatus = false;
+    let currentResponseMode = RESPONSE_GENERATION_MODES.response_ai.value;
 
     renderFiles(filesList, files);
+    // Прогреваем зависимости заранее, чтобы первый запуск был стабильнее.
+    ensureBriefPdfJsLoaded().catch(() => {});
+    ensureMammothLoaded().catch(() => {});
+    ensureXlsxLoaded().catch(() => {});
 
     const close = () => {
       if (recognitionIsRunning && recognition) {
@@ -1700,7 +1949,59 @@
 
     const updateFilesToggleLabel = () => {
       if (!filesToggleButton) return;
-      filesToggleButton.textContent = selected.size ? `📎 Файлы (${selected.size})` : '📎 Файлы';
+      let readyCount = 0;
+      selected.forEach((key) => {
+        if (fileWarmupState.get(key) === 'ready') readyCount += 1;
+      });
+      filesToggleButton.textContent = selected.size
+        ? `📎 Файлы (${readyCount}/${selected.size})`
+        : '📎 Файлы';
+    };
+
+    const setFileState = (key, stateValue) => {
+      const state = normalize(stateValue) || 'idle';
+      fileWarmupState.set(key, state);
+      const label = filesList && filesList.querySelector(`[data-file-index="${escapeSelectorAttribute(key)}"]`);
+      if (label instanceof HTMLElement) {
+        label.dataset.state = state;
+        const stateNode = label.querySelector('[data-file-state]');
+        if (stateNode) {
+          if (state === 'loading') stateNode.textContent = '…';
+          else if (state === 'ready') stateNode.textContent = '✓';
+          else if (state === 'error') stateNode.textContent = '!';
+          else stateNode.textContent = '○';
+        }
+      }
+      updateFilesToggleLabel();
+    };
+
+    const warmupFileByKey = (key) => {
+      const normalizedKey = normalize(key);
+      if (!normalizedKey || !selected.has(normalizedKey)) return;
+      const selectedFile = files[Number(normalizedKey)];
+      if (!selectedFile) return;
+      const requestId = (fileWarmupRequestId.get(normalizedKey) || 0) + 1;
+      fileWarmupRequestId.set(normalizedKey, requestId);
+      setFileState(normalizedKey, 'loading');
+      const promise = preloadSelectedFile(selectedFile, (message) => {
+        status.textContent = message;
+      }).then((ok) => {
+        if (!selected.has(normalizedKey)) return ok;
+        if (fileWarmupRequestId.get(normalizedKey) !== requestId) return ok;
+        setFileState(normalizedKey, ok ? 'ready' : 'error');
+        return ok;
+      }).catch(() => {
+        if (selected.has(normalizedKey) && fileWarmupRequestId.get(normalizedKey) === requestId) {
+          setFileState(normalizedKey, 'error');
+        }
+        return false;
+      }).finally(() => {
+        const currentPromise = fileWarmupPromises.get(normalizedKey);
+        if (currentPromise === promise) {
+          fileWarmupPromises.delete(normalizedKey);
+        }
+      });
+      fileWarmupPromises.set(normalizedKey, promise);
     };
 
     filesToggleButton?.addEventListener('click', () => {
@@ -1714,6 +2015,25 @@
       if (promptInput) promptInput.disabled = disabled;
       if (sendButton) sendButton.disabled = disabled;
       if (voiceButton) voiceButton.disabled = disabled || !speechSupported;
+      modeButtons.forEach((button) => {
+        button.disabled = disabled;
+      });
+    };
+
+    const applyResponseModeUi = (modeValue) => {
+      const nextMode = RESPONSE_GENERATION_MODES[modeValue] ? modeValue : RESPONSE_GENERATION_MODES.response_ai.value;
+      currentResponseMode = nextMode;
+      modeButtons.forEach((button) => {
+        const isActive = normalize(button.dataset.responseMode) === nextMode;
+        button.dataset.active = isActive ? 'true' : 'false';
+      });
+      const modeMeta = RESPONSE_GENERATION_MODES[nextMode];
+      if (promptInput && modeMeta && modeMeta.placeholder) {
+        promptInput.placeholder = modeMeta.placeholder;
+      }
+      if (status && modeMeta) {
+        status.textContent = `${modeMeta.icon} ${modeMeta.hint}`;
+      }
     };
 
     const appendPromptText = (chunk) => {
@@ -1845,9 +2165,19 @@
       promptInput.style.height = `${Math.min(Math.max(promptInput.scrollHeight, 52), 156)}px`;
     });
     promptInput?.dispatchEvent(new Event('input'));
+    applyResponseModeUi(currentResponseMode);
+
+    modeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        if (isSending) return;
+        const nextMode = normalize(button.dataset.responseMode);
+        applyResponseModeUi(nextMode);
+      });
+    });
 
     async function sendByCurrentStyle() {
       if (isSending) return;
+      const profile = getClientVisionProfile();
       const selectedStyleValue = normalize(styleSelect && styleSelect.value);
       if (!selectedStyleValue) {
         status.textContent = 'Выберите режим ответа.';
@@ -1855,7 +2185,9 @@
       }
       const userPrompt = normalize(promptInput && promptInput.value);
       if (!userPrompt) {
-        status.textContent = 'Введите запрос для ИИ или продиктуйте его голосом.';
+        status.textContent = currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value
+          ? 'В режиме «Ответ» нужен ваш черновик (текстом или голосом).'
+          : 'Введите запрос для ИИ или продиктуйте его голосом.';
         return;
       }
       const styleIndexFromSelect = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
@@ -1863,31 +2195,90 @@
         styleIndex = styleIndexFromSelect;
       }
       const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
-      const prompt = `Задача пользователя: ${userPrompt}\n\nПодготовь готовый текст ответа по выбранным файлам для вставки в документ: только суть, без приветствия и реквизитов.`;
-      const effectivePrompt = [prompt, styleMeta.prompt, RESPONSE_OUTPUT_DIRECTIVE].filter(Boolean).join('\n\n');
-      const selectedFiles = Array.from(selected)
-        .map((key) => files[Number(key)])
-        .filter(Boolean);
-
-      if (!selectedFiles.length) {
-        createBubble(messages, 'Выберите хотя бы один файл в меню «📎 Файлы».', 'assistant');
-        status.textContent = 'Нет выбранных файлов.';
+      const effectivePrompt = userPrompt;
+      const selectedKeys = Array.from(selected)
+        .filter((key) => fileWarmupState.get(key) !== 'error');
+      if (!selectedKeys.length) {
+        if (currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value) {
+          const responseAiMessage = 'Для режима «Ответ ИИ» выберите хотя бы один файл.';
+          createBubble(messages, responseAiMessage, 'assistant');
+          status.textContent = responseAiMessage;
+          return;
+        }
+        createBubble(messages, 'Выберите хотя бы один файл без ошибок в меню «📎 Файлы».', 'assistant');
+        status.textContent = 'Нет доступных файлов для отправки.';
         return;
       }
+      if (selectedKeys.length > profile.maxFilesPerRequest) {
+        status.textContent = 'Выберите меньше файлов';
+        return;
+      }
+
+      const pendingWarmups = selectedKeys
+        .map((key) => fileWarmupPromises.get(key))
+        .filter(Boolean);
 
       isSending = true;
       setComposerDisabled(true);
       if (filesPanel) filesPanel.hidden = true;
-      lastAiAnswer = '';
-      meta.innerHTML = '';
-      createBubble(messages, userPrompt, 'user');
-      status.textContent = 'Vision: готовим файлы...';
-      const startedAt = Date.now();
-      const loadingBubble = createLoadingBubble(messages);
-
       try {
-        const answerRaw = await requestTelegramVisionResponse({ prompt: effectivePrompt, systemPrompt: styleMeta.prompt, selectedFiles }, (message) => {
-          status.textContent = message;
+        if (pendingWarmups.length) {
+          status.textContent = 'Догружаю файлы перед отправкой...';
+          await Promise.allSettled(pendingWarmups);
+        }
+
+        const readySelectedKeys = selectedKeys
+          .filter((key) => fileWarmupState.get(key) === 'ready');
+        const skippedFilesCount = Math.max(0, selectedKeys.length - readySelectedKeys.length);
+        const selectedFiles = readySelectedKeys
+          .map((key) => files[Number(key)])
+          .filter(Boolean);
+
+        if (!selectedFiles.length) {
+          const emptyReadyMessage = currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value
+            ? 'Нет готовых файлов для «Ответ ИИ».'
+            : 'Нет готовых файлов для отправки.';
+          createBubble(messages, emptyReadyMessage, 'assistant');
+          status.textContent = emptyReadyMessage;
+          return;
+        }
+        const prevalidation = validateFilesBeforeSend(selectedFiles, profile);
+        if (!prevalidation.ok) {
+          status.textContent = normalize(prevalidation.error) || 'Проверьте выбранные файлы.';
+          return;
+        }
+
+        lastAiAnswer = '';
+        meta.innerHTML = '';
+        createBubble(messages, userPrompt, 'user');
+        if (skippedFilesCount > 0) {
+          createBubble(messages, `${skippedFilesCount} файлов пропущено.`, 'assistant');
+        }
+        status.textContent = 'Загрузка → Подготовка → Ответ';
+        const startedAt = Date.now();
+        const loadingBubble = createLoadingBubble(messages);
+
+        const answerRaw = await requestTelegramVisionResponse({
+          prompt: effectivePrompt,
+          systemPrompt: '',
+          tone: styleMeta.value,
+          assistantMode: currentResponseMode,
+          selectedFiles,
+        }, (message) => {
+          const stage = normalize(message).toLowerCase();
+          if (stage === 'загрузка') {
+            status.textContent = 'Загрузка → Подготовка → Ответ';
+            return;
+          }
+          if (stage === 'подготовка') {
+            status.textContent = '✓ Загрузка → Подготовка → Ответ';
+            return;
+          }
+          if (stage === 'ответ') {
+            status.textContent = '✓ Загрузка → ✓ Подготовка → Ответ';
+            return;
+          }
+          status.textContent = 'Загрузка → Подготовка → Ответ';
         });
         const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
         lastAiAnswer = answer;
@@ -1897,15 +2288,19 @@
         const elapsed = Date.now() - startedAt;
         meta.innerHTML = `
           <span class="tg-ai-chat__chip">Режим: vision</span>
+          <span class="tg-ai-chat__chip">Сценарий: ${currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value ? 'Ответ (редактирование)' : 'Ответ ИИ'}</span>
           <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
         `;
-        status.textContent = 'Данные переданы.';
+        status.textContent = skippedFilesCount > 0
+          ? `Данные переданы. ${skippedFilesCount} файлов пропущено.`
+          : 'Данные переданы.';
       } catch (error) {
         lastAiAnswer = '';
-        if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
+        const loadingNode = messages && messages.querySelector ? messages.querySelector('.tg-ai-chat__bubble--loading') : null;
+        if (loadingNode && loadingNode.parentNode) loadingNode.remove();
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
         status.textContent = 'Ошибка передачи.';
       } finally {
@@ -1943,10 +2338,26 @@
       if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
       const key = normalize(target.dataset.fileIndex);
       if (!key) return;
-      if (target.checked) selected.add(key);
-      else selected.delete(key);
+      if (target.checked) {
+        selected.add(key);
+        warmupFileByKey(key);
+      } else {
+        selected.delete(key);
+        fileWarmupPromises.delete(key);
+        fileWarmupRequestId.delete(key);
+        setFileState(key, 'idle');
+      }
+      if (target.checked) {
+        status.textContent = 'Подготавливаю файл...';
+      }
       updateFilesToggleLabel();
-      status.textContent = selected.size ? `Выбрано файлов: ${selected.size}` : 'Можно выбрать файлы для более точного ответа.';
+      let readyCount = 0;
+      selected.forEach((selectedKey) => {
+        if (fileWarmupState.get(selectedKey) === 'ready') readyCount += 1;
+      });
+      status.textContent = selected.size
+        ? `Выбрано файлов: ${selected.size} • готово: ${readyCount}`
+        : 'Можно выбрать файлы для более точного ответа.';
     });
 
     templateButton?.addEventListener('click', async () => {

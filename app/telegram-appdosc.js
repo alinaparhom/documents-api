@@ -9,6 +9,7 @@ const { createTelegramBriefAi } = await import('./ai-short_repsonse.js' + _vSuff
 preloadPdfjs();
 
 const API_URL = '/docs.php?action=mini_app_tasks';
+const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
@@ -23,6 +24,8 @@ const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
 const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
 const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 3 * 1000;
 const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 1500;
+const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 2500;
+const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
 const ENABLE_TASK_PDF_WARMUP = true;
 const pdfFetchTimeoutUrls = new Set();
 
@@ -495,6 +498,29 @@ function cloneTaskAttachmentPreviewCacheEntry(entry) {
 }
 
 function ensureAiDialogScriptLoaded() {
+  if (!window.DOCS_AI_PROMPTS || typeof window.DOCS_AI_PROMPTS !== 'object') {
+    window.DOCS_AI_PROMPTS = Object.freeze({
+      version: 'prompt-catalog-v1',
+      RESPONSE_OUTPUT_DIRECTIVE: { v1: '' },
+      VISION_QUALITY_DIRECTIVE: { v1: '' },
+      SYSTEM_TONE_PROMPTS: {
+        neutral: { value: 'neutral', label: 'Нейтральный', prompt: 'СТИЛЬ ОТВЕТА: Нейтральный деловой.\nПиши ровно, без эмоций и оценок.' },
+        aggressive: { value: 'aggressive', label: 'Агрессивный', prompt: 'СТИЛЬ ОТВЕТА: Жёсткий деловой.\nПиши прямолинейно, коротко и требовательно, без грубости и нарушений деловой этики.' },
+        calm: { value: 'calm', label: 'Спокойный', prompt: 'СТИЛЬ ОТВЕТА: Спокойный деловой.\nПиши мягко и понятно, но строго по делу.' },
+        neutral_enhanced: { value: 'neutral_enhanced', label: 'Нейтральный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Нейтральный деловой (усиленный).\nМаксимальная точность формулировок, структурный и строгий тон.' },
+        aggressive_enhanced: { value: 'aggressive_enhanced', label: 'Агрессивный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Жёсткий деловой (усиленный).\nМаксимально короткие и твёрдые формулировки, без эмоциональных вставок.' },
+        calm_enhanced: { value: 'calm_enhanced', label: 'Спокойный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Спокойный деловой (усиленный).\nПиши вежливо и понятно, сохраняя официальную точность.' }
+      },
+      DEFAULT_RESPONSE_FORMAT_LIMITS: {
+        response: { temperature: 0.2, max_tokens: 1800 },
+        response_extended: { temperature: 0.2, max_tokens: 2000 },
+        summary: { temperature: 0.3, max_tokens: 800, top_p: 0.85 },
+        vision_extract: { temperature: 0, max_tokens: 2000 }
+      },
+      DEFAULT_KEYS: { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'neutral_enhanced' }
+    });
+  }
+
   if (window && typeof window.openAiResponseDialog === 'function') {
     return Promise.resolve(window.openAiResponseDialog);
   }
@@ -673,6 +699,7 @@ const ALLOWED_LOG_EVENTS = new Set([
   'task_view_click',
   'task_view_error',
   'task_view_open',
+  'ai_dialog_blocked_no_fresh_files',
   'tasks_load_error',
   'tasks_load_start',
   'tasks_loaded',
@@ -2461,10 +2488,29 @@ function toggleStatusFilterSelection(currentFilters, filter) {
     return normalizeTaskFilters(currentFilters);
   }
   const current = normalizeTaskFilters(currentFilters);
-  if (current.includes(normalizedTarget)) {
-    return current.filter((value) => value !== normalizedTarget);
+  const isTargetOverdue = normalizedTarget === 'overdue';
+  const isTargetStatus = isStatusFilter(normalizedTarget);
+
+  if (isTargetOverdue) {
+    if (current.includes(normalizedTarget)) {
+      return current.filter((value) => value !== normalizedTarget);
+    }
+    return [...current, normalizedTarget];
   }
-  return [...current, normalizedTarget];
+
+  if (!isTargetStatus) {
+    if (current.includes(normalizedTarget)) {
+      return current.filter((value) => value !== normalizedTarget);
+    }
+    return [...current, normalizedTarget];
+  }
+
+  const withoutStatuses = current.filter((value) => !isStatusFilter(value));
+  const wasSelected = current.includes(normalizedTarget);
+  if (wasSelected) {
+    return withoutStatuses;
+  }
+  return [...withoutStatuses, normalizedTarget];
 }
 
 function setAssigneeFilterSelection(currentFilters, targetFilter) {
@@ -3913,7 +3959,7 @@ function createCard(task, index, anchorRegistry) {
         btn.type = 'button';
         btn.className = 'appdosc-card__action';
         btn.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
-        btn.textContent = 'Кратко ИИ';
+        btn.textContent = '🤖 Кратко';
         btn.disabled = !aiBriefText;
         if (!aiBriefText) {
           btn.title = 'Кратко ИИ пока отсутствует';
@@ -8271,7 +8317,7 @@ function startViewerBriefLoadingAnimation() {
     return () => {};
   }
   const button = elements.viewerBrief;
-  const initialText = button.textContent || 'Кратко - ИИ';
+  const initialText = button.textContent || '🤖 AI';
   const initialTitle = button.getAttribute('title') || '';
   const initialBackground = button.style.background;
   const initialBorderColor = button.style.borderColor;
@@ -8286,7 +8332,7 @@ function startViewerBriefLoadingAnimation() {
   const timerId = window.setInterval(() => {
     frame = (frame + 1) % 4;
     const dots = '.'.repeat(frame);
-    button.textContent = `⏳ Кратко ИИ${dots}`;
+    button.textContent = `🤖 AI${dots}`;
   }, 260);
 
   return () => {
@@ -15148,6 +15194,21 @@ function handleSummaryBadgeClick(filter) {
     return;
   }
 
+  if (state.entryTaskId) {
+    state.entryTaskId = '';
+    if (!state.entryTaskLog || typeof state.entryTaskLog !== 'object') {
+      state.entryTaskLog = { resolved: false, matched: false, expanded: false };
+    }
+    state.entryTaskLog.resolved = false;
+    state.entryTaskLog.expanded = false;
+    logEntryTaskEvent('entry_task_focus_cleared', {
+      source: 'status_filter_click',
+      targetFilter: normalizedTarget || DEFAULT_TASK_FILTER,
+      previousFilter: formatTaskFiltersForLog(previousFilters),
+      nextFilter: formatTaskFiltersForLog(nextFilters),
+    });
+  }
+
   state.taskFilter = nextFilters;
   state.selectedCardAnchor = '';
   updateVisibleTasks();
@@ -15838,7 +15899,7 @@ function renderResponseFilesCounter(counterElement, count, isFresh = false, butt
   }
 }
 
-async function fetchLatestTaskSnapshot(task) {
+async function fetchLatestTaskSnapshotFallbackFromList(task) {
   if (!task || typeof task !== 'object' || typeof fetch !== 'function') {
     return null;
   }
@@ -15893,13 +15954,157 @@ async function fetchLatestTaskSnapshot(task) {
   return null;
 }
 
+async function fetchLatestTaskSnapshot(task, options = {}) {
+  if (!task || typeof task !== 'object' || typeof fetch !== 'function') {
+    return { snapshot: null, status: 'invalid' };
+  }
+
+  const timeoutMsRaw = Number(options && options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : TASK_SNAPSHOT_FETCH_TIMEOUT_MS;
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  try {
+    const response = await fetch(TASK_SNAPSHOT_API_URL, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      cache: 'no-store',
+      signal: controller ? controller.signal : undefined,
+      body: JSON.stringify({
+        ...buildRequestBody(),
+        taskId: normalizeValue(task.id),
+        organization: getTaskOrganization(task),
+      }),
+    });
+
+    if (response.ok) {
+      const payload = await response.json();
+      if (payload && payload.success === true) {
+        const data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
+        return {
+          snapshot: {
+            files: Array.isArray(data.files) ? data.files : [],
+            responses: Array.isArray(data.responses) ? data.responses : [],
+            updatedAt: normalizeValue(data.updatedAt) || normalizeValue(task.updatedAt) || '',
+          },
+          status: 'ok',
+        };
+      }
+    }
+
+    let canUseLegacyFallback = response.status === 404 || response.status === 405;
+    if (!canUseLegacyFallback && response.status === 400) {
+      try {
+        const payload = await response.clone().json();
+        const message = normalizeValue(payload && (payload.message || payload.error || payload.reason || ''));
+        const normalizedMessage = message.toLowerCase();
+        if (normalizedMessage.includes('неизвест') && normalizedMessage.includes('действ')) {
+          canUseLegacyFallback = true;
+        }
+        if (normalizedMessage.includes('unknown') && normalizedMessage.includes('action')) {
+          canUseLegacyFallback = true;
+        }
+      } catch (_) {
+        canUseLegacyFallback = false;
+      }
+    }
+
+    if (canUseLegacyFallback) {
+      const legacy = await fetchLatestTaskSnapshotFallbackFromList(task);
+      return { snapshot: legacy, status: legacy ? 'legacy' : 'legacy_failed' };
+    }
+
+    return { snapshot: null, status: 'unavailable' };
+  } catch (error) {
+    const isTimeout = Boolean(error && (error.name === 'AbortError' || error.code === 'abort'));
+    return { snapshot: null, status: isTimeout ? 'timeout' : 'error' };
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
+
+async function resolveTaskForAiDialog(task, options = {}) {
+  if (!task || typeof task !== 'object') {
+    return task;
+  }
+
+  const startedAt = Date.now();
+  const timeoutMsRaw = Number(options && options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+    ? timeoutMsRaw
+    : AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS;
+  const hardDeadlineAt = startedAt + timeoutMs;
+  const isIosClient = Boolean(runtimeEnvironment && runtimeEnvironment.isIos);
+  const maxAttempts = isIosClient ? 3 : 1;
+  let latestTask = null;
+  let snapshotStatus = 'local';
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (Date.now() >= hardDeadlineAt) {
+      snapshotStatus = 'timeout';
+      break;
+    }
+    const remainingMs = Math.max(200, hardDeadlineAt - Date.now());
+    const snapshotResult = await fetchLatestTaskSnapshot(task, { timeoutMs: remainingMs });
+    latestTask = snapshotResult && snapshotResult.snapshot ? snapshotResult.snapshot : null;
+    snapshotStatus = snapshotResult && snapshotResult.status ? snapshotResult.status : 'error';
+    const files = Array.isArray(latestTask && latestTask.files) ? latestTask.files : [];
+    if (latestTask && files.length > 0) {
+      break;
+    }
+    if (attempt < maxAttempts - 1) {
+      // На iOS файлы иногда появляются с задержкой после смены статуса/фильтра.
+      // Делаем backoff в рамках общего лимита, чтобы не открывать диалог на устаревших данных.
+      const plannedWaitMs = 320 * (attempt + 1);
+      const remainingMs = hardDeadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        break;
+      }
+      const waitMs = Math.max(0, Math.min(plannedWaitMs, remainingMs));
+      if (!waitMs) {
+        break;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+
+  if (!latestTask || typeof latestTask !== 'object') {
+    return {
+      ...task,
+      files: Array.isArray(task.files) ? task.files : [],
+      responses: Array.isArray(task.responses) ? task.responses : [],
+      __aiSnapshotStatus: snapshotStatus,
+    };
+  }
+
+  return {
+    ...task,
+    ...latestTask,
+    files: Array.isArray(latestTask.files) ? latestTask.files : (Array.isArray(task.files) ? task.files : []),
+    responses: Array.isArray(latestTask.responses) ? latestTask.responses : (Array.isArray(task.responses) ? task.responses : []),
+    __aiSnapshotStatus: snapshotStatus,
+  };
+}
+
 async function refreshResponseCounterForEntry(counterElement, task, entry, fallbackValue = '', buttonElement = null) {
   if (!task) {
     return;
   }
 
-  const freshTask = await fetchLatestTaskSnapshot(task);
-  if (freshTask && typeof freshTask === 'object') {
+  const snapshotResult = await fetchLatestTaskSnapshot(task);
+  const freshTask = snapshotResult && snapshotResult.snapshot && typeof snapshotResult.snapshot === 'object'
+    ? snapshotResult.snapshot
+    : null;
+  if (freshTask) {
     task.responses = Array.isArray(freshTask.responses) ? freshTask.responses : [];
   }
 
@@ -16607,12 +16812,43 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  aiButton.addEventListener('click', () => {
-    openAiDialogSafely({
-      task,
-      entry,
-      onStatus: setStatus,
-    });
+  aiButton.addEventListener('click', async () => {
+    if (aiButton.disabled) {
+      return;
+    }
+    aiButton.disabled = true;
+    try {
+      if (typeof setStatus === 'function' && runtimeEnvironment.isIos) {
+        setStatus('info', 'Подготавливаем файлы для ИИ...');
+      }
+      const taskForDialog = await resolveTaskForAiDialog(task, {
+        timeoutMs: AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS,
+      });
+      if (typeof setStatus === 'function' && taskForDialog && taskForDialog.__aiSnapshotStatus !== 'ok' && taskForDialog.__aiSnapshotStatus !== 'legacy') {
+        setStatus('info', 'Открываю по локальным данным, часть файлов может появиться позже.');
+      }
+      const files = Array.isArray(taskForDialog && taskForDialog.files) ? taskForDialog.files : [];
+      if (!files.length) {
+        if (typeof setStatus === 'function') {
+          setStatus('warning', 'Файлы ещё обновляются, попробуйте через 1–2 секунды.');
+        }
+        logClientEvent('ai_dialog_blocked_no_fresh_files', {
+          taskId: normalizeValue(task && task.id),
+          taskEntryNumber: normalizeValue(task && task.entryNumber),
+          filesCount: 0,
+          timeoutMs: AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS,
+          isIos: runtimeEnvironment && runtimeEnvironment.isIos ? '1' : '0',
+        });
+        return;
+      }
+      openAiDialogSafely({
+        task: taskForDialog,
+        entry,
+        onStatus: setStatus,
+      });
+    } finally {
+      aiButton.disabled = false;
+    }
   });
 
   textInput.addEventListener('input', () => {
@@ -17084,8 +17320,6 @@ function setupAssignmentControls(card, task) {
       false,
       responseViewButton
     );
-    refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton).catch(() => {});
-
     responseViewButton.addEventListener('click', async () => {
       if (responseViewButton.dataset.loading === 'true') {
         return;
@@ -17849,8 +18083,6 @@ function setupSubordinateControls(card, task) {
       false,
       responseViewButton
     );
-    refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton).catch(() => {});
-
     responseViewButton.addEventListener('click', async () => {
       if (responseViewButton.dataset.loading === 'true') {
         return;

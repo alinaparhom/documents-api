@@ -2217,20 +2217,26 @@
         participants = 'Отправитель: ' + (sender || 'не найден') + '; Получатель: ' + (recipient || 'не найден');
       }
     }
+    var summaryItems = collectBriefSentences(analysis || sourceText, 3)
+      .map(normalizeSentence)
+      .filter(Boolean)
+      .slice(0, 3);
+    if (!summaryItems.length && analysis) {
+      summaryItems = [analysis];
+    }
+    var recommendationItems = cleanedRequirements.length
+      ? cleanedRequirements.slice(0, 3)
+      : cleanedActions.slice(0, 3);
+    var conclusionText = normalizeSentence((cleanedActions[0] || cleanedRequirements[0] || analysis || 'Нужно уточнить детали письма перед отправкой ответа.'));
     return [
-      'Краткий вывод ИИ',
+      'Краткое содержание',
+      summaryItems.length ? summaryItems.map(function(item) { return '• ' + item; }).join('\n') : '• Не удалось выделить содержание.',
       '',
-      'О чем файл',
-      analysis,
+      'Рекомендации',
+      recommendationItems.length ? recommendationItems.map(function(item) { return '• ' + item; }).join('\n') : '• Уточните данные письма и ключевые требования.',
       '',
-      'Кто прислал / кому',
-      participants || 'Не удалось точно определить отправителя и получателя.',
-      '',
-      'Важные детали',
-      cleanedActions.length ? cleanedActions.map(function(item) { return '• ' + item; }).join('\n') : '• ИИ не выделил важные детали.',
-      '',
-      'Что сделать дальше',
-      cleanedRequirements.length ? cleanedRequirements.map(function(item) { return '• ' + item; }).join('\n') : '• ИИ не вернул шаги по документу.'
+      'Итог',
+      conclusionText
     ].join('\n');
   }
 
@@ -2726,7 +2732,7 @@
       throw new Error(payload && payload.error ? payload.error : ('Ошибка ИИ (' + response.status + ')'));
     }
     if (!isMeaningfulAiBriefPayload(payload)) {
-      throw new Error('VIP ИИ не вернул осмысленный summary. Повторите запрос.');
+      throw new Error('ИИ не вернул осмысленный краткий вывод. Повторите запрос.');
     }
     return payload;
   }
@@ -2771,18 +2777,20 @@
     var openFromModule = window.openDocumentsAiBriefSummaryModal;
     if (typeof openFromModule === 'function') {
       openFromModule(options);
-      return;
+      return Promise.resolve(true);
     }
-    ensureAiResponseModalScript()
+    return ensureAiResponseModalScript()
       .then(function() {
         if (typeof window.openDocumentsAiBriefSummaryModal !== 'function') {
           throw new Error('Модуль «Кратко ИИ» не инициализирован.');
         }
         window.openDocumentsAiBriefSummaryModal(options);
+        return true;
       })
       .catch(function(error) {
         var showStatusMessage = typeof options.showMessage === 'function' ? options.showMessage : showMessage;
         showStatusMessage('error', error && error.message ? error.message : 'Не удалось открыть «Кратко ИИ».');
+        return false;
       });
   }
 
@@ -12670,6 +12678,13 @@
       if (!attachments.length) {
         return;
       }
+      if (briefActionButton.dataset.loading === '1') {
+        return;
+      }
+      var defaultBriefLabel = 'Кратко ИИ';
+      briefActionButton.dataset.loading = '1';
+      briefActionButton.disabled = true;
+      briefActionButton.textContent = '⏳ Открываю...';
       var linkedFiles = attachments.map(function(file) {
         return {
           name: getAttachmentName(file),
@@ -12690,6 +12705,10 @@
         onBriefReady: function(source, briefText) {
           return persistDocumentFileAiBrief(doc, source, briefText);
         }
+      }).finally(function() {
+        briefActionButton.dataset.loading = '0';
+        briefActionButton.textContent = defaultBriefLabel;
+        briefActionButton.disabled = !attachments.length;
       });
     });
     actions.appendChild(briefActionButton);
@@ -13771,7 +13790,7 @@
     var header = createElement('div', 'documents-responses-header');
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
-    var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ с помощью ИИ');
+    var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ ИИ');
     var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
@@ -14248,6 +14267,29 @@
 
 
 
+    if (!window.DOCS_AI_PROMPTS || typeof window.DOCS_AI_PROMPTS !== 'object') {
+      window.DOCS_AI_PROMPTS = Object.freeze({
+        version: 'prompt-catalog-v1',
+        RESPONSE_OUTPUT_DIRECTIVE: { v1: '' },
+        VISION_QUALITY_DIRECTIVE: { v1: '' },
+        SYSTEM_TONE_PROMPTS: {
+          neutral: { value: 'neutral', label: 'Нейтральный', prompt: 'СТИЛЬ ОТВЕТА: Нейтральный деловой.\nПиши ровно, без эмоций и оценок.' },
+          aggressive: { value: 'aggressive', label: 'Агрессивный', prompt: 'СТИЛЬ ОТВЕТА: Жёсткий деловой.\nПиши прямолинейно, коротко и требовательно, без грубости и нарушений деловой этики.' },
+          calm: { value: 'calm', label: 'Спокойный', prompt: 'СТИЛЬ ОТВЕТА: Спокойный деловой.\nПиши мягко и понятно, но строго по делу.' },
+          neutral_enhanced: { value: 'neutral_enhanced', label: 'Нейтральный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Нейтральный деловой (усиленный).\nМаксимальная точность формулировок, структурный и строгий тон.' },
+          aggressive_enhanced: { value: 'aggressive_enhanced', label: 'Агрессивный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Жёсткий деловой (усиленный).\nМаксимально короткие и твёрдые формулировки, без эмоциональных вставок.' },
+          calm_enhanced: { value: 'calm_enhanced', label: 'Спокойный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Спокойный деловой (усиленный).\nПиши вежливо и понятно, сохраняя официальную точность.' }
+        },
+        DEFAULT_RESPONSE_FORMAT_LIMITS: {
+          response: { temperature: 0.2, max_tokens: 1800 },
+          response_extended: { temperature: 0.2, max_tokens: 2000 },
+          summary: { temperature: 0.3, max_tokens: 800, top_p: 0.85 },
+          vision_extract: { temperature: 0, max_tokens: 2000 }
+        },
+        DEFAULT_KEYS: { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'neutral_enhanced' }
+      });
+    }
+
     var vipAiPaidScriptPromise = null;
 
     function ensureVipAiPaidScript() {
@@ -14289,7 +14331,7 @@
           }
           if (index >= candidates.length) {
             vipAiPaidScriptPromise = null;
-            reject(new Error('Не удалось загрузить модуль VIP ИИ. Проверьте путь к docx-ai-paid.js.'));
+            reject(new Error('Не удалось загрузить модуль Ответ ИИ. Проверьте путь к docx-ai-paid.js.'));
             return;
           }
           var src = candidates[index] + '?v=' + encodeURIComponent(version);
@@ -14363,7 +14405,7 @@
       if (!aiButton) return;
       aiButton.disabled = Boolean(active);
       aiButton.classList.toggle('is-loading', Boolean(active));
-      aiButton.textContent = active ? String(text || 'Открываем ИИ…') : 'Ответ с помощью ИИ';
+      aiButton.textContent = active ? String(text || 'Открываем ИИ…') : 'Ответ ИИ';
     }
 
     function openVipAiModal() {
@@ -14381,7 +14423,7 @@
           });
         })
         .catch(function(error) {
-          showMessage('error', error && error.message ? error.message : 'Не удалось открыть VIP ИИ.');
+          showMessage('error', error && error.message ? error.message : 'Не удалось открыть Ответ ИИ.');
         })
         .finally(function() {
           setVipButtonLoading(false);
