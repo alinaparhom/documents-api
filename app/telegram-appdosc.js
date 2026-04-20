@@ -3924,8 +3924,8 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
   applyRegistrationDateHeader(card, registrationDate);
   setCardField(card, '[data-field="direction"]', task.direction);
-  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'корреспондента'));
-  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'исполнителя'));
+  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
+  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
   setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
   setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
     setTitle: false,
@@ -14898,17 +14898,13 @@ function formatDocumentCell(task) {
   return parts.length ? parts.join(' ') : '—';
 }
 
-function formatEntityDisplay(value, labelInGenitive) {
+function formatEntityDisplay(value, label) {
   const normalized = normalizeValue(value);
   if (!normalized) {
     return '';
   }
 
-  if (/^\d+$/.test(normalized)) {
-    return `ID ${labelInGenitive}: ${normalized}`;
-  }
-
-  return normalized;
+  return `${label}: ${normalized}`;
 }
 
 function dedupeExecutorNames(candidates) {
