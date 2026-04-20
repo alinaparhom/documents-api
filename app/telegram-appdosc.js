@@ -3468,7 +3468,8 @@ function updateUserPanel() {
   }
 
   if (elements.userId) {
-    elements.userId.textContent = state.telegram.id ? `ID: ${state.telegram.id}` : 'ID не определён';
+    const username = state.telegram.username ? String(state.telegram.username).replace(/^@+/, '') : '';
+    elements.userId.textContent = username ? `@${username}` : 'Telegram подключён';
   }
 
   updateVersionPanel();
@@ -5133,7 +5134,6 @@ function resolvePersonSummary(person) {
   const name = person.name
     || person.responsible
     || person.email
-    || person.telegram
     || person.id
     || '';
   const parts = [];
@@ -5145,9 +5145,6 @@ function resolvePersonSummary(person) {
   }
   if (person.email) {
     parts.push(String(person.email));
-  }
-  if (person.telegram) {
-    parts.push(`TG: ${person.telegram}`);
   }
   return parts.length ? parts.join('\n') : '—';
 }
@@ -5168,9 +5165,6 @@ function buildAssigneeLines(list, fallbackRole, emptyText) {
     const meta = [];
     if (assignee.department) {
       meta.push(assignee.department);
-    }
-    if (assignee.telegram) {
-      meta.push(`TG: ${assignee.telegram}`);
     }
     if (assignee.email) {
       meta.push(assignee.email);
@@ -12694,7 +12688,6 @@ function buildResponsibleProfile(entry) {
   const label = pickDisplayValue(
     primaryName,
     entry.department,
-    entry.telegram,
     entry.login,
     entry.email,
     entry.number,
@@ -12702,11 +12695,11 @@ function buildResponsibleProfile(entry) {
 
   const identifier = normalizeIdentifier(
     entry.id
-      || entry.telegram
-      || entry.chatId
       || entry.email
       || entry.number
-      || entry.login,
+      || entry.login
+      || entry.chatId
+      || entry.telegram,
   );
 
   const normalizedName = normalizeName(primaryName)
@@ -12727,8 +12720,6 @@ function buildResponsibleProfile(entry) {
     resolvedLabel,
     primaryName,
     entry.department,
-    entry.telegram,
-    entry.chatId,
     entry.email,
     entry.login,
     entry.number,
@@ -14885,9 +14876,6 @@ function buildSubordinateOptionLabel(entry) {
   if (normalizeValue(entry.department)) {
     meta.push(entry.department);
   }
-  if (normalizeValue(entry.chatId) && normalizeValue(entry.chatId) !== normalizeValue(entry.telegram)) {
-    meta.push(`Chat ${normalizeValue(entry.chatId)}`);
-  }
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
   }
@@ -16294,7 +16282,6 @@ function buildAssignmentFallbackLabel(entry, role) {
     || normalizeValue(entry.name)
     || normalizeValue(entry.department)
     || normalizeValue(entry.email)
-    || normalizeValue(entry.telegram)
     || normalizeValue(entry.number)
     || defaultLabel;
 
@@ -17354,6 +17341,9 @@ function setupAssignmentControls(card, task) {
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Убрать';
     removeButton.disabled = false;
+    removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
+    removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
+    removeButton.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
     actions.style.width = '100%';
@@ -18124,6 +18114,9 @@ function setupSubordinateControls(card, task) {
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Убрать';
     removeButton.disabled = false;
+    removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
+    removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
+    removeButton.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
     actions.style.width = '100%';
