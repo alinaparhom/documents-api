@@ -87,7 +87,7 @@ function getServerAiPromptsCatalog(): array
         'DEFAULT_RESPONSE_FORMAT_LIMITS' => [
             'response' => ['temperature' => 0.2, 'max_tokens' => 1800],
             'response_extended' => ['temperature' => 0.2, 'max_tokens' => 2000],
-            'summary' => ['temperature' => 0.3, 'max_tokens' => 1800, 'top_p' => 0.85],
+            'summary' => ['temperature' => 0.2, 'max_tokens' => 1800],
             'vision_extract' => ['temperature' => 0.0, 'max_tokens' => 2000],
         ],
         'DEFAULT_KEYS' => [
@@ -770,8 +770,8 @@ function callGroqTranscription(string $tmpPath, string $fileName, string $mime, 
 function getBriefAiSystemPrompt(): string
 {
     return "Сформируй результат строго в формате:\n"
-        . "Кто прислал файл: ...\n"
-        . "Кому прислали файл: ...\n"
+        . "Кто прислал: ...\n"
+        . "Кому прислали (адресат): ...\n"
         . "Краткое содержание: ...\n\n"
         . "Правила:\n"
         . "- Используй только факты из документа.\n"
