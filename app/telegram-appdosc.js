@@ -3474,7 +3474,7 @@ function updateUserPanel() {
 
   if (elements.userRole) {
     const role = normalizeValue(state.telegram.role);
-    elements.userRole.textContent = role || 'Должность не указана';
+    elements.userRole.textContent = role ? `Роль: ${role}` : 'Роль: не указана';
   }
 
   updateVersionPanel();
@@ -17370,7 +17370,7 @@ function setupAssignmentControls(card, task) {
     commentInput.rows = 2;
     commentInput.maxLength = 500;
     commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    commentInput.style.fontSize = '18px';
+    commentInput.style.fontSize = '15px';
     commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
@@ -18205,7 +18205,7 @@ function setupSubordinateControls(card, task) {
     commentInput.rows = 2;
     commentInput.maxLength = 500;
     commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    commentInput.style.fontSize = '18px';
+    commentInput.style.fontSize = '15px';
     commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
