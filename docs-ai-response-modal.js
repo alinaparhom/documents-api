@@ -2083,7 +2083,11 @@
     }
 
     var prepared = await buildBriefVisionPayloadFromFile(file, function(message) { setStatus(message, 'loading'); });
-    var prompt = 'Сделай полный вывод по всему документу без потери важных деталей. Количество предложений выбирай по контексту.';
+    var prompt = 'Верни строго 3 строки:
+Кто прислал: ...
+Кому прислал: ...
+Краткое содержание: ... (2–5 предложений)
+Если данных нет — не указано. Только факты из документа.';
 
     if (prepared.kind === 'text') {
       var text = briefNormalizeValue(prepared.extractedText);
