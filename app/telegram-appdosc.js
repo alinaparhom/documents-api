@@ -16970,16 +16970,43 @@ function setupAssignmentControls(card, task) {
     return;
   }
 
-  const searchInput = container.querySelector('[data-card-assignee-search]');
+  const comboInput = container.querySelector('[data-card-assignee-combo]');
+  const optionsList = container.querySelector('[data-card-assignee-options]');
   const searchMeta = container.querySelector('[data-card-assignee-search-meta]');
-  const select = container.querySelector('[data-card-assignee-select]');
   const entriesContainer = container.querySelector('[data-card-assignee-entries]');
   const bulkButton = container.querySelector('[data-card-assign-submit]');
   const bulkCount = container.querySelector('[data-card-assign-count]');
-  if (!searchInput || !searchMeta || !select || !entriesContainer || !bulkButton || !bulkCount) {
+  if (!comboInput || !optionsList || !searchMeta || !entriesContainer || !bulkButton || !bulkCount) {
     container.remove();
     return;
   }
+  const comboWrapper = comboInput.closest('.appdosc-card__assign-selector');
+  if (comboWrapper) {
+    comboWrapper.style.position = 'relative';
+  }
+  comboInput.style.width = '100%';
+  comboInput.style.minHeight = '42px';
+  comboInput.style.padding = '10px 12px';
+  comboInput.style.borderRadius = '12px';
+  comboInput.style.fontSize = '14px';
+  comboInput.style.lineHeight = '1.35';
+  comboInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  optionsList.hidden = true;
+  optionsList.style.position = 'absolute';
+  optionsList.style.left = '0';
+  optionsList.style.right = '0';
+  optionsList.style.top = 'calc(100% + 8px)';
+  optionsList.style.zIndex = '50';
+  optionsList.style.marginTop = '0';
+  optionsList.style.maxHeight = '180px';
+  optionsList.style.overflowY = 'auto';
+  optionsList.style.borderRadius = '12px';
+  optionsList.style.border = '1px solid rgba(122, 168, 255, 0.45)';
+  optionsList.style.background = 'rgba(12, 26, 62, 0.96)';
+  optionsList.style.backdropFilter = 'blur(10px)';
+  optionsList.style.webkitBackdropFilter = 'blur(10px)';
+  optionsList.style.boxShadow = '0 12px 28px rgba(2, 9, 24, 0.42)';
+  optionsList.style.padding = '4px';
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
@@ -17077,20 +17104,20 @@ function setupAssignmentControls(card, task) {
     searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
-  const populateSelectOptions = () => {
-    select.innerHTML = '';
+  let visibleAssigneeOptions = [];
+  const hideOptionsList = () => {
+    optionsList.hidden = true;
+  };
 
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Выберите ответственного';
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
+  const populateComboOptions = () => {
+    optionsList.innerHTML = '';
+    visibleAssigneeOptions = [];
 
-    const query = normalizeValue(searchInput.value).toLowerCase();
+    const query = normalizeValue(comboInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
     let visibleCount = 0;
+
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildResponsibleOptionLabel(entry);
@@ -17108,13 +17135,37 @@ function setupAssignmentControls(card, task) {
       }
 
       visibleCount += 1;
-      const option = document.createElement('option');
-      option.value = value;
+      visibleAssigneeOptions.push({ value, label, entry });
+
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.dataset.assigneeValue = value;
       option.textContent = label;
-      select.appendChild(option);
+      option.style.width = '100%';
+      option.style.textAlign = 'left';
+      option.style.background = 'transparent';
+      option.style.border = 'none';
+      option.style.color = '#f8fbff';
+      option.style.fontSize = '14px';
+      option.style.lineHeight = '1.35';
+      option.style.padding = '8px 10px';
+      option.style.borderRadius = '8px';
+      option.style.cursor = 'pointer';
+      option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      option.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        handleAssigneeSelection(value);
+      });
+      option.addEventListener('mouseenter', () => {
+        option.style.background = 'rgba(63, 141, 255, 0.24)';
+      });
+      option.addEventListener('mouseleave', () => {
+        option.style.background = 'transparent';
+      });
+      optionsList.appendChild(option);
     });
 
-    select.disabled = visibleCount === 0;
+    optionsList.hidden = visibleCount === 0;
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -17252,6 +17303,9 @@ function setupAssignmentControls(card, task) {
     commentInput.placeholder = 'Комментарий для ответственного';
     commentInput.rows = 2;
     commentInput.maxLength = 500;
+    commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    commentInput.style.fontSize = '18px';
+    commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
     }
@@ -17291,7 +17345,12 @@ function setupAssignmentControls(card, task) {
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
     deadlineInput.style.width = '100%';
+    deadlineInput.style.minWidth = '0';
+    deadlineInput.style.minHeight = '50px';
     deadlineInput.style.boxSizing = 'border-box';
+    deadlineInput.style.padding = '12px 14px';
+    deadlineInput.style.borderRadius = '16px';
+    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -17630,7 +17689,7 @@ function setupAssignmentControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
-  populateSelectOptions();
+  populateComboOptions();
 
   currentIdentifiers.forEach((identifier) => {
     if (renderedAssignedKeys.has(identifier)) {
@@ -17674,18 +17733,20 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('input', () => {
-    populateSelectOptions();
-  });
+  const handleAssigneeSelection = (preferredValue = '') => {
+    const inputValue = normalizeValue(preferredValue || comboInput.value);
+    const selectedOption = visibleAssigneeOptions.find((option) => (
+      normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
+      || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
+    )) || visibleAssigneeOptions[0] || null;
 
-  select.addEventListener('change', () => {
-    const selectedValue = normalizeValue(select.value);
+    const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
       return;
     }
 
     const normalizedValue = normalizeIdentifier(selectedValue);
-    logAssignmentEvent('select_change', {
+    logAssignmentEvent('combo_select', {
       taskId: task.id || null,
       organization,
       selectedValue,
@@ -17708,7 +17769,7 @@ function setupAssignmentControls(card, task) {
     const alreadyAssigned = knownKeys.some((candidate) => existingKeys.has(candidate) || assignedKeyRegistry.has(candidate));
 
     if (existingRow || alreadyAssigned) {
-      logAssignmentEvent('select_duplicate', {
+      logAssignmentEvent('combo_duplicate', {
         taskId: task.id || null,
         organization,
         selectedValue,
@@ -17720,19 +17781,21 @@ function setupAssignmentControls(card, task) {
         existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
       setStatus('info', 'Ответственный уже назначен.');
-      select.selectedIndex = 0;
+      comboInput.value = '';
+      populateComboOptions();
       return;
     }
 
-    let label = '';
-    let referenceEntry = null;
-    if (normalizedValue && directory.has(normalizedValue)) {
+    let label = selectedOption ? selectedOption.label : '';
+    let referenceEntry = selectedOption ? selectedOption.entry : null;
+    if (!referenceEntry && normalizedValue && directory.has(normalizedValue)) {
       const directorySnapshot = directory.get(normalizedValue);
-      label = directorySnapshot.label;
+      label = label || directorySnapshot.label;
       referenceEntry = directorySnapshot.entry || null;
-    } else {
+    }
+    if (!referenceEntry) {
       referenceEntry = findAssignmentEntryByIdentifier(assignmentCandidates, normalizedValue || selectedValue.toLowerCase());
-      if (referenceEntry && typeof referenceEntry === 'object') {
+      if (!label && referenceEntry && typeof referenceEntry === 'object') {
         label = buildResponsibleOptionLabel(referenceEntry);
       }
     }
@@ -17741,7 +17804,7 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!resolveEntryTelegramId(referenceEntry)) {
-      logAssignmentEvent('select_missing_telegram', {
+      logAssignmentEvent('combo_missing_telegram', {
         taskId: task.id || null,
         organization,
         selectedValue,
@@ -17751,7 +17814,8 @@ function setupAssignmentControls(card, task) {
           : [],
       });
       setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      select.selectedIndex = 0;
+      comboInput.value = '';
+      populateComboOptions();
       return;
     }
 
@@ -17769,7 +17833,7 @@ function setupAssignmentControls(card, task) {
       instruction,
       referenceEntry,
     });
-    logAssignmentEvent('select_row_created', {
+    logAssignmentEvent('combo_row_created', {
       taskId: task.id || null,
       organization,
       selectedValue,
@@ -17779,7 +17843,38 @@ function setupAssignmentControls(card, task) {
       dueDate: due || null,
       instruction: instruction || null,
     });
-    select.selectedIndex = 0;
+    comboInput.value = '';
+    populateComboOptions();
+    hideOptionsList();
+  };
+
+  comboInput.addEventListener('input', () => {
+    const wasOpen = !optionsList.hidden;
+    populateComboOptions();
+    if (wasOpen && visibleAssigneeOptions.length > 0) {
+      optionsList.hidden = false;
+    }
+  });
+
+  comboInput.addEventListener('click', () => {
+    populateComboOptions();
+    optionsList.hidden = visibleAssigneeOptions.length === 0;
+  });
+
+  comboInput.addEventListener('change', () => {
+    handleAssigneeSelection(comboInput.value);
+  });
+
+  comboInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    handleAssigneeSelection(comboInput.value);
+  });
+
+  comboInput.addEventListener('blur', () => {
+    setTimeout(hideOptionsList, 120);
   });
 
   container.hidden = false;
@@ -18040,6 +18135,9 @@ function setupSubordinateControls(card, task) {
     commentInput.placeholder = 'Комментарий для подчинённого';
     commentInput.rows = 2;
     commentInput.maxLength = 500;
+    commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    commentInput.style.fontSize = '18px';
+    commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
     }
@@ -18064,7 +18162,12 @@ function setupSubordinateControls(card, task) {
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
     deadlineInput.style.width = '100%';
+    deadlineInput.style.minWidth = '0';
+    deadlineInput.style.minHeight = '50px';
     deadlineInput.style.boxSizing = 'border-box';
+    deadlineInput.style.padding = '12px 14px';
+    deadlineInput.style.borderRadius = '16px';
+    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
