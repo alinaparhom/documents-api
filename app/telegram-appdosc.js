@@ -3199,7 +3199,7 @@ async function loadTasks(force = false) {
       const message = state.error || 'Отрисовка карточек завершилась ошибкой';
       throw new Error(message);
     }
-    setStatus('success', `Найдено задач: ${state.stats.total}`);
+    setStatus('info', `Найдено задач: ${state.stats.total}`);
     logClientEvent('tasks_loaded', {
       total: state.stats.total,
       active: state.stats.active,
@@ -18025,8 +18025,7 @@ function setupSubordinateControls(card, task) {
   }
 
   const subordinates = getSubordinatesForOrganization(organization);
-  const responsibles = getResponsiblesForOrganization(organization);
-  const assignmentCandidates = buildAssignmentCandidateList(responsibles, subordinates);
+  const assignmentCandidates = buildAssignmentCandidateList([], subordinates);
   const canManageSubordinates = userIsDirectorForOrganization(organization)
     || userIsResponsibleForTask(task)
     || assignmentCandidates.length > 0;
