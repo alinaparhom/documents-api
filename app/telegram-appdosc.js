@@ -16985,10 +16985,10 @@ function setupAssignmentControls(card, task) {
     comboWrapper.style.position = 'relative';
   }
   comboInput.style.width = '100%';
-  comboInput.style.minHeight = '48px';
-  comboInput.style.padding = '12px 14px';
-  comboInput.style.borderRadius = '14px';
-  comboInput.style.fontSize = '16px';
+  comboInput.style.minHeight = '42px';
+  comboInput.style.padding = '10px 12px';
+  comboInput.style.borderRadius = '12px';
+  comboInput.style.fontSize = '14px';
   comboInput.style.lineHeight = '1.35';
   comboInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   optionsList.hidden = true;
@@ -16998,9 +16998,9 @@ function setupAssignmentControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '220px';
+  optionsList.style.maxHeight = '180px';
   optionsList.style.overflowY = 'auto';
-  optionsList.style.borderRadius = '14px';
+  optionsList.style.borderRadius = '12px';
   optionsList.style.border = '1px solid rgba(122, 168, 255, 0.45)';
   optionsList.style.background = 'rgba(12, 26, 62, 0.96)';
   optionsList.style.backdropFilter = 'blur(10px)';
@@ -17146,10 +17146,10 @@ function setupAssignmentControls(card, task) {
       option.style.background = 'transparent';
       option.style.border = 'none';
       option.style.color = '#f8fbff';
-      option.style.fontSize = '16px';
+      option.style.fontSize = '14px';
       option.style.lineHeight = '1.35';
-      option.style.padding = '10px 12px';
-      option.style.borderRadius = '10px';
+      option.style.padding = '8px 10px';
+      option.style.borderRadius = '8px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       option.addEventListener('pointerdown', (event) => {
@@ -17849,24 +17849,16 @@ function setupAssignmentControls(card, task) {
   };
 
   comboInput.addEventListener('input', () => {
+    const wasOpen = !optionsList.hidden;
     populateComboOptions();
-    if (visibleAssigneeOptions.length > 0) {
-      optionsList.hidden = false;
-    }
-  });
-
-  comboInput.addEventListener('focus', () => {
-    populateComboOptions();
-    if (visibleAssigneeOptions.length > 0) {
+    if (wasOpen && visibleAssigneeOptions.length > 0) {
       optionsList.hidden = false;
     }
   });
 
   comboInput.addEventListener('click', () => {
     populateComboOptions();
-    if (visibleAssigneeOptions.length > 0) {
-      optionsList.hidden = false;
-    }
+    optionsList.hidden = visibleAssigneeOptions.length === 0;
   });
 
   comboInput.addEventListener('change', () => {
