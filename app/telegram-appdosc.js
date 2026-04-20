@@ -17735,6 +17735,7 @@ function setupAssignmentControls(card, task) {
   updateBulkState();
 
   populateComboOptions();
+  hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {
     if (renderedAssignedKeys.has(identifier)) {
