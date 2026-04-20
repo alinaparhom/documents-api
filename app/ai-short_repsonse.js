@@ -23,7 +23,26 @@ export function createTelegramBriefAi(deps = {}) {
   let briefPdfJsLoader = null;
 
   function toBriefSummaryText(value) {
-    return String(value || '');
+    const source = String(value || '').replace(/\r\n/g, '\n').replace(/\u0000/g, '');
+    if (!source.trim()) return '';
+
+    const shortByMarker = (() => {
+      const markerPattern = /(краткое\s+содержание\s*:?\s*)/i;
+      const match = source.match(markerPattern);
+      if (!match || typeof match.index !== 'number') return '';
+      const startIndex = match.index + match[0].length;
+      return source.slice(startIndex);
+    })();
+
+    const cleaned = String(shortByMarker || source)
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
+      .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/(?:\n|\s)*(закрыть@?|@)\s*$/i, '')
+      .trim();
+
+    return cleaned || source.trim();
   }
 
   async function postGroqPaidWithFallback(createFormData) {
@@ -671,8 +690,12 @@ export function createTelegramBriefAi(deps = {}) {
   }
 
   function renderTelegramBriefPreview(container, payload) {
-    const summaryText = String(payload && payload.summary || '') || extractTelegramPlainAiBriefText(payload);
-    container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
+    const summaryText = toBriefSummaryText(String(payload && payload.summary || '') || extractTelegramPlainAiBriefText(payload));
+    container.innerHTML = '';
+    const textNode = document.createElement('p');
+    textNode.className = 'appdosc-brief-ai__placeholder';
+    textNode.textContent = summaryText || 'Пустой ответ от ИИ.';
+    container.appendChild(textNode);
   }
 
   const openTelegramBriefModal = function openTelegramBriefModal(task, statusHandler) {
