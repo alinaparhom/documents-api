@@ -11090,7 +11090,18 @@ function normalizeValue(value) {
 function normalizeBriefText(value) {
   const source = value === null || value === undefined ? '' : String(value);
   const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '');
-  return normalized.trim() ? normalized : '';
+  const trimmed = normalized.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const compact = trimmed.toLowerCase().replace(/\s+/g, ' ').replace(/^0+\s*/, '');
+  const hasSenderUnknown = /кто прислал[^:]*:\s*не указано/.test(compact);
+  const hasRecipientUnknown = /кому прислал[^:]*:\s*не указано/.test(compact) || /кому прислали[^:]*:\s*не указано/.test(compact);
+  const hasSummaryUnknown = /краткое содержание[^:]*:\s*не указано/.test(compact);
+  if (hasSenderUnknown && hasRecipientUnknown && hasSummaryUnknown) {
+    return '';
+  }
+  return trimmed;
 }
 
 function normalizeAssignmentComment(value) {
