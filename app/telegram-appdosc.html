@@ -613,12 +613,11 @@
                 type="search"
                 class="appdosc-card__assign-search"
                 data-card-assignee-combo
-                list="appdosc-assignee-list"
                 placeholder="Начните вводить ФИО или выберите из списка"
                 aria-label="Поиск и выбор ответственного"
                 autocomplete="off"
               />
-              <datalist data-card-assignee-options></datalist>
+              <div class="appdosc-card__assign-combo-list" data-card-assignee-options role="listbox" hidden></div>
               <span class="appdosc-card__assign-search-meta" data-card-assignee-search-meta></span>
             </label>
             <div class="appdosc-card__assign-entries" data-card-assignee-entries></div>

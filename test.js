@@ -13270,9 +13270,17 @@ function setupAssignmentControls(card, task) {
     container.remove();
     return;
   }
-  const comboListId = `appdosc-assignee-list-${normalizeValue(task.id) || Math.random().toString(36).slice(2)}`;
-  optionsList.id = comboListId;
-  comboInput.setAttribute('list', comboListId);
+  optionsList.hidden = true;
+  optionsList.style.marginTop = '8px';
+  optionsList.style.maxHeight = '220px';
+  optionsList.style.overflowY = 'auto';
+  optionsList.style.borderRadius = '14px';
+  optionsList.style.border = '1px solid rgba(122, 168, 255, 0.45)';
+  optionsList.style.background = 'rgba(12, 26, 62, 0.96)';
+  optionsList.style.backdropFilter = 'blur(10px)';
+  optionsList.style.webkitBackdropFilter = 'blur(10px)';
+  optionsList.style.boxShadow = '0 12px 28px rgba(2, 9, 24, 0.42)';
+  optionsList.style.padding = '4px';
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
@@ -13371,6 +13379,10 @@ function setupAssignmentControls(card, task) {
   };
 
   let visibleAssigneeOptions = [];
+  const hideOptionsList = () => {
+    optionsList.hidden = true;
+  };
+
   const populateComboOptions = () => {
     optionsList.innerHTML = '';
     visibleAssigneeOptions = [];
@@ -13398,11 +13410,35 @@ function setupAssignmentControls(card, task) {
       visibleCount += 1;
       visibleAssigneeOptions.push({ value, label, entry });
 
-      const option = document.createElement('option');
-      option.value = label;
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.dataset.assigneeValue = value;
+      option.textContent = label;
+      option.style.width = '100%';
+      option.style.textAlign = 'left';
+      option.style.background = 'transparent';
+      option.style.border = 'none';
+      option.style.color = '#f8fbff';
+      option.style.fontSize = '16px';
+      option.style.lineHeight = '1.35';
+      option.style.padding = '10px 12px';
+      option.style.borderRadius = '10px';
+      option.style.cursor = 'pointer';
+      option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      option.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        handleAssigneeSelection(value);
+      });
+      option.addEventListener('mouseenter', () => {
+        option.style.background = 'rgba(63, 141, 255, 0.24)';
+      });
+      option.addEventListener('mouseleave', () => {
+        option.style.background = 'transparent';
+      });
       optionsList.appendChild(option);
     });
 
+    optionsList.hidden = visibleCount === 0;
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -14058,10 +14094,21 @@ function setupAssignmentControls(card, task) {
     });
     comboInput.value = '';
     populateComboOptions();
+    hideOptionsList();
   };
 
   comboInput.addEventListener('input', () => {
     populateComboOptions();
+    if (visibleAssigneeOptions.length > 0) {
+      optionsList.hidden = false;
+    }
+  });
+
+  comboInput.addEventListener('focus', () => {
+    populateComboOptions();
+    if (visibleAssigneeOptions.length > 0) {
+      optionsList.hidden = false;
+    }
   });
 
   comboInput.addEventListener('change', () => {
@@ -14074,6 +14121,10 @@ function setupAssignmentControls(card, task) {
     }
     event.preventDefault();
     handleAssigneeSelection(comboInput.value);
+  });
+
+  comboInput.addEventListener('blur', () => {
+    setTimeout(hideOptionsList, 120);
   });
 
   container.hidden = false;
