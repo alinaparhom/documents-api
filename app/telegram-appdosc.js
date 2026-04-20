@@ -16983,14 +16983,21 @@ function setupAssignmentControls(card, task) {
   const comboWrapper = comboInput.closest('.appdosc-card__assign-selector');
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
+    comboWrapper.style.marginBottom = '2px';
   }
+  comboInput.classList.add('appdosc-card__assign-search--combo');
+  optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   comboInput.style.width = '100%';
-  comboInput.style.minHeight = '42px';
-  comboInput.style.padding = '10px 12px';
+  comboInput.style.minHeight = '40px';
+  comboInput.style.padding = '9px 12px';
   comboInput.style.borderRadius = '12px';
+  comboInput.style.border = '1px solid rgba(110, 154, 255, 0.35)';
+  comboInput.style.background = 'rgba(255, 255, 255, 0.72)';
+  comboInput.style.color = '#12325f';
   comboInput.style.fontSize = '14px';
   comboInput.style.lineHeight = '1.35';
   comboInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  comboInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
   optionsList.hidden = true;
   optionsList.style.position = 'absolute';
   optionsList.style.left = '0';
@@ -16998,15 +17005,16 @@ function setupAssignmentControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '180px';
+  optionsList.style.maxHeight = '196px';
   optionsList.style.overflowY = 'auto';
   optionsList.style.borderRadius = '12px';
-  optionsList.style.border = '1px solid rgba(122, 168, 255, 0.45)';
-  optionsList.style.background = 'rgba(12, 26, 62, 0.96)';
+  optionsList.style.border = '1px solid rgba(110, 154, 255, 0.4)';
+  optionsList.style.background = 'rgba(255, 255, 255, 0.92)';
   optionsList.style.backdropFilter = 'blur(10px)';
   optionsList.style.webkitBackdropFilter = 'blur(10px)';
-  optionsList.style.boxShadow = '0 12px 28px rgba(2, 9, 24, 0.42)';
-  optionsList.style.padding = '4px';
+  optionsList.style.boxShadow = '0 12px 28px rgba(42, 82, 150, 0.18)';
+  optionsList.style.padding = '6px';
+  optionsList.style.webkitOverflowScrolling = 'touch';
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
@@ -17097,7 +17105,7 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!query) {
-      searchMeta.textContent = `Показаны все: ${visibleCount}`;
+      searchMeta.textContent = `Все ответственные: ${visibleCount}`;
       return;
     }
 
@@ -17105,8 +17113,13 @@ function setupAssignmentControls(card, task) {
   };
 
   let visibleAssigneeOptions = [];
+  const setComboExpanded = (expanded) => {
+    comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    comboInput.dataset.expanded = expanded ? 'true' : 'false';
+  };
   const hideOptionsList = () => {
     optionsList.hidden = true;
+    setComboExpanded(false);
   };
 
   const populateComboOptions = () => {
@@ -17139,33 +17152,38 @@ function setupAssignmentControls(card, task) {
 
       const option = document.createElement('button');
       option.type = 'button';
+      option.className = 'appdosc-card__assign-option';
       option.dataset.assigneeValue = value;
       option.textContent = label;
       option.style.width = '100%';
       option.style.textAlign = 'left';
-      option.style.background = 'transparent';
-      option.style.border = 'none';
-      option.style.color = '#f8fbff';
+      option.style.background = 'rgba(255, 255, 255, 0.5)';
+      option.style.border = '1px solid rgba(114, 157, 255, 0.2)';
+      option.style.color = '#1c3762';
       option.style.fontSize = '14px';
       option.style.lineHeight = '1.35';
-      option.style.padding = '8px 10px';
-      option.style.borderRadius = '8px';
+      option.style.padding = '10px 12px';
+      option.style.minHeight = '46px';
+      option.style.borderRadius = '10px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      option.style.marginBottom = '4px';
+      option.style.touchAction = 'manipulation';
       option.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         handleAssigneeSelection(value);
       });
       option.addEventListener('mouseenter', () => {
-        option.style.background = 'rgba(63, 141, 255, 0.24)';
+        option.style.background = 'rgba(134, 180, 255, 0.22)';
       });
       option.addEventListener('mouseleave', () => {
-        option.style.background = 'transparent';
+        option.style.background = 'rgba(255, 255, 255, 0.5)';
       });
       optionsList.appendChild(option);
     });
 
     optionsList.hidden = visibleCount === 0;
+    setComboExpanded(visibleCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -17853,12 +17871,20 @@ function setupAssignmentControls(card, task) {
     populateComboOptions();
     if (wasOpen && visibleAssigneeOptions.length > 0) {
       optionsList.hidden = false;
+      setComboExpanded(true);
     }
+  });
+
+  comboInput.addEventListener('focus', () => {
+    populateComboOptions();
+    optionsList.hidden = visibleAssigneeOptions.length === 0;
+    setComboExpanded(visibleAssigneeOptions.length > 0);
   });
 
   comboInput.addEventListener('click', () => {
     populateComboOptions();
     optionsList.hidden = visibleAssigneeOptions.length === 0;
+    setComboExpanded(visibleAssigneeOptions.length > 0);
   });
 
   comboInput.addEventListener('change', () => {
