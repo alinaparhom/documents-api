@@ -16998,7 +16998,7 @@ function setupAssignmentControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '180px';
+  optionsList.style.maxHeight = '192px';
   optionsList.style.overflowY = 'auto';
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = '1px solid rgba(122, 168, 255, 0.45)';
@@ -17089,19 +17089,53 @@ function setupAssignmentControls(card, task) {
   currentIdentifiers.forEach(registerAssignedKey);
 
   const updateSearchMeta = (query, visibleCount, totalCount) => {
+    const rowStats = applyUnifiedAssigneeFilter(query);
+    const rowMeta = rowStats.totalRows > 0
+      ? ` • в назначенных: ${rowStats.visibleRows} из ${rowStats.totalRows}`
+      : '';
+
     if (visibleCount <= 0) {
       searchMeta.textContent = query
-        ? 'Совпадений не найдено. Попробуйте изменить запрос.'
+        ? `Совпадений в списке нет${rowMeta}. Попробуйте другой запрос.`
         : 'Нет доступных пользователей для выбора.';
       return;
     }
 
     if (!query) {
-      searchMeta.textContent = `Показаны все: ${visibleCount}`;
+      searchMeta.textContent = `Показаны все: ${visibleCount}${rowMeta}`;
       return;
     }
 
-    searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
+    searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}${rowMeta}`;
+  };
+
+  const applyUnifiedAssigneeFilter = (queryValue = '') => {
+    const query = normalizeValue(queryValue).toLowerCase();
+    const rows = Array.from(entriesContainer.querySelectorAll('[data-assignee-entry="true"]'));
+    let visibleRows = 0;
+
+    rows.forEach((row) => {
+      const valueText = normalizeValue(row.dataset.assigneeValue).toLowerCase();
+      const normalizedText = normalizeValue(row.dataset.assigneeNormalized).toLowerCase();
+      const nameText = normalizeValue(row.querySelector('.appdosc-card__assign-name')?.textContent).toLowerCase();
+      const commentText = normalizeValue(row.querySelector('.appdosc-card__assign-comment-input')?.value).toLowerCase();
+
+      const matches = !query
+        || valueText.includes(query)
+        || normalizedText.includes(query)
+        || nameText.includes(query)
+        || commentText.includes(query);
+
+      row.hidden = !matches;
+      if (matches) {
+        visibleRows += 1;
+      }
+    });
+
+    return {
+      visibleRows,
+      totalRows: rows.length,
+    };
   };
 
   let visibleAssigneeOptions = [];
@@ -17149,6 +17183,9 @@ function setupAssignmentControls(card, task) {
       option.style.fontSize = '14px';
       option.style.lineHeight = '1.35';
       option.style.padding = '8px 10px';
+      option.style.minHeight = '44px';
+      option.style.display = 'flex';
+      option.style.alignItems = 'center';
       option.style.borderRadius = '8px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
