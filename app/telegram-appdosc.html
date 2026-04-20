@@ -612,19 +612,14 @@
               <input
                 type="search"
                 class="appdosc-card__assign-search"
-                data-card-assignee-search
+                data-card-assignee-combo
+                list="appdosc-assignee-list"
                 placeholder="Начните вводить ФИО или выберите из списка"
                 aria-label="Поиск и выбор ответственного"
                 autocomplete="off"
               />
+              <datalist data-card-assignee-options></datalist>
               <span class="appdosc-card__assign-search-meta" data-card-assignee-search-meta></span>
-              <select
-                class="appdosc-card__assign-select"
-                data-card-assignee-select
-                aria-label="Список ответственных для выбора"
-              >
-                <option value="">Выберите из списка ниже</option>
-              </select>
             </label>
             <div class="appdosc-card__assign-entries" data-card-assignee-entries></div>
             <div class="appdosc-card__assign-bulk">

@@ -16970,16 +16970,19 @@ function setupAssignmentControls(card, task) {
     return;
   }
 
-  const searchInput = container.querySelector('[data-card-assignee-search]');
+  const comboInput = container.querySelector('[data-card-assignee-combo]');
+  const optionsList = container.querySelector('[data-card-assignee-options]');
   const searchMeta = container.querySelector('[data-card-assignee-search-meta]');
-  const select = container.querySelector('[data-card-assignee-select]');
   const entriesContainer = container.querySelector('[data-card-assignee-entries]');
   const bulkButton = container.querySelector('[data-card-assign-submit]');
   const bulkCount = container.querySelector('[data-card-assign-count]');
-  if (!searchInput || !searchMeta || !select || !entriesContainer || !bulkButton || !bulkCount) {
+  if (!comboInput || !optionsList || !searchMeta || !entriesContainer || !bulkButton || !bulkCount) {
     container.remove();
     return;
   }
+  const comboListId = `appdosc-assignee-list-${normalizeValue(task.id) || Math.random().toString(36).slice(2)}`;
+  optionsList.id = comboListId;
+  comboInput.setAttribute('list', comboListId);
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
@@ -17077,20 +17080,16 @@ function setupAssignmentControls(card, task) {
     searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
-  const populateSelectOptions = () => {
-    select.innerHTML = '';
+  let visibleAssigneeOptions = [];
+  const populateComboOptions = () => {
+    optionsList.innerHTML = '';
+    visibleAssigneeOptions = [];
 
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Выберите ответственного';
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
-
-    const query = normalizeValue(searchInput.value).toLowerCase();
+    const query = normalizeValue(comboInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
     let visibleCount = 0;
+
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildResponsibleOptionLabel(entry);
@@ -17108,13 +17107,13 @@ function setupAssignmentControls(card, task) {
       }
 
       visibleCount += 1;
+      visibleAssigneeOptions.push({ value, label, entry });
+
       const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      select.appendChild(option);
+      option.value = label;
+      optionsList.appendChild(option);
     });
 
-    select.disabled = visibleCount === 0;
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -17638,7 +17637,7 @@ function setupAssignmentControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
-  populateSelectOptions();
+  populateComboOptions();
 
   currentIdentifiers.forEach((identifier) => {
     if (renderedAssignedKeys.has(identifier)) {
@@ -17682,18 +17681,20 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('input', () => {
-    populateSelectOptions();
-  });
+  const handleAssigneeSelection = (preferredValue = '') => {
+    const inputValue = normalizeValue(preferredValue || comboInput.value);
+    const selectedOption = visibleAssigneeOptions.find((option) => (
+      normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
+      || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
+    )) || visibleAssigneeOptions[0] || null;
 
-  select.addEventListener('change', () => {
-    const selectedValue = normalizeValue(select.value);
+    const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
       return;
     }
 
     const normalizedValue = normalizeIdentifier(selectedValue);
-    logAssignmentEvent('select_change', {
+    logAssignmentEvent('combo_select', {
       taskId: task.id || null,
       organization,
       selectedValue,
@@ -17716,7 +17717,7 @@ function setupAssignmentControls(card, task) {
     const alreadyAssigned = knownKeys.some((candidate) => existingKeys.has(candidate) || assignedKeyRegistry.has(candidate));
 
     if (existingRow || alreadyAssigned) {
-      logAssignmentEvent('select_duplicate', {
+      logAssignmentEvent('combo_duplicate', {
         taskId: task.id || null,
         organization,
         selectedValue,
@@ -17728,19 +17729,21 @@ function setupAssignmentControls(card, task) {
         existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
       setStatus('info', 'Ответственный уже назначен.');
-      select.selectedIndex = 0;
+      comboInput.value = '';
+      populateComboOptions();
       return;
     }
 
-    let label = '';
-    let referenceEntry = null;
-    if (normalizedValue && directory.has(normalizedValue)) {
+    let label = selectedOption ? selectedOption.label : '';
+    let referenceEntry = selectedOption ? selectedOption.entry : null;
+    if (!referenceEntry && normalizedValue && directory.has(normalizedValue)) {
       const directorySnapshot = directory.get(normalizedValue);
-      label = directorySnapshot.label;
+      label = label || directorySnapshot.label;
       referenceEntry = directorySnapshot.entry || null;
-    } else {
+    }
+    if (!referenceEntry) {
       referenceEntry = findAssignmentEntryByIdentifier(assignmentCandidates, normalizedValue || selectedValue.toLowerCase());
-      if (referenceEntry && typeof referenceEntry === 'object') {
+      if (!label && referenceEntry && typeof referenceEntry === 'object') {
         label = buildResponsibleOptionLabel(referenceEntry);
       }
     }
@@ -17749,7 +17752,7 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!resolveEntryTelegramId(referenceEntry)) {
-      logAssignmentEvent('select_missing_telegram', {
+      logAssignmentEvent('combo_missing_telegram', {
         taskId: task.id || null,
         organization,
         selectedValue,
@@ -17759,7 +17762,8 @@ function setupAssignmentControls(card, task) {
           : [],
       });
       setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      select.selectedIndex = 0;
+      comboInput.value = '';
+      populateComboOptions();
       return;
     }
 
@@ -17777,7 +17781,7 @@ function setupAssignmentControls(card, task) {
       instruction,
       referenceEntry,
     });
-    logAssignmentEvent('select_row_created', {
+    logAssignmentEvent('combo_row_created', {
       taskId: task.id || null,
       organization,
       selectedValue,
@@ -17787,7 +17791,24 @@ function setupAssignmentControls(card, task) {
       dueDate: due || null,
       instruction: instruction || null,
     });
-    select.selectedIndex = 0;
+    comboInput.value = '';
+    populateComboOptions();
+  };
+
+  comboInput.addEventListener('input', () => {
+    populateComboOptions();
+  });
+
+  comboInput.addEventListener('change', () => {
+    handleAssigneeSelection(comboInput.value);
+  });
+
+  comboInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    handleAssigneeSelection(comboInput.value);
   });
 
   container.hidden = false;
