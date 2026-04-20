@@ -2170,8 +2170,8 @@
         }
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-          max_tokens: 700,
-          temperature: 0.2,
+          max_tokens: 1800,
+          temperature: 0.3,
           messages: [{ role: 'user', content: [{ type: 'text', text: (isPdfSource
             ? 'Извлеки текст с изображений страниц максимально дословно. Ничего не сокращай и не пересказывай.'
             : (prepared.messageText || prompt)) + '\\n\\nБлок ' + (batchIndex + 1) + ' из ' + imageBatches.length + '.' }].concat(currentBatch.map(function(item) { return { type: 'image_url', image_url: { url: item.dataUrl } }; })) }]

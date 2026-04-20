@@ -2292,14 +2292,7 @@
   }
 
   function formatAiBriefForStorage(text) {
-    var normalized = normalizeAiBriefText(text || '');
-    if (!normalized) {
-      return '';
-    }
-    return normalized
-      .replace(/([^\n])\s+(\d+[.)]\s+)/g, '$1\n$2')
-      .replace(/([^\n])\s+([•\-]\s+)/g, '$1\n$2')
-      .replace(/\n{3,}/g, '\n\n');
+    return normalizeAiBriefText(text || '');
   }
 
   function getAttachmentAiBrief(file) {
@@ -2395,10 +2388,7 @@
     if (!text) {
       text = normalizeAiBriefText(extractPlainAiBriefText(payload));
     }
-    if (!text) {
-      text = normalizeAiBriefText(buildAiConclusionFromPayload(payload, ''));
-    }
-    return formatAiBriefForStorage(text);
+    return normalizeAiBriefText(text);
   }
 
   async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress, onItemResolved) {
@@ -2446,7 +2436,7 @@
           });
         }
       }
-      briefText = formatAiBriefForStorage(briefText);
+      briefText = normalizeAiBriefText(briefText);
       if (typeof onItemResolved === 'function') {
         onItemResolved(file, briefText, i, batchFiles.length);
       }
