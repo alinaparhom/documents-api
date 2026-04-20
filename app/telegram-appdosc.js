@@ -3924,8 +3924,8 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
   applyRegistrationDateHeader(card, registrationDate);
   setCardField(card, '[data-field="direction"]', task.direction);
-  setCardField(card, '[data-field="correspondent"]', task.correspondent);
-  setCardField(card, '[data-field="executor"]', resolveExecutor(task));
+  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'корреспондента'));
+  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'исполнителя'));
   setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
   setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
     setTitle: false,
@@ -14887,14 +14887,28 @@ function buildSubordinateOptionLabel(entry) {
 
 function formatDocumentCell(task) {
   const parts = [];
-  if (task.documentNumber) {
-    parts.push(`№ ${task.documentNumber}`);
+  const title = normalizeValue(task?.document);
+  if (title) {
+    parts.push(title);
   }
   const formattedDate = formatDate(task.documentDate);
   if (formattedDate !== '—') {
     parts.push(`от ${formattedDate}`);
   }
   return parts.length ? parts.join(' ') : '—';
+}
+
+function formatEntityDisplay(value, labelInGenitive) {
+  const normalized = normalizeValue(value);
+  if (!normalized) {
+    return '';
+  }
+
+  if (/^\d+$/.test(normalized)) {
+    return `ID ${labelInGenitive}: ${normalized}`;
+  }
+
+  return normalized;
 }
 
 function dedupeExecutorNames(candidates) {
