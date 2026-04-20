@@ -2,7 +2,7 @@ const GROQ_PAID_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.
 const DOCS_AI_FALLBACK_ENDPOINTS = ['/api-docs.php', '/js/documents/api-docs.php'];
 const TELEGRAM_BRIEF_MODAL_STYLE_ID = 'appdosc-brief-ai-style-v2';
 const BRIEF_AI_REQUEST_TIMEOUT_MS = 90000;
-const BRIEF_SUMMARY_PROMPT = 'Сформируй ответ строго в формате: Кто прислал: ...; Кому прислал: ...; Краткое содержание: ... (2–5 предложений). Кто прислал — это отправитель (от кого письмо), обычно указан в шапке документа. Кому прислал — это получатель и адресаты письма (кому направлен документ). Если данных нет, пиши: не указано. Используй только факты из документа, без домыслов.';
+const BRIEF_SUMMARY_PROMPT = 'Сформируй ответ строго в формате: Кто прислал: ...; Кому прислал: ...; Краткое содержание: ... (2–5 предложений). Кто прислал — отправитель (от кого письмо), обычно указан в шапке документа. Кому прислал — получатель и адресаты (кому направлен документ). Если отправитель или получатель не найдены, пиши только в этих полях: не указано. В поле "Краткое содержание" обязательно дай фактическую суть документа, не пиши "не указано". Используй только факты из документа, без домыслов.';
 const BRIEF_PDF_SOURCES = [
   { script: '/js/documents/pdf/pdf.min.js', worker: '/js/documents/pdf/pdf.worker.min.js' },
   { script: '/pdf/pdf.min.js', worker: '/pdf/pdf.worker.min.js' },
@@ -518,6 +518,16 @@ export function createTelegramBriefAi(deps = {}) {
     return Boolean(summary || analysis || responseText || hasActions || hasRequirements);
   }
 
+  function isWeakTelegramBriefText(value) {
+    const text = normalizeValue(value).toLowerCase().replace(/\s+/g, ' ');
+    if (!text) return true;
+    const normalized = text.replace(/^0+\s*/, '');
+    const hasSenderUnknown = /кто прислал[^:]*:\s*не указано/.test(normalized);
+    const hasRecipientUnknown = /кому прислал[^:]*:\s*не указано/.test(normalized) || /кому прислали[^:]*:\s*не указано/.test(normalized);
+    const hasSummaryUnknown = /краткое содержание[^:]*:\s*не указано/.test(normalized);
+    return hasSenderUnknown && hasRecipientUnknown && hasSummaryUnknown;
+  }
+
   async function requestTelegramOcrByFile(fileOrBlob, fileName = 'ocr-file') {
     const request = await postDocsOcrWithFallback(() => {
       const formData = new FormData();
@@ -675,7 +685,7 @@ export function createTelegramBriefAi(deps = {}) {
     container.innerHTML = `<p class="appdosc-brief-ai__placeholder">${escapeHtml(summaryText || 'Пустой ответ от ИИ.')}</p>`;
   }
 
-  const openTelegramBriefModal = function openTelegramBriefModal(task, statusHandler) {
+  const openTelegramBriefModal = function openTelegramBriefModal(task, statusHandler, options = {}) {
     ensureTelegramBriefModalStyle();
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -707,6 +717,9 @@ export function createTelegramBriefAi(deps = {}) {
     const metaNode = modal.querySelector('[data-meta]');
     const sources = [];
     let activeRequestId = 0;
+    const onBriefReady = typeof options.onBriefReady === 'function' ? options.onBriefReady : null;
+    const onBriefApplied = typeof options.onBriefApplied === 'function' ? options.onBriefApplied : null;
+    const preferredSource = options && typeof options.preferredSource === 'object' ? options.preferredSource : null;
 
     const setStatus = (message, tone = 'idle') => {
       if (!statusNode) return;
@@ -717,7 +730,16 @@ export function createTelegramBriefAi(deps = {}) {
     (Array.isArray(task && task.files) ? task.files : []).forEach((file, index) => {
       const name = getAttachmentName(file, index + 1);
       const url = resolveFileFetchUrl(file);
-      if (url) sources.push({ label: name, url, type: 'file' });
+      if (url) {
+        sources.push({
+          label: name,
+          url,
+          type: 'file',
+          aiBrief: normalizeValue(file && file.aiBrief),
+          storedName: normalizeValue(file && file.storedName),
+          originalName: normalizeValue(file && file.originalName),
+        });
+      }
     });
 
     const activate = (button) => Array.from(list.querySelectorAll('.appdosc-brief-ai__item')).forEach((el) => el.classList.toggle('is-active', el === button));
@@ -735,6 +757,22 @@ export function createTelegramBriefAi(deps = {}) {
     modal.querySelector('[data-close]').addEventListener('click', close);
     document.addEventListener('keydown', onEscClose);
 
+    if (preferredSource) {
+      const preferredStored = normalizeValue(preferredSource.storedName);
+      const preferredOriginal = normalizeValue(preferredSource.originalName);
+      const preferredUrl = normalizeValue(preferredSource.url);
+      const preferredIndex = sources.findIndex((candidate) => {
+        const sameStored = preferredStored && normalizeValue(candidate && candidate.storedName) === preferredStored;
+        const sameOriginal = preferredOriginal && normalizeValue(candidate && candidate.originalName) === preferredOriginal;
+        const sameUrl = preferredUrl && normalizeValue(candidate && candidate.url) === preferredUrl;
+        return Boolean(sameStored || sameOriginal || sameUrl);
+      });
+      if (preferredIndex > 0) {
+        const [preferredItem] = sources.splice(preferredIndex, 1);
+        sources.unshift(preferredItem);
+      }
+    }
+
     sources.forEach((source) => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -751,6 +789,13 @@ export function createTelegramBriefAi(deps = {}) {
       button.addEventListener('click', async () => {
         const requestId = ++activeRequestId;
         activate(button);
+        const cachedBrief = normalizeValue(source && source.aiBrief);
+        if (cachedBrief && !isWeakTelegramBriefText(cachedBrief)) {
+          renderTelegramBriefPreview(preview, { summary: cachedBrief });
+          setStatus('Кратко ИИ загружено из задачи.', 'success');
+          if (metaNode) metaNode.textContent = 'Источник: сохранённый результат';
+          return;
+        }
         try {
           button.disabled = true;
           const modeLabel = 'Vision';
@@ -759,6 +804,22 @@ export function createTelegramBriefAi(deps = {}) {
           const startedAt = Date.now();
           const aiPayload = await requestTelegramVisionByFile(source, setStatus);
           if (requestId !== activeRequestId) return;
+          const nextSummary = normalizeValue(aiPayload && aiPayload.summary);
+          if (nextSummary) {
+            source.aiBrief = nextSummary;
+            if (onBriefApplied) {
+              onBriefApplied(source, nextSummary);
+            }
+            if (onBriefReady) {
+              try {
+                await onBriefReady(source, nextSummary);
+              } catch (persistError) {
+                if (typeof statusHandler === 'function') {
+                  statusHandler('warning', `Не удалось сохранить «Кратко ИИ»: ${persistError instanceof Error ? persistError.message : 'ошибка'}`);
+                }
+              }
+            }
+          }
           renderTelegramBriefPreview(preview, aiPayload);
           setStatus('Готово. Краткий вывод получен через Vision.', 'success');
           if (metaNode) {
