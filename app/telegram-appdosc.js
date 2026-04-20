@@ -16981,6 +16981,33 @@ function setupAssignmentControls(card, task) {
     return;
   }
   const comboWrapper = comboInput.closest('.appdosc-card__assign-selector');
+  const isDarkTheme = (state.telegram.colorScheme || 'light') === 'dark'
+    || document.body.classList.contains('appdosc--dark');
+  const comboPalette = isDarkTheme
+    ? {
+      inputBg: 'rgba(24, 36, 67, 0.82)',
+      inputBorder: 'rgba(124, 166, 255, 0.34)',
+      inputColor: '#ecf3ff',
+      listBg: 'rgba(20, 31, 59, 0.95)',
+      listBorder: 'rgba(118, 163, 255, 0.36)',
+      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    }
+    : {
+      inputBg: 'rgba(255, 255, 255, 0.72)',
+      inputBorder: 'rgba(110, 154, 255, 0.35)',
+      inputColor: '#12325f',
+      listBg: 'rgba(255, 255, 255, 0.92)',
+      listBorder: 'rgba(110, 154, 255, 0.4)',
+      shadow: '0 12px 28px rgba(42, 82, 150, 0.18)',
+      optionBg: 'rgba(255, 255, 255, 0.5)',
+      optionBorder: 'rgba(114, 157, 255, 0.2)',
+      optionColor: '#1c3762',
+      optionHover: 'rgba(134, 180, 255, 0.22)',
+    };
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
@@ -16989,11 +17016,11 @@ function setupAssignmentControls(card, task) {
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   comboInput.style.width = '100%';
   comboInput.style.minHeight = '40px';
-  comboInput.style.padding = '9px 12px';
+  comboInput.style.padding = '8px 11px';
   comboInput.style.borderRadius = '12px';
-  comboInput.style.border = '1px solid rgba(110, 154, 255, 0.35)';
-  comboInput.style.background = 'rgba(255, 255, 255, 0.72)';
-  comboInput.style.color = '#12325f';
+  comboInput.style.border = `1px solid ${comboPalette.inputBorder}`;
+  comboInput.style.background = comboPalette.inputBg;
+  comboInput.style.color = comboPalette.inputColor;
   comboInput.style.fontSize = '14px';
   comboInput.style.lineHeight = '1.35';
   comboInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -17005,15 +17032,15 @@ function setupAssignmentControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '196px';
+  optionsList.style.maxHeight = '168px';
   optionsList.style.overflowY = 'auto';
   optionsList.style.borderRadius = '12px';
-  optionsList.style.border = '1px solid rgba(110, 154, 255, 0.4)';
-  optionsList.style.background = 'rgba(255, 255, 255, 0.92)';
+  optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
+  optionsList.style.background = comboPalette.listBg;
   optionsList.style.backdropFilter = 'blur(10px)';
   optionsList.style.webkitBackdropFilter = 'blur(10px)';
-  optionsList.style.boxShadow = '0 12px 28px rgba(42, 82, 150, 0.18)';
-  optionsList.style.padding = '6px';
+  optionsList.style.boxShadow = comboPalette.shadow;
+  optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
@@ -17157,27 +17184,27 @@ function setupAssignmentControls(card, task) {
       option.textContent = label;
       option.style.width = '100%';
       option.style.textAlign = 'left';
-      option.style.background = 'rgba(255, 255, 255, 0.5)';
-      option.style.border = '1px solid rgba(114, 157, 255, 0.2)';
-      option.style.color = '#1c3762';
+      option.style.background = comboPalette.optionBg;
+      option.style.border = `1px solid ${comboPalette.optionBorder}`;
+      option.style.color = comboPalette.optionColor;
       option.style.fontSize = '14px';
       option.style.lineHeight = '1.35';
-      option.style.padding = '10px 12px';
-      option.style.minHeight = '46px';
-      option.style.borderRadius = '10px';
+      option.style.padding = '7px 10px';
+      option.style.minHeight = '38px';
+      option.style.borderRadius = '9px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-      option.style.marginBottom = '4px';
+      option.style.marginBottom = '3px';
       option.style.touchAction = 'manipulation';
       option.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         handleAssigneeSelection(value);
       });
       option.addEventListener('mouseenter', () => {
-        option.style.background = 'rgba(134, 180, 255, 0.22)';
+        option.style.background = comboPalette.optionHover;
       });
       option.addEventListener('mouseleave', () => {
-        option.style.background = 'rgba(255, 255, 255, 0.5)';
+        option.style.background = comboPalette.optionBg;
       });
       optionsList.appendChild(option);
     });
@@ -17873,12 +17900,6 @@ function setupAssignmentControls(card, task) {
       optionsList.hidden = false;
       setComboExpanded(true);
     }
-  });
-
-  comboInput.addEventListener('focus', () => {
-    populateComboOptions();
-    optionsList.hidden = visibleAssigneeOptions.length === 0;
-    setComboExpanded(visibleAssigneeOptions.length > 0);
   });
 
   comboInput.addEventListener('click', () => {
