@@ -446,8 +446,8 @@ export function createTelegramBriefAi(deps = {}) {
         }
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-          max_tokens: 1800,
-          temperature: 0.3,
+          max_tokens: 900,
+          temperature: 0,
           messages: [{
             role: 'user',
             content: [{ type: 'text', text: `${isPdfSource ? 'Извлеки текст с изображений страниц максимально дословно. Ничего не сокращай и не пересказывай.' : (prepared.messageText || BRIEF_SUMMARY_PROMPT)}\n\nБлок ${batchIndex + 1} из ${imageBatches.length}.` }].concat(
@@ -479,7 +479,9 @@ export function createTelegramBriefAi(deps = {}) {
         formData.append('action', 'generate_summary');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
-        formData.append('prompt', BRIEF_SUMMARY_PROMPT);
+        if (!isPdfSource) {
+          formData.append('prompt', BRIEF_SUMMARY_PROMPT);
+        }
         formData.append('extractedTexts', JSON.stringify([{
           name: file.name || fileName,
           type: 'text/plain',
