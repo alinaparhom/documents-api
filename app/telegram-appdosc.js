@@ -17111,7 +17111,9 @@ function setupAssignmentControls(card, task) {
   };
 
   let visibleAssigneeOptions = [];
+  let isAssigneeDropdownOpen = false;
   const hideOptionsList = () => {
+    isAssigneeDropdownOpen = false;
     optionsList.hidden = true;
   };
 
@@ -17175,7 +17177,7 @@ function setupAssignmentControls(card, task) {
       optionsList.appendChild(option);
     });
 
-    optionsList.hidden = visibleCount === 0;
+    optionsList.hidden = !isAssigneeDropdownOpen || visibleCount === 0;
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -17859,6 +17861,7 @@ function setupAssignmentControls(card, task) {
   };
 
   comboInput.addEventListener('input', () => {
+    isAssigneeDropdownOpen = true;
     const wasOpen = !optionsList.hidden;
     populateComboOptions();
     if (wasOpen && visibleAssigneeOptions.length > 0) {
@@ -17867,6 +17870,13 @@ function setupAssignmentControls(card, task) {
   });
 
   comboInput.addEventListener('click', () => {
+    isAssigneeDropdownOpen = true;
+    populateComboOptions();
+    optionsList.hidden = visibleAssigneeOptions.length === 0;
+  });
+
+  comboInput.addEventListener('focus', () => {
+    isAssigneeDropdownOpen = true;
     populateComboOptions();
     optionsList.hidden = visibleAssigneeOptions.length === 0;
   });
