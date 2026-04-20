@@ -15147,7 +15147,7 @@
             });
             itemWrap.appendChild(badge);
             var fileKey = buildLocalFileKey(file);
-            var briefState = fileKey ? pendingAiBriefByFileKey[fileKey] : null;
+            var briefState = isEditMode && fileKey ? pendingAiBriefByFileKey[fileKey] : null;
             var briefText = normalizeAiBriefText(briefState && briefState.text ? briefState.text : '');
             if (briefState && briefState.status === 'loading') {
               itemWrap.appendChild(createElement('div', 'documents-file__brief-preview', '⏳ Кратко ИИ: анализирую файл...'));
@@ -15239,9 +15239,11 @@
         });
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
-        addedFiles.forEach(function(file) {
-          scheduleAiBriefForFile(file, false);
-        });
+        if (isEditMode) {
+          addedFiles.forEach(function(file) {
+            scheduleAiBriefForFile(file, false);
+          });
+        }
 
         logFilesDiagnostics('sync', {
           source: source || 'unknown',
@@ -15620,33 +15622,40 @@
               var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
-                  var aiApiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-                  return prepareAiBriefsForBatchFiles(batch, aiApiUrl, function(done, total) {
-                    if (!total) {
-                      return;
-                    }
-                    var batchAiProgress = (done / total) / Math.max(1, batches.length);
-                    var aiPercent = 35 + Math.round(((batchIndex / Math.max(1, batches.length)) + batchAiProgress) * 28);
-                    aiPercent = Math.max(35, Math.min(88, aiPercent));
-                    updateUploadProgress(aiPercent, 'Кратко ИИ: ' + done + '/' + total + ' (' + (batchIndex + 1) + '/' + batches.length + ')', 'is-stage-processing');
-                  }, function(file, briefText) {
-                    var fileKey = buildLocalFileKey(file);
-                    if (fileKey) {
-                      pendingAiBriefByFileKey[fileKey] = {
-                        status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
-                        text: normalizeAiBriefText(briefText || ''),
-                        error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
-                      };
-                    }
-                    renderAttachmentsSummary(attachmentsStore);
-                  }).then(function(aiBriefs) {
+                  var aiBriefsPromise = Promise.resolve([]);
+                  if (isEditMode) {
+                    var aiApiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
+                    aiBriefsPromise = prepareAiBriefsForBatchFiles(batch, aiApiUrl, function(done, total) {
+                      if (!total) {
+                        return;
+                      }
+                      var batchAiProgress = (done / total) / Math.max(1, batches.length);
+                      var aiPercent = 35 + Math.round(((batchIndex / Math.max(1, batches.length)) + batchAiProgress) * 28);
+                      aiPercent = Math.max(35, Math.min(88, aiPercent));
+                      updateUploadProgress(aiPercent, 'Кратко ИИ: ' + done + '/' + total + ' (' + (batchIndex + 1) + '/' + batches.length + ')', 'is-stage-processing');
+                    }, function(file, briefText) {
+                      var fileKey = buildLocalFileKey(file);
+                      if (fileKey) {
+                        pendingAiBriefByFileKey[fileKey] = {
+                          status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
+                          text: normalizeAiBriefText(briefText || ''),
+                          error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
+                        };
+                      }
+                      renderAttachmentsSummary(attachmentsStore);
+                    });
+                  }
+
+                  return aiBriefsPromise.then(function(aiBriefs) {
                     var batchFormData = new FormData();
                     batchFormData.append('action', 'update');
                     batchFormData.append('organization', state.organization);
                     batchFormData.append('documentId', createdOrUpdatedDocumentId);
                     batch.forEach(function(file, fileIndex) {
                       batchFormData.append('attachments[]', file);
-                      batchFormData.append('attachmentsAiBrief[]', aiBriefs && aiBriefs[fileIndex] ? String(aiBriefs[fileIndex]) : '');
+                      if (isEditMode) {
+                        batchFormData.append('attachmentsAiBrief[]', aiBriefs && aiBriefs[fileIndex] ? String(aiBriefs[fileIndex]) : '');
+                      }
                     });
                     appendTelegramUserIdToFormData(batchFormData);
 
