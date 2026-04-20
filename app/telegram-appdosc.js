@@ -3473,7 +3473,10 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role);
+    const role = normalizeValue(state.telegram.role) || getCurrentUserRoleFromAccess();
+    if (!state.telegram.role && role) {
+      state.telegram.role = role;
+    }
     elements.userRole.textContent = role ? `Роль: ${role}` : 'Роль: не указана';
   }
 
@@ -11735,6 +11738,62 @@ function getCurrentUserResponsibleFromAccess() {
       || normalizeValue(entry.displayName);
     if (responsible) {
       return responsible;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserRoleFromAccess() {
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = [];
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.push(normalized);
+    }
+  };
+
+  pushId(state.telegram.id);
+  pushId(state.telegram.chatId);
+
+  const ids = Array.from(new Set(idCandidates));
+  const names = [];
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const role = normalizeValue(entry.role)
+      || normalizeValue(entry.position)
+      || normalizeValue(entry.jobTitle)
+      || normalizeValue(entry.title);
+    if (role) {
+      return role;
     }
   }
 
