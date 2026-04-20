@@ -14863,12 +14863,6 @@ function buildResponsibleOptionLabel(entry) {
   if (normalizeValue(entry.department)) {
     meta.push(entry.department);
   }
-  if (normalizeValue(entry.telegram)) {
-    meta.push(`TG ${normalizeValue(entry.telegram)}`);
-  }
-  if (normalizeValue(entry.chatId) && normalizeValue(entry.chatId) !== normalizeValue(entry.telegram)) {
-    meta.push(`Chat ${normalizeValue(entry.chatId)}`);
-  }
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
   }
@@ -16311,9 +16305,6 @@ function buildAssignmentFallbackLabel(entry, role) {
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
   }
-  if (normalizeValue(entry.telegram)) {
-    meta.push(`TG ${normalizeValue(entry.telegram)}`);
-  }
   if (normalizeValue(entry.login)) {
     meta.push(`Логин ${normalizeValue(entry.login)}`);
   }
@@ -17312,6 +17303,8 @@ function setupAssignmentControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
+    deadlineInput.style.width = '100%';
+    deadlineInput.style.boxSizing = 'border-box';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -17363,8 +17356,13 @@ function setupAssignmentControls(card, task) {
     removeButton.disabled = false;
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
+    actions.style.width = '100%';
+    actions.style.display = 'flex';
+    actions.style.justifyContent = 'stretch';
+    actions.style.marginTop = '10px';
+    removeButton.style.width = '100%';
     actions.appendChild(removeButton);
-    row.appendChild(actions);
+    info.appendChild(actions);
 
     entriesContainer.appendChild(row);
 
@@ -18075,6 +18073,8 @@ function setupSubordinateControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
+    deadlineInput.style.width = '100%';
+    deadlineInput.style.boxSizing = 'border-box';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -18126,8 +18126,13 @@ function setupSubordinateControls(card, task) {
     removeButton.disabled = false;
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
+    actions.style.width = '100%';
+    actions.style.display = 'flex';
+    actions.style.justifyContent = 'stretch';
+    actions.style.marginTop = '10px';
+    removeButton.style.width = '100%';
     actions.appendChild(removeButton);
-    row.appendChild(actions);
+    info.appendChild(actions);
 
     entriesContainer.appendChild(row);
 
