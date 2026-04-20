@@ -1320,7 +1320,7 @@ function handleGenerateSummaryAction(array $env): void
         'top_p' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['top_p'] ?? 0.85),
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],
-            ['role' => 'user', 'content' => "Сформируй вывод строго по требуемому формату.\n\n" . $fullText],
+            ['role' => 'user', 'content' => "Сформируй ответ строго в 3 строки.\nСтрока 1: Кто прислал.\nСтрока 2: Кому прислал.\nСтрока 3: Краткое содержание (2–5 предложений).\n\nТекст документа: " . $fullText],
         ],
     ];
 
