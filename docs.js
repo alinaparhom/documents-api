@@ -2391,64 +2391,6 @@
     return normalizeAiBriefText(text);
   }
 
-  async function prepareAiBriefsForBatchFiles(files, apiUrl, onProgress, onItemResolved) {
-    var batchFiles = Array.isArray(files) ? files : [];
-    var result = [];
-    var requestFromBriefModule = null;
-    try {
-      await ensureAiResponseModalScript();
-      if (typeof window !== 'undefined' && typeof window.requestDocumentsAiBriefByFileSource === 'function') {
-        requestFromBriefModule = window.requestDocumentsAiBriefByFileSource;
-      }
-    } catch (_) {}
-
-    for (var i = 0; i < batchFiles.length; i += 1) {
-      var file = batchFiles[i];
-      var briefText = '';
-      if (typeof onProgress === 'function') {
-        onProgress(i, batchFiles.length, file);
-      }
-      try {
-        var source = {
-          fileObject: file,
-          label: file && file.name ? file.name : ('Файл ' + (i + 1))
-        };
-        if (typeof requestFromBriefModule === 'function') {
-          var modulePayload = await requestFromBriefModule(source, function() {});
-          briefText = normalizeAiBriefText(modulePayload && modulePayload.summary ? modulePayload.summary : '');
-        }
-        if (!briefText) {
-          var payload = await requestAiBriefSummaryByAttachment(source, apiUrl, 'paid');
-          briefText = extractAiBriefFromPayload(payload);
-        }
-      } catch (error) {
-        try {
-          var fallbackSource = {
-            fileObject: file,
-            label: file && file.name ? file.name : ('Файл ' + (i + 1))
-          };
-          var fallbackPayload = await requestAiBriefSummaryByAttachment(fallbackSource, apiUrl, 'paid');
-          briefText = extractAiBriefFromPayload(fallbackPayload);
-        } catch (fallbackError) {
-          docsLogger.warn('Не удалось получить «Кратко от ИИ» при добавлении файла', {
-            fileName: file && file.name ? file.name : '',
-            message: fallbackError && fallbackError.message ? fallbackError.message : (error && error.message ? error.message : String(error || ''))
-          });
-        }
-      }
-      briefText = normalizeAiBriefText(briefText);
-      if (typeof onItemResolved === 'function') {
-        onItemResolved(file, briefText, i, batchFiles.length);
-      }
-      result.push(briefText);
-    }
-    if (typeof onProgress === 'function') {
-      onProgress(batchFiles.length, batchFiles.length, null);
-    }
-    return result;
-  }
-
-
   function getDirectAiAnalyzeUrl(apiUrl) {
     var endpoint = apiUrl || (window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php');
     return String(endpoint).replace(/[?&]action=ai_response_analyze$/i, '') + '?action=ai_response_analyze';
@@ -14897,57 +14839,11 @@
 
       var attachmentsDataTransfer = new DataTransfer();
       var attachmentsStore = [];
-      var pendingAiBriefByFileKey = Object.create(null);
-      var pendingAiBriefPromises = Object.create(null);
       var existingAttachments = Array.isArray(doc && doc.files) ? doc.files.slice() : [];
       var removedAttachmentKeys = Object.create(null);
 
-      function buildLocalFileKey(file) {
-        if (!file) {
-          return '';
-        }
-        var name = file.name ? String(file.name) : '';
-        var size = typeof file.size === 'number' ? String(file.size) : '';
-        var modified = typeof file.lastModified === 'number' ? String(file.lastModified) : '';
-        return [name, size, modified].join('::');
-      }
-
       function openAiBriefPreviewModal(fileName, briefText) {
         openAttachmentAiBriefModal(fileName, briefText);
-      }
-
-      function scheduleAiBriefForFile(file, force) {
-        var key = buildLocalFileKey(file);
-        if (!key) {
-          return;
-        }
-        var currentState = pendingAiBriefByFileKey[key];
-        if (!force && currentState && currentState.status === 'ready' && normalizeAiBriefText(currentState.text || '')) {
-          return;
-        }
-        if (pendingAiBriefPromises[key]) {
-          return;
-        }
-        pendingAiBriefByFileKey[key] = { status: 'loading', text: '', error: '' };
-        renderAttachmentsSummary(attachmentsStore);
-        var apiUrl = window.DOCUMENTS_AI_API_URL || '/js/documents/api-docs.php';
-        pendingAiBriefPromises[key] = prepareAiBriefsForBatchFiles([file], apiUrl, null, function(_file, briefText) {
-          pendingAiBriefByFileKey[key] = {
-            status: normalizeAiBriefText(briefText || '') ? 'ready' : 'error',
-            text: normalizeAiBriefText(briefText || ''),
-            error: normalizeAiBriefText(briefText || '') ? '' : 'ИИ вернул пустой ответ'
-          };
-          renderAttachmentsSummary(attachmentsStore);
-        }).catch(function(error) {
-          pendingAiBriefByFileKey[key] = {
-            status: 'error',
-            text: '',
-            error: error && error.message ? String(error.message) : 'Ошибка ИИ'
-          };
-          renderAttachmentsSummary(attachmentsStore);
-        }).finally(function() {
-          delete pendingAiBriefPromises[key];
-        });
       }
 
       function logFilesDiagnostics(action, details) {
@@ -15121,10 +15017,6 @@
                 }
                 var beforeCount = attachmentsStore.length;
                 attachmentsStore.splice(index, 1);
-                var removedKey = buildLocalFileKey(file);
-                if (removedKey && pendingAiBriefByFileKey[removedKey]) {
-                  delete pendingAiBriefByFileKey[removedKey];
-                }
                 syncAttachmentsInput();
                 logFilesDiagnostics('remove-new', {
                   name: file.name,
@@ -15154,8 +15046,6 @@
       function syncAttachments(files, append, source) {
         if (!append) {
           attachmentsStore = [];
-          pendingAiBriefByFileKey = Object.create(null);
-          pendingAiBriefPromises = Object.create(null);
         }
 
         var currentFiles = attachmentsStore.slice();
@@ -15186,18 +15076,6 @@
         });
 
         attachmentsStore = currentFiles.slice();
-        var activeKeys = Object.create(null);
-        attachmentsStore.forEach(function(file) {
-          var key = buildLocalFileKey(file);
-          if (key) {
-            activeKeys[key] = true;
-          }
-        });
-        Object.keys(pendingAiBriefByFileKey).forEach(function(key) {
-          if (!activeKeys[key]) {
-            delete pendingAiBriefByFileKey[key];
-          }
-        });
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
 
@@ -15578,14 +15456,13 @@
               var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
-                  return Promise.resolve([]).then(function(aiBriefs) {
+                  return Promise.resolve().then(function() {
                     var batchFormData = new FormData();
                     batchFormData.append('action', 'update');
                     batchFormData.append('organization', state.organization);
                     batchFormData.append('documentId', createdOrUpdatedDocumentId);
-                    batch.forEach(function(file, fileIndex) {
+                    batch.forEach(function(file) {
                       batchFormData.append('attachments[]', file);
-                      batchFormData.append('attachmentsAiBrief[]', aiBriefs && aiBriefs[fileIndex] ? String(aiBriefs[fileIndex]) : '');
                     });
                     appendTelegramUserIdToFormData(batchFormData);
 
