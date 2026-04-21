@@ -2666,7 +2666,10 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
     </div>
     <div class="appdosc-card__summary" data-field="summaryCollapsed">
-      <div class="appdosc-card__block-text" data-field="summaryCollapsedText"></div>
+      <div class="appdosc-card__block-text appdosc-card__summary-line">
+        <span class="appdosc-card__summary-label">Содержание:</span>
+        <span data-field="summaryCollapsedText"></span>
+      </div>
     </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
