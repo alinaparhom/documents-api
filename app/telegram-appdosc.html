@@ -273,9 +273,9 @@
       .appdosc-theme-toggle {
         position: relative;
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 4px;
-        width: min(220px, 100%);
+        width: min(156px, 100%);
         margin: 0 0 10px;
         padding: 4px;
         border-radius: 16px;
@@ -284,7 +284,7 @@
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         box-shadow: 0 6px 22px rgba(15, 23, 42, 0.16);
-        --theme-index: 2;
+        --theme-index: 0;
       }
 
       .appdosc-theme-toggle__pill {
@@ -292,7 +292,7 @@
         top: 4px;
         bottom: 4px;
         left: 4px;
-        width: calc((100% - 8px) / 3);
+        width: calc((100% - 8px) / 2);
         border-radius: 12px;
         border: 1px solid rgba(255, 255, 255, 0.45);
         background: linear-gradient(160deg, rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.34));
@@ -540,9 +540,8 @@
         <div class="appdosc__brand">
           <div class="appdosc-theme-toggle" data-theme-toggle role="group" aria-label="Переключатель темы">
             <span class="appdosc-theme-toggle__pill" aria-hidden="true"></span>
-            <button type="button" class="appdosc-theme-toggle__button" data-theme-option="dark" aria-pressed="false" aria-label="Тёмная тема">🌙</button>
+            <button type="button" class="appdosc-theme-toggle__button" data-theme-option="dark" aria-pressed="true" aria-label="Тёмная тема">🌙</button>
             <button type="button" class="appdosc-theme-toggle__button" data-theme-option="light" aria-pressed="false" aria-label="Светлая тема">☀️</button>
-            <button type="button" class="appdosc-theme-toggle__button" data-theme-option="system" aria-pressed="true" aria-label="Системная тема">✨</button>
           </div>
           <div class="appdosc__brand-row">
             <div class="appdosc-avatar appdosc-avatar--lg" data-user-avatar>

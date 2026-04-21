@@ -20,8 +20,7 @@ const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
-const THEME_MODE_STORAGE_KEY = 'appdosc_theme_mode';
-const THEME_MODE_OPTIONS = ['dark', 'light', 'system'];
+const THEME_MODE_OPTIONS = ['dark', 'light'];
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -1966,7 +1965,7 @@ function hydrateTelegramFromInitData(initData) {
 }
 
 const state = {
-  themeMode: 'system',
+  themeMode: 'dark',
   telegram: {
     id: '',
     username: '',
@@ -2796,6 +2795,9 @@ function initTelegram() {
   }
 
   state.telegram.colorScheme = webApp.colorScheme || getSystemColorScheme();
+  if (state.themeMode !== 'dark' && state.themeMode !== 'light') {
+    state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+  }
   state.telegram.initData = webApp.initData || '';
   state.telegram.platform = typeof webApp.platform === 'string' ? webApp.platform : state.telegram.platform;
   updateEnvironmentFromPlatform(state.telegram.platform);
@@ -2874,9 +2876,8 @@ function getSystemColorScheme() {
 }
 
 function syncThemeWithSystem() {
-  if (state.themeMode === 'system') {
-    state.telegram.colorScheme = getSystemColorScheme();
-  }
+  state.telegram.colorScheme = getSystemColorScheme();
+  state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
   applyTheme();
 }
 
@@ -2886,10 +2887,13 @@ function bindSystemThemeListener() {
   }
   systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
   const handleSystemThemeChange = (event) => {
-    if (state.themeMode !== 'system') {
+    const hasTelegramWebApp = Boolean(window.Telegram && window.Telegram.WebApp);
+    if (hasTelegramWebApp) {
       return;
     }
     state.telegram.colorScheme = event && event.matches ? 'dark' : 'light';
+    state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+    renderThemeToggle();
     applyTheme();
   };
   if (typeof systemThemeMediaQuery.addEventListener === 'function') {
@@ -2902,39 +2906,21 @@ function bindSystemThemeListener() {
 
 function normalizeThemeMode(value) {
   const mode = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return THEME_MODE_OPTIONS.includes(mode) ? mode : 'system';
-}
-
-function readSavedThemeMode() {
-  try {
-    return normalizeThemeMode(localStorage.getItem(THEME_MODE_STORAGE_KEY));
-  } catch (error) {
-    return 'system';
-  }
-}
-
-function persistThemeMode(mode) {
-  try {
-    localStorage.setItem(THEME_MODE_STORAGE_KEY, mode);
-  } catch (error) {
-    // ignore storage restrictions
-  }
+  return THEME_MODE_OPTIONS.includes(mode) ? mode : 'dark';
 }
 
 function initThemeMode() {
-  state.themeMode = readSavedThemeMode();
+  const webApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  const preferred = webApp && webApp.colorScheme ? webApp.colorScheme : getSystemColorScheme();
+  state.themeMode = preferred === 'dark' ? 'dark' : 'light';
   bindSystemThemeListener();
   renderThemeToggle();
   applyTheme();
 }
 
-function setThemeMode(mode, options = {}) {
+function setThemeMode(mode) {
   const nextMode = normalizeThemeMode(mode);
-  const shouldPersist = options && options.persist !== false;
   state.themeMode = nextMode;
-  if (shouldPersist) {
-    persistThemeMode(nextMode);
-  }
   renderThemeToggle();
   applyTheme();
 }
@@ -3146,9 +3132,7 @@ function readQueryContext() {
 
 function applyTheme() {
   const forcedMode = normalizeThemeMode(state.themeMode);
-  const theme = forcedMode === 'system'
-    ? getSystemColorScheme()
-    : forcedMode;
+  const theme = forcedMode;
   state.telegram.colorScheme = theme;
   document.documentElement.setAttribute('data-theme', theme);
   document.documentElement.setAttribute('data-theme-mode', forcedMode);
