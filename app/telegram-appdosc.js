@@ -3499,8 +3499,9 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role) || getCurrentUserPositionFromAccess();
-    if (!state.telegram.role && role) {
+    const accessRole = getCurrentUserPositionFromAccess();
+    const role = accessRole || normalizeValue(state.telegram.role);
+    if (role) {
       state.telegram.role = role;
     }
     elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
@@ -11998,6 +11999,7 @@ function getCurrentUserPositionFromAccess() {
   pushName(state.telegram.fullName);
   pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
   pushName(state.telegram.username);
+  pushName(getCurrentUserResponsibleFromAccess());
 
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object') {
