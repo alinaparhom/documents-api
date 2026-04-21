@@ -222,6 +222,12 @@
         max-width: 100% !important;
       }
 
+      .appdosc__table-card,
+      .appdosc__cards {
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+
       .appdosc__user {
         border-radius: 22px !important;
         padding: clamp(14px, 3.8vw, 24px) !important;
@@ -325,6 +331,8 @@
       .appdosc__refresh {
         min-height: 38px !important;
         width: 100%;
+        max-width: none !important;
+        display: flex;
         justify-content: center;
         padding: 0 12px !important;
         border-radius: 12px !important;
@@ -340,10 +348,14 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px !important;
         width: 100%;
+        justify-items: stretch;
       }
 
       .appdosc__summary-list .appdosc__badge {
         display: flex;
+        max-width: none !important;
+        min-width: 0 !important;
+        flex: 1 1 auto;
         width: 100%;
         min-height: 38px;
         margin: 0 !important;

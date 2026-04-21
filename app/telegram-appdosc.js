@@ -3500,7 +3500,10 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role);
+    const role = normalizeValue(state.telegram.role) || getCurrentUserRoleFromAccess();
+    if (!state.telegram.role && role) {
+      state.telegram.role = role;
+    }
     elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
   }
 
@@ -11953,8 +11956,7 @@ function getCurrentUserRoleFromAccess() {
     if (!entryMatchesUser(entry, ids, names)) {
       continue;
     }
-    const role = normalizeValue(entry.role)
-      || normalizeValue(entry.position)
+    const role = normalizeValue(entry.position)
       || normalizeValue(entry.jobTitle)
       || normalizeValue(entry.title);
     if (role) {
