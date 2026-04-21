@@ -2627,13 +2627,13 @@ const CARD_HIGHLIGHT_TIMEOUT = 1800;
 
 const FALLBACK_CARD_TEMPLATE = `
   <header class="appdosc-card__header" data-card-toggle>
-    <span class="appdosc-card__badge" data-field="entryNumber"></span>
-    <div class="appdosc-card__header-text">
-      <div class="appdosc-card__title" data-field="document">Документ</div>
-      <div class="appdosc-card__subtitle" data-field="organization"></div>
-    </div>
     <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
-    <span class="appdosc-card__status" data-field="status"></span>
+    <span class="appdosc-card__badge" data-field="entryNumber"></span>
+    <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+    <div class="appdosc-card__summary" data-field="summary">
+      <div class="appdosc-card__block-title">Кратко</div>
+      <div class="appdosc-card__block-text" data-field="summaryText"></div>
+    </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
   <dl class="appdosc-card__details">
@@ -2666,10 +2666,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <dd data-field="responseSummary"></dd>
     </div>
   </dl>
-  <div class="appdosc-card__summary" data-field="summary">
-    <div class="appdosc-card__block-title">Кратко</div>
-    <div class="appdosc-card__block-text" data-field="summaryText"></div>
-  </div>
   <div class="appdosc-card__resolution" data-field="resolution">
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
@@ -2681,8 +2677,8 @@ const FALLBACK_CARD_TEMPLATE = `
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
     <div class="appdosc-card__deadline">
-      <span class="appdosc-card__deadline-label">Срок</span>
-      <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
+      <span class="appdosc-card__deadline-label">От:</span>
+      <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
     </div>
     <div class="appdosc-card__actions">
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
@@ -3826,18 +3822,18 @@ function updateStats() {
       const rawValue = resolvedStatusCounts[key];
       const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
       const count = Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : 0;
-      badge.textContent = `${count} ${config.display}`;
+      setStatusBadgeText(badge, `${count} ${config.display}`);
     });
   }
 
   if (elements.overdue) {
     const resolvedOverdue = Number(overallStats.overdue) || 0;
-    elements.overdue.textContent = `${resolvedOverdue} просрочено`;
+    setStatusBadgeText(elements.overdue, `${resolvedOverdue} просрочено`);
   }
 
   if (elements.updated) {
     elements.updated.textContent = state.lastUpdated
-      ? `Обновлено: ${formatDateTime(state.lastUpdated)}`
+      ? `Обновлено: ${formatDateTimeCompact(state.lastUpdated)}`
       : 'Обновление не выполнялось';
   }
 
@@ -3849,6 +3845,18 @@ function updateStats() {
       overdue: Number(displayStats.overdue) || 0,
       selectedResponsible: directorState.selectedResponsibleToken || null,
     });
+  }
+}
+
+function setStatusBadgeText(badge, text) {
+  if (!(badge instanceof HTMLElement)) {
+    return;
+  }
+  const label = badge.querySelector('.appdosc__badge-label');
+  if (label instanceof HTMLElement) {
+    label.textContent = text;
+  } else {
+    badge.textContent = text;
   }
 }
 
@@ -4241,6 +4249,13 @@ function createCard(task, index, anchorRegistry) {
 
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
+  });
+  const senderCompact = normalizeValue(formatEntityDisplay(task.correspondent, ''))
+    || normalizeValue(formatEntityDisplay(resolveExecutor(task), ''))
+    || '—';
+  setCardField(card, '[data-field="senderCompact"]', senderCompact, {
+    fallback: '—',
+    setTitle: false,
   });
 
   applyStatusBadge(card, statusText, normalizedStatus, task);
@@ -15865,6 +15880,21 @@ function formatDateTime(value) {
     return '—';
   }
   return date.toLocaleString('ru-RU', { hour12: false });
+}
+
+function formatDateTimeCompact(value) {
+  const date = parseDate(value);
+  if (!date) {
+    return '—';
+  }
+  return date.toLocaleString('ru-RU', {
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function formatDateInputValue(value) {

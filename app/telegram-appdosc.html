@@ -547,19 +547,27 @@
       }
 
       .appdosc__refresh {
-        min-height: 38px !important;
+        min-height: 46px !important;
         width: 100% !important;
         max-width: none !important;
         display: flex;
+        align-items: center;
+        gap: 8px;
         box-sizing: border-box;
         justify-content: center;
         padding: 0 12px !important;
-        border-radius: 12px !important;
-        font-size: 14px !important;
+        border-radius: 14px !important;
+        font-size: 16px !important;
         font-weight: 600 !important;
-        opacity: 0.9;
-        box-shadow: none !important;
-        filter: saturate(0.9);
+        opacity: 1;
+        box-shadow: 0 8px 24px rgba(56, 139, 255, 0.2) !important;
+        background: linear-gradient(180deg, #4f8cff, #3f78e8) !important;
+      }
+
+      .appdosc__refresh-icon::before {
+        content: "↻";
+        font-size: 18px;
+        line-height: 1;
       }
 
       .appdosc__summary-list {
@@ -574,6 +582,8 @@
 
       .appdosc__summary-list .appdosc__badge {
         display: flex;
+        align-items: center;
+        gap: 8px;
         max-width: none !important;
         min-width: 0 !important;
         flex: 1 1 auto;
@@ -590,6 +600,69 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         font-size: clamp(12px, 2.6vw, 14px) !important;
+        color: #dbeafe;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        box-shadow: none !important;
+      }
+
+      .appdosc__badge-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        flex: 0 0 auto;
+      }
+
+      .appdosc__badge-label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .appdosc__badge--distributed {
+        background: rgba(124, 58, 237, 0.16) !important;
+        border-color: rgba(124, 58, 237, 0.3) !important;
+      }
+      .appdosc__badge--distributed .appdosc__badge-icon {
+        background: rgba(124, 58, 237, 0.22);
+      }
+      .appdosc__badge--accent {
+        background: rgba(59, 130, 246, 0.16) !important;
+        border-color: rgba(59, 130, 246, 0.28) !important;
+      }
+      .appdosc__badge--accent .appdosc__badge-icon {
+        background: rgba(59, 130, 246, 0.24);
+      }
+      .appdosc__badge--info {
+        background: rgba(14, 165, 233, 0.15) !important;
+        border-color: rgba(14, 165, 233, 0.28) !important;
+      }
+      .appdosc__badge--info .appdosc__badge-icon {
+        background: rgba(14, 165, 233, 0.22);
+      }
+      .appdosc__badge--success {
+        background: rgba(16, 185, 129, 0.16) !important;
+        border-color: rgba(16, 185, 129, 0.3) !important;
+      }
+      .appdosc__badge--success .appdosc__badge-icon {
+        background: rgba(16, 185, 129, 0.24);
+      }
+      .appdosc__badge--danger {
+        background: rgba(239, 68, 68, 0.15) !important;
+        border-color: rgba(239, 68, 68, 0.3) !important;
+      }
+      .appdosc__badge--danger .appdosc__badge-icon {
+        background: rgba(239, 68, 68, 0.2);
+      }
+      .appdosc__badge--warn {
+        background: rgba(249, 115, 22, 0.15) !important;
+        border-color: rgba(249, 115, 22, 0.3) !important;
+      }
+      .appdosc__badge--warn .appdosc__badge-icon {
+        background: rgba(249, 115, 22, 0.2);
       }
 
       .appdosc__responsible-panel {
@@ -611,6 +684,88 @@
         background-position: calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px);
         background-size: 6px 6px, 6px 6px;
         background-repeat: no-repeat;
+        border: 1px solid rgba(148, 163, 184, 0.26) !important;
+        box-shadow: none !important;
+      }
+
+      .appdosc__status {
+        margin-top: 10px;
+      }
+
+      .appdosc__status-message {
+        border: 1px solid rgba(59, 130, 246, 0.28);
+        background: rgba(15, 33, 73, 0.5);
+        color: #93c5fd !important;
+        border-radius: 14px;
+        padding: 12px 14px;
+        font-weight: 500;
+      }
+
+      .appdosc__table-meta {
+        font-size: 13px !important;
+        color: rgba(148, 163, 184, 0.86) !important;
+      }
+
+      .appdosc-card__header {
+        display: grid !important;
+        grid-template-columns: 1fr auto auto;
+        grid-template-areas:
+          "date badge chevron"
+          "summary summary summary";
+        row-gap: 8px;
+        column-gap: 10px;
+      }
+
+      .appdosc-card__meta {
+        grid-area: date;
+        font-size: 13px !important;
+      }
+
+      .appdosc-card__badge {
+        grid-area: badge;
+        font-size: 13px !important;
+        padding: 6px 10px !important;
+        border-radius: 999px !important;
+        background: rgba(37, 99, 235, 0.22) !important;
+      }
+
+      .appdosc-card__chevron {
+        grid-area: chevron;
+        color: #94a3b8;
+        font-size: 14px;
+        align-self: center;
+        transition: transform 0.2s ease;
+      }
+      .appdosc-card__header[aria-expanded='true'] .appdosc-card__chevron {
+        transform: rotate(180deg);
+      }
+
+      .appdosc-card__summary {
+        grid-area: summary;
+      }
+
+      .appdosc-card__summary .appdosc-card__block-title {
+        display: none !important;
+      }
+
+      .appdosc-card__block-text {
+        font-size: 15px !important;
+        line-height: 1.35 !important;
+      }
+
+      .appdosc-card__footer {
+        border-top: 1px solid rgba(148, 163, 184, 0.2) !important;
+        margin-top: 8px;
+        padding-top: 8px !important;
+      }
+
+      .appdosc-card__deadline-label {
+        opacity: 0.78;
+      }
+
+      .appdosc-card__header-text,
+      .appdosc-card__status {
+        display: none !important;
       }
 
       @media (max-width: 680px) {
@@ -700,7 +855,8 @@
                 data-status-filter="distributed"
                 aria-pressed="false"
               >
-                0 распределено
+                <span class="appdosc__badge-icon" aria-hidden="true">📄</span>
+                <span class="appdosc__badge-label">0 распределено</span>
               </button>
               <button
                 type="button"
@@ -708,7 +864,8 @@
                 data-status-filter="accepted"
                 aria-pressed="false"
               >
-                0 в работе
+                <span class="appdosc__badge-icon" aria-hidden="true">💼</span>
+                <span class="appdosc__badge-label">0 в работе</span>
               </button>
               <button
                 type="button"
@@ -716,7 +873,8 @@
                 data-status-filter="review"
                 aria-pressed="false"
               >
-                0 на проверке
+                <span class="appdosc__badge-icon" aria-hidden="true">🔎</span>
+                <span class="appdosc__badge-label">0 на проверке</span>
               </button>
               <button
                 type="button"
@@ -724,7 +882,8 @@
                 data-status-filter="done"
                 aria-pressed="false"
               >
-                0 выполнено
+                <span class="appdosc__badge-icon" aria-hidden="true">✅</span>
+                <span class="appdosc__badge-label">0 выполнено</span>
               </button>
               <button
                 type="button"
@@ -732,7 +891,8 @@
                 data-status-filter="cancelled"
                 aria-pressed="false"
               >
-                0 отменено
+                <span class="appdosc__badge-icon" aria-hidden="true">✖</span>
+                <span class="appdosc__badge-label">0 отменено</span>
               </button>
               <button
                 type="button"
@@ -740,7 +900,8 @@
                 data-overdue
                 aria-pressed="false"
               >
-                0 просрочено
+                <span class="appdosc__badge-icon" aria-hidden="true">⏰</span>
+                <span class="appdosc__badge-label">0 просрочено</span>
               </button>
             </div>
             <div class="appdosc__summary-actions">
@@ -979,13 +1140,13 @@
     <template id="appdosc-card-template">
       <article class="appdosc-card" data-card>
         <header class="appdosc-card__header" data-card-toggle>
-          <span class="appdosc-card__badge" data-field="entryNumber"></span>
-          <div class="appdosc-card__header-text">
-            <div class="appdosc-card__title" data-field="document">Документ</div>
-            <div class="appdosc-card__subtitle" data-field="organization">Организация</div>
-          </div>
           <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
-          <span class="appdosc-card__status" data-field="status"></span>
+          <span class="appdosc-card__badge" data-field="entryNumber"></span>
+          <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+          <div class="appdosc-card__summary" data-field="summary">
+            <div class="appdosc-card__block-title">Кратко</div>
+            <div class="appdosc-card__block-text" data-field="summaryText"></div>
+          </div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
         </header>
         <dl class="appdosc-card__details">
@@ -1018,10 +1179,6 @@
             <dd data-field="responseSummary"></dd>
           </div>
         </dl>
-        <div class="appdosc-card__summary" data-field="summary">
-          <div class="appdosc-card__block-title">Кратко</div>
-          <div class="appdosc-card__block-text" data-field="summaryText"></div>
-        </div>
         <div class="appdosc-card__resolution" data-field="resolution">
           <div class="appdosc-card__block-title">Резолюция</div>
           <div class="appdosc-card__block-text" data-field="resolutionText"></div>
@@ -1029,8 +1186,8 @@
         <div class="appdosc-card__files" data-files></div>
         <footer class="appdosc-card__footer">
           <div class="appdosc-card__deadline">
-            <span class="appdosc-card__deadline-label">Срок</span>
-            <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
+            <span class="appdosc-card__deadline-label">От:</span>
+            <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
           </div>
           <div class="appdosc-card__actions">
             <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
