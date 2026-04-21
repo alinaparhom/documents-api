@@ -816,10 +816,10 @@
         line-height: 1.34 !important;
         color: var(--appdosc-text-primary) !important;
         opacity: 0.98;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
+        display: block !important;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
 
       .appdosc-card__footer {
@@ -872,11 +872,6 @@
       .appdosc-card[data-expanded='false'] .appdosc-card__deadline--compact {
         display: inline-flex !important;
       }
-
-      .appdosc-card[data-expanded='true'] .appdosc-card__header .appdosc-card__summary {
-        display: none !important;
-      }
-
       .appdosc-card {
         border: 1px solid rgba(148, 163, 184, 0.22) !important;
         box-shadow: none !important;
@@ -1289,6 +1284,10 @@
           <div class="appdosc-card__detail">
             <dt>Исполнитель</dt>
             <dd data-field="executor"></dd>
+          </div>
+          <div class="appdosc-card__detail">
+            <dt>Содержание</dt>
+            <dd data-field="summaryFull"></dd>
           </div>
           <div class="appdosc-card__detail">
             <dt>Поручение</dt>

@@ -2692,6 +2692,10 @@ const FALLBACK_CARD_TEMPLATE = `
       <dd data-field="executor"></dd>
     </div>
     <div class="appdosc-card__detail">
+      <dt>Содержание</dt>
+      <dd data-field="summaryFull"></dd>
+    </div>
+    <div class="appdosc-card__detail">
       <dt>Поручение</dt>
       <dd data-field="instruction"></dd>
     </div>
@@ -4266,6 +4270,11 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
     setTitle: true,
+    fallback: 'Содержание не указано',
+  });
+  setCardField(card, '[data-field="summaryFull"]', compactContent, {
+    hideIfEmpty: false,
+    setTitle: false,
     fallback: 'Содержание не указано',
   });
   toggleSection(card, '[data-field="summary"]', true);
