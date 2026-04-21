@@ -3493,7 +3493,7 @@ function updateUserPanel() {
     if (!state.telegram.role && role) {
       state.telegram.role = role;
     }
-    elements.userRole.textContent = role ? `Роль: ${role}` : 'Роль: не указана';
+    elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
   }
 
   if (elements.userAvatarImage) {
