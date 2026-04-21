@@ -2672,10 +2672,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <dd data-field="responseSummary"></dd>
     </div>
   </dl>
-  <div class="appdosc-card__summary appdosc-card__summary--full" data-field="summaryFull">
-    <div class="appdosc-card__block-title">Кратко</div>
-    <div class="appdosc-card__block-text" data-field="summaryText"></div>
-  </div>
   <div class="appdosc-card__resolution" data-field="resolution">
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
@@ -4216,20 +4212,13 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const hasSummary = setCardField(card, '[data-field="summaryText"]', task.summary, {
-    hideIfEmpty: true,
-    setTitle: false,
-  });
-  const compactContent = normalizeValue(task.content)
-    || normalizeValue(task.summary)
-    || normalizeValue(task.instruction)
-    || '—';
+  const compactContent = normalizeValue(task.summary) || '—';
+  const hasSummary = compactContent !== '—';
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
     setTitle: false,
   });
   toggleSection(card, '[data-field="summary"]', hasSummary);
-  toggleSection(card, '[data-field="summaryFull"]', hasSummary);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,
@@ -9736,10 +9725,8 @@ async function openViewerFile(file, task, options = {}) {
           htmlOpenMs,
           totalMs,
         });
-        if (notify) {
-          setStatus('info', hasMultiple
-            ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
-            : 'Сводка открыта.');
+        if (notify && !hasMultiple) {
+          setStatus('info', 'Сводка открыта.');
         }
         void ensureTaskSummaryPreview(task, file).catch(function (err) {
           logTaskViewStage(task, 'summary_pdf_background_error', {
@@ -9948,10 +9935,9 @@ async function openViewerFile(file, task, options = {}) {
 
     if (notify) {
       if (mode === 'inline') {
-        const message = hasMultiple
-          ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
-          : 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.';
-        setStatus('info', message);
+        if (!hasMultiple) {
+          setStatus('info', 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.');
+        }
       } else if (mode === 'external_prompt') {
         // статус уже показан в openDocumentLink
       } else if (mode === 'telegram') {

@@ -821,14 +821,6 @@
         display: none !important;
       }
 
-      .appdosc-card__summary--full {
-        display: none;
-      }
-
-      .appdosc-card[data-expanded='true'] .appdosc-card__summary--full {
-        display: block;
-      }
-
       @media (max-width: 680px) {
         .appdosc {
           padding-inline: 8px !important;
@@ -1246,10 +1238,6 @@
             <dd data-field="responseSummary"></dd>
           </div>
         </dl>
-        <div class="appdosc-card__summary appdosc-card__summary--full" data-field="summaryFull">
-          <div class="appdosc-card__block-title">Кратко</div>
-          <div class="appdosc-card__block-text" data-field="summaryText"></div>
-        </div>
         <div class="appdosc-card__resolution" data-field="resolution">
           <div class="appdosc-card__block-title">Резолюция</div>
           <div class="appdosc-card__block-text" data-field="resolutionText"></div>
