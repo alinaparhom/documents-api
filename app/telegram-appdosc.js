@@ -2665,8 +2665,8 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__badge" data-field="entryNumber"></span>
       <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
     </div>
-    <div class="appdosc-card__summary" data-field="summary">
-      <div class="appdosc-card__block-text" data-field="contentCompact"></div>
+    <div class="appdosc-card__summary" data-field="summaryCollapsed">
+      <div class="appdosc-card__block-text" data-field="summaryCollapsedText"></div>
     </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
@@ -4244,40 +4244,18 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const resolveCompactText = (value) => {
-    if (value && typeof value === 'object') {
-      const nested = normalizeValue(
-        value.summary
-          || value.content
-          || value.description
-          || value.text
-          || value.title
-      );
-      return nested;
-    }
-    return normalizeValue(value);
-  };
-
-  const compactContent = resolveCompactText(task.contentCompact)
-    || resolveCompactText(task.summary)
-    || resolveCompactText(task.content)
-    || resolveCompactText(task.description)
-    || resolveCompactText(task.text)
-    || resolveCompactText(task.notes)
-    || resolveCompactText(task.instruction)
-    || normalizeValue(task.document)
-    || 'Содержание не указано';
-  setCardField(card, '[data-field="contentCompact"]', compactContent, {
-    hideIfEmpty: false,
-    setTitle: true,
-    fallback: 'Содержание не указано',
-  });
-  setCardField(card, '[data-field="summaryFull"]', compactContent, {
+  const summaryText = normalizeValue(task.summary) || 'Содержание не указано';
+  setCardField(card, '[data-field="summaryCollapsedText"]', summaryText, {
     hideIfEmpty: false,
     setTitle: false,
     fallback: 'Содержание не указано',
   });
-  toggleSection(card, '[data-field="summary"]', true);
+  setCardField(card, '[data-field="summaryFull"]', summaryText, {
+    hideIfEmpty: false,
+    setTitle: false,
+    fallback: 'Содержание не указано',
+  });
+  toggleSection(card, '[data-field="summaryCollapsed"]', true);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,
