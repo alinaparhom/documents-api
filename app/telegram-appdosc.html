@@ -181,6 +181,15 @@
         --appdosc-chip-text: #1d4ed8;
         --appdosc-status-bg: rgba(15, 23, 42, 0.04);
         --appdosc-status-border: rgba(59, 130, 246, 0.24);
+        --appdosc-badge-text: #1e293b;
+        --appdosc-meta-text: rgba(71, 85, 105, 0.9);
+        --appdosc-chevron-color: #64748b;
+        --appdosc-primary-btn-bg: linear-gradient(180deg, #4f8cff, #3f78e8);
+        --appdosc-primary-btn-border: rgba(59, 130, 246, 0.42);
+        --appdosc-primary-btn-text: #eff6ff;
+        --appdosc-primary-btn-shadow: 0 8px 24px rgba(37, 99, 235, 0.22);
+        --appdosc-badge-active-border: rgba(59, 130, 246, 0.86);
+        --appdosc-badge-active-bg: rgba(59, 130, 246, 0.1);
       }
 
       :root[data-theme='dark'] {
@@ -196,6 +205,15 @@
         --appdosc-chip-text: #bfdbfe;
         --appdosc-status-bg: rgba(15, 33, 73, 0.5);
         --appdosc-status-border: rgba(59, 130, 246, 0.28);
+        --appdosc-badge-text: #dbeafe;
+        --appdosc-meta-text: rgba(148, 163, 184, 0.9);
+        --appdosc-chevron-color: #94a3b8;
+        --appdosc-primary-btn-bg: linear-gradient(180deg, #3b82f6, #2563eb);
+        --appdosc-primary-btn-border: rgba(147, 197, 253, 0.44);
+        --appdosc-primary-btn-text: #f8fafc;
+        --appdosc-primary-btn-shadow: 0 8px 24px rgba(37, 99, 235, 0.34);
+        --appdosc-badge-active-border: rgba(125, 211, 252, 0.9);
+        --appdosc-badge-active-bg: rgba(59, 130, 246, 0.22);
       }
 
       .appdosc-viewer__zoom-group {
@@ -238,9 +256,9 @@
         width: 100% !important;
         max-width: 100% !important;
         margin: 0 !important;
-        padding-inline: clamp(10px, 2.8vw, 20px) !important;
-        padding-left: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-left)) !important;
-        padding-right: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-right)) !important;
+        padding-inline: 4px !important;
+        padding-left: max(4px, env(safe-area-inset-left)) !important;
+        padding-right: max(4px, env(safe-area-inset-right)) !important;
         padding-top: env(safe-area-inset-top);
         padding-bottom: env(safe-area-inset-bottom);
         box-sizing: border-box;
@@ -255,12 +273,19 @@
       .appdosc__content,
       .appdosc__footer {
         max-width: 100% !important;
+        width: 100% !important;
+        margin-inline: 0 !important;
       }
 
       .appdosc__table-card,
       .appdosc__cards {
         width: 100% !important;
         max-width: 100% !important;
+        margin-inline: 0 !important;
+      }
+
+      .appdosc__content {
+        padding-inline: 0 !important;
       }
 
       .appdosc__user {
@@ -570,8 +595,10 @@
         font-size: 16px !important;
         font-weight: 600 !important;
         opacity: 1;
-        box-shadow: 0 8px 24px rgba(56, 139, 255, 0.2) !important;
-        background: linear-gradient(180deg, #4f8cff, #3f78e8) !important;
+        color: var(--appdosc-primary-btn-text) !important;
+        border: 1px solid var(--appdosc-primary-btn-border) !important;
+        box-shadow: var(--appdosc-primary-btn-shadow) !important;
+        background: var(--appdosc-primary-btn-bg) !important;
       }
 
       .appdosc__refresh-icon::before {
@@ -610,9 +637,10 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         font-size: clamp(12px, 2.6vw, 14px) !important;
-        color: #dbeafe;
+        color: var(--appdosc-badge-text);
         border: 1px solid rgba(148, 163, 184, 0.22);
         box-shadow: none !important;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, filter 0.2s ease;
       }
 
       .appdosc__badge-icon {
@@ -713,12 +741,22 @@
 
       .appdosc__summary-list .appdosc__badge[aria-pressed='true'] {
         transform: translateY(-1px);
-        box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.24), 0 10px 18px rgba(37, 99, 235, 0.18) !important;
+        border-width: 2px !important;
+        border-color: var(--appdosc-badge-active-border) !important;
+        background: var(--appdosc-badge-active-bg) !important;
+        color: var(--appdosc-text-primary) !important;
+        box-shadow: none !important;
+        filter: none;
+      }
+
+      .appdosc__summary-list .appdosc__badge[aria-pressed='true'] .appdosc__badge-icon {
+        background: var(--appdosc-badge-active-bg) !important;
+        color: inherit;
       }
 
       .appdosc__table-meta {
         font-size: 13px !important;
-        color: rgba(148, 163, 184, 0.86) !important;
+        color: var(--appdosc-meta-text) !important;
       }
 
       .appdosc-card__header {
@@ -734,7 +772,7 @@
       .appdosc-card__meta {
         grid-area: date;
         font-size: 12px !important;
-        color: rgba(148, 163, 184, 0.92);
+        color: var(--appdosc-meta-text);
       }
 
       .appdosc-card__header-text {
@@ -755,7 +793,7 @@
       }
 
       .appdosc-card__chevron {
-        color: #94a3b8;
+        color: var(--appdosc-chevron-color);
         font-size: 13px;
         align-self: center;
         transition: transform 0.2s ease;
@@ -843,9 +881,9 @@
 
       @media (max-width: 680px) {
         .appdosc {
-          padding-inline: 8px !important;
-          padding-left: max(8px, env(safe-area-inset-left)) !important;
-          padding-right: max(8px, env(safe-area-inset-right)) !important;
+          padding-inline: 2px !important;
+          padding-left: max(2px, env(safe-area-inset-left)) !important;
+          padding-right: max(2px, env(safe-area-inset-right)) !important;
         }
 
         .appdosc__user {
