@@ -276,12 +276,14 @@
 
       .appdosc-avatar__placeholder::before {
         content: '';
-        width: 46%;
-        height: 46%;
+        width: 62%;
+        height: 62%;
         border-radius: 10px;
-        background: linear-gradient(140deg, rgba(255, 255, 255, 0.82), rgba(226, 232, 240, 0.55));
-        border: 1px solid rgba(255, 255, 255, 0.72);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        background:
+          radial-gradient(circle at 50% 32%, rgba(255, 255, 255, 0.9) 0 20%, transparent 21%),
+          radial-gradient(72% 52% at 50% 78%, rgba(255, 255, 255, 0.82) 0 58%, transparent 59%),
+          linear-gradient(150deg, rgba(248, 250, 252, 0.38), rgba(226, 232, 240, 0.2));
+        border: 1px solid rgba(255, 255, 255, 0.44);
       }
 
       .appdosc-card__assign-line {

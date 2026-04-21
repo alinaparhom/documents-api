@@ -3496,7 +3496,7 @@ function updateUserPanel() {
   }
 
   if (elements.userAvatarImage) {
-    const photoUrl = typeof state.telegram.photoUrl === 'string' ? state.telegram.photoUrl.trim() : '';
+    const photoUrl = normalizeAvatarUrl(state.telegram.photoUrl);
     if (photoUrl) {
       elements.userAvatarImage.src = photoUrl;
       elements.userAvatarImage.hidden = false;
@@ -11137,6 +11137,68 @@ function normalizeValue(value) {
   return string && string !== '—' ? string : '';
 }
 
+function normalizeAvatarUrl(value) {
+  const raw = normalizeValue(value);
+  if (!raw) {
+    return '';
+  }
+
+  if (raw.startsWith('//')) {
+    return `https:${raw}`;
+  }
+
+  if (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw) || /^blob:/i.test(raw)) {
+    return raw;
+  }
+
+  return '';
+}
+
+function resolveAvatarUrlFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const directFields = [
+    'photo_url',
+    'photoUrl',
+    'avatar_url',
+    'avatarUrl',
+    'avatar',
+    'image',
+    'imageUrl',
+    'profilePhoto',
+    'profile_photo',
+    'telegram_photo_url',
+    'telegramPhotoUrl',
+  ];
+
+  for (let index = 0; index < directFields.length; index += 1) {
+    const key = directFields[index];
+    const resolved = normalizeAvatarUrl(entry[key]);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const nestedObjects = [entry.user, entry.telegramUser, entry.profile, entry.contact];
+  for (let index = 0; index < nestedObjects.length; index += 1) {
+    const nested = nestedObjects[index];
+    if (!nested || typeof nested !== 'object') {
+      continue;
+    }
+    for (let fieldIndex = 0; fieldIndex < directFields.length; fieldIndex += 1) {
+      const key = directFields[fieldIndex];
+      const resolved = normalizeAvatarUrl(nested[key]);
+      if (resolved) {
+        return resolved;
+      }
+    }
+  }
+
+  return '';
+}
+
 function normalizeBriefText(value) {
   const source = value === null || value === undefined ? '' : String(value);
   const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '');
@@ -17431,6 +17493,31 @@ function setupAssignmentControls(card, task) {
     selectElement.value = normalized || '';
   };
 
+  const createAssigneeAvatar = (entry, fallbackLabel = '') => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = fallbackLabel ? `Аватар: ${fallbackLabel}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry);
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
   const createResponsibleRow = ({ value, label, normalized, assigned, comment, dueDate, instruction, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
@@ -17458,12 +17545,7 @@ function setupAssignmentControls(card, task) {
     const nameLine = document.createElement('div');
     nameLine.className = 'appdosc-card__assign-line';
 
-    const avatar = document.createElement('div');
-    avatar.className = 'appdosc-avatar';
-    avatar.setAttribute('aria-hidden', 'true');
-    const avatarPlaceholder = document.createElement('span');
-    avatarPlaceholder.className = 'appdosc-avatar__placeholder';
-    avatar.appendChild(avatarPlaceholder);
+    const avatar = createAssigneeAvatar(referenceEntry, label);
     nameLine.appendChild(avatar);
 
     const name = document.createElement('div');
@@ -18374,6 +18456,31 @@ function setupSubordinateControls(card, task) {
     return '';
   };
 
+  const createAssigneeAvatar = (entry, fallbackLabel = '') => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = fallbackLabel ? `Аватар: ${fallbackLabel}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry);
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
   const createSubordinateRow = ({ value, label, normalized, assigned, comment, dueDate, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
@@ -18401,12 +18508,7 @@ function setupSubordinateControls(card, task) {
     const nameLine = document.createElement('div');
     nameLine.className = 'appdosc-card__assign-line';
 
-    const avatar = document.createElement('div');
-    avatar.className = 'appdosc-avatar';
-    avatar.setAttribute('aria-hidden', 'true');
-    const avatarPlaceholder = document.createElement('span');
-    avatarPlaceholder.className = 'appdosc-avatar__placeholder';
-    avatar.appendChild(avatarPlaceholder);
+    const avatar = createAssigneeAvatar(referenceEntry, label);
     nameLine.appendChild(avatar);
 
     const name = document.createElement('div');
