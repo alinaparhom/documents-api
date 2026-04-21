@@ -5273,6 +5273,7 @@ function merge_record_with_responsible(array $record, array $responsible): array
 
     $map = [
         'department' => 'department',
+        'position' => 'position',
         'telegram' => 'telegram',
         'chatId' => 'chatId',
         'email' => 'email',
@@ -6723,6 +6724,7 @@ function sanitize_assignee_payload($value, bool $refreshTimestamp = false): arra
         'id' => sanitize_text_field($value['id'] ?? '', 120),
         'name' => sanitize_text_field($value['name'] ?? '', 200),
         'department' => sanitize_text_field($value['department'] ?? '', 160),
+        'position' => sanitize_text_field($value['position'] ?? '', 160),
         'note' => sanitize_text_field($value['note'] ?? '', 200),
         'telegram' => sanitize_text_field($value['telegram'] ?? '', 120),
         'chatId' => sanitize_text_field($value['chatId'] ?? '', 40),
