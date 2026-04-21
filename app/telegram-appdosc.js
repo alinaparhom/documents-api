@@ -5235,32 +5235,54 @@ function buildAssigneeLines(list, fallbackRole, emptyText) {
     if (!assignee) {
       return;
     }
-    const nameLine = assignee.name
-      ? assignee.name
-      : (assignee.id ? `${fallbackRole} #${assignee.id}` : fallbackRole);
+
+    const normalizedResponsible = normalizeValueString(assignee.responsible);
+    const normalizedName = normalizeValueString(assignee.name);
+    const fallbackName = assignee.id ? `${fallbackRole} #${assignee.id}` : fallbackRole;
+    const nameLine = normalizedResponsible || normalizedName || fallbackName;
     lines.push(nameLine);
+
+    const nameKey = normalizeValueString(nameLine).toLowerCase();
     const meta = [];
-    if (assignee.department) {
-      meta.push(assignee.department);
+    const seenMetaKeys = new Set();
+    const pushUniqueMeta = (value) => {
+      const text = normalizeValueString(value);
+      if (!text) {
+        return;
+      }
+      const key = text.toLowerCase();
+      if (key === nameKey || seenMetaKeys.has(key)) {
+        return;
+      }
+      seenMetaKeys.add(key);
+      meta.push(text);
+    };
+
+    pushUniqueMeta(assignee.position);
+    pushUniqueMeta(assignee.department);
+    pushUniqueMeta(assignee.email);
+
+    const statusValue = normalizeValueString(assignee.status);
+    if (statusValue) {
+      pushUniqueMeta(`Статус: ${statusValue}`);
     }
-    if (assignee.email) {
-      meta.push(assignee.email);
-    }
-    if (assignee.status) {
-      meta.push(`Статус: ${assignee.status}`);
-    }
+
     if (meta.length) {
       lines.push(meta.join(' • '));
     }
-    if (assignee.assignmentComment) {
-      lines.push(`Комментарий: ${assignee.assignmentComment}`);
+
+    const assignmentComment = normalizeValueString(assignee.assignmentComment);
+    if (assignmentComment) {
+      lines.push(`Комментарий: ${assignmentComment}`);
     }
+
     if (assignee.assignedAt) {
       const assignedAt = formatPdfDateTime(assignee.assignedAt);
       if (assignedAt) {
         lines.push(`Назначено: ${assignedAt}`);
       }
     }
+
     if (index < list.length - 1) {
       lines.push('');
     }
