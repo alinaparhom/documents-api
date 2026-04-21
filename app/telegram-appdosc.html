@@ -176,6 +176,11 @@
         --appdosc-avatar-border: rgba(148, 163, 184, 0.38);
         --appdosc-avatar-gradient-start: rgba(255, 255, 255, 0.74);
         --appdosc-avatar-gradient-end: rgba(203, 213, 225, 0.4);
+        --appdosc-chip-bg: rgba(37, 99, 235, 0.1);
+        --appdosc-chip-border: rgba(37, 99, 235, 0.26);
+        --appdosc-chip-text: #1d4ed8;
+        --appdosc-status-bg: rgba(15, 23, 42, 0.04);
+        --appdosc-status-border: rgba(59, 130, 246, 0.24);
       }
 
       :root[data-theme='dark'] {
@@ -186,6 +191,11 @@
         --appdosc-avatar-border: rgba(226, 232, 240, 0.35);
         --appdosc-avatar-gradient-start: rgba(255, 255, 255, 0.36);
         --appdosc-avatar-gradient-end: rgba(148, 163, 184, 0.18);
+        --appdosc-chip-bg: rgba(37, 99, 235, 0.22);
+        --appdosc-chip-border: rgba(96, 165, 250, 0.4);
+        --appdosc-chip-text: #bfdbfe;
+        --appdosc-status-bg: rgba(15, 33, 73, 0.5);
+        --appdosc-status-border: rgba(59, 130, 246, 0.28);
       }
 
       .appdosc-viewer__zoom-group {
@@ -693,12 +703,17 @@
       }
 
       .appdosc__status-message {
-        border: 1px solid rgba(59, 130, 246, 0.28);
-        background: rgba(15, 33, 73, 0.5);
-        color: #93c5fd !important;
+        border: 1px solid var(--appdosc-status-border);
+        background: var(--appdosc-status-bg);
+        color: var(--appdosc-chip-text) !important;
         border-radius: 14px;
         padding: 12px 14px;
         font-weight: 500;
+      }
+
+      .appdosc__summary-list .appdosc__badge[aria-pressed='true'] {
+        transform: translateY(-1px);
+        box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.24), 0 10px 18px rgba(37, 99, 235, 0.18) !important;
       }
 
       .appdosc__table-meta {
@@ -708,10 +723,10 @@
 
       .appdosc-card__header {
         display: grid !important;
-        grid-template-columns: 1fr auto auto;
+        grid-template-columns: 1fr auto;
         grid-template-areas:
-          "date badge chevron"
-          "summary summary summary";
+          "date side"
+          "compact compact";
         row-gap: 8px;
         column-gap: 10px;
       }
@@ -721,12 +736,22 @@
         font-size: 13px !important;
       }
 
+      .appdosc-card__header-text {
+        grid-column: 1 / -1;
+      }
+
+      .appdosc-card__status {
+        grid-column: 1 / -1;
+      }
+
       .appdosc-card__badge {
         grid-area: badge;
         font-size: 13px !important;
         padding: 6px 10px !important;
         border-radius: 999px !important;
-        background: rgba(37, 99, 235, 0.22) !important;
+        background: var(--appdosc-chip-bg) !important;
+        border: 1px solid var(--appdosc-chip-border) !important;
+        color: var(--appdosc-chip-text) !important;
       }
 
       .appdosc-card__chevron {
@@ -741,10 +766,10 @@
       }
 
       .appdosc-card__summary {
-        grid-area: summary;
+        grid-area: compact;
       }
 
-      .appdosc-card__summary .appdosc-card__block-title {
+      .appdosc-card__header .appdosc-card__summary .appdosc-card__block-title {
         display: none !important;
       }
 
@@ -763,9 +788,45 @@
         opacity: 0.78;
       }
 
-      .appdosc-card__header-text,
-      .appdosc-card__status {
+      .appdosc-card__deadline--full {
+        display: none;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__deadline--compact {
+        display: none;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__deadline--full {
+        display: inline-flex;
+      }
+
+      .appdosc-card__side {
+        grid-area: side;
+        display: inline-flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+      }
+
+      .appdosc-card__compact-actions {
         display: none !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__header-text,
+      .appdosc-card[data-expanded='false'] .appdosc-card__status {
+        display: none !important;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__header .appdosc-card__summary {
+        display: none !important;
+      }
+
+      .appdosc-card__summary--full {
+        display: none;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__summary--full {
+        display: block;
       }
 
       @media (max-width: 680px) {
@@ -1140,12 +1201,18 @@
     <template id="appdosc-card-template">
       <article class="appdosc-card" data-card>
         <header class="appdosc-card__header" data-card-toggle>
+          <div class="appdosc-card__header-text">
+            <div class="appdosc-card__title" data-field="document">Документ</div>
+            <div class="appdosc-card__subtitle" data-field="organization">Организация</div>
+          </div>
           <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
-          <span class="appdosc-card__badge" data-field="entryNumber"></span>
-          <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+          <span class="appdosc-card__status" data-field="status"></span>
+          <div class="appdosc-card__side">
+            <span class="appdosc-card__badge" data-field="entryNumber"></span>
+            <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+          </div>
           <div class="appdosc-card__summary" data-field="summary">
-            <div class="appdosc-card__block-title">Кратко</div>
-            <div class="appdosc-card__block-text" data-field="summaryText"></div>
+            <div class="appdosc-card__block-text" data-field="contentCompact"></div>
           </div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
         </header>
@@ -1179,15 +1246,23 @@
             <dd data-field="responseSummary"></dd>
           </div>
         </dl>
+        <div class="appdosc-card__summary appdosc-card__summary--full" data-field="summaryFull">
+          <div class="appdosc-card__block-title">Кратко</div>
+          <div class="appdosc-card__block-text" data-field="summaryText"></div>
+        </div>
         <div class="appdosc-card__resolution" data-field="resolution">
           <div class="appdosc-card__block-title">Резолюция</div>
           <div class="appdosc-card__block-text" data-field="resolutionText"></div>
         </div>
         <div class="appdosc-card__files" data-files></div>
         <footer class="appdosc-card__footer">
-          <div class="appdosc-card__deadline">
+          <div class="appdosc-card__deadline appdosc-card__deadline--compact">
             <span class="appdosc-card__deadline-label">От:</span>
             <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
+          </div>
+          <div class="appdosc-card__deadline appdosc-card__deadline--full">
+            <span class="appdosc-card__deadline-label">Срок</span>
+            <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
           </div>
           <div class="appdosc-card__actions">
             <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>

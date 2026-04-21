@@ -2627,12 +2627,18 @@ const CARD_HIGHLIGHT_TIMEOUT = 1800;
 
 const FALLBACK_CARD_TEMPLATE = `
   <header class="appdosc-card__header" data-card-toggle>
+    <div class="appdosc-card__header-text">
+      <div class="appdosc-card__title" data-field="document">Документ</div>
+      <div class="appdosc-card__subtitle" data-field="organization"></div>
+    </div>
     <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
-    <span class="appdosc-card__badge" data-field="entryNumber"></span>
-    <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+    <span class="appdosc-card__status" data-field="status"></span>
+    <div class="appdosc-card__side">
+      <span class="appdosc-card__badge" data-field="entryNumber"></span>
+      <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+    </div>
     <div class="appdosc-card__summary" data-field="summary">
-      <div class="appdosc-card__block-title">Кратко</div>
-      <div class="appdosc-card__block-text" data-field="summaryText"></div>
+      <div class="appdosc-card__block-text" data-field="contentCompact"></div>
     </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
@@ -2666,6 +2672,10 @@ const FALLBACK_CARD_TEMPLATE = `
       <dd data-field="responseSummary"></dd>
     </div>
   </dl>
+  <div class="appdosc-card__summary appdosc-card__summary--full" data-field="summaryFull">
+    <div class="appdosc-card__block-title">Кратко</div>
+    <div class="appdosc-card__block-text" data-field="summaryText"></div>
+  </div>
   <div class="appdosc-card__resolution" data-field="resolution">
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
@@ -2676,9 +2686,13 @@ const FALLBACK_CARD_TEMPLATE = `
   </div>
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
-    <div class="appdosc-card__deadline">
+    <div class="appdosc-card__deadline appdosc-card__deadline--compact">
       <span class="appdosc-card__deadline-label">От:</span>
       <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
+    </div>
+    <div class="appdosc-card__deadline appdosc-card__deadline--full">
+      <span class="appdosc-card__deadline-label">Срок</span>
+      <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
@@ -4206,7 +4220,16 @@ function createCard(task, index, anchorRegistry) {
     hideIfEmpty: true,
     setTitle: false,
   });
+  const compactContent = normalizeValue(task.content)
+    || normalizeValue(task.summary)
+    || normalizeValue(task.instruction)
+    || '—';
+  setCardField(card, '[data-field="contentCompact"]', compactContent, {
+    hideIfEmpty: false,
+    setTitle: false,
+  });
   toggleSection(card, '[data-field="summary"]', hasSummary);
+  toggleSection(card, '[data-field="summaryFull"]', hasSummary);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,
