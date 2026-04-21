@@ -815,6 +815,11 @@
         gap: 8px;
       }
 
+      .appdosc-card__header::after {
+        content: none !important;
+        display: none !important;
+      }
+
       .appdosc-card__compact-actions {
         display: none !important;
       }
@@ -822,6 +827,9 @@
       .appdosc-card[data-expanded='false'] .appdosc-card__header-text,
       .appdosc-card[data-expanded='false'] .appdosc-card__status {
         display: none !important;
+      }
+      .appdosc-card[data-expanded='false'] .appdosc-card__deadline--compact {
+        display: inline-flex !important;
       }
 
       .appdosc-card[data-expanded='true'] .appdosc-card__header .appdosc-card__summary {
