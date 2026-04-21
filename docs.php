@@ -4592,6 +4592,7 @@ function sanitize_admin_entry(array $entry): array
     $clean = [
         'number' => sanitize_text_field($entry['number'] ?? '', 20),
         'responsible' => sanitize_text_field($entry['responsible'] ?? '', 200),
+        'position' => sanitize_text_field($entry['position'] ?? '', 160),
         'telegram' => sanitize_text_field($entry['telegram'] ?? '', 120),
         'chatId' => sanitize_text_field($entry['chatId'] ?? '', 40),
         'email' => sanitize_text_field($entry['email'] ?? '', 160),
