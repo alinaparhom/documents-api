@@ -3392,6 +3392,15 @@ function updateStateFromPayload(payload) {
     state.telegram.id = String(payload.telegramUserId);
   }
 
+  if (!state.telegram.role) {
+    const payloadPosition = normalizeValue(payload.userPosition)
+      || normalizeValue(payload.position)
+      || normalizeValue(payload.jobTitle);
+    if (payloadPosition) {
+      state.telegram.role = String(payloadPosition);
+    }
+  }
+
   if (payload.user && typeof payload.user === 'object') {
     const user = payload.user;
     if (!state.telegram.id && user.id) {
@@ -3410,9 +3419,11 @@ function updateStateFromPayload(payload) {
       state.telegram.firstName = user.firstName ? String(user.firstName) : state.telegram.firstName;
       state.telegram.lastName = user.lastName ? String(user.lastName) : state.telegram.lastName;
     }
-    const userRole = user.position || user.jobTitle || user.title || user.role;
-    if (userRole) {
-      state.telegram.role = String(userRole);
+    const userPosition = normalizeValue(user.position)
+      || normalizeValue(user.jobTitle)
+      || normalizeValue(user.title);
+    if (userPosition) {
+      state.telegram.role = String(userPosition);
     }
   }
 
@@ -3489,10 +3500,7 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role) || getCurrentUserRoleFromAccess();
-    if (!state.telegram.role && role) {
-      state.telegram.role = role;
-    }
+    const role = normalizeValue(state.telegram.role);
     elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
   }
 
