@@ -4257,12 +4257,15 @@ function createCard(task, index, anchorRegistry) {
   const compactContent = resolveCompactText(task.summary)
     || resolveCompactText(task.content)
     || resolveCompactText(task.description)
+    || resolveCompactText(task.text)
+    || resolveCompactText(task.notes)
     || resolveCompactText(task.instruction)
-    || '—';
+    || normalizeValue(task.document)
+    || 'Содержание не указано';
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
-    setTitle: false,
-    fallback: '—',
+    setTitle: true,
+    fallback: 'Содержание не указано',
   });
   toggleSection(card, '[data-field="summary"]', true);
 
