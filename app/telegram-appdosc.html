@@ -266,12 +266,20 @@
         display: block;
       }
 
+      .appdosc-avatar__img[hidden] {
+        display: none !important;
+      }
+
       .appdosc-avatar__placeholder {
         position: absolute;
         inset: 0;
         display: flex;
         align-items: center;
         justify-content: center;
+      }
+
+      .appdosc-avatar__placeholder[hidden] {
+        display: none !important;
       }
 
       .appdosc-avatar__placeholder::before {

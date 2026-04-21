@@ -14,6 +14,7 @@ const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
+const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
@@ -3496,13 +3497,23 @@ function updateUserPanel() {
   }
 
   if (elements.userAvatarImage) {
-    const photoUrl = normalizeAvatarUrl(state.telegram.photoUrl);
+    const photoUrl = normalizeAvatarUrl(state.telegram.photoUrl)
+      || (normalizeTelegramUserId(state.telegram.id)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(normalizeTelegramUserId(state.telegram.id))}`
+        : '');
     if (photoUrl) {
       elements.userAvatarImage.src = photoUrl;
       elements.userAvatarImage.hidden = false;
       if (elements.userAvatarFallback) {
         elements.userAvatarFallback.hidden = true;
       }
+      elements.userAvatarImage.onerror = () => {
+        elements.userAvatarImage.hidden = true;
+        elements.userAvatarImage.removeAttribute('src');
+        if (elements.userAvatarFallback) {
+          elements.userAvatarFallback.hidden = false;
+        }
+      };
     } else {
       elements.userAvatarImage.removeAttribute('src');
       elements.userAvatarImage.hidden = true;
@@ -11154,6 +11165,58 @@ function normalizeAvatarUrl(value) {
   return '';
 }
 
+function normalizeTelegramUserId(value) {
+  const raw = normalizeValue(value);
+  if (!raw) {
+    return '';
+  }
+  const normalized = raw.replace(/[^\d-]/g, '');
+  return /^-?\d{4,20}$/.test(normalized) ? normalized : '';
+}
+
+function resolveTelegramUserIdFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const directCandidates = [
+    entry.telegram,
+    entry.telegramId,
+    entry.telegram_id,
+    entry.userId,
+    entry.user_id,
+    entry.id,
+  ];
+
+  for (let index = 0; index < directCandidates.length; index += 1) {
+    const id = normalizeTelegramUserId(directCandidates[index]);
+    if (id) {
+      return id;
+    }
+  }
+
+  const nestedCandidates = [entry.user, entry.telegramUser, entry.profile, entry.contact];
+  for (let index = 0; index < nestedCandidates.length; index += 1) {
+    const nested = nestedCandidates[index];
+    if (!nested || typeof nested !== 'object') {
+      continue;
+    }
+    const id = normalizeTelegramUserId(
+      nested.telegram
+      || nested.telegramId
+      || nested.telegram_id
+      || nested.userId
+      || nested.user_id
+      || nested.id
+    );
+    if (id) {
+      return id;
+    }
+  }
+
+  return '';
+}
+
 function resolveAvatarUrlFromEntry(entry) {
   if (!entry || typeof entry !== 'object') {
     return '';
@@ -17507,11 +17570,19 @@ function setupAssignmentControls(card, task) {
     placeholder.className = 'appdosc-avatar__placeholder';
     placeholder.setAttribute('aria-hidden', 'true');
 
-    const avatarUrl = resolveAvatarUrlFromEntry(entry);
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
     if (avatarUrl) {
       image.src = avatarUrl;
       image.hidden = false;
       placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
     }
 
     avatar.append(image, placeholder);
@@ -18470,11 +18541,19 @@ function setupSubordinateControls(card, task) {
     placeholder.className = 'appdosc-avatar__placeholder';
     placeholder.setAttribute('aria-hidden', 'true');
 
-    const avatarUrl = resolveAvatarUrlFromEntry(entry);
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
     if (avatarUrl) {
       image.src = avatarUrl;
       image.hidden = false;
       placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
     }
 
     avatar.append(image, placeholder);
