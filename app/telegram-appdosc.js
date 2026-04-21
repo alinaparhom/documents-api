@@ -2031,6 +2031,7 @@ const state = {
     visibilityRuleLogged: false,
     completedVisibilityLogged: false,
   },
+  userDirectoryEntries: [],
 };
 
 sharedState = state;
@@ -3387,9 +3388,18 @@ function updateStateFromPayload(payload) {
     ? payload.organizationsChecked
     : state.organizationsChecked;
   state.lastUpdated = payload.generatedAt || new Date().toISOString();
+  state.userDirectoryEntries = collectUserDirectoryEntries(payload);
 
   if (payload.telegramUserId && !state.telegram.id) {
     state.telegram.id = String(payload.telegramUserId);
+  }
+
+  if (!state.telegram.role) {
+    const payloadPosition = normalizeValue(payload.userPosition)
+      || normalizeValue(payload.position);
+    if (payloadPosition) {
+      state.telegram.role = String(payloadPosition);
+    }
   }
 
   if (payload.user && typeof payload.user === 'object') {
@@ -3410,9 +3420,9 @@ function updateStateFromPayload(payload) {
       state.telegram.firstName = user.firstName ? String(user.firstName) : state.telegram.firstName;
       state.telegram.lastName = user.lastName ? String(user.lastName) : state.telegram.lastName;
     }
-    const userRole = user.position || user.jobTitle || user.title || user.role;
-    if (userRole) {
-      state.telegram.role = String(userRole);
+    const userPosition = normalizeValue(user.position);
+    if (userPosition) {
+      state.telegram.role = String(userPosition);
     }
   }
 
@@ -3489,11 +3499,11 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role) || getCurrentUserRoleFromAccess();
+    const role = normalizeValue(state.telegram.role) || getCurrentUserPositionFromAccess();
     if (!state.telegram.role && role) {
       state.telegram.role = role;
     }
-    elements.userRole.textContent = role ? `Роль: ${role}` : 'Роль: не указана';
+    elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
   }
 
   if (elements.userAvatarImage) {
@@ -11749,7 +11759,44 @@ function normalizeSettingsDocsEntries(payload) {
   if (Array.isArray(payload.block1)) {
     return payload.block1;
   }
+  if (Array.isArray(payload.block2)) {
+    return payload.block2;
+  }
+  if (Array.isArray(payload.block3)) {
+    return payload.block3;
+  }
   return [];
+}
+
+function collectUserDirectoryEntries(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const buckets = [];
+  const appendArray = (value) => {
+    if (Array.isArray(value) && value.length) {
+      buckets.push(...value);
+    }
+  };
+
+  appendArray(payload.responsibles);
+  appendArray(payload.subordinates);
+  appendArray(payload.directors);
+  appendArray(payload.block1);
+  appendArray(payload.block2);
+  appendArray(payload.block3);
+
+  if (payload.settings && typeof payload.settings === 'object') {
+    appendArray(payload.settings.responsibles);
+    appendArray(payload.settings.subordinates);
+    appendArray(payload.settings.directors);
+    appendArray(payload.settings.block1);
+    appendArray(payload.settings.block2);
+    appendArray(payload.settings.block3);
+  }
+
+  return buckets.filter((entry) => entry && typeof entry === 'object');
 }
 
 async function getResponsibleFromSettingsDocs(organization, telegramId) {
@@ -11901,13 +11948,14 @@ function getCurrentUserResponsibleFromAccess() {
   return '';
 }
 
-function getCurrentUserRoleFromAccess() {
+function getCurrentUserPositionFromAccess() {
   const access = state && state.access && typeof state.access === 'object' ? state.access : null;
-  if (!access) {
+  const directoryEntries = Array.isArray(state?.userDirectoryEntries) ? state.userDirectoryEntries : [];
+  if (!access && !directoryEntries.length) {
     return '';
   }
 
-  const groups = [access.responsibles, access.subordinates, access.directors];
+  const groups = access ? [access.responsibles, access.subordinates, access.directors] : [];
   const entries = [];
   groups.forEach((group) => {
     if (!group || typeof group !== 'object') {
@@ -11919,6 +11967,9 @@ function getCurrentUserRoleFromAccess() {
       }
     });
   });
+  if (directoryEntries.length) {
+    entries.push(...directoryEntries);
+  }
 
   if (!entries.length) {
     return '';
@@ -11934,9 +11985,19 @@ function getCurrentUserRoleFromAccess() {
 
   pushId(state.telegram.id);
   pushId(state.telegram.chatId);
+  pushId(state.telegram.username);
 
   const ids = Array.from(new Set(idCandidates));
   const names = [];
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      names.push(normalized);
+    }
+  };
+  pushName(state.telegram.fullName);
+  pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+  pushName(state.telegram.username);
 
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object') {
@@ -11945,12 +12006,9 @@ function getCurrentUserRoleFromAccess() {
     if (!entryMatchesUser(entry, ids, names)) {
       continue;
     }
-    const role = normalizeValue(entry.role)
-      || normalizeValue(entry.position)
-      || normalizeValue(entry.jobTitle)
-      || normalizeValue(entry.title);
-    if (role) {
-      return role;
+    const position = normalizeValue(entry.position);
+    if (position) {
+      return position;
     }
   }
 
