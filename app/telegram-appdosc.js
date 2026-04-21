@@ -1923,6 +1923,9 @@ function hydrateTelegramFromInitData(initData) {
         if (!state.telegram.languageCode && typeof user.language_code === 'string') {
           state.telegram.languageCode = user.language_code;
         }
+        if (!state.telegram.photoUrl && typeof user.photo_url === 'string') {
+          state.telegram.photoUrl = user.photo_url;
+        }
       }
     } catch (error) {
       // ignore JSON parse issues
@@ -1964,6 +1967,7 @@ const state = {
     firstName: '',
     lastName: '',
     fullName: '',
+    photoUrl: '',
     role: '',
     chatId: '',
     chatType: '',
@@ -2690,6 +2694,9 @@ function initElements() {
   elements.refreshButton = document.querySelector('[data-refresh]');
   elements.userName = document.querySelector('[data-user-name]');
   elements.userRole = document.querySelector('[data-user-role]');
+  elements.userAvatar = document.querySelector('[data-user-avatar]');
+  elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
+  elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
@@ -2793,6 +2800,7 @@ function initTelegram() {
       state.telegram.firstName = user.first_name ? String(user.first_name) : state.telegram.firstName;
       state.telegram.lastName = user.last_name ? String(user.last_name) : state.telegram.lastName;
       state.telegram.languageCode = user.language_code ? String(user.language_code) : state.telegram.languageCode;
+      state.telegram.photoUrl = user.photo_url ? String(user.photo_url) : state.telegram.photoUrl;
       const nameParts = [state.telegram.firstName, state.telegram.lastName].filter(Boolean);
       state.telegram.fullName = nameParts.join(' ').trim() || state.telegram.fullName;
     }
@@ -2997,6 +3005,11 @@ function readQueryContext() {
   const fullName = params.get('telegram_full_name') || params.get('full_name');
   if (!state.telegram.fullName && fullName) {
     state.telegram.fullName = String(fullName).trim();
+  }
+
+  const photoUrl = params.get('telegram_photo_url') || params.get('photo_url');
+  if (!state.telegram.photoUrl && photoUrl) {
+    state.telegram.photoUrl = String(photoUrl).trim();
   }
 
   const platformParam = params.get('telegram_platform')
@@ -3465,11 +3478,13 @@ function renderEmpty() {
 }
 
 function updateUserPanel() {
+  const displayName = state.telegram.fullName
+    || state.telegram.firstName
+    || state.telegram.username
+    || 'Неизвестный пользователь';
+
   if (elements.userName) {
-    elements.userName.textContent = state.telegram.fullName
-      || state.telegram.firstName
-      || state.telegram.username
-      || 'Неизвестный пользователь';
+    elements.userName.textContent = displayName;
   }
 
   if (elements.userRole) {
@@ -3478,6 +3493,29 @@ function updateUserPanel() {
       state.telegram.role = role;
     }
     elements.userRole.textContent = role ? `Роль: ${role}` : 'Роль: не указана';
+  }
+
+  if (elements.userAvatarFallback) {
+    const safeName = String(displayName || '').trim();
+    const initial = safeName ? safeName.charAt(0).toUpperCase() : 'Г';
+    elements.userAvatarFallback.textContent = initial;
+  }
+
+  if (elements.userAvatarImage) {
+    const photoUrl = typeof state.telegram.photoUrl === 'string' ? state.telegram.photoUrl.trim() : '';
+    if (photoUrl) {
+      elements.userAvatarImage.src = photoUrl;
+      elements.userAvatarImage.hidden = false;
+      if (elements.userAvatarFallback) {
+        elements.userAvatarFallback.hidden = true;
+      }
+    } else {
+      elements.userAvatarImage.removeAttribute('src');
+      elements.userAvatarImage.hidden = true;
+      if (elements.userAvatarFallback) {
+        elements.userAvatarFallback.hidden = false;
+      }
+    }
   }
 
   updateVersionPanel();
