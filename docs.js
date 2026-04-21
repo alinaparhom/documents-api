@@ -4241,6 +4241,9 @@
       if (entry.department) {
         snapshot.department = entry.department;
       }
+      if (entry.position) {
+        snapshot.position = entry.position;
+      }
       if (entry.telegram) {
         snapshot.telegram = entry.telegram;
       }
@@ -4360,6 +4363,9 @@
     var includeSourceTag = Boolean(config.includeSourceTag);
     var name = entry.responsible ? String(entry.responsible).trim() : '';
     var meta = [];
+    if (entry.position) {
+      meta.push(String(entry.position).trim());
+    }
     if (entry.department) {
       meta.push(String(entry.department).trim());
     }
@@ -4552,6 +4558,9 @@
       if (entry.department) {
         option.dataset.department = entry.department;
       }
+      if (entry.position) {
+        option.dataset.position = entry.position;
+      }
       if (entry.telegram) {
         option.dataset.telegram = entry.telegram;
       }
@@ -4643,6 +4652,9 @@
       if (entry.department) {
         option.dataset.department = entry.department;
       }
+      if (entry.position) {
+        option.dataset.position = entry.position;
+      }
       if (entry.telegram) {
         option.dataset.telegram = entry.telegram;
       }
@@ -4718,6 +4730,9 @@
       if (!snapshot.department && selectedOption.dataset.department) {
         snapshot.department = selectedOption.dataset.department;
       }
+      if (!snapshot.position && selectedOption.dataset.position) {
+        snapshot.position = selectedOption.dataset.position;
+      }
       if (!snapshot.telegram && selectedOption.dataset.telegram) {
         snapshot.telegram = selectedOption.dataset.telegram;
       }
@@ -4737,6 +4752,9 @@
     }
     clearMissingTelegram(select);
     var parts = [];
+    if (snapshot.position) {
+      parts.push(snapshot.position);
+    }
     if (snapshot.department) {
       parts.push(snapshot.department);
     }
@@ -4779,6 +4797,9 @@
       if (!snapshot.department && selectedOption.dataset.department) {
         snapshot.department = selectedOption.dataset.department;
       }
+      if (!snapshot.position && selectedOption.dataset.position) {
+        snapshot.position = selectedOption.dataset.position;
+      }
       if (!snapshot.telegram && selectedOption.dataset.telegram) {
         snapshot.telegram = selectedOption.dataset.telegram;
       }
@@ -4798,6 +4819,9 @@
     }
     clearMissingTelegram(select);
     var parts = [];
+    if (snapshot.position) {
+      parts.push(snapshot.position);
+    }
     if (snapshot.department) {
       parts.push(snapshot.department);
     }
@@ -5663,6 +5687,7 @@
       var headerCells = [
         '<th>№ п/п</th>',
         '<th>Ответственный</th>',
+        '<th>Должность</th>',
         '<th>ID Telegram</th>',
         '<th>ID чата</th>',
         '<th>Эл. почта</th>'
@@ -5891,6 +5916,7 @@
     var base = {
       number: '',
       responsible: '',
+      position: '',
       telegram: '',
       chatId: '',
       email: '',
@@ -5939,6 +5965,7 @@
 
     appendInputCell('number', data.number, 'text', 'off');
     appendInputCell('responsible', data.responsible, 'text', 'name');
+    appendInputCell('position', data.position, 'text', 'organization-title');
     appendInputCell('telegram', data.telegram, 'text', 'off');
     appendInputCell('chatId', data.chatId, 'text', 'off');
     appendInputCell('email', data.email, 'email', 'email');
@@ -7362,6 +7389,9 @@
       if (info.department && !snapshot.department) {
         snapshot.department = info.department;
       }
+      if (info.position && !snapshot.position) {
+        snapshot.position = info.position;
+      }
       if (info.telegram && !snapshot.telegram) {
         snapshot.telegram = info.telegram;
       }
@@ -7466,6 +7496,9 @@
         var existing = results[matchedIndex];
         if (!existing.department && snapshot.department) {
           existing.department = snapshot.department;
+        }
+        if (!existing.position && snapshot.position) {
+          existing.position = snapshot.position;
         }
         if (!existing.telegram && snapshot.telegram) {
           existing.telegram = snapshot.telegram;
@@ -9115,10 +9148,17 @@
     entryNode.appendChild(createElement('div', 'documents-assignee__name', nameText));
 
     if (assignee) {
-      var metaParts = [];
-      if (assignee.department) {
-        metaParts.push(assignee.department);
+      var titleParts = [];
+      if (assignee.position) {
+        titleParts.push(assignee.position);
       }
+      if (assignee.department) {
+        titleParts.push(assignee.department);
+      }
+      if (titleParts.length) {
+        entryNode.appendChild(createElement('div', 'documents-assignee__meta documents-assignee__meta--muted', titleParts.join(' · ')));
+      }
+      var metaParts = [];
       if (assignee.telegram) {
         metaParts.push('TG: ' + assignee.telegram);
       }
