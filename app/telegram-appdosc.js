@@ -18,6 +18,9 @@ const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
+let systemThemeMediaQuery = null;
+let isSystemThemeListenerBound = false;
+const THEME_MODE_OPTIONS = ['dark', 'light'];
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -1962,6 +1965,7 @@ function hydrateTelegramFromInitData(initData) {
 }
 
 const state = {
+  themeMode: 'dark',
   telegram: {
     id: '',
     username: '',
@@ -2697,6 +2701,12 @@ function initElements() {
   elements.userName = document.querySelector('[data-user-name]');
   elements.userRole = document.querySelector('[data-user-role]');
   elements.userAvatar = document.querySelector('[data-user-avatar]');
+  elements.settingsSheet = document.querySelector('[data-settings-sheet]');
+  elements.settingsCloseTargets = Array.from(document.querySelectorAll('[data-settings-close]'));
+  elements.settingsUserAvatar = document.querySelector('[data-settings-user-avatar]');
+  elements.settingsUserName = document.querySelector('[data-settings-user-name]');
+  elements.settingsUserRole = document.querySelector('[data-settings-user-role]');
+  elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
   elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
   elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
@@ -2758,6 +2768,7 @@ function initElements() {
 function initTelegram() {
   const { Telegram } = window;
   if (!Telegram || !Telegram.WebApp) {
+    syncThemeWithSystem();
     readQueryContext();
     logClientEvent('init_no_webapp', {
       telegramAvailable: false,
@@ -2787,7 +2798,10 @@ function initTelegram() {
     // ignore expansion issues
   }
 
-  state.telegram.colorScheme = webApp.colorScheme || 'light';
+  state.telegram.colorScheme = webApp.colorScheme || getSystemColorScheme();
+  if (state.themeMode !== 'dark' && state.themeMode !== 'light') {
+    state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+  }
   state.telegram.initData = webApp.initData || '';
   state.telegram.platform = typeof webApp.platform === 'string' ? webApp.platform : state.telegram.platform;
   updateEnvironmentFromPlatform(state.telegram.platform);
@@ -2837,7 +2851,7 @@ function initTelegram() {
 
   if (typeof webApp.onEvent === 'function') {
     webApp.onEvent('themeChanged', () => {
-      state.telegram.colorScheme = webApp.colorScheme || 'light';
+      state.telegram.colorScheme = webApp.colorScheme || getSystemColorScheme();
       applyTheme();
     });
   }
@@ -2856,6 +2870,87 @@ function initTelegram() {
     hasInitData: Boolean(state.telegram.initData),
     colorScheme: state.telegram.colorScheme || 'light',
   });
+}
+
+function getSystemColorScheme() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return 'light';
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function syncThemeWithSystem() {
+  state.telegram.colorScheme = getSystemColorScheme();
+  state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+  applyTheme();
+}
+
+function bindSystemThemeListener() {
+  if (isSystemThemeListenerBound || typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return;
+  }
+  systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  const handleSystemThemeChange = (event) => {
+    const hasTelegramWebApp = Boolean(window.Telegram && window.Telegram.WebApp);
+    if (hasTelegramWebApp) {
+      return;
+    }
+    state.telegram.colorScheme = event && event.matches ? 'dark' : 'light';
+    state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+    renderThemeToggle();
+    applyTheme();
+  };
+  if (typeof systemThemeMediaQuery.addEventListener === 'function') {
+    systemThemeMediaQuery.addEventListener('change', handleSystemThemeChange);
+  } else if (typeof systemThemeMediaQuery.addListener === 'function') {
+    systemThemeMediaQuery.addListener(handleSystemThemeChange);
+  }
+  isSystemThemeListenerBound = true;
+}
+
+function normalizeThemeMode(value) {
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return THEME_MODE_OPTIONS.includes(mode) ? mode : 'dark';
+}
+
+function initThemeMode() {
+  const webApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  const preferred = webApp && webApp.colorScheme ? webApp.colorScheme : getSystemColorScheme();
+  state.themeMode = preferred === 'dark' ? 'dark' : 'light';
+  bindSystemThemeListener();
+  renderThemeToggle();
+  applyTheme();
+}
+
+function setThemeMode(mode) {
+  const nextMode = normalizeThemeMode(mode);
+  state.themeMode = nextMode;
+  renderThemeToggle();
+  applyTheme();
+}
+
+function renderThemeToggle() {
+  if (!Array.isArray(elements.themeOptionButtons) || !elements.themeOptionButtons.length) {
+    return;
+  }
+  const mode = normalizeThemeMode(state.themeMode);
+  elements.themeOptionButtons.forEach((button) => {
+    const buttonMode = normalizeThemeMode(button.dataset.themeOption);
+    const isActive = buttonMode === mode;
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function openSettingsSheet() {
+  if (elements.settingsSheet instanceof HTMLElement) {
+    elements.settingsSheet.hidden = false;
+  }
+}
+
+function closeSettingsSheet() {
+  if (elements.settingsSheet instanceof HTMLElement) {
+    elements.settingsSheet.hidden = true;
+  }
 }
 
 function parseTaskIdFromStartParam(value) {
@@ -3049,8 +3144,11 @@ function readQueryContext() {
 }
 
 function applyTheme() {
-  const theme = state.telegram.colorScheme || 'light';
+  const forcedMode = normalizeThemeMode(state.themeMode);
+  const theme = forcedMode;
+  state.telegram.colorScheme = theme;
   document.documentElement.setAttribute('data-theme', theme);
+  document.documentElement.setAttribute('data-theme-mode', forcedMode);
   setClass(document.body, 'appdosc--dark', theme === 'dark');
 
   const themeParams = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp.themeParams : null;
@@ -3497,6 +3595,9 @@ function updateUserPanel() {
   if (elements.userName) {
     elements.userName.textContent = displayName;
   }
+  if (elements.settingsUserName) {
+    elements.settingsUserName.textContent = displayName;
+  }
 
   if (elements.userRole) {
     const role = normalizeValue(state.telegram.role)
@@ -3506,6 +3607,9 @@ function updateUserPanel() {
       state.telegram.role = role;
     }
     elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
+    if (elements.settingsUserRole) {
+      elements.settingsUserRole.textContent = role || 'Должность не указана';
+    }
   }
 
   if (elements.userAvatarImage) {
@@ -3513,6 +3617,9 @@ function updateUserPanel() {
       || (normalizeTelegramUserId(state.telegram.id)
         ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(normalizeTelegramUserId(state.telegram.id))}`
         : '');
+    if (elements.settingsUserAvatar) {
+      elements.settingsUserAvatar.src = photoUrl || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2284%22 height=%2284%22%3E%3Crect width=%2284%22 height=%2284%22 rx=%2218%22 fill=%22%23cbd5e1%22/%3E%3Ctext x=%2242%22 y=%2250%22 text-anchor=%22middle%22 font-size=%2230%22%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E';
+    }
     if (photoUrl) {
       elements.userAvatarImage.src = photoUrl;
       elements.userAvatarImage.hidden = false;
@@ -3618,17 +3725,9 @@ function updateStats() {
     }
   }
 
-  const statusCounts = isPlainObject(displayStats.statuses)
-    ? displayStats.statuses
-    : createEmptyStatusCounters();
-  const hasStatusCounts = Object.keys(STATUS_SUMMARY_CONFIG).some((key) => {
-    const rawValue = statusCounts[key];
-    const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
-    return Number.isFinite(numeric) && numeric > 0;
-  });
-  const resolvedStatusCounts = !hasStatusCounts && overallStats.total > 0
+  const resolvedStatusCounts = isPlainObject(overallStats.statuses)
     ? overallStats.statuses
-    : statusCounts;
+    : createEmptyStatusCounters();
 
   if (elements.statusBadges) {
     Object.entries(STATUS_SUMMARY_CONFIG).forEach(([key, config]) => {
@@ -3644,10 +3743,7 @@ function updateStats() {
   }
 
   if (elements.overdue) {
-    const overdue = Number(displayStats.overdue) || 0;
-    const resolvedOverdue = !hasStatusCounts && overdue === 0 && overallStats.total > 0
-      ? Number(overallStats.overdue) || 0
-      : overdue;
+    const resolvedOverdue = Number(overallStats.overdue) || 0;
     elements.overdue.textContent = `${resolvedOverdue} просрочено`;
   }
 
@@ -15625,6 +15721,29 @@ function attachEvents() {
   if (elements.viewerDeleteResponse) {
     elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
   }
+  if (elements.userAvatar) {
+    elements.userAvatar.addEventListener('click', openSettingsSheet);
+    elements.userAvatar.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openSettingsSheet();
+      }
+    });
+  }
+  if (Array.isArray(elements.settingsCloseTargets) && elements.settingsCloseTargets.length) {
+    elements.settingsCloseTargets.forEach((target) => {
+      target.addEventListener('click', closeSettingsSheet);
+    });
+  }
+  if (Array.isArray(elements.themeOptionButtons) && elements.themeOptionButtons.length) {
+    elements.themeOptionButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const nextMode = normalizeThemeMode(button.dataset.themeOption);
+        setThemeMode(nextMode);
+        closeSettingsSheet();
+      });
+    });
+  }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -15635,6 +15754,11 @@ function attachEvents() {
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
       loadTasks(false);
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeSettingsSheet();
     }
   });
 }
@@ -15815,6 +15939,7 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
+  initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
     pdfViewerInstance.preload();

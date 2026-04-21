@@ -167,14 +167,35 @@
         display: block;
       }
 
+      :root {
+        color-scheme: light dark;
+        --appdosc-surface-glass: rgba(255, 255, 255, 0.7);
+        --appdosc-surface-glass-border: rgba(148, 163, 184, 0.34);
+        --appdosc-text-primary: #0f172a;
+        --appdosc-text-muted: #475569;
+        --appdosc-avatar-border: rgba(148, 163, 184, 0.38);
+        --appdosc-avatar-gradient-start: rgba(255, 255, 255, 0.74);
+        --appdosc-avatar-gradient-end: rgba(203, 213, 225, 0.4);
+      }
+
+      :root[data-theme='dark'] {
+        --appdosc-surface-glass: rgba(30, 41, 59, 0.45);
+        --appdosc-surface-glass-border: rgba(148, 163, 184, 0.42);
+        --appdosc-text-primary: #f8fafc;
+        --appdosc-text-muted: rgba(203, 213, 225, 0.9);
+        --appdosc-avatar-border: rgba(226, 232, 240, 0.35);
+        --appdosc-avatar-gradient-start: rgba(255, 255, 255, 0.36);
+        --appdosc-avatar-gradient-end: rgba(148, 163, 184, 0.18);
+      }
+
       .appdosc-viewer__zoom-group {
         display: inline-flex;
         align-items: center;
         border-radius: 12px;
-        background: rgba(255, 255, 255, 0.32);
+        background: var(--appdosc-surface-glass);
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.5);
+        border: 1px solid var(--appdosc-surface-glass-border);
         overflow: hidden;
       }
 
@@ -203,16 +224,20 @@
 
 
 
-      :root {
-        color-scheme: dark;
-      }
-
       .appdosc {
         width: 100% !important;
         max-width: 100% !important;
         margin: 0 !important;
         padding-inline: clamp(10px, 2.8vw, 20px) !important;
+        padding-left: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-left)) !important;
+        padding-right: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-right)) !important;
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
         box-sizing: border-box;
+        min-height: 100dvh;
+        color: var(--appdosc-text-primary);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
       }
 
       .appdosc__header,
@@ -245,6 +270,186 @@
         gap: 14px;
       }
 
+      .appdosc-avatar-wrap {
+        position: relative;
+      }
+
+      .appdosc-avatar[data-settings-open] {
+        cursor: pointer;
+      }
+
+      .appdosc-avatar__settings-badge {
+        position: absolute;
+        right: -6px;
+        bottom: -6px;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        border: 1px solid var(--appdosc-surface-glass-border);
+        background: var(--appdosc-surface-glass);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        line-height: 1;
+      }
+
+      .appdosc-settings-sheet[hidden] {
+        display: none !important;
+      }
+
+      .appdosc-settings-sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 1300;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+      }
+
+      .appdosc-settings-sheet__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+      }
+
+      .appdosc-settings-sheet__card {
+        position: relative;
+        width: min(520px, 100%);
+        border-radius: 22px 22px 0 0;
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+        border: 1px solid var(--appdosc-surface-glass-border);
+        background: var(--appdosc-surface-glass);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      .appdosc-settings-sheet__title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 700;
+        text-align: center;
+      }
+
+      .appdosc-settings-sheet__close {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        border: 1px solid var(--appdosc-surface-glass-border);
+        background: transparent;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-settings-sheet__drag {
+        width: 52px;
+        height: 5px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.52);
+        margin: 0 auto 10px;
+      }
+
+      .appdosc-settings-sheet__header {
+        position: relative;
+        margin-bottom: 14px;
+      }
+
+      .appdosc-settings-sheet__user {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .appdosc-settings-sheet__user-avatar {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        object-fit: cover;
+      }
+
+      .appdosc-settings-sheet__user-name {
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .appdosc-settings-sheet__user-role {
+        font-size: 14px;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-settings-sheet__item {
+        width: 100%;
+        min-height: 48px;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.26);
+        background: rgba(255, 255, 255, 0.32);
+        color: var(--appdosc-text-primary);
+        padding: 0 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 15px;
+        margin-bottom: 8px;
+      }
+
+      :root[data-theme='dark'] .appdosc-settings-sheet__item,
+      :root[data-theme='dark'] .appdosc-settings-sheet__theme-btn {
+        background: rgba(15, 23, 42, 0.35);
+        border-color: rgba(148, 163, 184, 0.34);
+      }
+
+      .appdosc-settings-sheet__item-left {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .appdosc-settings-sheet__coming {
+        font-size: 12px;
+        color: #2563eb;
+        background: rgba(37, 99, 235, 0.12);
+        border: 1px solid rgba(37, 99, 235, 0.28);
+        padding: 2px 8px;
+        border-radius: 999px;
+      }
+
+      .appdosc-settings-sheet__section {
+        margin: 14px 0 8px;
+        font-size: 14px;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-settings-sheet__theme-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .appdosc-settings-sheet__theme-btn {
+        min-height: 84px;
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: rgba(255, 255, 255, 0.42);
+        color: var(--appdosc-text-primary);
+        display: grid;
+        place-items: center;
+        gap: 6px;
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      .appdosc-settings-sheet__theme-btn span:first-child {
+        font-size: 28px;
+      }
+
+      .appdosc-settings-sheet__theme-btn[aria-pressed='true'] {
+        border-color: rgba(59, 130, 246, 0.72);
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18) inset;
+      }
+
       .appdosc-avatar {
         width: 42px;
         height: 42px;
@@ -252,8 +457,8 @@
         overflow: hidden;
         position: relative;
         flex: 0 0 auto;
-        border: 1px solid rgba(255, 255, 255, 0.34);
-        background: linear-gradient(135deg, rgba(255, 255, 255, 0.36), rgba(148, 163, 184, 0.18));
+        border: 1px solid var(--appdosc-avatar-border);
+        background: linear-gradient(135deg, var(--appdosc-avatar-gradient-start), var(--appdosc-avatar-gradient-end));
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
         box-shadow: 0 10px 22px rgba(15, 23, 42, 0.22);
@@ -314,8 +519,14 @@
 
       .appdosc__user-role {
         font-size: clamp(13px, 2.8vw, 15px);
-        color: rgba(203, 213, 225, 0.9);
+        color: var(--appdosc-text-muted);
         letter-spacing: 0.01em;
+      }
+
+      .appdosc__user-hint {
+        font-size: 12px;
+        color: var(--appdosc-text-muted);
+        opacity: 0.92;
       }
 
       .appdosc__summary-actions {
@@ -405,6 +616,8 @@
       @media (max-width: 680px) {
         .appdosc {
           padding-inline: 8px !important;
+          padding-left: max(8px, env(safe-area-inset-left)) !important;
+          padding-right: max(8px, env(safe-area-inset-right)) !important;
         }
 
         .appdosc__user {
@@ -446,18 +659,22 @@
       <header class="appdosc__header">
         <div class="appdosc__brand">
           <div class="appdosc__brand-row">
-            <div class="appdosc-avatar appdosc-avatar--lg" data-user-avatar>
-              <img
-                class="appdosc-avatar__img"
-                data-user-avatar-image
-                alt="Аватар пользователя"
-                hidden
-              />
-              <span class="appdosc-avatar__placeholder" data-user-avatar-fallback aria-hidden="true"></span>
+            <div class="appdosc-avatar-wrap">
+              <div class="appdosc-avatar appdosc-avatar--lg" data-user-avatar data-settings-open role="button" tabindex="0" aria-label="Открыть настройки">
+                <img
+                  class="appdosc-avatar__img"
+                  data-user-avatar-image
+                  alt="Аватар пользователя"
+                  hidden
+                />
+                <span class="appdosc-avatar__placeholder" data-user-avatar-fallback aria-hidden="true"></span>
+              </div>
+              <span class="appdosc-avatar__settings-badge" aria-hidden="true">⚙️</span>
             </div>
             <div class="appdosc__brand-user">
               <span class="appdosc__user-name" data-user-name>Гость</span>
               <span class="appdosc__user-role" data-user-role>Должность: не указана</span>
+              <span class="appdosc__user-hint">Нажмите на аватар, чтобы открыть настройки</span>
             </div>
           </div>
         </div>
@@ -901,6 +1118,43 @@
         </div>
       </article>
     </template>
+
+    <div class="appdosc-settings-sheet" data-settings-sheet hidden>
+      <div class="appdosc-settings-sheet__backdrop" data-settings-close></div>
+      <section class="appdosc-settings-sheet__card" aria-label="Настройки">
+        <div class="appdosc-settings-sheet__drag" aria-hidden="true"></div>
+        <header class="appdosc-settings-sheet__header">
+          <button type="button" class="appdosc-settings-sheet__close" data-settings-close aria-label="Закрыть">✕</button>
+          <h3 class="appdosc-settings-sheet__title">Настройки</h3>
+        </header>
+        <div class="appdosc-settings-sheet__user">
+          <img class="appdosc-settings-sheet__user-avatar" data-settings-user-avatar alt="Аватар" />
+          <div>
+            <div class="appdosc-settings-sheet__user-name" data-settings-user-name>Арсений</div>
+            <div class="appdosc-settings-sheet__user-role" data-settings-user-role>Директор</div>
+          </div>
+        </div>
+        <button type="button" class="appdosc-settings-sheet__item">
+          <span class="appdosc-settings-sheet__item-left"><span>✏️</span><span>Редактировать профиль</span></span>
+          <span class="appdosc-settings-sheet__coming">В разработке</span>
+        </button>
+        <button type="button" class="appdosc-settings-sheet__item">
+          <span class="appdosc-settings-sheet__item-left"><span>🔔</span><span>Уведомления</span></span>
+          <span class="appdosc-settings-sheet__coming">В разработке</span>
+        </button>
+        <div class="appdosc-settings-sheet__section">Тема оформления</div>
+        <div class="appdosc-settings-sheet__theme-grid" role="group" aria-label="Выбор темы">
+          <button type="button" class="appdosc-settings-sheet__theme-btn" data-theme-option="light" aria-pressed="false">
+            <span>☀️</span>
+            <span>Светлая</span>
+          </button>
+          <button type="button" class="appdosc-settings-sheet__theme-btn" data-theme-option="dark" aria-pressed="true">
+            <span>🌙</span>
+            <span>Тёмная</span>
+          </button>
+        </div>
+      </section>
+    </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </body>
