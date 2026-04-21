@@ -9974,6 +9974,26 @@ function docs_prepare_records_for_response(array $records, string $organization,
             $record['instruction'] = sanitize_instruction((string) $record['instruction']);
         }
 
+        $summaryCandidates = [
+            $record['summary'] ?? null,
+            $record['contentCompact'] ?? null,
+            $record['content'] ?? null,
+            $record['description'] ?? null,
+            $record['text'] ?? null,
+        ];
+        $normalizedSummary = '';
+        foreach ($summaryCandidates as $candidate) {
+            $sanitizedCandidate = sanitize_text_field((string) $candidate, 1000);
+            if ($sanitizedCandidate !== '') {
+                $normalizedSummary = $sanitizedCandidate;
+                break;
+            }
+        }
+        if ($normalizedSummary !== '') {
+            $record['summary'] = $normalizedSummary;
+            $record['contentCompact'] = $normalizedSummary;
+        }
+
         if (isset($record['files']) && is_array($record['files'])) {
             foreach ($record['files'] as &$file) {
                 if (!is_array($file)) {

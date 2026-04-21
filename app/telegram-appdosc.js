@@ -4254,7 +4254,8 @@ function createCard(task, index, anchorRegistry) {
     return normalizeValue(value);
   };
 
-  const compactContent = resolveCompactText(task.summary)
+  const compactContent = resolveCompactText(task.contentCompact)
+    || resolveCompactText(task.summary)
     || resolveCompactText(task.content)
     || resolveCompactText(task.description)
     || resolveCompactText(task.text)
