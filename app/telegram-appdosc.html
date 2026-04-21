@@ -779,6 +779,11 @@
         grid-area: date;
         font-size: 12px !important;
         color: var(--appdosc-meta-text);
+        display: block;
+        max-width: min(100%, 72vw);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .appdosc-card__header-text {
@@ -826,6 +831,25 @@
         white-space: normal;
         overflow-wrap: anywhere;
         word-break: break-word;
+      }
+
+      .appdosc-card__summary-line {
+        display: inline-flex !important;
+        align-items: baseline;
+        gap: 6px;
+        width: 100%;
+      }
+
+      .appdosc-card__summary-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--appdosc-meta-text);
+        flex: 0 0 auto;
+      }
+
+      .appdosc-card__summary-line [data-field="summaryCollapsedText"] {
+        min-width: 0;
+        flex: 1 1 auto;
       }
 
       .appdosc-card__footer {
@@ -880,6 +904,12 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__summary-line [data-field="summaryCollapsedText"] {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .appdosc-card[data-expanded='false'] .appdosc-card__deadline--compact {
         display: inline-flex !important;
@@ -1285,7 +1315,10 @@
             <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
           </div>
           <div class="appdosc-card__summary" data-field="summaryCollapsed">
-            <div class="appdosc-card__block-text" data-field="summaryCollapsedText"></div>
+            <div class="appdosc-card__block-text appdosc-card__summary-line">
+              <span class="appdosc-card__summary-label">Содержание:</span>
+              <span data-field="summaryCollapsedText"></span>
+            </div>
           </div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
         </header>

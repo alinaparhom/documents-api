@@ -2666,7 +2666,10 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
     </div>
     <div class="appdosc-card__summary" data-field="summaryCollapsed">
-      <div class="appdosc-card__block-text" data-field="summaryCollapsedText"></div>
+      <div class="appdosc-card__block-text appdosc-card__summary-line">
+        <span class="appdosc-card__summary-label">Содержание:</span>
+        <span data-field="summaryCollapsedText"></span>
+      </div>
     </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
@@ -4232,10 +4235,11 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="organization"]', task.organization, {
     fallback: 'Организация не указана',
   });
+  const summaryText = normalizeValue(task.summary) || 'Содержание не указано';
   const registrationDate = formatDate(task.registrationDate);
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
-  applyRegistrationDateHeader(card, registrationDate);
+  applyRegistrationDateHeader(card, registrationDate, summaryText);
   setCardField(card, '[data-field="direction"]', task.direction);
   setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
   setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
@@ -4244,7 +4248,6 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const summaryText = normalizeValue(task.summary) || 'Содержание не указано';
   setCardField(card, '[data-field="summaryCollapsedText"]', summaryText, {
     hideIfEmpty: false,
     setTitle: false,
@@ -4942,7 +4945,7 @@ function openTelegramFileAiBriefModal(fileName, briefText) {
   document.body.appendChild(overlay);
 }
 
-function applyRegistrationDateHeader(card, registrationDate) {
+function applyRegistrationDateHeader(card, registrationDate, summaryValue = '') {
   if (!(card instanceof HTMLElement)) {
     return;
   }
@@ -4954,17 +4957,19 @@ function applyRegistrationDateHeader(card, registrationDate) {
 
   const normalized = normalizeValue(registrationDate);
   const hasDate = normalized && normalized !== '—';
+  const summaryText = truncateText(normalizeValue(summaryValue) || 'Содержание не указано', 76);
+  const fullSummary = normalizeValue(summaryValue) || 'Содержание не указано';
 
   if (hasDate) {
-    headerDate.textContent = normalized;
+    headerDate.textContent = `${normalized} · ${summaryText}`;
     headerDate.hidden = false;
     headerDate.dataset.empty = 'false';
-    headerDate.title = `Дата регистрации: ${normalized}`;
+    headerDate.title = `Дата регистрации: ${normalized}\nСодержание: ${fullSummary}`;
   } else {
-    headerDate.textContent = '';
-    headerDate.hidden = true;
+    headerDate.textContent = summaryText;
+    headerDate.hidden = false;
     headerDate.dataset.empty = 'true';
-    headerDate.removeAttribute('title');
+    headerDate.title = `Содержание: ${fullSummary}`;
   }
 }
 
