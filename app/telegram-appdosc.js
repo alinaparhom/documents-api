@@ -17685,7 +17685,10 @@ function setupAssignmentControls(card, task) {
 
     const note = document.createElement('div');
     note.className = 'appdosc-card__assign-note';
-    note.textContent = assigned ? 'Назначен' : 'Новый кандидат';
+    const responsiblePosition = normalizeValue(referenceEntry && referenceEntry.position);
+    note.textContent = responsiblePosition
+      ? `Должность: ${responsiblePosition}`
+      : (assigned ? 'Назначен' : 'Новый кандидат');
     info.appendChild(note);
 
     const commentInput = document.createElement('textarea');
@@ -18653,6 +18656,14 @@ function setupSubordinateControls(card, task) {
     name.textContent = label || buildAssignmentFallbackLabel(null, 'subordinate');
     nameLine.appendChild(name);
     info.appendChild(nameLine);
+
+    const note = document.createElement('div');
+    note.className = 'appdosc-card__assign-note';
+    const subordinatePosition = normalizeValue(referenceEntry && referenceEntry.position);
+    note.textContent = subordinatePosition
+      ? `Должность: ${subordinatePosition}`
+      : (assigned ? 'Назначен' : 'Новый кандидат');
+    info.appendChild(note);
 
     const commentInput = document.createElement('textarea');
     commentInput.className = 'appdosc-card__assign-comment-input';
