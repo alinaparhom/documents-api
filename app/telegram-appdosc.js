@@ -3395,10 +3395,9 @@ function updateStateFromPayload(payload) {
   }
 
   if (!state.telegram.role) {
-    const payloadPosition = normalizeValue(payload.userPosition)
-      || normalizeValue(payload.position);
-    if (payloadPosition) {
-      state.telegram.role = String(payloadPosition);
+    const payloadAdministrator = normalizeValue(payload.administrator);
+    if (payloadAdministrator) {
+      state.telegram.role = String(payloadAdministrator);
     }
   }
 
@@ -3420,9 +3419,9 @@ function updateStateFromPayload(payload) {
       state.telegram.firstName = user.firstName ? String(user.firstName) : state.telegram.firstName;
       state.telegram.lastName = user.lastName ? String(user.lastName) : state.telegram.lastName;
     }
-    const userPosition = normalizeValue(user.position);
-    if (userPosition) {
-      state.telegram.role = String(userPosition);
+    const userAdministrator = normalizeValue(user.administrator);
+    if (userAdministrator) {
+      state.telegram.role = String(userAdministrator);
     }
   }
 
@@ -3499,7 +3498,7 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role) || getCurrentUserPositionFromAccess();
+    const role = normalizeValue(state.telegram.role) || getCurrentUserAdministratorFromAccess();
     if (!state.telegram.role && role) {
       state.telegram.role = role;
     }
@@ -11948,7 +11947,7 @@ function getCurrentUserResponsibleFromAccess() {
   return '';
 }
 
-function getCurrentUserPositionFromAccess() {
+function getCurrentUserAdministratorFromAccess() {
   const access = state && state.access && typeof state.access === 'object' ? state.access : null;
   const directoryEntries = Array.isArray(state?.userDirectoryEntries) ? state.userDirectoryEntries : [];
   if (!access && !directoryEntries.length) {
@@ -12006,9 +12005,9 @@ function getCurrentUserPositionFromAccess() {
     if (!entryMatchesUser(entry, ids, names)) {
       continue;
     }
-    const position = normalizeValue(entry.position);
-    if (position) {
-      return position;
+    const administrator = normalizeValue(entry.administrator);
+    if (administrator) {
+      return administrator;
     }
   }
 
