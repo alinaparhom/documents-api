@@ -4235,10 +4235,11 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="organization"]', task.organization, {
     fallback: 'Организация не указана',
   });
+  const summaryText = normalizeValue(task.summary) || 'Содержание не указано';
   const registrationDate = formatDate(task.registrationDate);
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
-  applyRegistrationDateHeader(card, registrationDate);
+  applyRegistrationDateHeader(card, registrationDate, summaryText);
   setCardField(card, '[data-field="direction"]', task.direction);
   setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
   setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
@@ -4247,7 +4248,6 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const summaryText = normalizeValue(task.summary) || 'Содержание не указано';
   setCardField(card, '[data-field="summaryCollapsedText"]', summaryText, {
     hideIfEmpty: false,
     setTitle: false,
@@ -4945,7 +4945,7 @@ function openTelegramFileAiBriefModal(fileName, briefText) {
   document.body.appendChild(overlay);
 }
 
-function applyRegistrationDateHeader(card, registrationDate) {
+function applyRegistrationDateHeader(card, registrationDate, summaryValue = '') {
   if (!(card instanceof HTMLElement)) {
     return;
   }
@@ -4957,17 +4957,19 @@ function applyRegistrationDateHeader(card, registrationDate) {
 
   const normalized = normalizeValue(registrationDate);
   const hasDate = normalized && normalized !== '—';
+  const summaryText = truncateText(normalizeValue(summaryValue) || 'Содержание не указано', 76);
+  const fullSummary = normalizeValue(summaryValue) || 'Содержание не указано';
 
   if (hasDate) {
-    headerDate.textContent = `${normalized} · Содержание`;
+    headerDate.textContent = `${normalized} · ${summaryText}`;
     headerDate.hidden = false;
     headerDate.dataset.empty = 'false';
-    headerDate.title = `Дата регистрации: ${normalized}. Ниже отображается содержание задачи.`;
+    headerDate.title = `Дата регистрации: ${normalized}\nСодержание: ${fullSummary}`;
   } else {
-    headerDate.textContent = 'Содержание';
+    headerDate.textContent = summaryText;
     headerDate.hidden = false;
     headerDate.dataset.empty = 'true';
-    headerDate.title = 'Содержание задачи';
+    headerDate.title = `Содержание: ${fullSummary}`;
   }
 }
 
