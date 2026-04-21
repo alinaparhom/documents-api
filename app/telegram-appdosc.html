@@ -238,9 +238,9 @@
         width: 100% !important;
         max-width: 100% !important;
         margin: 0 !important;
-        padding-inline: clamp(10px, 2.8vw, 20px) !important;
-        padding-left: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-left)) !important;
-        padding-right: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-right)) !important;
+        padding-inline: 4px !important;
+        padding-left: max(4px, env(safe-area-inset-left)) !important;
+        padding-right: max(4px, env(safe-area-inset-right)) !important;
         padding-top: env(safe-area-inset-top);
         padding-bottom: env(safe-area-inset-bottom);
         box-sizing: border-box;
@@ -255,12 +255,19 @@
       .appdosc__content,
       .appdosc__footer {
         max-width: 100% !important;
+        width: 100% !important;
+        margin-inline: 0 !important;
       }
 
       .appdosc__table-card,
       .appdosc__cards {
         width: 100% !important;
         max-width: 100% !important;
+        margin-inline: 0 !important;
+      }
+
+      .appdosc__content {
+        padding-inline: 0 !important;
       }
 
       .appdosc__user {
@@ -843,9 +850,9 @@
 
       @media (max-width: 680px) {
         .appdosc {
-          padding-inline: 8px !important;
-          padding-left: max(8px, env(safe-area-inset-left)) !important;
-          padding-right: max(8px, env(safe-area-inset-right)) !important;
+          padding-inline: 2px !important;
+          padding-left: max(2px, env(safe-area-inset-left)) !important;
+          padding-right: max(2px, env(safe-area-inset-right)) !important;
         }
 
         .appdosc__user {
