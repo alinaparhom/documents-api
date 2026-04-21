@@ -769,6 +769,12 @@
         column-gap: 10px;
       }
 
+      .appdosc-card[data-expanded='false'] .appdosc-card__header {
+        grid-template-columns: auto 1fr auto;
+        grid-template-areas: "date compact side";
+        align-items: center;
+      }
+
       .appdosc-card__meta {
         grid-area: date;
         font-size: 12px !important;
@@ -869,9 +875,28 @@
       .appdosc-card[data-expanded='false'] .appdosc-card__status {
         display: none !important;
       }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__summary .appdosc-card__block-text {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .appdosc-card[data-expanded='false'] .appdosc-card__deadline--compact {
         display: inline-flex !important;
       }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__header .appdosc-card__summary {
+        display: none !important;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__details .appdosc-card__detail {
+        display: none;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__details .appdosc-card__detail--summary {
+        display: grid;
+      }
+
       .appdosc-card {
         border: 1px solid rgba(148, 163, 184, 0.22) !important;
         box-shadow: none !important;
@@ -1285,7 +1310,7 @@
             <dt>Исполнитель</dt>
             <dd data-field="executor"></dd>
           </div>
-          <div class="appdosc-card__detail">
+          <div class="appdosc-card__detail appdosc-card__detail--summary">
             <dt>Содержание</dt>
             <dd data-field="summaryFull"></dd>
           </div>

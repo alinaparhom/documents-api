@@ -2691,7 +2691,7 @@ const FALLBACK_CARD_TEMPLATE = `
       <dt>Исполнитель</dt>
       <dd data-field="executor"></dd>
     </div>
-    <div class="appdosc-card__detail">
+    <div class="appdosc-card__detail appdosc-card__detail--summary">
       <dt>Содержание</dt>
       <dd data-field="summaryFull"></dd>
     </div>
