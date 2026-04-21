@@ -3495,12 +3495,6 @@ function updateUserPanel() {
     elements.userRole.textContent = role ? `Роль: ${role}` : 'Роль: не указана';
   }
 
-  if (elements.userAvatarFallback) {
-    const safeName = String(displayName || '').trim();
-    const initial = safeName ? safeName.charAt(0).toUpperCase() : 'Г';
-    elements.userAvatarFallback.textContent = initial;
-  }
-
   if (elements.userAvatarImage) {
     const photoUrl = typeof state.telegram.photoUrl === 'string' ? state.telegram.photoUrl.trim() : '';
     if (photoUrl) {
@@ -17461,10 +17455,22 @@ function setupAssignmentControls(card, task) {
     roleLabel.textContent = 'Ответственный';
     info.appendChild(roleLabel);
 
+    const nameLine = document.createElement('div');
+    nameLine.className = 'appdosc-card__assign-line';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    const avatarPlaceholder = document.createElement('span');
+    avatarPlaceholder.className = 'appdosc-avatar__placeholder';
+    avatar.appendChild(avatarPlaceholder);
+    nameLine.appendChild(avatar);
+
     const name = document.createElement('div');
     name.className = 'appdosc-card__assign-name';
     name.textContent = label || buildAssignmentFallbackLabel(null, 'responsible');
-    info.appendChild(name);
+    nameLine.appendChild(name);
+    info.appendChild(nameLine);
 
     const note = document.createElement('div');
     note.className = 'appdosc-card__assign-note';
@@ -18392,10 +18398,22 @@ function setupSubordinateControls(card, task) {
     roleLabel.textContent = 'Подчинённый';
     info.appendChild(roleLabel);
 
+    const nameLine = document.createElement('div');
+    nameLine.className = 'appdosc-card__assign-line';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    const avatarPlaceholder = document.createElement('span');
+    avatarPlaceholder.className = 'appdosc-avatar__placeholder';
+    avatar.appendChild(avatarPlaceholder);
+    nameLine.appendChild(avatar);
+
     const name = document.createElement('div');
     name.className = 'appdosc-card__assign-name';
     name.textContent = label || buildAssignmentFallbackLabel(null, 'subordinate');
-    info.appendChild(name);
+    nameLine.appendChild(name);
+    info.appendChild(nameLine);
 
     const commentInput = document.createElement('textarea');
     commentInput.className = 'appdosc-card__assign-comment-input';
