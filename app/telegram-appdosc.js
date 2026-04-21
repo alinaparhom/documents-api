@@ -4212,7 +4212,9 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const compactContent = normalizeValue(task.summary) || '—';
+  const compactContent = normalizeValue(task.content)
+    || normalizeValue(task.summary)
+    || '—';
   const hasSummary = compactContent !== '—';
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
