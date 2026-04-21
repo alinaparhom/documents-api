@@ -8082,6 +8082,20 @@ function docs_build_request_user_context(): array
 
     $sessionAuth = docs_get_session_auth();
     if (is_array($sessionAuth)) {
+        $sessionPosition = sanitize_text_field((string) ($sessionAuth['position'] ?? ''), 160);
+        if ($sessionPosition !== '') {
+            if (!is_array($user)) {
+                $user = [
+                    'id' => $primaryId,
+                    'username' => $username,
+                    'firstName' => $firstName,
+                    'lastName' => $lastName,
+                    'fullName' => $fullName,
+                ];
+            }
+            $user['position'] = $sessionPosition;
+        }
+
         $sessionRole = $sessionAuth['role'] ?? 'guest';
         if ($sessionRole === 'admin') {
             $filter = null;
@@ -8288,6 +8302,7 @@ function docs_set_session_auth(array $auth): void
     $normalizedOrganization = docs_normalize_organization_candidate((string) ($auth['organization'] ?? ''));
     $login = sanitize_text_field((string) ($auth['login'] ?? ''), 120);
     $fullName = sanitize_text_field((string) ($auth['fullName'] ?? ''), 200);
+    $position = sanitize_text_field((string) ($auth['position'] ?? ''), 160);
     $telegramId = sanitize_text_field((string) ($auth['telegramId'] ?? ''), 120);
     $chatId = sanitize_text_field((string) ($auth['chatId'] ?? ''), 80);
     $responsibleNumber = sanitize_text_field((string) ($auth['responsibleNumber'] ?? ''), 60);
@@ -8304,6 +8319,10 @@ function docs_set_session_auth(array $auth): void
         'fullName' => $fullName,
         'telegramId' => $telegramId,
     ];
+
+    if ($position !== '') {
+        $_SESSION[DOCS_SESSION_KEY]['position'] = $position;
+    }
 
     if ($adminScope !== '') {
         $_SESSION[DOCS_SESSION_KEY]['adminScope'] = $adminScope;
@@ -8337,6 +8356,7 @@ function docs_get_session_auth(): ?array
     $organization = docs_normalize_organization_candidate((string) ($raw['organization'] ?? ''));
     $login = sanitize_text_field((string) ($raw['login'] ?? ''), 120);
     $fullName = sanitize_text_field((string) ($raw['fullName'] ?? ''), 200);
+    $position = sanitize_text_field((string) ($raw['position'] ?? ''), 160);
     $telegramId = sanitize_text_field((string) ($raw['telegramId'] ?? ''), 120);
     $chatId = sanitize_text_field((string) ($raw['chatId'] ?? ''), 80);
     $responsibleNumber = sanitize_text_field((string) ($raw['responsibleNumber'] ?? ''), 60);
@@ -8350,6 +8370,10 @@ function docs_get_session_auth(): ?array
         'fullName' => $fullName,
         'telegramId' => $telegramId,
     ];
+
+    if ($position !== '') {
+        $session['position'] = $position;
+    }
 
     if ($adminScope !== '') {
         $session['adminScope'] = $adminScope;
@@ -9033,6 +9057,7 @@ function docs_authenticate_director_user(string $organization, string $login, st
         return [
             'login' => sanitize_text_field((string) ($entry['login'] ?? $login), 120),
             'fullName' => sanitize_text_field((string) ($entry['responsible'] ?? ''), 200),
+            'position' => sanitize_text_field((string) ($entry['position'] ?? ''), 160),
             'telegramId' => sanitize_text_field((string) ($entry['telegram'] ?? ''), 120),
             'chatId' => sanitize_text_field((string) ($entry['chatId'] ?? ''), 80),
             'passwordHash' => sanitize_text_field($storedHash !== '' ? $storedHash : $storedPassword, 255),
@@ -9179,6 +9204,7 @@ function docs_authenticate_responsible_user_with_diagnostics(string $organizatio
             $credentials = [
                 'login' => sanitize_text_field((string) ($entry['login'] ?? $login), 120),
                 'fullName' => sanitize_text_field((string) ($entry['responsible'] ?? ''), 200),
+                'position' => sanitize_text_field((string) ($entry['position'] ?? ''), 160),
                 'telegramId' => sanitize_text_field((string) ($entry['telegram'] ?? ''), 120),
                 'chatId' => sanitize_text_field((string) ($entry['chatId'] ?? ''), 80),
                 'responsibleNumber' => sanitize_text_field((string) ($entry['number'] ?? ''), 60),
@@ -9263,6 +9289,7 @@ function docs_authenticate_mainadmin_user(string $organization, string $login, s
             'password' => (string) ($credentials['password'] ?? ''),
             'passwordHash' => (string) ($credentials['passwordHash'] ?? ''),
             'fullName' => $credentials['fullName'] ?? '',
+            'position' => $credentials['position'] ?? '',
             'telegramId' => $credentials['telegramId'] ?? '',
         ];
     }
@@ -9283,6 +9310,7 @@ function docs_authenticate_mainadmin_user(string $organization, string $login, s
                 'password' => (string) ($entry['password'] ?? ''),
                 'passwordHash' => (string) ($entry['passwordHash'] ?? ''),
                 'fullName' => $entry['fullName'] ?? '',
+                'position' => $entry['position'] ?? '',
                 'telegramId' => $entry['telegramId'] ?? '',
             ];
         }
@@ -9316,6 +9344,7 @@ function docs_authenticate_mainadmin_user(string $organization, string $login, s
                 'password' => $storedPassword,
                 'passwordHash' => $storedHash,
                 'fullName' => $user['fullName'] ?? '',
+                'position' => $user['position'] ?? '',
                 'telegramId' => $user['telegramId'] ?? '',
             ]);
         }
@@ -9407,6 +9436,7 @@ function docs_describe_session(?array $auth, ?array $accessContext = null): arra
         $userData = array_filter([
             'login' => sanitize_text_field((string) ($auth['login'] ?? ''), 120),
             'fullName' => sanitize_text_field((string) ($auth['fullName'] ?? ''), 200),
+            'position' => sanitize_text_field((string) ($auth['position'] ?? ''), 160),
             'telegramId' => sanitize_text_field((string) ($auth['telegramId'] ?? ''), 120),
             'chatId' => sanitize_text_field((string) ($auth['chatId'] ?? ''), 80),
             'responsibleNumber' => sanitize_text_field((string) ($auth['responsibleNumber'] ?? ''), 60),
@@ -11106,6 +11136,7 @@ switch ($action) {
                 'organization' => $requestedOrganization,
                 'login' => $userCredentials['login'] ?? $loginValue,
                 'fullName' => $userCredentials['fullName'] ?? '',
+                'position' => $userCredentials['position'] ?? '',
                 'telegramId' => $userCredentials['telegramId'] ?? '',
             ]);
 
@@ -11164,6 +11195,7 @@ switch ($action) {
                 'organization' => $requestedOrganization,
                 'login' => $directorCredentials['login'] ?? $loginValue,
                 'fullName' => $directorCredentials['fullName'] ?? '',
+                'position' => $directorCredentials['position'] ?? '',
                 'telegramId' => $directorCredentials['telegramId'] ?? '',
                 'adminScope' => $directorCredentials['adminScope'] ?? 'director',
             ]);
@@ -11247,6 +11279,7 @@ switch ($action) {
                 'organization' => $requestedOrganization,
                 'login' => $responsibleCredentials['login'] ?? $loginValue,
                 'fullName' => $responsibleCredentials['fullName'] ?? '',
+                'position' => $responsibleCredentials['position'] ?? '',
                 'telegramId' => $responsibleCredentials['telegramId'] ?? '',
                 'chatId' => $responsibleCredentials['chatId'] ?? '',
                 'responsibleNumber' => $responsibleCredentials['responsibleNumber'] ?? '',
