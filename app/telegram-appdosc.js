@@ -9,6 +9,7 @@ const { createTelegramBriefAi } = await import('./ai-short_repsonse.js' + _vSuff
 preloadPdfjs();
 
 const API_URL = '/docs.php?action=mini_app_tasks';
+const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
 const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
@@ -1966,6 +1967,8 @@ function hydrateTelegramFromInitData(initData) {
 
 const state = {
   themeMode: 'dark',
+  persistedThemeMode: '',
+  isThemeSaving: false,
   telegram: {
     id: '',
     username: '',
@@ -2922,11 +2925,87 @@ function initThemeMode() {
   applyTheme();
 }
 
-function setThemeMode(mode) {
+function resolveOrganizationForThemePreference() {
+  if (Array.isArray(state.visibleTasks) && state.visibleTasks.length) {
+    const visibleTaskOrganization = normalizeValue(getTaskOrganization(state.visibleTasks[0]));
+    if (visibleTaskOrganization) {
+      return visibleTaskOrganization;
+    }
+  }
+  if (Array.isArray(state.tasks) && state.tasks.length) {
+    const taskOrganization = normalizeValue(getTaskOrganization(state.tasks[0]));
+    if (taskOrganization) {
+      return taskOrganization;
+    }
+  }
+  if (Array.isArray(state.organizations) && state.organizations.length) {
+    for (let index = 0; index < state.organizations.length; index += 1) {
+      const item = state.organizations[index];
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const organization = normalizeValue(item.name || item.organization);
+      if (organization) {
+        return organization;
+      }
+    }
+  }
+  return '';
+}
+
+async function persistThemeModePreference(mode) {
+  const normalizedMode = normalizeThemeMode(mode);
+  if (state.isThemeSaving) {
+    return;
+  }
+  if (state.persistedThemeMode === normalizedMode) {
+    return;
+  }
+  const organization = resolveOrganizationForThemePreference();
+  if (!organization || typeof fetch !== 'function') {
+    return;
+  }
+  state.isThemeSaving = true;
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+    if (state.telegram.initData) {
+      headers['X-Telegram-Init-Data'] = state.telegram.initData;
+    }
+    const response = await fetch(THEME_SETTINGS_SAVE_ENDPOINT, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers,
+      body: JSON.stringify({
+        organization,
+        themeMode: normalizedMode,
+      }),
+    });
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    if (payload && payload.success) {
+      state.persistedThemeMode = normalizedMode;
+    }
+  } catch (_) {
+    // ignore theme preference save issues
+  } finally {
+    state.isThemeSaving = false;
+  }
+}
+
+function setThemeMode(mode, options = {}) {
   const nextMode = normalizeThemeMode(mode);
+  const shouldPersist = options && options.persist !== false;
   state.themeMode = nextMode;
   renderThemeToggle();
   applyTheme();
+  if (shouldPersist) {
+    persistThemeModePreference(nextMode);
+  }
 }
 
 function renderThemeToggle() {
@@ -3490,6 +3569,15 @@ function updateStateFromPayload(payload) {
 
   if (payload.telegramUserId && !state.telegram.id) {
     state.telegram.id = String(payload.telegramUserId);
+  }
+
+  const payloadThemeCandidate = normalizeValue(payload && payload.themeMode);
+  const payloadThemeMode = payloadThemeCandidate ? normalizeThemeMode(payloadThemeCandidate) : '';
+  if (payloadThemeMode && payloadThemeMode !== normalizeThemeMode(state.themeMode)) {
+    setThemeMode(payloadThemeMode, { persist: false });
+  }
+  if (payloadThemeMode) {
+    state.persistedThemeMode = payloadThemeMode;
   }
 
   if (!state.telegram.role) {

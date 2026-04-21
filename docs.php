@@ -4691,6 +4691,19 @@ function docs_generate_password_hash(string $password): ?string
     return null;
 }
 
+function docs_normalize_theme_mode($value): string
+{
+    $mode = mb_strtolower(trim((string) $value), 'UTF-8');
+    if ($mode === 'light') {
+        return 'light';
+    }
+    if ($mode === 'dark') {
+        return 'dark';
+    }
+
+    return '';
+}
+
 function sanitize_admin_entry(array $entry): array
 {
     $clean = [
@@ -4703,6 +4716,7 @@ function sanitize_admin_entry(array $entry): array
         'department' => sanitize_text_field($entry['department'] ?? '', 160),
         'note' => sanitize_text_field($entry['note'] ?? '', 300),
         'login' => sanitize_text_field($entry['login'] ?? '', 120),
+        'theme' => docs_normalize_theme_mode($entry['theme'] ?? ''),
     ];
 
     if (isset($entry['role'])) {
@@ -5668,6 +5682,70 @@ function load_responsibles_for_folder(string $folder): array
     }
 
     return $responsibles;
+}
+
+function docs_find_theme_mode_for_telegram_user(array $settings, string $telegramUserId): string
+{
+    $normalizedUserId = normalize_identifier_value($telegramUserId);
+    if ($normalizedUserId === '') {
+        return '';
+    }
+
+    foreach (['responsibles', 'block2', 'block3'] as $groupKey) {
+        if (!isset($settings[$groupKey]) || !is_array($settings[$groupKey])) {
+            continue;
+        }
+
+        foreach ($settings[$groupKey] as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $entryTelegramId = normalize_identifier_value($entry['telegram'] ?? ($entry['chatId'] ?? ($entry['id'] ?? '')));
+            if ($entryTelegramId === '' || $entryTelegramId !== $normalizedUserId) {
+                continue;
+            }
+
+            $mode = docs_normalize_theme_mode($entry['theme'] ?? '');
+            if ($mode !== '') {
+                return $mode;
+            }
+        }
+    }
+
+    return '';
+}
+
+function docs_save_theme_mode_for_telegram_user(array &$settings, string $telegramUserId, string $themeMode): bool
+{
+    $normalizedUserId = normalize_identifier_value($telegramUserId);
+    $normalizedTheme = docs_normalize_theme_mode($themeMode);
+    if ($normalizedUserId === '' || $normalizedTheme === '') {
+        return false;
+    }
+
+    $updated = false;
+    foreach (['responsibles', 'block2', 'block3'] as $groupKey) {
+        if (!isset($settings[$groupKey]) || !is_array($settings[$groupKey])) {
+            continue;
+        }
+
+        foreach ($settings[$groupKey] as $index => $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $entryTelegramId = normalize_identifier_value($entry['telegram'] ?? ($entry['chatId'] ?? ($entry['id'] ?? '')));
+            if ($entryTelegramId === '' || $entryTelegramId !== $normalizedUserId) {
+                continue;
+            }
+
+            $settings[$groupKey][$index]['theme'] = $normalizedTheme;
+            $updated = true;
+        }
+    }
+
+    return $updated;
 }
 
 function docs_normalize_identifier_candidate_value($value): string
@@ -12033,6 +12111,7 @@ switch ($action) {
         $directorModeActive = false;
         $directorOrganizations = [];
         $directorModeReasons = [];
+        $savedThemeMode = '';
 
         foreach ($organizations as $organization) {
             $folder = sanitize_folder_name($organization);
@@ -12048,6 +12127,9 @@ switch ($action) {
             $directors = isset($settings['block2']) && is_array($settings['block2'])
                 ? $settings['block2']
                 : [];
+            if ($savedThemeMode === '' && !empty($filterIds)) {
+                $savedThemeMode = docs_find_theme_mode_for_telegram_user($settings, (string) $filterIds[0]);
+            }
             $prepared = docs_prepare_records_for_response($records, $organization, $folder);
             $responsiblesWithCounts = docs_enrich_responsibles_with_counts(
                 $responsibles,
@@ -12482,6 +12564,7 @@ switch ($action) {
             'stats' => $stats,
             'generatedAt' => date('c'),
             'telegramUserId' => $telegramUserId !== '' ? $telegramUserId : null,
+            'themeMode' => $savedThemeMode !== '' ? $savedThemeMode : null,
             'user' => $userInfo,
             'filterSource' => $requestContext['filterSource'] ?? null,
             'organizationsChecked' => $totalOrganizations,
@@ -12495,6 +12578,63 @@ switch ($action) {
                 'canDeleteDocuments' => false,
             ],
             'directorMode' => $directorModeSummary,
+        ]);
+        break;
+
+    case 'mini_app_save_theme':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $requestContext = docs_build_request_user_context();
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $organizationCandidate = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        if ($organizationCandidate === '') {
+            respond_error('Не указана организация.');
+        }
+
+        $themeMode = docs_normalize_theme_mode($payload['themeMode'] ?? ($payload['theme'] ?? ''));
+        if ($themeMode === '') {
+            respond_error('Некорректная тема.');
+        }
+
+        $telegramUserId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+        if ($telegramUserId === '' && isset($requestContext['raw']) && is_array($requestContext['raw'])) {
+            $telegramUserId = normalize_identifier_value($requestContext['raw']['telegram_user_id'] ?? '');
+        }
+        if ($telegramUserId === '' && isset($requestContext['user']) && is_array($requestContext['user'])) {
+            $telegramUserId = normalize_identifier_value($requestContext['user']['id'] ?? '');
+        }
+        if ($telegramUserId === '') {
+            respond_error('Не удалось определить Telegram ID.', 400, [
+                'requiresTelegramId' => true,
+            ]);
+        }
+
+        $accessContext = docs_resolve_access_context($organizationCandidate, true);
+        $organization = $accessContext['active'] ?? $organizationCandidate;
+        if (!is_string($organization) || $organization === '') {
+            respond_error('Не удалось определить организацию.', 400);
+        }
+        $folder = sanitize_folder_name($organization);
+        $settings = load_admin_settings($folder);
+        $updated = docs_save_theme_mode_for_telegram_user($settings, $telegramUserId, $themeMode);
+        if ($updated) {
+            save_admin_settings($folder, $settings);
+        }
+
+        respond_success([
+            'organization' => $organization,
+            'telegramUserId' => $telegramUserId,
+            'themeMode' => $themeMode,
+            'updated' => $updated,
         ]);
         break;
 
