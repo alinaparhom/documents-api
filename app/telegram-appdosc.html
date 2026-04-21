@@ -270,70 +270,104 @@
         gap: 14px;
       }
 
-      .appdosc-theme-toggle {
+      .appdosc-avatar-wrap {
         position: relative;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 4px;
-        width: min(156px, 100%);
-        margin: 0 0 10px;
-        padding: 4px;
-        border-radius: 16px;
+      }
+
+      .appdosc-avatar[data-settings-open] {
+        cursor: pointer;
+      }
+
+      .appdosc-avatar__settings-badge {
+        position: absolute;
+        right: -6px;
+        bottom: -6px;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
         border: 1px solid var(--appdosc-surface-glass-border);
         background: var(--appdosc-surface-glass);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        box-shadow: 0 6px 22px rgba(15, 23, 42, 0.16);
-        --theme-index: 0;
-      }
-
-      .appdosc-theme-toggle__pill {
-        position: absolute;
-        top: 4px;
-        bottom: 4px;
-        left: 4px;
-        width: calc((100% - 8px) / 2);
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.45);
-        background: linear-gradient(160deg, rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.34));
-        box-shadow: 0 6px 14px rgba(59, 130, 246, 0.2);
-        transform: translateX(calc(var(--theme-index) * 100%));
-        transition: transform 240ms ease, box-shadow 220ms ease;
-        pointer-events: none;
-      }
-
-      :root[data-theme='dark'] .appdosc-theme-toggle__pill {
-        border-color: rgba(148, 163, 184, 0.45);
-        background: linear-gradient(150deg, rgba(71, 85, 105, 0.58), rgba(30, 41, 59, 0.5));
-        box-shadow: 0 6px 14px rgba(59, 130, 246, 0.26);
-      }
-
-      .appdosc-theme-toggle__button {
-        position: relative;
-        z-index: 1;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 38px;
-        border: 0;
-        border-radius: 12px;
+        font-size: 12px;
+        line-height: 1;
+      }
+
+      .appdosc-settings-sheet[hidden] {
+        display: none !important;
+      }
+
+      .appdosc-settings-sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 1300;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+      }
+
+      .appdosc-settings-sheet__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+      }
+
+      .appdosc-settings-sheet__card {
+        position: relative;
+        width: min(520px, 100%);
+        border-radius: 22px 22px 0 0;
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+        border: 1px solid var(--appdosc-surface-glass-border);
+        background: var(--appdosc-surface-glass);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      .appdosc-settings-sheet__title {
+        margin: 0 0 10px;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .appdosc-settings-sheet__close {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        border: 1px solid var(--appdosc-surface-glass-border);
         background: transparent;
-        color: rgba(100, 116, 139, 0.88);
-        font-size: 17px;
-        cursor: pointer;
-        transition: color 200ms ease, transform 180ms ease;
+        color: var(--appdosc-text-muted);
       }
 
-      .appdosc-theme-toggle__button:active {
-        transform: scale(0.96);
+      .appdosc-settings-sheet__theme-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
       }
 
-      .appdosc-theme-toggle__button[aria-pressed='true'] {
+      .appdosc-settings-sheet__theme-btn {
+        min-height: 84px;
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: rgba(255, 255, 255, 0.42);
         color: var(--appdosc-text-primary);
+        display: grid;
+        place-items: center;
+        gap: 6px;
+        font-size: 15px;
+        font-weight: 600;
       }
 
-      :root[data-theme='dark'] .appdosc-theme-toggle__button {
-        color: rgba(148, 163, 184, 0.9);
+      .appdosc-settings-sheet__theme-btn span:first-child {
+        font-size: 28px;
+      }
+
+      .appdosc-settings-sheet__theme-btn[aria-pressed='true'] {
+        border-color: rgba(59, 130, 246, 0.72);
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18) inset;
       }
 
       .appdosc-avatar {
@@ -407,6 +441,12 @@
         font-size: clamp(13px, 2.8vw, 15px);
         color: var(--appdosc-text-muted);
         letter-spacing: 0.01em;
+      }
+
+      .appdosc__user-hint {
+        font-size: 12px;
+        color: var(--appdosc-text-muted);
+        opacity: 0.92;
       }
 
       .appdosc__summary-actions {
@@ -538,24 +578,23 @@
     <div class="appdosc" data-app>
       <header class="appdosc__header">
         <div class="appdosc__brand">
-          <div class="appdosc-theme-toggle" data-theme-toggle role="group" aria-label="Переключатель темы">
-            <span class="appdosc-theme-toggle__pill" aria-hidden="true"></span>
-            <button type="button" class="appdosc-theme-toggle__button" data-theme-option="dark" aria-pressed="true" aria-label="Тёмная тема">🌙</button>
-            <button type="button" class="appdosc-theme-toggle__button" data-theme-option="light" aria-pressed="false" aria-label="Светлая тема">☀️</button>
-          </div>
           <div class="appdosc__brand-row">
-            <div class="appdosc-avatar appdosc-avatar--lg" data-user-avatar>
-              <img
-                class="appdosc-avatar__img"
-                data-user-avatar-image
-                alt="Аватар пользователя"
-                hidden
-              />
-              <span class="appdosc-avatar__placeholder" data-user-avatar-fallback aria-hidden="true"></span>
+            <div class="appdosc-avatar-wrap">
+              <div class="appdosc-avatar appdosc-avatar--lg" data-user-avatar data-settings-open role="button" tabindex="0" aria-label="Открыть настройки">
+                <img
+                  class="appdosc-avatar__img"
+                  data-user-avatar-image
+                  alt="Аватар пользователя"
+                  hidden
+                />
+                <span class="appdosc-avatar__placeholder" data-user-avatar-fallback aria-hidden="true"></span>
+              </div>
+              <span class="appdosc-avatar__settings-badge" aria-hidden="true">⚙️</span>
             </div>
             <div class="appdosc__brand-user">
               <span class="appdosc__user-name" data-user-name>Гость</span>
               <span class="appdosc__user-role" data-user-role>Должность: не указана</span>
+              <span class="appdosc__user-hint">Нажмите на аватар, чтобы открыть настройки</span>
             </div>
           </div>
         </div>
@@ -999,6 +1038,24 @@
         </div>
       </article>
     </template>
+
+    <div class="appdosc-settings-sheet" data-settings-sheet hidden>
+      <div class="appdosc-settings-sheet__backdrop" data-settings-close></div>
+      <section class="appdosc-settings-sheet__card" aria-label="Настройки">
+        <button type="button" class="appdosc-settings-sheet__close" data-settings-close aria-label="Закрыть">✕</button>
+        <h3 class="appdosc-settings-sheet__title">Тема оформления</h3>
+        <div class="appdosc-settings-sheet__theme-grid" role="group" aria-label="Выбор темы">
+          <button type="button" class="appdosc-settings-sheet__theme-btn" data-theme-option="light" aria-pressed="false">
+            <span>☀️</span>
+            <span>Светлая</span>
+          </button>
+          <button type="button" class="appdosc-settings-sheet__theme-btn" data-theme-option="dark" aria-pressed="true">
+            <span>🌙</span>
+            <span>Тёмная</span>
+          </button>
+        </div>
+      </section>
+    </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </body>

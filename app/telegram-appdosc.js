@@ -2701,7 +2701,8 @@ function initElements() {
   elements.userName = document.querySelector('[data-user-name]');
   elements.userRole = document.querySelector('[data-user-role]');
   elements.userAvatar = document.querySelector('[data-user-avatar]');
-  elements.themeToggle = document.querySelector('[data-theme-toggle]');
+  elements.settingsSheet = document.querySelector('[data-settings-sheet]');
+  elements.settingsCloseTargets = Array.from(document.querySelectorAll('[data-settings-close]'));
   elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
   elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
   elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
@@ -2926,18 +2927,27 @@ function setThemeMode(mode) {
 }
 
 function renderThemeToggle() {
-  if (!(elements.themeToggle instanceof HTMLElement) || !Array.isArray(elements.themeOptionButtons)) {
+  if (!Array.isArray(elements.themeOptionButtons) || !elements.themeOptionButtons.length) {
     return;
   }
   const mode = normalizeThemeMode(state.themeMode);
-  const index = Math.max(0, THEME_MODE_OPTIONS.indexOf(mode));
-  elements.themeToggle.style.setProperty('--theme-index', String(index));
-  elements.themeToggle.setAttribute('data-theme-mode', mode);
   elements.themeOptionButtons.forEach((button) => {
     const buttonMode = normalizeThemeMode(button.dataset.themeOption);
     const isActive = buttonMode === mode;
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
   });
+}
+
+function openSettingsSheet() {
+  if (elements.settingsSheet instanceof HTMLElement) {
+    elements.settingsSheet.hidden = false;
+  }
+}
+
+function closeSettingsSheet() {
+  if (elements.settingsSheet instanceof HTMLElement) {
+    elements.settingsSheet.hidden = true;
+  }
 }
 
 function parseTaskIdFromStartParam(value) {
@@ -15710,11 +15720,26 @@ function attachEvents() {
   if (elements.viewerDeleteResponse) {
     elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
   }
+  if (elements.userAvatar) {
+    elements.userAvatar.addEventListener('click', openSettingsSheet);
+    elements.userAvatar.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openSettingsSheet();
+      }
+    });
+  }
+  if (Array.isArray(elements.settingsCloseTargets) && elements.settingsCloseTargets.length) {
+    elements.settingsCloseTargets.forEach((target) => {
+      target.addEventListener('click', closeSettingsSheet);
+    });
+  }
   if (Array.isArray(elements.themeOptionButtons) && elements.themeOptionButtons.length) {
     elements.themeOptionButtons.forEach((button) => {
       button.addEventListener('click', () => {
         const nextMode = normalizeThemeMode(button.dataset.themeOption);
         setThemeMode(nextMode);
+        closeSettingsSheet();
       });
     });
   }
@@ -15728,6 +15753,11 @@ function attachEvents() {
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
       loadTasks(false);
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeSettingsSheet();
     }
   });
 }
