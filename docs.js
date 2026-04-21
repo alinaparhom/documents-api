@@ -8,7 +8,8 @@
     error: function() {}
   };
   var SETTINGS_LOG_PREFIX = '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438';
-  var TELEGRAM_MISSING_MESSAGE = '\u0423 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435\u0442 ID Telegram. \u041e\u0431\u0440\u0430\u0442\u0438\u0442\u0435\u0441\u044c \u043a \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0443.';
+  var TELEGRAM_MISSING_MESSAGE = '\u0423 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435\u0442 Telegram ID \u2014 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u0440\u0438\u0434\u0451\u0442.';
+  var TELEGRAM_MISSING_OPTION_NOTE = '\u041d\u0435\u0442 Telegram ID \u2014 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u0440\u0438\u0434\u0451\u0442';
 
   try {
     DATE_TIME_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
@@ -4552,7 +4553,9 @@
         seen[listKey] = true;
       }
       var optionValue = compositeKey || id;
-      var option = createElement('option', '', buildResponsibleLabel(entry, { omitRoleSuffix: true, includeSourceTag: true }) || id);
+      var baseLabel = buildResponsibleLabel(entry, { omitRoleSuffix: true, includeSourceTag: true }) || id;
+      var hasTelegramId = Boolean((entry.telegram && String(entry.telegram).trim()) || (entry.chatId && String(entry.chatId).trim()));
+      var option = createElement('option', '', hasTelegramId ? baseLabel : (baseLabel + ' • ' + TELEGRAM_MISSING_OPTION_NOTE));
       option.value = optionValue;
       option.dataset.name = entry.responsible || '';
       if (entry.department) {
@@ -4574,6 +4577,9 @@
         option.dataset.note = entry.note;
       }
       option.dataset.role = 'responsible';
+      if (!hasTelegramId) {
+        option.disabled = true;
+      }
       var selectedComposite = normalizeCompositeKeyValue(selectedId);
       var matchById = selectedId && normalizeResponsibleId(selectedId) === normalizeResponsibleId(id);
       var matchByComposite = compositeKey && selectedComposite && selectedComposite === compositeKey;
@@ -4646,7 +4652,9 @@
         return;
       }
 
-      var option = createElement('option', '', buildResponsibleLabel(entry, { omitRoleSuffix: true, includeSourceTag: true }) || optionValue);
+      var baseLabel = buildResponsibleLabel(entry, { omitRoleSuffix: true, includeSourceTag: true }) || optionValue;
+      var hasTelegramId = Boolean((entry.telegram && String(entry.telegram).trim()) || (entry.chatId && String(entry.chatId).trim()));
+      var option = createElement('option', '', hasTelegramId ? baseLabel : (baseLabel + ' • ' + TELEGRAM_MISSING_OPTION_NOTE));
       option.value = optionValue;
       option.dataset.name = entry.responsible || '';
       if (entry.department) {
@@ -4668,6 +4676,9 @@
         option.dataset.note = entry.note;
       }
       option.dataset.role = 'subordinate';
+      if (!hasTelegramId) {
+        option.disabled = true;
+      }
       if (shouldSelect || (selectedId && normalizeResponsibleId(selectedId) === normalizeResponsibleId(optionValue))) {
         option.selected = true;
       }

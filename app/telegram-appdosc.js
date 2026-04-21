@@ -743,7 +743,8 @@ const PDF_DIAGNOSTIC_EVENT = 'appdosc:pdf-log';
 const PDF_DIAGNOSTIC_THROTTLE_MS = 1200;
 const PDF_LOG_THROTTLE_MS = 350;
 const BULK_ASSIGN_FEEDBACK_TIMEOUT_MS = 2400;
-const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет ID Telegram. Обратитесь к администратору.';
+const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет Telegram ID — уведомление не придёт.';
+const TELEGRAM_MISSING_OPTION_NOTE = 'Нет Telegram ID — уведомление не придёт';
 const RESPONSIBLE_PANEL_TITLE = 'Назначенные задачи по ответственным';
 const SUBORDINATE_PANEL_TITLE = 'Назначенные задачи на подчинённых';
 const INSTRUCTION_OPTIONS = ['В работу', 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
@@ -17825,6 +17826,7 @@ function setupAssignmentControls(card, task) {
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildResponsibleOptionLabel(entry);
+      const hasTelegramId = Boolean(resolveEntryTelegramId(entry));
       if (!value || addedValues.has(value)) {
         return;
       }
@@ -17839,13 +17841,15 @@ function setupAssignmentControls(card, task) {
       }
 
       visibleCount += 1;
-      visibleAssigneeOptions.push({ value, label, entry });
+      visibleAssigneeOptions.push({ value, label, entry, hasTelegramId });
 
       const option = document.createElement('button');
       option.type = 'button';
       option.className = 'appdosc-card__assign-option';
       option.dataset.assigneeValue = value;
-      option.textContent = label;
+      option.textContent = hasTelegramId
+        ? label
+        : `${label} • ${TELEGRAM_MISSING_OPTION_NOTE}`;
       option.style.width = '100%';
       option.style.textAlign = 'left';
       option.style.background = comboPalette.optionBg;
@@ -17860,7 +17864,17 @@ function setupAssignmentControls(card, task) {
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       option.style.marginBottom = '3px';
       option.style.touchAction = 'manipulation';
+      if (!hasTelegramId) {
+        option.disabled = true;
+        option.style.opacity = '0.72';
+        option.style.cursor = 'not-allowed';
+      }
       option.addEventListener('pointerdown', (event) => {
+        if (!hasTelegramId) {
+          event.preventDefault();
+          setStatus('error', TELEGRAM_MISSING_MESSAGE);
+          return;
+        }
         event.preventDefault();
         handleAssigneeSelection(value);
       });
@@ -18494,6 +18508,13 @@ function setupAssignmentControls(card, task) {
     if (!selectedValue) {
       return;
     }
+    if (selectedOption && selectedOption.hasTelegramId === false) {
+      setStatus('error', TELEGRAM_MISSING_MESSAGE);
+      comboInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
+      return;
+    }
 
     const normalizedValue = normalizeIdentifier(selectedValue);
     logAssignmentEvent('combo_select', {
@@ -18858,6 +18879,7 @@ function setupSubordinateControls(card, task) {
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildSubordinateOptionLabel(entry);
+      const hasTelegramId = Boolean(resolveEntryTelegramId(entry));
       if (!value || addedValues.has(value)) {
         return;
       }
@@ -18872,12 +18894,14 @@ function setupSubordinateControls(card, task) {
       }
 
       visibleCount += 1;
-      visibleSubordinateOptions.push({ value, label, entry });
+      visibleSubordinateOptions.push({ value, label, entry, hasTelegramId });
       const option = document.createElement('button');
       option.type = 'button';
       option.className = 'appdosc-card__assign-option';
       option.dataset.subordinateValue = value;
-      option.textContent = label;
+      option.textContent = hasTelegramId
+        ? label
+        : `${label} • ${TELEGRAM_MISSING_OPTION_NOTE}`;
       option.style.width = '100%';
       option.style.textAlign = 'left';
       option.style.background = comboPalette.optionBg;
@@ -18892,7 +18916,17 @@ function setupSubordinateControls(card, task) {
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       option.style.marginBottom = '3px';
       option.style.touchAction = 'manipulation';
+      if (!hasTelegramId) {
+        option.disabled = true;
+        option.style.opacity = '0.72';
+        option.style.cursor = 'not-allowed';
+      }
       option.addEventListener('pointerdown', (event) => {
+        if (!hasTelegramId) {
+          event.preventDefault();
+          setStatus('error', TELEGRAM_MISSING_MESSAGE);
+          return;
+        }
         event.preventDefault();
         handleSubordinateSelection(value);
       });
@@ -19413,6 +19447,13 @@ function setupSubordinateControls(card, task) {
     )) || visibleSubordinateOptions[0] || null;
     const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
+      return;
+    }
+    if (selectedOption && selectedOption.hasTelegramId === false) {
+      setStatus('error', TELEGRAM_MISSING_MESSAGE);
+      searchInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
 
