@@ -779,6 +779,110 @@ function docs_send_telegram_message(string $chatId, string $text, ?string $botTo
     ];
 }
 
+function docs_request_telegram_api(string $method, array $params = [], ?string $botToken = null): array
+{
+    if ($botToken === null || $botToken === '') {
+        $botToken = docs_resolve_telegram_bot_token();
+    }
+
+    if ($botToken === null || $botToken === '') {
+        return ['ok' => false, 'error' => 'bot_token_missing'];
+    }
+
+    $endpoint = 'https://api.telegram.org/bot' . $botToken . '/' . ltrim($method, '/');
+    if (!empty($params)) {
+        $endpoint .= (strpos($endpoint, '?') === false ? '?' : '&')
+            . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    $response = @file_get_contents($endpoint);
+    if ($response === false) {
+        $error = error_get_last();
+        return ['ok' => false, 'error' => $error['message'] ?? 'request_failed'];
+    }
+
+    $decoded = json_decode($response, true);
+    if (!is_array($decoded) || empty($decoded['ok'])) {
+        return [
+            'ok' => false,
+            'error' => is_array($decoded) ? ($decoded['description'] ?? 'invalid_response') : 'invalid_response',
+            'response' => $decoded,
+        ];
+    }
+
+    return ['ok' => true, 'result' => $decoded['result'] ?? null];
+}
+
+function docs_stream_telegram_avatar(string $telegramUserId): bool
+{
+    $telegramUserId = preg_replace('/[^\d-]/', '', trim($telegramUserId));
+    if ($telegramUserId === '' || !preg_match('/^-?\d{4,20}$/', $telegramUserId)) {
+        return false;
+    }
+
+    $botToken = docs_resolve_telegram_bot_token();
+    if ($botToken === null || $botToken === '') {
+        return false;
+    }
+
+    $cacheDir = __DIR__ . '/uploads/telegram-avatar-cache';
+    if (!is_dir($cacheDir)) {
+        @mkdir($cacheDir, 0775, true);
+    }
+
+    $cacheFile = rtrim($cacheDir, "/\\") . '/' . $telegramUserId . '.jpg';
+    $cacheTtl = 3600;
+    if (is_file($cacheFile) && (time() - (int) @filemtime($cacheFile)) <= $cacheTtl) {
+        header('Content-Type: image/jpeg');
+        header('Cache-Control: public, max-age=3600');
+        readfile($cacheFile);
+        return true;
+    }
+
+    $photos = docs_request_telegram_api('getUserProfilePhotos', [
+        'user_id' => $telegramUserId,
+        'limit' => 1,
+    ], $botToken);
+    if (empty($photos['ok']) || !isset($photos['result']['photos'][0]) || !is_array($photos['result']['photos'][0])) {
+        return false;
+    }
+
+    $sizes = $photos['result']['photos'][0];
+    $best = end($sizes);
+    if (!is_array($best) || empty($best['file_id'])) {
+        return false;
+    }
+
+    $fileInfo = docs_request_telegram_api('getFile', ['file_id' => (string) $best['file_id']], $botToken);
+    if (empty($fileInfo['ok']) || empty($fileInfo['result']['file_path'])) {
+        return false;
+    }
+
+    $filePath = (string) $fileInfo['result']['file_path'];
+    $fileUrl = 'https://api.telegram.org/file/bot' . $botToken . '/' . ltrim($filePath, '/');
+    $binary = @file_get_contents($fileUrl);
+    if (!is_string($binary) || $binary === '') {
+        return false;
+    }
+
+    @file_put_contents($cacheFile, $binary);
+
+    $finfo = function_exists('finfo_open') ? @finfo_open(FILEINFO_MIME_TYPE) : false;
+    $mime = 'image/jpeg';
+    if ($finfo) {
+        $detected = @finfo_buffer($finfo, $binary);
+        @finfo_close($finfo);
+        if (is_string($detected) && strpos($detected, 'image/') === 0) {
+            $mime = $detected;
+        }
+    }
+
+    header('Content-Type: ' . $mime);
+    header('Cache-Control: public, max-age=3600');
+    echo $binary;
+    return true;
+}
+
 function docs_build_task_start_param(array $record): string
 {
     $taskId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
@@ -11387,6 +11491,34 @@ switch ($action) {
     case 'mini_app_upload_pdf':
         docs_handle_mini_app_upload_pdf($method);
         break;
+
+    case 'mini_app_telegram_avatar':
+        if ($method !== 'GET' && $method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $requestContext = docs_build_request_user_context();
+        $primaryId = trim((string) ($requestContext['primaryId'] ?? ''));
+        if ($primaryId === '') {
+            respond_error('Не удалось подтвердить пользователя Telegram.', 401);
+        }
+
+        $userId = (string) ($_REQUEST['user_id'] ?? '');
+        if ($userId === '') {
+            respond_error('Не указан user_id.', 400);
+        }
+
+        if (docs_stream_telegram_avatar($userId)) {
+            exit;
+        }
+
+        http_response_code(404);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => false,
+            'error' => 'avatar_not_found',
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
 
     case 'mini_app_user_journal':
         docs_handle_mini_app_user_journal($method);

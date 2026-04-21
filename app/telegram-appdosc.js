@@ -14,6 +14,7 @@ const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
+const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
@@ -1923,6 +1924,9 @@ function hydrateTelegramFromInitData(initData) {
         if (!state.telegram.languageCode && typeof user.language_code === 'string') {
           state.telegram.languageCode = user.language_code;
         }
+        if (!state.telegram.photoUrl && typeof user.photo_url === 'string') {
+          state.telegram.photoUrl = user.photo_url;
+        }
       }
     } catch (error) {
       // ignore JSON parse issues
@@ -1964,6 +1968,7 @@ const state = {
     firstName: '',
     lastName: '',
     fullName: '',
+    photoUrl: '',
     role: '',
     chatId: '',
     chatType: '',
@@ -2690,6 +2695,9 @@ function initElements() {
   elements.refreshButton = document.querySelector('[data-refresh]');
   elements.userName = document.querySelector('[data-user-name]');
   elements.userRole = document.querySelector('[data-user-role]');
+  elements.userAvatar = document.querySelector('[data-user-avatar]');
+  elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
+  elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
@@ -2793,6 +2801,7 @@ function initTelegram() {
       state.telegram.firstName = user.first_name ? String(user.first_name) : state.telegram.firstName;
       state.telegram.lastName = user.last_name ? String(user.last_name) : state.telegram.lastName;
       state.telegram.languageCode = user.language_code ? String(user.language_code) : state.telegram.languageCode;
+      state.telegram.photoUrl = user.photo_url ? String(user.photo_url) : state.telegram.photoUrl;
       const nameParts = [state.telegram.firstName, state.telegram.lastName].filter(Boolean);
       state.telegram.fullName = nameParts.join(' ').trim() || state.telegram.fullName;
     }
@@ -2997,6 +3006,11 @@ function readQueryContext() {
   const fullName = params.get('telegram_full_name') || params.get('full_name');
   if (!state.telegram.fullName && fullName) {
     state.telegram.fullName = String(fullName).trim();
+  }
+
+  const photoUrl = params.get('telegram_photo_url') || params.get('photo_url');
+  if (!state.telegram.photoUrl && photoUrl) {
+    state.telegram.photoUrl = String(photoUrl).trim();
   }
 
   const platformParam = params.get('telegram_platform')
@@ -3465,11 +3479,13 @@ function renderEmpty() {
 }
 
 function updateUserPanel() {
+  const displayName = state.telegram.fullName
+    || state.telegram.firstName
+    || state.telegram.username
+    || 'Неизвестный пользователь';
+
   if (elements.userName) {
-    elements.userName.textContent = state.telegram.fullName
-      || state.telegram.firstName
-      || state.telegram.username
-      || 'Неизвестный пользователь';
+    elements.userName.textContent = displayName;
   }
 
   if (elements.userRole) {
@@ -3478,6 +3494,33 @@ function updateUserPanel() {
       state.telegram.role = role;
     }
     elements.userRole.textContent = role ? `Роль: ${role}` : 'Роль: не указана';
+  }
+
+  if (elements.userAvatarImage) {
+    const photoUrl = normalizeAvatarUrl(state.telegram.photoUrl)
+      || (normalizeTelegramUserId(state.telegram.id)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(normalizeTelegramUserId(state.telegram.id))}`
+        : '');
+    if (photoUrl) {
+      elements.userAvatarImage.src = photoUrl;
+      elements.userAvatarImage.hidden = false;
+      if (elements.userAvatarFallback) {
+        elements.userAvatarFallback.hidden = true;
+      }
+      elements.userAvatarImage.onerror = () => {
+        elements.userAvatarImage.hidden = true;
+        elements.userAvatarImage.removeAttribute('src');
+        if (elements.userAvatarFallback) {
+          elements.userAvatarFallback.hidden = false;
+        }
+      };
+    } else {
+      elements.userAvatarImage.removeAttribute('src');
+      elements.userAvatarImage.hidden = true;
+      if (elements.userAvatarFallback) {
+        elements.userAvatarFallback.hidden = false;
+      }
+    }
   }
 
   updateVersionPanel();
@@ -11105,6 +11148,120 @@ function normalizeValue(value) {
   return string && string !== '—' ? string : '';
 }
 
+function normalizeAvatarUrl(value) {
+  const raw = normalizeValue(value);
+  if (!raw) {
+    return '';
+  }
+
+  if (raw.startsWith('//')) {
+    return `https:${raw}`;
+  }
+
+  if (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw) || /^blob:/i.test(raw)) {
+    return raw;
+  }
+
+  return '';
+}
+
+function normalizeTelegramUserId(value) {
+  const raw = normalizeValue(value);
+  if (!raw) {
+    return '';
+  }
+  const normalized = raw.replace(/[^\d-]/g, '');
+  return /^-?\d{4,20}$/.test(normalized) ? normalized : '';
+}
+
+function resolveTelegramUserIdFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const directCandidates = [
+    entry.telegram,
+    entry.telegramId,
+    entry.telegram_id,
+    entry.userId,
+    entry.user_id,
+    entry.id,
+  ];
+
+  for (let index = 0; index < directCandidates.length; index += 1) {
+    const id = normalizeTelegramUserId(directCandidates[index]);
+    if (id) {
+      return id;
+    }
+  }
+
+  const nestedCandidates = [entry.user, entry.telegramUser, entry.profile, entry.contact];
+  for (let index = 0; index < nestedCandidates.length; index += 1) {
+    const nested = nestedCandidates[index];
+    if (!nested || typeof nested !== 'object') {
+      continue;
+    }
+    const id = normalizeTelegramUserId(
+      nested.telegram
+      || nested.telegramId
+      || nested.telegram_id
+      || nested.userId
+      || nested.user_id
+      || nested.id
+    );
+    if (id) {
+      return id;
+    }
+  }
+
+  return '';
+}
+
+function resolveAvatarUrlFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const directFields = [
+    'photo_url',
+    'photoUrl',
+    'avatar_url',
+    'avatarUrl',
+    'avatar',
+    'image',
+    'imageUrl',
+    'profilePhoto',
+    'profile_photo',
+    'telegram_photo_url',
+    'telegramPhotoUrl',
+  ];
+
+  for (let index = 0; index < directFields.length; index += 1) {
+    const key = directFields[index];
+    const resolved = normalizeAvatarUrl(entry[key]);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const nestedObjects = [entry.user, entry.telegramUser, entry.profile, entry.contact];
+  for (let index = 0; index < nestedObjects.length; index += 1) {
+    const nested = nestedObjects[index];
+    if (!nested || typeof nested !== 'object') {
+      continue;
+    }
+    for (let fieldIndex = 0; fieldIndex < directFields.length; fieldIndex += 1) {
+      const key = directFields[fieldIndex];
+      const resolved = normalizeAvatarUrl(nested[key]);
+      if (resolved) {
+        return resolved;
+      }
+    }
+  }
+
+  return '';
+}
+
 function normalizeBriefText(value) {
   const source = value === null || value === undefined ? '' : String(value);
   const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '');
@@ -17399,6 +17556,39 @@ function setupAssignmentControls(card, task) {
     selectElement.value = normalized || '';
   };
 
+  const createAssigneeAvatar = (entry, fallbackLabel = '') => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = fallbackLabel ? `Аватар: ${fallbackLabel}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
   const createResponsibleRow = ({ value, label, normalized, assigned, comment, dueDate, instruction, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
@@ -17423,10 +17613,17 @@ function setupAssignmentControls(card, task) {
     roleLabel.textContent = 'Ответственный';
     info.appendChild(roleLabel);
 
+    const nameLine = document.createElement('div');
+    nameLine.className = 'appdosc-card__assign-line';
+
+    const avatar = createAssigneeAvatar(referenceEntry, label);
+    nameLine.appendChild(avatar);
+
     const name = document.createElement('div');
     name.className = 'appdosc-card__assign-name';
     name.textContent = label || buildAssignmentFallbackLabel(null, 'responsible');
-    info.appendChild(name);
+    nameLine.appendChild(name);
+    info.appendChild(nameLine);
 
     const note = document.createElement('div');
     note.className = 'appdosc-card__assign-note';
@@ -18330,6 +18527,39 @@ function setupSubordinateControls(card, task) {
     return '';
   };
 
+  const createAssigneeAvatar = (entry, fallbackLabel = '') => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = fallbackLabel ? `Аватар: ${fallbackLabel}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
   const createSubordinateRow = ({ value, label, normalized, assigned, comment, dueDate, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
@@ -18354,10 +18584,17 @@ function setupSubordinateControls(card, task) {
     roleLabel.textContent = 'Подчинённый';
     info.appendChild(roleLabel);
 
+    const nameLine = document.createElement('div');
+    nameLine.className = 'appdosc-card__assign-line';
+
+    const avatar = createAssigneeAvatar(referenceEntry, label);
+    nameLine.appendChild(avatar);
+
     const name = document.createElement('div');
     name.className = 'appdosc-card__assign-name';
     name.textContent = label || buildAssignmentFallbackLabel(null, 'subordinate');
-    info.appendChild(name);
+    nameLine.appendChild(name);
+    info.appendChild(nameLine);
 
     const commentInput = document.createElement('textarea');
     commentInput.className = 'appdosc-card__assign-comment-input';
