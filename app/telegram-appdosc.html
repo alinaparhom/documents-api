@@ -320,19 +320,27 @@
 
       .appdosc__summary-actions {
         width: 100%;
+        max-width: 100% !important;
         display: block;
         margin: 10px 0 0;
       }
 
       .appdosc__summary-status {
-        width: 100%;
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+
+      .appdosc__user-state {
+        width: 100% !important;
+        max-width: 100% !important;
       }
 
       .appdosc__refresh {
         min-height: 38px !important;
-        width: 100%;
+        width: 100% !important;
         max-width: none !important;
         display: flex;
+        box-sizing: border-box;
         justify-content: center;
         padding: 0 12px !important;
         border-radius: 12px !important;
@@ -345,10 +353,12 @@
 
       .appdosc__summary-list {
         display: grid !important;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
         gap: 8px !important;
-        width: 100%;
+        width: 100% !important;
+        max-width: 100% !important;
         justify-items: stretch;
+        align-items: stretch;
       }
 
       .appdosc__summary-list .appdosc__badge {
@@ -356,7 +366,10 @@
         max-width: none !important;
         min-width: 0 !important;
         flex: 1 1 auto;
-        width: 100%;
+        width: 100% !important;
+        justify-self: stretch;
+        align-self: stretch;
+        box-sizing: border-box;
         min-height: 38px;
         margin: 0 !important;
         padding: 0 10px !important;

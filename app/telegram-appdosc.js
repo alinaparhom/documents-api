@@ -3394,8 +3394,7 @@ function updateStateFromPayload(payload) {
 
   if (!state.telegram.role) {
     const payloadPosition = normalizeValue(payload.userPosition)
-      || normalizeValue(payload.position)
-      || normalizeValue(payload.jobTitle);
+      || normalizeValue(payload.position);
     if (payloadPosition) {
       state.telegram.role = String(payloadPosition);
     }
@@ -3419,9 +3418,7 @@ function updateStateFromPayload(payload) {
       state.telegram.firstName = user.firstName ? String(user.firstName) : state.telegram.firstName;
       state.telegram.lastName = user.lastName ? String(user.lastName) : state.telegram.lastName;
     }
-    const userPosition = normalizeValue(user.position)
-      || normalizeValue(user.jobTitle)
-      || normalizeValue(user.title);
+    const userPosition = normalizeValue(user.position);
     if (userPosition) {
       state.telegram.role = String(userPosition);
     }
@@ -3500,7 +3497,7 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role) || getCurrentUserRoleFromAccess();
+    const role = normalizeValue(state.telegram.role) || getCurrentUserPositionFromAccess();
     if (!state.telegram.role && role) {
       state.telegram.role = role;
     }
@@ -11912,7 +11909,7 @@ function getCurrentUserResponsibleFromAccess() {
   return '';
 }
 
-function getCurrentUserRoleFromAccess() {
+function getCurrentUserPositionFromAccess() {
   const access = state && state.access && typeof state.access === 'object' ? state.access : null;
   if (!access) {
     return '';
@@ -11956,11 +11953,9 @@ function getCurrentUserRoleFromAccess() {
     if (!entryMatchesUser(entry, ids, names)) {
       continue;
     }
-    const role = normalizeValue(entry.position)
-      || normalizeValue(entry.jobTitle)
-      || normalizeValue(entry.title);
-    if (role) {
-      return role;
+    const position = normalizeValue(entry.position);
+    if (position) {
+      return position;
     }
   }
 
