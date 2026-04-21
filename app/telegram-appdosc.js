@@ -2323,6 +2323,33 @@ function sanitizeTaskItem(task) {
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
 
+  const resolveSummaryValue = (value) => {
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (value && typeof value === 'object') {
+      return (
+        normalizeValue(value.summary)
+        || normalizeValue(value.content)
+        || normalizeValue(value.description)
+        || normalizeValue(value.text)
+        || normalizeValue(value.title)
+        || ''
+      );
+    }
+    return normalizeValue(value) || '';
+  };
+
+  const normalizedSummary = resolveSummaryValue(sanitized.summary)
+    || resolveSummaryValue(sanitized.content)
+    || resolveSummaryValue(sanitized.description)
+    || resolveSummaryValue(sanitized.text)
+    || '';
+
+  if (normalizedSummary) {
+    sanitized.summary = normalizedSummary;
+  }
+
   return sanitized;
 }
 
