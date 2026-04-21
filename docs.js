@@ -9148,13 +9148,17 @@
     entryNode.appendChild(createElement('div', 'documents-assignee__name', nameText));
 
     if (assignee) {
-      var metaParts = [];
+      var titleParts = [];
       if (assignee.position) {
-        metaParts.push(assignee.position);
+        titleParts.push(assignee.position);
       }
       if (assignee.department) {
-        metaParts.push(assignee.department);
+        titleParts.push(assignee.department);
       }
+      if (titleParts.length) {
+        entryNode.appendChild(createElement('div', 'documents-assignee__meta documents-assignee__meta--muted', titleParts.join(' · ')));
+      }
+      var metaParts = [];
       if (assignee.telegram) {
         metaParts.push('TG: ' + assignee.telegram);
       }
