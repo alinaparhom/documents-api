@@ -4212,13 +4212,31 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const compactContent = normalizeValue(task.summary) || '—';
-  const hasSummary = compactContent !== '—';
+  const resolveCompactText = (value) => {
+    if (value && typeof value === 'object') {
+      const nested = normalizeValue(
+        value.summary
+          || value.content
+          || value.description
+          || value.text
+          || value.title
+      );
+      return nested;
+    }
+    return normalizeValue(value);
+  };
+
+  const compactContent = resolveCompactText(task.summary)
+    || resolveCompactText(task.content)
+    || resolveCompactText(task.description)
+    || resolveCompactText(task.instruction)
+    || '—';
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
     setTitle: false,
+    fallback: '—',
   });
-  toggleSection(card, '[data-field="summary"]', hasSummary);
+  toggleSection(card, '[data-field="summary"]', true);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,
@@ -4262,9 +4280,23 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
   });
-  const senderCompact = normalizeValue(formatEntityDisplay(task.correspondent, ''))
-    || normalizeValue(formatEntityDisplay(resolveExecutor(task), ''))
-    || '—';
+  const resolveSenderText = (value) => {
+    if (value && typeof value === 'object') {
+      return normalizeValue(
+        value.name
+          || value.fullName
+          || value.fio
+          || value.title
+          || value.email
+      );
+    }
+    return normalizeValue(value);
+  };
+  const senderCompact = resolveSenderText(task.correspondent)
+    || resolveSenderText(task.sender)
+    || resolveSenderText(task.from)
+    || resolveSenderText(resolveExecutor(task))
+    || 'не указан';
   setCardField(card, '[data-field="senderCompact"]', senderCompact, {
     fallback: '—',
     setTitle: false,
