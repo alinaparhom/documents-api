@@ -4577,10 +4577,13 @@
         option.dataset.note = entry.note;
       }
       option.dataset.role = 'responsible';
+      if (!hasTelegramId) {
+        option.disabled = true;
+      }
       var selectedComposite = normalizeCompositeKeyValue(selectedId);
       var matchById = selectedId && normalizeResponsibleId(selectedId) === normalizeResponsibleId(id);
       var matchByComposite = compositeKey && selectedComposite && selectedComposite === compositeKey;
-      if (matchById || matchByComposite) {
+      if ((matchById || matchByComposite) && hasTelegramId) {
         option.selected = true;
       }
       select.appendChild(option);
@@ -4673,7 +4676,10 @@
         option.dataset.note = entry.note;
       }
       option.dataset.role = 'subordinate';
-      if (shouldSelect || (selectedId && normalizeResponsibleId(selectedId) === normalizeResponsibleId(optionValue))) {
+      if (!hasTelegramId) {
+        option.disabled = true;
+      }
+      if ((shouldSelect || (selectedId && normalizeResponsibleId(selectedId) === normalizeResponsibleId(optionValue))) && hasTelegramId) {
         option.selected = true;
       }
       select.appendChild(option);
