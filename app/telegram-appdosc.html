@@ -224,6 +224,15 @@
 
 
 
+      body {
+        margin: 0;
+        background:
+          radial-gradient(120% 80% at 10% 0%, #123a80 0%, rgba(18, 58, 128, 0) 58%),
+          radial-gradient(120% 85% at 90% 100%, #0b2f65 0%, rgba(11, 47, 101, 0) 62%),
+          linear-gradient(180deg, #040f2c 0%, #02081b 100%);
+        min-height: 100dvh;
+      }
+
       .appdosc {
         width: 100% !important;
         max-width: 100% !important;
@@ -256,6 +265,11 @@
       .appdosc__user {
         border-radius: 22px !important;
         padding: clamp(14px, 3.8vw, 24px) !important;
+        background: linear-gradient(145deg, rgba(11, 30, 72, 0.88), rgba(7, 20, 54, 0.9));
+        border: 1px solid rgba(89, 130, 223, 0.2);
+        box-shadow:
+          0 20px 36px rgba(2, 10, 34, 0.48),
+          inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
       .appdosc__brand-user {
@@ -557,9 +571,12 @@
         border-radius: 12px !important;
         font-size: 14px !important;
         font-weight: 600 !important;
-        opacity: 0.9;
-        box-shadow: none !important;
-        filter: saturate(0.9);
+        opacity: 1;
+        box-shadow: 0 8px 20px rgba(59, 130, 246, 0.28) !important;
+        filter: none;
+        border: 1px solid rgba(147, 197, 253, 0.28) !important;
+        background: linear-gradient(180deg, #3f76d3 0%, #315ea9 100%) !important;
+        color: #dbeafe !important;
       }
 
       .appdosc__summary-list {
@@ -590,6 +607,61 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         font-size: clamp(12px, 2.6vw, 14px) !important;
+        background: rgba(20, 45, 95, 0.55) !important;
+        border: 1px solid rgba(86, 131, 218, 0.25) !important;
+        color: #c7dbff !important;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      .appdosc__badge::before {
+        content: '';
+        width: 28px;
+        height: 28px;
+        min-width: 28px;
+        margin-right: 10px;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.22);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 15px;
+      }
+
+      .appdosc__badge--distributed::before { content: '🧾'; }
+      .appdosc__badge--accent::before { content: '💼'; }
+      .appdosc__badge--info::before { content: '🔎'; }
+      .appdosc__badge--success::before { content: '✅'; }
+      .appdosc__badge--danger::before { content: '❌'; }
+      .appdosc__badge--warn::before { content: '🕒'; }
+
+      .appdosc__badge--distributed {
+        background: linear-gradient(135deg, rgba(80, 72, 180, 0.32), rgba(44, 33, 109, 0.4)) !important;
+        color: #9488ff !important;
+      }
+
+      .appdosc__badge--accent {
+        background: linear-gradient(135deg, rgba(44, 103, 213, 0.3), rgba(32, 62, 126, 0.42)) !important;
+        color: #64b1ff !important;
+      }
+
+      .appdosc__badge--info {
+        background: linear-gradient(135deg, rgba(32, 134, 207, 0.3), rgba(20, 63, 120, 0.42)) !important;
+        color: #39d4ff !important;
+      }
+
+      .appdosc__badge--success {
+        background: linear-gradient(135deg, rgba(7, 157, 118, 0.3), rgba(7, 98, 74, 0.45)) !important;
+        color: #1ce0a8 !important;
+      }
+
+      .appdosc__badge--danger {
+        background: linear-gradient(135deg, rgba(185, 40, 83, 0.31), rgba(109, 19, 52, 0.44)) !important;
+        color: #ff5f7f !important;
+      }
+
+      .appdosc__badge--warn {
+        background: linear-gradient(135deg, rgba(175, 104, 31, 0.32), rgba(96, 51, 16, 0.46)) !important;
+        color: #ffb648 !important;
       }
 
       .appdosc__responsible-panel {
@@ -607,10 +679,150 @@
         min-height: 52px !important;
         padding-right: 44px !important;
         border-radius: 14px !important;
+        border: 1px solid rgba(112, 147, 219, 0.28) !important;
+        background-color: rgba(11, 26, 62, 0.7) !important;
+        color: #a2b8df !important;
         background-image: linear-gradient(45deg, transparent 50%, #cbd5e1 50%), linear-gradient(135deg, #cbd5e1 50%, transparent 50%);
         background-position: calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px);
         background-size: 6px 6px, 6px 6px;
         background-repeat: no-repeat;
+      }
+
+      .appdosc__task-nav-label,
+      .appdosc__table-title {
+        color: #d4e5ff !important;
+      }
+
+      .appdosc__table-card {
+        border-radius: 22px !important;
+        background: linear-gradient(155deg, rgba(9, 25, 62, 0.92), rgba(5, 18, 50, 0.95)) !important;
+        border: 1px solid rgba(89, 130, 223, 0.2) !important;
+        box-shadow: 0 20px 34px rgba(2, 10, 34, 0.45);
+      }
+
+      .appdosc__table-meta,
+      .appdosc__footer-meta {
+        color: #8da7d4 !important;
+      }
+
+      .appdosc__status-message {
+        border-radius: 14px !important;
+        border: 1px solid rgba(86, 131, 218, 0.28) !important;
+        background: rgba(8, 33, 79, 0.65) !important;
+        color: #4ea0ff !important;
+      }
+
+      .appdosc-card {
+        border-radius: 18px !important;
+        background: linear-gradient(150deg, rgba(16, 37, 84, 0.72), rgba(11, 28, 67, 0.74)) !important;
+        border: 1px solid rgba(106, 143, 214, 0.2) !important;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        padding: 14px !important;
+      }
+
+      .appdosc-card__header {
+        display: flex !important;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+
+      .appdosc-card__header-text,
+      .appdosc-card__status,
+      .appdosc-card__footer,
+      .appdosc-card__resolution,
+      .appdosc-card__files,
+      .appdosc-card__details .appdosc-card__detail:not(:nth-child(4)) {
+        display: none !important;
+      }
+
+      .appdosc-card__meta {
+        order: 1;
+        margin-right: auto;
+        color: #9ab4de !important;
+        font-size: 12px !important;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .appdosc-card__meta::before {
+        content: '📅';
+        font-size: 14px;
+      }
+
+      .appdosc-card__badge {
+        order: 2;
+        margin-left: auto;
+        min-height: 30px;
+        padding: 4px 12px !important;
+        border-radius: 999px !important;
+        background: rgba(36, 94, 194, 0.55) !important;
+        border: 1px solid rgba(125, 178, 255, 0.28) !important;
+        color: #6db5ff !important;
+        font-weight: 700 !important;
+      }
+
+      .appdosc-card__title {
+        color: #d6e7ff !important;
+      }
+
+      .appdosc-card__subtitle,
+      .appdosc-card__meta,
+      .appdosc-card__block-text,
+      .appdosc-card__detail dd {
+        color: #8ea8d4 !important;
+      }
+
+      .appdosc-card__block-title,
+      .appdosc-card__detail dt {
+        color: #4ea0ff !important;
+      }
+
+      .appdosc-card__summary {
+        margin-top: 8px;
+      }
+
+      .appdosc-card__summary .appdosc-card__block-title {
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .appdosc-card__summary .appdosc-card__block-text {
+        font-size: 18px;
+        line-height: 1.4;
+        color: #94a9cf !important;
+      }
+
+      .appdosc-card__details {
+        margin: 8px 0 0 !important;
+        padding-top: 10px;
+        border-top: 1px solid rgba(117, 148, 206, 0.22);
+      }
+
+      .appdosc-card__details .appdosc-card__detail:nth-child(4) {
+        display: flex !important;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .appdosc-card__details .appdosc-card__detail:nth-child(4) dt {
+        margin: 0 !important;
+        font-size: 0;
+      }
+
+      .appdosc-card__details .appdosc-card__detail:nth-child(4) dt::before {
+        content: '👤';
+        font-size: 14px;
+      }
+
+      .appdosc-card__details .appdosc-card__detail:nth-child(4) dd {
+        margin: 0 !important;
+      }
+
+      .appdosc-card__details .appdosc-card__detail:nth-child(4) dd::before {
+        content: 'От: ';
+        color: #8ea8d4;
       }
 
       @media (max-width: 680px) {
