@@ -3725,17 +3725,9 @@ function updateStats() {
     }
   }
 
-  const statusCounts = isPlainObject(displayStats.statuses)
-    ? displayStats.statuses
-    : createEmptyStatusCounters();
-  const hasStatusCounts = Object.keys(STATUS_SUMMARY_CONFIG).some((key) => {
-    const rawValue = statusCounts[key];
-    const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
-    return Number.isFinite(numeric) && numeric > 0;
-  });
-  const resolvedStatusCounts = !hasStatusCounts && overallStats.total > 0
+  const resolvedStatusCounts = isPlainObject(overallStats.statuses)
     ? overallStats.statuses
-    : statusCounts;
+    : createEmptyStatusCounters();
 
   if (elements.statusBadges) {
     Object.entries(STATUS_SUMMARY_CONFIG).forEach(([key, config]) => {
@@ -3751,10 +3743,7 @@ function updateStats() {
   }
 
   if (elements.overdue) {
-    const overdue = Number(displayStats.overdue) || 0;
-    const resolvedOverdue = !hasStatusCounts && overdue === 0 && overallStats.total > 0
-      ? Number(overallStats.overdue) || 0
-      : overdue;
+    const resolvedOverdue = Number(overallStats.overdue) || 0;
     elements.overdue.textContent = `${resolvedOverdue} просрочено`;
   }
 

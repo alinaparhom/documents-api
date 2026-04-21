@@ -396,8 +396,7 @@
       }
 
       :root[data-theme='dark'] .appdosc-settings-sheet__item,
-      :root[data-theme='dark'] .appdosc-settings-sheet__theme-btn,
-      :root[data-theme='dark'] .appdosc-settings-sheet__logout {
+      :root[data-theme='dark'] .appdosc-settings-sheet__theme-btn {
         background: rgba(15, 23, 42, 0.35);
         border-color: rgba(148, 163, 184, 0.34);
       }
@@ -406,6 +405,15 @@
         display: inline-flex;
         align-items: center;
         gap: 10px;
+      }
+
+      .appdosc-settings-sheet__coming {
+        font-size: 12px;
+        color: #2563eb;
+        background: rgba(37, 99, 235, 0.12);
+        border: 1px solid rgba(37, 99, 235, 0.28);
+        padding: 2px 8px;
+        border-radius: 999px;
       }
 
       .appdosc-settings-sheet__section {
@@ -440,18 +448,6 @@
       .appdosc-settings-sheet__theme-btn[aria-pressed='true'] {
         border-color: rgba(59, 130, 246, 0.72);
         box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18) inset;
-      }
-
-      .appdosc-settings-sheet__logout {
-        width: 100%;
-        min-height: 48px;
-        border-radius: 14px;
-        border: 1px solid rgba(239, 68, 68, 0.35);
-        background: rgba(255, 255, 255, 0.28);
-        color: #ef4444;
-        margin-top: 14px;
-        font-size: 16px;
-        font-weight: 600;
       }
 
       .appdosc-avatar {
@@ -1140,11 +1136,11 @@
         </div>
         <button type="button" class="appdosc-settings-sheet__item">
           <span class="appdosc-settings-sheet__item-left"><span>✏️</span><span>Редактировать профиль</span></span>
-          <span aria-hidden="true">›</span>
+          <span class="appdosc-settings-sheet__coming">В разработке</span>
         </button>
         <button type="button" class="appdosc-settings-sheet__item">
           <span class="appdosc-settings-sheet__item-left"><span>🔔</span><span>Уведомления</span></span>
-          <span aria-hidden="true">›</span>
+          <span class="appdosc-settings-sheet__coming">В разработке</span>
         </button>
         <div class="appdosc-settings-sheet__section">Тема оформления</div>
         <div class="appdosc-settings-sheet__theme-grid" role="group" aria-label="Выбор темы">
@@ -1157,7 +1153,6 @@
             <span>Тёмная</span>
           </button>
         </div>
-        <button type="button" class="appdosc-settings-sheet__logout">⎋ Выйти из аккаунта</button>
       </section>
     </div>
 
