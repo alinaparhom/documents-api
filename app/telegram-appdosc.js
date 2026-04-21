@@ -2627,13 +2627,19 @@ const CARD_HIGHLIGHT_TIMEOUT = 1800;
 
 const FALLBACK_CARD_TEMPLATE = `
   <header class="appdosc-card__header" data-card-toggle>
-    <span class="appdosc-card__badge" data-field="entryNumber"></span>
     <div class="appdosc-card__header-text">
       <div class="appdosc-card__title" data-field="document">Документ</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
     <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
     <span class="appdosc-card__status" data-field="status"></span>
+    <div class="appdosc-card__side">
+      <span class="appdosc-card__badge" data-field="entryNumber"></span>
+      <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+    </div>
+    <div class="appdosc-card__summary" data-field="summary">
+      <div class="appdosc-card__block-text" data-field="contentCompact"></div>
+    </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
   <dl class="appdosc-card__details">
@@ -2666,10 +2672,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <dd data-field="responseSummary"></dd>
     </div>
   </dl>
-  <div class="appdosc-card__summary" data-field="summary">
-    <div class="appdosc-card__block-title">Кратко</div>
-    <div class="appdosc-card__block-text" data-field="summaryText"></div>
-  </div>
   <div class="appdosc-card__resolution" data-field="resolution">
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
@@ -2680,7 +2682,11 @@ const FALLBACK_CARD_TEMPLATE = `
   </div>
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
-    <div class="appdosc-card__deadline">
+    <div class="appdosc-card__deadline appdosc-card__deadline--compact">
+      <span class="appdosc-card__deadline-label">От:</span>
+      <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
+    </div>
+    <div class="appdosc-card__deadline appdosc-card__deadline--full">
       <span class="appdosc-card__deadline-label">Срок</span>
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
@@ -3826,18 +3832,18 @@ function updateStats() {
       const rawValue = resolvedStatusCounts[key];
       const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
       const count = Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : 0;
-      badge.textContent = `${count} ${config.display}`;
+      setStatusBadgeText(badge, `${count} ${config.display}`);
     });
   }
 
   if (elements.overdue) {
     const resolvedOverdue = Number(overallStats.overdue) || 0;
-    elements.overdue.textContent = `${resolvedOverdue} просрочено`;
+    setStatusBadgeText(elements.overdue, `${resolvedOverdue} просрочено`);
   }
 
   if (elements.updated) {
     elements.updated.textContent = state.lastUpdated
-      ? `Обновлено: ${formatDateTime(state.lastUpdated)}`
+      ? `Обновлено: ${formatDateTimeCompact(state.lastUpdated)}`
       : 'Обновление не выполнялось';
   }
 
@@ -3849,6 +3855,18 @@ function updateStats() {
       overdue: Number(displayStats.overdue) || 0,
       selectedResponsible: directorState.selectedResponsibleToken || null,
     });
+  }
+}
+
+function setStatusBadgeText(badge, text) {
+  if (!(badge instanceof HTMLElement)) {
+    return;
+  }
+  const label = badge.querySelector('.appdosc__badge-label');
+  if (label instanceof HTMLElement) {
+    label.textContent = text;
+  } else {
+    badge.textContent = text;
   }
 }
 
@@ -4194,11 +4212,31 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const hasSummary = setCardField(card, '[data-field="summaryText"]', task.summary, {
-    hideIfEmpty: true,
+  const resolveCompactText = (value) => {
+    if (value && typeof value === 'object') {
+      const nested = normalizeValue(
+        value.summary
+          || value.content
+          || value.description
+          || value.text
+          || value.title
+      );
+      return nested;
+    }
+    return normalizeValue(value);
+  };
+
+  const compactContent = resolveCompactText(task.summary)
+    || resolveCompactText(task.content)
+    || resolveCompactText(task.description)
+    || resolveCompactText(task.instruction)
+    || '—';
+  setCardField(card, '[data-field="contentCompact"]', compactContent, {
+    hideIfEmpty: false,
     setTitle: false,
+    fallback: '—',
   });
-  toggleSection(card, '[data-field="summary"]', hasSummary);
+  toggleSection(card, '[data-field="summary"]', true);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,
@@ -4241,6 +4279,27 @@ function createCard(task, index, anchorRegistry) {
 
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
+  });
+  const resolveSenderText = (value) => {
+    if (value && typeof value === 'object') {
+      return normalizeValue(
+        value.name
+          || value.fullName
+          || value.fio
+          || value.title
+          || value.email
+      );
+    }
+    return normalizeValue(value);
+  };
+  const senderCompact = resolveSenderText(task.correspondent)
+    || resolveSenderText(task.sender)
+    || resolveSenderText(task.from)
+    || resolveSenderText(resolveExecutor(task))
+    || 'не указан';
+  setCardField(card, '[data-field="senderCompact"]', senderCompact, {
+    fallback: '—',
+    setTitle: false,
   });
 
   applyStatusBadge(card, statusText, normalizedStatus, task);
@@ -9698,10 +9757,8 @@ async function openViewerFile(file, task, options = {}) {
           htmlOpenMs,
           totalMs,
         });
-        if (notify) {
-          setStatus('info', hasMultiple
-            ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
-            : 'Сводка открыта.');
+        if (notify && !hasMultiple) {
+          setStatus('info', 'Сводка открыта.');
         }
         void ensureTaskSummaryPreview(task, file).catch(function (err) {
           logTaskViewStage(task, 'summary_pdf_background_error', {
@@ -9910,10 +9967,9 @@ async function openViewerFile(file, task, options = {}) {
 
     if (notify) {
       if (mode === 'inline') {
-        const message = hasMultiple
-          ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
-          : 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.';
-        setStatus('info', message);
+        if (!hasMultiple) {
+          setStatus('info', 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.');
+        }
       } else if (mode === 'external_prompt') {
         // статус уже показан в openDocumentLink
       } else if (mode === 'telegram') {
@@ -15865,6 +15921,21 @@ function formatDateTime(value) {
     return '—';
   }
   return date.toLocaleString('ru-RU', { hour12: false });
+}
+
+function formatDateTimeCompact(value) {
+  const date = parseDate(value);
+  if (!date) {
+    return '—';
+  }
+  return date.toLocaleString('ru-RU', {
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function formatDateInputValue(value) {
