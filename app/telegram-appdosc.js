@@ -2323,6 +2323,33 @@ function sanitizeTaskItem(task) {
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
 
+  const resolveSummaryValue = (value) => {
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (value && typeof value === 'object') {
+      return (
+        normalizeValue(value.summary)
+        || normalizeValue(value.content)
+        || normalizeValue(value.description)
+        || normalizeValue(value.text)
+        || normalizeValue(value.title)
+        || ''
+      );
+    }
+    return normalizeValue(value) || '';
+  };
+
+  const normalizedSummary = resolveSummaryValue(sanitized.summary)
+    || resolveSummaryValue(sanitized.content)
+    || resolveSummaryValue(sanitized.description)
+    || resolveSummaryValue(sanitized.text)
+    || '';
+
+  if (normalizedSummary) {
+    sanitized.summary = normalizedSummary;
+  }
+
   return sanitized;
 }
 
@@ -2638,8 +2665,8 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__badge" data-field="entryNumber"></span>
       <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
     </div>
-    <div class="appdosc-card__summary" data-field="summary">
-      <div class="appdosc-card__block-text" data-field="contentCompact"></div>
+    <div class="appdosc-card__summary" data-field="summaryCollapsed">
+      <div class="appdosc-card__block-text" data-field="summaryCollapsedText"></div>
     </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
@@ -2663,6 +2690,10 @@ const FALLBACK_CARD_TEMPLATE = `
     <div class="appdosc-card__detail">
       <dt>Исполнитель</dt>
       <dd data-field="executor"></dd>
+    </div>
+    <div class="appdosc-card__detail appdosc-card__detail--summary">
+      <dt>Содержание</dt>
+      <dd data-field="summaryFull"></dd>
     </div>
     <div class="appdosc-card__detail">
       <dt>Поручение</dt>
@@ -4213,31 +4244,18 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const resolveCompactText = (value) => {
-    if (value && typeof value === 'object') {
-      const nested = normalizeValue(
-        value.summary
-          || value.content
-          || value.description
-          || value.text
-          || value.title
-      );
-      return nested;
-    }
-    return normalizeValue(value);
-  };
-
-  const compactContent = resolveCompactText(task.summary)
-    || resolveCompactText(task.content)
-    || resolveCompactText(task.description)
-    || resolveCompactText(task.instruction)
-    || '—';
-  setCardField(card, '[data-field="contentCompact"]', compactContent, {
+  const summaryText = normalizeValue(task.summary) || 'Содержание не указано';
+  setCardField(card, '[data-field="summaryCollapsedText"]', summaryText, {
     hideIfEmpty: false,
     setTitle: false,
-    fallback: '—',
+    fallback: 'Содержание не указано',
   });
-  toggleSection(card, '[data-field="summary"]', true);
+  setCardField(card, '[data-field="summaryFull"]', summaryText, {
+    hideIfEmpty: false,
+    setTitle: false,
+    fallback: 'Содержание не указано',
+  });
+  toggleSection(card, '[data-field="summaryCollapsed"]', true);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,

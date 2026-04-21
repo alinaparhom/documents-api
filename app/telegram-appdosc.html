@@ -769,6 +769,12 @@
         column-gap: 10px;
       }
 
+      .appdosc-card[data-expanded='false'] .appdosc-card__header {
+        grid-template-columns: auto 1fr auto;
+        grid-template-areas: "date compact side";
+        align-items: center;
+      }
+
       .appdosc-card__meta {
         grid-area: date;
         font-size: 12px !important;
@@ -804,6 +810,7 @@
 
       .appdosc-card__summary {
         grid-area: compact;
+        color: var(--appdosc-text-primary) !important;
       }
 
       .appdosc-card__header .appdosc-card__summary .appdosc-card__block-title {
@@ -813,10 +820,12 @@
       .appdosc-card__block-text {
         font-size: 14px !important;
         line-height: 1.34 !important;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
+        color: var(--appdosc-text-primary) !important;
+        opacity: 0.98;
+        display: block !important;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
 
       .appdosc-card__footer {
@@ -866,12 +875,26 @@
       .appdosc-card[data-expanded='false'] .appdosc-card__status {
         display: none !important;
       }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__summary .appdosc-card__block-text {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .appdosc-card[data-expanded='false'] .appdosc-card__deadline--compact {
         display: inline-flex !important;
       }
 
       .appdosc-card[data-expanded='true'] .appdosc-card__header .appdosc-card__summary {
         display: none !important;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__details .appdosc-card__detail {
+        display: none;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__details .appdosc-card__detail--summary {
+        display: grid;
       }
 
       .appdosc-card {
@@ -1261,8 +1284,8 @@
             <span class="appdosc-card__badge" data-field="entryNumber"></span>
             <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
           </div>
-          <div class="appdosc-card__summary" data-field="summary">
-            <div class="appdosc-card__block-text" data-field="contentCompact"></div>
+          <div class="appdosc-card__summary" data-field="summaryCollapsed">
+            <div class="appdosc-card__block-text" data-field="summaryCollapsedText"></div>
           </div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
         </header>
@@ -1286,6 +1309,10 @@
           <div class="appdosc-card__detail">
             <dt>Исполнитель</dt>
             <dd data-field="executor"></dd>
+          </div>
+          <div class="appdosc-card__detail appdosc-card__detail--summary">
+            <dt>Содержание</dt>
+            <dd data-field="summaryFull"></dd>
           </div>
           <div class="appdosc-card__detail">
             <dt>Поручение</dt>
