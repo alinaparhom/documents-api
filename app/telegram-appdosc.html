@@ -727,13 +727,14 @@
         grid-template-areas:
           "date side"
           "compact compact";
-        row-gap: 8px;
+        row-gap: 6px;
         column-gap: 10px;
       }
 
       .appdosc-card__meta {
         grid-area: date;
-        font-size: 13px !important;
+        font-size: 12px !important;
+        color: rgba(148, 163, 184, 0.92);
       }
 
       .appdosc-card__header-text {
@@ -745,9 +746,8 @@
       }
 
       .appdosc-card__badge {
-        grid-area: badge;
         font-size: 13px !important;
-        padding: 6px 10px !important;
+        padding: 4px 9px !important;
         border-radius: 999px !important;
         background: var(--appdosc-chip-bg) !important;
         border: 1px solid var(--appdosc-chip-border) !important;
@@ -755,9 +755,8 @@
       }
 
       .appdosc-card__chevron {
-        grid-area: chevron;
         color: #94a3b8;
-        font-size: 14px;
+        font-size: 13px;
         align-self: center;
         transition: transform 0.2s ease;
       }
@@ -774,18 +773,26 @@
       }
 
       .appdosc-card__block-text {
-        font-size: 15px !important;
-        line-height: 1.35 !important;
+        font-size: 14px !important;
+        line-height: 1.34 !important;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
       }
 
       .appdosc-card__footer {
         border-top: 1px solid rgba(148, 163, 184, 0.2) !important;
-        margin-top: 8px;
-        padding-top: 8px !important;
+        margin-top: 6px;
+        padding-top: 6px !important;
       }
 
       .appdosc-card__deadline-label {
         opacity: 0.78;
+      }
+      .appdosc-card__deadline--compact {
+        color: rgba(148, 163, 184, 0.92);
+        font-size: 12px;
       }
 
       .appdosc-card__deadline--full {
@@ -803,9 +810,9 @@
       .appdosc-card__side {
         grid-area: side;
         display: inline-flex;
-        flex-direction: column;
+        flex-direction: row;
         align-items: flex-end;
-        gap: 6px;
+        gap: 8px;
       }
 
       .appdosc-card__compact-actions {
@@ -819,6 +826,11 @@
 
       .appdosc-card[data-expanded='true'] .appdosc-card__header .appdosc-card__summary {
         display: none !important;
+      }
+
+      .appdosc-card {
+        border: 1px solid rgba(148, 163, 184, 0.22) !important;
+        box-shadow: none !important;
       }
 
       @media (max-width: 680px) {

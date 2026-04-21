@@ -4214,6 +4214,8 @@ function createCard(task, index, anchorRegistry) {
 
   const compactContent = normalizeValue(task.content)
     || normalizeValue(task.summary)
+    || normalizeValue(task.instruction)
+    || normalizeValue(task.document)
     || '—';
   const hasSummary = compactContent !== '—';
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
