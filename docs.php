@@ -12262,6 +12262,116 @@ switch ($action) {
             $debugTelegramIdCandidate = $telegramUserId;
         }
 
+        $resolvedUserPosition = '';
+        if (isset($requestContext['user']['position'])) {
+            $resolvedUserPosition = sanitize_text_field((string) $requestContext['user']['position'], 160);
+        }
+
+        if ($resolvedUserPosition === '') {
+            $userCandidates = [];
+            $appendCandidate = static function ($value) use (&$userCandidates): void {
+                if ($value === null) {
+                    return;
+                }
+
+                $candidate = trim((string) $value);
+                if ($candidate === '') {
+                    return;
+                }
+
+                $userCandidates[] = $candidate;
+            };
+
+            if ($telegramUserId !== '') {
+                $appendCandidate($telegramUserId);
+            }
+            if (isset($filter['ids']) && is_array($filter['ids'])) {
+                foreach ($filter['ids'] as $candidateId) {
+                    $appendCandidate($candidateId);
+                }
+            }
+            if (isset($requestContext['user']) && is_array($requestContext['user'])) {
+                foreach (['id', 'username', 'fullName'] as $field) {
+                    if (isset($requestContext['user'][$field])) {
+                        $appendCandidate($requestContext['user'][$field]);
+                    }
+                }
+
+                $fullNameParts = [];
+                if (!empty($requestContext['user']['firstName'])) {
+                    $fullNameParts[] = (string) $requestContext['user']['firstName'];
+                }
+                if (!empty($requestContext['user']['lastName'])) {
+                    $fullNameParts[] = (string) $requestContext['user']['lastName'];
+                }
+                if (!empty($fullNameParts)) {
+                    $appendCandidate(implode(' ', $fullNameParts));
+                }
+            }
+
+            $userCandidates = array_values(array_unique($userCandidates));
+            $matchedDirectoryEntry = null;
+
+            $tryMatchEntry = static function ($entry, array $candidates): bool {
+                if (!is_array($entry) || empty($candidates)) {
+                    return false;
+                }
+
+                $entryIdValues = [];
+                foreach (['telegram', 'chatId', 'id', 'number', 'login', 'username'] as $field) {
+                    if (isset($entry[$field]) && $entry[$field] !== '') {
+                        $entryIdValues[] = docs_normalize_identifier_candidate_value($entry[$field]);
+                    }
+                }
+
+                $entryNameValues = [];
+                foreach (['responsible', 'name', 'fio', 'fullName'] as $field) {
+                    if (isset($entry[$field]) && $entry[$field] !== '') {
+                        $entryNameValues[] = docs_normalize_name_candidate_value($entry[$field]);
+                    }
+                }
+
+                foreach ($candidates as $candidate) {
+                    $normalizedId = docs_normalize_identifier_candidate_value($candidate);
+                    if ($normalizedId !== '' && in_array($normalizedId, $entryIdValues, true)) {
+                        return true;
+                    }
+
+                    $normalizedName = docs_normalize_name_candidate_value($candidate);
+                    if ($normalizedName !== '' && in_array($normalizedName, $entryNameValues, true)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            };
+
+            foreach ($organizationSummaries as $summary) {
+                if (!is_array($summary)) {
+                    continue;
+                }
+
+                foreach (['responsibles', 'subordinates', 'directors'] as $groupKey) {
+                    if (!isset($summary[$groupKey]) || !is_array($summary[$groupKey])) {
+                        continue;
+                    }
+
+                    foreach ($summary[$groupKey] as $entry) {
+                        if (!$tryMatchEntry($entry, $userCandidates)) {
+                            continue;
+                        }
+
+                        $matchedDirectoryEntry = $entry;
+                        break 3;
+                    }
+                }
+            }
+
+            if (is_array($matchedDirectoryEntry) && !empty($matchedDirectoryEntry['position'])) {
+                $resolvedUserPosition = sanitize_text_field((string) $matchedDirectoryEntry['position'], 160);
+            }
+        }
+
         $userInfo = null;
         if (isset($requestContext['user']) && is_array($requestContext['user']) && !empty($requestContext['user'])) {
             $userInfo = array_filter([
@@ -12272,11 +12382,19 @@ switch ($action) {
                 'firstName' => $requestContext['user']['firstName'] ?? null,
                 'lastName' => $requestContext['user']['lastName'] ?? null,
                 'fullName' => $requestContext['user']['fullName'] ?? null,
-            ], static function ($value) {
+                'position' => $resolvedUserPosition,
+            ], static function ($value, $key) {
+                if ($key === 'position') {
+                    return true;
+                }
+
                 return $value !== null && $value !== '';
-            });
+            }, ARRAY_FILTER_USE_BOTH);
         } elseif ($telegramUserId !== '') {
-            $userInfo = ['id' => $telegramUserId];
+            $userInfo = [
+                'id' => $telegramUserId,
+                'position' => $resolvedUserPosition,
+            ];
         }
 
         $telegramInitDataSummary = [
