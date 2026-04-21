@@ -3499,7 +3499,9 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role) || getCurrentUserPositionFromAccess();
+    const role = normalizeValue(state.telegram.role)
+      || getCurrentUserPositionFromAccess()
+      || getCurrentUserPositionFromTasks();
     if (!state.telegram.role && role) {
       state.telegram.role = role;
     }
@@ -12031,6 +12033,57 @@ function getCurrentUserPositionFromAccess() {
     const position = normalizeValue(entry.position);
     if (position) {
       return position;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserPositionFromTasks() {
+  const tasks = Array.isArray(state?.tasks) ? state.tasks : [];
+  if (!tasks.length) {
+    return '';
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return '';
+  }
+
+  for (const task of tasks) {
+    if (!task || typeof task !== 'object') {
+      continue;
+    }
+
+    const pools = [];
+    if (Array.isArray(task.assignees)) {
+      pools.push(...task.assignees);
+    }
+    if (task.assignee && typeof task.assignee === 'object') {
+      pools.push(task.assignee);
+    }
+    if (Array.isArray(task.responsibles)) {
+      pools.push(...task.responsibles);
+    }
+    if (Array.isArray(task.subordinates)) {
+      pools.push(...task.subordinates);
+    }
+    if (Array.isArray(task.directors)) {
+      pools.push(...task.directors);
+    }
+
+    for (const entry of pools) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      if (!entryMatchesUser(entry, ids, names)) {
+        continue;
+      }
+
+      const position = normalizeValue(entry.position);
+      if (position) {
+        return position;
+      }
     }
   }
 
