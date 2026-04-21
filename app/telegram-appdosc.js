@@ -4959,15 +4959,15 @@ function applyRegistrationDateHeader(card, registrationDate) {
   const hasDate = normalized && normalized !== '—';
 
   if (hasDate) {
-    headerDate.textContent = normalized;
+    headerDate.textContent = `${normalized} · Содержание`;
     headerDate.hidden = false;
     headerDate.dataset.empty = 'false';
-    headerDate.title = `Дата регистрации: ${normalized}`;
+    headerDate.title = `Дата регистрации: ${normalized}. Ниже отображается содержание задачи.`;
   } else {
-    headerDate.textContent = '';
-    headerDate.hidden = true;
+    headerDate.textContent = 'Содержание';
+    headerDate.hidden = false;
     headerDate.dataset.empty = 'true';
-    headerDate.removeAttribute('title');
+    headerDate.title = 'Содержание задачи';
   }
 }
 
