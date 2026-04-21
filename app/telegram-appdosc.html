@@ -325,9 +325,10 @@
       }
 
       .appdosc-settings-sheet__title {
-        margin: 0 0 10px;
+        margin: 0;
         font-size: 16px;
         font-weight: 700;
+        text-align: center;
       }
 
       .appdosc-settings-sheet__close {
@@ -339,6 +340,77 @@
         border-radius: 999px;
         border: 1px solid var(--appdosc-surface-glass-border);
         background: transparent;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-settings-sheet__drag {
+        width: 52px;
+        height: 5px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.52);
+        margin: 0 auto 10px;
+      }
+
+      .appdosc-settings-sheet__header {
+        position: relative;
+        margin-bottom: 14px;
+      }
+
+      .appdosc-settings-sheet__user {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .appdosc-settings-sheet__user-avatar {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        object-fit: cover;
+      }
+
+      .appdosc-settings-sheet__user-name {
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .appdosc-settings-sheet__user-role {
+        font-size: 14px;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-settings-sheet__item {
+        width: 100%;
+        min-height: 48px;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.26);
+        background: rgba(255, 255, 255, 0.32);
+        color: var(--appdosc-text-primary);
+        padding: 0 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 15px;
+        margin-bottom: 8px;
+      }
+
+      :root[data-theme='dark'] .appdosc-settings-sheet__item,
+      :root[data-theme='dark'] .appdosc-settings-sheet__theme-btn,
+      :root[data-theme='dark'] .appdosc-settings-sheet__logout {
+        background: rgba(15, 23, 42, 0.35);
+        border-color: rgba(148, 163, 184, 0.34);
+      }
+
+      .appdosc-settings-sheet__item-left {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .appdosc-settings-sheet__section {
+        margin: 14px 0 8px;
+        font-size: 14px;
         color: var(--appdosc-text-muted);
       }
 
@@ -368,6 +440,18 @@
       .appdosc-settings-sheet__theme-btn[aria-pressed='true'] {
         border-color: rgba(59, 130, 246, 0.72);
         box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18) inset;
+      }
+
+      .appdosc-settings-sheet__logout {
+        width: 100%;
+        min-height: 48px;
+        border-radius: 14px;
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        background: rgba(255, 255, 255, 0.28);
+        color: #ef4444;
+        margin-top: 14px;
+        font-size: 16px;
+        font-weight: 600;
       }
 
       .appdosc-avatar {
@@ -1042,8 +1126,27 @@
     <div class="appdosc-settings-sheet" data-settings-sheet hidden>
       <div class="appdosc-settings-sheet__backdrop" data-settings-close></div>
       <section class="appdosc-settings-sheet__card" aria-label="Настройки">
-        <button type="button" class="appdosc-settings-sheet__close" data-settings-close aria-label="Закрыть">✕</button>
-        <h3 class="appdosc-settings-sheet__title">Тема оформления</h3>
+        <div class="appdosc-settings-sheet__drag" aria-hidden="true"></div>
+        <header class="appdosc-settings-sheet__header">
+          <button type="button" class="appdosc-settings-sheet__close" data-settings-close aria-label="Закрыть">✕</button>
+          <h3 class="appdosc-settings-sheet__title">Настройки</h3>
+        </header>
+        <div class="appdosc-settings-sheet__user">
+          <img class="appdosc-settings-sheet__user-avatar" data-settings-user-avatar alt="Аватар" />
+          <div>
+            <div class="appdosc-settings-sheet__user-name" data-settings-user-name>Арсений</div>
+            <div class="appdosc-settings-sheet__user-role" data-settings-user-role>Директор</div>
+          </div>
+        </div>
+        <button type="button" class="appdosc-settings-sheet__item">
+          <span class="appdosc-settings-sheet__item-left"><span>✏️</span><span>Редактировать профиль</span></span>
+          <span aria-hidden="true">›</span>
+        </button>
+        <button type="button" class="appdosc-settings-sheet__item">
+          <span class="appdosc-settings-sheet__item-left"><span>🔔</span><span>Уведомления</span></span>
+          <span aria-hidden="true">›</span>
+        </button>
+        <div class="appdosc-settings-sheet__section">Тема оформления</div>
         <div class="appdosc-settings-sheet__theme-grid" role="group" aria-label="Выбор темы">
           <button type="button" class="appdosc-settings-sheet__theme-btn" data-theme-option="light" aria-pressed="false">
             <span>☀️</span>
@@ -1054,6 +1157,7 @@
             <span>Тёмная</span>
           </button>
         </div>
+        <button type="button" class="appdosc-settings-sheet__logout">⎋ Выйти из аккаунта</button>
       </section>
     </div>
 

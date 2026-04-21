@@ -2703,6 +2703,9 @@ function initElements() {
   elements.userAvatar = document.querySelector('[data-user-avatar]');
   elements.settingsSheet = document.querySelector('[data-settings-sheet]');
   elements.settingsCloseTargets = Array.from(document.querySelectorAll('[data-settings-close]'));
+  elements.settingsUserAvatar = document.querySelector('[data-settings-user-avatar]');
+  elements.settingsUserName = document.querySelector('[data-settings-user-name]');
+  elements.settingsUserRole = document.querySelector('[data-settings-user-role]');
   elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
   elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
   elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
@@ -3592,6 +3595,9 @@ function updateUserPanel() {
   if (elements.userName) {
     elements.userName.textContent = displayName;
   }
+  if (elements.settingsUserName) {
+    elements.settingsUserName.textContent = displayName;
+  }
 
   if (elements.userRole) {
     const role = normalizeValue(state.telegram.role)
@@ -3601,6 +3607,9 @@ function updateUserPanel() {
       state.telegram.role = role;
     }
     elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
+    if (elements.settingsUserRole) {
+      elements.settingsUserRole.textContent = role || 'Должность не указана';
+    }
   }
 
   if (elements.userAvatarImage) {
@@ -3608,6 +3617,9 @@ function updateUserPanel() {
       || (normalizeTelegramUserId(state.telegram.id)
         ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(normalizeTelegramUserId(state.telegram.id))}`
         : '');
+    if (elements.settingsUserAvatar) {
+      elements.settingsUserAvatar.src = photoUrl || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2284%22 height=%2284%22%3E%3Crect width=%2284%22 height=%2284%22 rx=%2218%22 fill=%22%23cbd5e1%22/%3E%3Ctext x=%2242%22 y=%2250%22 text-anchor=%22middle%22 font-size=%2230%22%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E';
+    }
     if (photoUrl) {
       elements.userAvatarImage.src = photoUrl;
       elements.userAvatarImage.hidden = false;
