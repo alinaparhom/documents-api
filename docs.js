@@ -9,7 +9,7 @@
   };
   var SETTINGS_LOG_PREFIX = '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438';
   var TELEGRAM_MISSING_MESSAGE = '\u0423 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435\u0442 Telegram ID \u2014 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u0440\u0438\u0434\u0451\u0442.';
-  var TELEGRAM_MISSING_OPTION_NOTE = '\u041d\u0435\u0442 Telegram ID \u2014 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u0440\u0438\u0434\u0451\u0442';
+  var TELEGRAM_MISSING_OPTION_NOTE = '\u0431\u0435\u0437 TG';
 
   try {
     DATE_TIME_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
@@ -4577,9 +4577,6 @@
         option.dataset.note = entry.note;
       }
       option.dataset.role = 'responsible';
-      if (!hasTelegramId) {
-        option.disabled = true;
-      }
       var selectedComposite = normalizeCompositeKeyValue(selectedId);
       var matchById = selectedId && normalizeResponsibleId(selectedId) === normalizeResponsibleId(id);
       var matchByComposite = compositeKey && selectedComposite && selectedComposite === compositeKey;
@@ -4676,9 +4673,6 @@
         option.dataset.note = entry.note;
       }
       option.dataset.role = 'subordinate';
-      if (!hasTelegramId) {
-        option.disabled = true;
-      }
       if (shouldSelect || (selectedId && normalizeResponsibleId(selectedId) === normalizeResponsibleId(optionValue))) {
         option.selected = true;
       }
