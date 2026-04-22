@@ -2958,6 +2958,13 @@ function initElements() {
   elements.advancedFilters = document.querySelector('[data-advanced-filters]');
   elements.advancedFiltersToggle = document.querySelector('[data-advanced-filters-toggle]');
   elements.advancedFiltersBody = document.querySelector('[data-advanced-filters-body]');
+  if (elements.advancedFilters instanceof HTMLElement && elements.advancedFiltersBody instanceof HTMLElement) {
+    const collapsedByMarkup = elements.advancedFilters.classList.contains('appdosc-filters--collapsed');
+    elements.advancedFiltersBody.hidden = collapsedByMarkup;
+    if (elements.advancedFiltersToggle instanceof HTMLElement) {
+      elements.advancedFiltersToggle.setAttribute('aria-expanded', collapsedByMarkup ? 'false' : 'true');
+    }
+  }
   elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
   elements.filterDateTo = document.querySelector('[data-filter-date-to]');
   elements.filterCorrespondent = document.querySelector('[data-filter-correspondent]');
