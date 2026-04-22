@@ -288,6 +288,151 @@
         padding-inline: 0 !important;
       }
 
+      .appdosc-filters {
+        margin: 0 0 12px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 18px;
+        padding: 10px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(241, 245, 249, 0.5));
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+
+      .appdosc-filters__head {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border: 0;
+        background: transparent;
+        color: var(--appdosc-text-primary);
+        font-size: 18px;
+        font-weight: 700;
+        padding: 4px 2px;
+      }
+
+      .appdosc-filters__icon {
+        font-size: 16px;
+      }
+
+      .appdosc-filters__chevron {
+        font-size: 14px;
+        transition: transform .2s ease;
+      }
+
+      .appdosc-filters--collapsed .appdosc-filters__chevron {
+        transform: rotate(-90deg);
+      }
+
+      .appdosc-filters__body {
+        margin-top: 10px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .appdosc-filters__grid {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .appdosc-filters__field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .appdosc-filters__field label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-filters__input {
+        width: 100%;
+        min-height: 42px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--appdosc-text-primary);
+        padding: 10px 12px;
+        font-size: 14px;
+      }
+
+      .appdosc-filters__quick {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .appdosc-filters__chip-btn {
+        border: 1px solid rgba(59, 130, 246, 0.28);
+        background: rgba(59, 130, 246, 0.08);
+        color: #1d4ed8;
+        border-radius: 10px;
+        padding: 8px 11px;
+        font-size: 13px;
+      }
+
+      .appdosc-filters__switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        color: var(--appdosc-text-primary);
+      }
+
+      .appdosc-filters__actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .appdosc-filters__btn {
+        min-height: 42px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.38);
+        background: rgba(255, 255, 255, 0.55);
+        color: var(--appdosc-text-primary);
+        padding: 8px 16px;
+        font-weight: 600;
+      }
+
+      .appdosc-filters__btn--primary {
+        background: var(--appdosc-primary-btn-bg);
+        color: #fff;
+        border-color: var(--appdosc-primary-btn-border);
+      }
+
+      .appdosc-filters__active {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .appdosc-filters__tag {
+        border-radius: 999px;
+        border: 1px solid rgba(59, 130, 246, 0.28);
+        background: rgba(59, 130, 246, 0.1);
+        color: #1e40af;
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+
+      @media (max-width: 820px) {
+        .appdosc-filters__grid {
+          grid-template-columns: 1fr;
+        }
+
+        .appdosc-filters__actions {
+          justify-content: stretch;
+        }
+
+        .appdosc-filters__btn {
+          flex: 1;
+        }
+      }
+
       .appdosc__user {
         border-radius: 22px !important;
         padding: clamp(14px, 3.8vw, 24px) !important;
@@ -1151,6 +1296,55 @@
       </section>
 
       <main class="appdosc__content">
+        <section class="appdosc-filters" data-advanced-filters>
+          <button type="button" class="appdosc-filters__head" data-advanced-filters-toggle aria-expanded="true">
+            <span><span class="appdosc-filters__icon">⏳</span> Фильтры</span>
+            <span class="appdosc-filters__chevron">▾</span>
+          </button>
+          <div class="appdosc-filters__body" data-advanced-filters-body>
+            <div class="appdosc-filters__grid">
+              <div class="appdosc-filters__field">
+                <label for="appdosc-filter-date-from">Период: от</label>
+                <input id="appdosc-filter-date-from" class="appdosc-filters__input" type="date" data-filter-date-from />
+              </div>
+              <div class="appdosc-filters__field">
+                <label for="appdosc-filter-date-to">Период: до</label>
+                <input id="appdosc-filter-date-to" class="appdosc-filters__input" type="date" data-filter-date-to />
+              </div>
+              <div class="appdosc-filters__field">
+                <label for="appdosc-filter-correspondent">Корреспондент / отправитель</label>
+                <input id="appdosc-filter-correspondent" class="appdosc-filters__input" type="text" placeholder="Введите имя" data-filter-correspondent />
+              </div>
+              <div class="appdosc-filters__field">
+                <label for="appdosc-filter-object">Объект</label>
+                <input id="appdosc-filter-object" class="appdosc-filters__input" type="text" placeholder="Например: ЖК Север" data-filter-object />
+              </div>
+              <div class="appdosc-filters__field">
+                <label for="appdosc-filter-responsible">Ответственный</label>
+                <input id="appdosc-filter-responsible" class="appdosc-filters__input" type="text" placeholder="ФИО" data-filter-responsible />
+              </div>
+              <div class="appdosc-filters__field">
+                <label for="appdosc-filter-task-number">№ задачи</label>
+                <input id="appdosc-filter-task-number" class="appdosc-filters__input" type="text" placeholder="Введите номер" data-filter-task-number />
+              </div>
+            </div>
+            <div class="appdosc-filters__quick">
+              <button type="button" class="appdosc-filters__chip-btn" data-filter-range="today">Сегодня</button>
+              <button type="button" class="appdosc-filters__chip-btn" data-filter-range="week">Неделя</button>
+              <button type="button" class="appdosc-filters__chip-btn" data-filter-range="month">Месяц</button>
+              <button type="button" class="appdosc-filters__chip-btn" data-filter-range="quarter">Квартал</button>
+            </div>
+            <label class="appdosc-filters__switch">
+              <input type="checkbox" data-filter-overdue-only />
+              Только просроченные
+            </label>
+            <div class="appdosc-filters__actions">
+              <button type="button" class="appdosc-filters__btn" data-filter-reset>Сбросить</button>
+              <button type="button" class="appdosc-filters__btn appdosc-filters__btn--primary" data-filter-apply>Применить</button>
+            </div>
+            <div class="appdosc-filters__active" data-filter-active-list></div>
+          </div>
+        </section>
         <div class="appdosc__table-card">
           <div class="appdosc__table-head">
             <div class="appdosc__table-title">Список задач</div>
