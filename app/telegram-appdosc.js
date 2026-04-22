@@ -4043,7 +4043,7 @@ function renderCards() {
   const visibleItems = getVisibleTaskItems();
   const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
 
-  const newSignature = buildTasksSignature(visibleItems);
+  const newSignature = buildTasksSignature(visibleItems, state.taskFilter);
   if (newSignature && newSignature === lastRenderedTasksSignature) {
     return;
   }
@@ -4065,17 +4065,21 @@ function renderCards() {
   setPlaceholderMessage(DEFAULT_PLACEHOLDER_MESSAGE);
   togglePlaceholder(false);
 
+  const groupedItems = buildTaskGroupsForTaskList(visibleItems);
+  const shouldRenderGroups = groupedItems.length > 0;
+
   const fragment = document.createDocumentFragment();
   const anchorRegistry = new Set();
   const visibleAnchors = new Set();
-  visibleItems.forEach((item, position) => {
+  let visiblePosition = 0;
+  const renderCardItem = (item) => {
     const source = item && typeof item === 'object' ? item : {};
     const task = isPlainObject(source.task) ? source.task : {};
     const referenceIndex = Number.isInteger(source.originalIndex)
       ? source.originalIndex
-      : position;
+      : visiblePosition;
     const card = createCard(task, referenceIndex, anchorRegistry);
-    card.dataset.visibleIndex = String(position);
+    card.dataset.visibleIndex = String(visiblePosition);
     if (Number.isInteger(referenceIndex)) {
       card.dataset.originalIndex = String(referenceIndex);
     } else if ('originalIndex' in card.dataset) {
@@ -4089,7 +4093,20 @@ function renderCards() {
       visibleAnchors.add(anchorKey);
     }
     fragment.appendChild(card);
-  });
+    visiblePosition += 1;
+  };
+
+  if (shouldRenderGroups) {
+    groupedItems.forEach((group) => {
+      const title = document.createElement('div');
+      title.className = 'appdosc__cards-group-title';
+      title.textContent = `${group.label} (${Array.isArray(group.items) ? group.items.length : 0})`;
+      fragment.appendChild(title);
+      (Array.isArray(group.items) ? group.items : []).forEach((item) => renderCardItem(item));
+    });
+  } else {
+    visibleItems.forEach((item) => renderCardItem(item));
+  }
   elements.cardsContainer.appendChild(fragment);
   const entryAnchorId = resolveEntryTaskAnchor(visibleItems);
   if (entryAnchorId) {
@@ -6831,7 +6848,7 @@ function cleanupTaskAttachmentPreviewCache(activeKeys) {
   });
 }
 
-function buildTasksSignature(visibleTasks) {
+function buildTasksSignature(visibleTasks, filters = []) {
   if (!Array.isArray(visibleTasks) || !visibleTasks.length) {
     return '';
   }
@@ -6847,7 +6864,65 @@ function buildTasksSignature(visibleTasks) {
       (task.dueDate || '')
     );
   }
+  const normalizedFilters = normalizeTaskFilters(filters);
+  if (normalizedFilters.length) {
+    parts.push(`filters:${normalizedFilters.join(',')}`);
+  }
   return parts.join('|');
+}
+
+function resolveTaskResponsibleOrCorrespondent(task) {
+  if (!task || typeof task !== 'object') {
+    return 'Без ответственного';
+  }
+
+  const responsibleProfiles = getTaskResponsibleProfiles(task);
+  if (responsibleProfiles.length) {
+    const names = responsibleProfiles
+      .map((profile) => normalizeValue(profile.sourceLabel) || normalizeValue(profile.label))
+      .filter(Boolean);
+    if (names.length) {
+      return names.join(', ');
+    }
+  }
+
+  const fallbackResponsible = normalizeValue(task.responsible);
+  if (fallbackResponsible) {
+    return fallbackResponsible;
+  }
+
+  const correspondent = normalizeValue(task.correspondent);
+  if (correspondent) {
+    return `Корреспондент: ${correspondent}`;
+  }
+
+  return 'Без ответственного';
+}
+
+function buildTaskGroupsForTaskList(visibleItems) {
+  const groups = new Map();
+  const sortedItems = Array.isArray(visibleItems) ? visibleItems.slice() : [];
+  sortedItems.sort((left, right) => {
+    const leftLabel = resolveTaskResponsibleOrCorrespondent(left && left.task);
+    const rightLabel = resolveTaskResponsibleOrCorrespondent(right && right.task);
+    const byOwner = leftLabel.localeCompare(rightLabel, 'ru', { sensitivity: 'base' });
+    if (byOwner !== 0) {
+      return byOwner;
+    }
+    const leftDue = normalizeValue(left && left.task && left.task.dueDate);
+    const rightDue = normalizeValue(right && right.task && right.task.dueDate);
+    return leftDue.localeCompare(rightDue, 'ru', { sensitivity: 'base' });
+  });
+
+  sortedItems.forEach((item) => {
+    const groupLabel = resolveTaskResponsibleOrCorrespondent(item && item.task);
+    if (!groups.has(groupLabel)) {
+      groups.set(groupLabel, []);
+    }
+    groups.get(groupLabel).push(item);
+  });
+
+  return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
 }
 
 function resolveFilePreviewSource(file) {
