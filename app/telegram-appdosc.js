@@ -10925,7 +10925,6 @@ function setupDirectorCompactCompletion(card, task) {
   const organization = getTaskOrganization(task);
   const directorAssigned = organization
     && userIsDirectorForOrganization(organization)
-    && isTaskAssignedToCurrentDirector(task)
     && !isTaskCompleted(task);
 
   if (!directorAssigned) {
@@ -10995,7 +10994,7 @@ function setupStatusControls(card, task) {
 
   const isDirector = userIsDirectorForOrganization(organization);
   const canManageByAssignment = userIsResponsibleForTask(task)
-    || (isDirector && isTaskAssignedToCurrentDirector(task));
+    || isDirector;
   if (!canManageByAssignment) {
     container.remove();
     return;
