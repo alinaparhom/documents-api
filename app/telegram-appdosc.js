@@ -9,14 +9,19 @@ const { createTelegramBriefAi } = await import('./ai-short_repsonse.js' + _vSuff
 preloadPdfjs();
 
 const API_URL = '/docs.php?action=mini_app_tasks';
+const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
 const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
+const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
+let systemThemeMediaQuery = null;
+let isSystemThemeListenerBound = false;
+const THEME_MODE_OPTIONS = ['dark', 'light'];
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -726,7 +731,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Распределено', 'Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -738,7 +743,8 @@ const PDF_DIAGNOSTIC_EVENT = 'appdosc:pdf-log';
 const PDF_DIAGNOSTIC_THROTTLE_MS = 1200;
 const PDF_LOG_THROTTLE_MS = 350;
 const BULK_ASSIGN_FEEDBACK_TIMEOUT_MS = 2400;
-const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет ID Telegram. Обратитесь к администратору.';
+const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет Telegram ID — уведомление не придёт.';
+const TELEGRAM_MISSING_OPTION_NOTE = 'Нет Telegram ID — уведомление не придёт';
 const RESPONSIBLE_PANEL_TITLE = 'Назначенные задачи по ответственным';
 const SUBORDINATE_PANEL_TITLE = 'Назначенные задачи на подчинённых';
 const INSTRUCTION_OPTIONS = ['В работу', 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
@@ -760,8 +766,8 @@ const STATUS_SUMMARY_CONFIG = {
     filter: `${STATUS_FILTER_PREFIX}distributed`,
   },
   accepted: {
-    label: 'Принято в работу',
-    display: 'принято в работу',
+    label: 'В работе',
+    display: 'в работе',
     filter: `${STATUS_FILTER_PREFIX}accepted`,
   },
   review: {
@@ -1923,6 +1929,9 @@ function hydrateTelegramFromInitData(initData) {
         if (!state.telegram.languageCode && typeof user.language_code === 'string') {
           state.telegram.languageCode = user.language_code;
         }
+        if (!state.telegram.photoUrl && typeof user.photo_url === 'string') {
+          state.telegram.photoUrl = user.photo_url;
+        }
       }
     } catch (error) {
       // ignore JSON parse issues
@@ -1958,12 +1967,17 @@ function hydrateTelegramFromInitData(initData) {
 }
 
 const state = {
+  themeMode: 'dark',
+  persistedThemeMode: '',
+  isThemeSaving: false,
   telegram: {
     id: '',
     username: '',
     firstName: '',
     lastName: '',
     fullName: '',
+    photoUrl: '',
+    role: '',
     chatId: '',
     chatType: '',
     languageCode: '',
@@ -1985,6 +1999,16 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
+  advancedFilter: {
+    dateFrom: '',
+    dateTo: '',
+    correspondent: '',
+    object: '',
+    responsible: '',
+    statusKeys: [],
+    taskNumber: '',
+    overdueOnly: false,
+  },
   access: {
     responsibles: {},
     subordinates: {},
@@ -2025,6 +2049,7 @@ const state = {
     visibilityRuleLogged: false,
     completedVisibilityLogged: false,
   },
+  userDirectoryEntries: [],
 };
 
 sharedState = state;
@@ -2308,6 +2333,33 @@ function sanitizeTaskItem(task) {
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
 
+  const resolveSummaryValue = (value) => {
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (value && typeof value === 'object') {
+      return (
+        normalizeValue(value.summary)
+        || normalizeValue(value.content)
+        || normalizeValue(value.description)
+        || normalizeValue(value.text)
+        || normalizeValue(value.title)
+        || ''
+      );
+    }
+    return normalizeValue(value) || '';
+  };
+
+  const normalizedSummary = resolveSummaryValue(sanitized.summary)
+    || resolveSummaryValue(sanitized.content)
+    || resolveSummaryValue(sanitized.description)
+    || resolveSummaryValue(sanitized.text)
+    || '';
+
+  if (normalizedSummary) {
+    sanitized.summary = normalizedSummary;
+  }
+
   return sanitized;
 }
 
@@ -2482,6 +2534,160 @@ function hasAssigneeFilters(filters) {
   return splitTaskFilters(filters).assigneeFilters.length > 0;
 }
 
+function normalizeAdvancedFilterValue(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function getAdvancedFilterState() {
+  if (!state.advancedFilter || typeof state.advancedFilter !== 'object') {
+    state.advancedFilter = {
+      dateFrom: '',
+      dateTo: '',
+      correspondent: '',
+      object: '',
+      responsible: '',
+      statusKeys: [],
+      taskNumber: '',
+      overdueOnly: false,
+    };
+  }
+  if (!Array.isArray(state.advancedFilter.statusKeys)) {
+    state.advancedFilter.statusKeys = [];
+  }
+  return state.advancedFilter;
+}
+
+function parseDateValue(dateText) {
+  const value = normalizeAdvancedFilterValue(dateText);
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  parsed.setHours(0, 0, 0, 0);
+  return parsed;
+}
+
+function getTaskCorrespondentText(task) {
+  const correspondent = formatEntityDisplay(task?.correspondent, '')
+    || normalizeValue(task?.sender)
+    || normalizeValue(task?.from)
+    || '';
+  return correspondent.trim();
+}
+
+function getTaskResponsibleText(task) {
+  const candidates = [
+    normalizeValue(task?.responsible),
+    formatEntityDisplay(resolveExecutor(task), ''),
+  ];
+  if (Array.isArray(task?.responsibles)) {
+    task.responsibles.forEach((item) => {
+      if (typeof item === 'string') {
+        candidates.push(normalizeValue(item));
+      } else if (item && typeof item === 'object') {
+        candidates.push(normalizeValue(item.responsible || item.name || item.fio));
+      }
+    });
+  }
+  return candidates.filter(Boolean).join(' ').trim();
+}
+
+function applyAdvancedTaskFilters(items) {
+  const filters = getAdvancedFilterState();
+  const source = Array.isArray(items) ? items : [];
+  if (!source.length) {
+    return [];
+  }
+
+  const dateFrom = parseDateValue(filters.dateFrom);
+  const dateTo = parseDateValue(filters.dateTo);
+  const correspondent = normalizeAdvancedFilterValue(filters.correspondent).toLowerCase();
+  const objectValue = normalizeAdvancedFilterValue(filters.object).toLowerCase();
+  const responsible = normalizeAdvancedFilterValue(filters.responsible).toLowerCase();
+  const statusKeys = Array.isArray(filters.statusKeys) ? filters.statusKeys : [];
+  const taskNumber = normalizeAdvancedFilterValue(filters.taskNumber).toLowerCase();
+  const overdueOnly = Boolean(filters.overdueOnly);
+
+  return source.filter((item) => {
+    const task = item && typeof item === 'object' ? item.task : null;
+    if (!task || typeof task !== 'object') {
+      return false;
+    }
+
+    if (overdueOnly && !isOverdue(task)) {
+      return false;
+    }
+
+    if (dateFrom || dateTo) {
+      const registration = parseDateValue(task.registrationDate);
+      if (!registration) {
+        return false;
+      }
+      if (dateFrom && registration.getTime() < dateFrom.getTime()) {
+        return false;
+      }
+      if (dateTo && registration.getTime() > dateTo.getTime()) {
+        return false;
+      }
+    }
+
+    if (correspondent) {
+      const text = getTaskCorrespondentText(task).toLowerCase();
+      if (!text.includes(correspondent)) {
+        return false;
+      }
+    }
+
+    if (objectValue) {
+      const objectText = [
+        normalizeValue(task.object),
+        normalizeValue(task.organization),
+        normalizeValue(task.document),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!objectText.includes(objectValue)) {
+        return false;
+      }
+    }
+
+    if (responsible) {
+      const text = getTaskResponsibleText(task).toLowerCase();
+      if (!text.includes(responsible)) {
+        return false;
+      }
+    }
+
+    if (statusKeys.length) {
+      const taskStatusKey = getTaskStatusKeyForUser(task);
+      if (!taskStatusKey || !statusKeys.includes(taskStatusKey)) {
+        return false;
+      }
+    }
+
+    if (taskNumber) {
+      const numberText = [
+        normalizeValue(task.id),
+        normalizeValue(task.entryNumber),
+        normalizeValue(task.registryNumber),
+        normalizeValue(task.documentNumber),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!numberText.includes(taskNumber)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
 function toggleStatusFilterSelection(currentFilters, filter) {
   const normalizedTarget = normalizeTaskFilter(filter);
   if (!normalizedTarget || normalizedTarget === DEFAULT_TASK_FILTER) {
@@ -2613,13 +2819,22 @@ const CARD_HIGHLIGHT_TIMEOUT = 1800;
 
 const FALLBACK_CARD_TEMPLATE = `
   <header class="appdosc-card__header" data-card-toggle>
-    <span class="appdosc-card__badge" data-field="entryNumber"></span>
     <div class="appdosc-card__header-text">
       <div class="appdosc-card__title" data-field="document">Документ</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
     <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
     <span class="appdosc-card__status" data-field="status"></span>
+    <div class="appdosc-card__side">
+      <span class="appdosc-card__badge" data-field="entryNumber"></span>
+      <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+    </div>
+    <div class="appdosc-card__summary" data-field="summaryCollapsed">
+      <div class="appdosc-card__block-text appdosc-card__summary-line">
+        <span class="appdosc-card__summary-label">Содержание:</span>
+        <span data-field="summaryCollapsedText"></span>
+      </div>
+    </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
   <dl class="appdosc-card__details">
@@ -2643,6 +2858,10 @@ const FALLBACK_CARD_TEMPLATE = `
       <dt>Исполнитель</dt>
       <dd data-field="executor"></dd>
     </div>
+    <div class="appdosc-card__detail appdosc-card__detail--summary">
+      <dt>Содержание</dt>
+      <dd data-field="summaryFull"></dd>
+    </div>
     <div class="appdosc-card__detail">
       <dt>Поручение</dt>
       <dd data-field="instruction"></dd>
@@ -2652,10 +2871,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <dd data-field="responseSummary"></dd>
     </div>
   </dl>
-  <div class="appdosc-card__summary" data-field="summary">
-    <div class="appdosc-card__block-title">Кратко</div>
-    <div class="appdosc-card__block-text" data-field="summaryText"></div>
-  </div>
   <div class="appdosc-card__resolution" data-field="resolution">
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
@@ -2666,7 +2881,11 @@ const FALLBACK_CARD_TEMPLATE = `
   </div>
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
-    <div class="appdosc-card__deadline">
+    <div class="appdosc-card__deadline appdosc-card__deadline--compact">
+      <span class="appdosc-card__deadline-label">От:</span>
+      <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
+    </div>
+    <div class="appdosc-card__deadline appdosc-card__deadline--full">
       <span class="appdosc-card__deadline-label">Срок</span>
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
@@ -2688,7 +2907,16 @@ function initElements() {
   elements.app = document.querySelector('[data-app]');
   elements.refreshButton = document.querySelector('[data-refresh]');
   elements.userName = document.querySelector('[data-user-name]');
-  elements.userId = document.querySelector('[data-user-id]');
+  elements.userRole = document.querySelector('[data-user-role]');
+  elements.userAvatar = document.querySelector('[data-user-avatar]');
+  elements.settingsSheet = document.querySelector('[data-settings-sheet]');
+  elements.settingsCloseTargets = Array.from(document.querySelectorAll('[data-settings-close]'));
+  elements.settingsUserAvatar = document.querySelector('[data-settings-user-avatar]');
+  elements.settingsUserName = document.querySelector('[data-settings-user-name]');
+  elements.settingsUserRole = document.querySelector('[data-settings-user-role]');
+  elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
+  elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
+  elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
@@ -2727,6 +2955,30 @@ function initElements() {
   elements.versionUpdated = document.querySelector('[data-version-updated]');
   elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
   elements.taskSelector = document.querySelector('[data-task-select]');
+  elements.advancedFilters = document.querySelector('[data-advanced-filters]');
+  elements.advancedFiltersToggle = document.querySelector('[data-advanced-filters-toggle]');
+  elements.advancedFiltersBody = document.querySelector('[data-advanced-filters-body]');
+  if (elements.advancedFilters instanceof HTMLElement && elements.advancedFiltersBody instanceof HTMLElement) {
+    elements.advancedFilters.classList.add('appdosc-filters--collapsed');
+    elements.advancedFiltersBody.hidden = true;
+    if (elements.advancedFiltersToggle instanceof HTMLElement) {
+      elements.advancedFiltersToggle.setAttribute('aria-expanded', 'false');
+    }
+  }
+  elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
+  elements.filterDateTo = document.querySelector('[data-filter-date-to]');
+  elements.filterCorrespondent = document.querySelector('[data-filter-correspondent]');
+  elements.filterObject = document.querySelector('[data-filter-object]');
+  elements.filterResponsible = document.querySelector('[data-filter-responsible]');
+  elements.filterStatusChips = document.querySelector('[data-filter-status-chips]');
+  elements.filterStatusToggle = document.querySelector('[data-filter-status-toggle]');
+  elements.filterStatusList = document.querySelector('[data-filter-status-list]');
+  elements.filterTaskNumber = document.querySelector('[data-filter-task-number]');
+  elements.filterOverdueOnly = document.querySelector('[data-filter-overdue-only]');
+  elements.filterApply = document.querySelector('[data-filter-apply]');
+  elements.filterReset = document.querySelector('[data-filter-reset]');
+  elements.filterQuickRanges = Array.from(document.querySelectorAll('[data-filter-range]'));
+  elements.filterActiveList = document.querySelector('[data-filter-active-list]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
@@ -2748,6 +3000,7 @@ function initElements() {
 function initTelegram() {
   const { Telegram } = window;
   if (!Telegram || !Telegram.WebApp) {
+    syncThemeWithSystem();
     readQueryContext();
     logClientEvent('init_no_webapp', {
       telegramAvailable: false,
@@ -2777,7 +3030,10 @@ function initTelegram() {
     // ignore expansion issues
   }
 
-  state.telegram.colorScheme = webApp.colorScheme || 'light';
+  state.telegram.colorScheme = webApp.colorScheme || getSystemColorScheme();
+  if (state.themeMode !== 'dark' && state.themeMode !== 'light') {
+    state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+  }
   state.telegram.initData = webApp.initData || '';
   state.telegram.platform = typeof webApp.platform === 'string' ? webApp.platform : state.telegram.platform;
   updateEnvironmentFromPlatform(state.telegram.platform);
@@ -2792,6 +3048,7 @@ function initTelegram() {
       state.telegram.firstName = user.first_name ? String(user.first_name) : state.telegram.firstName;
       state.telegram.lastName = user.last_name ? String(user.last_name) : state.telegram.lastName;
       state.telegram.languageCode = user.language_code ? String(user.language_code) : state.telegram.languageCode;
+      state.telegram.photoUrl = user.photo_url ? String(user.photo_url) : state.telegram.photoUrl;
       const nameParts = [state.telegram.firstName, state.telegram.lastName].filter(Boolean);
       state.telegram.fullName = nameParts.join(' ').trim() || state.telegram.fullName;
     }
@@ -2826,7 +3083,7 @@ function initTelegram() {
 
   if (typeof webApp.onEvent === 'function') {
     webApp.onEvent('themeChanged', () => {
-      state.telegram.colorScheme = webApp.colorScheme || 'light';
+      state.telegram.colorScheme = webApp.colorScheme || getSystemColorScheme();
       applyTheme();
     });
   }
@@ -2845,6 +3102,163 @@ function initTelegram() {
     hasInitData: Boolean(state.telegram.initData),
     colorScheme: state.telegram.colorScheme || 'light',
   });
+}
+
+function getSystemColorScheme() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return 'light';
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function syncThemeWithSystem() {
+  state.telegram.colorScheme = getSystemColorScheme();
+  state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+  applyTheme();
+}
+
+function bindSystemThemeListener() {
+  if (isSystemThemeListenerBound || typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return;
+  }
+  systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  const handleSystemThemeChange = (event) => {
+    const hasTelegramWebApp = Boolean(window.Telegram && window.Telegram.WebApp);
+    if (hasTelegramWebApp) {
+      return;
+    }
+    state.telegram.colorScheme = event && event.matches ? 'dark' : 'light';
+    state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+    renderThemeToggle();
+    applyTheme();
+  };
+  if (typeof systemThemeMediaQuery.addEventListener === 'function') {
+    systemThemeMediaQuery.addEventListener('change', handleSystemThemeChange);
+  } else if (typeof systemThemeMediaQuery.addListener === 'function') {
+    systemThemeMediaQuery.addListener(handleSystemThemeChange);
+  }
+  isSystemThemeListenerBound = true;
+}
+
+function normalizeThemeMode(value) {
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return THEME_MODE_OPTIONS.includes(mode) ? mode : 'dark';
+}
+
+function initThemeMode() {
+  const webApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  const preferred = webApp && webApp.colorScheme ? webApp.colorScheme : getSystemColorScheme();
+  state.themeMode = preferred === 'dark' ? 'dark' : 'light';
+  bindSystemThemeListener();
+  renderThemeToggle();
+  applyTheme();
+}
+
+function resolveOrganizationForThemePreference() {
+  if (Array.isArray(state.visibleTasks) && state.visibleTasks.length) {
+    const visibleTaskOrganization = normalizeValue(getTaskOrganization(state.visibleTasks[0]));
+    if (visibleTaskOrganization) {
+      return visibleTaskOrganization;
+    }
+  }
+  if (Array.isArray(state.tasks) && state.tasks.length) {
+    const taskOrganization = normalizeValue(getTaskOrganization(state.tasks[0]));
+    if (taskOrganization) {
+      return taskOrganization;
+    }
+  }
+  if (Array.isArray(state.organizations) && state.organizations.length) {
+    for (let index = 0; index < state.organizations.length; index += 1) {
+      const item = state.organizations[index];
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const organization = normalizeValue(item.name || item.organization);
+      if (organization) {
+        return organization;
+      }
+    }
+  }
+  return '';
+}
+
+async function persistThemeModePreference(mode) {
+  const normalizedMode = normalizeThemeMode(mode);
+  if (state.isThemeSaving) {
+    return;
+  }
+  if (state.persistedThemeMode === normalizedMode) {
+    return;
+  }
+  const organization = resolveOrganizationForThemePreference();
+  if (!organization || typeof fetch !== 'function') {
+    return;
+  }
+  state.isThemeSaving = true;
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+    if (state.telegram.initData) {
+      headers['X-Telegram-Init-Data'] = state.telegram.initData;
+    }
+    const response = await fetch(THEME_SETTINGS_SAVE_ENDPOINT, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers,
+      body: JSON.stringify({
+        organization,
+        themeMode: normalizedMode,
+      }),
+    });
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    if (payload && payload.success) {
+      state.persistedThemeMode = normalizedMode;
+    }
+  } catch (_) {
+    // ignore theme preference save issues
+  } finally {
+    state.isThemeSaving = false;
+  }
+}
+
+function setThemeMode(mode, options = {}) {
+  const nextMode = normalizeThemeMode(mode);
+  const shouldPersist = options && options.persist !== false;
+  state.themeMode = nextMode;
+  renderThemeToggle();
+  applyTheme();
+  if (shouldPersist) {
+    persistThemeModePreference(nextMode);
+  }
+}
+
+function renderThemeToggle() {
+  if (!Array.isArray(elements.themeOptionButtons) || !elements.themeOptionButtons.length) {
+    return;
+  }
+  const mode = normalizeThemeMode(state.themeMode);
+  elements.themeOptionButtons.forEach((button) => {
+    const buttonMode = normalizeThemeMode(button.dataset.themeOption);
+    const isActive = buttonMode === mode;
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function openSettingsSheet() {
+  if (elements.settingsSheet instanceof HTMLElement) {
+    elements.settingsSheet.hidden = false;
+  }
+}
+
+function closeSettingsSheet() {
+  if (elements.settingsSheet instanceof HTMLElement) {
+    elements.settingsSheet.hidden = true;
+  }
 }
 
 function parseTaskIdFromStartParam(value) {
@@ -2998,6 +3412,11 @@ function readQueryContext() {
     state.telegram.fullName = String(fullName).trim();
   }
 
+  const photoUrl = params.get('telegram_photo_url') || params.get('photo_url');
+  if (!state.telegram.photoUrl && photoUrl) {
+    state.telegram.photoUrl = String(photoUrl).trim();
+  }
+
   const platformParam = params.get('telegram_platform')
     || params.get('platform')
     || hashParams.get('tgWebAppPlatform')
@@ -3033,8 +3452,11 @@ function readQueryContext() {
 }
 
 function applyTheme() {
-  const theme = state.telegram.colorScheme || 'light';
+  const forcedMode = normalizeThemeMode(state.themeMode);
+  const theme = forcedMode;
+  state.telegram.colorScheme = theme;
   document.documentElement.setAttribute('data-theme', theme);
+  document.documentElement.setAttribute('data-theme-mode', forcedMode);
   setClass(document.body, 'appdosc--dark', theme === 'dark');
 
   const themeParams = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp.themeParams : null;
@@ -3198,7 +3620,7 @@ async function loadTasks(force = false) {
       const message = state.error || 'Отрисовка карточек завершилась ошибкой';
       throw new Error(message);
     }
-    setStatus('success', `Найдено задач: ${state.stats.total}`);
+    setStatus('info', `Найдено задач: ${state.stats.total}`);
     logClientEvent('tasks_loaded', {
       total: state.stats.total,
       active: state.stats.active,
@@ -3372,9 +3794,27 @@ function updateStateFromPayload(payload) {
     ? payload.organizationsChecked
     : state.organizationsChecked;
   state.lastUpdated = payload.generatedAt || new Date().toISOString();
+  state.userDirectoryEntries = collectUserDirectoryEntries(payload);
 
   if (payload.telegramUserId && !state.telegram.id) {
     state.telegram.id = String(payload.telegramUserId);
+  }
+
+  const payloadThemeCandidate = normalizeValue(payload && payload.themeMode);
+  const payloadThemeMode = payloadThemeCandidate ? normalizeThemeMode(payloadThemeCandidate) : '';
+  if (payloadThemeMode && payloadThemeMode !== normalizeThemeMode(state.themeMode)) {
+    setThemeMode(payloadThemeMode, { persist: false });
+  }
+  if (payloadThemeMode) {
+    state.persistedThemeMode = payloadThemeMode;
+  }
+
+  if (!state.telegram.role) {
+    const payloadPosition = normalizeValue(payload.userPosition)
+      || normalizeValue(payload.position);
+    if (payloadPosition) {
+      state.telegram.role = String(payloadPosition);
+    }
   }
 
   if (payload.user && typeof payload.user === 'object') {
@@ -3394,6 +3834,10 @@ function updateStateFromPayload(payload) {
     if (user.firstName || user.lastName) {
       state.telegram.firstName = user.firstName ? String(user.firstName) : state.telegram.firstName;
       state.telegram.lastName = user.lastName ? String(user.lastName) : state.telegram.lastName;
+    }
+    const userPosition = normalizeValue(user.position);
+    if (userPosition) {
+      state.telegram.role = String(userPosition);
     }
   }
 
@@ -3443,6 +3887,7 @@ function render() {
   updateStats();
   updateDirectorSummary();
   updateSummaryFilterState();
+  updateAdvancedFilterUi();
   renderCards();
   updateFooter();
 }
@@ -3451,6 +3896,7 @@ function renderEmpty() {
   updateUserPanel();
   updateStats();
   updateDirectorSummary();
+  updateAdvancedFilterUi();
   clearCards();
   updateFooter();
   logIosStage('render_empty', {
@@ -3460,15 +3906,59 @@ function renderEmpty() {
 }
 
 function updateUserPanel() {
+  const displayName = state.telegram.fullName
+    || state.telegram.firstName
+    || state.telegram.username
+    || 'Неизвестный пользователь';
+
   if (elements.userName) {
-    elements.userName.textContent = state.telegram.fullName
-      || state.telegram.firstName
-      || state.telegram.username
-      || 'Неизвестный пользователь';
+    elements.userName.textContent = displayName;
+  }
+  if (elements.settingsUserName) {
+    elements.settingsUserName.textContent = displayName;
   }
 
-  if (elements.userId) {
-    elements.userId.textContent = state.telegram.id ? `ID: ${state.telegram.id}` : 'ID не определён';
+  if (elements.userRole) {
+    const role = normalizeValue(state.telegram.role)
+      || getCurrentUserPositionFromAccess()
+      || getCurrentUserPositionFromTasks();
+    if (!state.telegram.role && role) {
+      state.telegram.role = role;
+    }
+    elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
+    if (elements.settingsUserRole) {
+      elements.settingsUserRole.textContent = role || 'Должность не указана';
+    }
+  }
+
+  if (elements.userAvatarImage) {
+    const photoUrl = normalizeAvatarUrl(state.telegram.photoUrl)
+      || (normalizeTelegramUserId(state.telegram.id)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(normalizeTelegramUserId(state.telegram.id))}`
+        : '');
+    if (elements.settingsUserAvatar) {
+      elements.settingsUserAvatar.src = photoUrl || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2284%22 height=%2284%22%3E%3Crect width=%2284%22 height=%2284%22 rx=%2218%22 fill=%22%23cbd5e1%22/%3E%3Ctext x=%2242%22 y=%2250%22 text-anchor=%22middle%22 font-size=%2230%22%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E';
+    }
+    if (photoUrl) {
+      elements.userAvatarImage.src = photoUrl;
+      elements.userAvatarImage.hidden = false;
+      if (elements.userAvatarFallback) {
+        elements.userAvatarFallback.hidden = true;
+      }
+      elements.userAvatarImage.onerror = () => {
+        elements.userAvatarImage.hidden = true;
+        elements.userAvatarImage.removeAttribute('src');
+        if (elements.userAvatarFallback) {
+          elements.userAvatarFallback.hidden = false;
+        }
+      };
+    } else {
+      elements.userAvatarImage.removeAttribute('src');
+      elements.userAvatarImage.hidden = true;
+      if (elements.userAvatarFallback) {
+        elements.userAvatarFallback.hidden = false;
+      }
+    }
   }
 
   updateVersionPanel();
@@ -3494,6 +3984,22 @@ function updateVersionPanel() {
   if (elements.versionPanel) {
     elements.versionPanel.hidden = false;
   }
+}
+
+function formatTaskCountLabel(value) {
+  const count = Number.isFinite(Number(value)) ? Math.abs(Math.trunc(Number(value))) : 0;
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 19) {
+    return 'задач';
+  }
+  if (mod10 === 1) {
+    return 'задача';
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return 'задачи';
+  }
+  return 'задач';
 }
 
 function updateStats() {
@@ -3530,7 +4036,7 @@ function updateStats() {
 
   if (elements.total) {
     const total = Number(displayStats.total) || 0;
-    elements.total.textContent = `${total} задач`;
+    elements.total.textContent = `${total} ${formatTaskCountLabel(total)}`;
     if (directorActive) {
       elements.total.dataset.source = statsSource;
     } else if (elements.total.dataset.source) {
@@ -3538,17 +4044,9 @@ function updateStats() {
     }
   }
 
-  const statusCounts = isPlainObject(displayStats.statuses)
-    ? displayStats.statuses
-    : createEmptyStatusCounters();
-  const hasStatusCounts = Object.keys(STATUS_SUMMARY_CONFIG).some((key) => {
-    const rawValue = statusCounts[key];
-    const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
-    return Number.isFinite(numeric) && numeric > 0;
-  });
-  const resolvedStatusCounts = !hasStatusCounts && overallStats.total > 0
+  const resolvedStatusCounts = isPlainObject(overallStats.statuses)
     ? overallStats.statuses
-    : statusCounts;
+    : createEmptyStatusCounters();
 
   if (elements.statusBadges) {
     Object.entries(STATUS_SUMMARY_CONFIG).forEach(([key, config]) => {
@@ -3559,21 +4057,18 @@ function updateStats() {
       const rawValue = resolvedStatusCounts[key];
       const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
       const count = Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : 0;
-      badge.textContent = `${count} ${config.display}`;
+      setStatusBadgeText(badge, `${count} ${config.display}`);
     });
   }
 
   if (elements.overdue) {
-    const overdue = Number(displayStats.overdue) || 0;
-    const resolvedOverdue = !hasStatusCounts && overdue === 0 && overallStats.total > 0
-      ? Number(overallStats.overdue) || 0
-      : overdue;
-    elements.overdue.textContent = `${resolvedOverdue} просрочено`;
+    const resolvedOverdue = Number(overallStats.overdue) || 0;
+    setStatusBadgeText(elements.overdue, `${resolvedOverdue} просрочено`);
   }
 
   if (elements.updated) {
     elements.updated.textContent = state.lastUpdated
-      ? `Обновлено: ${formatDateTime(state.lastUpdated)}`
+      ? `Обновлено: ${formatDateTimeCompact(state.lastUpdated)}`
       : 'Обновление не выполнялось';
   }
 
@@ -3585,6 +4080,18 @@ function updateStats() {
       overdue: Number(displayStats.overdue) || 0,
       selectedResponsible: directorState.selectedResponsibleToken || null,
     });
+  }
+}
+
+function setStatusBadgeText(badge, text) {
+  if (!(badge instanceof HTMLElement)) {
+    return;
+  }
+  const label = badge.querySelector('.appdosc__badge-label');
+  if (label instanceof HTMLElement) {
+    label.textContent = text;
+  } else {
+    badge.textContent = text;
   }
 }
 
@@ -3918,23 +4425,30 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="organization"]', task.organization, {
     fallback: 'Организация не указана',
   });
+  const summaryText = normalizeValue(task.summary) || 'Содержание не указано';
   const registrationDate = formatDate(task.registrationDate);
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
-  applyRegistrationDateHeader(card, registrationDate);
+  applyRegistrationDateHeader(card, registrationDate, summaryText);
   setCardField(card, '[data-field="direction"]', task.direction);
-  setCardField(card, '[data-field="correspondent"]', task.correspondent);
-  setCardField(card, '[data-field="executor"]', resolveExecutor(task));
+  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
+  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
   setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
   setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
     setTitle: false,
   });
 
-  const hasSummary = setCardField(card, '[data-field="summaryText"]', task.summary, {
-    hideIfEmpty: true,
+  setCardField(card, '[data-field="summaryCollapsedText"]', summaryText, {
+    hideIfEmpty: false,
     setTitle: false,
+    fallback: 'Содержание не указано',
   });
-  toggleSection(card, '[data-field="summary"]', hasSummary);
+  setCardField(card, '[data-field="summaryFull"]', summaryText, {
+    hideIfEmpty: false,
+    setTitle: false,
+    fallback: 'Содержание не указано',
+  });
+  toggleSection(card, '[data-field="summaryCollapsed"]', true);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,
@@ -3977,6 +4491,27 @@ function createCard(task, index, anchorRegistry) {
 
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
+  });
+  const resolveSenderText = (value) => {
+    if (value && typeof value === 'object') {
+      return normalizeValue(
+        value.name
+          || value.fullName
+          || value.fio
+          || value.title
+          || value.email
+      );
+    }
+    return normalizeValue(value);
+  };
+  const senderCompact = resolveSenderText(task.correspondent)
+    || resolveSenderText(task.sender)
+    || resolveSenderText(task.from)
+    || resolveSenderText(resolveExecutor(task))
+    || 'не указан';
+  setCardField(card, '[data-field="senderCompact"]', senderCompact, {
+    fallback: '—',
+    setTitle: false,
   });
 
   applyStatusBadge(card, statusText, normalizedStatus, task);
@@ -4368,7 +4903,7 @@ function updateVisibleTasks() {
     }
   }
 
-  state.visibleTasks = visible;
+  state.visibleTasks = applyAdvancedTaskFilters(visible);
 }
 
 function truncateText(value, limit = 140) {
@@ -4600,7 +5135,7 @@ function openTelegramFileAiBriefModal(fileName, briefText) {
   document.body.appendChild(overlay);
 }
 
-function applyRegistrationDateHeader(card, registrationDate) {
+function applyRegistrationDateHeader(card, registrationDate, summaryValue = '') {
   if (!(card instanceof HTMLElement)) {
     return;
   }
@@ -4612,17 +5147,19 @@ function applyRegistrationDateHeader(card, registrationDate) {
 
   const normalized = normalizeValue(registrationDate);
   const hasDate = normalized && normalized !== '—';
+  const summaryText = truncateText(normalizeValue(summaryValue) || 'Содержание не указано', 76);
+  const fullSummary = normalizeValue(summaryValue) || 'Содержание не указано';
 
   if (hasDate) {
-    headerDate.textContent = normalized;
+    headerDate.textContent = `${normalized} · ${summaryText}`;
     headerDate.hidden = false;
     headerDate.dataset.empty = 'false';
-    headerDate.title = `Дата регистрации: ${normalized}`;
+    headerDate.title = `Дата регистрации: ${normalized}\nСодержание: ${fullSummary}`;
   } else {
-    headerDate.textContent = '';
-    headerDate.hidden = true;
+    headerDate.textContent = summaryText;
+    headerDate.hidden = false;
     headerDate.dataset.empty = 'true';
-    headerDate.removeAttribute('title');
+    headerDate.title = `Содержание: ${fullSummary}`;
   }
 }
 
@@ -5133,7 +5670,6 @@ function resolvePersonSummary(person) {
   const name = person.name
     || person.responsible
     || person.email
-    || person.telegram
     || person.id
     || '';
   const parts = [];
@@ -5145,9 +5681,6 @@ function resolvePersonSummary(person) {
   }
   if (person.email) {
     parts.push(String(person.email));
-  }
-  if (person.telegram) {
-    parts.push(`TG: ${person.telegram}`);
   }
   return parts.length ? parts.join('\n') : '—';
 }
@@ -5161,35 +5694,54 @@ function buildAssigneeLines(list, fallbackRole, emptyText) {
     if (!assignee) {
       return;
     }
-    const nameLine = assignee.name
-      ? assignee.name
-      : (assignee.id ? `${fallbackRole} #${assignee.id}` : fallbackRole);
+
+    const normalizedResponsible = normalizeValueString(assignee.responsible);
+    const normalizedName = normalizeValueString(assignee.name);
+    const fallbackName = assignee.id ? `${fallbackRole} #${assignee.id}` : fallbackRole;
+    const nameLine = normalizedResponsible || normalizedName || fallbackName;
     lines.push(nameLine);
+
+    const nameKey = normalizeValueString(nameLine).toLowerCase();
     const meta = [];
-    if (assignee.department) {
-      meta.push(assignee.department);
+    const seenMetaKeys = new Set();
+    const pushUniqueMeta = (value) => {
+      const text = normalizeValueString(value);
+      if (!text) {
+        return;
+      }
+      const key = text.toLowerCase();
+      if (key === nameKey || seenMetaKeys.has(key)) {
+        return;
+      }
+      seenMetaKeys.add(key);
+      meta.push(text);
+    };
+
+    pushUniqueMeta(assignee.position);
+    pushUniqueMeta(assignee.department);
+    pushUniqueMeta(assignee.email);
+
+    const statusValue = normalizeValueString(assignee.status);
+    if (statusValue) {
+      pushUniqueMeta(`Статус: ${statusValue}`);
     }
-    if (assignee.telegram) {
-      meta.push(`TG: ${assignee.telegram}`);
-    }
-    if (assignee.email) {
-      meta.push(assignee.email);
-    }
-    if (assignee.status) {
-      meta.push(`Статус: ${assignee.status}`);
-    }
+
     if (meta.length) {
       lines.push(meta.join(' • '));
     }
-    if (assignee.assignmentComment) {
-      lines.push(`Комментарий: ${assignee.assignmentComment}`);
+
+    const assignmentComment = normalizeValueString(assignee.assignmentComment);
+    if (assignmentComment) {
+      lines.push(`Комментарий: ${assignmentComment}`);
     }
+
     if (assignee.assignedAt) {
       const assignedAt = formatPdfDateTime(assignee.assignedAt);
       if (assignedAt) {
         lines.push(`Назначено: ${assignedAt}`);
       }
     }
+
     if (index < list.length - 1) {
       lines.push('');
     }
@@ -9419,10 +9971,8 @@ async function openViewerFile(file, task, options = {}) {
           htmlOpenMs,
           totalMs,
         });
-        if (notify) {
-          setStatus('info', hasMultiple
-            ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
-            : 'Сводка открыта.');
+        if (notify && !hasMultiple) {
+          setStatus('info', 'Сводка открыта.');
         }
         void ensureTaskSummaryPreview(task, file).catch(function (err) {
           logTaskViewStage(task, 'summary_pdf_background_error', {
@@ -9631,10 +10181,9 @@ async function openViewerFile(file, task, options = {}) {
 
     if (notify) {
       if (mode === 'inline') {
-        const message = hasMultiple
-          ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
-          : 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.';
-        setStatus('info', message);
+        if (!hasMultiple) {
+          setStatus('info', 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.');
+        }
       } else if (mode === 'external_prompt') {
         // статус уже показан в openDocumentLink
       } else if (mode === 'telegram') {
@@ -10376,7 +10925,6 @@ function setupDirectorCompactCompletion(card, task) {
   const organization = getTaskOrganization(task);
   const directorAssigned = organization
     && userIsDirectorForOrganization(organization)
-    && isTaskAssignedToCurrentDirector(task)
     && !isTaskCompleted(task);
 
   if (!directorAssigned) {
@@ -10445,12 +10993,8 @@ function setupStatusControls(card, task) {
   }
 
   const isDirector = userIsDirectorForOrganization(organization);
-  if (isDirector) {
-    container.remove();
-    return;
-  }
-
-  const canManageByAssignment = userIsResponsibleForTask(task);
+  const canManageByAssignment = userIsResponsibleForTask(task)
+    || isDirector;
   if (!canManageByAssignment) {
     container.remove();
     return;
@@ -11087,10 +11631,135 @@ function normalizeValue(value) {
   return string && string !== '—' ? string : '';
 }
 
+function normalizeAvatarUrl(value) {
+  const raw = normalizeValue(value);
+  if (!raw) {
+    return '';
+  }
+
+  if (raw.startsWith('//')) {
+    return `https:${raw}`;
+  }
+
+  if (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw) || /^blob:/i.test(raw)) {
+    return raw;
+  }
+
+  return '';
+}
+
+function normalizeTelegramUserId(value) {
+  const raw = normalizeValue(value);
+  if (!raw) {
+    return '';
+  }
+  const normalized = raw.replace(/[^\d-]/g, '');
+  return /^-?\d{4,20}$/.test(normalized) ? normalized : '';
+}
+
+function resolveTelegramUserIdFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const directCandidates = [
+    entry.telegram,
+    entry.telegramId,
+    entry.telegram_id,
+    entry.userId,
+    entry.user_id,
+    entry.id,
+  ];
+
+  for (let index = 0; index < directCandidates.length; index += 1) {
+    const id = normalizeTelegramUserId(directCandidates[index]);
+    if (id) {
+      return id;
+    }
+  }
+
+  const nestedCandidates = [entry.user, entry.telegramUser, entry.profile, entry.contact];
+  for (let index = 0; index < nestedCandidates.length; index += 1) {
+    const nested = nestedCandidates[index];
+    if (!nested || typeof nested !== 'object') {
+      continue;
+    }
+    const id = normalizeTelegramUserId(
+      nested.telegram
+      || nested.telegramId
+      || nested.telegram_id
+      || nested.userId
+      || nested.user_id
+      || nested.id
+    );
+    if (id) {
+      return id;
+    }
+  }
+
+  return '';
+}
+
+function resolveAvatarUrlFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const directFields = [
+    'photo_url',
+    'photoUrl',
+    'avatar_url',
+    'avatarUrl',
+    'avatar',
+    'image',
+    'imageUrl',
+    'profilePhoto',
+    'profile_photo',
+    'telegram_photo_url',
+    'telegramPhotoUrl',
+  ];
+
+  for (let index = 0; index < directFields.length; index += 1) {
+    const key = directFields[index];
+    const resolved = normalizeAvatarUrl(entry[key]);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const nestedObjects = [entry.user, entry.telegramUser, entry.profile, entry.contact];
+  for (let index = 0; index < nestedObjects.length; index += 1) {
+    const nested = nestedObjects[index];
+    if (!nested || typeof nested !== 'object') {
+      continue;
+    }
+    for (let fieldIndex = 0; fieldIndex < directFields.length; fieldIndex += 1) {
+      const key = directFields[fieldIndex];
+      const resolved = normalizeAvatarUrl(nested[key]);
+      if (resolved) {
+        return resolved;
+      }
+    }
+  }
+
+  return '';
+}
+
 function normalizeBriefText(value) {
   const source = value === null || value === undefined ? '' : String(value);
   const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '');
-  return normalized.trim() ? normalized : '';
+  const trimmed = normalized.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const compact = trimmed.toLowerCase().replace(/\s+/g, ' ').replace(/^0+\s*/, '');
+  const hasSenderUnknown = /кто прислал[^:]*:\s*не указано/.test(compact);
+  const hasRecipientUnknown = /кому прислал[^:]*:\s*не указано/.test(compact) || /кому прислали[^:]*:\s*не указано/.test(compact);
+  const hasSummaryUnknown = /краткое содержание[^:]*:\s*не указано/.test(compact);
+  if (hasSenderUnknown && hasRecipientUnknown && hasSummaryUnknown) {
+    return '';
+  }
+  return trimmed;
 }
 
 function normalizeAssignmentComment(value) {
@@ -11563,7 +12232,44 @@ function normalizeSettingsDocsEntries(payload) {
   if (Array.isArray(payload.block1)) {
     return payload.block1;
   }
+  if (Array.isArray(payload.block2)) {
+    return payload.block2;
+  }
+  if (Array.isArray(payload.block3)) {
+    return payload.block3;
+  }
   return [];
+}
+
+function collectUserDirectoryEntries(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const buckets = [];
+  const appendArray = (value) => {
+    if (Array.isArray(value) && value.length) {
+      buckets.push(...value);
+    }
+  };
+
+  appendArray(payload.responsibles);
+  appendArray(payload.subordinates);
+  appendArray(payload.directors);
+  appendArray(payload.block1);
+  appendArray(payload.block2);
+  appendArray(payload.block3);
+
+  if (payload.settings && typeof payload.settings === 'object') {
+    appendArray(payload.settings.responsibles);
+    appendArray(payload.settings.subordinates);
+    appendArray(payload.settings.directors);
+    appendArray(payload.settings.block1);
+    appendArray(payload.settings.block2);
+    appendArray(payload.settings.block3);
+  }
+
+  return buckets.filter((entry) => entry && typeof entry === 'object');
 }
 
 async function getResponsibleFromSettingsDocs(organization, telegramId) {
@@ -11709,6 +12415,124 @@ function getCurrentUserResponsibleFromAccess() {
       || normalizeValue(entry.displayName);
     if (responsible) {
       return responsible;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserPositionFromAccess() {
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  const directoryEntries = Array.isArray(state?.userDirectoryEntries) ? state.userDirectoryEntries : [];
+  if (!access && !directoryEntries.length) {
+    return '';
+  }
+
+  const groups = access ? [access.responsibles, access.subordinates, access.directors] : [];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+  if (directoryEntries.length) {
+    entries.push(...directoryEntries);
+  }
+
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = [];
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.push(normalized);
+    }
+  };
+
+  pushId(state.telegram.id);
+  pushId(state.telegram.chatId);
+  pushId(state.telegram.username);
+
+  const ids = Array.from(new Set(idCandidates));
+  const names = [];
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      names.push(normalized);
+    }
+  };
+  pushName(state.telegram.fullName);
+  pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+  pushName(state.telegram.username);
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const position = normalizeValue(entry.position);
+    if (position) {
+      return position;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserPositionFromTasks() {
+  const tasks = Array.isArray(state?.tasks) ? state.tasks : [];
+  if (!tasks.length) {
+    return '';
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return '';
+  }
+
+  for (const task of tasks) {
+    if (!task || typeof task !== 'object') {
+      continue;
+    }
+
+    const pools = [];
+    if (Array.isArray(task.assignees)) {
+      pools.push(...task.assignees);
+    }
+    if (task.assignee && typeof task.assignee === 'object') {
+      pools.push(task.assignee);
+    }
+    if (Array.isArray(task.responsibles)) {
+      pools.push(...task.responsibles);
+    }
+    if (Array.isArray(task.subordinates)) {
+      pools.push(...task.subordinates);
+    }
+    if (Array.isArray(task.directors)) {
+      pools.push(...task.directors);
+    }
+
+    for (const entry of pools) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      if (!entryMatchesUser(entry, ids, names)) {
+        continue;
+      }
+
+      const position = normalizeValue(entry.position);
+      if (position) {
+        return position;
+      }
     }
   }
 
@@ -12683,7 +13507,6 @@ function buildResponsibleProfile(entry) {
   const label = pickDisplayValue(
     primaryName,
     entry.department,
-    entry.telegram,
     entry.login,
     entry.email,
     entry.number,
@@ -12691,11 +13514,11 @@ function buildResponsibleProfile(entry) {
 
   const identifier = normalizeIdentifier(
     entry.id
-      || entry.telegram
-      || entry.chatId
       || entry.email
       || entry.number
-      || entry.login,
+      || entry.login
+      || entry.chatId
+      || entry.telegram,
   );
 
   const normalizedName = normalizeName(primaryName)
@@ -12716,8 +13539,6 @@ function buildResponsibleProfile(entry) {
     resolvedLabel,
     primaryName,
     entry.department,
-    entry.telegram,
-    entry.chatId,
     entry.email,
     entry.login,
     entry.number,
@@ -14852,12 +15673,6 @@ function buildResponsibleOptionLabel(entry) {
   if (normalizeValue(entry.department)) {
     meta.push(entry.department);
   }
-  if (normalizeValue(entry.telegram)) {
-    meta.push(`TG ${normalizeValue(entry.telegram)}`);
-  }
-  if (normalizeValue(entry.chatId) && normalizeValue(entry.chatId) !== normalizeValue(entry.telegram)) {
-    meta.push(`Chat ${normalizeValue(entry.chatId)}`);
-  }
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
   }
@@ -14880,9 +15695,6 @@ function buildSubordinateOptionLabel(entry) {
   if (normalizeValue(entry.department)) {
     meta.push(entry.department);
   }
-  if (normalizeValue(entry.chatId) && normalizeValue(entry.chatId) !== normalizeValue(entry.telegram)) {
-    meta.push(`Chat ${normalizeValue(entry.chatId)}`);
-  }
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
   }
@@ -14894,14 +15706,24 @@ function buildSubordinateOptionLabel(entry) {
 
 function formatDocumentCell(task) {
   const parts = [];
-  if (task.documentNumber) {
-    parts.push(`№ ${task.documentNumber}`);
+  const title = normalizeValue(task?.document);
+  if (title) {
+    parts.push(title);
   }
   const formattedDate = formatDate(task.documentDate);
   if (formattedDate !== '—') {
     parts.push(`от ${formattedDate}`);
   }
   return parts.length ? parts.join(' ') : '—';
+}
+
+function formatEntityDisplay(value, label) {
+  const normalized = normalizeValue(value);
+  if (!normalized) {
+    return '';
+  }
+
+  return `${label}: ${normalized}`;
 }
 
 function dedupeExecutorNames(candidates) {
@@ -15175,6 +15997,273 @@ function clearStatus() {
   elements.status.className = 'appdosc__status-message';
 }
 
+function buildAdvancedFilterTags() {
+  const filters = getAdvancedFilterState();
+  const tags = [];
+  if (filters.dateFrom || filters.dateTo) {
+    tags.push(`Период: ${filters.dateFrom || '…'} — ${filters.dateTo || '…'}`);
+  }
+  if (filters.correspondent) {
+    tags.push(`Корреспондент: ${filters.correspondent}`);
+  }
+  if (filters.object) {
+    tags.push(`Объект: ${filters.object}`);
+  }
+  if (filters.responsible) {
+    tags.push(`Ответственный: ${filters.responsible}`);
+  }
+  if (Array.isArray(filters.statusKeys) && filters.statusKeys.length) {
+    const statuses = filters.statusKeys
+      .map((key) => STATUS_SUMMARY_CONFIG[key]?.display || key)
+      .join(', ');
+    tags.push(`Статус: ${statuses}`);
+  }
+  if (filters.taskNumber) {
+    tags.push(`№ задачи: ${filters.taskNumber}`);
+  }
+  if (filters.overdueOnly) {
+    tags.push('Только просроченные');
+  }
+  return tags;
+}
+
+function collectFilterSelectOptions() {
+  const options = {
+    correspondents: new Set(),
+    objects: new Set(),
+    responsibles: new Set(),
+  };
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  tasks.forEach((task) => {
+    const correspondent = getTaskCorrespondentText(task).trim();
+    if (correspondent) {
+      options.correspondents.add(correspondent);
+    }
+    const objectValue = normalizeValue(task?.object) || normalizeValue(task?.organization);
+    if (objectValue) {
+      options.objects.add(objectValue.trim());
+    }
+    const responsible = getTaskResponsibleText(task).trim();
+    if (responsible) {
+      options.responsibles.add(responsible);
+    }
+  });
+  return options;
+}
+
+function refillSelect(selectElement, values, defaultLabel) {
+  if (!(selectElement instanceof HTMLSelectElement)) {
+    return;
+  }
+  const currentValue = normalizeAdvancedFilterValue(selectElement.value);
+  selectElement.innerHTML = '';
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = defaultLabel;
+  selectElement.appendChild(defaultOption);
+  values.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    selectElement.appendChild(option);
+  });
+  if (currentValue) {
+    selectElement.value = currentValue;
+  }
+}
+
+function updateStatusFilterUi() {
+  const filters = getAdvancedFilterState();
+  const selectedKeys = Array.isArray(filters.statusKeys) ? filters.statusKeys : [];
+  if (elements.filterStatusToggle instanceof HTMLElement) {
+    elements.filterStatusToggle.textContent = selectedKeys.length
+      ? `Выбрано статусов: ${selectedKeys.length}`
+      : 'Выбрать статусы';
+  }
+  if (elements.filterStatusChips instanceof HTMLElement) {
+    elements.filterStatusChips.innerHTML = '';
+    if (!selectedKeys.length) {
+      const empty = document.createElement('span');
+      empty.className = 'appdosc-filters__status-chip';
+      empty.textContent = 'Все статусы';
+      elements.filterStatusChips.appendChild(empty);
+    } else {
+      selectedKeys.forEach((key) => {
+        const chip = document.createElement('span');
+        chip.className = 'appdosc-filters__status-chip';
+        chip.textContent = STATUS_SUMMARY_CONFIG[key]?.display || key;
+        elements.filterStatusChips.appendChild(chip);
+      });
+    }
+  }
+
+  if (elements.filterStatusList instanceof HTMLElement) {
+    elements.filterStatusList.innerHTML = '';
+    Object.keys(STATUS_SUMMARY_CONFIG).forEach((key) => {
+      const row = document.createElement('label');
+      row.className = 'appdosc-filters__status-item';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = selectedKeys.includes(key);
+      input.dataset.filterStatusOption = key;
+      const text = document.createElement('span');
+      text.textContent = STATUS_SUMMARY_CONFIG[key]?.display || key;
+      row.appendChild(input);
+      row.appendChild(text);
+      elements.filterStatusList.appendChild(row);
+    });
+  }
+}
+
+function updateAdvancedFilterUi() {
+  const filters = getAdvancedFilterState();
+  const optionSets = collectFilterSelectOptions();
+  refillSelect(
+    elements.filterCorrespondent,
+    Array.from(optionSets.correspondents).sort((a, b) => a.localeCompare(b, 'ru')),
+    'Все',
+  );
+  refillSelect(
+    elements.filterObject,
+    Array.from(optionSets.objects).sort((a, b) => a.localeCompare(b, 'ru')),
+    'Все объекты',
+  );
+  refillSelect(
+    elements.filterResponsible,
+    Array.from(optionSets.responsibles).sort((a, b) => a.localeCompare(b, 'ru')),
+    'Выберите',
+  );
+
+  if (elements.filterDateFrom instanceof HTMLInputElement) {
+    elements.filterDateFrom.value = filters.dateFrom || '';
+  }
+  if (elements.filterDateTo instanceof HTMLInputElement) {
+    elements.filterDateTo.value = filters.dateTo || '';
+  }
+  if (elements.filterCorrespondent instanceof HTMLSelectElement) {
+    elements.filterCorrespondent.value = filters.correspondent || '';
+  }
+  if (elements.filterObject instanceof HTMLSelectElement) {
+    elements.filterObject.value = filters.object || '';
+  }
+  if (elements.filterResponsible instanceof HTMLSelectElement) {
+    elements.filterResponsible.value = filters.responsible || '';
+  }
+  if (elements.filterTaskNumber instanceof HTMLInputElement) {
+    elements.filterTaskNumber.value = filters.taskNumber || '';
+  }
+  if (elements.filterOverdueOnly instanceof HTMLInputElement) {
+    elements.filterOverdueOnly.checked = Boolean(filters.overdueOnly);
+  }
+  updateStatusFilterUi();
+
+  if (elements.filterActiveList instanceof HTMLElement) {
+    elements.filterActiveList.innerHTML = '';
+    const tags = buildAdvancedFilterTags();
+    if (!tags.length) {
+      const emptyTag = document.createElement('span');
+      emptyTag.className = 'appdosc-filters__tag';
+      emptyTag.textContent = 'Активные фильтры: нет';
+      elements.filterActiveList.appendChild(emptyTag);
+      return;
+    }
+    tags.forEach((tagText) => {
+      const tag = document.createElement('span');
+      tag.className = 'appdosc-filters__tag';
+      tag.textContent = tagText;
+      elements.filterActiveList.appendChild(tag);
+    });
+  }
+}
+
+function setQuickDateRange(range) {
+  const now = new Date();
+  const end = new Date(now);
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
+  if (range === 'today') {
+    // already today
+  } else if (range === 'week') {
+    start.setDate(start.getDate() - 6);
+  } else if (range === 'month') {
+    start.setMonth(start.getMonth() - 1);
+  } else if (range === 'quarter') {
+    start.setMonth(start.getMonth() - 3);
+  } else {
+    return;
+  }
+
+  const filters = getAdvancedFilterState();
+  filters.dateFrom = start.toISOString().slice(0, 10);
+  filters.dateTo = end.toISOString().slice(0, 10);
+  updateAdvancedFilterUi();
+}
+
+function applyAdvancedFiltersFromForm() {
+  const filters = getAdvancedFilterState();
+  filters.dateFrom = normalizeAdvancedFilterValue(elements.filterDateFrom?.value);
+  filters.dateTo = normalizeAdvancedFilterValue(elements.filterDateTo?.value);
+  filters.correspondent = normalizeAdvancedFilterValue(elements.filterCorrespondent?.value);
+  filters.object = normalizeAdvancedFilterValue(elements.filterObject?.value);
+  filters.responsible = normalizeAdvancedFilterValue(elements.filterResponsible?.value);
+  filters.statusKeys = Array.from(
+    document.querySelectorAll('[data-filter-status-option]:checked'),
+  )
+    .map((item) => item.dataset.filterStatusOption || '')
+    .filter(Boolean);
+  filters.taskNumber = normalizeAdvancedFilterValue(elements.filterTaskNumber?.value);
+  filters.overdueOnly = Boolean(elements.filterOverdueOnly?.checked);
+  if (elements.filterStatusList instanceof HTMLElement) {
+    elements.filterStatusList.hidden = true;
+  }
+  state.selectedCardAnchor = '';
+  updateVisibleTasks();
+  safeRender('advanced_filter_change');
+}
+
+function resetAdvancedFilters() {
+  state.taskFilter = [];
+  state.advancedFilter = {
+    dateFrom: '',
+    dateTo: '',
+    correspondent: '',
+    object: '',
+    responsible: '',
+    statusKeys: [],
+    taskNumber: '',
+    overdueOnly: false,
+  };
+  if (elements.filterStatusList instanceof HTMLElement) {
+    elements.filterStatusList.hidden = true;
+  }
+  state.selectedCardAnchor = '';
+  updateVisibleTasks();
+  safeRender('advanced_filter_reset');
+}
+
+function handleAdvancedFiltersToggle() {
+  if (!(elements.advancedFilters instanceof HTMLElement)) {
+    return;
+  }
+  const collapsed = elements.advancedFilters.classList.toggle('appdosc-filters--collapsed');
+  if (elements.advancedFiltersBody instanceof HTMLElement) {
+    elements.advancedFiltersBody.hidden = collapsed;
+  }
+  if (elements.advancedFiltersToggle instanceof HTMLElement) {
+    elements.advancedFiltersToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+}
+
+function handleStatusFilterToggle() {
+  if (!(elements.filterStatusList instanceof HTMLElement)) {
+    return;
+  }
+  const expanded = elements.filterStatusList.hidden;
+  elements.filterStatusList.hidden = !expanded;
+}
+
 function handleSummaryBadgeClick(filter) {
   const normalizedTarget = normalizeTaskFilter(filter);
   const previousFilters = normalizeTaskFilters(state.taskFilter);
@@ -15243,6 +16332,34 @@ function attachEvents() {
   if (elements.overdue) {
     elements.overdue.addEventListener('click', () => handleSummaryBadgeClick('overdue'));
   }
+  if (elements.advancedFiltersToggle) {
+    elements.advancedFiltersToggle.addEventListener('click', handleAdvancedFiltersToggle);
+  }
+  if (elements.filterApply) {
+    elements.filterApply.addEventListener('click', applyAdvancedFiltersFromForm);
+  }
+  if (elements.filterReset) {
+    elements.filterReset.addEventListener('click', resetAdvancedFilters);
+  }
+  if (elements.filterStatusToggle) {
+    elements.filterStatusToggle.addEventListener('click', handleStatusFilterToggle);
+  }
+  if (elements.filterStatusList) {
+    elements.filterStatusList.addEventListener('change', () => {
+      const filters = getAdvancedFilterState();
+      filters.statusKeys = Array.from(
+        document.querySelectorAll('[data-filter-status-option]:checked'),
+      )
+        .map((item) => item.dataset.filterStatusOption || '')
+        .filter(Boolean);
+      updateStatusFilterUi();
+    });
+  }
+  if (Array.isArray(elements.filterQuickRanges)) {
+    elements.filterQuickRanges.forEach((button) => {
+      button.addEventListener('click', () => setQuickDateRange(button.dataset.filterRange || ''));
+    });
+  }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
   }
@@ -15251,6 +16368,29 @@ function attachEvents() {
   }
   if (elements.viewerDeleteResponse) {
     elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
+  }
+  if (elements.userAvatar) {
+    elements.userAvatar.addEventListener('click', openSettingsSheet);
+    elements.userAvatar.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openSettingsSheet();
+      }
+    });
+  }
+  if (Array.isArray(elements.settingsCloseTargets) && elements.settingsCloseTargets.length) {
+    elements.settingsCloseTargets.forEach((target) => {
+      target.addEventListener('click', closeSettingsSheet);
+    });
+  }
+  if (Array.isArray(elements.themeOptionButtons) && elements.themeOptionButtons.length) {
+    elements.themeOptionButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const nextMode = normalizeThemeMode(button.dataset.themeOption);
+        setThemeMode(nextMode);
+        closeSettingsSheet();
+      });
+    });
   }
 
   document.addEventListener('visibilitychange', () => {
@@ -15262,6 +16402,11 @@ function attachEvents() {
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
       loadTasks(false);
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeSettingsSheet();
     }
   });
 }
@@ -15280,6 +16425,21 @@ function formatDateTime(value) {
     return '—';
   }
   return date.toLocaleString('ru-RU', { hour12: false });
+}
+
+function formatDateTimeCompact(value) {
+  const date = parseDate(value);
+  if (!date) {
+    return '—';
+  }
+  return date.toLocaleString('ru-RU', {
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function formatDateInputValue(value) {
@@ -15442,6 +16602,7 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
+  initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
     pdfViewerInstance.preload();
@@ -16289,7 +17450,6 @@ function buildAssignmentFallbackLabel(entry, role) {
     || normalizeValue(entry.name)
     || normalizeValue(entry.department)
     || normalizeValue(entry.email)
-    || normalizeValue(entry.telegram)
     || normalizeValue(entry.number)
     || defaultLabel;
 
@@ -16299,9 +17459,6 @@ function buildAssignmentFallbackLabel(entry, role) {
   }
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
-  }
-  if (normalizeValue(entry.telegram)) {
-    meta.push(`TG ${normalizeValue(entry.telegram)}`);
   }
   if (normalizeValue(entry.login)) {
     meta.push(`Логин ${normalizeValue(entry.login)}`);
@@ -16981,16 +18138,78 @@ function setupAssignmentControls(card, task) {
     return;
   }
 
-  const searchInput = container.querySelector('[data-card-assignee-search]');
+  const comboInput = container.querySelector('[data-card-assignee-combo]');
+  const optionsList = container.querySelector('[data-card-assignee-options]');
   const searchMeta = container.querySelector('[data-card-assignee-search-meta]');
-  const select = container.querySelector('[data-card-assignee-select]');
   const entriesContainer = container.querySelector('[data-card-assignee-entries]');
   const bulkButton = container.querySelector('[data-card-assign-submit]');
   const bulkCount = container.querySelector('[data-card-assign-count]');
-  if (!searchInput || !searchMeta || !select || !entriesContainer || !bulkButton || !bulkCount) {
+  if (!comboInput || !optionsList || !searchMeta || !entriesContainer || !bulkButton || !bulkCount) {
     container.remove();
     return;
   }
+  const comboWrapper = comboInput.closest('.appdosc-card__assign-selector');
+  const isDarkTheme = (state.telegram.colorScheme || 'light') === 'dark'
+    || document.body.classList.contains('appdosc--dark');
+  const comboPalette = isDarkTheme
+    ? {
+      inputBg: 'rgba(24, 36, 67, 0.82)',
+      inputBorder: 'rgba(124, 166, 255, 0.34)',
+      inputColor: '#ecf3ff',
+      listBg: 'rgba(20, 31, 59, 0.95)',
+      listBorder: 'rgba(118, 163, 255, 0.36)',
+      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    }
+    : {
+      inputBg: 'rgba(255, 255, 255, 0.72)',
+      inputBorder: 'rgba(110, 154, 255, 0.35)',
+      inputColor: '#12325f',
+      listBg: 'rgba(255, 255, 255, 0.92)',
+      listBorder: 'rgba(110, 154, 255, 0.4)',
+      shadow: '0 12px 28px rgba(42, 82, 150, 0.18)',
+      optionBg: 'rgba(255, 255, 255, 0.5)',
+      optionBorder: 'rgba(114, 157, 255, 0.2)',
+      optionColor: '#1c3762',
+      optionHover: 'rgba(134, 180, 255, 0.22)',
+    };
+  if (comboWrapper) {
+    comboWrapper.style.position = 'relative';
+    comboWrapper.style.marginBottom = '2px';
+  }
+  comboInput.classList.add('appdosc-card__assign-search--combo');
+  optionsList.classList.add('appdosc-card__assign-combo-list--compact');
+  comboInput.style.width = '100%';
+  comboInput.style.minHeight = '40px';
+  comboInput.style.padding = '8px 11px';
+  comboInput.style.borderRadius = '12px';
+  comboInput.style.border = `1px solid ${comboPalette.inputBorder}`;
+  comboInput.style.background = comboPalette.inputBg;
+  comboInput.style.color = comboPalette.inputColor;
+  comboInput.style.fontSize = '14px';
+  comboInput.style.lineHeight = '1.35';
+  comboInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  comboInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
+  optionsList.hidden = true;
+  optionsList.style.position = 'absolute';
+  optionsList.style.left = '0';
+  optionsList.style.right = '0';
+  optionsList.style.top = 'calc(100% + 8px)';
+  optionsList.style.zIndex = '50';
+  optionsList.style.marginTop = '0';
+  optionsList.style.maxHeight = '168px';
+  optionsList.style.overflowY = 'auto';
+  optionsList.style.borderRadius = '12px';
+  optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
+  optionsList.style.background = comboPalette.listBg;
+  optionsList.style.backdropFilter = 'blur(10px)';
+  optionsList.style.webkitBackdropFilter = 'blur(10px)';
+  optionsList.style.boxShadow = comboPalette.shadow;
+  optionsList.style.padding = '4px';
+  optionsList.style.webkitOverflowScrolling = 'touch';
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
@@ -17081,30 +18300,36 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!query) {
-      searchMeta.textContent = `Показаны все: ${visibleCount}`;
+      searchMeta.textContent = `Все ответственные: ${visibleCount}`;
       return;
     }
 
     searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
-  const populateSelectOptions = () => {
-    select.innerHTML = '';
+  let visibleAssigneeOptions = [];
+  const setComboExpanded = (expanded) => {
+    comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    comboInput.dataset.expanded = expanded ? 'true' : 'false';
+  };
+  const hideOptionsList = () => {
+    optionsList.hidden = true;
+    setComboExpanded(false);
+  };
 
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Выберите ответственного';
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
+  const populateComboOptions = () => {
+    optionsList.innerHTML = '';
+    visibleAssigneeOptions = [];
 
-    const query = normalizeValue(searchInput.value).toLowerCase();
+    const query = normalizeValue(comboInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
     let visibleCount = 0;
+
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildResponsibleOptionLabel(entry);
+      const hasTelegramId = Boolean(resolveEntryTelegramId(entry));
       if (!value || addedValues.has(value)) {
         return;
       }
@@ -17119,13 +18344,54 @@ function setupAssignmentControls(card, task) {
       }
 
       visibleCount += 1;
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      select.appendChild(option);
+      visibleAssigneeOptions.push({ value, label, entry, hasTelegramId });
+
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'appdosc-card__assign-option';
+      option.dataset.assigneeValue = value;
+      option.textContent = hasTelegramId
+        ? label
+        : `${label} • ${TELEGRAM_MISSING_OPTION_NOTE}`;
+      option.style.width = '100%';
+      option.style.textAlign = 'left';
+      option.style.background = comboPalette.optionBg;
+      option.style.border = `1px solid ${comboPalette.optionBorder}`;
+      option.style.color = comboPalette.optionColor;
+      option.style.fontSize = '14px';
+      option.style.lineHeight = '1.35';
+      option.style.padding = '7px 10px';
+      option.style.minHeight = '38px';
+      option.style.borderRadius = '9px';
+      option.style.cursor = 'pointer';
+      option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      option.style.marginBottom = '3px';
+      option.style.touchAction = 'manipulation';
+      if (!hasTelegramId) {
+        option.disabled = true;
+        option.style.opacity = '0.72';
+        option.style.cursor = 'not-allowed';
+      }
+      option.addEventListener('pointerdown', (event) => {
+        if (!hasTelegramId) {
+          event.preventDefault();
+          setStatus('error', TELEGRAM_MISSING_MESSAGE);
+          return;
+        }
+        event.preventDefault();
+        handleAssigneeSelection(value);
+      });
+      option.addEventListener('mouseenter', () => {
+        option.style.background = comboPalette.optionHover;
+      });
+      option.addEventListener('mouseleave', () => {
+        option.style.background = comboPalette.optionBg;
+      });
+      optionsList.appendChild(option);
     });
 
-    select.disabled = visibleCount === 0;
+    optionsList.hidden = visibleCount === 0;
+    setComboExpanded(visibleCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -17224,6 +18490,39 @@ function setupAssignmentControls(card, task) {
     selectElement.value = normalized || '';
   };
 
+  const createAssigneeAvatar = (entry, fallbackLabel = '') => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = fallbackLabel ? `Аватар: ${fallbackLabel}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
   const createResponsibleRow = ({ value, label, normalized, assigned, comment, dueDate, instruction, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
@@ -17248,10 +18547,17 @@ function setupAssignmentControls(card, task) {
     roleLabel.textContent = 'Ответственный';
     info.appendChild(roleLabel);
 
+    const nameLine = document.createElement('div');
+    nameLine.className = 'appdosc-card__assign-line';
+
+    const avatar = createAssigneeAvatar(referenceEntry, label);
+    nameLine.appendChild(avatar);
+
     const name = document.createElement('div');
     name.className = 'appdosc-card__assign-name';
     name.textContent = label || buildAssignmentFallbackLabel(null, 'responsible');
-    info.appendChild(name);
+    nameLine.appendChild(name);
+    info.appendChild(nameLine);
 
     const note = document.createElement('div');
     note.className = 'appdosc-card__assign-note';
@@ -17263,6 +18569,9 @@ function setupAssignmentControls(card, task) {
     commentInput.placeholder = 'Комментарий для ответственного';
     commentInput.rows = 2;
     commentInput.maxLength = 500;
+    commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    commentInput.style.fontSize = '14px';
+    commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
     }
@@ -17301,6 +18610,13 @@ function setupAssignmentControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
+    deadlineInput.style.width = '100%';
+    deadlineInput.style.minWidth = '0';
+    deadlineInput.style.minHeight = '50px';
+    deadlineInput.style.boxSizing = 'border-box';
+    deadlineInput.style.padding = '12px 14px';
+    deadlineInput.style.borderRadius = '16px';
+    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -17350,10 +18666,18 @@ function setupAssignmentControls(card, task) {
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Убрать';
     removeButton.disabled = false;
+    removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
+    removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
+    removeButton.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
+    actions.style.width = '100%';
+    actions.style.display = 'flex';
+    actions.style.justifyContent = 'stretch';
+    actions.style.marginTop = '10px';
+    removeButton.style.width = '100%';
     actions.appendChild(removeButton);
-    row.appendChild(actions);
+    info.appendChild(actions);
 
     entriesContainer.appendChild(row);
 
@@ -17631,7 +18955,8 @@ function setupAssignmentControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
-  populateSelectOptions();
+  populateComboOptions();
+  hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {
     if (renderedAssignedKeys.has(identifier)) {
@@ -17675,18 +19000,27 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('input', () => {
-    populateSelectOptions();
-  });
+  const handleAssigneeSelection = (preferredValue = '') => {
+    const inputValue = normalizeValue(preferredValue || comboInput.value);
+    const selectedOption = visibleAssigneeOptions.find((option) => (
+      normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
+      || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
+    )) || visibleAssigneeOptions[0] || null;
 
-  select.addEventListener('change', () => {
-    const selectedValue = normalizeValue(select.value);
+    const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
+      return;
+    }
+    if (selectedOption && selectedOption.hasTelegramId === false) {
+      setStatus('error', TELEGRAM_MISSING_MESSAGE);
+      comboInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
 
     const normalizedValue = normalizeIdentifier(selectedValue);
-    logAssignmentEvent('select_change', {
+    logAssignmentEvent('combo_select', {
       taskId: task.id || null,
       organization,
       selectedValue,
@@ -17709,7 +19043,7 @@ function setupAssignmentControls(card, task) {
     const alreadyAssigned = knownKeys.some((candidate) => existingKeys.has(candidate) || assignedKeyRegistry.has(candidate));
 
     if (existingRow || alreadyAssigned) {
-      logAssignmentEvent('select_duplicate', {
+      logAssignmentEvent('combo_duplicate', {
         taskId: task.id || null,
         organization,
         selectedValue,
@@ -17721,19 +19055,21 @@ function setupAssignmentControls(card, task) {
         existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
       setStatus('info', 'Ответственный уже назначен.');
-      select.selectedIndex = 0;
+      comboInput.value = '';
+      populateComboOptions();
       return;
     }
 
-    let label = '';
-    let referenceEntry = null;
-    if (normalizedValue && directory.has(normalizedValue)) {
+    let label = selectedOption ? selectedOption.label : '';
+    let referenceEntry = selectedOption ? selectedOption.entry : null;
+    if (!referenceEntry && normalizedValue && directory.has(normalizedValue)) {
       const directorySnapshot = directory.get(normalizedValue);
-      label = directorySnapshot.label;
+      label = label || directorySnapshot.label;
       referenceEntry = directorySnapshot.entry || null;
-    } else {
+    }
+    if (!referenceEntry) {
       referenceEntry = findAssignmentEntryByIdentifier(assignmentCandidates, normalizedValue || selectedValue.toLowerCase());
-      if (referenceEntry && typeof referenceEntry === 'object') {
+      if (!label && referenceEntry && typeof referenceEntry === 'object') {
         label = buildResponsibleOptionLabel(referenceEntry);
       }
     }
@@ -17742,7 +19078,7 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!resolveEntryTelegramId(referenceEntry)) {
-      logAssignmentEvent('select_missing_telegram', {
+      logAssignmentEvent('combo_missing_telegram', {
         taskId: task.id || null,
         organization,
         selectedValue,
@@ -17752,7 +19088,8 @@ function setupAssignmentControls(card, task) {
           : [],
       });
       setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      select.selectedIndex = 0;
+      comboInput.value = '';
+      populateComboOptions();
       return;
     }
 
@@ -17770,7 +19107,7 @@ function setupAssignmentControls(card, task) {
       instruction,
       referenceEntry,
     });
-    logAssignmentEvent('select_row_created', {
+    logAssignmentEvent('combo_row_created', {
       taskId: task.id || null,
       organization,
       selectedValue,
@@ -17780,8 +19117,53 @@ function setupAssignmentControls(card, task) {
       dueDate: due || null,
       instruction: instruction || null,
     });
-    select.selectedIndex = 0;
+    comboInput.value = '';
+    populateComboOptions();
+    hideOptionsList();
+  };
+
+  comboInput.addEventListener('input', () => {
+    const wasOpen = !optionsList.hidden;
+    populateComboOptions();
+    if (wasOpen && visibleAssigneeOptions.length > 0) {
+      optionsList.hidden = false;
+      setComboExpanded(true);
+    }
   });
+
+  comboInput.addEventListener('click', () => {
+    populateComboOptions();
+    optionsList.hidden = visibleAssigneeOptions.length === 0;
+    setComboExpanded(visibleAssigneeOptions.length > 0);
+  });
+
+  comboInput.addEventListener('change', () => {
+    handleAssigneeSelection(comboInput.value);
+  });
+
+  comboInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    handleAssigneeSelection(comboInput.value);
+  });
+
+  comboInput.addEventListener('blur', () => {
+    setTimeout(hideOptionsList, 120);
+  });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (optionsList.hidden) {
+      return;
+    }
+    const target = event && event.target ? event.target : null;
+    const interactiveArea = comboWrapper || container;
+    if (target && interactiveArea && interactiveArea.contains(target)) {
+      return;
+    }
+    hideOptionsList();
+  }, true);
 
   container.hidden = false;
 }
@@ -17803,8 +19185,7 @@ function setupSubordinateControls(card, task) {
   }
 
   const subordinates = getSubordinatesForOrganization(organization);
-  const responsibles = getResponsiblesForOrganization(organization);
-  const assignmentCandidates = buildAssignmentCandidateList(responsibles, subordinates);
+  const assignmentCandidates = buildAssignmentCandidateList([], subordinates);
   const canManageSubordinates = userIsDirectorForOrganization(organization)
     || userIsResponsibleForTask(task)
     || assignmentCandidates.length > 0;
@@ -17821,19 +19202,80 @@ function setupSubordinateControls(card, task) {
   }
 
   const searchInput = container.querySelector('[data-card-subordinate-search]');
+  const optionsList = container.querySelector('[data-card-subordinate-options]');
   const searchMeta = container.querySelector('[data-card-subordinate-search-meta]');
-  const select = container.querySelector('[data-card-subordinate-select]');
   const entriesContainer = container.querySelector('[data-card-subordinate-entries]');
   const bulkButton = container.querySelector('[data-card-subordinate-submit]');
   const bulkCount = container.querySelector('[data-card-subordinate-count]');
-  if (!searchInput || !searchMeta || !select || !entriesContainer || !bulkButton || !bulkCount) {
+  if (!searchInput || !optionsList || !searchMeta || !entriesContainer || !bulkButton || !bulkCount) {
     container.remove();
     return;
   }
 
+  const comboWrapper = searchInput.closest('.appdosc-card__assign-selector');
+  const isDarkTheme = (state.telegram.colorScheme || 'light') === 'dark'
+    || document.body.classList.contains('appdosc--dark');
+  const comboPalette = isDarkTheme
+    ? {
+      inputBg: 'rgba(24, 36, 67, 0.82)',
+      inputBorder: 'rgba(124, 166, 255, 0.34)',
+      inputColor: '#ecf3ff',
+      listBg: 'rgba(20, 31, 59, 0.95)',
+      listBorder: 'rgba(118, 163, 255, 0.36)',
+      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    }
+    : {
+      inputBg: 'rgba(255, 255, 255, 0.72)',
+      inputBorder: 'rgba(110, 154, 255, 0.35)',
+      inputColor: '#12325f',
+      listBg: 'rgba(255, 255, 255, 0.92)',
+      listBorder: 'rgba(110, 154, 255, 0.4)',
+      shadow: '0 12px 28px rgba(42, 82, 150, 0.18)',
+      optionBg: 'rgba(255, 255, 255, 0.5)',
+      optionBorder: 'rgba(114, 157, 255, 0.2)',
+      optionColor: '#1c3762',
+      optionHover: 'rgba(134, 180, 255, 0.22)',
+    };
+  if (comboWrapper) {
+    comboWrapper.style.position = 'relative';
+    comboWrapper.style.marginBottom = '2px';
+  }
+  searchInput.classList.add('appdosc-card__assign-search--combo');
+  optionsList.classList.add('appdosc-card__assign-combo-list--compact');
+  searchInput.style.width = '100%';
+  searchInput.style.minHeight = '40px';
+  searchInput.style.padding = '8px 11px';
+  searchInput.style.borderRadius = '12px';
+  searchInput.style.border = `1px solid ${comboPalette.inputBorder}`;
+  searchInput.style.background = comboPalette.inputBg;
+  searchInput.style.color = comboPalette.inputColor;
+  searchInput.style.fontSize = '14px';
+  searchInput.style.lineHeight = '1.35';
+  searchInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  searchInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
+  optionsList.hidden = true;
+  optionsList.style.position = 'absolute';
+  optionsList.style.left = '0';
+  optionsList.style.right = '0';
+  optionsList.style.top = 'calc(100% + 8px)';
+  optionsList.style.zIndex = '50';
+  optionsList.style.marginTop = '0';
+  optionsList.style.maxHeight = '168px';
+  optionsList.style.overflowY = 'auto';
+  optionsList.style.borderRadius = '12px';
+  optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
+  optionsList.style.background = comboPalette.listBg;
+  optionsList.style.backdropFilter = 'blur(10px)';
+  optionsList.style.webkitBackdropFilter = 'blur(10px)';
+  optionsList.style.boxShadow = comboPalette.shadow;
+  optionsList.style.padding = '4px';
+  optionsList.style.webkitOverflowScrolling = 'touch';
+
   if (!assignmentCandidates.length) {
-    select.disabled = true;
-    select.title = 'Нет доступных подчинённых для назначения';
     searchInput.disabled = true;
     searchMeta.textContent = 'Подчинённые для назначения отсутствуют.';
   }
@@ -17932,16 +19374,19 @@ function setupSubordinateControls(card, task) {
     searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
-  const populateSelectOptions = () => {
-    select.innerHTML = '';
+  let visibleSubordinateOptions = [];
+  const setComboExpanded = (expanded) => {
+    searchInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    searchInput.dataset.expanded = expanded ? 'true' : 'false';
+  };
+  const hideOptionsList = () => {
+    optionsList.hidden = true;
+    setComboExpanded(false);
+  };
 
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Выберите подчинённого';
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
-
+  const populateComboOptions = () => {
+    optionsList.innerHTML = '';
+    visibleSubordinateOptions = [];
     const query = normalizeValue(searchInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
@@ -17949,6 +19394,7 @@ function setupSubordinateControls(card, task) {
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildSubordinateOptionLabel(entry);
+      const hasTelegramId = Boolean(resolveEntryTelegramId(entry));
       if (!value || addedValues.has(value)) {
         return;
       }
@@ -17963,13 +19409,53 @@ function setupSubordinateControls(card, task) {
       }
 
       visibleCount += 1;
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      select.appendChild(option);
+      visibleSubordinateOptions.push({ value, label, entry, hasTelegramId });
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'appdosc-card__assign-option';
+      option.dataset.subordinateValue = value;
+      option.textContent = hasTelegramId
+        ? label
+        : `${label} • ${TELEGRAM_MISSING_OPTION_NOTE}`;
+      option.style.width = '100%';
+      option.style.textAlign = 'left';
+      option.style.background = comboPalette.optionBg;
+      option.style.border = `1px solid ${comboPalette.optionBorder}`;
+      option.style.color = comboPalette.optionColor;
+      option.style.fontSize = '14px';
+      option.style.lineHeight = '1.35';
+      option.style.padding = '7px 10px';
+      option.style.minHeight = '38px';
+      option.style.borderRadius = '9px';
+      option.style.cursor = 'pointer';
+      option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      option.style.marginBottom = '3px';
+      option.style.touchAction = 'manipulation';
+      if (!hasTelegramId) {
+        option.disabled = true;
+        option.style.opacity = '0.72';
+        option.style.cursor = 'not-allowed';
+      }
+      option.addEventListener('pointerdown', (event) => {
+        if (!hasTelegramId) {
+          event.preventDefault();
+          setStatus('error', TELEGRAM_MISSING_MESSAGE);
+          return;
+        }
+        event.preventDefault();
+        handleSubordinateSelection(value);
+      });
+      option.addEventListener('mouseenter', () => {
+        option.style.background = comboPalette.optionHover;
+      });
+      option.addEventListener('mouseleave', () => {
+        option.style.background = comboPalette.optionBg;
+      });
+      optionsList.appendChild(option);
     });
 
-    select.disabled = visibleCount === 0;
+    optionsList.hidden = visibleCount === 0;
+    setComboExpanded(visibleCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -18007,6 +19493,39 @@ function setupSubordinateControls(card, task) {
     return '';
   };
 
+  const createAssigneeAvatar = (entry, fallbackLabel = '') => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = fallbackLabel ? `Аватар: ${fallbackLabel}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
   const createSubordinateRow = ({ value, label, normalized, assigned, comment, dueDate, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
@@ -18031,16 +19550,26 @@ function setupSubordinateControls(card, task) {
     roleLabel.textContent = 'Подчинённый';
     info.appendChild(roleLabel);
 
+    const nameLine = document.createElement('div');
+    nameLine.className = 'appdosc-card__assign-line';
+
+    const avatar = createAssigneeAvatar(referenceEntry, label);
+    nameLine.appendChild(avatar);
+
     const name = document.createElement('div');
     name.className = 'appdosc-card__assign-name';
     name.textContent = label || buildAssignmentFallbackLabel(null, 'subordinate');
-    info.appendChild(name);
+    nameLine.appendChild(name);
+    info.appendChild(nameLine);
 
     const commentInput = document.createElement('textarea');
     commentInput.className = 'appdosc-card__assign-comment-input';
     commentInput.placeholder = 'Комментарий для подчинённого';
     commentInput.rows = 2;
     commentInput.maxLength = 500;
+    commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    commentInput.style.fontSize = '14px';
+    commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
     }
@@ -18064,6 +19593,13 @@ function setupSubordinateControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
+    deadlineInput.style.width = '100%';
+    deadlineInput.style.minWidth = '0';
+    deadlineInput.style.minHeight = '50px';
+    deadlineInput.style.boxSizing = 'border-box';
+    deadlineInput.style.padding = '12px 14px';
+    deadlineInput.style.borderRadius = '16px';
+    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -18113,10 +19649,18 @@ function setupSubordinateControls(card, task) {
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Убрать';
     removeButton.disabled = false;
+    removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
+    removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
+    removeButton.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
+    actions.style.width = '100%';
+    actions.style.display = 'flex';
+    actions.style.justifyContent = 'stretch';
+    actions.style.marginTop = '10px';
+    removeButton.style.width = '100%';
     actions.appendChild(removeButton);
-    row.appendChild(actions);
+    info.appendChild(actions);
 
     entriesContainer.appendChild(row);
 
@@ -18337,7 +19881,8 @@ function setupSubordinateControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
-  populateSelectOptions();
+  populateComboOptions();
+  hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {
     const directoryEntry = directory.get(identifier);
@@ -18409,13 +19954,21 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('input', () => {
-    populateSelectOptions();
-  });
-
-  select.addEventListener('change', () => {
-    const selectedValue = normalizeValue(select.value);
+  const handleSubordinateSelection = (preferredValue = '') => {
+    const inputValue = normalizeValue(preferredValue || searchInput.value);
+    const selectedOption = visibleSubordinateOptions.find((option) => (
+      normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
+      || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
+    )) || visibleSubordinateOptions[0] || null;
+    const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
+      return;
+    }
+    if (selectedOption && selectedOption.hasTelegramId === false) {
+      setStatus('error', TELEGRAM_MISSING_MESSAGE);
+      searchInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
 
@@ -18423,15 +19976,21 @@ function setupSubordinateControls(card, task) {
     const existingRow = findAssignmentRow(entriesContainer, buildAssignmentRowKey(selectedValue, normalizedValue));
     if (existingRow) {
       existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      select.selectedIndex = 0;
+      searchInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
 
-    let label = '';
-    if (normalizedValue && directory.has(normalizedValue)) {
+    let label = selectedOption ? selectedOption.label : '';
+    if (!label && normalizedValue && directory.has(normalizedValue)) {
       label = directory.get(normalizedValue).label;
-    } else {
-      const matchedEntry = findAssignmentEntryByIdentifier(assignmentCandidates, normalizedValue || selectedValue.toLowerCase());
+    }
+    if (!label) {
+      const matchedEntry = findAssignmentEntryByIdentifier(
+        assignmentCandidates,
+        normalizedValue || selectedValue.toLowerCase(),
+      );
       if (matchedEntry && typeof matchedEntry === 'object') {
         label = buildSubordinateOptionLabel(matchedEntry);
       }
@@ -18441,7 +20000,9 @@ function setupSubordinateControls(card, task) {
     }
 
     let referenceEntry = null;
-    if (normalizedValue && directory.has(normalizedValue)) {
+    if (selectedOption && selectedOption.entry) {
+      referenceEntry = selectedOption.entry;
+    } else if (normalizedValue && directory.has(normalizedValue)) {
       referenceEntry = directory.get(normalizedValue).entry || null;
     }
     if (!referenceEntry) {
@@ -18449,7 +20010,9 @@ function setupSubordinateControls(card, task) {
     }
     if (!resolveEntryTelegramId(referenceEntry)) {
       setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      select.selectedIndex = 0;
+      searchInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
     const matchedEntry = findAssignmentEntryByIdentifier(
@@ -18471,9 +20034,53 @@ function setupSubordinateControls(card, task) {
     if (row) {
       registerRenderedEntry(referenceEntry || matchedEntry, selectedValue, normalizedValue);
     }
+    searchInput.value = '';
+    populateComboOptions();
+    hideOptionsList();
+  };
 
-    select.selectedIndex = 0;
+  searchInput.addEventListener('input', () => {
+    const wasOpen = !optionsList.hidden;
+    populateComboOptions();
+    if (wasOpen && visibleSubordinateOptions.length > 0) {
+      optionsList.hidden = false;
+      setComboExpanded(true);
+    }
   });
+
+  searchInput.addEventListener('click', () => {
+    populateComboOptions();
+    optionsList.hidden = visibleSubordinateOptions.length === 0;
+    setComboExpanded(visibleSubordinateOptions.length > 0);
+  });
+
+  searchInput.addEventListener('change', () => {
+    handleSubordinateSelection(searchInput.value);
+  });
+
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    handleSubordinateSelection(searchInput.value);
+  });
+
+  searchInput.addEventListener('blur', () => {
+    setTimeout(hideOptionsList, 120);
+  });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (optionsList.hidden) {
+      return;
+    }
+    const target = event && event.target ? event.target : null;
+    const interactiveArea = comboWrapper || container;
+    if (target && interactiveArea && interactiveArea.contains(target)) {
+      return;
+    }
+    hideOptionsList();
+  }, true);
 
   container.hidden = false;
 
