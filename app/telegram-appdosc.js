@@ -2005,6 +2005,7 @@ const state = {
     correspondent: '',
     object: '',
     responsible: '',
+    statusKeys: [],
     taskNumber: '',
     overdueOnly: false,
   },
@@ -2545,9 +2546,13 @@ function getAdvancedFilterState() {
       correspondent: '',
       object: '',
       responsible: '',
+      statusKeys: [],
       taskNumber: '',
       overdueOnly: false,
     };
+  }
+  if (!Array.isArray(state.advancedFilter.statusKeys)) {
+    state.advancedFilter.statusKeys = [];
   }
   return state.advancedFilter;
 }
@@ -2570,7 +2575,7 @@ function getTaskCorrespondentText(task) {
     || normalizeValue(task?.sender)
     || normalizeValue(task?.from)
     || '';
-  return correspondent.toLowerCase();
+  return correspondent.trim();
 }
 
 function getTaskResponsibleText(task) {
@@ -2587,7 +2592,7 @@ function getTaskResponsibleText(task) {
       }
     });
   }
-  return candidates.filter(Boolean).join(' ').toLowerCase();
+  return candidates.filter(Boolean).join(' ').trim();
 }
 
 function applyAdvancedTaskFilters(items) {
@@ -2602,6 +2607,7 @@ function applyAdvancedTaskFilters(items) {
   const correspondent = normalizeAdvancedFilterValue(filters.correspondent).toLowerCase();
   const objectValue = normalizeAdvancedFilterValue(filters.object).toLowerCase();
   const responsible = normalizeAdvancedFilterValue(filters.responsible).toLowerCase();
+  const statusKeys = Array.isArray(filters.statusKeys) ? filters.statusKeys : [];
   const taskNumber = normalizeAdvancedFilterValue(filters.taskNumber).toLowerCase();
   const overdueOnly = Boolean(filters.overdueOnly);
 
@@ -2629,7 +2635,7 @@ function applyAdvancedTaskFilters(items) {
     }
 
     if (correspondent) {
-      const text = getTaskCorrespondentText(task);
+      const text = getTaskCorrespondentText(task).toLowerCase();
       if (!text.includes(correspondent)) {
         return false;
       }
@@ -2650,8 +2656,15 @@ function applyAdvancedTaskFilters(items) {
     }
 
     if (responsible) {
-      const text = getTaskResponsibleText(task);
+      const text = getTaskResponsibleText(task).toLowerCase();
       if (!text.includes(responsible)) {
+        return false;
+      }
+    }
+
+    if (statusKeys.length) {
+      const taskStatusKey = getTaskStatusKeyForUser(task);
+      if (!taskStatusKey || !statusKeys.includes(taskStatusKey)) {
         return false;
       }
     }
@@ -2950,6 +2963,9 @@ function initElements() {
   elements.filterCorrespondent = document.querySelector('[data-filter-correspondent]');
   elements.filterObject = document.querySelector('[data-filter-object]');
   elements.filterResponsible = document.querySelector('[data-filter-responsible]');
+  elements.filterStatusChips = document.querySelector('[data-filter-status-chips]');
+  elements.filterStatusToggle = document.querySelector('[data-filter-status-toggle]');
+  elements.filterStatusList = document.querySelector('[data-filter-status-list]');
   elements.filterTaskNumber = document.querySelector('[data-filter-task-number]');
   elements.filterOverdueOnly = document.querySelector('[data-filter-overdue-only]');
   elements.filterApply = document.querySelector('[data-filter-apply]');
@@ -15994,6 +16010,12 @@ function buildAdvancedFilterTags() {
   if (filters.responsible) {
     tags.push(`Ответственный: ${filters.responsible}`);
   }
+  if (Array.isArray(filters.statusKeys) && filters.statusKeys.length) {
+    const statuses = filters.statusKeys
+      .map((key) => STATUS_SUMMARY_CONFIG[key]?.display || key)
+      .join(', ');
+    tags.push(`Статус: ${statuses}`);
+  }
   if (filters.taskNumber) {
     tags.push(`№ задачи: ${filters.taskNumber}`);
   }
@@ -16003,21 +16025,126 @@ function buildAdvancedFilterTags() {
   return tags;
 }
 
+function collectFilterSelectOptions() {
+  const options = {
+    correspondents: new Set(),
+    objects: new Set(),
+    responsibles: new Set(),
+  };
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  tasks.forEach((task) => {
+    const correspondent = getTaskCorrespondentText(task).trim();
+    if (correspondent) {
+      options.correspondents.add(correspondent);
+    }
+    const objectValue = normalizeValue(task?.object) || normalizeValue(task?.organization);
+    if (objectValue) {
+      options.objects.add(objectValue.trim());
+    }
+    const responsible = getTaskResponsibleText(task).trim();
+    if (responsible) {
+      options.responsibles.add(responsible);
+    }
+  });
+  return options;
+}
+
+function refillSelect(selectElement, values, defaultLabel) {
+  if (!(selectElement instanceof HTMLSelectElement)) {
+    return;
+  }
+  const currentValue = normalizeAdvancedFilterValue(selectElement.value);
+  selectElement.innerHTML = '';
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = defaultLabel;
+  selectElement.appendChild(defaultOption);
+  values.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    selectElement.appendChild(option);
+  });
+  if (currentValue) {
+    selectElement.value = currentValue;
+  }
+}
+
+function updateStatusFilterUi() {
+  const filters = getAdvancedFilterState();
+  const selectedKeys = Array.isArray(filters.statusKeys) ? filters.statusKeys : [];
+  if (elements.filterStatusToggle instanceof HTMLElement) {
+    elements.filterStatusToggle.textContent = selectedKeys.length
+      ? `Выбрано статусов: ${selectedKeys.length}`
+      : 'Выбрать статусы';
+  }
+  if (elements.filterStatusChips instanceof HTMLElement) {
+    elements.filterStatusChips.innerHTML = '';
+    if (!selectedKeys.length) {
+      const empty = document.createElement('span');
+      empty.className = 'appdosc-filters__status-chip';
+      empty.textContent = 'Все статусы';
+      elements.filterStatusChips.appendChild(empty);
+    } else {
+      selectedKeys.forEach((key) => {
+        const chip = document.createElement('span');
+        chip.className = 'appdosc-filters__status-chip';
+        chip.textContent = STATUS_SUMMARY_CONFIG[key]?.display || key;
+        elements.filterStatusChips.appendChild(chip);
+      });
+    }
+  }
+
+  if (elements.filterStatusList instanceof HTMLElement) {
+    elements.filterStatusList.innerHTML = '';
+    Object.keys(STATUS_SUMMARY_CONFIG).forEach((key) => {
+      const row = document.createElement('label');
+      row.className = 'appdosc-filters__status-item';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = selectedKeys.includes(key);
+      input.dataset.filterStatusOption = key;
+      const text = document.createElement('span');
+      text.textContent = STATUS_SUMMARY_CONFIG[key]?.display || key;
+      row.appendChild(input);
+      row.appendChild(text);
+      elements.filterStatusList.appendChild(row);
+    });
+  }
+}
+
 function updateAdvancedFilterUi() {
   const filters = getAdvancedFilterState();
+  const optionSets = collectFilterSelectOptions();
+  refillSelect(
+    elements.filterCorrespondent,
+    Array.from(optionSets.correspondents).sort((a, b) => a.localeCompare(b, 'ru')),
+    'Все',
+  );
+  refillSelect(
+    elements.filterObject,
+    Array.from(optionSets.objects).sort((a, b) => a.localeCompare(b, 'ru')),
+    'Все объекты',
+  );
+  refillSelect(
+    elements.filterResponsible,
+    Array.from(optionSets.responsibles).sort((a, b) => a.localeCompare(b, 'ru')),
+    'Выберите',
+  );
+
   if (elements.filterDateFrom instanceof HTMLInputElement) {
     elements.filterDateFrom.value = filters.dateFrom || '';
   }
   if (elements.filterDateTo instanceof HTMLInputElement) {
     elements.filterDateTo.value = filters.dateTo || '';
   }
-  if (elements.filterCorrespondent instanceof HTMLInputElement) {
+  if (elements.filterCorrespondent instanceof HTMLSelectElement) {
     elements.filterCorrespondent.value = filters.correspondent || '';
   }
-  if (elements.filterObject instanceof HTMLInputElement) {
+  if (elements.filterObject instanceof HTMLSelectElement) {
     elements.filterObject.value = filters.object || '';
   }
-  if (elements.filterResponsible instanceof HTMLInputElement) {
+  if (elements.filterResponsible instanceof HTMLSelectElement) {
     elements.filterResponsible.value = filters.responsible || '';
   }
   if (elements.filterTaskNumber instanceof HTMLInputElement) {
@@ -16026,6 +16153,7 @@ function updateAdvancedFilterUi() {
   if (elements.filterOverdueOnly instanceof HTMLInputElement) {
     elements.filterOverdueOnly.checked = Boolean(filters.overdueOnly);
   }
+  updateStatusFilterUi();
 
   if (elements.filterActiveList instanceof HTMLElement) {
     elements.filterActiveList.innerHTML = '';
@@ -16078,8 +16206,16 @@ function applyAdvancedFiltersFromForm() {
   filters.correspondent = normalizeAdvancedFilterValue(elements.filterCorrespondent?.value);
   filters.object = normalizeAdvancedFilterValue(elements.filterObject?.value);
   filters.responsible = normalizeAdvancedFilterValue(elements.filterResponsible?.value);
+  filters.statusKeys = Array.from(
+    document.querySelectorAll('[data-filter-status-option]:checked'),
+  )
+    .map((item) => item.dataset.filterStatusOption || '')
+    .filter(Boolean);
   filters.taskNumber = normalizeAdvancedFilterValue(elements.filterTaskNumber?.value);
   filters.overdueOnly = Boolean(elements.filterOverdueOnly?.checked);
+  if (elements.filterStatusList instanceof HTMLElement) {
+    elements.filterStatusList.hidden = true;
+  }
   state.selectedCardAnchor = '';
   updateVisibleTasks();
   safeRender('advanced_filter_change');
@@ -16093,9 +16229,13 @@ function resetAdvancedFilters() {
     correspondent: '',
     object: '',
     responsible: '',
+    statusKeys: [],
     taskNumber: '',
     overdueOnly: false,
   };
+  if (elements.filterStatusList instanceof HTMLElement) {
+    elements.filterStatusList.hidden = true;
+  }
   state.selectedCardAnchor = '';
   updateVisibleTasks();
   safeRender('advanced_filter_reset');
@@ -16112,6 +16252,14 @@ function handleAdvancedFiltersToggle() {
   if (elements.advancedFiltersToggle instanceof HTMLElement) {
     elements.advancedFiltersToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
   }
+}
+
+function handleStatusFilterToggle() {
+  if (!(elements.filterStatusList instanceof HTMLElement)) {
+    return;
+  }
+  const expanded = elements.filterStatusList.hidden;
+  elements.filterStatusList.hidden = !expanded;
 }
 
 function handleSummaryBadgeClick(filter) {
@@ -16190,6 +16338,20 @@ function attachEvents() {
   }
   if (elements.filterReset) {
     elements.filterReset.addEventListener('click', resetAdvancedFilters);
+  }
+  if (elements.filterStatusToggle) {
+    elements.filterStatusToggle.addEventListener('click', handleStatusFilterToggle);
+  }
+  if (elements.filterStatusList) {
+    elements.filterStatusList.addEventListener('change', () => {
+      const filters = getAdvancedFilterState();
+      filters.statusKeys = Array.from(
+        document.querySelectorAll('[data-filter-status-option]:checked'),
+      )
+        .map((item) => item.dataset.filterStatusOption || '')
+        .filter(Boolean);
+      updateStatusFilterUi();
+    });
   }
   if (Array.isArray(elements.filterQuickRanges)) {
     elements.filterQuickRanges.forEach((button) => {
