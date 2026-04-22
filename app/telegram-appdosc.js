@@ -18673,6 +18673,18 @@ function setupAssignmentControls(card, task) {
     setTimeout(hideOptionsList, 120);
   });
 
+  document.addEventListener('pointerdown', (event) => {
+    if (optionsList.hidden) {
+      return;
+    }
+    const target = event && event.target ? event.target : null;
+    const interactiveArea = comboWrapper || container;
+    if (target && interactiveArea && interactiveArea.contains(target)) {
+      return;
+    }
+    hideOptionsList();
+  }, true);
+
   container.hidden = false;
 }
 
@@ -19577,6 +19589,18 @@ function setupSubordinateControls(card, task) {
   searchInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (optionsList.hidden) {
+      return;
+    }
+    const target = event && event.target ? event.target : null;
+    const interactiveArea = comboWrapper || container;
+    if (target && interactiveArea && interactiveArea.contains(target)) {
+      return;
+    }
+    hideOptionsList();
+  }, true);
 
   container.hidden = false;
 
