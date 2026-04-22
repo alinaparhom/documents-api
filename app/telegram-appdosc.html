@@ -730,6 +730,94 @@
         gap: 8px;
       }
 
+      .appdosc-filter {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      .appdosc-filter__toggle {
+        min-height: 48px;
+        border-radius: 14px;
+        border: 1px solid var(--appdosc-surface-glass-border);
+        background: var(--appdosc-surface-glass);
+        color: var(--appdosc-text-primary);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 14px;
+        font-weight: 600;
+        width: 100%;
+      }
+
+      .appdosc-filter__toggle-icon {
+        font-size: 16px;
+      }
+
+      .appdosc-filter__toggle-text {
+        flex: 1;
+        text-align: left;
+      }
+
+      .appdosc-filter__toggle-caret {
+        font-size: 12px;
+        opacity: 0.75;
+      }
+
+      .appdosc-filter__content {
+        border: 1px solid var(--appdosc-surface-glass-border);
+        background: var(--appdosc-surface-glass);
+        border-radius: 14px;
+        padding: 12px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .appdosc-filter__field {
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .appdosc-filter__field--full {
+        grid-column: 1 / -1;
+      }
+
+      .appdosc-filter__label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--appdosc-text-secondary);
+      }
+
+      .appdosc-filter__input {
+        min-height: 44px;
+        border-radius: 12px;
+        border: 1px solid var(--appdosc-surface-glass-border);
+        background: var(--appdosc-surface-glass);
+        color: var(--appdosc-text-primary);
+        font-size: 14px;
+        padding: 10px 12px;
+        width: 100%;
+      }
+
+      .appdosc-filter__reset {
+        grid-column: 1 / -1;
+        min-height: 44px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.32);
+        background: transparent;
+        color: var(--appdosc-text-secondary);
+        font-weight: 600;
+      }
+
+      @media (max-width: 540px) {
+        .appdosc-filter__content {
+          grid-template-columns: 1fr;
+        }
+      }
+
       .appdosc__task-nav-select {
         appearance: none;
         -webkit-appearance: none;
@@ -1149,6 +1237,42 @@
           </div>
         </div>
         <div class="appdosc__user-controls">
+          <div class="appdosc-filter" data-task-filter-panel>
+            <button
+              type="button"
+              class="appdosc-filter__toggle"
+              data-task-filter-toggle
+              aria-expanded="false"
+              aria-controls="appdosc-task-filter-content"
+            >
+              <span class="appdosc-filter__toggle-icon" aria-hidden="true">⚙️</span>
+              <span class="appdosc-filter__toggle-text">Фильтр задач</span>
+              <span class="appdosc-filter__toggle-caret" data-task-filter-caret aria-hidden="true">▼</span>
+            </button>
+            <div class="appdosc-filter__content" id="appdosc-task-filter-content" data-task-filter-content hidden>
+              <label class="appdosc-filter__field">
+                <span class="appdosc-filter__label">Дата с</span>
+                <input type="date" class="appdosc-filter__input" data-task-filter-date-from>
+              </label>
+              <label class="appdosc-filter__field">
+                <span class="appdosc-filter__label">Дата до</span>
+                <input type="date" class="appdosc-filter__input" data-task-filter-date-to>
+              </label>
+              <label class="appdosc-filter__field appdosc-filter__field--full">
+                <span class="appdosc-filter__label">Ответственный</span>
+                <select class="appdosc-filter__input" data-task-filter-responsible>
+                  <option value="">Все ответственные</option>
+                </select>
+              </label>
+              <label class="appdosc-filter__field appdosc-filter__field--full">
+                <span class="appdosc-filter__label">Корреспондент</span>
+                <select class="appdosc-filter__input" data-task-filter-correspondent>
+                  <option value="">Все корреспонденты</option>
+                </select>
+              </label>
+              <button type="button" class="appdosc-filter__reset" data-task-filter-reset>Сбросить фильтр</button>
+            </div>
+          </div>
           <div class="appdosc__task-nav" data-task-selector>
             <label class="appdosc__task-nav-label" for="appdosc-task-select">Перейти к задаче</label>
             <select

@@ -1999,6 +1999,13 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
+  taskListFilter: {
+    expanded: false,
+    dateFrom: '',
+    dateTo: '',
+    responsible: '',
+    correspondent: '',
+  },
   access: {
     responsibles: {},
     subordinates: {},
@@ -2789,6 +2796,15 @@ function initElements() {
   elements.versionPanel = document.querySelector('[data-version-panel]');
   elements.versionValue = document.querySelector('[data-version-value]');
   elements.versionUpdated = document.querySelector('[data-version-updated]');
+  elements.taskFilterPanel = document.querySelector('[data-task-filter-panel]');
+  elements.taskFilterToggle = document.querySelector('[data-task-filter-toggle]');
+  elements.taskFilterCaret = document.querySelector('[data-task-filter-caret]');
+  elements.taskFilterContent = document.querySelector('[data-task-filter-content]');
+  elements.taskFilterDateFrom = document.querySelector('[data-task-filter-date-from]');
+  elements.taskFilterDateTo = document.querySelector('[data-task-filter-date-to]');
+  elements.taskFilterResponsible = document.querySelector('[data-task-filter-responsible]');
+  elements.taskFilterCorrespondent = document.querySelector('[data-task-filter-correspondent]');
+  elements.taskFilterReset = document.querySelector('[data-task-filter-reset]');
   elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
   elements.taskSelector = document.querySelector('[data-task-select]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
@@ -3515,6 +3531,7 @@ function updateStateFromPayload(payload) {
   state.tasks = sanitizedTasks;
   const activePreviewKeys = applyTaskAttachmentPreviewCache(state.tasks, previousPreviewEntries);
   cleanupTaskAttachmentPreviewCache(activePreviewKeys);
+  updateAdvancedFilterSelectOptions();
   updateVisibleTasks();
   if (state.entryTaskId) {
     const matchCount = Array.isArray(state.visibleTasks) ? state.visibleTasks.length : 0;
@@ -4674,6 +4691,188 @@ function isTaskExcludedByEntryStatus(task, directorState) {
   return isOverdue(task);
 }
 
+function normalizeTaskListFilterState() {
+  if (!state.taskListFilter || typeof state.taskListFilter !== 'object') {
+    state.taskListFilter = {
+      expanded: false,
+      dateFrom: '',
+      dateTo: '',
+      responsible: '',
+      correspondent: '',
+    };
+  }
+  state.taskListFilter.expanded = state.taskListFilter.expanded === true;
+  state.taskListFilter.dateFrom = normalizeValue(state.taskListFilter.dateFrom);
+  state.taskListFilter.dateTo = normalizeValue(state.taskListFilter.dateTo);
+  state.taskListFilter.responsible = normalizeValue(state.taskListFilter.responsible);
+  state.taskListFilter.correspondent = normalizeValue(state.taskListFilter.correspondent);
+  return state.taskListFilter;
+}
+
+function resolveTaskResponsibleLabel(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+  const responsibleProfiles = getTaskResponsibleProfiles(task);
+  if (responsibleProfiles.length) {
+    const names = responsibleProfiles
+      .map((profile) => normalizeValue(profile.sourceLabel) || normalizeValue(profile.label))
+      .filter(Boolean);
+    if (names.length) {
+      return names.join(', ');
+    }
+  }
+  return normalizeValue(task.responsible);
+}
+
+function resolveTaskCorrespondentLabel(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+  return normalizeValue(task.correspondent);
+}
+
+function resolveTaskDateForRangeFilter(task) {
+  if (!task || typeof task !== 'object') {
+    return null;
+  }
+  const candidates = [task.dueDate, task.date, task.createdAt, task.updatedAt];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const parsed = parseDate(candidates[index]);
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function applyTaskListAdvancedFilters(items) {
+  const source = Array.isArray(items) ? items : [];
+  const advanced = normalizeTaskListFilterState();
+  const fromDate = advanced.dateFrom ? parseDate(advanced.dateFrom) : null;
+  const toDateRaw = advanced.dateTo ? parseDate(advanced.dateTo) : null;
+  const toDate = toDateRaw ? new Date(toDateRaw.getFullYear(), toDateRaw.getMonth(), toDateRaw.getDate(), 23, 59, 59, 999) : null;
+  const responsibleFilter = normalizeName(advanced.responsible);
+  const correspondentFilter = normalizeName(advanced.correspondent);
+
+  if (!fromDate && !toDate && !responsibleFilter && !correspondentFilter) {
+    return source;
+  }
+
+  return source.filter((item) => {
+    const task = item && item.task ? item.task : null;
+    if (!task || typeof task !== 'object') {
+      return false;
+    }
+
+    if (responsibleFilter) {
+      const responsible = normalizeName(resolveTaskResponsibleLabel(task));
+      if (!responsible || responsible !== responsibleFilter) {
+        return false;
+      }
+    }
+
+    if (correspondentFilter) {
+      const correspondent = normalizeName(resolveTaskCorrespondentLabel(task));
+      if (!correspondent || correspondent !== correspondentFilter) {
+        return false;
+      }
+    }
+
+    if (fromDate || toDate) {
+      const taskDate = resolveTaskDateForRangeFilter(task);
+      if (!taskDate) {
+        return false;
+      }
+      if (fromDate && taskDate < fromDate) {
+        return false;
+      }
+      if (toDate && taskDate > toDate) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+function refreshTaskFilterPanelState() {
+  const advanced = normalizeTaskListFilterState();
+  if (elements.taskFilterToggle instanceof HTMLElement) {
+    elements.taskFilterToggle.setAttribute('aria-expanded', advanced.expanded ? 'true' : 'false');
+  }
+  if (elements.taskFilterCaret instanceof HTMLElement) {
+    elements.taskFilterCaret.textContent = advanced.expanded ? '▲' : '▼';
+  }
+  if (elements.taskFilterContent instanceof HTMLElement) {
+    elements.taskFilterContent.hidden = !advanced.expanded;
+  }
+  if (elements.taskFilterDateFrom instanceof HTMLInputElement) {
+    elements.taskFilterDateFrom.value = advanced.dateFrom || '';
+  }
+  if (elements.taskFilterDateTo instanceof HTMLInputElement) {
+    elements.taskFilterDateTo.value = advanced.dateTo || '';
+  }
+  if (elements.taskFilterResponsible instanceof HTMLSelectElement) {
+    elements.taskFilterResponsible.value = advanced.responsible || '';
+  }
+  if (elements.taskFilterCorrespondent instanceof HTMLSelectElement) {
+    elements.taskFilterCorrespondent.value = advanced.correspondent || '';
+  }
+}
+
+function replaceSelectOptions(select, values, emptyLabel) {
+  if (!(select instanceof HTMLSelectElement)) {
+    return;
+  }
+  const currentValue = normalizeValue(select.value);
+  select.innerHTML = '';
+  const emptyOption = document.createElement('option');
+  emptyOption.value = '';
+  emptyOption.textContent = emptyLabel;
+  select.appendChild(emptyOption);
+  values.forEach((value) => {
+    const normalized = normalizeValue(value);
+    if (!normalized) {
+      return;
+    }
+    const option = document.createElement('option');
+    option.value = normalized;
+    option.textContent = normalized;
+    select.appendChild(option);
+  });
+  select.value = values.includes(currentValue) ? currentValue : '';
+}
+
+function updateAdvancedFilterSelectOptions() {
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  const responsibleSet = new Set();
+  const correspondentSet = new Set();
+  tasks.forEach((task) => {
+    const responsible = resolveTaskResponsibleLabel(task);
+    const correspondent = resolveTaskCorrespondentLabel(task);
+    if (responsible) {
+      responsibleSet.add(responsible);
+    }
+    if (correspondent) {
+      correspondentSet.add(correspondent);
+    }
+  });
+  const responsibles = Array.from(responsibleSet).sort((a, b) => a.localeCompare(b, 'ru', { sensitivity: 'base' }));
+  const correspondents = Array.from(correspondentSet).sort((a, b) => a.localeCompare(b, 'ru', { sensitivity: 'base' }));
+  replaceSelectOptions(elements.taskFilterResponsible, responsibles, 'Все ответственные');
+  replaceSelectOptions(elements.taskFilterCorrespondent, correspondents, 'Все корреспонденты');
+
+  const advanced = normalizeTaskListFilterState();
+  if (advanced.responsible && !responsibles.includes(advanced.responsible)) {
+    advanced.responsible = '';
+  }
+  if (advanced.correspondent && !correspondents.includes(advanced.correspondent)) {
+    advanced.correspondent = '';
+  }
+  refreshTaskFilterPanelState();
+}
+
 function updateVisibleTasks() {
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
@@ -4730,7 +4929,7 @@ function updateVisibleTasks() {
     }
   }
 
-  state.visibleTasks = visible;
+  state.visibleTasks = applyTaskListAdvancedFilters(visible);
 }
 
 function truncateText(value, limit = 140) {
@@ -6868,30 +7067,25 @@ function buildTasksSignature(visibleTasks, filters = []) {
   if (normalizedFilters.length) {
     parts.push(`filters:${normalizedFilters.join(',')}`);
   }
+  const advanced = normalizeTaskListFilterState();
+  const advancedSignature = [
+    advanced.dateFrom || '',
+    advanced.dateTo || '',
+    advanced.responsible || '',
+    advanced.correspondent || '',
+  ].join('|');
+  if (advancedSignature.replace(/\|/g, '').length > 0) {
+    parts.push(`advanced:${advancedSignature}`);
+  }
   return parts.join('|');
 }
 
 function resolveTaskResponsibleOrCorrespondent(task) {
-  if (!task || typeof task !== 'object') {
-    return 'Без ответственного';
+  const responsible = resolveTaskResponsibleLabel(task);
+  if (responsible) {
+    return responsible;
   }
-
-  const responsibleProfiles = getTaskResponsibleProfiles(task);
-  if (responsibleProfiles.length) {
-    const names = responsibleProfiles
-      .map((profile) => normalizeValue(profile.sourceLabel) || normalizeValue(profile.label))
-      .filter(Boolean);
-    if (names.length) {
-      return names.join(', ');
-    }
-  }
-
-  const fallbackResponsible = normalizeValue(task.responsible);
-  if (fallbackResponsible) {
-    return fallbackResponsible;
-  }
-
-  const correspondent = normalizeValue(task.correspondent);
+  const correspondent = resolveTaskCorrespondentLabel(task);
   if (correspondent) {
     return `Корреспондент: ${correspondent}`;
   }
@@ -15928,6 +16122,51 @@ function handleSummaryBadgeClick(filter) {
   safeRender(reason);
 }
 
+function applyAdvancedTaskFilterAndRender(reason = 'advanced_task_filter_change') {
+  state.selectedCardAnchor = '';
+  updateVisibleTasks();
+  safeRender(reason);
+}
+
+function handleTaskFilterToggleClick() {
+  const advanced = normalizeTaskListFilterState();
+  advanced.expanded = !advanced.expanded;
+  refreshTaskFilterPanelState();
+}
+
+function handleAdvancedTaskFilterInputChange() {
+  const advanced = normalizeTaskListFilterState();
+  if (elements.taskFilterDateFrom instanceof HTMLInputElement) {
+    advanced.dateFrom = normalizeValue(elements.taskFilterDateFrom.value);
+  }
+  if (elements.taskFilterDateTo instanceof HTMLInputElement) {
+    advanced.dateTo = normalizeValue(elements.taskFilterDateTo.value);
+  }
+  if (elements.taskFilterResponsible instanceof HTMLSelectElement) {
+    advanced.responsible = normalizeValue(elements.taskFilterResponsible.value);
+  }
+  if (elements.taskFilterCorrespondent instanceof HTMLSelectElement) {
+    advanced.correspondent = normalizeValue(elements.taskFilterCorrespondent.value);
+  }
+  if (state.entryTaskId) {
+    state.entryTaskId = '';
+  }
+  applyAdvancedTaskFilterAndRender();
+}
+
+function handleAdvancedTaskFilterReset() {
+  const advanced = normalizeTaskListFilterState();
+  advanced.dateFrom = '';
+  advanced.dateTo = '';
+  advanced.responsible = '';
+  advanced.correspondent = '';
+  if (state.entryTaskId) {
+    state.entryTaskId = '';
+  }
+  refreshTaskFilterPanelState();
+  applyAdvancedTaskFilterAndRender('advanced_task_filter_reset');
+}
+
 function attachEvents() {
   if (elements.refreshButton) {
     elements.refreshButton.addEventListener('click', () => loadTasks(true));
@@ -15954,6 +16193,24 @@ function attachEvents() {
   }
   if (elements.overdue) {
     elements.overdue.addEventListener('click', () => handleSummaryBadgeClick('overdue'));
+  }
+  if (elements.taskFilterToggle) {
+    elements.taskFilterToggle.addEventListener('click', handleTaskFilterToggleClick);
+  }
+  if (elements.taskFilterDateFrom) {
+    elements.taskFilterDateFrom.addEventListener('change', handleAdvancedTaskFilterInputChange);
+  }
+  if (elements.taskFilterDateTo) {
+    elements.taskFilterDateTo.addEventListener('change', handleAdvancedTaskFilterInputChange);
+  }
+  if (elements.taskFilterResponsible) {
+    elements.taskFilterResponsible.addEventListener('change', handleAdvancedTaskFilterInputChange);
+  }
+  if (elements.taskFilterCorrespondent) {
+    elements.taskFilterCorrespondent.addEventListener('change', handleAdvancedTaskFilterInputChange);
+  }
+  if (elements.taskFilterReset) {
+    elements.taskFilterReset.addEventListener('click', handleAdvancedTaskFilterReset);
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
@@ -16197,6 +16454,9 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
+  normalizeTaskListFilterState();
+  refreshTaskFilterPanelState();
+  updateAdvancedFilterSelectOptions();
   initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
