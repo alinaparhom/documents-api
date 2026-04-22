@@ -8352,18 +8352,31 @@ function entryMatchesUser(entry, ids, names) {
   return false;
 }
 
+function userRoleSuggestsDirector() {
+  const role = normalizeName(state && state.telegram ? state.telegram.role : '');
+  if (!role) {
+    return false;
+  }
+
+  return role.includes('директор') || role.includes('director');
+}
+
 function userIsDirectorForOrganization(organization) {
   const directors = getDirectorsForOrganization(organization);
   if (!directors.length) {
-    return false;
+    return userRoleSuggestsDirector();
   }
 
   const { ids, names } = getUserIdentifierCandidates();
   if (!ids.length && !names.length) {
-    return false;
+    return userRoleSuggestsDirector();
   }
 
-  return directors.some((entry) => entryMatchesUser(entry, ids, names));
+  if (directors.some((entry) => entryMatchesUser(entry, ids, names))) {
+    return true;
+  }
+
+  return userRoleSuggestsDirector();
 }
 
 function userHasDirectorAccess() {
@@ -8373,18 +8386,22 @@ function userHasDirectorAccess() {
   }
 
   if (!state.access || typeof state.access.directors !== 'object') {
-    return false;
+    return userRoleSuggestsDirector();
   }
 
   const { ids, names } = getUserIdentifierCandidates();
   if (!ids.length && !names.length) {
-    return false;
+    return userRoleSuggestsDirector();
   }
 
-  return Object.keys(state.access.directors).some((key) => {
+  if (Object.keys(state.access.directors).some((key) => {
     const entries = Array.isArray(state.access.directors[key]) ? state.access.directors[key] : [];
     return entries.some((entry) => entryMatchesUser(entry, ids, names));
-  });
+  })) {
+    return true;
+  }
+
+  return userRoleSuggestsDirector();
 }
 
 function userHasSubordinateAccess() {
