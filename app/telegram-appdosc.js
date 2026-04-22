@@ -2959,10 +2959,10 @@ function initElements() {
   elements.advancedFiltersToggle = document.querySelector('[data-advanced-filters-toggle]');
   elements.advancedFiltersBody = document.querySelector('[data-advanced-filters-body]');
   if (elements.advancedFilters instanceof HTMLElement && elements.advancedFiltersBody instanceof HTMLElement) {
-    const collapsedByMarkup = elements.advancedFilters.classList.contains('appdosc-filters--collapsed');
-    elements.advancedFiltersBody.hidden = collapsedByMarkup;
+    elements.advancedFilters.classList.add('appdosc-filters--collapsed');
+    elements.advancedFiltersBody.hidden = true;
     if (elements.advancedFiltersToggle instanceof HTMLElement) {
-      elements.advancedFiltersToggle.setAttribute('aria-expanded', collapsedByMarkup ? 'false' : 'true');
+      elements.advancedFiltersToggle.setAttribute('aria-expanded', 'false');
     }
   }
   elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
