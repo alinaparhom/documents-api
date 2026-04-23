@@ -4194,12 +4194,6 @@ function createCard(task, index, anchorRegistry) {
     }
   }
 
-  setCardField(card, '[data-field="document"]', formatDocumentCell(task), {
-    fallback: 'Документ',
-  });
-  setCardField(card, '[data-field="organization"]', task.organization, {
-    fallback: 'Организация не указана',
-  });
   const registrationDate = formatDate(task.registrationDate);
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);

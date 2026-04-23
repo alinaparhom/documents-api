@@ -681,7 +681,10 @@
       }
 
       .appdosc-card__header {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) auto !important;
         gap: 8px !important;
+        align-items: center;
       }
 
       .appdosc-card__meta {
@@ -721,6 +724,20 @@
         grid-column: 1 / 4 !important;
         grid-row: 2 !important;
         margin-top: 0;
+      }
+
+      .appdosc-card__compact-actions {
+        grid-column: 1 / -1 !important;
+        width: 100%;
+      }
+
+      .appdosc-card__compact-actions .appdosc-card__action,
+      .appdosc-card__compact-actions .appdosc-card__action--compact {
+        width: 100%;
+        min-height: 40px !important;
+        border-radius: 12px !important;
+        font-size: 14px !important;
+        justify-content: center;
       }
 
       .appdosc-card__footer {
@@ -993,11 +1010,10 @@
               <option value="" selected disabled>Выберите задачу из списка</option>
             </select>
           </div>
+          <section class="appdosc__status" aria-live="polite">
+            <div class="appdosc__status-message" data-status hidden></div>
+          </section>
         </div>
-      </section>
-
-      <section class="appdosc__status" aria-live="polite">
-        <div class="appdosc__status-message" data-status hidden></div>
       </section>
 
       <main class="appdosc__content">
