@@ -2640,6 +2640,7 @@ const FALLBACK_CARD_TEMPLATE = `
         <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
       </div>
       <div class="appdosc-card__title task-name" data-field="document">Документ</div>
+      <div class="task-inline-status" data-field="statusInline"></div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
     <div class="appdosc-card__side">
@@ -4312,6 +4313,7 @@ function createCard(task, index, anchorRegistry) {
   });
 
   applyStatusBadge(card, statusText, normalizedStatus, task);
+  applyInlineStatus(card, statusText, normalizedStatus, task);
   populateCardFiles(card, task.files);
 
   const organization = getTaskOrganization(task);
@@ -7008,6 +7010,41 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     statusElement.classList.add('appdosc-card__status--accent');
     statusElement.classList.add('task-status--active');
   }
+}
+
+function applyInlineStatus(card, statusText, normalizedStatus, task) {
+  const inlineElement = card.querySelector('[data-field="statusInline"]');
+  if (!inlineElement) {
+    return;
+  }
+  if (!normalizeValue(statusText)) {
+    inlineElement.hidden = true;
+    inlineElement.textContent = '';
+    return;
+  }
+
+  inlineElement.hidden = false;
+  inlineElement.textContent = statusText;
+  inlineElement.classList.remove(
+    'task-inline-status--work',
+    'task-inline-status--review',
+    'task-inline-status--done',
+    'task-inline-status--distributed'
+  );
+
+  if (isTaskCompleted(task)) {
+    inlineElement.classList.add('task-inline-status--done');
+    return;
+  }
+  if (normalizedStatus.includes('проверк')) {
+    inlineElement.classList.add('task-inline-status--review');
+    return;
+  }
+  if (normalizedStatus.includes('распредел')) {
+    inlineElement.classList.add('task-inline-status--distributed');
+    return;
+  }
+  inlineElement.classList.add('task-inline-status--work');
 }
 
 function getFileExtension(value) {
