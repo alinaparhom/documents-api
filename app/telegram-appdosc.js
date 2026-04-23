@@ -2644,7 +2644,10 @@ const FALLBACK_CARD_TEMPLATE = `
     </div>
     <div class="appdosc-card__side">
       <span class="appdosc-card__status task-status" data-field="status"></span>
-      <span class="appdosc-card__chevron task-chevron" aria-hidden="true"></span>
+      <span class="task-arrows">
+        <span class="chevron appdosc-card__chevron task-chevron" aria-hidden="true"></span>
+        <span class="chevron" aria-hidden="true"></span>
+      </span>
     </div>
     <div class="appdosc-card__summary" data-field="summary">
       <div class="appdosc-card__block-text" data-field="contentCompact"></div>
