@@ -1998,6 +1998,13 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
+  compactFilters: {
+    expanded: false,
+    dateFrom: '',
+    dateTo: '',
+    groupType: '',
+    groupValue: '',
+  },
   access: {
     responsibles: {},
     subordinates: {},
@@ -2754,6 +2761,12 @@ function initElements() {
     }
   });
   elements.overdue = document.querySelector('[data-overdue]');
+  elements.taskFilterToggle = document.querySelector('[data-task-filter-toggle]');
+  elements.taskFilterPanel = document.querySelector('[data-task-filter-panel]');
+  elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
+  elements.filterDateTo = document.querySelector('[data-filter-date-to]');
+  elements.filterGroupType = document.querySelector('[data-filter-group-type]');
+  elements.filterGroupValue = document.querySelector('[data-filter-group-value]');
   elements.status = document.querySelector('[data-status]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
@@ -3673,6 +3686,7 @@ function render() {
   updateStats();
   updateDirectorSummary();
   updateSummaryFilterState();
+  syncCompactFilterPanelState();
   renderCards();
   updateFooter();
 }
@@ -3681,6 +3695,7 @@ function renderEmpty() {
   updateUserPanel();
   updateStats();
   updateDirectorSummary();
+  syncCompactFilterPanelState();
   clearCards();
   updateFooter();
   logIosStage('render_empty', {
@@ -3917,6 +3932,162 @@ function updateSummaryFilterState() {
     element.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     setClass(element, 'appdosc__badge--selected', isSelected);
   });
+}
+
+function setTaskFilterPanelExpanded(expanded) {
+  const isExpanded = Boolean(expanded);
+  state.compactFilters.expanded = isExpanded;
+  if (elements.taskFilterPanel instanceof HTMLElement) {
+    elements.taskFilterPanel.hidden = !isExpanded;
+  }
+  if (elements.taskFilterToggle instanceof HTMLElement) {
+    elements.taskFilterToggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+  }
+}
+
+function getTaskDateForCompactFilter(task) {
+  if (!task || typeof task !== 'object') {
+    return null;
+  }
+  const candidates = [task.dueDate, task.registrationDate, task.createdAt, task.date];
+  for (const value of candidates) {
+    const parsed = parseDate(value);
+    if (parsed) {
+      parsed.setHours(0, 0, 0, 0);
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function readCompactFilterNames(task, groupType) {
+  if (!task || typeof task !== 'object' || !groupType) {
+    return [];
+  }
+  if (groupType === 'correspondent') {
+    const base = normalizeValue(
+      typeof task.correspondent === 'object'
+        ? (task.correspondent.name || task.correspondent.responsible || task.correspondent.fio)
+        : task.correspondent,
+    );
+    return base ? [base] : [];
+  }
+
+  const bucket = [];
+  const push = (value) => {
+    const normalized = normalizeValue(value);
+    if (normalized && !bucket.includes(normalized)) {
+      bucket.push(normalized);
+    }
+  };
+  const handleEntry = (entry) => {
+    if (!entry) {
+      return;
+    }
+    if (typeof entry === 'string') {
+      push(entry);
+      return;
+    }
+    if (typeof entry === 'object') {
+      push(entry.responsible || entry.name || entry.fio || entry.label || entry.displayName);
+    }
+  };
+
+  if (groupType === 'responsible') {
+    handleEntry(task.responsible);
+    if (Array.isArray(task.responsibles)) {
+      task.responsibles.forEach(handleEntry);
+    }
+  }
+  if (groupType === 'subordinate') {
+    handleEntry(task.subordinate);
+    if (Array.isArray(task.subordinates)) {
+      task.subordinates.forEach(handleEntry);
+    }
+  }
+  return bucket;
+}
+
+function syncCompactFilterGroupOptions() {
+  if (!(elements.filterGroupValue instanceof HTMLSelectElement)) {
+    return;
+  }
+  const type = normalizeValue(state.compactFilters.groupType);
+  const select = elements.filterGroupValue;
+  select.innerHTML = '';
+  if (!type) {
+    select.disabled = true;
+    select.appendChild(new Option('Сначала выберите группировку', ''));
+    state.compactFilters.groupValue = '';
+    return;
+  }
+
+  const values = new Set();
+  state.tasks.forEach((task) => {
+    readCompactFilterNames(task, type).forEach((name) => values.add(name));
+  });
+  const options = Array.from(values).sort((a, b) => a.localeCompare(b, 'ru'));
+  select.disabled = options.length === 0;
+  select.appendChild(new Option(options.length ? 'Все' : 'Нет данных', ''));
+  options.forEach((value) => select.appendChild(new Option(value, value)));
+  if (!options.includes(state.compactFilters.groupValue)) {
+    state.compactFilters.groupValue = '';
+  }
+  select.value = state.compactFilters.groupValue;
+}
+
+function applyCompactFilters(visibleItems) {
+  const source = Array.isArray(visibleItems) ? visibleItems : [];
+  if (!source.length) {
+    return [];
+  }
+  const dateFrom = normalizeDateInputValue(state.compactFilters.dateFrom);
+  const dateTo = normalizeDateInputValue(state.compactFilters.dateTo);
+  const groupType = normalizeValue(state.compactFilters.groupType);
+  const groupValue = normalizeValue(state.compactFilters.groupValue);
+  const parsedFrom = dateFrom ? parseDate(dateFrom) : null;
+  const parsedTo = dateTo ? parseDate(dateTo) : null;
+  if (parsedFrom) {
+    parsedFrom.setHours(0, 0, 0, 0);
+  }
+  if (parsedTo) {
+    parsedTo.setHours(23, 59, 59, 999);
+  }
+  return source.filter((item) => {
+    const task = item && item.task ? item.task : null;
+    if (parsedFrom || parsedTo) {
+      const taskDate = getTaskDateForCompactFilter(task);
+      if (!taskDate) {
+        return false;
+      }
+      const stamp = taskDate.getTime();
+      if (parsedFrom && stamp < parsedFrom.getTime()) {
+        return false;
+      }
+      if (parsedTo && stamp > parsedTo.getTime()) {
+        return false;
+      }
+    }
+    if (groupType && groupValue) {
+      const names = readCompactFilterNames(task, groupType);
+      return names.includes(groupValue);
+    }
+    return true;
+  });
+}
+
+function syncCompactFilterPanelState() {
+  setTaskFilterPanelExpanded(state.compactFilters.expanded);
+  if (elements.filterDateFrom instanceof HTMLInputElement) {
+    elements.filterDateFrom.value = normalizeDateInputValue(state.compactFilters.dateFrom);
+  }
+  if (elements.filterDateTo instanceof HTMLInputElement) {
+    elements.filterDateTo.value = normalizeDateInputValue(state.compactFilters.dateTo);
+  }
+  if (elements.filterGroupType instanceof HTMLSelectElement) {
+    elements.filterGroupType.value = normalizeValue(state.compactFilters.groupType);
+  }
+  syncCompactFilterGroupOptions();
 }
 
 function ensureExpandedCardSet() {
@@ -4651,7 +4822,8 @@ function updateVisibleTasks() {
   const entryTaskId = normalizeValue(state.entryTaskId);
 
   if (entryTaskId) {
-    state.visibleTasks = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    const matched = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    state.visibleTasks = applyCompactFilters(matched);
     return;
   }
 
@@ -4700,7 +4872,7 @@ function updateVisibleTasks() {
     }
   }
 
-  state.visibleTasks = visible;
+  state.visibleTasks = applyCompactFilters(visible);
 }
 
 function truncateText(value, limit = 140) {
@@ -15891,6 +16063,41 @@ function attachEvents() {
   }
   if (elements.overdue) {
     elements.overdue.addEventListener('click', () => handleSummaryBadgeClick('overdue'));
+  }
+  if (elements.taskFilterToggle) {
+    elements.taskFilterToggle.addEventListener('click', () => {
+      setTaskFilterPanelExpanded(!state.compactFilters.expanded);
+    });
+  }
+  if (elements.filterDateFrom) {
+    elements.filterDateFrom.addEventListener('change', (event) => {
+      state.compactFilters.dateFrom = normalizeDateInputValue(event.target.value);
+      updateVisibleTasks();
+      safeRender('compact_filter_date_from');
+    });
+  }
+  if (elements.filterDateTo) {
+    elements.filterDateTo.addEventListener('change', (event) => {
+      state.compactFilters.dateTo = normalizeDateInputValue(event.target.value);
+      updateVisibleTasks();
+      safeRender('compact_filter_date_to');
+    });
+  }
+  if (elements.filterGroupType) {
+    elements.filterGroupType.addEventListener('change', (event) => {
+      state.compactFilters.groupType = normalizeValue(event.target.value);
+      state.compactFilters.groupValue = '';
+      syncCompactFilterGroupOptions();
+      updateVisibleTasks();
+      safeRender('compact_filter_group_type');
+    });
+  }
+  if (elements.filterGroupValue) {
+    elements.filterGroupValue.addEventListener('change', (event) => {
+      state.compactFilters.groupValue = normalizeValue(event.target.value);
+      updateVisibleTasks();
+      safeRender('compact_filter_group_value');
+    });
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);

@@ -1179,6 +1179,65 @@
 
       }
 
+      .appdosc__filter-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 34px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.34);
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        color: var(--appdosc-text-primary);
+        padding: 0 10px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .appdosc__filter-toggle-icon {
+        width: 18px;
+        height: 18px;
+        display: inline-flex;
+      }
+
+      .appdosc__filter-toggle-icon svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .appdosc__task-filter-panel {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        padding: 10px;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        background: rgba(255, 255, 255, 0.62);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+
+      .appdosc__task-filter-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc__task-filter-field input,
+      .appdosc__task-filter-field select {
+        height: 34px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--appdosc-text-primary);
+        padding: 0 10px;
+        font-size: 13px;
+      }
+
       @media (max-width: 520px) {
         .appdosc-viewer__controls {
           gap: 6px;
@@ -1207,6 +1266,15 @@
 
         .tasks-header-top {
           flex-wrap: wrap;
+        }
+
+        .appdosc__task-filter-panel {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .appdosc__filter-toggle {
+          height: 32px;
+          padding-inline: 9px;
         }
 
         .tasks-refresh {
@@ -1435,6 +1503,21 @@
         <div class="appdosc__table-card tasks-panel">
           <div class="appdosc__table-head tasks-header">
             <div class="tasks-header-top">
+              <button
+                class="appdosc__filter-toggle"
+                type="button"
+                data-task-filter-toggle
+                aria-expanded="false"
+                aria-controls="appdosc-task-filter-panel"
+                title="Открыть фильтры"
+              >
+                <span class="appdosc__filter-toggle-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M4 7h16M7 12h10M10 17h4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <span class="appdosc__filter-toggle-text">Фильтр</span>
+              </button>
               <div class="appdosc__table-title tasks-title">Список задач</div>
               <button class="appdosc__refresh tasks-refresh" type="button" data-refresh>
                 <span class="appdosc__refresh-icon" aria-hidden="true">
@@ -1451,6 +1534,31 @@
                 </span>
                 <span class="appdosc__refresh-text">Обновить</span>
               </button>
+            </div>
+            <div class="appdosc__task-filter-panel" id="appdosc-task-filter-panel" data-task-filter-panel hidden>
+              <label class="appdosc__task-filter-field">
+                <span>Дата от</span>
+                <input type="date" data-filter-date-from />
+              </label>
+              <label class="appdosc__task-filter-field">
+                <span>Дата до</span>
+                <input type="date" data-filter-date-to />
+              </label>
+              <label class="appdosc__task-filter-field">
+                <span>Группировка</span>
+                <select data-filter-group-type>
+                  <option value="">Без группировки</option>
+                  <option value="correspondent">Корреспондент</option>
+                  <option value="responsible">Ответственный</option>
+                  <option value="subordinate">Подчинённый</option>
+                </select>
+              </label>
+              <label class="appdosc__task-filter-field">
+                <span>Значение</span>
+                <select data-filter-group-value disabled>
+                  <option value="">Сначала выберите группировку</option>
+                </select>
+              </label>
             </div>
             <div class="appdosc__table-meta tasks-updated" data-updated>Обновление не выполнялось</div>
           </div>
