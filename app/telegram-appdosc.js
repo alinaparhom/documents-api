@@ -2627,19 +2627,13 @@ const CARD_HIGHLIGHT_TIMEOUT = 1800;
 
 const FALLBACK_CARD_TEMPLATE = `
   <header class="appdosc-card__header" data-card-toggle>
+    <span class="appdosc-card__badge" data-field="entryNumber"></span>
     <div class="appdosc-card__header-text">
       <div class="appdosc-card__title" data-field="document">Документ</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
     <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
     <span class="appdosc-card__status" data-field="status"></span>
-    <div class="appdosc-card__side">
-      <span class="appdosc-card__badge" data-field="entryNumber"></span>
-      <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
-    </div>
-    <div class="appdosc-card__summary" data-field="summary">
-      <div class="appdosc-card__block-text" data-field="contentCompact"></div>
-    </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
   <dl class="appdosc-card__details">
@@ -2672,6 +2666,9 @@ const FALLBACK_CARD_TEMPLATE = `
       <dd data-field="responseSummary"></dd>
     </div>
   </dl>
+  <div class="appdosc-card__summary" data-field="summary">
+    <div class="appdosc-card__block-text" data-field="contentCompact"></div>
+  </div>
   <div class="appdosc-card__resolution" data-field="resolution">
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
@@ -2682,11 +2679,7 @@ const FALLBACK_CARD_TEMPLATE = `
   </div>
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
-    <div class="appdosc-card__deadline appdosc-card__deadline--compact">
-      <span class="appdosc-card__deadline-label">От:</span>
-      <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
-    </div>
-    <div class="appdosc-card__deadline appdosc-card__deadline--full">
+    <div class="appdosc-card__deadline">
       <span class="appdosc-card__deadline-label">Срок</span>
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
@@ -2746,6 +2739,7 @@ function initElements() {
   });
   elements.overdue = document.querySelector('[data-overdue]');
   elements.status = document.querySelector('[data-status]');
+  elements.taskFound = document.querySelector('[data-task-found]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
   elements.placeholder = document.querySelector('[data-placeholder]');
@@ -3397,7 +3391,7 @@ async function loadTasks(force = false) {
       const message = state.error || 'Отрисовка карточек завершилась ошибкой';
       throw new Error(message);
     }
-    setStatus('info', `Найдено задач: ${state.stats.total}`);
+    updateTaskFoundInline();
     logClientEvent('tasks_loaded', {
       total: state.stats.total,
       active: state.stats.active,
@@ -3847,6 +3841,8 @@ function updateStats() {
       : 'Обновление не выполнялось';
   }
 
+  updateTaskFoundInline(Number(displayStats.total) || 0);
+
   if (directorActive) {
     logDirectorDebug('stats_update', {
       filter: filterLabel,
@@ -3856,6 +3852,14 @@ function updateStats() {
       selectedResponsible: directorState.selectedResponsibleToken || null,
     });
   }
+}
+
+function updateTaskFoundInline(total = null) {
+  if (!(elements.taskFound instanceof HTMLElement)) {
+    return;
+  }
+  const count = Number.isFinite(total) ? total : (Number(state.stats?.total) || 0);
+  elements.taskFound.textContent = `Найдено задач: ${count}`;
 }
 
 function setStatusBadgeText(badge, text) {

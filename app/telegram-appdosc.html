@@ -685,8 +685,8 @@
       }
 
       .appdosc-card__meta {
-        grid-column: 1 !important;
-        grid-row: 1 !important;
+        grid-column: 1 / -1 !important;
+        grid-row: auto !important;
         display: inline-flex;
         align-items: center;
         gap: 4px;
@@ -694,15 +694,6 @@
         opacity: 0.86;
         line-height: 1.1;
         padding: 2px 0;
-      }
-
-      .appdosc-card__side {
-        grid-column: 3 !important;
-        grid-row: 1 !important;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        justify-self: end;
       }
 
       .appdosc-card__badge {
@@ -714,19 +705,21 @@
       }
 
       .appdosc-card__header-text {
-        display: none !important;
+        display: block !important;
       }
 
-      .appdosc-card__summary {
-        grid-column: 1 / 4 !important;
-        grid-row: 2 !important;
-        margin-top: 0;
+      .appdosc__task-nav-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
       }
 
-      .appdosc__task-nav .appdosc__status-message {
-        font-size: 13px !important;
-        padding: 8px 10px !important;
-        border-radius: 10px !important;
+      .appdosc__task-found-inline {
+        font-size: 12px;
+        color: var(--appdosc-text-muted);
+        opacity: 0.9;
       }
 
       .appdosc-card__footer {
@@ -762,7 +755,7 @@
 
       .appdosc__task-nav {
         display: grid;
-        gap: 8px;
+        gap: 6px;
       }
 
       .appdosc__task-nav-select {
@@ -796,6 +789,11 @@
 
         .appdosc__task-nav-label {
           font-size: 14px !important;
+        }
+
+        .appdosc__task-found-inline {
+          width: 100%;
+          font-size: 11px;
         }
       }
 
@@ -988,10 +986,10 @@
         </div>
         <div class="appdosc__user-controls">
           <div class="appdosc__task-nav" data-task-selector>
-            <label class="appdosc__task-nav-label" for="appdosc-task-select">Перейти к задаче</label>
-            <section class="appdosc__status" aria-live="polite">
-              <div class="appdosc__status-message" data-status hidden></div>
-            </section>
+            <div class="appdosc__task-nav-head">
+              <label class="appdosc__task-nav-label" for="appdosc-task-select">Перейти к задаче</label>
+              <span class="appdosc__task-found-inline" data-task-found>Найдено задач: 0</span>
+            </div>
             <select
               class="appdosc__task-nav-select"
               id="appdosc-task-select"
@@ -1003,6 +1001,10 @@
             </select>
           </div>
         </div>
+      </section>
+
+      <section class="appdosc__status" aria-live="polite">
+        <div class="appdosc__status-message" data-status hidden></div>
       </section>
 
       <main class="appdosc__content">
@@ -1159,19 +1161,13 @@
     <template id="appdosc-card-template">
       <article class="appdosc-card" data-card>
         <header class="appdosc-card__header" data-card-toggle>
-          <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
-          <span class="appdosc-card__status" data-field="status"></span>
-          <div class="appdosc-card__side">
-            <span class="appdosc-card__badge" data-field="entryNumber"></span>
-            <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
-          </div>
+          <span class="appdosc-card__badge" data-field="entryNumber"></span>
           <div class="appdosc-card__header-text">
             <div class="appdosc-card__title" data-field="document">Документ</div>
-            <div class="appdosc-card__subtitle" data-field="organization"></div>
+            <div class="appdosc-card__subtitle" data-field="organization">Организация</div>
           </div>
-          <div class="appdosc-card__summary" data-field="summary">
-            <div class="appdosc-card__block-text" data-field="contentCompact"></div>
-          </div>
+          <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
+          <span class="appdosc-card__status" data-field="status"></span>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
         </header>
         <dl class="appdosc-card__details">
@@ -1204,17 +1200,16 @@
             <dd data-field="responseSummary"></dd>
           </div>
         </dl>
+        <div class="appdosc-card__summary" data-field="summary">
+          <div class="appdosc-card__block-text" data-field="contentCompact"></div>
+        </div>
         <div class="appdosc-card__resolution" data-field="resolution">
           <div class="appdosc-card__block-title">Резолюция</div>
           <div class="appdosc-card__block-text" data-field="resolutionText"></div>
         </div>
         <div class="appdosc-card__files" data-files></div>
         <footer class="appdosc-card__footer">
-          <div class="appdosc-card__deadline appdosc-card__deadline--compact">
-            <span class="appdosc-card__deadline-label">От:</span>
-            <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
-          </div>
-          <div class="appdosc-card__deadline appdosc-card__deadline--full">
+          <div class="appdosc-card__deadline">
             <span class="appdosc-card__deadline-label">Срок</span>
             <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
           </div>
