@@ -675,6 +675,11 @@
         box-shadow: none !important;
       }
 
+      :root:not([data-theme='dark']) .appdosc-card {
+        border-color: rgba(148, 163, 184, 0.32) !important;
+        background: rgba(255, 255, 255, 0.84) !important;
+      }
+
       .appdosc-card__header {
         gap: 8px !important;
       }
@@ -728,20 +733,22 @@
       }
 
       .appdosc-card__action {
-        min-height: 36px !important;
-        padding: 8px 12px !important;
+        min-height: 38px !important;
+        padding: 9px 12px !important;
         border-radius: 10px !important;
         font-size: 13px !important;
         line-height: 1.2;
+        touch-action: manipulation;
       }
 
       .appdosc-card__assign .appdosc-card__action,
       .appdosc-card__status-controls .appdosc-card__action,
       .appdosc-card__status-controls .appdosc-card__status-button {
-        min-height: 34px !important;
-        padding: 7px 10px !important;
+        min-height: 36px !important;
+        padding: 8px 10px !important;
         font-size: 12px !important;
         border-radius: 9px !important;
+        touch-action: manipulation;
       }
 
       .appdosc__responsible-panel {

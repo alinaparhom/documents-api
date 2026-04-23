@@ -16265,6 +16265,52 @@ function collectTaskAssignments(task, role) {
   return result;
 }
 
+function buildMutationSnapshotEntries(task, role) {
+  const normalizedRole = role === 'subordinate' ? 'subordinate' : 'responsible';
+  const entries = collectTaskAssignments(task, normalizedRole);
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return [];
+  }
+
+  return entries
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const id = normalizeValue(
+        entry.id
+          || entry.subordinateId
+          || entry.subordinate
+          || entry.telegram
+          || entry.chatId
+          || entry.email
+          || entry.number
+          || entry.login
+      );
+      if (!id) {
+        return null;
+      }
+
+      const snapshot = { id };
+      const comment = normalizeAssignmentComment(entry.assignmentComment || entry.comment);
+      if (comment) {
+        snapshot.assignmentComment = comment;
+      }
+      const dueDate = normalizeAssignmentDueDate(entry.assignmentDueDate || entry.dueDate);
+      if (dueDate) {
+        snapshot.assignmentDueDate = dueDate;
+      }
+      if (normalizedRole === 'responsible') {
+        const instruction = normalizeAssignmentInstruction(entry.assignmentInstruction || entry.instruction);
+        if (instruction) {
+          snapshot.assignmentInstruction = instruction;
+        }
+      }
+      return snapshot;
+    })
+    .filter((entry) => entry);
+}
+
 
 
 function sendResponseViewerLog(stage, payload = {}) {
@@ -18249,6 +18295,7 @@ function setupAssignmentControls(card, task) {
           organization,
           documentId: task.id,
           removeAssigneeId: targetValue,
+          subordinates: buildMutationSnapshotEntries(task, 'subordinate'),
         });
 
         logClientEvent('task_assign_remove_success', {
@@ -18386,6 +18433,7 @@ function setupAssignmentControls(card, task) {
         organization,
         documentId: task.id,
         assignees: payloadAssignments,
+        subordinates: buildMutationSnapshotEntries(task, 'subordinate'),
       });
 
       logClientEvent('task_assign_success', {
@@ -19179,6 +19227,7 @@ function setupSubordinateControls(card, task) {
           organization,
           documentId: task.id,
           removeSubordinateId: targetValue,
+          assignees: buildMutationSnapshotEntries(task, 'responsible'),
         });
 
         logClientEvent('task_subordinate_remove_success', {
@@ -19286,6 +19335,7 @@ function setupSubordinateControls(card, task) {
         organization,
         documentId: task.id,
         subordinates: payloadAssignments,
+        assignees: buildMutationSnapshotEntries(task, 'responsible'),
       });
 
       logClientEvent('task_subordinate_assign_success', {
