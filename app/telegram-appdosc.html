@@ -907,6 +907,17 @@
         overflow: hidden;
       }
 
+      .appdosc-card[data-expanded='false'] .task-meta {
+        display: none !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .task-name,
+      .appdosc-card[data-expanded='false'] .appdosc-card__title {
+        -webkit-line-clamp: 1 !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+      }
+
       .appdosc-card__subtitle {
         display: none !important;
       }
@@ -971,32 +982,28 @@
         grid-area: actions !important;
         display: flex !important;
         align-items: center !important;
-        gap: 14px !important;
+        gap: 8px !important;
         justify-self: end !important;
       }
 
       .task-chevron,
       .appdosc-card__chevron {
-        position: static !important;
-        width: 9px !important;
-        height: 9px !important;
-        border-right: 2px solid #94a3b8 !important;
-        border-bottom: 2px solid #94a3b8 !important;
-        transform: rotate(45deg) !important;
-        transition: transform .2s ease !important;
-        flex: 0 0 auto !important;
-        font-size: 0 !important;
+        display: none !important;
       }
 
-      .task-chevron::before,
-      .task-chevron::after,
-      .appdosc-card__chevron::before,
-      .appdosc-card__chevron::after {
-        content: none !important;
+      .appdosc-card__side::after {
+        content: '';
+        width: 9px;
+        height: 9px;
+        border-right: 2px solid #94a3b8;
+        border-bottom: 2px solid #94a3b8;
+        transform: rotate(45deg);
+        transition: transform .2s ease;
+        flex: 0 0 auto;
       }
 
-      .appdosc-card[data-expanded='true'] .appdosc-card__chevron {
-        transform: rotate(225deg) !important;
+      .appdosc-card[data-expanded='true'] .appdosc-card__side::after {
+        transform: rotate(225deg);
       }
 
       .appdosc-card__summary {
@@ -1041,6 +1048,24 @@
         font-size: 13px !important;
         line-height: 1.35 !important;
         overflow-wrap: anywhere !important;
+      }
+
+      .appdosc-card__assign-entries .appdosc-avatar,
+      .appdosc-card__assign-entry .appdosc-avatar {
+        width: 24px !important;
+        height: 24px !important;
+        min-width: 24px !important;
+        min-height: 24px !important;
+        display: inline-flex !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+
+      .appdosc-card__assign-entries .appdosc-avatar__img,
+      .appdosc-card__assign-entry .appdosc-avatar__img {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
       }
 
       .appdosc-card__files {
@@ -1626,7 +1651,6 @@
           </div>
           <div class="appdosc-card__side">
             <span class="appdosc-card__status task-status" data-field="status"></span>
-            <span class="appdosc-card__chevron task-chevron" aria-hidden="true"></span>
           </div>
           <div class="appdosc-card__summary" data-field="summary"><div class="appdosc-card__block-text" data-field="contentCompact"></div></div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
