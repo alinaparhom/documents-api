@@ -4439,7 +4439,6 @@ function createCard(task, index, anchorRegistry) {
   const compactContent = resolveCompactText(task.summary)
     || resolveCompactText(task.content)
     || resolveCompactText(task.description)
-    || resolveCompactText(task.instruction)
     || 'Не указано';
 
   setCardField(card, '[data-field="document"]', compactContent, {
@@ -7185,6 +7184,7 @@ function resolveTaskViewerFiles(task) {
 
 function applyStatusBadge(card, statusText, normalizedStatus, task) {
   const statusElement = card.querySelector('[data-field="status"]');
+  const taskMainElement = card.querySelector('.task-main');
   if (!statusElement) {
     return;
   }
@@ -7204,32 +7204,58 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     statusElement.hidden = true;
     statusElement.textContent = '';
     statusElement.removeAttribute('title');
+    if (card && card.dataset) {
+      delete card.dataset.statusIcon;
+      delete card.dataset.statusLabel;
+      delete card.dataset.statusTone;
+    }
+    if (taskMainElement && taskMainElement.dataset) {
+      delete taskMainElement.dataset.statusIcon;
+      delete taskMainElement.dataset.statusLabel;
+      delete taskMainElement.dataset.statusTone;
+    }
     return;
   }
 
-  const statusLabel = `Статус задачи: ${statusText}`;
-  statusElement.hidden = false;
+  const statusLabel = `${statusText}`;
+  statusElement.hidden = true;
   statusElement.textContent = statusLabel;
-  statusElement.title = statusLabel;
+  statusElement.title = `Статус задачи: ${statusText}`;
+  let statusTone = 'accent';
 
   if (isTaskCompleted(task)) {
     statusElement.classList.add('appdosc-card__status--done');
     statusElement.classList.add('task-status--done');
+    statusTone = 'done';
   } else if (isOverdue(task)) {
     statusElement.classList.add('appdosc-card__status--danger');
     statusElement.classList.add('task-status--active');
+    statusTone = 'danger';
   } else if (normalizedStatus.includes('контрол')) {
     statusElement.classList.add('appdosc-card__status--warn');
     statusElement.classList.add('task-status--active');
+    statusTone = 'warn';
   } else if (normalizedStatus.includes('распредел')) {
     statusElement.classList.add('appdosc-card__status--info');
     statusElement.classList.add('task-status--active');
+    statusTone = 'info';
   } else if (normalizedStatus.includes('работ') || normalizedStatus.includes('нов')) {
     statusElement.classList.add('appdosc-card__status--accent');
     statusElement.classList.add('task-status--active');
   } else {
     statusElement.classList.add('appdosc-card__status--accent');
     statusElement.classList.add('task-status--active');
+  }
+
+  if (card && card.dataset) {
+    delete card.dataset.statusIcon;
+    card.dataset.statusLabel = String(statusText).trim();
+    card.dataset.statusTone = statusTone;
+  }
+  if (taskMainElement && taskMainElement.dataset) {
+    delete taskMainElement.dataset.statusIcon;
+    taskMainElement.dataset.statusLabel = String(statusText).trim();
+    taskMainElement.dataset.statusTone = statusTone;
   }
 }
 
@@ -10981,7 +11007,7 @@ function setupDirectorCompactCompletion(card, task) {
   const isReviewStatus = isTaskUnderReview(task);
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'appdosc-card__action appdosc-card__action--compact';
+  button.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
   button.textContent = isReviewStatus ? 'Проверено' : 'Завершить назначение';
   setActionButtonLoading(button, false);
 
