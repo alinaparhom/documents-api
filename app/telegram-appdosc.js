@@ -6963,6 +6963,7 @@ function resolveTaskViewerFiles(task) {
 
 function applyStatusBadge(card, statusText, normalizedStatus, task) {
   const statusElement = card.querySelector('[data-field="status"]');
+  const taskMainElement = card.querySelector('.task-main');
   if (!statusElement) {
     return;
   }
@@ -6985,6 +6986,10 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     if (card && card.dataset) {
       delete card.dataset.statusIcon;
       delete card.dataset.statusLabel;
+    }
+    if (taskMainElement && taskMainElement.dataset) {
+      delete taskMainElement.dataset.statusIcon;
+      delete taskMainElement.dataset.statusLabel;
     }
     return;
   }
@@ -7023,6 +7028,10 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   if (card && card.dataset) {
     card.dataset.statusIcon = statusIcon;
     card.dataset.statusLabel = String(statusText).trim();
+  }
+  if (taskMainElement && taskMainElement.dataset) {
+    taskMainElement.dataset.statusIcon = statusIcon;
+    taskMainElement.dataset.statusLabel = String(statusText).trim();
   }
 }
 
