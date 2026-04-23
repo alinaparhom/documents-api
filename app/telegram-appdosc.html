@@ -838,21 +838,6 @@
         gap: 4px !important;
       }
 
-      .task-main[data-status-icon]::before {
-        content: attr(data-status-icon);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 18px;
-        height: 18px;
-        border-radius: 999px;
-        border: 1px solid rgba(191, 219, 254, 0.45);
-        background: rgba(255, 255, 255, 0.12);
-        color: #e2e8f0;
-        font-size: 10px;
-        margin-bottom: 2px;
-      }
-
       .task-main[data-status-label]::after {
         content: attr(data-status-label);
         display: inline-flex;
@@ -862,13 +847,14 @@
         min-height: 20px;
         padding: 2px 8px;
         border-radius: 999px;
-        border: 1px solid rgba(147, 197, 253, 0.4);
-        background: rgba(255, 255, 255, 0.12);
-        color: #dbeafe;
+        border: 1px solid rgba(147, 197, 253, 0.5);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(148, 197, 255, 0.14));
+        color: #f0f7ff;
         font: 600 10px/1.2 Inter, system-ui, sans-serif;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
       }
 
       .task-meta {
@@ -992,17 +978,7 @@
       }
 
       .appdosc-card__status.task-status {
-        position: static !important;
-        grid-column: auto !important;
-        grid-row: auto !important;
-        justify-self: auto !important;
-        height: 32px !important;
-        min-height: 32px !important;
-        padding: 0 10px !important;
-        border-radius: 10px !important;
-        font-size: 12px !important;
-        font-weight: 700 !important;
-        white-space: nowrap !important;
+        display: none !important;
       }
 
       .appdosc-card__status {
@@ -1024,11 +1000,7 @@
         display: none !important;
       }
 
-      .appdosc-card__status::before { content: '•'; font-size: 11px; line-height: 1; }
-      .appdosc-card__status.task-status--done::before { content: '✓'; }
-      .appdosc-card__status.appdosc-card__status--danger::before { content: '!'; }
-      .appdosc-card__status.appdosc-card__status--warn::before { content: '⏱'; }
-      .appdosc-card__status.appdosc-card__status--info::before { content: '◔'; }
+      .appdosc-card__status::before { content: none !important; }
 
       .appdosc-card--done .appdosc-card__status {
         color: #4ade80 !important;

@@ -6995,28 +6995,22 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   }
 
   const statusLabel = `${statusText}`;
-  statusElement.hidden = false;
+  statusElement.hidden = true;
   statusElement.textContent = statusLabel;
   statusElement.title = `Статус задачи: ${statusText}`;
-
-  let statusIcon = '•';
 
   if (isTaskCompleted(task)) {
     statusElement.classList.add('appdosc-card__status--done');
     statusElement.classList.add('task-status--done');
-    statusIcon = '✓';
   } else if (isOverdue(task)) {
     statusElement.classList.add('appdosc-card__status--danger');
     statusElement.classList.add('task-status--active');
-    statusIcon = '!';
   } else if (normalizedStatus.includes('контрол')) {
     statusElement.classList.add('appdosc-card__status--warn');
     statusElement.classList.add('task-status--active');
-    statusIcon = '⏱';
   } else if (normalizedStatus.includes('распредел')) {
     statusElement.classList.add('appdosc-card__status--info');
     statusElement.classList.add('task-status--active');
-    statusIcon = '◔';
   } else if (normalizedStatus.includes('работ') || normalizedStatus.includes('нов')) {
     statusElement.classList.add('appdosc-card__status--accent');
     statusElement.classList.add('task-status--active');
@@ -7026,11 +7020,11 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   }
 
   if (card && card.dataset) {
-    card.dataset.statusIcon = statusIcon;
+    delete card.dataset.statusIcon;
     card.dataset.statusLabel = String(statusText).trim();
   }
   if (taskMainElement && taskMainElement.dataset) {
-    taskMainElement.dataset.statusIcon = statusIcon;
+    delete taskMainElement.dataset.statusIcon;
     taskMainElement.dataset.statusLabel = String(statusText).trim();
   }
 }
