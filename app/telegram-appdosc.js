@@ -6986,10 +6986,12 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     if (card && card.dataset) {
       delete card.dataset.statusIcon;
       delete card.dataset.statusLabel;
+      delete card.dataset.statusTone;
     }
     if (taskMainElement && taskMainElement.dataset) {
       delete taskMainElement.dataset.statusIcon;
       delete taskMainElement.dataset.statusLabel;
+      delete taskMainElement.dataset.statusTone;
     }
     return;
   }
@@ -6998,19 +7000,24 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   statusElement.hidden = true;
   statusElement.textContent = statusLabel;
   statusElement.title = `Статус задачи: ${statusText}`;
+  let statusTone = 'accent';
 
   if (isTaskCompleted(task)) {
     statusElement.classList.add('appdosc-card__status--done');
     statusElement.classList.add('task-status--done');
+    statusTone = 'done';
   } else if (isOverdue(task)) {
     statusElement.classList.add('appdosc-card__status--danger');
     statusElement.classList.add('task-status--active');
+    statusTone = 'danger';
   } else if (normalizedStatus.includes('контрол')) {
     statusElement.classList.add('appdosc-card__status--warn');
     statusElement.classList.add('task-status--active');
+    statusTone = 'warn';
   } else if (normalizedStatus.includes('распредел')) {
     statusElement.classList.add('appdosc-card__status--info');
     statusElement.classList.add('task-status--active');
+    statusTone = 'info';
   } else if (normalizedStatus.includes('работ') || normalizedStatus.includes('нов')) {
     statusElement.classList.add('appdosc-card__status--accent');
     statusElement.classList.add('task-status--active');
@@ -7022,10 +7029,12 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   if (card && card.dataset) {
     delete card.dataset.statusIcon;
     card.dataset.statusLabel = String(statusText).trim();
+    card.dataset.statusTone = statusTone;
   }
   if (taskMainElement && taskMainElement.dataset) {
     delete taskMainElement.dataset.statusIcon;
     taskMainElement.dataset.statusLabel = String(statusText).trim();
+    taskMainElement.dataset.statusTone = statusTone;
   }
 }
 
