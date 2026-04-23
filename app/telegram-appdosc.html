@@ -745,12 +745,12 @@
         width: 100% !important;
         max-width: 430px !important;
         margin: 0 auto !important;
-        padding: 18px 14px !important;
+        padding: 14px 12px !important;
         border-radius: 28px !important;
         overflow: hidden !important;
         border: 1px solid rgba(79, 120, 190, 0.25) !important;
-        background: radial-gradient(circle at top right, rgba(28, 67, 136, 0.2), transparent 44%), linear-gradient(160deg, #071120 0%, #0b1527 100%) !important;
-        box-shadow: 0 20px 48px rgba(1, 8, 22, 0.5), inset 0 0 0 1px rgba(123, 168, 255, 0.08) !important;
+        background: linear-gradient(160deg, rgba(10, 20, 36, 0.96), rgba(11, 22, 40, 0.92)) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
       }
 
       .appdosc__table-head.tasks-header {
@@ -774,7 +774,7 @@
         line-height: 1 !important;
         font-weight: 760 !important;
         letter-spacing: -0.04em !important;
-        color: #f8fafc !important;
+        color: rgba(255, 255, 255, 0.92) !important;
       }
 
       .appdosc__table-meta.tasks-updated {
@@ -791,33 +791,34 @@
       }
 
       .tasks-refresh {
-        min-height: 40px !important;
-        padding: 8px 14px !important;
+        min-height: 36px !important;
+        padding: 8px 12px !important;
         border-radius: 16px !important;
-        border: 1px solid rgba(79, 120, 190, 0.35) !important;
-        background: rgba(20, 44, 84, 0.72) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        color: rgba(255, 255, 255, 0.85) !important;
+        box-shadow: none !important;
       }
 
       .appdosc__cards.tasks-list {
         display: grid;
-        gap: 8px;
+        gap: 12px;
       }
 
       .appdosc-card.task-card {
         min-height: auto !important;
         border-radius: 18px !important;
         border: 1px solid rgba(79, 120, 190, 0.25) !important;
-        background: linear-gradient(100deg, rgba(12, 25, 45, 0.9), rgba(10, 23, 43, 0.82)) !important;
-        box-shadow: 0 14px 24px rgba(2, 12, 29, 0.34), inset 0 0 0 1px rgba(98, 148, 236, 0.08) !important;
+        background: linear-gradient(145deg, rgba(12, 24, 43, 0.9), rgba(10, 22, 39, 0.86)) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
       }
 
       .appdosc-card__header {
         width: 100%;
-        min-height: 80px !important;
-        padding: 12px !important;
-        display: grid !important;
-        grid-template-columns: 44px minmax(0, 1fr) auto !important;
-        grid-template-areas: "icon main actions" !important;
+        min-height: 72px !important;
+        padding: 10px 12px !important;
+        display: flex !important;
+        justify-content: space-between !important;
         gap: 10px !important;
         align-items: center !important;
         cursor: pointer;
@@ -841,11 +842,11 @@
       }
 
       .task-main {
-        grid-area: main !important;
         min-width: 0 !important;
         display: flex !important;
         flex-direction: column !important;
         gap: 4px !important;
+        flex: 1 1 auto !important;
       }
 
       .task-meta {
@@ -857,14 +858,15 @@
       }
 
       .task-date {
-        color: #93c5fd !important;
+        color: rgba(255, 255, 255, 0.78) !important;
         font-size: 11px !important;
         line-height: 1.2 !important;
         white-space: nowrap !important;
+        pointer-events: none !important;
         border-radius: 999px !important;
         padding: 3px 8px !important;
-        border: 1px solid rgba(96, 165, 250, 0.28) !important;
-        background: rgba(37, 99, 235, .22) !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        background: rgba(255, 255, 255, .06) !important;
       }
 
       .appdosc-card__meta {
@@ -883,15 +885,15 @@
         font-weight: 700 !important;
         line-height: 1.1;
         min-height: 20px !important;
-        color: #60a5fa !important;
-        background: rgba(37, 99, 235, .28) !important;
-        border: 1px solid rgba(63, 140, 255, 0.26);
+        color: rgba(255, 255, 255, 0.85) !important;
+        background: rgba(255, 255, 255, .06) !important;
+        border: 1px solid rgba(255, 255, 255, 0.14);
         white-space: nowrap !important;
       }
 
       .task-name,
       .appdosc-card__title {
-        color: #f8fafc !important;
+        color: rgba(255, 255, 255, 0.92) !important;
         font-size: 12px !important;
         line-height: 1.2 !important;
         font-weight: 600 !important;
@@ -976,24 +978,24 @@
         grid-column: auto !important;
         grid-row: auto !important;
         justify-self: auto !important;
-        height: 32px !important;
-        min-height: 32px !important;
-        padding: 0 10px !important;
+        min-height: 28px !important;
+        padding: 5px 10px !important;
         border-radius: 10px !important;
-        font-size: 12px !important;
-        font-weight: 700 !important;
+        font-size: 11px !important;
+        font-weight: 600 !important;
         white-space: nowrap !important;
+        pointer-events: none !important;
       }
 
       .appdosc-card__status {
         position: static !important;
-        min-height: 32px !important;
-        padding: 0 10px !important;
+        min-height: 28px !important;
+        padding: 5px 10px !important;
         border-radius: 10px !important;
-        border: 1px solid rgba(63, 140, 255, 0.5) !important;
-        color: #72a9ff !important;
-        background: rgba(29, 63, 117, 0.5) !important;
-        font-size: 12px !important;
+        border: 1px solid rgba(76, 217, 100, 0.35) !important;
+        color: #4cd964 !important;
+        background: rgba(80, 200, 120, 0.15) !important;
+        font-size: 11px !important;
         line-height: 1.2;
         display: inline-flex;
         align-items: center;
@@ -1016,6 +1018,14 @@
 
       .appdosc-card--done .appdosc-card__status::before {
         content: none !important;
+      }
+
+      .appdosc-card--done {
+        opacity: 0.6 !important;
+      }
+
+      .appdosc-card--overdue {
+        border: 1px solid rgba(255, 80, 80, 0.4) !important;
       }
 
       .appdosc-card__side {
@@ -1154,6 +1164,28 @@
         touch-action: manipulation;
       }
 
+
+      .appdosc-card__action--compact {
+        background: linear-gradient(135deg, #2b6cff, #4ea1ff) !important;
+        color: #ffffff !important;
+        border: 0 !important;
+        box-shadow: 0 4px 12px rgba(43, 108, 255, 0.25) !important;
+      }
+
+      .appdosc-card__status-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 36px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: rgba(80, 200, 120, 0.15);
+        color: #4cd964;
+        border: 1px solid rgba(76, 217, 100, 0.35);
+        font-size: 12px;
+        font-weight: 600;
+        pointer-events: none;
+      }
+
       .appdosc-card__assign .appdosc-card__action,
       .appdosc-card__status-controls .appdosc-card__action,
       .appdosc-card__status-controls .appdosc-card__status-button {
@@ -1281,12 +1313,8 @@
         }
 
         .appdosc__table-card.tasks-panel {
-          padding: 14px 10px !important;
+          padding: 12px 10px !important;
           border-radius: 24px !important;
-        }
-
-        .tasks-header-top {
-          flex-wrap: wrap;
         }
 
         .tasks-refresh {
@@ -1297,7 +1325,7 @@
         .appdosc-card__header {
           grid-template-columns: 42px minmax(0, 1fr) auto !important;
           grid-template-areas: "icon main actions" !important;
-          min-height: 78px !important;
+          min-height: 68px !important;
           padding: 10px !important;
           gap: 10px !important;
         }

@@ -10758,32 +10758,37 @@ function setupDirectorCompactCompletion(card, task) {
   }
 
   const isReviewStatus = isTaskUnderReview(task);
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'appdosc-card__action appdosc-card__action--compact';
-  button.textContent = isReviewStatus ? 'Проверено' : 'Завершить назначение';
-  setActionButtonLoading(button, false);
+  if (isReviewStatus) {
+    const status = document.createElement('span');
+    status.className = 'appdosc-card__status-pill';
+    status.textContent = 'Проверено';
+    status.setAttribute('role', 'status');
+    container.appendChild(status);
+  } else {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'appdosc-card__action appdosc-card__action--compact';
+    button.textContent = 'Завершить назначение';
+    setActionButtonLoading(button, false);
 
-  button.addEventListener('click', async (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+    button.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
 
-    if (button.dataset.loading === 'true') {
-      return;
-    }
+      if (button.dataset.loading === 'true') {
+        return;
+      }
 
-    const confirmMessage = isReviewStatus
-      ? 'Отметить задачу как проверенную? Она исчезнет из списка директора и будет доступна в разделе «Выполнено».'
-      : 'Завершить задачу? Она исчезнет из списка директора и будет доступна в разделе «Выполнено».';
-    const confirmed = window.confirm(confirmMessage);
-    if (!confirmed) {
-      return;
-    }
+      const confirmed = window.confirm('Завершить задачу? Она исчезнет из списка директора и будет доступна в разделе «Выполнено».');
+      if (!confirmed) {
+        return;
+      }
 
-    await handleCardComplete(button, task);
-  });
+      await handleCardComplete(button, task);
+    });
 
-  container.appendChild(button);
+    container.appendChild(button);
+  }
   container.hidden = false;
 }
 
