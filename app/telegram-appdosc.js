@@ -2756,6 +2756,7 @@ function initElements() {
   elements.versionUpdated = document.querySelector('[data-version-updated]');
   elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
   elements.taskSelector = document.querySelector('[data-task-select]');
+  elements.taskCountInline = document.querySelector('[data-task-count-inline]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
@@ -3397,7 +3398,6 @@ async function loadTasks(force = false) {
       const message = state.error || 'Отрисовка карточек завершилась ошибкой';
       throw new Error(message);
     }
-    setStatus('info', `Найдено задач: ${state.stats.total}`);
     logClientEvent('tasks_loaded', {
       total: state.stats.total,
       active: state.stats.active,
@@ -4782,6 +4782,18 @@ function updateTaskSelector() {
   placeholderOption.value = '';
   const visibleItems = getVisibleTaskItems();
   const hasCards = visibleItems.length > 0;
+  const taskCountLabel = hasCards
+    ? ` • ${visibleItems.length}`
+    : '';
+  if (elements.taskCountInline) {
+    elements.taskCountInline.textContent = taskCountLabel;
+  }
+  if (elements.taskSelector) {
+    elements.taskSelector.setAttribute(
+      'aria-label',
+      hasCards ? `Перейти к задаче • ${visibleItems.length}` : 'Перейти к задаче',
+    );
+  }
   const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
   placeholderOption.textContent = hasCards
     ? 'Выберите задачу из списка'

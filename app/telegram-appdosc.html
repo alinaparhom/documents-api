@@ -760,6 +760,17 @@
         gap: 8px;
       }
 
+      .appdosc__task-nav-label {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .appdosc__task-nav-count {
+        display: inline;
+      }
+
       .appdosc__task-nav-select {
         appearance: none;
         -webkit-appearance: none;
@@ -791,6 +802,9 @@
 
         .appdosc__task-nav-label {
           font-size: 14px !important;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
       }
 
@@ -983,7 +997,10 @@
         </div>
         <div class="appdosc__user-controls">
           <div class="appdosc__task-nav" data-task-selector>
-            <label class="appdosc__task-nav-label" for="appdosc-task-select">Перейти к задаче</label>
+            <label class="appdosc__task-nav-label" for="appdosc-task-select">
+              <span>Перейти к задаче</span>
+              <span class="appdosc__task-nav-count" data-task-count-inline></span>
+            </label>
             <select
               class="appdosc__task-nav-select"
               id="appdosc-task-select"
