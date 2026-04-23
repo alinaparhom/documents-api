@@ -1259,6 +1259,164 @@
 
       }
 
+      .appdosc__filter-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 34px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.34);
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        color: var(--appdosc-text-primary);
+        padding: 0 10px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.18s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .appdosc__filter-toggle:hover,
+      .appdosc__filter-toggle:focus-visible {
+        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.14);
+        transform: translateY(-1px);
+      }
+
+      .appdosc__filter-toggle:active {
+        transform: translateY(0);
+      }
+
+      .appdosc__filter-toggle[aria-expanded='true'] {
+        background: rgba(59, 130, 246, 0.14);
+        border-color: rgba(59, 130, 246, 0.4);
+      }
+
+      .appdosc__filter-toggle-icon {
+        width: 18px;
+        height: 18px;
+        display: inline-flex;
+      }
+
+      .appdosc__filter-toggle-icon svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .appdosc__task-filter-panel {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        width: 100%;
+        padding: 10px;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        background: rgba(255, 255, 255, 0.62);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-sizing: border-box;
+      }
+
+      .appdosc__task-filter-panel[hidden] {
+        display: none !important;
+      }
+
+      .appdosc__task-filter-quick {
+        grid-column: 1 / span 2;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .appdosc__task-filter-quick-btn {
+        height: 28px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        background: rgba(255, 255, 255, 0.86);
+        color: var(--appdosc-text-primary);
+        padding: 0 10px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .appdosc__task-filter-quick-btn.is-active {
+        background: rgba(59, 130, 246, 0.16);
+        border-color: rgba(59, 130, 246, 0.5);
+      }
+
+      .appdosc__task-filter-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--appdosc-text-muted);
+        min-width: 0;
+      }
+
+      .appdosc__task-filter-field input,
+      .appdosc__task-filter-field select {
+        width: 100%;
+        height: 34px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--appdosc-text-primary);
+        padding: 0 10px;
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+
+      .appdosc__task-filter-actions {
+        display: flex;
+        align-items: flex-end;
+        justify-content: flex-end;
+        min-width: 0;
+      }
+
+      .appdosc__task-filter-reset {
+        height: 34px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.34);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--appdosc-text-primary);
+        font-size: 12px;
+        font-weight: 600;
+        padding: 0 12px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      :root[data-theme='dark'] .appdosc__filter-toggle {
+        background: rgba(30, 41, 59, 0.58);
+        border-color: rgba(148, 163, 184, 0.48);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-panel {
+        background: rgba(30, 41, 59, 0.52);
+        border-color: rgba(148, 163, 184, 0.46);
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-field {
+        color: rgba(203, 213, 225, 0.92);
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-field input,
+      :root[data-theme='dark'] .appdosc__task-filter-field select,
+      :root[data-theme='dark'] .appdosc__task-filter-quick-btn,
+      :root[data-theme='dark'] .appdosc__task-filter-reset {
+        background: rgba(15, 23, 42, 0.74);
+        border-color: rgba(148, 163, 184, 0.46);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-quick-btn.is-active {
+        background: rgba(96, 165, 250, 0.2);
+        border-color: rgba(96, 165, 250, 0.58);
+      }
+
       @media (max-width: 520px) {
         .appdosc-viewer__controls {
           gap: 6px;
@@ -1287,6 +1445,28 @@
 
         .tasks-header-top {
           flex-wrap: wrap;
+        }
+
+        .appdosc__task-filter-panel {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .appdosc__task-filter-quick {
+          grid-column: 1 / -1;
+        }
+
+        .appdosc__task-filter-actions {
+          grid-column: 1 / -1;
+          justify-content: stretch;
+        }
+
+        .appdosc__task-filter-reset {
+          width: 100%;
+        }
+
+        .appdosc__filter-toggle {
+          height: 32px;
+          padding-inline: 9px;
         }
 
         .tasks-refresh {
@@ -1515,6 +1695,21 @@
           <div class="appdosc__table-head tasks-header">
             <div class="tasks-header-top">
               <div class="appdosc__table-title tasks-title">Список задач</div>
+              <button
+                class="appdosc__filter-toggle"
+                type="button"
+                data-task-filter-toggle
+                aria-expanded="false"
+                aria-controls="appdosc-task-filter-panel"
+                title="Открыть фильтры"
+              >
+                <span class="appdosc__filter-toggle-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M4 7h16M7 12h10M10 17h4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <span class="appdosc__filter-toggle-text">Фильтр</span>
+              </button>
               <button class="appdosc__refresh tasks-refresh" type="button" data-refresh>
                 <span class="appdosc__refresh-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
@@ -1530,6 +1725,40 @@
                 </span>
                 <span class="appdosc__refresh-text">Обновить</span>
               </button>
+            </div>
+            <div class="appdosc__task-filter-panel" id="appdosc-task-filter-panel" data-task-filter-panel hidden>
+              <label class="appdosc__task-filter-field">
+                <span>Дата от</span>
+                <input type="date" data-filter-date-from />
+              </label>
+              <label class="appdosc__task-filter-field">
+                <span>Дата до</span>
+                <input type="date" data-filter-date-to />
+              </label>
+              <div class="appdosc__task-filter-quick" data-filter-quick>
+                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="today">Сегодня</button>
+                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="week">Неделя</button>
+                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="month">Месяц</button>
+                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
+              </div>
+              <label class="appdosc__task-filter-field">
+                <span>Группировка</span>
+                <select data-filter-group-type>
+                  <option value="">Без группировки</option>
+                  <option value="correspondent">Корреспондент</option>
+                  <option value="responsible">Ответственный</option>
+                  <option value="subordinate">Подчинённый</option>
+                </select>
+              </label>
+              <label class="appdosc__task-filter-field">
+                <span>Значение</span>
+                <select data-filter-group-value disabled>
+                  <option value="">Сначала выберите группировку</option>
+                </select>
+              </label>
+              <div class="appdosc__task-filter-actions">
+                <button type="button" class="appdosc__task-filter-reset" data-filter-reset>Сброс</button>
+              </div>
             </div>
             <div class="appdosc__table-meta tasks-updated" data-updated>Обновление не выполнялось</div>
           </div>

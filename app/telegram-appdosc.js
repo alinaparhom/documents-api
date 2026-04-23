@@ -1998,6 +1998,14 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
+  compactFilters: {
+    expanded: false,
+    dateFrom: '',
+    dateTo: '',
+    quickPreset: '',
+    groupType: '',
+    groupValue: '',
+  },
   access: {
     responsibles: {},
     subordinates: {},
@@ -2753,6 +2761,14 @@ function initElements() {
     }
   });
   elements.overdue = document.querySelector('[data-overdue]');
+  elements.taskFilterToggle = document.querySelector('[data-task-filter-toggle]');
+  elements.taskFilterPanel = document.querySelector('[data-task-filter-panel]');
+  elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
+  elements.filterDateTo = document.querySelector('[data-filter-date-to]');
+  elements.filterQuickButtons = Array.from(document.querySelectorAll('[data-filter-quick-btn]'));
+  elements.filterResetButton = document.querySelector('[data-filter-reset]');
+  elements.filterGroupType = document.querySelector('[data-filter-group-type]');
+  elements.filterGroupValue = document.querySelector('[data-filter-group-value]');
   elements.status = document.querySelector('[data-status]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
@@ -2771,6 +2787,7 @@ function initElements() {
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
   elements.viewerBrief = document.querySelector('[data-viewer-brief]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
+  setTaskFilterPanelExpanded(false);
 
   logIosStage('elements_initialized', {
     cardsContainer: Boolean(elements.cardsContainer),
@@ -3672,6 +3689,7 @@ function render() {
   updateStats();
   updateDirectorSummary();
   updateSummaryFilterState();
+  syncCompactFilterPanelState();
   renderCards();
   updateFooter();
 }
@@ -3680,6 +3698,7 @@ function renderEmpty() {
   updateUserPanel();
   updateStats();
   updateDirectorSummary();
+  syncCompactFilterPanelState();
   clearCards();
   updateFooter();
   logIosStage('render_empty', {
@@ -3916,6 +3935,207 @@ function updateSummaryFilterState() {
     element.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     setClass(element, 'appdosc__badge--selected', isSelected);
   });
+}
+
+function setTaskFilterPanelExpanded(expanded) {
+  const isExpanded = Boolean(expanded);
+  state.compactFilters.expanded = isExpanded;
+  if (elements.taskFilterPanel instanceof HTMLElement) {
+    elements.taskFilterPanel.hidden = !isExpanded;
+  }
+  if (elements.taskFilterToggle instanceof HTMLElement) {
+    elements.taskFilterToggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+  }
+}
+
+function getTaskDateForCompactFilter(task) {
+  if (!task || typeof task !== 'object') {
+    return null;
+  }
+  const candidates = [task.dueDate, task.registrationDate, task.createdAt, task.date];
+  for (const value of candidates) {
+    const parsed = parseDate(value);
+    if (parsed) {
+      parsed.setHours(0, 0, 0, 0);
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function resolveCompactCorrespondent(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+  if (task.correspondent && typeof task.correspondent === 'object') {
+    return normalizeValue(
+      task.correspondent.name
+      || task.correspondent.responsible
+      || task.correspondent.fio
+      || task.correspondent.label
+      || task.correspondent.displayName,
+    );
+  }
+  return normalizeValue(task.correspondent || task.sender || task.author);
+}
+
+function getCompactGroupEntries(task, groupType) {
+  if (!task || typeof task !== 'object' || !groupType) {
+    return [];
+  }
+  if (groupType === 'correspondent') {
+    const label = resolveCompactCorrespondent(task);
+    return label ? [{ value: normalizeName(label), label }] : [];
+  }
+  if (groupType === 'responsible') {
+    return getTaskResponsibleProfiles(task).map((profile) => ({
+      value: profile.token,
+      label: profile.label || profile.sourceLabel || 'Ответственный',
+    }));
+  }
+  if (groupType === 'subordinate') {
+    return getTaskSubordinateProfiles(task).map((profile) => ({
+      value: profile.token,
+      label: profile.label || profile.sourceLabel || 'Подчинённый',
+    }));
+  }
+  return [];
+}
+
+function syncCompactFilterGroupOptions() {
+  if (!(elements.filterGroupValue instanceof HTMLSelectElement)) {
+    return;
+  }
+  const type = normalizeValue(state.compactFilters.groupType);
+  const select = elements.filterGroupValue;
+  select.innerHTML = '';
+  if (!type) {
+    select.disabled = true;
+    select.appendChild(new Option('Сначала выберите группировку', ''));
+    state.compactFilters.groupValue = '';
+    return;
+  }
+
+  const values = new Map();
+  state.tasks.forEach((task) => {
+    getCompactGroupEntries(task, type).forEach((entry) => {
+      if (entry && entry.value && !values.has(entry.value)) {
+        values.set(entry.value, entry.label || entry.value);
+      }
+    });
+  });
+  const options = Array.from(values.entries())
+    .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'ru'));
+  select.disabled = options.length === 0;
+  select.appendChild(new Option(options.length ? 'Все' : 'Нет данных', ''));
+  options.forEach(([value, label]) => select.appendChild(new Option(label, value)));
+  if (!values.has(state.compactFilters.groupValue)) {
+    state.compactFilters.groupValue = '';
+  }
+  select.value = state.compactFilters.groupValue;
+}
+
+function applyCompactFilters(visibleItems) {
+  const source = Array.isArray(visibleItems) ? visibleItems : [];
+  if (!source.length) {
+    return [];
+  }
+  const dateFrom = normalizeDateInputValue(state.compactFilters.dateFrom);
+  const dateTo = normalizeDateInputValue(state.compactFilters.dateTo);
+  const groupType = normalizeValue(state.compactFilters.groupType);
+  const groupValue = normalizeValue(state.compactFilters.groupValue);
+  const parsedFrom = dateFrom ? parseDate(dateFrom) : null;
+  const parsedTo = dateTo ? parseDate(dateTo) : null;
+  if (parsedFrom) {
+    parsedFrom.setHours(0, 0, 0, 0);
+  }
+  if (parsedTo) {
+    parsedTo.setHours(23, 59, 59, 999);
+  }
+  if (parsedFrom && parsedTo && parsedFrom.getTime() > parsedTo.getTime()) {
+    const temp = parsedFrom.getTime();
+    parsedFrom.setTime(parsedTo.getTime());
+    parsedTo.setTime(temp);
+  }
+  return source.filter((item) => {
+    const task = item && item.task ? item.task : null;
+    if (parsedFrom || parsedTo) {
+      const taskDate = getTaskDateForCompactFilter(task);
+      if (!taskDate) {
+        return false;
+      }
+      const stamp = taskDate.getTime();
+      if (parsedFrom && stamp < parsedFrom.getTime()) {
+        return false;
+      }
+      if (parsedTo && stamp > parsedTo.getTime()) {
+        return false;
+      }
+    }
+    if (groupType && groupValue) {
+      const values = getCompactGroupEntries(task, groupType).map((entry) => entry.value);
+      return values.includes(groupValue);
+    }
+    return true;
+  });
+}
+
+function applyCompactQuickPreset(preset) {
+  const normalizedPreset = normalizeValue(preset);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const from = new Date(today);
+  const to = new Date(today);
+
+  if (normalizedPreset === 'today') {
+    // same day
+  } else if (normalizedPreset === 'week') {
+    from.setDate(today.getDate() - 6);
+  } else if (normalizedPreset === 'month') {
+    from.setDate(today.getDate() - 30);
+  } else if (normalizedPreset === 'quarter') {
+    from.setDate(today.getDate() - 90);
+  } else {
+    state.compactFilters.quickPreset = '';
+    return;
+  }
+
+  state.compactFilters.quickPreset = normalizedPreset;
+  state.compactFilters.dateFrom = formatDateInputValue(from);
+  state.compactFilters.dateTo = formatDateInputValue(to);
+}
+
+function resetCompactFilters() {
+  state.compactFilters.dateFrom = '';
+  state.compactFilters.dateTo = '';
+  state.compactFilters.quickPreset = '';
+  state.compactFilters.groupType = '';
+  state.compactFilters.groupValue = '';
+}
+
+function syncCompactFilterPanelState() {
+  setTaskFilterPanelExpanded(state.compactFilters.expanded);
+  if (elements.filterDateFrom instanceof HTMLInputElement) {
+    elements.filterDateFrom.value = normalizeDateInputValue(state.compactFilters.dateFrom);
+  }
+  if (elements.filterDateTo instanceof HTMLInputElement) {
+    elements.filterDateTo.value = normalizeDateInputValue(state.compactFilters.dateTo);
+  }
+  if (elements.filterGroupType instanceof HTMLSelectElement) {
+    elements.filterGroupType.value = normalizeValue(state.compactFilters.groupType);
+  }
+  syncCompactFilterGroupOptions();
+  if (Array.isArray(elements.filterQuickButtons)) {
+    elements.filterQuickButtons.forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      const preset = normalizeValue(button.dataset.filterQuickBtn);
+      const isActive = preset && preset === state.compactFilters.quickPreset;
+      setClass(button, 'is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
 }
 
 function ensureExpandedCardSet() {
@@ -4652,7 +4872,8 @@ function updateVisibleTasks() {
   const entryTaskId = normalizeValue(state.entryTaskId);
 
   if (entryTaskId) {
-    state.visibleTasks = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    const matched = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    state.visibleTasks = applyCompactFilters(matched);
     return;
   }
 
@@ -4701,7 +4922,7 @@ function updateVisibleTasks() {
     }
   }
 
-  state.visibleTasks = visible;
+  state.visibleTasks = applyCompactFilters(visible);
 }
 
 function truncateText(value, limit = 140) {
@@ -15905,6 +16126,69 @@ function attachEvents() {
   }
   if (elements.overdue) {
     elements.overdue.addEventListener('click', () => handleSummaryBadgeClick('overdue'));
+  }
+  if (elements.taskFilterToggle) {
+    elements.taskFilterToggle.addEventListener('click', () => {
+      setTaskFilterPanelExpanded(!state.compactFilters.expanded);
+    });
+  }
+  if (elements.filterDateFrom) {
+    elements.filterDateFrom.addEventListener('change', (event) => {
+      state.compactFilters.dateFrom = normalizeDateInputValue(event.target.value);
+      state.compactFilters.quickPreset = '';
+      updateVisibleTasks();
+      safeRender('compact_filter_date_from');
+    });
+  }
+  if (elements.filterDateTo) {
+    elements.filterDateTo.addEventListener('change', (event) => {
+      state.compactFilters.dateTo = normalizeDateInputValue(event.target.value);
+      state.compactFilters.quickPreset = '';
+      updateVisibleTasks();
+      safeRender('compact_filter_date_to');
+    });
+  }
+  if (Array.isArray(elements.filterQuickButtons)) {
+    elements.filterQuickButtons.forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      button.addEventListener('click', () => {
+        const preset = normalizeValue(button.dataset.filterQuickBtn);
+        if (preset && state.compactFilters.quickPreset === preset) {
+          state.compactFilters.quickPreset = '';
+          state.compactFilters.dateFrom = '';
+          state.compactFilters.dateTo = '';
+        } else {
+          applyCompactQuickPreset(preset);
+        }
+        updateVisibleTasks();
+        safeRender('compact_filter_quick');
+      });
+    });
+  }
+  if (elements.filterGroupType) {
+    elements.filterGroupType.addEventListener('change', (event) => {
+      state.compactFilters.groupType = normalizeValue(event.target.value);
+      state.compactFilters.groupValue = '';
+      syncCompactFilterGroupOptions();
+      updateVisibleTasks();
+      safeRender('compact_filter_group_type');
+    });
+  }
+  if (elements.filterGroupValue) {
+    elements.filterGroupValue.addEventListener('change', (event) => {
+      state.compactFilters.groupValue = normalizeValue(event.target.value);
+      updateVisibleTasks();
+      safeRender('compact_filter_group_value');
+    });
+  }
+  if (elements.filterResetButton) {
+    elements.filterResetButton.addEventListener('click', () => {
+      resetCompactFilters();
+      updateVisibleTasks();
+      safeRender('compact_filter_reset');
+    });
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
