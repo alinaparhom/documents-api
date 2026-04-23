@@ -761,20 +761,6 @@
         margin-bottom: 14px !important;
       }
 
-      .tasks-app-badge {
-        display: inline-flex;
-        align-items: center;
-        min-height: 30px;
-        margin-bottom: 10px;
-        padding: 5px 12px;
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.9);
-        color: #334155;
-        font-size: 16px;
-        font-weight: 500;
-        letter-spacing: 0.01em;
-      }
-
       .tasks-header-top {
         width: 100%;
         display: flex;
@@ -814,12 +800,12 @@
 
       .appdosc__cards.tasks-list {
         display: grid;
-        gap: 12px;
+        gap: 8px;
       }
 
       .appdosc-card.task-card {
         min-height: auto !important;
-        border-radius: 22px !important;
+        border-radius: 18px !important;
         border: 1px solid rgba(79, 120, 190, 0.25) !important;
         background: linear-gradient(100deg, rgba(12, 25, 45, 0.9), rgba(10, 23, 43, 0.82)) !important;
         box-shadow: 0 14px 24px rgba(2, 12, 29, 0.34), inset 0 0 0 1px rgba(98, 148, 236, 0.08) !important;
@@ -827,21 +813,26 @@
 
       .appdosc-card__header {
         width: 100%;
-        min-height: 96px !important;
-        padding: 16px !important;
+        min-height: 80px !important;
+        padding: 12px !important;
         display: grid !important;
-        grid-template-columns: 56px minmax(0, 1fr) auto !important;
+        grid-template-columns: 44px minmax(0, 1fr) auto !important;
         grid-template-areas: "icon main actions" !important;
-        gap: 14px !important;
+        gap: 10px !important;
         align-items: center !important;
         cursor: pointer;
       }
 
+      .appdosc-card__header::after {
+        content: none !important;
+        display: none !important;
+      }
+
       .task-icon {
         grid-area: icon !important;
-        width: 50px !important;
-        height: 50px !important;
-        border-radius: 16px !important;
+        width: 40px !important;
+        height: 40px !important;
+        border-radius: 12px !important;
         display: grid !important;
         place-items: center !important;
         background: rgba(28, 73, 135, .55) !important;
@@ -854,7 +845,7 @@
         min-width: 0 !important;
         display: flex !important;
         flex-direction: column !important;
-        gap: 6px !important;
+        gap: 4px !important;
       }
 
       .task-meta {
@@ -866,10 +857,14 @@
       }
 
       .task-date {
-        color: #94a3b8 !important;
-        font-size: 12px !important;
+        color: #93c5fd !important;
+        font-size: 11px !important;
         line-height: 1.2 !important;
         white-space: nowrap !important;
+        border-radius: 999px !important;
+        padding: 3px 8px !important;
+        border: 1px solid rgba(96, 165, 250, 0.28) !important;
+        background: rgba(37, 99, 235, .22) !important;
       }
 
       .appdosc-card__meta {
@@ -897,14 +892,79 @@
       .task-name,
       .appdosc-card__title {
         color: #f8fafc !important;
-        font-size: 14px !important;
+        font-size: 12px !important;
         line-height: 1.2 !important;
-        font-weight: 680 !important;
+        font-weight: 600 !important;
         margin: 0;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
+      }
+
+      .appdosc-card[data-expanded='false'] .task-name,
+      .appdosc-card[data-expanded='false'] .appdosc-card__title {
+        -webkit-line-clamp: 1 !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .task-main {
+        display: block !important;
+        min-width: 0 !important;
+        padding: 18px 96px 0 0 !important;
+        font: 500 11px/1.3 Inter, system-ui, sans-serif !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .task-meta {
+        position: absolute !important;
+        top: 8px !important;
+        left: 12px !important;
+        right: auto !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        margin: 0 !important;
+        flex: 0 0 auto !important;
+        font: inherit !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .task-date,
+      .appdosc-card[data-expanded='false'] .task-number {
+        font: inherit !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .task-name {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        margin: 0 !important;
+        font: inherit !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .task-icon {
+        display: none !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__header {
+        grid-template-columns: minmax(0, 1fr) auto !important;
+        grid-template-areas: "main actions" !important;
+        min-height: 56px !important;
+        padding: 10px 12px !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__status {
+        min-height: auto !important;
+        height: auto !important;
+        padding: 2px 6px !important;
+        border: 1px solid rgba(96, 165, 250, 0.24) !important;
+        border-radius: 8px !important;
+        background: rgba(15, 23, 42, 0.35) !important;
+        color: #93c5fd !important;
+        font: 500 11px/1.2 Inter, system-ui, sans-serif !important;
+        max-width: 124px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
       }
 
       .appdosc-card__subtitle {
@@ -916,28 +976,28 @@
         grid-column: auto !important;
         grid-row: auto !important;
         justify-self: auto !important;
-        height: 38px !important;
-        min-height: 38px !important;
-        padding: 0 12px !important;
-        border-radius: 12px !important;
-        font-size: 14px !important;
+        height: 32px !important;
+        min-height: 32px !important;
+        padding: 0 10px !important;
+        border-radius: 10px !important;
+        font-size: 12px !important;
         font-weight: 700 !important;
         white-space: nowrap !important;
       }
 
       .appdosc-card__status {
         position: static !important;
-        min-height: 38px !important;
-        padding: 0 14px !important;
-        border-radius: 13px !important;
+        min-height: 32px !important;
+        padding: 0 10px !important;
+        border-radius: 10px !important;
         border: 1px solid rgba(63, 140, 255, 0.5) !important;
         color: #72a9ff !important;
         background: rgba(29, 63, 117, 0.5) !important;
-        font-size: 14px !important;
+        font-size: 12px !important;
         line-height: 1.2;
         display: inline-flex;
         align-items: center;
-        gap: 7px;
+        gap: 6px;
       }
 
       .appdosc-card__status:empty {
@@ -945,11 +1005,7 @@
       }
 
       .appdosc-card__status::before {
-        content: '';
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        border: 2px solid currentColor;
+        content: none !important;
       }
 
       .appdosc-card--done .appdosc-card__status {
@@ -959,37 +1015,42 @@
       }
 
       .appdosc-card--done .appdosc-card__status::before {
-        border: 0;
-        width: 16px;
-        height: 16px;
-        background: currentColor;
-        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill='black' d='m7.8 13.8-3.6-3.6L3 11.4l4.8 4.8L17 7l-1.2-1.2z'/%3E%3C/svg%3E") center / contain no-repeat;
-        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill='black' d='m7.8 13.8-3.6-3.6L3 11.4l4.8 4.8L17 7l-1.2-1.2z'/%3E%3C/svg%3E") center / contain no-repeat;
+        content: none !important;
       }
 
       .appdosc-card__side {
         grid-area: actions !important;
         display: flex !important;
         align-items: center !important;
-        gap: 14px !important;
+        gap: 6px !important;
         justify-self: end !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__side {
+        position: absolute !important;
+        top: 8px !important;
+        right: 10px !important;
+        justify-self: auto !important;
       }
 
       .task-chevron,
       .appdosc-card__chevron {
-        position: static !important;
-        width: 13px !important;
-        height: 13px !important;
-        border-right: 3px solid #94a3b8 !important;
-        border-bottom: 3px solid #94a3b8 !important;
-        transform: rotate(45deg) !important;
-        transition: transform .2s ease !important;
-        flex: 0 0 auto !important;
-        font-size: 0 !important;
+        display: none !important;
       }
 
-      .appdosc-card[data-expanded='true'] .appdosc-card__chevron {
-        transform: rotate(225deg) !important;
+      .appdosc-card__side::after {
+        content: '';
+        width: 8px;
+        height: 8px;
+        border-right: 2px solid #94a3b8;
+        border-bottom: 2px solid #94a3b8;
+        transform: rotate(45deg);
+        transition: transform .2s ease;
+        flex: 0 0 auto;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__side::after {
+        transform: rotate(225deg);
       }
 
       .appdosc-card__summary {
@@ -997,10 +1058,10 @@
       }
 
       .appdosc-card__details {
-        padding: 0 14px 16px 84px !important;
+        padding: 0 12px 12px 66px !important;
         margin: 0 !important;
         display: grid !important;
-        gap: 14px !important;
+        gap: 10px !important;
       }
 
       .appdosc-card[data-expanded='false'] .appdosc-card__details,
@@ -1031,9 +1092,28 @@
       .appdosc-card__detail dd {
         margin: 0 !important;
         color: #e5edf8 !important;
-        font-size: 16px !important;
-        line-height: 1.28 !important;
+        font-size: 13px !important;
+        line-height: 1.35 !important;
         overflow-wrap: anywhere !important;
+      }
+
+      .appdosc-card__assign-entries .appdosc-avatar,
+      .appdosc-card__assign-entry .appdosc-avatar {
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
+        min-height: 30px !important;
+        border-radius: 10px !important;
+        display: inline-flex !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+
+      .appdosc-card__assign-entries .appdosc-avatar__img,
+      .appdosc-card__assign-entry .appdosc-avatar__img {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
       }
 
       .appdosc-card__files {
@@ -1215,17 +1295,17 @@
         }
 
         .appdosc-card__header {
-          grid-template-columns: 50px minmax(0, 1fr) auto !important;
+          grid-template-columns: 42px minmax(0, 1fr) auto !important;
           grid-template-areas: "icon main actions" !important;
-          min-height: 92px !important;
-          padding: 12px !important;
-          gap: 12px !important;
+          min-height: 78px !important;
+          padding: 10px !important;
+          gap: 10px !important;
         }
 
         .task-icon {
-          width: 48px !important;
-          height: 48px !important;
-          border-radius: 14px !important;
+          width: 38px !important;
+          height: 38px !important;
+          border-radius: 12px !important;
         }
 
         .appdosc-card__side {
@@ -1236,12 +1316,12 @@
         .appdosc-card__files,
         .appdosc-card__resolution,
         .appdosc-card__footer {
-          padding-left: 72px !important;
+          padding-left: 58px !important;
           padding-right: 12px !important;
         }
 
         .task-name {
-          font-size: 17px !important;
+          font-size: 13px !important;
         }
 
         .appdosc-card__status.task-status {
@@ -1426,12 +1506,11 @@
         </div>
       </section>
 
-      <section class="appdosc__status" aria-live="polite">
+      <section class="appdosc__status" aria-live="polite" hidden>
         <div class="appdosc__status-message" data-status hidden></div>
       </section>
 
       <main class="appdosc__content">
-        <div class="tasks-app-badge">Документооборот Mini App</div>
         <div class="appdosc__table-card tasks-panel">
           <div class="appdosc__table-head tasks-header">
             <div class="tasks-header-top">
@@ -1614,12 +1693,11 @@
               <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
               <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
             </div>
-            <div class="appdosc-card__title task-name" data-field="document">Документ</div>
+            <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
             <div class="appdosc-card__subtitle" data-field="organization"></div>
           </div>
           <div class="appdosc-card__side">
             <span class="appdosc-card__status task-status" data-field="status"></span>
-            <span class="appdosc-card__chevron task-chevron" aria-hidden="true"></span>
           </div>
           <div class="appdosc-card__summary" data-field="summary"><div class="appdosc-card__block-text" data-field="contentCompact"></div></div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>

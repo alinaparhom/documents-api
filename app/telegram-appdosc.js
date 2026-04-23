@@ -2639,12 +2639,11 @@ const FALLBACK_CARD_TEMPLATE = `
         <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
         <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
       </div>
-      <div class="appdosc-card__title task-name" data-field="document">Документ</div>
+      <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
     <div class="appdosc-card__side">
       <span class="appdosc-card__status task-status" data-field="status"></span>
-      <span class="appdosc-card__chevron task-chevron" aria-hidden="true"></span>
     </div>
     <div class="appdosc-card__summary" data-field="summary">
       <div class="appdosc-card__block-text" data-field="contentCompact"></div>
@@ -4203,24 +4202,6 @@ function createCard(task, index, anchorRegistry) {
     }
   }
 
-  setCardField(card, '[data-field="document"]', formatDocumentCell(task), {
-    fallback: 'Документ',
-  });
-  setCardField(card, '[data-field="organization"]', task.organization, {
-    fallback: 'Организация не указана',
-  });
-  const registrationDate = formatDate(task.registrationDate);
-  setCardField(card, '[data-field="registry"]', task.registryNumber);
-  setCardField(card, '[data-field="registrationDate"]', registrationDate);
-  applyRegistrationDateHeader(card, registrationDate);
-  setCardField(card, '[data-field="direction"]', task.direction);
-  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
-  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
-  setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
-  setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
-    setTitle: false,
-  });
-
   const resolveCompactText = (value) => {
     if (value && typeof value === 'object') {
       const nested = normalizeValue(
@@ -4239,11 +4220,31 @@ function createCard(task, index, anchorRegistry) {
     || resolveCompactText(task.content)
     || resolveCompactText(task.description)
     || resolveCompactText(task.instruction)
-    || '—';
+    || 'Не указано';
+
+  setCardField(card, '[data-field="document"]', compactContent, {
+    fallback: 'Не указано',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="organization"]', task.organization, {
+    fallback: 'Организация не указана',
+  });
+  const registrationDate = formatDate(task.registrationDate);
+  setCardField(card, '[data-field="registry"]', task.registryNumber);
+  setCardField(card, '[data-field="registrationDate"]', registrationDate);
+  applyRegistrationDateHeader(card, registrationDate);
+  setCardField(card, '[data-field="direction"]', task.direction);
+  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
+  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
+  setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
+  setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
+    setTitle: false,
+  });
+
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
     setTitle: false,
-    fallback: '—',
+    fallback: 'Не указано',
   });
   toggleSection(card, '[data-field="summary"]', true);
 
@@ -4792,7 +4793,7 @@ function updateTaskSelector() {
   const visibleItems = getVisibleTaskItems();
   const hasCards = visibleItems.length > 0;
   const taskCountLabel = hasCards
-    ? ` • ${visibleItems.length}`
+    ? ` • Всего задач: ${visibleItems.length}`
     : '';
   if (elements.taskCountInline) {
     elements.taskCountInline.textContent = taskCountLabel;
@@ -6985,9 +6986,10 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     return;
   }
 
+  const statusLabel = `Статус задачи: ${statusText}`;
   statusElement.hidden = false;
-  statusElement.textContent = statusText;
-  statusElement.title = statusText;
+  statusElement.textContent = statusLabel;
+  statusElement.title = statusLabel;
 
   if (isTaskCompleted(task)) {
     statusElement.classList.add('appdosc-card__status--done');
@@ -15779,8 +15781,12 @@ function setStatus(type, message) {
   if (!elements.status) {
     return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
   elements.status.textContent = message;
   elements.status.hidden = !message;
+  if (statusContainer) {
+    statusContainer.hidden = !message;
+  }
   elements.status.className = 'appdosc__status-message';
   if (type && STATUS_CLASSES[type]) {
     elements.status.classList.add(STATUS_CLASSES[type]);
@@ -15791,8 +15797,12 @@ function setStatusAction(type, message, actionLabel, actionHandler) {
   if (!elements.status) {
     return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
 
   elements.status.hidden = !message;
+  if (statusContainer) {
+    statusContainer.hidden = !message;
+  }
   elements.status.className = 'appdosc__status-message';
   if (type && STATUS_CLASSES[type]) {
     elements.status.classList.add(STATUS_CLASSES[type]);
@@ -15819,7 +15829,11 @@ function clearStatus() {
   if (!elements.status) {
     return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
   elements.status.hidden = true;
+  if (statusContainer) {
+    statusContainer.hidden = true;
+  }
   elements.status.textContent = '';
   elements.status.className = 'appdosc__status-message';
 }
