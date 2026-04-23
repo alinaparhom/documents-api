@@ -838,6 +838,21 @@
         gap: 4px !important;
       }
 
+      .appdosc-card[data-status-icon] .task-main::before {
+        content: attr(data-status-icon);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        border: 1px solid rgba(191, 219, 254, 0.45);
+        background: rgba(255, 255, 255, 0.12);
+        color: #e2e8f0;
+        font-size: 10px;
+        margin-bottom: 2px;
+      }
+
       .task-meta {
         display: flex !important;
         align-items: center !important;
@@ -941,13 +956,13 @@
       .appdosc-card[data-expanded='false'] .appdosc-card__header {
         grid-template-columns: minmax(0, 1fr) auto !important;
         grid-template-areas: "main actions" !important;
-        min-height: 50px !important;
+        min-height: 64px !important;
         padding: 8px 10px !important;
         gap: 8px !important;
-        border-radius: 14px !important;
-        background: linear-gradient(165deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05)) !important;
-        border: 1px solid rgba(186, 230, 253, 0.2) !important;
-        backdrop-filter: blur(8px);
+        border-radius: 0 !important;
+        background: transparent !important;
+        border: 0 !important;
+        backdrop-filter: none;
       }
 
       .appdosc-card[data-expanded='false'] .appdosc-card__status {
@@ -1030,6 +1045,9 @@
         top: 8px !important;
         right: 10px !important;
         justify-self: auto !important;
+        display: grid !important;
+        gap: 6px !important;
+        justify-items: end !important;
       }
 
       .task-chevron,
@@ -1053,6 +1071,18 @@
 
       .appdosc-card[data-expanded='true'] .appdosc-card__side::after {
         transform: rotate(225deg);
+      }
+
+      .appdosc-card__compact-actions {
+        position: absolute !important;
+        top: 30px !important;
+        right: 10px !important;
+        display: grid !important;
+        justify-items: end !important;
+      }
+
+      .appdosc-card[data-expanded='true'] .appdosc-card__compact-actions {
+        display: none !important;
       }
 
       .appdosc-card__summary {
@@ -1342,9 +1372,14 @@
 
         .appdosc-card[data-expanded='false'] .appdosc-card__header {
           grid-template-columns: minmax(0, 1fr) auto !important;
-          min-height: 46px !important;
+          min-height: 58px !important;
           padding: 7px 8px !important;
           gap: 6px !important;
+        }
+
+        .appdosc-card__compact-actions {
+          top: 28px !important;
+          right: 8px !important;
         }
 
         .appdosc-card[data-expanded='false'] .task-meta {

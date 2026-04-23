@@ -6982,6 +6982,9 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     statusElement.hidden = true;
     statusElement.textContent = '';
     statusElement.removeAttribute('title');
+    if (card && card.dataset) {
+      delete card.dataset.statusIcon;
+    }
     return;
   }
 
@@ -6990,24 +6993,34 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   statusElement.textContent = statusLabel;
   statusElement.title = `Статус задачи: ${statusText}`;
 
+  let statusIcon = '•';
+
   if (isTaskCompleted(task)) {
     statusElement.classList.add('appdosc-card__status--done');
     statusElement.classList.add('task-status--done');
+    statusIcon = '✓';
   } else if (isOverdue(task)) {
     statusElement.classList.add('appdosc-card__status--danger');
     statusElement.classList.add('task-status--active');
+    statusIcon = '!';
   } else if (normalizedStatus.includes('контрол')) {
     statusElement.classList.add('appdosc-card__status--warn');
     statusElement.classList.add('task-status--active');
+    statusIcon = '⏱';
   } else if (normalizedStatus.includes('распредел')) {
     statusElement.classList.add('appdosc-card__status--info');
     statusElement.classList.add('task-status--active');
+    statusIcon = '◔';
   } else if (normalizedStatus.includes('работ') || normalizedStatus.includes('нов')) {
     statusElement.classList.add('appdosc-card__status--accent');
     statusElement.classList.add('task-status--active');
   } else {
     statusElement.classList.add('appdosc-card__status--accent');
     statusElement.classList.add('task-status--active');
+  }
+
+  if (card && card.dataset) {
+    card.dataset.statusIcon = statusIcon;
   }
 }
 
