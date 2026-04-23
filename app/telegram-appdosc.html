@@ -618,6 +618,16 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        animation: none !important;
+      }
+
+      .appdosc__refresh.is-loading .appdosc__refresh-icon {
+        animation: appdoscRefreshSpin 0.85s linear infinite !important;
+      }
+
+      @keyframes appdoscRefreshSpin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
       }
 
       .appdosc__task-nav-select {
@@ -647,8 +657,16 @@
         opacity: 0.75;
       }
 
+      .appdosc__cards {
+        display: grid;
+        gap: 10px;
+      }
+
       .appdosc-card {
         border-radius: 16px !important;
+        border: 1px solid rgba(148, 163, 184, 0.2) !important;
+        background: rgba(8, 25, 58, 0.56) !important;
+        box-shadow: none !important;
       }
 
       .appdosc-card__header {
@@ -688,6 +706,27 @@
 
       .appdosc-card__footer {
         padding-top: 8px !important;
+      }
+
+      .appdosc-card__actions {
+        gap: 8px !important;
+      }
+
+      .appdosc-card__action {
+        min-height: 36px !important;
+        padding: 8px 12px !important;
+        border-radius: 10px !important;
+        font-size: 13px !important;
+        line-height: 1.2;
+      }
+
+      .appdosc-card__assign .appdosc-card__action,
+      .appdosc-card__status-controls .appdosc-card__action,
+      .appdosc-card__status-controls .appdosc-card__status-button {
+        min-height: 34px !important;
+        padding: 7px 10px !important;
+        font-size: 12px !important;
+        border-radius: 9px !important;
       }
 
       .appdosc__responsible-panel {
