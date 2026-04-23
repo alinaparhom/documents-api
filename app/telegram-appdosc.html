@@ -953,7 +953,7 @@
         font-size: 0 !important;
       }
 
-      .appdosc-card--expanded .appdosc-card__chevron {
+      .appdosc-card[data-expanded='true'] .appdosc-card__chevron {
         transform: rotate(225deg) !important;
       }
 
@@ -968,14 +968,14 @@
         gap: 14px !important;
       }
 
-      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__details,
-      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__resolution,
-      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__files,
-      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__footer,
-      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__instruction,
-      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__status-controls,
-      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__due-editor,
-      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__assign {
+      .appdosc-card[data-expanded='false'] .appdosc-card__details,
+      .appdosc-card[data-expanded='false'] .appdosc-card__resolution,
+      .appdosc-card[data-expanded='false'] .appdosc-card__files,
+      .appdosc-card[data-expanded='false'] .appdosc-card__footer,
+      .appdosc-card[data-expanded='false'] .appdosc-card__instruction,
+      .appdosc-card[data-expanded='false'] .appdosc-card__status-controls,
+      .appdosc-card[data-expanded='false'] .appdosc-card__due-editor,
+      .appdosc-card[data-expanded='false'] .appdosc-card__assign {
         display: none !important;
       }
 
