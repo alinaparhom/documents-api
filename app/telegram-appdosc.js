@@ -2627,15 +2627,24 @@ const CARD_HIGHLIGHT_TIMEOUT = 1800;
 
 const FALLBACK_CARD_TEMPLATE = `
   <header class="appdosc-card__header" data-card-toggle>
-    <div class="appdosc-card__header-text">
-      <div class="appdosc-card__title" data-field="document">Документ</div>
+    <span class="task-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M9 4.5h6a1.5 1.5 0 0 1 1.5 1.5V7H19a2 2 0 0 1 2 2v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2.5V6A1.5 1.5 0 0 1 9 4.5Z" stroke="#5e9cff" stroke-width="1.7"/>
+        <path d="M9 6.25h6" stroke="#5e9cff" stroke-width="1.7" stroke-linecap="round"/>
+        <path d="m8.8 14.1 2.1 2.2 4.4-4.6" stroke="#5e9cff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+    <div class="appdosc-card__header-text task-main">
+      <div class="task-meta">
+        <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
+        <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
+      </div>
+      <div class="appdosc-card__title task-name" data-field="document">Документ</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
-    <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
-    <span class="appdosc-card__status" data-field="status"></span>
+    <span class="appdosc-card__status task-status task-status--active" data-field="status"></span>
     <div class="appdosc-card__side">
-      <span class="appdosc-card__badge" data-field="entryNumber"></span>
-      <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
+      <span class="appdosc-card__chevron task-chevron" aria-hidden="true">⌄</span>
     </div>
     <div class="appdosc-card__summary" data-field="summary">
       <div class="appdosc-card__block-text" data-field="contentCompact"></div>
@@ -4151,7 +4160,7 @@ function createCard(task, index, anchorRegistry) {
 
   if (!card) {
     card = document.createElement('article');
-    card.className = 'appdosc-card';
+    card.className = 'appdosc-card task-card';
     card.setAttribute('data-card', '');
     card.innerHTML = FALLBACK_CARD_TEMPLATE;
   }
