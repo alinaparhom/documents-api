@@ -681,10 +681,7 @@
       }
 
       .appdosc-card__header {
-        display: grid !important;
-        grid-template-columns: minmax(0, 1fr) auto !important;
         gap: 8px !important;
-        align-items: center;
       }
 
       .appdosc-card__meta {
@@ -726,18 +723,10 @@
         margin-top: 0;
       }
 
-      .appdosc-card__compact-actions {
-        grid-column: 1 / -1 !important;
-        width: 100%;
-      }
-
-      .appdosc-card__compact-actions .appdosc-card__action,
-      .appdosc-card__compact-actions .appdosc-card__action--compact {
-        width: 100%;
-        min-height: 40px !important;
-        border-radius: 12px !important;
-        font-size: 14px !important;
-        justify-content: center;
+      .appdosc__task-nav .appdosc__status-message {
+        font-size: 13px !important;
+        padding: 8px 10px !important;
+        border-radius: 10px !important;
       }
 
       .appdosc-card__footer {
@@ -1000,6 +989,9 @@
         <div class="appdosc__user-controls">
           <div class="appdosc__task-nav" data-task-selector>
             <label class="appdosc__task-nav-label" for="appdosc-task-select">Перейти к задаче</label>
+            <section class="appdosc__status" aria-live="polite">
+              <div class="appdosc__status-message" data-status hidden></div>
+            </section>
             <select
               class="appdosc__task-nav-select"
               id="appdosc-task-select"
@@ -1010,9 +1002,6 @@
               <option value="" selected disabled>Выберите задачу из списка</option>
             </select>
           </div>
-          <section class="appdosc__status" aria-live="polite">
-            <div class="appdosc__status-message" data-status hidden></div>
-          </section>
         </div>
       </section>
 
