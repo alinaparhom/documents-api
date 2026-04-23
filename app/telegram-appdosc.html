@@ -1149,6 +1149,136 @@
         background-repeat: no-repeat;
       }
 
+      .appdosc-filters {
+        margin-bottom: 10px;
+        border: 1px solid rgba(75, 115, 180, .22);
+        border-radius: 16px;
+        padding: 10px;
+        background: rgba(255, 255, 255, .08);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+      }
+
+      .appdosc-filters__toggle,
+      .appdosc-filters__input,
+      .appdosc-filters__select,
+      .appdosc-filters__status-toggle {
+        width: 100%;
+        min-height: 40px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, .32);
+        background: rgba(15, 23, 42, .6);
+        color: #e2e8f0;
+        font-size: 13px;
+        padding: 8px 10px;
+      }
+
+      .appdosc-filters__toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-weight: 600;
+      }
+
+      .appdosc-filters__count {
+        min-width: 20px;
+        min-height: 20px;
+        border-radius: 999px;
+        padding: 0 6px;
+        font-size: 12px;
+        background: #2563eb;
+        color: #fff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .appdosc-filters__body,
+      .appdosc-filters__active {
+        margin-top: 8px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .appdosc-filters__row--2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .appdosc-filters__label,
+      .appdosc-filters__active-label {
+        font-size: 12px;
+        color: #94a3b8;
+      }
+
+      .appdosc-filters__preset-list,
+      .appdosc-filters__active-list,
+      .appdosc-filters__statuses {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .appdosc-filters__preset,
+      .appdosc-filters__chip,
+      .appdosc-filters__status-chip {
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, .32);
+        background: rgba(15, 23, 42, .52);
+        color: #e2e8f0;
+        font-size: 12px;
+        padding: 5px 8px;
+      }
+
+      .appdosc-filters__preset.is-active {
+        border-color: rgba(59, 130, 246, .62);
+        color: #bfdbfe;
+        background: rgba(37, 99, 235, .18);
+      }
+
+      .appdosc-filters__status-menu {
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, .24);
+        padding: 6px;
+        display: grid;
+        gap: 4px;
+        background: rgba(15, 23, 42, .82);
+      }
+
+      .appdosc-filters__status-option {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #e2e8f0;
+      }
+
+      .appdosc-filters__actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .appdosc-filters__button {
+        min-height: 40px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, .32);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .appdosc-filters__button--reset {
+        background: rgba(15, 23, 42, .54);
+        color: #e2e8f0;
+      }
+
+      .appdosc-filters__button--apply {
+        background: #2563eb;
+        color: #fff;
+        border-color: rgba(37, 99, 235, .6);
+      }
+
       @media (max-width: 680px) {
         .appdosc {
           padding-inline: 6px !important;
@@ -1175,6 +1305,10 @@
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+        }
+
+        .appdosc-filters__row--2 {
+          grid-template-columns: 1fr;
         }
 
       }
@@ -1408,6 +1542,64 @@
           </div>
         </div>
         <div class="appdosc__user-controls">
+          <section class="appdosc-filters" data-advanced-filters>
+            <button type="button" class="appdosc-filters__toggle" data-advanced-filters-toggle aria-expanded="false">
+              <span>🧪 Фильтры</span>
+              <span class="appdosc-filters__count" data-filter-counter hidden>0</span>
+            </button>
+            <div class="appdosc-filters__body" data-advanced-filters-body hidden>
+              <div class="appdosc-filters__row--2">
+                <label>
+                  <span class="appdosc-filters__label">Дата с</span>
+                  <input class="appdosc-filters__input" type="date" data-filter-date-from />
+                </label>
+                <label>
+                  <span class="appdosc-filters__label">Дата по</span>
+                  <input class="appdosc-filters__input" type="date" data-filter-date-to />
+                </label>
+              </div>
+              <div class="appdosc-filters__preset-list">
+                <button class="appdosc-filters__preset" type="button" data-filter-range="today">Сегодня</button>
+                <button class="appdosc-filters__preset" type="button" data-filter-range="week">Неделя</button>
+                <button class="appdosc-filters__preset" type="button" data-filter-range="month">Месяц</button>
+                <button class="appdosc-filters__preset" type="button" data-filter-range="quarter">Квартал</button>
+              </div>
+              <label>
+                <span class="appdosc-filters__label">Корреспондент / отправитель</span>
+                <select class="appdosc-filters__select" data-filter-sender><option value="">Выберите</option></select>
+              </label>
+              <label>
+                <span class="appdosc-filters__label">Объект</span>
+                <select class="appdosc-filters__select" data-filter-object><option value="">Выберите</option></select>
+              </label>
+              <div>
+                <span class="appdosc-filters__label">Статус</span>
+                <div class="appdosc-filters__statuses" data-filter-status-chips></div>
+                <button class="appdosc-filters__status-toggle" type="button" data-filter-status-toggle>Выбрать статусы</button>
+                <div class="appdosc-filters__status-menu" data-filter-status-list hidden></div>
+              </div>
+              <label>
+                <span class="appdosc-filters__label">Ответственный</span>
+                <select class="appdosc-filters__select" data-filter-responsible><option value="">Выберите</option></select>
+              </label>
+              <label>
+                <span class="appdosc-filters__label">№ задачи</span>
+                <input class="appdosc-filters__input" type="text" data-filter-task-number placeholder="Например TASK-123" />
+              </label>
+              <label class="appdosc-filters__status-option">
+                <input type="checkbox" data-filter-overdue-only />
+                <span>Только просроченные</span>
+              </label>
+              <div class="appdosc-filters__actions">
+                <button type="button" class="appdosc-filters__button appdosc-filters__button--reset" data-filter-reset>Сбросить</button>
+                <button type="button" class="appdosc-filters__button appdosc-filters__button--apply" data-filter-apply>Применить</button>
+              </div>
+            </div>
+            <div class="appdosc-filters__active" data-filter-active-wrap hidden>
+              <span class="appdosc-filters__active-label">Активные фильтры:</span>
+              <div class="appdosc-filters__active-list" data-filter-active-list></div>
+            </div>
+          </section>
           <div class="appdosc__task-nav" data-task-selector>
             <label class="appdosc__task-nav-label" for="appdosc-task-select">
               <span>Перейти к задаче</span>

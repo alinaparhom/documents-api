@@ -1998,6 +1998,17 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
+  filtersState: {
+    dateFrom: null,
+    dateTo: null,
+    sender: null,
+    object: null,
+    statuses: [],
+    responsible: null,
+    taskNumber: '',
+    overdueOnly: false,
+  },
+  activePresetPeriod: '',
   access: {
     responsibles: {},
     subordinates: {},
@@ -2444,6 +2455,21 @@ const TASK_FILTERS = ['all', 'overdue', ...STATUS_FILTERS];
 const DEFAULT_TASK_FILTER = 'all';
 const DEFAULT_PLACEHOLDER_MESSAGE = 'Задачи отсутствуют';
 const FILTER_PLACEHOLDER_MESSAGE = 'Для выбранной категории задачи отсутствуют';
+const FILTER_PRESET_DAYS = {
+  today: 0,
+  week: 7,
+  month: 30,
+  quarter: 90,
+};
+const ADVANCED_STATUS_OPTIONS = [
+  { value: 'distributed', label: 'Распределено' },
+  { value: 'accepted', label: 'В работе' },
+  { value: 'review', label: 'На проверке' },
+  { value: 'done', label: 'Выполнено' },
+  { value: 'overdue', label: 'Просрочено' },
+  { value: 'new', label: 'Новое' },
+  { value: 'cancelled', label: 'Отменено' },
+];
 
 function normalizeTaskFilter(filter) {
   if (typeof filter !== 'string') {
@@ -2766,6 +2792,25 @@ function initElements() {
   elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
   elements.taskSelector = document.querySelector('[data-task-select]');
   elements.taskCountInline = document.querySelector('[data-task-count-inline]');
+  elements.advancedFiltersRoot = document.querySelector('[data-advanced-filters]');
+  elements.advancedFiltersToggle = document.querySelector('[data-advanced-filters-toggle]');
+  elements.advancedFiltersBody = document.querySelector('[data-advanced-filters-body]');
+  elements.filtersCounter = document.querySelector('[data-filter-counter]');
+  elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
+  elements.filterDateTo = document.querySelector('[data-filter-date-to]');
+  elements.filterSender = document.querySelector('[data-filter-sender]');
+  elements.filterObject = document.querySelector('[data-filter-object]');
+  elements.filterStatusChips = document.querySelector('[data-filter-status-chips]');
+  elements.filterStatusToggle = document.querySelector('[data-filter-status-toggle]');
+  elements.filterStatusList = document.querySelector('[data-filter-status-list]');
+  elements.filterResponsible = document.querySelector('[data-filter-responsible]');
+  elements.filterTaskNumber = document.querySelector('[data-filter-task-number]');
+  elements.filterOverdueOnly = document.querySelector('[data-filter-overdue-only]');
+  elements.filterReset = document.querySelector('[data-filter-reset]');
+  elements.filterApply = document.querySelector('[data-filter-apply]');
+  elements.filterActiveWrap = document.querySelector('[data-filter-active-wrap]');
+  elements.filterActiveList = document.querySelector('[data-filter-active-list]');
+  elements.filterRangeButtons = Array.from(document.querySelectorAll('[data-filter-range]'));
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
@@ -3487,6 +3532,8 @@ function updateStateFromPayload(payload) {
 
   const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
   state.tasks = sanitizedTasks;
+  refreshAdvancedFilterDictionaries();
+  renderFiltersForm();
   const activePreviewKeys = applyTaskAttachmentPreviewCache(state.tasks, previousPreviewEntries);
   cleanupTaskAttachmentPreviewCache(activePreviewKeys);
   updateVisibleTasks();
@@ -4029,7 +4076,11 @@ function renderCards() {
   }
 
   if (!visibleItems.length) {
-    setPlaceholderMessage(hasTasks ? FILTER_PLACEHOLDER_MESSAGE : DEFAULT_PLACEHOLDER_MESSAGE);
+    const hasAdvancedFilters = countActiveAdvancedFilters() > 0;
+    const message = hasTasks
+      ? (hasAdvancedFilters ? 'По выбранным фильтрам задач не найдено' : FILTER_PLACEHOLDER_MESSAGE)
+      : DEFAULT_PLACEHOLDER_MESSAGE;
+    setPlaceholderMessage(message);
     togglePlaceholder(true);
     updateTaskSelector();
     pruneExpandedCardAnchors(new Set());
@@ -4700,7 +4751,7 @@ function updateVisibleTasks() {
     }
   }
 
-  state.visibleTasks = visible;
+  state.visibleTasks = applyFiltersToTasks(visible, getAdvancedFiltersState());
 }
 
 function truncateText(value, limit = 140) {
@@ -15866,6 +15917,52 @@ function handleSummaryBadgeClick(filter) {
 }
 
 function attachEvents() {
+  if (elements.advancedFiltersToggle) {
+    elements.advancedFiltersToggle.addEventListener('click', toggleFiltersPanel);
+  }
+  if (elements.filterStatusToggle && elements.filterStatusList) {
+    elements.filterStatusToggle.addEventListener('click', () => {
+      elements.filterStatusList.hidden = !elements.filterStatusList.hidden;
+    });
+  }
+  if (elements.filterDateFrom) {
+    elements.filterDateFrom.addEventListener('change', () => {
+      state.activePresetPeriod = '';
+      setDateRange(elements.filterDateFrom.value, getAdvancedFiltersState().dateTo);
+    });
+  }
+  if (elements.filterDateTo) {
+    elements.filterDateTo.addEventListener('change', () => {
+      state.activePresetPeriod = '';
+      setDateRange(getAdvancedFiltersState().dateFrom, elements.filterDateTo.value);
+    });
+  }
+  if (elements.filterSender) {
+    elements.filterSender.addEventListener('change', () => selectSender(elements.filterSender.value));
+  }
+  if (elements.filterObject) {
+    elements.filterObject.addEventListener('change', () => selectObject(elements.filterObject.value));
+  }
+  if (elements.filterResponsible) {
+    elements.filterResponsible.addEventListener('change', () => selectResponsible(elements.filterResponsible.value));
+  }
+  if (elements.filterTaskNumber) {
+    elements.filterTaskNumber.addEventListener('input', () => setTaskNumber(elements.filterTaskNumber.value));
+  }
+  if (elements.filterOverdueOnly) {
+    elements.filterOverdueOnly.addEventListener('change', () => setOverdueOnly(elements.filterOverdueOnly.checked));
+  }
+  if (Array.isArray(elements.filterRangeButtons)) {
+    elements.filterRangeButtons.forEach((button) => {
+      button.addEventListener('click', () => applyPresetPeriod(button.dataset.filterRange));
+    });
+  }
+  if (elements.filterReset) {
+    elements.filterReset.addEventListener('click', resetFilters);
+  }
+  if (elements.filterApply) {
+    elements.filterApply.addEventListener('click', applyFilters);
+  }
   if (elements.refreshButton) {
     elements.refreshButton.addEventListener('click', () => loadTasks(true));
   }
@@ -15957,6 +16054,424 @@ function formatDateTime(value) {
     return '—';
   }
   return date.toLocaleString('ru-RU', { hour12: false });
+}
+
+function formatFilterDateRu(value) {
+  if (!value) {
+    return '';
+  }
+  const parts = String(value).split('-');
+  if (parts.length !== 3) {
+    return '';
+  }
+  return `${parts[2]}.${parts[1]}.${parts[0]}`;
+}
+
+function getAdvancedFiltersState() {
+  if (!state.filtersState || typeof state.filtersState !== 'object') {
+    state.filtersState = {
+      dateFrom: null,
+      dateTo: null,
+      sender: null,
+      object: null,
+      statuses: [],
+      responsible: null,
+      taskNumber: '',
+      overdueOnly: false,
+    };
+  }
+  return state.filtersState;
+}
+
+function countActiveAdvancedFilters() {
+  const filters = getAdvancedFiltersState();
+  let count = 0;
+  if (filters.dateFrom || filters.dateTo) count += 1;
+  if (filters.sender) count += 1;
+  if (filters.object) count += 1;
+  count += Array.isArray(filters.statuses) ? filters.statuses.length : 0;
+  if (filters.responsible) count += 1;
+  if (filters.taskNumber) count += 1;
+  if (filters.overdueOnly) count += 1;
+  return count;
+}
+
+function updateFiltersCounter() {
+  if (!(elements.filtersCounter instanceof HTMLElement)) {
+    return;
+  }
+  const count = countActiveAdvancedFilters();
+  elements.filtersCounter.textContent = String(count);
+  elements.filtersCounter.hidden = count < 1;
+}
+
+function closeFiltersPanel() {
+  if (elements.advancedFiltersBody instanceof HTMLElement) {
+    elements.advancedFiltersBody.hidden = true;
+  }
+  if (elements.advancedFiltersToggle instanceof HTMLElement) {
+    elements.advancedFiltersToggle.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function openFiltersPanel() {
+  if (elements.advancedFiltersBody instanceof HTMLElement) {
+    elements.advancedFiltersBody.hidden = false;
+  }
+  if (elements.advancedFiltersToggle instanceof HTMLElement) {
+    elements.advancedFiltersToggle.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function toggleFiltersPanel() {
+  const isHidden = !(elements.advancedFiltersBody instanceof HTMLElement) || elements.advancedFiltersBody.hidden;
+  if (isHidden) {
+    openFiltersPanel();
+  } else {
+    closeFiltersPanel();
+  }
+}
+
+function syncAdvancedFilterStateFromForm() {
+  const filters = getAdvancedFiltersState();
+  filters.dateFrom = normalizeValue(elements.filterDateFrom && elements.filterDateFrom.value) || null;
+  filters.dateTo = normalizeValue(elements.filterDateTo && elements.filterDateTo.value) || null;
+  filters.sender = normalizeValue(elements.filterSender && elements.filterSender.value) || null;
+  filters.object = normalizeValue(elements.filterObject && elements.filterObject.value) || null;
+  filters.responsible = normalizeValue(elements.filterResponsible && elements.filterResponsible.value) || null;
+  filters.taskNumber = normalizeValue(elements.filterTaskNumber && elements.filterTaskNumber.value) || '';
+  filters.overdueOnly = Boolean(elements.filterOverdueOnly && elements.filterOverdueOnly.checked);
+}
+
+function setDateRange(dateFrom, dateTo) {
+  const filters = getAdvancedFiltersState();
+  const from = normalizeValue(dateFrom) || null;
+  const to = normalizeValue(dateTo) || null;
+  if (from && to && from > to) {
+    filters.dateFrom = to;
+    filters.dateTo = from;
+  } else {
+    filters.dateFrom = from;
+    filters.dateTo = to;
+  }
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+}
+
+function applyPresetPeriod(period) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = FILTER_PRESET_DAYS[period];
+  if (typeof diff !== 'number') {
+    state.activePresetPeriod = '';
+    return;
+  }
+  const start = new Date(today);
+  start.setDate(today.getDate() - diff);
+  state.activePresetPeriod = period;
+  setDateRange(start.toISOString().slice(0, 10), today.toISOString().slice(0, 10));
+}
+
+function selectSender(sender) {
+  const filters = getAdvancedFiltersState();
+  filters.sender = normalizeValue(sender) || null;
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+}
+
+function selectObject(objectValue) {
+  const filters = getAdvancedFiltersState();
+  filters.object = normalizeValue(objectValue) || null;
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+}
+
+function toggleStatus(statusValue) {
+  const normalized = normalizeValue(statusValue);
+  if (!normalized) {
+    return;
+  }
+  const filters = getAdvancedFiltersState();
+  const list = Array.isArray(filters.statuses) ? filters.statuses.slice() : [];
+  if (list.includes(normalized)) {
+    filters.statuses = list.filter((item) => item !== normalized);
+  } else {
+    filters.statuses = [...list, normalized];
+  }
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+}
+
+function selectResponsible(responsible) {
+  const filters = getAdvancedFiltersState();
+  filters.responsible = normalizeValue(responsible) || null;
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+}
+
+function setTaskNumber(value) {
+  const filters = getAdvancedFiltersState();
+  filters.taskNumber = normalizeValue(value) || '';
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+}
+
+function setOverdueOnly(value) {
+  const filters = getAdvancedFiltersState();
+  filters.overdueOnly = Boolean(value);
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+}
+
+function removeFilter(filterKey, filterValue = '') {
+  const filters = getAdvancedFiltersState();
+  if (filterKey === 'date') {
+    filters.dateFrom = null;
+    filters.dateTo = null;
+  } else if (filterKey === 'sender') {
+    filters.sender = null;
+  } else if (filterKey === 'object') {
+    filters.object = null;
+  } else if (filterKey === 'status') {
+    filters.statuses = (filters.statuses || []).filter((item) => item !== filterValue);
+  } else if (filterKey === 'responsible') {
+    filters.responsible = null;
+  } else if (filterKey === 'taskNumber') {
+    filters.taskNumber = '';
+  } else if (filterKey === 'overdueOnly') {
+    filters.overdueOnly = false;
+  }
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+}
+
+function renderActiveFilters() {
+  if (!(elements.filterActiveList instanceof HTMLElement) || !(elements.filterActiveWrap instanceof HTMLElement)) {
+    return;
+  }
+  elements.filterActiveList.innerHTML = '';
+  const filters = getAdvancedFiltersState();
+  const items = [];
+  if (filters.dateFrom || filters.dateTo) {
+    items.push({ key: 'date', label: `${formatFilterDateRu(filters.dateFrom) || '...'} — ${formatFilterDateRu(filters.dateTo) || '...'}` });
+  }
+  if (filters.sender) items.push({ key: 'sender', label: filters.sender });
+  if (filters.object) items.push({ key: 'object', label: filters.object });
+  (filters.statuses || []).forEach((status) => {
+    const label = ADVANCED_STATUS_OPTIONS.find((item) => item.value === status)?.label || status;
+    items.push({ key: 'status', value: status, label });
+  });
+  if (filters.responsible) items.push({ key: 'responsible', label: filters.responsible });
+  if (filters.taskNumber) items.push({ key: 'taskNumber', label: `№ ${filters.taskNumber}` });
+  if (filters.overdueOnly) items.push({ key: 'overdueOnly', label: 'Только просроченные' });
+
+  elements.filterActiveWrap.hidden = items.length === 0;
+  items.forEach((item) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'appdosc-filters__chip';
+    button.textContent = `${item.label} ×`;
+    button.addEventListener('click', () => removeFilter(item.key, item.value || ''));
+    elements.filterActiveList.appendChild(button);
+  });
+}
+
+function renderFilterStatusList() {
+  if (!(elements.filterStatusList instanceof HTMLElement)) {
+    return;
+  }
+  const filters = getAdvancedFiltersState();
+  elements.filterStatusList.innerHTML = '';
+  ADVANCED_STATUS_OPTIONS.forEach((status) => {
+    const option = document.createElement('label');
+    option.className = 'appdosc-filters__status-option';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = (filters.statuses || []).includes(status.value);
+    checkbox.addEventListener('change', () => toggleStatus(status.value));
+    option.appendChild(checkbox);
+    const text = document.createElement('span');
+    text.textContent = status.label;
+    option.appendChild(text);
+    elements.filterStatusList.appendChild(option);
+  });
+}
+
+function renderFiltersForm() {
+  const filters = getAdvancedFiltersState();
+  if (elements.filterDateFrom) elements.filterDateFrom.value = filters.dateFrom || '';
+  if (elements.filterDateTo) elements.filterDateTo.value = filters.dateTo || '';
+  if (elements.filterSender) elements.filterSender.value = filters.sender || '';
+  if (elements.filterObject) elements.filterObject.value = filters.object || '';
+  if (elements.filterResponsible) elements.filterResponsible.value = filters.responsible || '';
+  if (elements.filterTaskNumber) elements.filterTaskNumber.value = filters.taskNumber || '';
+  if (elements.filterOverdueOnly) elements.filterOverdueOnly.checked = Boolean(filters.overdueOnly);
+  if (elements.filterStatusChips instanceof HTMLElement) {
+    elements.filterStatusChips.innerHTML = '';
+    (filters.statuses || []).forEach((status) => {
+      const label = ADVANCED_STATUS_OPTIONS.find((item) => item.value === status)?.label || status;
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'appdosc-filters__status-chip';
+      chip.textContent = `${label} ×`;
+      chip.addEventListener('click', () => removeFilter('status', status));
+      elements.filterStatusChips.appendChild(chip);
+    });
+  }
+  if (Array.isArray(elements.filterRangeButtons)) {
+    elements.filterRangeButtons.forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.filterRange === state.activePresetPeriod);
+    });
+  }
+  renderFilterStatusList();
+}
+
+function buildQueryParams() {
+  syncAdvancedFilterStateFromForm();
+  const filters = getAdvancedFiltersState();
+  const params = new URLSearchParams();
+  if (filters.dateFrom) params.set('date_from', filters.dateFrom);
+  if (filters.dateTo) params.set('date_to', filters.dateTo);
+  if (filters.sender) params.set('sender', filters.sender);
+  if (filters.object) params.set('object', filters.object);
+  if (filters.statuses && filters.statuses.length) params.set('statuses', filters.statuses.join(','));
+  if (filters.responsible) params.set('responsible', filters.responsible);
+  if (filters.taskNumber) params.set('task_number', filters.taskNumber);
+  if (filters.overdueOnly) params.set('overdue', '1');
+  return params;
+}
+
+function initFiltersFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const filters = getAdvancedFiltersState();
+  filters.dateFrom = normalizeValue(params.get('date_from')) || null;
+  filters.dateTo = normalizeValue(params.get('date_to')) || null;
+  filters.sender = normalizeValue(params.get('sender')) || null;
+  filters.object = normalizeValue(params.get('object')) || null;
+  const statuses = normalizeValue(params.get('statuses'));
+  filters.statuses = statuses ? statuses.split(',').map((item) => normalizeValue(item)).filter(Boolean) : [];
+  filters.responsible = normalizeValue(params.get('responsible')) || null;
+  filters.taskNumber = normalizeValue(params.get('task_number')) || '';
+  filters.overdueOnly = params.get('overdue') === '1';
+}
+
+function resetFilters() {
+  state.filtersState = {
+    dateFrom: null,
+    dateTo: null,
+    sender: null,
+    object: null,
+    statuses: [],
+    responsible: null,
+    taskNumber: '',
+    overdueOnly: false,
+  };
+  state.activePresetPeriod = '';
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
+  window.history.replaceState({}, '', window.location.pathname);
+  updateVisibleTasks();
+  safeRender('advanced_filters_reset');
+}
+
+function applyFilters() {
+  const params = buildQueryParams();
+  const query = params.toString();
+  const nextUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+  window.history.replaceState({}, '', nextUrl);
+  updateVisibleTasks();
+  safeRender('advanced_filters_apply');
+}
+
+function getTaskAdvancedDate(task) {
+  const raw = normalizeValue(task && (task.registrationDate || task.date || task.createdAt || task.registrationDateHeader || task.dueDate));
+  if (!raw) {
+    return '';
+  }
+  const parsed = parseDate(raw);
+  if (!parsed) {
+    return '';
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function getTaskAdvancedResponsible(task) {
+  return normalizeValue(task && (task.responsible || (task.assignee && (task.assignee.name || task.assignee.responsible))));
+}
+
+function applyFiltersToTasks(tasks, filtersState) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  const filters = filtersState && typeof filtersState === 'object' ? filtersState : getAdvancedFiltersState();
+  return source.filter((item) => {
+    const task = item && item.task ? item.task : item;
+    const date = getTaskAdvancedDate(task);
+    if (filters.dateFrom && date && date < filters.dateFrom) return false;
+    if (filters.dateTo && date && date > filters.dateTo) return false;
+    if (filters.sender) {
+      const sender = normalizeValue(task && task.correspondent);
+      if (!sender || sender !== filters.sender) return false;
+    }
+    if (filters.object) {
+      const objectValue = normalizeValue(task && (task.object || task.organization));
+      if (!objectValue || objectValue !== filters.object) return false;
+    }
+    if (Array.isArray(filters.statuses) && filters.statuses.length) {
+      const statusKey = normalizeValue(getTaskStatusKeyForUser(task)) || normalizeValue(task && task.status);
+      if (!statusKey || !filters.statuses.includes(statusKey)) return false;
+    }
+    if (filters.responsible) {
+      const responsible = getTaskAdvancedResponsible(task);
+      if (!responsible || responsible !== filters.responsible) return false;
+    }
+    if (filters.taskNumber) {
+      const taskNumber = normalizeValue(task && (task.entryNumber || task.taskNumber || task.id)) || '';
+      if (!taskNumber.toLowerCase().includes(filters.taskNumber.toLowerCase())) return false;
+    }
+    if (filters.overdueOnly && !isOverdue(task)) return false;
+    return true;
+  });
+}
+
+function fillSelectWithValues(selectElement, values) {
+  if (!(selectElement instanceof HTMLSelectElement)) {
+    return;
+  }
+  const current = normalizeValue(selectElement.value) || '';
+  selectElement.innerHTML = '<option value="">Выберите</option>';
+  values.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    selectElement.appendChild(option);
+  });
+  selectElement.value = current;
+}
+
+function refreshAdvancedFilterDictionaries() {
+  const senderSet = new Set(['Алина Пархоменко', 'Иван Смирнов', 'Мария Кузнецова']);
+  const objectSet = new Set(['ЖК Север', 'ЖК Восток', 'БЦ Центральный']);
+  const responsibleSet = new Set(['Антон Иванов', 'Елена Орлова', 'Дмитрий Соколов']);
+  const source = Array.isArray(state.tasks) ? state.tasks : [];
+  source.forEach((task) => {
+    const sender = normalizeValue(task && task.correspondent);
+    if (sender) senderSet.add(sender);
+    const objectValue = normalizeValue(task && (task.object || task.organization));
+    if (objectValue) objectSet.add(objectValue);
+    const responsible = getTaskAdvancedResponsible(task);
+    if (responsible) responsibleSet.add(responsible);
+  });
+  fillSelectWithValues(elements.filterSender, Array.from(senderSet).sort((a, b) => a.localeCompare(b, 'ru')));
+  fillSelectWithValues(elements.filterObject, Array.from(objectSet).sort((a, b) => a.localeCompare(b, 'ru')));
+  fillSelectWithValues(elements.filterResponsible, Array.from(responsibleSet).sort((a, b) => a.localeCompare(b, 'ru')));
 }
 
 function formatDateTimeCompact(value) {
@@ -16142,7 +16657,37 @@ function bootstrap() {
   attachPdfDiagnostics();
   readAssetVersionInfo();
   initTelegram();
+  refreshAdvancedFilterDictionaries();
+  initFiltersFromUrl();
+  renderFiltersForm();
+  renderActiveFilters();
+  updateFiltersCounter();
   attachEvents();
+  if (typeof window !== 'undefined') {
+    window.appdoscFilters = {
+      filtersState: getAdvancedFiltersState(),
+      toggleFiltersPanel,
+      openFiltersPanel,
+      closeFiltersPanel,
+      setDateRange,
+      applyPresetPeriod,
+      selectSender,
+      selectObject,
+      toggleStatus,
+      selectResponsible,
+      setTaskNumber,
+      setOverdueOnly,
+      removeFilter,
+      resetFilters,
+      applyFilters,
+      renderFiltersForm,
+      renderActiveFilters,
+      updateFiltersCounter,
+      buildQueryParams,
+      initFiltersFromUrl,
+      applyFiltersToTasks,
+    };
+  }
   prewarmMiniAppPdfResources();
   if (!safeRender('bootstrap_initial')) {
     try {
