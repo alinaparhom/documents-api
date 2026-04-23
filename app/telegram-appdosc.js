@@ -18147,7 +18147,7 @@ function setupAssignmentControls(card, task) {
     removeButton.type = 'button';
     removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
     removeButton.dataset.assignmentAction = 'remove';
-    removeButton.textContent = 'Убрать';
+    removeButton.textContent = 'Отозвать';
     removeButton.disabled = false;
     removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
     removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
@@ -19098,7 +19098,7 @@ function setupSubordinateControls(card, task) {
     removeButton.type = 'button';
     removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
     removeButton.dataset.assignmentAction = 'remove';
-    removeButton.textContent = 'Убрать';
+    removeButton.textContent = 'Отозвать';
     removeButton.disabled = false;
     removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
     removeButton.style.background = 'rgba(8, 22, 58, 0.45)';

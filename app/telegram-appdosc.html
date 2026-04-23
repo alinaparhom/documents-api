@@ -612,13 +612,19 @@
       }
 
       .appdosc__refresh-icon {
-        width: auto;
-        height: auto;
-        font-size: 16px;
+        width: 16px;
+        height: 16px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         animation: none !important;
+        color: currentColor;
+      }
+
+      .appdosc__refresh-icon svg {
+        width: 16px;
+        height: 16px;
+        display: block;
       }
 
       .appdosc__refresh.is-loading .appdosc__refresh-icon {
@@ -676,6 +682,13 @@
       .appdosc-card__meta {
         grid-column: 1 !important;
         grid-row: 1 !important;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px !important;
+        opacity: 0.86;
+        line-height: 1.1;
+        padding: 2px 0;
       }
 
       .appdosc-card__side {
@@ -689,8 +702,10 @@
 
       .appdosc-card__badge {
         border-radius: 999px !important;
-        padding: 6px 10px !important;
-        font-size: 14px !important;
+        padding: 4px 8px !important;
+        font-size: 12px !important;
+        line-height: 1.1;
+        min-height: 24px !important;
       }
 
       .appdosc-card__header-text {
@@ -888,7 +903,18 @@
             </div>
             <div class="appdosc__summary-actions">
               <button class="appdosc__refresh" type="button" data-refresh>
-                <span class="appdosc__refresh-icon" aria-hidden="true">⟳</span>
+                <span class="appdosc__refresh-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path
+                      d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.9"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </span>
                 <span class="appdosc__refresh-text">Обновить</span>
               </button>
             </div>
