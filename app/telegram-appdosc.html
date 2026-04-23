@@ -1193,6 +1193,23 @@
         padding: 0 10px;
         font-size: 13px;
         font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.18s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .appdosc__filter-toggle:hover,
+      .appdosc__filter-toggle:focus-visible {
+        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.14);
+        transform: translateY(-1px);
+      }
+
+      .appdosc__filter-toggle:active {
+        transform: translateY(0);
+      }
+
+      .appdosc__filter-toggle[aria-expanded='true'] {
+        background: rgba(59, 130, 246, 0.14);
+        border-color: rgba(59, 130, 246, 0.4);
       }
 
       .appdosc__filter-toggle-icon {
@@ -1219,6 +1236,10 @@
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         box-sizing: border-box;
+      }
+
+      .appdosc__task-filter-panel[hidden] {
+        display: none !important;
       }
 
       .appdosc__task-filter-quick {
@@ -1284,6 +1305,7 @@
         font-weight: 600;
         padding: 0 12px;
         white-space: nowrap;
+        cursor: pointer;
       }
 
       :root[data-theme='dark'] .appdosc__filter-toggle {
@@ -1640,9 +1662,6 @@
                 <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="month">Месяц</button>
                 <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
               </div>
-              <div class="appdosc__task-filter-actions">
-                <button type="button" class="appdosc__task-filter-reset" data-filter-reset>Сбросить фильтр</button>
-              </div>
               <label class="appdosc__task-filter-field">
                 <span>Группировка</span>
                 <select data-filter-group-type>
@@ -1658,6 +1677,9 @@
                   <option value="">Сначала выберите группировку</option>
                 </select>
               </label>
+              <div class="appdosc__task-filter-actions">
+                <button type="button" class="appdosc__task-filter-reset" data-filter-reset>Сброс</button>
+              </div>
             </div>
             <div class="appdosc__table-meta tasks-updated" data-updated>Обновление не выполнялось</div>
           </div>

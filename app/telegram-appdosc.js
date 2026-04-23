@@ -2788,6 +2788,7 @@ function initElements() {
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
   elements.viewerBrief = document.querySelector('[data-viewer-brief]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
+  setTaskFilterPanelExpanded(false);
 
   logIosStage('elements_initialized', {
     cardsContainer: Boolean(elements.cardsContainer),
