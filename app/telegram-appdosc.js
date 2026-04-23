@@ -2767,6 +2767,7 @@ function initElements() {
   elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
   elements.filterDateTo = document.querySelector('[data-filter-date-to]');
   elements.filterQuickButtons = Array.from(document.querySelectorAll('[data-filter-quick-btn]'));
+  elements.filterResetButton = document.querySelector('[data-filter-reset]');
   elements.filterGroupType = document.querySelector('[data-filter-group-type]');
   elements.filterGroupValue = document.querySelector('[data-filter-group-value]');
   elements.status = document.querySelector('[data-status]');
@@ -4102,6 +4103,14 @@ function applyCompactQuickPreset(preset) {
   state.compactFilters.quickPreset = normalizedPreset;
   state.compactFilters.dateFrom = formatDateInputValue(from);
   state.compactFilters.dateTo = formatDateInputValue(to);
+}
+
+function resetCompactFilters() {
+  state.compactFilters.dateFrom = '';
+  state.compactFilters.dateTo = '';
+  state.compactFilters.quickPreset = '';
+  state.compactFilters.groupType = '';
+  state.compactFilters.groupValue = '';
 }
 
 function syncCompactFilterPanelState() {
@@ -16157,6 +16166,13 @@ function attachEvents() {
       state.compactFilters.groupValue = normalizeValue(event.target.value);
       updateVisibleTasks();
       safeRender('compact_filter_group_value');
+    });
+  }
+  if (elements.filterResetButton) {
+    elements.filterResetButton.addEventListener('click', () => {
+      resetCompactFilters();
+      updateVisibleTasks();
+      safeRender('compact_filter_reset');
     });
   }
   if (elements.viewerDownload) {
