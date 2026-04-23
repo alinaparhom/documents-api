@@ -4219,7 +4219,6 @@ function createCard(task, index, anchorRegistry) {
   const compactContent = resolveCompactText(task.summary)
     || resolveCompactText(task.content)
     || resolveCompactText(task.description)
-    || resolveCompactText(task.instruction)
     || 'Не указано';
 
   setCardField(card, '[data-field="document"]', compactContent, {
@@ -6986,10 +6985,10 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     return;
   }
 
-  const statusLabel = `Статус задачи: ${statusText}`;
+  const statusLabel = `${statusText}`;
   statusElement.hidden = false;
   statusElement.textContent = statusLabel;
-  statusElement.title = statusLabel;
+  statusElement.title = `Статус задачи: ${statusText}`;
 
   if (isTaskCompleted(task)) {
     statusElement.classList.add('appdosc-card__status--done');
@@ -10760,7 +10759,7 @@ function setupDirectorCompactCompletion(card, task) {
   const isReviewStatus = isTaskUnderReview(task);
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'appdosc-card__action appdosc-card__action--compact';
+  button.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
   button.textContent = isReviewStatus ? 'Проверено' : 'Завершить назначение';
   setActionButtonLoading(button, false);
 
