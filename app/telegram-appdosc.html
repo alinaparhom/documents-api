@@ -735,8 +735,19 @@
         color: #93c5fd !important;
       }
 
+      .appdosc__content {
+        width: 100%;
+        max-width: 430px;
+        margin: 0 auto;
+      }
+
       .appdosc__table-card.tasks-panel {
+        width: 100% !important;
+        max-width: 430px !important;
+        margin: 0 auto !important;
+        padding: 22px 18px !important;
         border-radius: 28px !important;
+        overflow: hidden !important;
         border: 1px solid rgba(79, 120, 190, 0.25) !important;
         background: radial-gradient(circle at top right, rgba(28, 67, 136, 0.2), transparent 44%), linear-gradient(160deg, #071120 0%, #0b1527 100%) !important;
         box-shadow: 0 20px 48px rgba(1, 8, 22, 0.5), inset 0 0 0 1px rgba(123, 168, 255, 0.08) !important;
@@ -744,26 +755,31 @@
 
       .appdosc__table-head.tasks-header {
         display: flex !important;
-        align-items: center !important;
-        justify-content: space-between !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
         gap: 10px !important;
+        margin-bottom: 18px !important;
       }
 
       .appdosc__table-title.tasks-title {
-        font-size: clamp(28px, 7vw, 54px) !important;
-        line-height: 1.05;
+        font-size: clamp(34px, 8vw, 42px) !important;
+        line-height: .95 !important;
+        font-weight: 800 !important;
+        letter-spacing: -0.04em !important;
         color: #f8fafc !important;
       }
 
       .appdosc__table-meta.tasks-updated {
-        font-size: clamp(12px, 3vw, 18px) !important;
+        width: fit-content !important;
+        max-width: 100% !important;
+        font-size: 15px !important;
         line-height: 1.2;
         color: #94a3b8 !important;
-        padding: 10px 14px;
+        padding: 9px 13px !important;
         border-radius: 16px;
         border: 1px solid rgba(79, 120, 190, 0.25);
         background: rgba(15, 31, 58, 0.78);
-        white-space: nowrap;
+        white-space: normal !important;
       }
 
       .appdosc__cards.tasks-list {
@@ -779,67 +795,83 @@
       }
 
       .appdosc-card__header {
+        width: 100%;
+        min-height: 92px !important;
+        padding: 14px !important;
         display: grid !important;
-        grid-template-columns: 56px 1fr auto auto;
-        grid-template-rows: auto auto;
-        align-items: center;
-        gap: 8px 10px !important;
-        min-height: 92px;
+        grid-template-columns: 56px minmax(0, 1fr) auto !important;
+        grid-template-areas:
+          "icon main side"
+          "icon main side" !important;
+        gap: 12px !important;
+        align-items: center !important;
         cursor: pointer;
       }
 
       .task-icon {
-        width: 56px;
-        height: 56px;
-        border-radius: 16px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        grid-column: 1;
-        grid-row: 1 / 3;
-        background: linear-gradient(165deg, rgba(33, 67, 120, 0.52), rgba(21, 44, 80, 0.85));
-        border: 1px solid rgba(85, 136, 225, 0.2);
+        grid-area: icon !important;
+        width: 56px !important;
+        height: 56px !important;
+        border-radius: 18px !important;
+        display: grid !important;
+        place-items: center !important;
+        background: rgba(28, 73, 135, .55) !important;
+        border: 1px solid rgba(75, 140, 255, .28) !important;
+        flex: 0 0 auto !important;
       }
 
       .task-main {
-        grid-column: 2;
-        grid-row: 1 / 3;
-        min-width: 0;
+        grid-area: main !important;
+        min-width: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 7px !important;
       }
 
       .task-meta {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-        margin-bottom: 6px;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        min-width: 0 !important;
+        margin: 0 !important;
       }
 
-      .task-date,
+      .task-date {
+        color: #94a3b8 !important;
+        font-size: 14px !important;
+        line-height: 1.2 !important;
+        white-space: nowrap !important;
+      }
+
       .appdosc-card__meta {
         color: #94a3b8 !important;
-        font-size: 13px !important;
-        line-height: 1.2;
+        font-size: 14px !important;
+        line-height: 1.2 !important;
         margin: 0 !important;
+        white-space: nowrap !important;
       }
 
       .task-number,
       .appdosc-card__badge {
         border-radius: 999px !important;
-        padding: 4px 10px !important;
-        font-size: 13px !important;
+        padding: 4px 9px !important;
+        font-size: 14px !important;
+        font-weight: 700 !important;
         line-height: 1.1;
         min-height: 24px !important;
-        color: #71a7ff !important;
-        background: rgba(24, 75, 154, 0.45) !important;
+        color: #60a5fa !important;
+        background: rgba(37, 99, 235, .28) !important;
         border: 1px solid rgba(63, 140, 255, 0.26);
+        white-space: nowrap !important;
       }
 
       .task-name,
       .appdosc-card__title {
         color: #f8fafc !important;
+        font-size: 17px !important;
+        line-height: 1.18 !important;
+        font-weight: 750 !important;
         margin: 0;
-        line-height: 1.25;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
@@ -851,14 +883,22 @@
       }
 
       .appdosc-card__status.task-status {
-        grid-column: 3;
-        grid-row: 1 / 3;
-        justify-self: end;
+        position: static !important;
+        grid-column: auto !important;
+        grid-row: auto !important;
+        justify-self: auto !important;
+        height: 40px !important;
+        min-height: 40px !important;
+        padding: 0 14px !important;
+        border-radius: 13px !important;
+        font-size: 14px !important;
+        font-weight: 750 !important;
+        white-space: nowrap !important;
       }
 
       .appdosc-card__status {
-        min-height: 40px;
-        padding: 8px 14px !important;
+        min-height: 40px !important;
+        padding: 0 14px !important;
         border-radius: 14px !important;
         border: 1px solid rgba(63, 140, 255, 0.5) !important;
         color: #72a9ff !important;
@@ -894,25 +934,92 @@
       }
 
       .appdosc-card__side {
-        grid-column: 4;
-        grid-row: 1 / 3;
-        justify-self: end;
-        align-self: center;
+        grid-area: side !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+        justify-self: end !important;
       }
 
       .task-chevron,
       .appdosc-card__chevron {
-        color: #94a3b8 !important;
-        font-size: 24px !important;
-        transition: transform 0.22s ease;
+        width: 12px !important;
+        height: 12px !important;
+        border-right: 3px solid #94a3b8 !important;
+        border-bottom: 3px solid #94a3b8 !important;
+        transform: rotate(45deg) !important;
+        transition: transform .2s ease !important;
+        flex: 0 0 auto !important;
+        font-size: 0 !important;
       }
 
       .appdosc-card--expanded .appdosc-card__chevron {
-        transform: rotate(180deg);
+        transform: rotate(225deg) !important;
       }
 
       .appdosc-card__summary {
         display: none !important;
+      }
+
+      .appdosc-card__details {
+        padding: 0 14px 16px 84px !important;
+        margin: 0 !important;
+        display: grid !important;
+        gap: 14px !important;
+      }
+
+      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__details,
+      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__resolution,
+      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__files,
+      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__footer,
+      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__instruction,
+      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__status-controls,
+      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__due-editor,
+      .appdosc-card:not(.appdosc-card--expanded) .appdosc-card__assign {
+        display: none !important;
+      }
+
+      .appdosc-card__detail {
+        margin: 0 !important;
+        min-width: 0 !important;
+      }
+
+      .appdosc-card__detail dt {
+        margin: 0 0 4px !important;
+        color: #8190aa !important;
+        font-size: 11px !important;
+        line-height: 1.2 !important;
+        text-transform: uppercase !important;
+        letter-spacing: .12em !important;
+      }
+
+      .appdosc-card__detail dd {
+        margin: 0 !important;
+        color: #e5edf8 !important;
+        font-size: 16px !important;
+        line-height: 1.28 !important;
+        overflow-wrap: anywhere !important;
+      }
+
+      .appdosc-card__files {
+        padding: 0 14px 16px 84px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+      }
+
+      .appdosc-card__file,
+      .appdosc-card__file-link,
+      .appdosc-card__files a {
+        max-width: 100% !important;
+        padding: 10px 13px !important;
+        border-radius: 999px !important;
+        background: rgba(148, 163, 184, .16) !important;
+        color: #cbd5e1 !important;
+        font-size: 14px !important;
+        line-height: 1.25 !important;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
       }
 
       .appdosc-card__footer {
@@ -947,21 +1054,33 @@
       }
 
       .appdosc__footer {
+        width: 100%;
+        max-width: 430px;
+        margin: 14px auto 0 !important;
+        padding: 0 0 calc(16px + env(safe-area-inset-bottom)) !important;
         border-radius: 22px;
       }
 
       .appdosc__footer-meta.tasks-stats {
+        margin-top: 12px !important;
+        padding: 14px !important;
         border-radius: 18px;
-        border: 1px solid rgba(79, 120, 190, 0.25);
-        background: linear-gradient(95deg, rgba(13, 30, 58, 0.9), rgba(12, 25, 45, 0.72));
+        border: 1px solid rgba(75, 115, 180, .22);
+        background: rgba(15, 31, 55, .72) !important;
         color: #94a3b8;
+        font-size: 15px !important;
+        line-height: 1.35 !important;
       }
 
       .appdosc__footer-hint.tasks-help {
+        margin-top: 12px !important;
+        padding: 14px !important;
         border-radius: 18px;
-        border: 1px solid rgba(79, 120, 190, 0.25);
-        background: rgba(12, 25, 45, 0.72);
+        border: 1px solid rgba(75, 115, 180, .22);
+        background: rgba(15, 31, 55, .72) !important;
         color: #94a3b8;
+        font-size: 15px !important;
+        line-height: 1.35 !important;
       }
 
       .appdosc__task-nav {
@@ -1023,19 +1142,6 @@
           text-overflow: ellipsis;
         }
 
-        .appdosc__table-head.tasks-header {
-          align-items: flex-start !important;
-          flex-direction: column;
-        }
-
-        .appdosc__table-title.tasks-title {
-          font-size: clamp(24px, 8vw, 34px) !important;
-        }
-
-        .appdosc__table-meta.tasks-updated {
-          max-width: 100%;
-          white-space: normal;
-        }
       }
 
       @media (max-width: 520px) {
@@ -1055,34 +1161,52 @@
           height: 18px;
         }
 
+        .appdosc {
+          padding-inline: 8px !important;
+        }
+
+        .appdosc__table-card.tasks-panel {
+          padding: 18px 12px !important;
+          border-radius: 24px !important;
+        }
+
         .appdosc-card__header {
-          grid-template-columns: 48px 1fr auto;
-          grid-template-rows: auto auto auto;
-          min-height: 86px;
-          gap: 7px 8px !important;
+          grid-template-columns: 48px minmax(0, 1fr) !important;
+          grid-template-areas:
+            "icon main"
+            "icon main"
+            "icon side" !important;
+          min-height: 92px !important;
+          padding: 12px !important;
         }
 
         .task-icon {
-          width: 48px;
-          height: 48px;
-          border-radius: 14px;
-          grid-row: 1 / 3;
-        }
-
-        .task-main {
-          grid-column: 2 / 4;
-          grid-row: 1 / 3;
-        }
-
-        .appdosc-card__status.task-status {
-          grid-column: 2;
-          grid-row: 3;
-          justify-self: start;
+          width: 48px !important;
+          height: 48px !important;
+          border-radius: 16px !important;
         }
 
         .appdosc-card__side {
-          grid-column: 3;
-          grid-row: 3;
+          justify-self: start !important;
+        }
+
+        .appdosc-card__details,
+        .appdosc-card__files,
+        .appdosc-card__resolution,
+        .appdosc-card__footer {
+          padding-left: 72px !important;
+          padding-right: 12px !important;
+        }
+
+        .task-name {
+          font-size: 16px !important;
+        }
+
+        .appdosc-card__status.task-status {
+          height: 36px !important;
+          min-height: 36px !important;
+          font-size: 13px !important;
+          padding: 0 12px !important;
         }
       }
     </style>
@@ -1447,9 +1571,9 @@
             <div class="appdosc-card__title task-name" data-field="document">Документ</div>
             <div class="appdosc-card__subtitle" data-field="organization"></div>
           </div>
-          <span class="appdosc-card__status task-status task-status--active" data-field="status"></span>
           <div class="appdosc-card__side">
-            <span class="appdosc-card__chevron task-chevron" aria-hidden="true">⌄</span>
+            <span class="appdosc-card__status task-status task-status--active" data-field="status"></span>
+            <span class="appdosc-card__chevron task-chevron" aria-hidden="true"></span>
           </div>
           <div class="appdosc-card__summary" data-field="summary"><div class="appdosc-card__block-text" data-field="contentCompact"></div></div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>

@@ -2642,9 +2642,9 @@ const FALLBACK_CARD_TEMPLATE = `
       <div class="appdosc-card__title task-name" data-field="document">Документ</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
-    <span class="appdosc-card__status task-status task-status--active" data-field="status"></span>
     <div class="appdosc-card__side">
-      <span class="appdosc-card__chevron task-chevron" aria-hidden="true">⌄</span>
+      <span class="appdosc-card__status task-status task-status--active" data-field="status"></span>
+      <span class="appdosc-card__chevron task-chevron" aria-hidden="true"></span>
     </div>
     <div class="appdosc-card__summary" data-field="summary">
       <div class="appdosc-card__block-text" data-field="contentCompact"></div>
@@ -6967,7 +6967,16 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     return;
   }
 
-  statusElement.className = 'appdosc-card__status';
+  statusElement.classList.remove(
+    'appdosc-card__status--done',
+    'appdosc-card__status--danger',
+    'appdosc-card__status--warn',
+    'appdosc-card__status--info',
+    'appdosc-card__status--accent',
+    'task-status--done',
+    'task-status--active'
+  );
+  statusElement.classList.add('appdosc-card__status', 'task-status');
 
   if (!normalizeValue(statusText)) {
     statusElement.hidden = true;
@@ -6982,16 +6991,22 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
 
   if (isTaskCompleted(task)) {
     statusElement.classList.add('appdosc-card__status--done');
+    statusElement.classList.add('task-status--done');
   } else if (isOverdue(task)) {
     statusElement.classList.add('appdosc-card__status--danger');
+    statusElement.classList.add('task-status--active');
   } else if (normalizedStatus.includes('контрол')) {
     statusElement.classList.add('appdosc-card__status--warn');
+    statusElement.classList.add('task-status--active');
   } else if (normalizedStatus.includes('распредел')) {
     statusElement.classList.add('appdosc-card__status--info');
+    statusElement.classList.add('task-status--active');
   } else if (normalizedStatus.includes('работ') || normalizedStatus.includes('нов')) {
     statusElement.classList.add('appdosc-card__status--accent');
+    statusElement.classList.add('task-status--active');
   } else {
     statusElement.classList.add('appdosc-card__status--accent');
+    statusElement.classList.add('task-status--active');
   }
 }
 
