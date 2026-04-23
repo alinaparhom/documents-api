@@ -4220,10 +4220,10 @@ function createCard(task, index, anchorRegistry) {
     || resolveCompactText(task.content)
     || resolveCompactText(task.description)
     || resolveCompactText(task.instruction)
-    || '—';
+    || 'Не указано';
 
   setCardField(card, '[data-field="document"]', compactContent, {
-    fallback: 'Содержимое',
+    fallback: 'Не указано',
     setTitle: false,
   });
   setCardField(card, '[data-field="organization"]', task.organization, {
@@ -4244,7 +4244,7 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
     setTitle: false,
-    fallback: '—',
+    fallback: 'Не указано',
   });
   toggleSection(card, '[data-field="summary"]', true);
 
@@ -6986,9 +6986,10 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     return;
   }
 
+  const statusLabel = `Статус задачи: ${statusText}`;
   statusElement.hidden = false;
-  statusElement.textContent = statusText;
-  statusElement.title = statusText;
+  statusElement.textContent = statusLabel;
+  statusElement.title = statusLabel;
 
   if (isTaskCompleted(task)) {
     statusElement.classList.add('appdosc-card__status--done');
