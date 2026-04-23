@@ -55,6 +55,8 @@
   };
   let jsZipLoaderPromise = null;
   const loadedFileCache = new Map();
+  let viewportCssSyncStarted = false;
+  let viewportCssSyncHandler = null;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -1003,6 +1005,10 @@
     style.id = STYLE_ID;
     style.textContent = `
       :root{
+        --app-vh:1vh;
+        --app-safe-bottom:env(safe-area-inset-bottom,0px);
+        --app-keyboard-offset:0px;
+        --app-bottom-inset:calc(var(--app-safe-bottom) + var(--app-keyboard-offset));
         --tg-bg-gradient:linear-gradient(145deg,rgba(255,255,255,.98),rgba(248,250,252,.96));
         --tg-accent:#2563eb;
         --tg-accent-hover:#1d4ed8;
@@ -1019,7 +1025,7 @@
       .tg-ai-chat__messages::-webkit-scrollbar-thumb,.tg-ai-chat__files-list::-webkit-scrollbar-thumb,.tg-ai-template-editor__body::-webkit-scrollbar-thumb,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:10px}
       .tg-ai-chat__messages::-webkit-scrollbar-thumb:hover,.tg-ai-chat__files-list::-webkit-scrollbar-thumb:hover,.tg-ai-template-editor__body::-webkit-scrollbar-thumb:hover,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb:hover{background:#64748b}
       .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px);animation:tg-fade-in .25s ease}
-      .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:var(--tg-bg-gradient);box-shadow:0 20px 50px rgba(15,23,42,.22);animation:tg-scale-in .2s cubic-bezier(.2,.9,.4,1.1)}
+      .tg-ai-chat__card{width:min(900px,100%);height:min(calc(var(--app-vh,1vh) * 100 - 12px),860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:var(--tg-bg-gradient);box-shadow:0 20px 50px rgba(15,23,42,.22);animation:tg-scale-in .2s cubic-bezier(.2,.9,.4,1.1)}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
       .tg-ai-chat__head-main{display:grid;gap:7px;min-width:0}
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
@@ -1032,7 +1038,7 @@
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
       .tg-ai-chat__bubble--user{align-self:flex-end;background:#dbeafe;border:1px solid rgba(59,130,246,.3);color:#1e3a8a}
       .tg-ai-chat__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.65);font-size:12px;color:#334155;background:rgba(255,255,255,.8)}
-      .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;background:rgba(255,255,255,.93)}
+      .tg-ai-chat__composer{padding:10px 12px calc(10px + var(--app-bottom-inset, env(safe-area-inset-bottom,0px)));display:grid;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
       .tg-ai-chat__toolbar--compact{grid-template-columns:repeat(2,minmax(0,1fr))}
       .tg-ai-chat__mode-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border:1px solid rgba(191,219,254,.85);border-radius:12px;background:rgba(239,246,255,.72);backdrop-filter:blur(6px)}
@@ -1049,7 +1055,7 @@
       .tg-ai-chat__icon-btn[data-active="true"]{background:rgba(254,226,226,.95);color:#b91c1c}
       .tg-ai-chat__send{padding:0 14px;background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff}
       .tg-ai-chat__send[disabled],.tg-ai-chat__icon-btn[disabled]{opacity:.55}
-      .tg-ai-chat__files{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.97);padding:9px 12px calc(9px + env(safe-area-inset-bottom,0px))}
+      .tg-ai-chat__files{border-top:1px solid rgba(203,213,225,.8);background:rgba(248,250,252,.97);padding:9px 12px calc(9px + var(--app-bottom-inset, env(safe-area-inset-bottom,0px)))}
       .tg-ai-chat__files[hidden]{display:none}
       .tg-ai-chat__files-title{font-size:12px;color:#64748b;margin:0 0 8px}
       .tg-ai-chat__files-list{display:flex;flex-wrap:wrap;gap:6px;max-height:156px;overflow:auto}
@@ -1072,7 +1078,7 @@
       .tg-ai-chat__dots span:nth-child(2){animation-delay:.16s}
       .tg-ai-chat__dots span:nth-child(3){animation-delay:.32s}
       .tg-ai-template-preview{position:fixed;inset:0;z-index:3800;background:rgba(2,6,23,.65);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:12px}
-      .tg-ai-template-preview__card{width:min(980px,100%);height:min(100dvh - 16px,900px);display:flex;flex-direction:column;overflow:hidden;border-radius:20px;border:1px solid rgba(255,255,255,.8);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 20px 50px rgba(15,23,42,.35)}
+      .tg-ai-template-preview__card{width:min(980px,100%);height:min(calc(var(--app-vh,1vh) * 100 - 16px),900px);display:flex;flex-direction:column;overflow:hidden;border-radius:20px;border:1px solid rgba(255,255,255,.8);background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95));box-shadow:0 20px 50px rgba(15,23,42,.35)}
       .tg-ai-template-preview__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.8)}
       .tg-ai-template-preview__title{font-size:14px;font-weight:800;color:#0f172a}
       .tg-ai-template-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
@@ -1081,7 +1087,7 @@
       .tg-ai-template-preview__body{flex:1;min-height:0}
       .tg-ai-template-preview__status{padding:8px 12px;border-top:1px solid rgba(203,213,225,.8);font-size:12px;color:#334155;background:rgba(248,250,252,.95)}
       .tg-ai-generated-preview{position:fixed;inset:0;z-index:3950;background:rgba(2,6,23,.56);backdrop-filter:blur(8px);display:flex;align-items:stretch;justify-content:center;padding:0}
-      .tg-ai-generated-preview__card{width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95))}
+      .tg-ai-generated-preview__card{width:100%;height:calc(var(--app-vh,1vh) * 100);display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.98),rgba(239,246,255,.95))}
       .tg-ai-generated-preview__head{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(203,213,225,.85)}
       .tg-ai-generated-preview__title{font-size:14px;font-weight:800;color:#0f172a}
       .tg-ai-generated-preview__hint{font-size:12px;color:#64748b;margin-top:2px}
@@ -1136,7 +1142,7 @@
       .tg-ai-template-editor__input:focus,.tg-ai-template-editor__textarea:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.25)}
       .tg-ai-template-editor__textarea{min-height:36dvh;resize:vertical;font-size:14px;line-height:1.55}
       .tg-ai-template-editor__error{font-size:12px;color:#b91c1c;min-height:16px}
-      .tg-ai-template-editor__foot{display:flex;justify-content:flex-end;gap:8px;padding:12px;border-top:1px solid rgba(203,213,225,.75);background:rgba(255,255,255,.84)}
+      .tg-ai-template-editor__foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 12px calc(12px + var(--app-bottom-inset, env(safe-area-inset-bottom,0px)));border-top:1px solid rgba(203,213,225,.75);background:rgba(255,255,255,.84)}
       .tg-ai-template-editor__btn{border:1px solid rgba(148,163,184,.45);background:#fff;color:#334155;border-radius:12px;padding:10px 14px;min-height:40px;font-weight:700}
       .tg-ai-template-editor__btn--primary{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#1d4ed8}
       .tg-ai-template-editor__btn[disabled]{opacity:.65}
@@ -1144,9 +1150,45 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:calc(var(--app-vh,1vh) * 100);border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:calc(var(--app-vh,1vh) * 100);border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + var(--app-bottom-inset, env(safe-area-inset-bottom,0px)))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
+  }
+
+  function updateViewportCssVars() {
+    const docEl = document && document.documentElement;
+    if (!(docEl instanceof HTMLElement)) return;
+    const layoutHeight = Math.max(0, Number(globalScope && globalScope.innerHeight) || docEl.clientHeight || 0);
+    const viewport = globalScope && globalScope.visualViewport ? globalScope.visualViewport : null;
+    const visualHeight = viewport && Number(viewport.height) > 0
+      ? Number(viewport.height)
+      : layoutHeight;
+    const viewportHeight = Math.max(0, visualHeight || layoutHeight || 0);
+    const viewportOffsetTop = viewport && Number(viewport.offsetTop) > 0 ? Number(viewport.offsetTop) : 0;
+    const keyboardOffset = Math.max(0, layoutHeight - viewportHeight - viewportOffsetTop);
+    docEl.style.setProperty('--app-vh', `${(viewportHeight || layoutHeight || 0) * 0.01}px`);
+    docEl.style.setProperty('--app-keyboard-offset', `${keyboardOffset}px`);
+    docEl.style.setProperty('--app-safe-bottom', 'env(safe-area-inset-bottom,0px)');
+    docEl.style.setProperty('--app-bottom-inset', `calc(var(--app-safe-bottom) + ${keyboardOffset}px)`);
+  }
+
+  function ensureViewportCssSync() {
+    if (viewportCssSyncStarted) {
+      updateViewportCssVars();
+      return;
+    }
+    viewportCssSyncStarted = true;
+    viewportCssSyncHandler = () => {
+      updateViewportCssVars();
+    };
+    updateViewportCssVars();
+    globalScope.addEventListener('resize', viewportCssSyncHandler, { passive: true });
+    globalScope.addEventListener('orientationchange', viewportCssSyncHandler, { passive: true });
+    const viewport = globalScope.visualViewport;
+    if (viewport && typeof viewport.addEventListener === 'function') {
+      viewport.addEventListener('resize', viewportCssSyncHandler, { passive: true });
+      viewport.addEventListener('scroll', viewportCssSyncHandler, { passive: true });
+    }
   }
 
   function getDocsGenerateEndpoints() {
@@ -1858,6 +1900,7 @@
 
   globalScope.openAiResponseDialog = function openAiResponseDialog(context = {}) {
     ensureStyles();
+    ensureViewportCssSync();
     ensureBriefPdfJsLoaded().catch(() => {});
 
     const task = context && context.task ? context.task : {};
@@ -2163,6 +2206,16 @@
       if (!promptInput) return;
       promptInput.style.height = '0px';
       promptInput.style.height = `${Math.min(Math.max(promptInput.scrollHeight, 52), 156)}px`;
+      updateViewportCssVars();
+    });
+    promptInput?.addEventListener('focus', () => {
+      updateViewportCssVars();
+      setTimeout(updateViewportCssVars, 120);
+      setTimeout(updateViewportCssVars, 280);
+    });
+    promptInput?.addEventListener('blur', () => {
+      updateViewportCssVars();
+      setTimeout(updateViewportCssVars, 120);
     });
     promptInput?.dispatchEvent(new Event('input'));
     applyResponseModeUi(currentResponseMode);
