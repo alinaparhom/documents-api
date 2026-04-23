@@ -1219,6 +1219,30 @@
         -webkit-backdrop-filter: blur(10px);
       }
 
+      .appdosc__task-filter-quick {
+        grid-column: 1 / span 2;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .appdosc__task-filter-quick-btn {
+        height: 28px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        background: rgba(255, 255, 255, 0.86);
+        color: var(--appdosc-text-primary);
+        padding: 0 10px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .appdosc__task-filter-quick-btn.is-active {
+        background: rgba(59, 130, 246, 0.16);
+        border-color: rgba(59, 130, 246, 0.5);
+      }
+
       .appdosc__task-filter-field {
         display: flex;
         flex-direction: column;
@@ -1236,6 +1260,34 @@
         color: var(--appdosc-text-primary);
         padding: 0 10px;
         font-size: 13px;
+      }
+
+      :root[data-theme='dark'] .appdosc__filter-toggle {
+        background: rgba(30, 41, 59, 0.58);
+        border-color: rgba(148, 163, 184, 0.48);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-panel {
+        background: rgba(30, 41, 59, 0.52);
+        border-color: rgba(148, 163, 184, 0.46);
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-field {
+        color: rgba(203, 213, 225, 0.92);
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-field input,
+      :root[data-theme='dark'] .appdosc__task-filter-field select,
+      :root[data-theme='dark'] .appdosc__task-filter-quick-btn {
+        background: rgba(15, 23, 42, 0.74);
+        border-color: rgba(148, 163, 184, 0.46);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-quick-btn.is-active {
+        background: rgba(96, 165, 250, 0.2);
+        border-color: rgba(96, 165, 250, 0.58);
       }
 
       @media (max-width: 520px) {
@@ -1270,6 +1322,10 @@
 
         .appdosc__task-filter-panel {
           grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .appdosc__task-filter-quick {
+          grid-column: 1 / -1;
         }
 
         .appdosc__filter-toggle {
@@ -1544,6 +1600,12 @@
                 <span>Дата до</span>
                 <input type="date" data-filter-date-to />
               </label>
+              <div class="appdosc__task-filter-quick" data-filter-quick>
+                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="today">Сегодня</button>
+                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="week">Неделя</button>
+                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="month">Месяц</button>
+                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
+              </div>
               <label class="appdosc__task-filter-field">
                 <span>Группировка</span>
                 <select data-filter-group-type>

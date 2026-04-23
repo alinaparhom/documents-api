@@ -2002,6 +2002,7 @@ const state = {
     expanded: false,
     dateFrom: '',
     dateTo: '',
+    quickPreset: '',
     groupType: '',
     groupValue: '',
   },
@@ -2765,6 +2766,7 @@ function initElements() {
   elements.taskFilterPanel = document.querySelector('[data-task-filter-panel]');
   elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
   elements.filterDateTo = document.querySelector('[data-filter-date-to]');
+  elements.filterQuickButtons = Array.from(document.querySelectorAll('[data-filter-quick-btn]'));
   elements.filterGroupType = document.querySelector('[data-filter-group-type]');
   elements.filterGroupValue = document.querySelector('[data-filter-group-value]');
   elements.status = document.querySelector('[data-status]');
@@ -3960,52 +3962,43 @@ function getTaskDateForCompactFilter(task) {
   return null;
 }
 
-function readCompactFilterNames(task, groupType) {
+function resolveCompactCorrespondent(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+  if (task.correspondent && typeof task.correspondent === 'object') {
+    return normalizeValue(
+      task.correspondent.name
+      || task.correspondent.responsible
+      || task.correspondent.fio
+      || task.correspondent.label
+      || task.correspondent.displayName,
+    );
+  }
+  return normalizeValue(task.correspondent || task.sender || task.author);
+}
+
+function getCompactGroupEntries(task, groupType) {
   if (!task || typeof task !== 'object' || !groupType) {
     return [];
   }
   if (groupType === 'correspondent') {
-    const base = normalizeValue(
-      typeof task.correspondent === 'object'
-        ? (task.correspondent.name || task.correspondent.responsible || task.correspondent.fio)
-        : task.correspondent,
-    );
-    return base ? [base] : [];
+    const label = resolveCompactCorrespondent(task);
+    return label ? [{ value: normalizeName(label), label }] : [];
   }
-
-  const bucket = [];
-  const push = (value) => {
-    const normalized = normalizeValue(value);
-    if (normalized && !bucket.includes(normalized)) {
-      bucket.push(normalized);
-    }
-  };
-  const handleEntry = (entry) => {
-    if (!entry) {
-      return;
-    }
-    if (typeof entry === 'string') {
-      push(entry);
-      return;
-    }
-    if (typeof entry === 'object') {
-      push(entry.responsible || entry.name || entry.fio || entry.label || entry.displayName);
-    }
-  };
-
   if (groupType === 'responsible') {
-    handleEntry(task.responsible);
-    if (Array.isArray(task.responsibles)) {
-      task.responsibles.forEach(handleEntry);
-    }
+    return getTaskResponsibleProfiles(task).map((profile) => ({
+      value: profile.token,
+      label: profile.label || profile.sourceLabel || 'Ответственный',
+    }));
   }
   if (groupType === 'subordinate') {
-    handleEntry(task.subordinate);
-    if (Array.isArray(task.subordinates)) {
-      task.subordinates.forEach(handleEntry);
-    }
+    return getTaskSubordinateProfiles(task).map((profile) => ({
+      value: profile.token,
+      label: profile.label || profile.sourceLabel || 'Подчинённый',
+    }));
   }
-  return bucket;
+  return [];
 }
 
 function syncCompactFilterGroupOptions() {
@@ -4022,15 +4015,20 @@ function syncCompactFilterGroupOptions() {
     return;
   }
 
-  const values = new Set();
+  const values = new Map();
   state.tasks.forEach((task) => {
-    readCompactFilterNames(task, type).forEach((name) => values.add(name));
+    getCompactGroupEntries(task, type).forEach((entry) => {
+      if (entry && entry.value && !values.has(entry.value)) {
+        values.set(entry.value, entry.label || entry.value);
+      }
+    });
   });
-  const options = Array.from(values).sort((a, b) => a.localeCompare(b, 'ru'));
+  const options = Array.from(values.entries())
+    .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'ru'));
   select.disabled = options.length === 0;
   select.appendChild(new Option(options.length ? 'Все' : 'Нет данных', ''));
-  options.forEach((value) => select.appendChild(new Option(value, value)));
-  if (!options.includes(state.compactFilters.groupValue)) {
+  options.forEach(([value, label]) => select.appendChild(new Option(label, value)));
+  if (!values.has(state.compactFilters.groupValue)) {
     state.compactFilters.groupValue = '';
   }
   select.value = state.compactFilters.groupValue;
@@ -4053,6 +4051,11 @@ function applyCompactFilters(visibleItems) {
   if (parsedTo) {
     parsedTo.setHours(23, 59, 59, 999);
   }
+  if (parsedFrom && parsedTo && parsedFrom.getTime() > parsedTo.getTime()) {
+    const temp = parsedFrom.getTime();
+    parsedFrom.setTime(parsedTo.getTime());
+    parsedTo.setTime(temp);
+  }
   return source.filter((item) => {
     const task = item && item.task ? item.task : null;
     if (parsedFrom || parsedTo) {
@@ -4069,11 +4072,36 @@ function applyCompactFilters(visibleItems) {
       }
     }
     if (groupType && groupValue) {
-      const names = readCompactFilterNames(task, groupType);
-      return names.includes(groupValue);
+      const values = getCompactGroupEntries(task, groupType).map((entry) => entry.value);
+      return values.includes(groupValue);
     }
     return true;
   });
+}
+
+function applyCompactQuickPreset(preset) {
+  const normalizedPreset = normalizeValue(preset);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const from = new Date(today);
+  const to = new Date(today);
+
+  if (normalizedPreset === 'today') {
+    // same day
+  } else if (normalizedPreset === 'week') {
+    from.setDate(today.getDate() - 6);
+  } else if (normalizedPreset === 'month') {
+    from.setDate(today.getDate() - 30);
+  } else if (normalizedPreset === 'quarter') {
+    from.setDate(today.getDate() - 90);
+  } else {
+    state.compactFilters.quickPreset = '';
+    return;
+  }
+
+  state.compactFilters.quickPreset = normalizedPreset;
+  state.compactFilters.dateFrom = formatDateInputValue(from);
+  state.compactFilters.dateTo = formatDateInputValue(to);
 }
 
 function syncCompactFilterPanelState() {
@@ -4088,6 +4116,17 @@ function syncCompactFilterPanelState() {
     elements.filterGroupType.value = normalizeValue(state.compactFilters.groupType);
   }
   syncCompactFilterGroupOptions();
+  if (Array.isArray(elements.filterQuickButtons)) {
+    elements.filterQuickButtons.forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      const preset = normalizeValue(button.dataset.filterQuickBtn);
+      const isActive = preset && preset === state.compactFilters.quickPreset;
+      setClass(button, 'is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
 }
 
 function ensureExpandedCardSet() {
@@ -16072,6 +16111,7 @@ function attachEvents() {
   if (elements.filterDateFrom) {
     elements.filterDateFrom.addEventListener('change', (event) => {
       state.compactFilters.dateFrom = normalizeDateInputValue(event.target.value);
+      state.compactFilters.quickPreset = '';
       updateVisibleTasks();
       safeRender('compact_filter_date_from');
     });
@@ -16079,8 +16119,28 @@ function attachEvents() {
   if (elements.filterDateTo) {
     elements.filterDateTo.addEventListener('change', (event) => {
       state.compactFilters.dateTo = normalizeDateInputValue(event.target.value);
+      state.compactFilters.quickPreset = '';
       updateVisibleTasks();
       safeRender('compact_filter_date_to');
+    });
+  }
+  if (Array.isArray(elements.filterQuickButtons)) {
+    elements.filterQuickButtons.forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      button.addEventListener('click', () => {
+        const preset = normalizeValue(button.dataset.filterQuickBtn);
+        if (preset && state.compactFilters.quickPreset === preset) {
+          state.compactFilters.quickPreset = '';
+          state.compactFilters.dateFrom = '';
+          state.compactFilters.dateTo = '';
+        } else {
+          applyCompactQuickPreset(preset);
+        }
+        updateVisibleTasks();
+        safeRender('compact_filter_quick');
+      });
     });
   }
   if (elements.filterGroupType) {
