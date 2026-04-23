@@ -4792,7 +4792,7 @@ function updateTaskSelector() {
   const visibleItems = getVisibleTaskItems();
   const hasCards = visibleItems.length > 0;
   const taskCountLabel = hasCards
-    ? ` • ${visibleItems.length}`
+    ? ` • Всего задач: ${visibleItems.length}`
     : '';
   if (elements.taskCountInline) {
     elements.taskCountInline.textContent = taskCountLabel;
@@ -15779,8 +15779,12 @@ function setStatus(type, message) {
   if (!elements.status) {
     return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
   elements.status.textContent = message;
   elements.status.hidden = !message;
+  if (statusContainer) {
+    statusContainer.hidden = !message;
+  }
   elements.status.className = 'appdosc__status-message';
   if (type && STATUS_CLASSES[type]) {
     elements.status.classList.add(STATUS_CLASSES[type]);
@@ -15791,8 +15795,12 @@ function setStatusAction(type, message, actionLabel, actionHandler) {
   if (!elements.status) {
     return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
 
   elements.status.hidden = !message;
+  if (statusContainer) {
+    statusContainer.hidden = !message;
+  }
   elements.status.className = 'appdosc__status-message';
   if (type && STATUS_CLASSES[type]) {
     elements.status.classList.add(STATUS_CLASSES[type]);
@@ -15819,7 +15827,11 @@ function clearStatus() {
   if (!elements.status) {
     return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
   elements.status.hidden = true;
+  if (statusContainer) {
+    statusContainer.hidden = true;
+  }
   elements.status.textContent = '';
   elements.status.className = 'appdosc__status-message';
 }

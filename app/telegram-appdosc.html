@@ -814,12 +814,12 @@
 
       .appdosc__cards.tasks-list {
         display: grid;
-        gap: 12px;
+        gap: 8px;
       }
 
       .appdosc-card.task-card {
         min-height: auto !important;
-        border-radius: 22px !important;
+        border-radius: 18px !important;
         border: 1px solid rgba(79, 120, 190, 0.25) !important;
         background: linear-gradient(100deg, rgba(12, 25, 45, 0.9), rgba(10, 23, 43, 0.82)) !important;
         box-shadow: 0 14px 24px rgba(2, 12, 29, 0.34), inset 0 0 0 1px rgba(98, 148, 236, 0.08) !important;
@@ -827,21 +827,21 @@
 
       .appdosc-card__header {
         width: 100%;
-        min-height: 96px !important;
-        padding: 16px !important;
+        min-height: 80px !important;
+        padding: 12px !important;
         display: grid !important;
-        grid-template-columns: 56px minmax(0, 1fr) auto !important;
+        grid-template-columns: 44px minmax(0, 1fr) auto !important;
         grid-template-areas: "icon main actions" !important;
-        gap: 14px !important;
+        gap: 10px !important;
         align-items: center !important;
         cursor: pointer;
       }
 
       .task-icon {
         grid-area: icon !important;
-        width: 50px !important;
-        height: 50px !important;
-        border-radius: 16px !important;
+        width: 40px !important;
+        height: 40px !important;
+        border-radius: 12px !important;
         display: grid !important;
         place-items: center !important;
         background: rgba(28, 73, 135, .55) !important;
@@ -854,7 +854,7 @@
         min-width: 0 !important;
         display: flex !important;
         flex-direction: column !important;
-        gap: 6px !important;
+        gap: 4px !important;
       }
 
       .task-meta {
@@ -897,7 +897,7 @@
       .task-name,
       .appdosc-card__title {
         color: #f8fafc !important;
-        font-size: 14px !important;
+        font-size: 13px !important;
         line-height: 1.2 !important;
         font-weight: 680 !important;
         margin: 0;
@@ -916,28 +916,28 @@
         grid-column: auto !important;
         grid-row: auto !important;
         justify-self: auto !important;
-        height: 38px !important;
-        min-height: 38px !important;
-        padding: 0 12px !important;
-        border-radius: 12px !important;
-        font-size: 14px !important;
+        height: 32px !important;
+        min-height: 32px !important;
+        padding: 0 10px !important;
+        border-radius: 10px !important;
+        font-size: 12px !important;
         font-weight: 700 !important;
         white-space: nowrap !important;
       }
 
       .appdosc-card__status {
         position: static !important;
-        min-height: 38px !important;
-        padding: 0 14px !important;
-        border-radius: 13px !important;
+        min-height: 32px !important;
+        padding: 0 10px !important;
+        border-radius: 10px !important;
         border: 1px solid rgba(63, 140, 255, 0.5) !important;
         color: #72a9ff !important;
         background: rgba(29, 63, 117, 0.5) !important;
-        font-size: 14px !important;
+        font-size: 12px !important;
         line-height: 1.2;
         display: inline-flex;
         align-items: center;
-        gap: 7px;
+        gap: 6px;
       }
 
       .appdosc-card__status:empty {
@@ -978,14 +978,21 @@
       .task-chevron,
       .appdosc-card__chevron {
         position: static !important;
-        width: 13px !important;
-        height: 13px !important;
-        border-right: 3px solid #94a3b8 !important;
-        border-bottom: 3px solid #94a3b8 !important;
+        width: 9px !important;
+        height: 9px !important;
+        border-right: 2px solid #94a3b8 !important;
+        border-bottom: 2px solid #94a3b8 !important;
         transform: rotate(45deg) !important;
         transition: transform .2s ease !important;
         flex: 0 0 auto !important;
         font-size: 0 !important;
+      }
+
+      .task-chevron::before,
+      .task-chevron::after,
+      .appdosc-card__chevron::before,
+      .appdosc-card__chevron::after {
+        content: none !important;
       }
 
       .appdosc-card[data-expanded='true'] .appdosc-card__chevron {
@@ -997,10 +1004,10 @@
       }
 
       .appdosc-card__details {
-        padding: 0 14px 16px 84px !important;
+        padding: 0 12px 12px 66px !important;
         margin: 0 !important;
         display: grid !important;
-        gap: 14px !important;
+        gap: 10px !important;
       }
 
       .appdosc-card[data-expanded='false'] .appdosc-card__details,
@@ -1031,8 +1038,8 @@
       .appdosc-card__detail dd {
         margin: 0 !important;
         color: #e5edf8 !important;
-        font-size: 16px !important;
-        line-height: 1.28 !important;
+        font-size: 13px !important;
+        line-height: 1.35 !important;
         overflow-wrap: anywhere !important;
       }
 
@@ -1215,17 +1222,17 @@
         }
 
         .appdosc-card__header {
-          grid-template-columns: 50px minmax(0, 1fr) auto !important;
+          grid-template-columns: 42px minmax(0, 1fr) auto !important;
           grid-template-areas: "icon main actions" !important;
-          min-height: 92px !important;
-          padding: 12px !important;
-          gap: 12px !important;
+          min-height: 78px !important;
+          padding: 10px !important;
+          gap: 10px !important;
         }
 
         .task-icon {
-          width: 48px !important;
-          height: 48px !important;
-          border-radius: 14px !important;
+          width: 38px !important;
+          height: 38px !important;
+          border-radius: 12px !important;
         }
 
         .appdosc-card__side {
@@ -1236,12 +1243,12 @@
         .appdosc-card__files,
         .appdosc-card__resolution,
         .appdosc-card__footer {
-          padding-left: 72px !important;
+          padding-left: 58px !important;
           padding-right: 12px !important;
         }
 
         .task-name {
-          font-size: 17px !important;
+          font-size: 13px !important;
         }
 
         .appdosc-card__status.task-status {
@@ -1426,7 +1433,7 @@
         </div>
       </section>
 
-      <section class="appdosc__status" aria-live="polite">
+      <section class="appdosc__status" aria-live="polite" hidden>
         <div class="appdosc__status-message" data-status hidden></div>
       </section>
 
