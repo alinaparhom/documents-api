@@ -4253,9 +4253,9 @@ function createCard(task, index, anchorRegistry) {
         const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
         const aiBriefText = normalizeBriefText(file && file.aiBrief);
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(148,163,184,.32);';
+        row.className = 'appdosc-ai-brief-row';
         const label = document.createElement('span');
-        label.style.cssText = 'font-size:12px;line-height:1.35;color:#1e293b;word-break:break-word;';
+        label.className = 'appdosc-ai-brief-row__label';
         label.textContent = fileName;
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -4897,19 +4897,19 @@ function toggleSection(card, selector, shouldShow) {
 
 function openTelegramFileAiBriefModal(fileName, briefText) {
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:4000;background:rgba(15,23,42,.42);backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;padding:10px;';
+  overlay.className = 'appdosc-ai-brief-modal__overlay';
   const panel = document.createElement('div');
-  panel.style.cssText = 'width:min(760px,100%);max-height:84vh;overflow:auto;border-radius:18px;padding:14px;background:linear-gradient(160deg,rgba(255,255,255,.98),rgba(248,250,252,.95));border:1px solid rgba(255,255,255,.9);box-shadow:0 20px 40px rgba(15,23,42,.24);';
+  panel.className = 'appdosc-ai-brief-modal__panel';
   const title = document.createElement('div');
-  title.style.cssText = 'font-size:15px;font-weight:700;color:#0f172a;margin-bottom:8px;';
+  title.className = 'appdosc-ai-brief-modal__title';
   title.textContent = fileName || 'Файл';
   const text = document.createElement('pre');
-  text.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;tab-size:4;font:500 13px/1.65 Inter,system-ui,sans-serif;color:#1e293b;background:rgba(248,250,252,.95);border-radius:12px;padding:14px;border:1px solid rgba(203,213,225,.72);';
+  text.className = 'appdosc-ai-brief-modal__text';
   text.textContent = briefText || '—';
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
   closeButton.textContent = 'Закрыть';
-  closeButton.style.cssText = 'margin-top:12px;padding:8px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.45);background:#fff;color:#0f172a;font-weight:600;';
+  closeButton.className = 'appdosc-ai-brief-modal__button';
   closeButton.addEventListener('click', () => overlay.remove());
   panel.appendChild(title);
   panel.appendChild(text);
