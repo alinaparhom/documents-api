@@ -6984,6 +6984,7 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     statusElement.removeAttribute('title');
     if (card && card.dataset) {
       delete card.dataset.statusIcon;
+      delete card.dataset.statusLabel;
     }
     return;
   }
@@ -7021,6 +7022,7 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
 
   if (card && card.dataset) {
     card.dataset.statusIcon = statusIcon;
+    card.dataset.statusLabel = String(statusText).trim();
   }
 }
 
