@@ -735,80 +735,326 @@
         color: #93c5fd !important;
       }
 
-      .appdosc__table-head {
-        align-items: baseline !important;
+      .appdosc__content {
+        width: 100%;
+        max-width: 430px;
+        margin: 0 auto;
       }
 
-      .appdosc__table-title {
-        font-size: clamp(20px, 4.8vw, 26px) !important;
-        line-height: 1.2;
+      .appdosc__table-card.tasks-panel {
+        width: 100% !important;
+        max-width: 430px !important;
+        margin: 0 auto !important;
+        padding: 18px 14px !important;
+        border-radius: 28px !important;
+        overflow: hidden !important;
+        border: 1px solid rgba(79, 120, 190, 0.25) !important;
+        background: radial-gradient(circle at top right, rgba(28, 67, 136, 0.2), transparent 44%), linear-gradient(160deg, #071120 0%, #0b1527 100%) !important;
+        box-shadow: 0 20px 48px rgba(1, 8, 22, 0.5), inset 0 0 0 1px rgba(123, 168, 255, 0.08) !important;
       }
 
-      .appdosc__table-meta {
-        font-size: 13px !important;
-        line-height: 1.3;
-        opacity: 0.75;
+      .appdosc__table-head.tasks-header {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 10px !important;
+        margin-bottom: 14px !important;
       }
 
-      .appdosc__cards {
-        display: grid;
+      .tasks-app-badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 30px;
+        margin-bottom: 10px;
+        padding: 5px 12px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.9);
+        color: #334155;
+        font-size: 16px;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+      }
+
+      .tasks-header-top {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         gap: 10px;
       }
 
-      .appdosc-card {
-        border-radius: 16px !important;
-        border: 1px solid rgba(148, 163, 184, 0.2) !important;
-        background: rgba(8, 25, 58, 0.56) !important;
-        box-shadow: none !important;
+      .appdosc__table-title.tasks-title {
+        font-size: clamp(24px, 6.2vw, 34px) !important;
+        line-height: 1 !important;
+        font-weight: 760 !important;
+        letter-spacing: -0.04em !important;
+        color: #f8fafc !important;
       }
 
-      :root:not([data-theme='dark']) .appdosc-card {
-        border-color: rgba(148, 163, 184, 0.32) !important;
-        background: rgba(255, 255, 255, 0.84) !important;
+      .appdosc__table-meta.tasks-updated {
+        width: fit-content !important;
+        max-width: 100% !important;
+        font-size: 13px !important;
+        line-height: 1.2;
+        color: #94a3b8 !important;
+        padding: 8px 12px !important;
+        border-radius: 16px;
+        border: 1px solid rgba(79, 120, 190, 0.25);
+        background: rgba(15, 31, 58, 0.78);
+        white-space: normal !important;
+      }
+
+      .tasks-refresh {
+        min-height: 40px !important;
+        padding: 8px 14px !important;
+        border-radius: 16px !important;
+        border: 1px solid rgba(79, 120, 190, 0.35) !important;
+        background: rgba(20, 44, 84, 0.72) !important;
+      }
+
+      .appdosc__cards.tasks-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .appdosc-card.task-card {
+        min-height: auto !important;
+        border-radius: 22px !important;
+        border: 1px solid rgba(79, 120, 190, 0.25) !important;
+        background: linear-gradient(100deg, rgba(12, 25, 45, 0.9), rgba(10, 23, 43, 0.82)) !important;
+        box-shadow: 0 14px 24px rgba(2, 12, 29, 0.34), inset 0 0 0 1px rgba(98, 148, 236, 0.08) !important;
       }
 
       .appdosc-card__header {
+        width: 100%;
+        min-height: 96px !important;
+        padding: 16px !important;
+        display: grid !important;
+        grid-template-columns: 56px minmax(0, 1fr) auto !important;
+        grid-template-areas: "icon main actions" !important;
+        gap: 14px !important;
+        align-items: center !important;
+        cursor: pointer;
+      }
+
+      .task-icon {
+        grid-area: icon !important;
+        width: 50px !important;
+        height: 50px !important;
+        border-radius: 16px !important;
+        display: grid !important;
+        place-items: center !important;
+        background: rgba(28, 73, 135, .55) !important;
+        border: 1px solid rgba(75, 140, 255, .28) !important;
+        flex: 0 0 auto !important;
+      }
+
+      .task-main {
+        grid-area: main !important;
+        min-width: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+      }
+
+      .task-meta {
+        display: flex !important;
+        align-items: center !important;
         gap: 8px !important;
+        min-width: 0 !important;
+        margin: 0 !important;
+      }
+
+      .task-date {
+        color: #94a3b8 !important;
+        font-size: 12px !important;
+        line-height: 1.2 !important;
+        white-space: nowrap !important;
       }
 
       .appdosc-card__meta {
-        grid-column: 1 !important;
-        grid-row: 1 !important;
+        color: #94a3b8 !important;
+        font-size: 12px !important;
+        line-height: 1.2 !important;
+        margin: 0 !important;
+        white-space: nowrap !important;
+      }
+
+      .task-number,
+      .appdosc-card__badge {
+        border-radius: 999px !important;
+        padding: 3px 8px !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        line-height: 1.1;
+        min-height: 20px !important;
+        color: #60a5fa !important;
+        background: rgba(37, 99, 235, .28) !important;
+        border: 1px solid rgba(63, 140, 255, 0.26);
+        white-space: nowrap !important;
+      }
+
+      .task-name,
+      .appdosc-card__title {
+        color: #f8fafc !important;
+        font-size: 14px !important;
+        line-height: 1.2 !important;
+        font-weight: 680 !important;
+        margin: 0;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .appdosc-card__subtitle {
+        display: none !important;
+      }
+
+      .appdosc-card__status.task-status {
+        position: static !important;
+        grid-column: auto !important;
+        grid-row: auto !important;
+        justify-self: auto !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        padding: 0 12px !important;
+        border-radius: 12px !important;
+        font-size: 14px !important;
+        font-weight: 700 !important;
+        white-space: nowrap !important;
+      }
+
+      .appdosc-card__status {
+        position: static !important;
+        min-height: 38px !important;
+        padding: 0 14px !important;
+        border-radius: 13px !important;
+        border: 1px solid rgba(63, 140, 255, 0.5) !important;
+        color: #72a9ff !important;
+        background: rgba(29, 63, 117, 0.5) !important;
+        font-size: 14px !important;
+        line-height: 1.2;
         display: inline-flex;
         align-items: center;
-        gap: 4px;
-        font-size: 12px !important;
-        opacity: 0.86;
-        line-height: 1.1;
-        padding: 2px 0;
+        gap: 7px;
+      }
+
+      .appdosc-card__status:empty {
+        display: none !important;
+      }
+
+      .appdosc-card__status::before {
+        content: '';
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        border: 2px solid currentColor;
+      }
+
+      .appdosc-card--done .appdosc-card__status {
+        color: #4ade80 !important;
+        border-color: rgba(74, 222, 128, 0.45) !important;
+        background: rgba(20, 83, 45, 0.46) !important;
+      }
+
+      .appdosc-card--done .appdosc-card__status::before {
+        border: 0;
+        width: 16px;
+        height: 16px;
+        background: currentColor;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill='black' d='m7.8 13.8-3.6-3.6L3 11.4l4.8 4.8L17 7l-1.2-1.2z'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill='black' d='m7.8 13.8-3.6-3.6L3 11.4l4.8 4.8L17 7l-1.2-1.2z'/%3E%3C/svg%3E") center / contain no-repeat;
       }
 
       .appdosc-card__side {
-        grid-column: 3 !important;
-        grid-row: 1 !important;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        justify-self: end;
+        grid-area: actions !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 14px !important;
+        justify-self: end !important;
       }
 
-      .appdosc-card__badge {
-        border-radius: 999px !important;
-        padding: 4px 8px !important;
-        font-size: 12px !important;
-        line-height: 1.1;
-        min-height: 24px !important;
+      .task-chevron,
+      .appdosc-card__chevron {
+        position: static !important;
+        width: 13px !important;
+        height: 13px !important;
+        border-right: 3px solid #94a3b8 !important;
+        border-bottom: 3px solid #94a3b8 !important;
+        transform: rotate(45deg) !important;
+        transition: transform .2s ease !important;
+        flex: 0 0 auto !important;
+        font-size: 0 !important;
       }
 
-      .appdosc-card__header-text {
-        grid-column: 1 / 4 !important;
-        grid-row: 2 !important;
+      .appdosc-card[data-expanded='true'] .appdosc-card__chevron {
+        transform: rotate(225deg) !important;
       }
 
       .appdosc-card__summary {
-        grid-column: 1 / 4 !important;
-        grid-row: 3 !important;
-        margin-top: 2px;
+        display: none !important;
+      }
+
+      .appdosc-card__details {
+        padding: 0 14px 16px 84px !important;
+        margin: 0 !important;
+        display: grid !important;
+        gap: 14px !important;
+      }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__details,
+      .appdosc-card[data-expanded='false'] .appdosc-card__resolution,
+      .appdosc-card[data-expanded='false'] .appdosc-card__files,
+      .appdosc-card[data-expanded='false'] .appdosc-card__footer,
+      .appdosc-card[data-expanded='false'] .appdosc-card__instruction,
+      .appdosc-card[data-expanded='false'] .appdosc-card__status-controls,
+      .appdosc-card[data-expanded='false'] .appdosc-card__due-editor,
+      .appdosc-card[data-expanded='false'] .appdosc-card__assign {
+        display: none !important;
+      }
+
+      .appdosc-card__detail {
+        margin: 0 !important;
+        min-width: 0 !important;
+      }
+
+      .appdosc-card__detail dt {
+        margin: 0 0 4px !important;
+        color: #8190aa !important;
+        font-size: 11px !important;
+        line-height: 1.2 !important;
+        text-transform: uppercase !important;
+        letter-spacing: .12em !important;
+      }
+
+      .appdosc-card__detail dd {
+        margin: 0 !important;
+        color: #e5edf8 !important;
+        font-size: 16px !important;
+        line-height: 1.28 !important;
+        overflow-wrap: anywhere !important;
+      }
+
+      .appdosc-card__files {
+        padding: 0 14px 16px 84px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+      }
+
+      .appdosc-card__file,
+      .appdosc-card__file-link,
+      .appdosc-card__files a {
+        max-width: 100% !important;
+        padding: 10px 13px !important;
+        border-radius: 999px !important;
+        background: rgba(148, 163, 184, .16) !important;
+        color: #cbd5e1 !important;
+        font-size: 14px !important;
+        line-height: 1.25 !important;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
       }
 
       .appdosc-card__footer {
@@ -840,6 +1086,36 @@
 
       .appdosc__responsible-panel {
         display: none !important;
+      }
+
+      .appdosc__footer {
+        width: 100%;
+        max-width: 430px;
+        margin: 14px auto 0 !important;
+        padding: 0 0 calc(16px + env(safe-area-inset-bottom)) !important;
+        border-radius: 22px;
+      }
+
+      .appdosc__footer-meta.tasks-stats {
+        margin-top: 12px !important;
+        padding: 14px !important;
+        border-radius: 18px;
+        border: 1px solid rgba(75, 115, 180, .22);
+        background: rgba(15, 31, 55, .72) !important;
+        color: #94a3b8;
+        font-size: 13px !important;
+        line-height: 1.35 !important;
+      }
+
+      .appdosc__footer-hint.tasks-help {
+        margin-top: 12px !important;
+        padding: 14px !important;
+        border-radius: 18px;
+        border: 1px solid rgba(75, 115, 180, .22);
+        background: rgba(15, 31, 55, .72) !important;
+        color: #94a3b8;
+        font-size: 13px !important;
+        line-height: 1.35 !important;
       }
 
       .appdosc__task-nav {
@@ -900,6 +1176,7 @@
           overflow: hidden;
           text-overflow: ellipsis;
         }
+
       }
 
       @media (max-width: 520px) {
@@ -917,6 +1194,64 @@
         .appdosc-viewer__fit-icon {
           width: 18px;
           height: 18px;
+        }
+
+        .appdosc {
+          padding-inline: 8px !important;
+        }
+
+        .appdosc__table-card.tasks-panel {
+          padding: 14px 10px !important;
+          border-radius: 24px !important;
+        }
+
+        .tasks-header-top {
+          flex-wrap: wrap;
+        }
+
+        .tasks-refresh {
+          min-height: 34px !important;
+          padding: 7px 10px !important;
+        }
+
+        .appdosc-card__header {
+          grid-template-columns: 50px minmax(0, 1fr) auto !important;
+          grid-template-areas: "icon main actions" !important;
+          min-height: 92px !important;
+          padding: 12px !important;
+          gap: 12px !important;
+        }
+
+        .task-icon {
+          width: 48px !important;
+          height: 48px !important;
+          border-radius: 14px !important;
+        }
+
+        .appdosc-card__side {
+          justify-self: end !important;
+        }
+
+        .appdosc-card__details,
+        .appdosc-card__files,
+        .appdosc-card__resolution,
+        .appdosc-card__footer {
+          padding-left: 72px !important;
+          padding-right: 12px !important;
+        }
+
+        .task-name {
+          font-size: 17px !important;
+        }
+
+        .appdosc-card__status.task-status {
+          height: 30px !important;
+          min-height: 30px !important;
+          font-size: 13px !important;
+          padding: 0 10px !important;
+          max-width: 145px !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
         }
       }
     </style>
@@ -1016,23 +1351,6 @@
                 <span class="appdosc__badge-label">0 просрочено</span>
               </button>
             </div>
-            <div class="appdosc__summary-actions">
-              <button class="appdosc__refresh" type="button" data-refresh>
-                <span class="appdosc__refresh-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                    <path
-                      d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.9"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </span>
-                <span class="appdosc__refresh-text">Обновить</span>
-              </button>
-            </div>
             <div
               class="appdosc__responsible-panel appdosc__responsible-panel--collapsed"
               data-responsible-panel
@@ -1113,20 +1431,38 @@
       </section>
 
       <main class="appdosc__content">
-        <div class="appdosc__table-card">
-          <div class="appdosc__table-head">
-            <div class="appdosc__table-title">Список задач</div>
-            <div class="appdosc__table-meta" data-updated>Обновление не выполнялось</div>
+        <div class="tasks-app-badge">Документооборот Mini App</div>
+        <div class="appdosc__table-card tasks-panel">
+          <div class="appdosc__table-head tasks-header">
+            <div class="tasks-header-top">
+              <div class="appdosc__table-title tasks-title">Список задач</div>
+              <button class="appdosc__refresh tasks-refresh" type="button" data-refresh>
+                <span class="appdosc__refresh-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path
+                      d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.9"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span class="appdosc__refresh-text">Обновить</span>
+              </button>
+            </div>
+            <div class="appdosc__table-meta tasks-updated" data-updated>Обновление не выполнялось</div>
           </div>
-          <div class="appdosc__cards" data-cards-container aria-live="polite">
+          <div class="appdosc__cards tasks-list" data-cards-container aria-live="polite">
             <div class="appdosc__cards-placeholder" data-placeholder>Задачи отсутствуют</div>
           </div>
         </div>
       </main>
 
       <footer class="appdosc__footer">
-        <div class="appdosc__footer-meta" data-organizations>Организаций обработано: 0</div>
-        <div class="appdosc__footer-hint">Если вы не видите задания, откройте мини-приложение из Telegram-чата с ботом.</div>
+        <div class="appdosc__footer-meta tasks-stats" data-organizations>Организаций обработано: 0</div>
+        <div class="appdosc__footer-hint tasks-help">Если вы не видите задания, откройте мини-приложение из Telegram-чата с ботом.</div>
       </footer>
     </div>
 
@@ -1264,21 +1600,28 @@
     </div>
 
     <template id="appdosc-card-template">
-      <article class="appdosc-card" data-card>
+      <article class="appdosc-card task-card" data-card>
         <header class="appdosc-card__header" data-card-toggle>
-          <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
-          <span class="appdosc-card__status" data-field="status"></span>
-          <div class="appdosc-card__side">
-            <span class="appdosc-card__badge" data-field="entryNumber"></span>
-            <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
-          </div>
-          <div class="appdosc-card__header-text">
-            <div class="appdosc-card__title" data-field="document">Документ</div>
+          <span class="task-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9 4.5h6a1.5 1.5 0 0 1 1.5 1.5V7H19a2 2 0 0 1 2 2v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2.5V6A1.5 1.5 0 0 1 9 4.5Z" stroke="#5e9cff" stroke-width="1.7"/>
+              <path d="M9 6.25h6" stroke="#5e9cff" stroke-width="1.7" stroke-linecap="round"/>
+              <path d="m8.8 14.1 2.1 2.2 4.4-4.6" stroke="#5e9cff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <div class="appdosc-card__header-text task-main">
+            <div class="task-meta">
+              <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
+              <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
+            </div>
+            <div class="appdosc-card__title task-name" data-field="document">Документ</div>
             <div class="appdosc-card__subtitle" data-field="organization"></div>
           </div>
-          <div class="appdosc-card__summary" data-field="summary">
-            <div class="appdosc-card__block-text" data-field="contentCompact"></div>
+          <div class="appdosc-card__side">
+            <span class="appdosc-card__status task-status" data-field="status"></span>
+            <span class="appdosc-card__chevron task-chevron" aria-hidden="true"></span>
           </div>
+          <div class="appdosc-card__summary" data-field="summary"><div class="appdosc-card__block-text" data-field="contentCompact"></div></div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
         </header>
         <dl class="appdosc-card__details">
