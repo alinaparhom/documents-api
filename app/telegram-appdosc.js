@@ -2756,6 +2756,7 @@ function initElements() {
   elements.versionUpdated = document.querySelector('[data-version-updated]');
   elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
   elements.taskSelector = document.querySelector('[data-task-select]');
+  elements.taskNavLabel = document.querySelector('[data-task-nav-label]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
@@ -3397,7 +3398,6 @@ async function loadTasks(force = false) {
       const message = state.error || 'Отрисовка карточек завершилась ошибкой';
       throw new Error(message);
     }
-    setStatus('info', `Найдено задач: ${state.stats.total}`);
     logClientEvent('tasks_loaded', {
       total: state.stats.total,
       active: state.stats.active,
@@ -4782,6 +4782,7 @@ function updateTaskSelector() {
   placeholderOption.value = '';
   const visibleItems = getVisibleTaskItems();
   const hasCards = visibleItems.length > 0;
+  updateTaskSelectorLabel(visibleItems.length);
   const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
   placeholderOption.textContent = hasCards
     ? 'Выберите задачу из списка'
@@ -4831,6 +4832,18 @@ function updateTaskSelector() {
   } else {
     selector.removeAttribute('aria-disabled');
   }
+}
+
+function updateTaskSelectorLabel(total) {
+  if (!elements.taskNavLabel) {
+    return;
+  }
+  const count = Number.isFinite(Number(total)) ? Math.max(0, Math.trunc(Number(total))) : 0;
+  if (count <= 0) {
+    elements.taskNavLabel.textContent = 'Перейти к задаче';
+    return;
+  }
+  elements.taskNavLabel.textContent = `Перейти к задаче • ${count} ${formatTaskCountLabel(count)}`;
 }
 
 function handleTaskSelectorChange(event) {
