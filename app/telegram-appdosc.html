@@ -19,6 +19,30 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script>
       (function bootstrapVersionedAssets() {
+        const applyEffectsProfileClass = function() {
+          const root = document.documentElement;
+          if (!root) return;
+          const nav = window.navigator || {};
+          const ua = String(nav.userAgent || '');
+          const platform = String(nav.platform || '');
+          const touchPoints = Number(nav.maxTouchPoints || 0);
+          const isIos = /iPad|iPhone|iPod/i.test(ua) || (/Mac/i.test(platform) && touchPoints > 1);
+          const isAndroid = /Android/i.test(ua);
+          const isWebView = isIos
+            ? (/WebView|Telegram|FBAN|FBAV|Line\//i.test(ua) || (/AppleWebKit/i.test(ua) && !/Safari/i.test(ua)))
+            : (isAndroid ? /; wv\)|\bwv\b|Version\/[\d.]+|Telegram/i.test(ua) : false);
+          const memory = Number(nav.deviceMemory) || 0;
+          const cores = Number(nav.hardwareConcurrency) || 0;
+          const saveData = Boolean(nav.connection && nav.connection.saveData);
+          const prefersReducedMotion = typeof window.matchMedia === 'function'
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          const lowPower = (memory > 0 && memory <= 3) || (cores > 0 && cores <= 4);
+          const reduced = Boolean(saveData || prefersReducedMotion || lowPower || (isWebView && isIos));
+          root.classList.toggle('reduced-effects', reduced);
+          root.setAttribute('data-effects-profile', reduced ? 'reduced' : 'full');
+        };
+        applyEffectsProfileClass();
+
         const inTelegram = Boolean(window.Telegram && window.Telegram.WebApp);
 
         const forceFreshLoad = function() {
@@ -176,6 +200,15 @@
         --appdosc-avatar-border: rgba(148, 163, 184, 0.38);
         --appdosc-avatar-gradient-start: rgba(255, 255, 255, 0.74);
         --appdosc-avatar-gradient-end: rgba(203, 213, 225, 0.4);
+        --appdosc-overlay-blur: 6px;
+        --appdosc-surface-blur: 5px;
+        --appdosc-strong-blur: 10px;
+      }
+
+      :root.reduced-effects {
+        --appdosc-overlay-blur: 0px;
+        --appdosc-surface-blur: 0px;
+        --appdosc-strong-blur: 0px;
       }
 
       :root[data-theme='dark'] {
@@ -210,8 +243,8 @@
         inset: 0;
         z-index: 4000;
         background: rgba(15, 23, 42, 0.42);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(var(--appdosc-overlay-blur));
+        -webkit-backdrop-filter: blur(var(--appdosc-overlay-blur));
         display: flex;
         align-items: flex-end;
         justify-content: center;
@@ -278,8 +311,8 @@
         align-items: center;
         border-radius: 12px;
         background: var(--appdosc-surface-glass);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(var(--appdosc-surface-blur));
+        -webkit-backdrop-filter: blur(var(--appdosc-surface-blur));
         border: 1px solid var(--appdosc-surface-glass-border);
         overflow: hidden;
       }
@@ -405,8 +438,8 @@
         padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
         border: 1px solid var(--appdosc-surface-glass-border);
         background: var(--appdosc-surface-glass);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
+        backdrop-filter: blur(var(--appdosc-strong-blur));
+        -webkit-backdrop-filter: blur(var(--appdosc-strong-blur));
       }
 
       .appdosc-settings-sheet__title {
@@ -544,8 +577,8 @@
         flex: 0 0 auto;
         border: 1px solid var(--appdosc-avatar-border);
         background: linear-gradient(135deg, var(--appdosc-avatar-gradient-start), var(--appdosc-avatar-gradient-end));
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(var(--appdosc-surface-blur));
+        -webkit-backdrop-filter: blur(var(--appdosc-surface-blur));
         box-shadow: 0 10px 22px rgba(15, 23, 42, 0.22);
       }
 
