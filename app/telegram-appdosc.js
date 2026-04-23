@@ -743,8 +743,7 @@ const PDF_DIAGNOSTIC_EVENT = 'appdosc:pdf-log';
 const PDF_DIAGNOSTIC_THROTTLE_MS = 1200;
 const PDF_LOG_THROTTLE_MS = 350;
 const BULK_ASSIGN_FEEDBACK_TIMEOUT_MS = 2400;
-const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет Telegram ID — уведомление не придёт.';
-const TELEGRAM_MISSING_OPTION_NOTE = 'Нет Telegram ID — уведомление не придёт';
+const TELEGRAM_MISSING_MESSAGE = 'У пользователя нет ID Telegram. Обратитесь к администратору.';
 const RESPONSIBLE_PANEL_TITLE = 'Назначенные задачи по ответственным';
 const SUBORDINATE_PANEL_TITLE = 'Назначенные задачи на подчинённых';
 const INSTRUCTION_OPTIONS = ['В работу', 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
@@ -1999,16 +1998,6 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
-  advancedFilter: {
-    dateFrom: '',
-    dateTo: '',
-    correspondent: '',
-    object: '',
-    responsible: '',
-    statusKeys: [],
-    taskNumber: '',
-    overdueOnly: false,
-  },
   access: {
     responsibles: {},
     subordinates: {},
@@ -2333,33 +2322,6 @@ function sanitizeTaskItem(task) {
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
 
-  const resolveSummaryValue = (value) => {
-    if (typeof value === 'string') {
-      return value;
-    }
-    if (value && typeof value === 'object') {
-      return (
-        normalizeValue(value.summary)
-        || normalizeValue(value.content)
-        || normalizeValue(value.description)
-        || normalizeValue(value.text)
-        || normalizeValue(value.title)
-        || ''
-      );
-    }
-    return normalizeValue(value) || '';
-  };
-
-  const normalizedSummary = resolveSummaryValue(sanitized.summary)
-    || resolveSummaryValue(sanitized.content)
-    || resolveSummaryValue(sanitized.description)
-    || resolveSummaryValue(sanitized.text)
-    || '';
-
-  if (normalizedSummary) {
-    sanitized.summary = normalizedSummary;
-  }
-
   return sanitized;
 }
 
@@ -2534,160 +2496,6 @@ function hasAssigneeFilters(filters) {
   return splitTaskFilters(filters).assigneeFilters.length > 0;
 }
 
-function normalizeAdvancedFilterValue(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function getAdvancedFilterState() {
-  if (!state.advancedFilter || typeof state.advancedFilter !== 'object') {
-    state.advancedFilter = {
-      dateFrom: '',
-      dateTo: '',
-      correspondent: '',
-      object: '',
-      responsible: '',
-      statusKeys: [],
-      taskNumber: '',
-      overdueOnly: false,
-    };
-  }
-  if (!Array.isArray(state.advancedFilter.statusKeys)) {
-    state.advancedFilter.statusKeys = [];
-  }
-  return state.advancedFilter;
-}
-
-function parseDateValue(dateText) {
-  const value = normalizeAdvancedFilterValue(dateText);
-  if (!value) {
-    return null;
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  parsed.setHours(0, 0, 0, 0);
-  return parsed;
-}
-
-function getTaskCorrespondentText(task) {
-  const correspondent = formatEntityDisplay(task?.correspondent, '')
-    || normalizeValue(task?.sender)
-    || normalizeValue(task?.from)
-    || '';
-  return correspondent.trim();
-}
-
-function getTaskResponsibleText(task) {
-  const candidates = [
-    normalizeValue(task?.responsible),
-    formatEntityDisplay(resolveExecutor(task), ''),
-  ];
-  if (Array.isArray(task?.responsibles)) {
-    task.responsibles.forEach((item) => {
-      if (typeof item === 'string') {
-        candidates.push(normalizeValue(item));
-      } else if (item && typeof item === 'object') {
-        candidates.push(normalizeValue(item.responsible || item.name || item.fio));
-      }
-    });
-  }
-  return candidates.filter(Boolean).join(' ').trim();
-}
-
-function applyAdvancedTaskFilters(items) {
-  const filters = getAdvancedFilterState();
-  const source = Array.isArray(items) ? items : [];
-  if (!source.length) {
-    return [];
-  }
-
-  const dateFrom = parseDateValue(filters.dateFrom);
-  const dateTo = parseDateValue(filters.dateTo);
-  const correspondent = normalizeAdvancedFilterValue(filters.correspondent).toLowerCase();
-  const objectValue = normalizeAdvancedFilterValue(filters.object).toLowerCase();
-  const responsible = normalizeAdvancedFilterValue(filters.responsible).toLowerCase();
-  const statusKeys = Array.isArray(filters.statusKeys) ? filters.statusKeys : [];
-  const taskNumber = normalizeAdvancedFilterValue(filters.taskNumber).toLowerCase();
-  const overdueOnly = Boolean(filters.overdueOnly);
-
-  return source.filter((item) => {
-    const task = item && typeof item === 'object' ? item.task : null;
-    if (!task || typeof task !== 'object') {
-      return false;
-    }
-
-    if (overdueOnly && !isOverdue(task)) {
-      return false;
-    }
-
-    if (dateFrom || dateTo) {
-      const registration = parseDateValue(task.registrationDate);
-      if (!registration) {
-        return false;
-      }
-      if (dateFrom && registration.getTime() < dateFrom.getTime()) {
-        return false;
-      }
-      if (dateTo && registration.getTime() > dateTo.getTime()) {
-        return false;
-      }
-    }
-
-    if (correspondent) {
-      const text = getTaskCorrespondentText(task).toLowerCase();
-      if (!text.includes(correspondent)) {
-        return false;
-      }
-    }
-
-    if (objectValue) {
-      const objectText = [
-        normalizeValue(task.object),
-        normalizeValue(task.organization),
-        normalizeValue(task.document),
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      if (!objectText.includes(objectValue)) {
-        return false;
-      }
-    }
-
-    if (responsible) {
-      const text = getTaskResponsibleText(task).toLowerCase();
-      if (!text.includes(responsible)) {
-        return false;
-      }
-    }
-
-    if (statusKeys.length) {
-      const taskStatusKey = getTaskStatusKeyForUser(task);
-      if (!taskStatusKey || !statusKeys.includes(taskStatusKey)) {
-        return false;
-      }
-    }
-
-    if (taskNumber) {
-      const numberText = [
-        normalizeValue(task.id),
-        normalizeValue(task.entryNumber),
-        normalizeValue(task.registryNumber),
-        normalizeValue(task.documentNumber),
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      if (!numberText.includes(taskNumber)) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-}
-
 function toggleStatusFilterSelection(currentFilters, filter) {
   const normalizedTarget = normalizeTaskFilter(filter);
   if (!normalizedTarget || normalizedTarget === DEFAULT_TASK_FILTER) {
@@ -2829,11 +2637,8 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__badge" data-field="entryNumber"></span>
       <span class="appdosc-card__chevron" aria-hidden="true">⌄</span>
     </div>
-    <div class="appdosc-card__summary" data-field="summaryCollapsed">
-      <div class="appdosc-card__block-text appdosc-card__summary-line">
-        <span class="appdosc-card__summary-label">Содержание:</span>
-        <span data-field="summaryCollapsedText"></span>
-      </div>
+    <div class="appdosc-card__summary" data-field="summary">
+      <div class="appdosc-card__block-text" data-field="contentCompact"></div>
     </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
@@ -2857,10 +2662,6 @@ const FALLBACK_CARD_TEMPLATE = `
     <div class="appdosc-card__detail">
       <dt>Исполнитель</dt>
       <dd data-field="executor"></dd>
-    </div>
-    <div class="appdosc-card__detail appdosc-card__detail--summary">
-      <dt>Содержание</dt>
-      <dd data-field="summaryFull"></dd>
     </div>
     <div class="appdosc-card__detail">
       <dt>Поручение</dt>
@@ -2955,30 +2756,6 @@ function initElements() {
   elements.versionUpdated = document.querySelector('[data-version-updated]');
   elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
   elements.taskSelector = document.querySelector('[data-task-select]');
-  elements.advancedFilters = document.querySelector('[data-advanced-filters]');
-  elements.advancedFiltersToggle = document.querySelector('[data-advanced-filters-toggle]');
-  elements.advancedFiltersBody = document.querySelector('[data-advanced-filters-body]');
-  if (elements.advancedFilters instanceof HTMLElement && elements.advancedFiltersBody instanceof HTMLElement) {
-    elements.advancedFilters.classList.add('appdosc-filters--collapsed');
-    elements.advancedFiltersBody.hidden = true;
-    if (elements.advancedFiltersToggle instanceof HTMLElement) {
-      elements.advancedFiltersToggle.setAttribute('aria-expanded', 'false');
-    }
-  }
-  elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
-  elements.filterDateTo = document.querySelector('[data-filter-date-to]');
-  elements.filterCorrespondent = document.querySelector('[data-filter-correspondent]');
-  elements.filterObject = document.querySelector('[data-filter-object]');
-  elements.filterResponsible = document.querySelector('[data-filter-responsible]');
-  elements.filterStatusChips = document.querySelector('[data-filter-status-chips]');
-  elements.filterStatusToggle = document.querySelector('[data-filter-status-toggle]');
-  elements.filterStatusList = document.querySelector('[data-filter-status-list]');
-  elements.filterTaskNumber = document.querySelector('[data-filter-task-number]');
-  elements.filterOverdueOnly = document.querySelector('[data-filter-overdue-only]');
-  elements.filterApply = document.querySelector('[data-filter-apply]');
-  elements.filterReset = document.querySelector('[data-filter-reset]');
-  elements.filterQuickRanges = Array.from(document.querySelectorAll('[data-filter-range]'));
-  elements.filterActiveList = document.querySelector('[data-filter-active-list]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
@@ -3887,7 +3664,6 @@ function render() {
   updateStats();
   updateDirectorSummary();
   updateSummaryFilterState();
-  updateAdvancedFilterUi();
   renderCards();
   updateFooter();
 }
@@ -3896,7 +3672,6 @@ function renderEmpty() {
   updateUserPanel();
   updateStats();
   updateDirectorSummary();
-  updateAdvancedFilterUi();
   clearCards();
   updateFooter();
   logIosStage('render_empty', {
@@ -4425,11 +4200,10 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="organization"]', task.organization, {
     fallback: 'Организация не указана',
   });
-  const summaryText = normalizeValue(task.summary) || 'Содержание не указано';
   const registrationDate = formatDate(task.registrationDate);
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
-  applyRegistrationDateHeader(card, registrationDate, summaryText);
+  applyRegistrationDateHeader(card, registrationDate);
   setCardField(card, '[data-field="direction"]', task.direction);
   setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
   setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
@@ -4438,17 +4212,31 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  setCardField(card, '[data-field="summaryCollapsedText"]', summaryText, {
+  const resolveCompactText = (value) => {
+    if (value && typeof value === 'object') {
+      const nested = normalizeValue(
+        value.summary
+          || value.content
+          || value.description
+          || value.text
+          || value.title
+      );
+      return nested;
+    }
+    return normalizeValue(value);
+  };
+
+  const compactContent = resolveCompactText(task.summary)
+    || resolveCompactText(task.content)
+    || resolveCompactText(task.description)
+    || resolveCompactText(task.instruction)
+    || '—';
+  setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
     setTitle: false,
-    fallback: 'Содержание не указано',
+    fallback: '—',
   });
-  setCardField(card, '[data-field="summaryFull"]', summaryText, {
-    hideIfEmpty: false,
-    setTitle: false,
-    fallback: 'Содержание не указано',
-  });
-  toggleSection(card, '[data-field="summaryCollapsed"]', true);
+  toggleSection(card, '[data-field="summary"]', true);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,
@@ -4903,7 +4691,7 @@ function updateVisibleTasks() {
     }
   }
 
-  state.visibleTasks = applyAdvancedTaskFilters(visible);
+  state.visibleTasks = visible;
 }
 
 function truncateText(value, limit = 140) {
@@ -5135,7 +4923,7 @@ function openTelegramFileAiBriefModal(fileName, briefText) {
   document.body.appendChild(overlay);
 }
 
-function applyRegistrationDateHeader(card, registrationDate, summaryValue = '') {
+function applyRegistrationDateHeader(card, registrationDate) {
   if (!(card instanceof HTMLElement)) {
     return;
   }
@@ -5147,19 +4935,17 @@ function applyRegistrationDateHeader(card, registrationDate, summaryValue = '') 
 
   const normalized = normalizeValue(registrationDate);
   const hasDate = normalized && normalized !== '—';
-  const summaryText = truncateText(normalizeValue(summaryValue) || 'Содержание не указано', 76);
-  const fullSummary = normalizeValue(summaryValue) || 'Содержание не указано';
 
   if (hasDate) {
-    headerDate.textContent = `${normalized} · ${summaryText}`;
+    headerDate.textContent = normalized;
     headerDate.hidden = false;
     headerDate.dataset.empty = 'false';
-    headerDate.title = `Дата регистрации: ${normalized}\nСодержание: ${fullSummary}`;
+    headerDate.title = `Дата регистрации: ${normalized}`;
   } else {
-    headerDate.textContent = summaryText;
-    headerDate.hidden = false;
+    headerDate.textContent = '';
+    headerDate.hidden = true;
     headerDate.dataset.empty = 'true';
-    headerDate.title = `Содержание: ${fullSummary}`;
+    headerDate.removeAttribute('title');
   }
 }
 
@@ -10925,6 +10711,7 @@ function setupDirectorCompactCompletion(card, task) {
   const organization = getTaskOrganization(task);
   const directorAssigned = organization
     && userIsDirectorForOrganization(organization)
+    && isTaskAssignedToCurrentDirector(task)
     && !isTaskCompleted(task);
 
   if (!directorAssigned) {
@@ -10993,8 +10780,12 @@ function setupStatusControls(card, task) {
   }
 
   const isDirector = userIsDirectorForOrganization(organization);
-  const canManageByAssignment = userIsResponsibleForTask(task)
-    || isDirector;
+  if (isDirector) {
+    container.remove();
+    return;
+  }
+
+  const canManageByAssignment = userIsResponsibleForTask(task);
   if (!canManageByAssignment) {
     container.remove();
     return;
@@ -15997,273 +15788,6 @@ function clearStatus() {
   elements.status.className = 'appdosc__status-message';
 }
 
-function buildAdvancedFilterTags() {
-  const filters = getAdvancedFilterState();
-  const tags = [];
-  if (filters.dateFrom || filters.dateTo) {
-    tags.push(`Период: ${filters.dateFrom || '…'} — ${filters.dateTo || '…'}`);
-  }
-  if (filters.correspondent) {
-    tags.push(`Корреспондент: ${filters.correspondent}`);
-  }
-  if (filters.object) {
-    tags.push(`Объект: ${filters.object}`);
-  }
-  if (filters.responsible) {
-    tags.push(`Ответственный: ${filters.responsible}`);
-  }
-  if (Array.isArray(filters.statusKeys) && filters.statusKeys.length) {
-    const statuses = filters.statusKeys
-      .map((key) => STATUS_SUMMARY_CONFIG[key]?.display || key)
-      .join(', ');
-    tags.push(`Статус: ${statuses}`);
-  }
-  if (filters.taskNumber) {
-    tags.push(`№ задачи: ${filters.taskNumber}`);
-  }
-  if (filters.overdueOnly) {
-    tags.push('Только просроченные');
-  }
-  return tags;
-}
-
-function collectFilterSelectOptions() {
-  const options = {
-    correspondents: new Set(),
-    objects: new Set(),
-    responsibles: new Set(),
-  };
-  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
-  tasks.forEach((task) => {
-    const correspondent = getTaskCorrespondentText(task).trim();
-    if (correspondent) {
-      options.correspondents.add(correspondent);
-    }
-    const objectValue = normalizeValue(task?.object) || normalizeValue(task?.organization);
-    if (objectValue) {
-      options.objects.add(objectValue.trim());
-    }
-    const responsible = getTaskResponsibleText(task).trim();
-    if (responsible) {
-      options.responsibles.add(responsible);
-    }
-  });
-  return options;
-}
-
-function refillSelect(selectElement, values, defaultLabel) {
-  if (!(selectElement instanceof HTMLSelectElement)) {
-    return;
-  }
-  const currentValue = normalizeAdvancedFilterValue(selectElement.value);
-  selectElement.innerHTML = '';
-  const defaultOption = document.createElement('option');
-  defaultOption.value = '';
-  defaultOption.textContent = defaultLabel;
-  selectElement.appendChild(defaultOption);
-  values.forEach((value) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = value;
-    selectElement.appendChild(option);
-  });
-  if (currentValue) {
-    selectElement.value = currentValue;
-  }
-}
-
-function updateStatusFilterUi() {
-  const filters = getAdvancedFilterState();
-  const selectedKeys = Array.isArray(filters.statusKeys) ? filters.statusKeys : [];
-  if (elements.filterStatusToggle instanceof HTMLElement) {
-    elements.filterStatusToggle.textContent = selectedKeys.length
-      ? `Выбрано статусов: ${selectedKeys.length}`
-      : 'Выбрать статусы';
-  }
-  if (elements.filterStatusChips instanceof HTMLElement) {
-    elements.filterStatusChips.innerHTML = '';
-    if (!selectedKeys.length) {
-      const empty = document.createElement('span');
-      empty.className = 'appdosc-filters__status-chip';
-      empty.textContent = 'Все статусы';
-      elements.filterStatusChips.appendChild(empty);
-    } else {
-      selectedKeys.forEach((key) => {
-        const chip = document.createElement('span');
-        chip.className = 'appdosc-filters__status-chip';
-        chip.textContent = STATUS_SUMMARY_CONFIG[key]?.display || key;
-        elements.filterStatusChips.appendChild(chip);
-      });
-    }
-  }
-
-  if (elements.filterStatusList instanceof HTMLElement) {
-    elements.filterStatusList.innerHTML = '';
-    Object.keys(STATUS_SUMMARY_CONFIG).forEach((key) => {
-      const row = document.createElement('label');
-      row.className = 'appdosc-filters__status-item';
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.checked = selectedKeys.includes(key);
-      input.dataset.filterStatusOption = key;
-      const text = document.createElement('span');
-      text.textContent = STATUS_SUMMARY_CONFIG[key]?.display || key;
-      row.appendChild(input);
-      row.appendChild(text);
-      elements.filterStatusList.appendChild(row);
-    });
-  }
-}
-
-function updateAdvancedFilterUi() {
-  const filters = getAdvancedFilterState();
-  const optionSets = collectFilterSelectOptions();
-  refillSelect(
-    elements.filterCorrespondent,
-    Array.from(optionSets.correspondents).sort((a, b) => a.localeCompare(b, 'ru')),
-    'Все',
-  );
-  refillSelect(
-    elements.filterObject,
-    Array.from(optionSets.objects).sort((a, b) => a.localeCompare(b, 'ru')),
-    'Все объекты',
-  );
-  refillSelect(
-    elements.filterResponsible,
-    Array.from(optionSets.responsibles).sort((a, b) => a.localeCompare(b, 'ru')),
-    'Выберите',
-  );
-
-  if (elements.filterDateFrom instanceof HTMLInputElement) {
-    elements.filterDateFrom.value = filters.dateFrom || '';
-  }
-  if (elements.filterDateTo instanceof HTMLInputElement) {
-    elements.filterDateTo.value = filters.dateTo || '';
-  }
-  if (elements.filterCorrespondent instanceof HTMLSelectElement) {
-    elements.filterCorrespondent.value = filters.correspondent || '';
-  }
-  if (elements.filterObject instanceof HTMLSelectElement) {
-    elements.filterObject.value = filters.object || '';
-  }
-  if (elements.filterResponsible instanceof HTMLSelectElement) {
-    elements.filterResponsible.value = filters.responsible || '';
-  }
-  if (elements.filterTaskNumber instanceof HTMLInputElement) {
-    elements.filterTaskNumber.value = filters.taskNumber || '';
-  }
-  if (elements.filterOverdueOnly instanceof HTMLInputElement) {
-    elements.filterOverdueOnly.checked = Boolean(filters.overdueOnly);
-  }
-  updateStatusFilterUi();
-
-  if (elements.filterActiveList instanceof HTMLElement) {
-    elements.filterActiveList.innerHTML = '';
-    const tags = buildAdvancedFilterTags();
-    if (!tags.length) {
-      const emptyTag = document.createElement('span');
-      emptyTag.className = 'appdosc-filters__tag';
-      emptyTag.textContent = 'Активные фильтры: нет';
-      elements.filterActiveList.appendChild(emptyTag);
-      return;
-    }
-    tags.forEach((tagText) => {
-      const tag = document.createElement('span');
-      tag.className = 'appdosc-filters__tag';
-      tag.textContent = tagText;
-      elements.filterActiveList.appendChild(tag);
-    });
-  }
-}
-
-function setQuickDateRange(range) {
-  const now = new Date();
-  const end = new Date(now);
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  end.setHours(0, 0, 0, 0);
-
-  if (range === 'today') {
-    // already today
-  } else if (range === 'week') {
-    start.setDate(start.getDate() - 6);
-  } else if (range === 'month') {
-    start.setMonth(start.getMonth() - 1);
-  } else if (range === 'quarter') {
-    start.setMonth(start.getMonth() - 3);
-  } else {
-    return;
-  }
-
-  const filters = getAdvancedFilterState();
-  filters.dateFrom = start.toISOString().slice(0, 10);
-  filters.dateTo = end.toISOString().slice(0, 10);
-  updateAdvancedFilterUi();
-}
-
-function applyAdvancedFiltersFromForm() {
-  const filters = getAdvancedFilterState();
-  filters.dateFrom = normalizeAdvancedFilterValue(elements.filterDateFrom?.value);
-  filters.dateTo = normalizeAdvancedFilterValue(elements.filterDateTo?.value);
-  filters.correspondent = normalizeAdvancedFilterValue(elements.filterCorrespondent?.value);
-  filters.object = normalizeAdvancedFilterValue(elements.filterObject?.value);
-  filters.responsible = normalizeAdvancedFilterValue(elements.filterResponsible?.value);
-  filters.statusKeys = Array.from(
-    document.querySelectorAll('[data-filter-status-option]:checked'),
-  )
-    .map((item) => item.dataset.filterStatusOption || '')
-    .filter(Boolean);
-  filters.taskNumber = normalizeAdvancedFilterValue(elements.filterTaskNumber?.value);
-  filters.overdueOnly = Boolean(elements.filterOverdueOnly?.checked);
-  if (elements.filterStatusList instanceof HTMLElement) {
-    elements.filterStatusList.hidden = true;
-  }
-  state.selectedCardAnchor = '';
-  updateVisibleTasks();
-  safeRender('advanced_filter_change');
-}
-
-function resetAdvancedFilters() {
-  state.taskFilter = [];
-  state.advancedFilter = {
-    dateFrom: '',
-    dateTo: '',
-    correspondent: '',
-    object: '',
-    responsible: '',
-    statusKeys: [],
-    taskNumber: '',
-    overdueOnly: false,
-  };
-  if (elements.filterStatusList instanceof HTMLElement) {
-    elements.filterStatusList.hidden = true;
-  }
-  state.selectedCardAnchor = '';
-  updateVisibleTasks();
-  safeRender('advanced_filter_reset');
-}
-
-function handleAdvancedFiltersToggle() {
-  if (!(elements.advancedFilters instanceof HTMLElement)) {
-    return;
-  }
-  const collapsed = elements.advancedFilters.classList.toggle('appdosc-filters--collapsed');
-  if (elements.advancedFiltersBody instanceof HTMLElement) {
-    elements.advancedFiltersBody.hidden = collapsed;
-  }
-  if (elements.advancedFiltersToggle instanceof HTMLElement) {
-    elements.advancedFiltersToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-  }
-}
-
-function handleStatusFilterToggle() {
-  if (!(elements.filterStatusList instanceof HTMLElement)) {
-    return;
-  }
-  const expanded = elements.filterStatusList.hidden;
-  elements.filterStatusList.hidden = !expanded;
-}
-
 function handleSummaryBadgeClick(filter) {
   const normalizedTarget = normalizeTaskFilter(filter);
   const previousFilters = normalizeTaskFilters(state.taskFilter);
@@ -16331,34 +15855,6 @@ function attachEvents() {
   }
   if (elements.overdue) {
     elements.overdue.addEventListener('click', () => handleSummaryBadgeClick('overdue'));
-  }
-  if (elements.advancedFiltersToggle) {
-    elements.advancedFiltersToggle.addEventListener('click', handleAdvancedFiltersToggle);
-  }
-  if (elements.filterApply) {
-    elements.filterApply.addEventListener('click', applyAdvancedFiltersFromForm);
-  }
-  if (elements.filterReset) {
-    elements.filterReset.addEventListener('click', resetAdvancedFilters);
-  }
-  if (elements.filterStatusToggle) {
-    elements.filterStatusToggle.addEventListener('click', handleStatusFilterToggle);
-  }
-  if (elements.filterStatusList) {
-    elements.filterStatusList.addEventListener('change', () => {
-      const filters = getAdvancedFilterState();
-      filters.statusKeys = Array.from(
-        document.querySelectorAll('[data-filter-status-option]:checked'),
-      )
-        .map((item) => item.dataset.filterStatusOption || '')
-        .filter(Boolean);
-      updateStatusFilterUi();
-    });
-  }
-  if (Array.isArray(elements.filterQuickRanges)) {
-    elements.filterQuickRanges.forEach((button) => {
-      button.addEventListener('click', () => setQuickDateRange(button.dataset.filterRange || ''));
-    });
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
@@ -18329,7 +17825,6 @@ function setupAssignmentControls(card, task) {
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildResponsibleOptionLabel(entry);
-      const hasTelegramId = Boolean(resolveEntryTelegramId(entry));
       if (!value || addedValues.has(value)) {
         return;
       }
@@ -18344,15 +17839,13 @@ function setupAssignmentControls(card, task) {
       }
 
       visibleCount += 1;
-      visibleAssigneeOptions.push({ value, label, entry, hasTelegramId });
+      visibleAssigneeOptions.push({ value, label, entry });
 
       const option = document.createElement('button');
       option.type = 'button';
       option.className = 'appdosc-card__assign-option';
       option.dataset.assigneeValue = value;
-      option.textContent = hasTelegramId
-        ? label
-        : `${label} • ${TELEGRAM_MISSING_OPTION_NOTE}`;
+      option.textContent = label;
       option.style.width = '100%';
       option.style.textAlign = 'left';
       option.style.background = comboPalette.optionBg;
@@ -18367,17 +17860,7 @@ function setupAssignmentControls(card, task) {
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       option.style.marginBottom = '3px';
       option.style.touchAction = 'manipulation';
-      if (!hasTelegramId) {
-        option.disabled = true;
-        option.style.opacity = '0.72';
-        option.style.cursor = 'not-allowed';
-      }
       option.addEventListener('pointerdown', (event) => {
-        if (!hasTelegramId) {
-          event.preventDefault();
-          setStatus('error', TELEGRAM_MISSING_MESSAGE);
-          return;
-        }
         event.preventDefault();
         handleAssigneeSelection(value);
       });
@@ -19011,13 +18494,6 @@ function setupAssignmentControls(card, task) {
     if (!selectedValue) {
       return;
     }
-    if (selectedOption && selectedOption.hasTelegramId === false) {
-      setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      comboInput.value = '';
-      populateComboOptions();
-      hideOptionsList();
-      return;
-    }
 
     const normalizedValue = normalizeIdentifier(selectedValue);
     logAssignmentEvent('combo_select', {
@@ -19152,18 +18628,6 @@ function setupAssignmentControls(card, task) {
   comboInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
-
-  document.addEventListener('pointerdown', (event) => {
-    if (optionsList.hidden) {
-      return;
-    }
-    const target = event && event.target ? event.target : null;
-    const interactiveArea = comboWrapper || container;
-    if (target && interactiveArea && interactiveArea.contains(target)) {
-      return;
-    }
-    hideOptionsList();
-  }, true);
 
   container.hidden = false;
 }
@@ -19394,7 +18858,6 @@ function setupSubordinateControls(card, task) {
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildSubordinateOptionLabel(entry);
-      const hasTelegramId = Boolean(resolveEntryTelegramId(entry));
       if (!value || addedValues.has(value)) {
         return;
       }
@@ -19409,14 +18872,12 @@ function setupSubordinateControls(card, task) {
       }
 
       visibleCount += 1;
-      visibleSubordinateOptions.push({ value, label, entry, hasTelegramId });
+      visibleSubordinateOptions.push({ value, label, entry });
       const option = document.createElement('button');
       option.type = 'button';
       option.className = 'appdosc-card__assign-option';
       option.dataset.subordinateValue = value;
-      option.textContent = hasTelegramId
-        ? label
-        : `${label} • ${TELEGRAM_MISSING_OPTION_NOTE}`;
+      option.textContent = label;
       option.style.width = '100%';
       option.style.textAlign = 'left';
       option.style.background = comboPalette.optionBg;
@@ -19431,17 +18892,7 @@ function setupSubordinateControls(card, task) {
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       option.style.marginBottom = '3px';
       option.style.touchAction = 'manipulation';
-      if (!hasTelegramId) {
-        option.disabled = true;
-        option.style.opacity = '0.72';
-        option.style.cursor = 'not-allowed';
-      }
       option.addEventListener('pointerdown', (event) => {
-        if (!hasTelegramId) {
-          event.preventDefault();
-          setStatus('error', TELEGRAM_MISSING_MESSAGE);
-          return;
-        }
         event.preventDefault();
         handleSubordinateSelection(value);
       });
@@ -19964,13 +19415,6 @@ function setupSubordinateControls(card, task) {
     if (!selectedValue) {
       return;
     }
-    if (selectedOption && selectedOption.hasTelegramId === false) {
-      setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      searchInput.value = '';
-      populateComboOptions();
-      hideOptionsList();
-      return;
-    }
 
     const normalizedValue = normalizeIdentifier(selectedValue);
     const existingRow = findAssignmentRow(entriesContainer, buildAssignmentRowKey(selectedValue, normalizedValue));
@@ -20069,18 +19513,6 @@ function setupSubordinateControls(card, task) {
   searchInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
-
-  document.addEventListener('pointerdown', (event) => {
-    if (optionsList.hidden) {
-      return;
-    }
-    const target = event && event.target ? event.target : null;
-    const interactiveArea = comboWrapper || container;
-    if (target && interactiveArea && interactiveArea.contains(target)) {
-      return;
-    }
-    hideOptionsList();
-  }, true);
 
   container.hidden = false;
 
