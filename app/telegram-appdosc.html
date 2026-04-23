@@ -781,6 +781,10 @@
         color-scheme: light dark;
       }
 
+      .appdosc__task-nav-select[data-placeholder='true'] {
+        color: var(--tg-theme-hint-color, #94a3b8) !important;
+      }
+
       .appdosc__task-nav-select:disabled {
         opacity: 0.72;
       }
@@ -794,6 +798,15 @@
         background: var(--tg-theme-bg-color, #ffffff);
       }
 
+      .appdosc__task-nav-select option[disabled] {
+        color: var(--tg-theme-hint-color, #94a3b8);
+      }
+
+      :root[data-theme='dark'] .appdosc__task-nav-select option {
+        color: var(--tg-theme-text-color, #f8fafc);
+        background: color-mix(in srgb, var(--tg-theme-bg-color, #0b1220) 92%, #000 8%);
+      }
+
       :root[data-theme='dark'] .appdosc__task-nav-select {
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23cbd5e1' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
       }
@@ -802,6 +815,19 @@
       .appdosc input,
       .appdosc select,
       .appdosc textarea {
+        color: var(--tg-theme-text-color, var(--appdosc-text-primary));
+      }
+
+      .appdosc__table-title,
+      .appdosc__table-meta,
+      .appdosc__footer-hint,
+      .appdosc__footer-meta,
+      .appdosc__cards-placeholder,
+      .appdosc-card__title,
+      .appdosc-card__summary,
+      .appdosc-card__meta,
+      .appdosc-card__deadline-value,
+      .appdosc-card__block-text {
         color: var(--tg-theme-text-color, var(--appdosc-text-primary));
       }
 

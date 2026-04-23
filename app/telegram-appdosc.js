@@ -4832,6 +4832,7 @@ function updateTaskSelector() {
   } else {
     selector.removeAttribute('aria-disabled');
   }
+  selector.dataset.placeholder = String(!selectionExists);
 }
 
 function updateTaskSelectorLabel(total) {
@@ -4850,9 +4851,15 @@ function handleTaskSelectorChange(event) {
   const value = event?.target?.value || '';
   if (!value) {
     state.selectedCardAnchor = '';
+    if (elements.taskSelector) {
+      elements.taskSelector.dataset.placeholder = 'true';
+    }
     return;
   }
   state.selectedCardAnchor = value;
+  if (elements.taskSelector) {
+    elements.taskSelector.dataset.placeholder = 'false';
+  }
   scrollToCard(value);
 }
 
