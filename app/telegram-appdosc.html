@@ -761,20 +761,6 @@
         margin-bottom: 14px !important;
       }
 
-      .tasks-app-badge {
-        display: inline-flex;
-        align-items: center;
-        min-height: 30px;
-        margin-bottom: 10px;
-        padding: 5px 12px;
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.9);
-        color: #334155;
-        font-size: 16px;
-        font-weight: 500;
-        letter-spacing: 0.01em;
-      }
-
       .tasks-header-top {
         width: 100%;
         display: flex;
@@ -866,10 +852,14 @@
       }
 
       .task-date {
-        color: #94a3b8 !important;
-        font-size: 12px !important;
+        color: #93c5fd !important;
+        font-size: 11px !important;
         line-height: 1.2 !important;
         white-space: nowrap !important;
+        border-radius: 999px !important;
+        padding: 3px 8px !important;
+        border: 1px solid rgba(96, 165, 250, 0.28) !important;
+        background: rgba(37, 99, 235, .22) !important;
       }
 
       .appdosc-card__meta {
@@ -897,9 +887,9 @@
       .task-name,
       .appdosc-card__title {
         color: #f8fafc !important;
-        font-size: 13px !important;
+        font-size: 12px !important;
         line-height: 1.2 !important;
-        font-weight: 680 !important;
+        font-weight: 600 !important;
         margin: 0;
         display: -webkit-box;
         -webkit-line-clamp: 2;
@@ -920,7 +910,7 @@
         align-items: center !important;
         gap: 6px !important;
         min-width: 0 !important;
-        font: 500 13px/1.35 Inter, system-ui, sans-serif !important;
+        font: 500 12px/1.35 Inter, system-ui, sans-serif !important;
       }
 
       .appdosc-card[data-expanded='false'] .task-meta {
@@ -1480,7 +1470,6 @@
       </section>
 
       <main class="appdosc__content">
-        <div class="tasks-app-badge">Документооборот Mini App</div>
         <div class="appdosc__table-card tasks-panel">
           <div class="appdosc__table-head tasks-header">
             <div class="tasks-header-top">
@@ -1663,7 +1652,7 @@
               <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
               <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
             </div>
-            <div class="appdosc-card__title task-name" data-field="document">Документ</div>
+            <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
             <div class="appdosc-card__subtitle" data-field="organization"></div>
           </div>
           <div class="appdosc-card__side">

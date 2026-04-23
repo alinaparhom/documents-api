@@ -2639,7 +2639,7 @@ const FALLBACK_CARD_TEMPLATE = `
         <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
         <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
       </div>
-      <div class="appdosc-card__title task-name" data-field="document">Документ</div>
+      <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
     <div class="appdosc-card__side">
@@ -4202,24 +4202,6 @@ function createCard(task, index, anchorRegistry) {
     }
   }
 
-  setCardField(card, '[data-field="document"]', formatDocumentCell(task), {
-    fallback: 'Документ',
-  });
-  setCardField(card, '[data-field="organization"]', task.organization, {
-    fallback: 'Организация не указана',
-  });
-  const registrationDate = formatDate(task.registrationDate);
-  setCardField(card, '[data-field="registry"]', task.registryNumber);
-  setCardField(card, '[data-field="registrationDate"]', registrationDate);
-  applyRegistrationDateHeader(card, registrationDate);
-  setCardField(card, '[data-field="direction"]', task.direction);
-  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
-  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
-  setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
-  setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
-    setTitle: false,
-  });
-
   const resolveCompactText = (value) => {
     if (value && typeof value === 'object') {
       const nested = normalizeValue(
@@ -4239,6 +4221,26 @@ function createCard(task, index, anchorRegistry) {
     || resolveCompactText(task.description)
     || resolveCompactText(task.instruction)
     || '—';
+
+  setCardField(card, '[data-field="document"]', compactContent, {
+    fallback: 'Содержимое',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="organization"]', task.organization, {
+    fallback: 'Организация не указана',
+  });
+  const registrationDate = formatDate(task.registrationDate);
+  setCardField(card, '[data-field="registry"]', task.registryNumber);
+  setCardField(card, '[data-field="registrationDate"]', registrationDate);
+  applyRegistrationDateHeader(card, registrationDate);
+  setCardField(card, '[data-field="direction"]', task.direction);
+  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
+  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
+  setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
+  setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
+    setTitle: false,
+  });
+
   setCardField(card, '[data-field="contentCompact"]', compactContent, {
     hideIfEmpty: false,
     setTitle: false,
