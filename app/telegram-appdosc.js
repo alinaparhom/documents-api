@@ -19093,89 +19093,62 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  let waitSecondTapForKeyboard = false;
-  let skipUnlockOnCurrentClick = false;
   const unlockComboSearch = () => {
     comboInput.readOnly = false;
     comboInput.dataset.searchUnlocked = 'true';
     comboInput.setAttribute('inputmode', 'search');
-    waitSecondTapForKeyboard = false;
     showOptionsList();
     comboInput.focus({ preventScroll: true });
-    requestAnimationFrame(() => {
-      comboInput.focus({ preventScroll: true });
-      const cursor = comboInput.value.length;
-      if (typeof comboInput.setSelectionRange === 'function') {
-        comboInput.setSelectionRange(cursor, cursor);
-      }
-    });
+    const cursor = comboInput.value.length;
+    if (typeof comboInput.setSelectionRange === 'function') {
+      comboInput.setSelectionRange(cursor, cursor);
+    }
     setKeyboardButtonActive(true);
   };
   const relockComboSearch = () => {
     comboInput.readOnly = true;
     comboInput.dataset.searchUnlocked = 'false';
     comboInput.setAttribute('inputmode', 'none');
-    waitSecondTapForKeyboard = false;
-    skipUnlockOnCurrentClick = false;
     setKeyboardButtonActive(false);
   };
   const dismissComboInteraction = () => {
+    const wasActive = document.activeElement === comboInput;
     relockComboSearch();
     hideOptionsList();
-    if (document.activeElement === comboInput) {
+    if (wasActive) {
       comboInput.blur();
+      window.setTimeout(() => {
+        if (document.activeElement === comboInput) {
+          comboInput.blur();
+        }
+      }, 0);
     }
   };
-  const handleKeyboardButtonPress = (event) => {
+  const openSearchFromUserAction = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    showOptionsList();
     unlockComboSearch();
   };
-  keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
+  keyboardButton.addEventListener('click', openSearchFromUserAction);
   keyboardButton.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') {
       return;
     }
-    handleKeyboardButtonPress(event);
+    openSearchFromUserAction(event);
   });
 
-  comboInput.addEventListener('pointerdown', (event) => {
+  comboInput.addEventListener('click', (event) => {
     if (comboInput.readOnly) {
-      if (!isComboExpanded()) {
-        event.preventDefault();
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        skipUnlockOnCurrentClick = true;
-        return;
-      }
-      waitSecondTapForKeyboard = true;
+      openSearchFromUserAction(event);
       return;
     }
     showOptionsList();
   });
 
   comboInput.addEventListener('focus', () => {
-    showOptionsList();
-  });
-
-  comboInput.addEventListener('click', () => {
-    if (comboInput.readOnly) {
-      if (skipUnlockOnCurrentClick) {
-        skipUnlockOnCurrentClick = false;
-        return;
-      }
-      if (!isComboExpanded()) {
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        return;
-      }
+    if (!comboInput.readOnly) {
+      showOptionsList();
     }
-    if (waitSecondTapForKeyboard && isComboExpanded()) {
-      unlockComboSearch();
-      return;
-    }
-    showOptionsList();
   });
 
   comboInput.addEventListener('change', () => {
@@ -19197,6 +19170,9 @@ function setupAssignmentControls(card, task) {
 
   let lastTouchDismissAt = 0;
   const handleOutsideDismiss = (event) => {
+    if (!isComboExpanded() && document.activeElement !== comboInput) {
+      return;
+    }
     if (event.type === 'touchstart') {
       lastTouchDismissAt = Date.now();
     }
@@ -20158,89 +20134,62 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  let waitSecondTapForKeyboard = false;
-  let skipUnlockOnCurrentClick = false;
   const unlockSubordinateSearch = () => {
     searchInput.readOnly = false;
     searchInput.dataset.searchUnlocked = 'true';
     searchInput.setAttribute('inputmode', 'search');
-    waitSecondTapForKeyboard = false;
     showOptionsList();
     searchInput.focus({ preventScroll: true });
-    requestAnimationFrame(() => {
-      searchInput.focus({ preventScroll: true });
-      const cursor = searchInput.value.length;
-      if (typeof searchInput.setSelectionRange === 'function') {
-        searchInput.setSelectionRange(cursor, cursor);
-      }
-    });
+    const cursor = searchInput.value.length;
+    if (typeof searchInput.setSelectionRange === 'function') {
+      searchInput.setSelectionRange(cursor, cursor);
+    }
     setKeyboardButtonActive(true);
   };
   const relockSubordinateSearch = () => {
     searchInput.readOnly = true;
     searchInput.dataset.searchUnlocked = 'false';
     searchInput.setAttribute('inputmode', 'none');
-    waitSecondTapForKeyboard = false;
-    skipUnlockOnCurrentClick = false;
     setKeyboardButtonActive(false);
   };
   const dismissComboInteraction = () => {
+    const wasActive = document.activeElement === searchInput;
     relockSubordinateSearch();
     hideOptionsList();
-    if (document.activeElement === searchInput) {
+    if (wasActive) {
       searchInput.blur();
+      window.setTimeout(() => {
+        if (document.activeElement === searchInput) {
+          searchInput.blur();
+        }
+      }, 0);
     }
   };
-  const handleKeyboardButtonPress = (event) => {
+  const openSearchFromUserAction = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    showOptionsList();
     unlockSubordinateSearch();
   };
-  keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
+  keyboardButton.addEventListener('click', openSearchFromUserAction);
   keyboardButton.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') {
       return;
     }
-    handleKeyboardButtonPress(event);
+    openSearchFromUserAction(event);
   });
 
-  searchInput.addEventListener('pointerdown', (event) => {
+  searchInput.addEventListener('click', (event) => {
     if (searchInput.readOnly) {
-      if (!isComboExpanded()) {
-        event.preventDefault();
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        skipUnlockOnCurrentClick = true;
-        return;
-      }
-      waitSecondTapForKeyboard = true;
+      openSearchFromUserAction(event);
       return;
     }
     showOptionsList();
   });
 
   searchInput.addEventListener('focus', () => {
-    showOptionsList();
-  });
-
-  searchInput.addEventListener('click', () => {
-    if (searchInput.readOnly) {
-      if (skipUnlockOnCurrentClick) {
-        skipUnlockOnCurrentClick = false;
-        return;
-      }
-      if (!isComboExpanded()) {
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        return;
-      }
+    if (!searchInput.readOnly) {
+      showOptionsList();
     }
-    if (waitSecondTapForKeyboard && isComboExpanded()) {
-      unlockSubordinateSearch();
-      return;
-    }
-    showOptionsList();
   });
 
   searchInput.addEventListener('change', () => {
@@ -20261,6 +20210,9 @@ function setupSubordinateControls(card, task) {
   });
   let lastTouchDismissAt = 0;
   const handleOutsideDismiss = (event) => {
+    if (!isComboExpanded() && document.activeElement !== searchInput) {
+      return;
+    }
     if (event.type === 'touchstart') {
       lastTouchDismissAt = Date.now();
     }
