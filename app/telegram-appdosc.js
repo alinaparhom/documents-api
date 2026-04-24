@@ -18132,10 +18132,6 @@ function setupAssignmentControls(card, task) {
     optionsList.style.maxHeight = `${Math.min(260, dynamicHeight)}px`;
   };
   updateOptionsViewportBounds();
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', updateOptionsViewportBounds);
-  }
-  window.addEventListener('resize', updateOptionsViewportBounds);
   let inputShell = comboInput.parentElement && comboInput.parentElement.classList.contains('appdosc-card__assign-input-shell')
     ? comboInput.parentElement
     : null;
@@ -18293,6 +18289,7 @@ function setupAssignmentControls(card, task) {
     setComboExpanded(false);
   };
   const showOptionsList = () => {
+    updateOptionsViewportBounds();
     populateComboOptions();
     const hasOptions = visibleAssigneeOptions.length > 0;
     optionsList.hidden = !hasOptions;
@@ -19198,9 +19195,11 @@ function setupAssignmentControls(card, task) {
     if (comboInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
     dismissComboInteraction();
   };
-  document.addEventListener('pointerdown', handleOutsideDismiss, true);
-  document.addEventListener('touchstart', handleOutsideDismiss, true);
-  document.addEventListener('mousedown', handleOutsideDismiss, true);
+  const outsideDismissEvent = window.PointerEvent ? 'pointerdown' : 'mousedown';
+  document.addEventListener(outsideDismissEvent, handleOutsideDismiss, true);
+  if (!window.PointerEvent) {
+    document.addEventListener('touchstart', handleOutsideDismiss, true);
+  }
 
   container.hidden = false;
 }
@@ -19331,10 +19330,6 @@ function setupSubordinateControls(card, task) {
     optionsList.style.maxHeight = `${Math.min(260, dynamicHeight)}px`;
   };
   updateOptionsViewportBounds();
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', updateOptionsViewportBounds);
-  }
-  window.addEventListener('resize', updateOptionsViewportBounds);
   let inputShell = searchInput.parentElement && searchInput.parentElement.classList.contains('appdosc-card__assign-input-shell')
     ? searchInput.parentElement
     : null;
@@ -19495,6 +19490,7 @@ function setupSubordinateControls(card, task) {
     setComboExpanded(false);
   };
   const showOptionsList = () => {
+    updateOptionsViewportBounds();
     populateComboOptions();
     const hasOptions = visibleSubordinateOptions.length > 0;
     optionsList.hidden = !hasOptions;
@@ -20249,9 +20245,11 @@ function setupSubordinateControls(card, task) {
     if (searchInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
     dismissComboInteraction();
   };
-  document.addEventListener('pointerdown', handleOutsideDismiss, true);
-  document.addEventListener('touchstart', handleOutsideDismiss, true);
-  document.addEventListener('mousedown', handleOutsideDismiss, true);
+  const outsideDismissEvent = window.PointerEvent ? 'pointerdown' : 'mousedown';
+  document.addEventListener(outsideDismissEvent, handleOutsideDismiss, true);
+  if (!window.PointerEvent) {
+    document.addEventListener('touchstart', handleOutsideDismiss, true);
+  }
 
   container.hidden = false;
 
