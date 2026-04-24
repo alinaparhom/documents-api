@@ -18067,9 +18067,9 @@ function setupAssignmentControls(card, task) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
   }
-  comboInput.readOnly = false;
-  comboInput.dataset.searchUnlocked = 'true';
-  comboInput.setAttribute('inputmode', 'search');
+  comboInput.readOnly = true;
+  comboInput.dataset.searchUnlocked = 'false';
+  comboInput.setAttribute('inputmode', 'none');
   comboInput.classList.add('appdosc-card__assign-search--combo');
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   comboInput.style.width = '100%';
@@ -18100,6 +18100,24 @@ function setupAssignmentControls(card, task) {
   optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
+  const keyboardAssistButton = document.createElement('button');
+  keyboardAssistButton.type = 'button';
+  keyboardAssistButton.className = 'appdosc-card__assign-keyboard-toggle';
+  keyboardAssistButton.textContent = '⌨️ Поиск';
+  keyboardAssistButton.style.marginTop = '8px';
+  keyboardAssistButton.style.minHeight = '34px';
+  keyboardAssistButton.style.padding = '6px 10px';
+  keyboardAssistButton.style.borderRadius = '11px';
+  keyboardAssistButton.style.border = '1px solid rgba(161, 203, 255, 0.52)';
+  keyboardAssistButton.style.background = 'rgba(255, 255, 255, 0.12)';
+  keyboardAssistButton.style.backdropFilter = 'blur(8px)';
+  keyboardAssistButton.style.webkitBackdropFilter = 'blur(8px)';
+  keyboardAssistButton.style.color = '#eef6ff';
+  keyboardAssistButton.style.fontSize = '12px';
+  keyboardAssistButton.style.fontWeight = '600';
+  keyboardAssistButton.style.letterSpacing = '0.01em';
+  keyboardAssistButton.style.cursor = 'pointer';
+  comboInput.insertAdjacentElement('afterend', keyboardAssistButton);
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
@@ -19011,15 +19029,12 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  comboInput.addEventListener('pointerdown', () => {
-    showOptionsList();
-  });
-
-  comboInput.addEventListener('focus', () => {
-    showOptionsList();
-  });
-
-  comboInput.addEventListener('click', () => {
+  let waitSecondTapForKeyboard = false;
+  const unlockComboSearch = () => {
+    comboInput.readOnly = false;
+    comboInput.dataset.searchUnlocked = 'true';
+    comboInput.setAttribute('inputmode', 'search');
+    waitSecondTapForKeyboard = false;
     showOptionsList();
     comboInput.focus({ preventScroll: true });
     requestAnimationFrame(() => {
@@ -19029,7 +19044,36 @@ function setupAssignmentControls(card, task) {
         comboInput.setSelectionRange(cursor, cursor);
       }
     });
+  };
+  const relockComboSearch = () => {
+    comboInput.readOnly = true;
+    comboInput.dataset.searchUnlocked = 'false';
+    comboInput.setAttribute('inputmode', 'none');
+    waitSecondTapForKeyboard = false;
+  };
+
+  comboInput.addEventListener('pointerdown', (event) => {
+    if (comboInput.readOnly) {
+      event.preventDefault();
+      showOptionsList();
+      waitSecondTapForKeyboard = true;
+      return;
+    }
+    showOptionsList();
   });
+
+  comboInput.addEventListener('focus', () => {
+    showOptionsList();
+  });
+
+  comboInput.addEventListener('click', () => {
+    if (waitSecondTapForKeyboard || comboInput.readOnly) {
+      unlockComboSearch();
+      return;
+    }
+    showOptionsList();
+  });
+  keyboardAssistButton.addEventListener('click', unlockComboSearch);
 
   comboInput.addEventListener('change', () => {
     handleAssigneeSelection(comboInput.value);
@@ -19044,6 +19088,7 @@ function setupAssignmentControls(card, task) {
   });
 
   comboInput.addEventListener('blur', () => {
+    relockComboSearch();
     setTimeout(hideOptionsList, 120);
   });
 
@@ -19117,9 +19162,9 @@ function setupSubordinateControls(card, task) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
   }
-  searchInput.readOnly = false;
-  searchInput.dataset.searchUnlocked = 'true';
-  searchInput.setAttribute('inputmode', 'search');
+  searchInput.readOnly = true;
+  searchInput.dataset.searchUnlocked = 'false';
+  searchInput.setAttribute('inputmode', 'none');
   searchInput.classList.add('appdosc-card__assign-search--combo');
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   searchInput.style.width = '100%';
@@ -19150,6 +19195,24 @@ function setupSubordinateControls(card, task) {
   optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
+  const subordinateKeyboardAssistButton = document.createElement('button');
+  subordinateKeyboardAssistButton.type = 'button';
+  subordinateKeyboardAssistButton.className = 'appdosc-card__assign-keyboard-toggle';
+  subordinateKeyboardAssistButton.textContent = '⌨️ Поиск';
+  subordinateKeyboardAssistButton.style.marginTop = '8px';
+  subordinateKeyboardAssistButton.style.minHeight = '34px';
+  subordinateKeyboardAssistButton.style.padding = '6px 10px';
+  subordinateKeyboardAssistButton.style.borderRadius = '11px';
+  subordinateKeyboardAssistButton.style.border = '1px solid rgba(161, 203, 255, 0.52)';
+  subordinateKeyboardAssistButton.style.background = 'rgba(255, 255, 255, 0.12)';
+  subordinateKeyboardAssistButton.style.backdropFilter = 'blur(8px)';
+  subordinateKeyboardAssistButton.style.webkitBackdropFilter = 'blur(8px)';
+  subordinateKeyboardAssistButton.style.color = '#eef6ff';
+  subordinateKeyboardAssistButton.style.fontSize = '12px';
+  subordinateKeyboardAssistButton.style.fontWeight = '600';
+  subordinateKeyboardAssistButton.style.letterSpacing = '0.01em';
+  subordinateKeyboardAssistButton.style.cursor = 'pointer';
+  searchInput.insertAdjacentElement('afterend', subordinateKeyboardAssistButton);
 
   if (!assignmentCandidates.length) {
     searchInput.disabled = true;
@@ -19914,15 +19977,12 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('pointerdown', () => {
-    showOptionsList();
-  });
-
-  searchInput.addEventListener('focus', () => {
-    showOptionsList();
-  });
-
-  searchInput.addEventListener('click', () => {
+  let waitSecondTapForKeyboard = false;
+  const unlockSubordinateSearch = () => {
+    searchInput.readOnly = false;
+    searchInput.dataset.searchUnlocked = 'true';
+    searchInput.setAttribute('inputmode', 'search');
+    waitSecondTapForKeyboard = false;
     showOptionsList();
     searchInput.focus({ preventScroll: true });
     requestAnimationFrame(() => {
@@ -19932,7 +19992,36 @@ function setupSubordinateControls(card, task) {
         searchInput.setSelectionRange(cursor, cursor);
       }
     });
+  };
+  const relockSubordinateSearch = () => {
+    searchInput.readOnly = true;
+    searchInput.dataset.searchUnlocked = 'false';
+    searchInput.setAttribute('inputmode', 'none');
+    waitSecondTapForKeyboard = false;
+  };
+
+  searchInput.addEventListener('pointerdown', (event) => {
+    if (searchInput.readOnly) {
+      event.preventDefault();
+      showOptionsList();
+      waitSecondTapForKeyboard = true;
+      return;
+    }
+    showOptionsList();
   });
+
+  searchInput.addEventListener('focus', () => {
+    showOptionsList();
+  });
+
+  searchInput.addEventListener('click', () => {
+    if (waitSecondTapForKeyboard || searchInput.readOnly) {
+      unlockSubordinateSearch();
+      return;
+    }
+    showOptionsList();
+  });
+  subordinateKeyboardAssistButton.addEventListener('click', unlockSubordinateSearch);
 
   searchInput.addEventListener('change', () => {
     handleSubordinateSelection(searchInput.value);
@@ -19947,6 +20036,7 @@ function setupSubordinateControls(card, task) {
   });
 
   searchInput.addEventListener('blur', () => {
+    relockSubordinateSearch();
     setTimeout(hideOptionsList, 120);
   });
 
