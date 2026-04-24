@@ -18102,7 +18102,7 @@ function setupAssignmentControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '168px';
+  optionsList.style.maxHeight = '410px';
   optionsList.style.overflowY = 'auto';
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
@@ -19174,7 +19174,7 @@ function setupSubordinateControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '168px';
+  optionsList.style.maxHeight = '410px';
   optionsList.style.overflowY = 'auto';
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
@@ -19289,9 +19289,17 @@ function setupSubordinateControls(card, task) {
     searchInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     searchInput.dataset.expanded = expanded ? 'true' : 'false';
   };
+  const isComboExpanded = () => searchInput.dataset.expanded === 'true';
   const hideOptionsList = () => {
     optionsList.hidden = true;
     setComboExpanded(false);
+  };
+  const showOptionsList = () => {
+    populateComboOptions();
+    const hasOptions = visibleSubordinateOptions.length > 0;
+    optionsList.hidden = !hasOptions;
+    setComboExpanded(hasOptions);
+    return hasOptions;
   };
 
   const populateComboOptions = () => {
@@ -19940,10 +19948,34 @@ function setupSubordinateControls(card, task) {
     }
   });
 
+  let waitSecondTapForKeyboard = false;
+
+  searchInput.addEventListener('pointerdown', (event) => {
+    if (isComboExpanded()) {
+      return;
+    }
+    event.preventDefault();
+    showOptionsList();
+    waitSecondTapForKeyboard = true;
+  });
+
   searchInput.addEventListener('click', () => {
-    populateComboOptions();
-    optionsList.hidden = visibleSubordinateOptions.length === 0;
-    setComboExpanded(visibleSubordinateOptions.length > 0);
+    if (waitSecondTapForKeyboard) {
+      waitSecondTapForKeyboard = false;
+      return;
+    }
+    if (!isComboExpanded()) {
+      showOptionsList();
+      return;
+    }
+    searchInput.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      searchInput.focus({ preventScroll: true });
+      const cursor = searchInput.value.length;
+      if (typeof searchInput.setSelectionRange === 'function') {
+        searchInput.setSelectionRange(cursor, cursor);
+      }
+    });
   });
 
   searchInput.addEventListener('change', () => {
