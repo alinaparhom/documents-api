@@ -2781,6 +2781,7 @@ function initElements() {
   elements.periodButtonValue = document.querySelector('[data-period-button-value]');
   elements.rangeCalendarRoot = document.querySelector('[data-range-calendar]');
   elements.rangeCalendarBackdrop = document.querySelector('[data-range-calendar-backdrop]');
+  elements.rangeCalendarClose = document.querySelector('[data-range-calendar-close]');
   elements.rangeCalendarMonths = document.querySelector('[data-calendar-months]');
   elements.rangeCalendarStartLabel = document.querySelector('[data-start-label]');
   elements.rangeCalendarEndLabel = document.querySelector('[data-end-label]');
@@ -4179,6 +4180,7 @@ function initRangeCalendar(options = {}) {
   const openButton = elements.periodButton;
   const openButtonValue = elements.periodButtonValue;
   const backdrop = elements.rangeCalendarBackdrop;
+  const closeButton = elements.rangeCalendarClose;
   const monthsContainer = elements.rangeCalendarMonths;
   const startLabel = elements.rangeCalendarStartLabel;
   const endLabel = elements.rangeCalendarEndLabel;
@@ -4195,7 +4197,9 @@ function initRangeCalendar(options = {}) {
 
   const onChange = typeof options.onChange === 'function' ? options.onChange : () => {};
   const monthsToRender = Number(options.monthsToRender || 4);
+  const pastMonthsToRender = Number(options.pastMonthsToRender || 6);
   const safeMonthsToRender = Number.isFinite(monthsToRender) && monthsToRender > 0 ? monthsToRender : 4;
+  const safePastMonthsToRender = Number.isFinite(pastMonthsToRender) && pastMonthsToRender >= 0 ? pastMonthsToRender : 6;
   let taskCounts = options.taskCounts && typeof options.taskCounts === 'object' ? options.taskCounts : {};
   let startDate = normalizeDateInputValue(options.startDate || '');
   let endDate = normalizeDateInputValue(options.endDate || '');
@@ -4205,6 +4209,12 @@ function initRangeCalendar(options = {}) {
     root.hidden = false;
     isPickingRange = false;
     renderMonths();
+    const today = new Date();
+    const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    const currentMonth = monthsContainer.querySelector(`[data-month-key="${monthKey}"]`);
+    if (currentMonth instanceof HTMLElement) {
+      currentMonth.scrollIntoView({ block: 'start' });
+    }
     updateSelection();
   }
 
@@ -4248,8 +4258,8 @@ function initRangeCalendar(options = {}) {
     monthsContainer.textContent = '';
     const base = options.baseDate ? parseDate(options.baseDate) : new Date();
     const baseDate = base instanceof Date && !Number.isNaN(base.getTime()) ? base : new Date();
-    const firstMonth = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
-    for (let i = 0; i < safeMonthsToRender; i += 1) {
+    const firstMonth = new Date(baseDate.getFullYear(), baseDate.getMonth() - safePastMonthsToRender, 1);
+    for (let i = 0; i < safeMonthsToRender + safePastMonthsToRender; i += 1) {
       const monthDate = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + i, 1);
       monthsContainer.appendChild(renderMonth(monthDate));
     }
@@ -4258,6 +4268,7 @@ function initRangeCalendar(options = {}) {
   function renderMonth(monthDate) {
     const month = document.createElement('section');
     month.className = 'range-calendar__month';
+    month.dataset.monthKey = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
     const title = document.createElement('h3');
     title.className = 'range-calendar__month-title';
     title.textContent = getMonthName(monthDate);
@@ -4388,6 +4399,9 @@ function initRangeCalendar(options = {}) {
   openButton.addEventListener('click', open);
   if (backdrop instanceof HTMLElement) {
     backdrop.addEventListener('click', close);
+  }
+  if (closeButton instanceof HTMLElement) {
+    closeButton.addEventListener('click', close);
   }
   submitButton.addEventListener('click', submit);
   if (clearStartButton instanceof HTMLElement) {

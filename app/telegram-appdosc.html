@@ -1705,17 +1705,16 @@
 
       .task-period-button {
         width: 100%;
-        min-height: 72px;
-        padding: 14px 16px;
-        border: 1px solid #dbe4f3;
-        border-radius: 20px;
-        background: #ffffff;
-        box-shadow: 0 8px 24px rgba(31, 64, 120, 0.08);
+        min-height: 44px;
+        padding: 10px 12px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.82);
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         text-align: left;
-        color: #101828;
+        color: var(--appdosc-text-primary);
       }
 
       .task-period-button__icon {
@@ -1735,9 +1734,9 @@
 
       .task-period-button__value {
         margin-top: 4px;
-        font-size: 18px;
+        font-size: 14px;
         font-weight: 700;
-        color: #101828;
+        color: var(--appdosc-text-primary);
       }
 
       .task-period-button__chevron {
@@ -1786,6 +1785,36 @@
         }
       }
 
+      .range-calendar__header {
+        position: relative;
+        min-height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 10px;
+      }
+
+      .range-calendar__title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+
+      .range-calendar__close {
+        position: absolute;
+        right: 0;
+        top: 0;
+        width: 34px;
+        height: 34px;
+        border: 0;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.9);
+        color: #64748b;
+        font-size: 22px;
+        line-height: 1;
+      }
+
       .range-calendar__handle {
         width: 56px;
         height: 5px;
@@ -1825,7 +1854,7 @@
       .range-calendar__selected-value {
         display: block;
         margin-top: 5px;
-        font-size: 20px;
+        font-size: clamp(16px, 2.4vw, 18px);
         font-weight: 800;
         color: #111827;
       }
@@ -1874,7 +1903,7 @@
 
       .range-calendar__month-title {
         margin: 0 0 18px;
-        font-size: 26px;
+        font-size: clamp(20px, 4vw, 24px);
         font-weight: 900;
         color: #111827;
       }
@@ -1909,7 +1938,7 @@
       }
 
       .range-calendar__day-number {
-        font-size: 22px;
+        font-size: clamp(17px, 3.8vw, 20px);
         font-weight: 900;
         line-height: 1;
       }
@@ -1959,12 +1988,13 @@
       }
 
       .range-calendar__footer {
-        position: absolute;
-        left: 14px;
-        right: 14px;
-        bottom: calc(14px + env(safe-area-inset-bottom));
+        position: sticky;
+        left: 0;
+        right: 0;
+        bottom: 0;
         background: linear-gradient(to top, #f5f7fb 70%, rgba(245, 247, 251, 0));
         padding-top: 18px;
+        padding-bottom: calc(10px + env(safe-area-inset-bottom));
       }
 
       .range-calendar__period-total {
@@ -1977,12 +2007,12 @@
 
       .range-calendar__submit {
         width: 100%;
-        min-height: 58px;
+        min-height: 54px;
         border: 0;
         border-radius: 18px;
         background: #2daa4f;
         color: #ffffff;
-        font-size: 20px;
+        font-size: clamp(16px, 3.8vw, 18px);
         font-weight: 900;
         box-shadow: 0 10px 24px rgba(45, 170, 79, 0.28);
       }
@@ -1990,6 +2020,50 @@
       .range-calendar__submit:disabled {
         background: #c9d2df;
         box-shadow: none;
+      }
+
+      :root[data-theme='dark'] .task-period-button {
+        background: rgba(15, 23, 42, 0.74);
+        border-color: rgba(148, 163, 184, 0.46);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .task-period-button__value,
+      :root[data-theme='dark'] .task-period-button__chevron {
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .range-calendar__panel {
+        background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+      }
+
+      :root[data-theme='dark'] .range-calendar__title,
+      :root[data-theme='dark'] .range-calendar__month-title,
+      :root[data-theme='dark'] .range-calendar__day {
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .range-calendar__close,
+      :root[data-theme='dark'] .range-calendar__selected-card,
+      :root[data-theme='dark'] .range-calendar__month {
+        background: rgba(30, 41, 59, 0.85);
+        color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .range-calendar__selected-value,
+      :root[data-theme='dark'] .range-calendar__selected-label,
+      :root[data-theme='dark'] .range-calendar__period-total,
+      :root[data-theme='dark'] .range-calendar__weekdays,
+      :root[data-theme='dark'] .range-calendar__day-count {
+        color: #cbd5e1;
+      }
+
+      :root[data-theme='dark'] .range-calendar__day.is-in-range {
+        background: linear-gradient(180deg, rgba(37, 99, 235, 0.35) 0%, rgba(59, 130, 246, 0.25) 100%);
+      }
+
+      :root[data-theme='dark'] .range-calendar__footer {
+        background: linear-gradient(to top, rgba(17, 24, 39, 0.96) 70%, rgba(17, 24, 39, 0));
       }
 
       .appdosc__task-filter-actions {
@@ -2421,6 +2495,10 @@
               <div class="range-calendar__backdrop" data-range-calendar-backdrop></div>
               <div class="range-calendar__panel" role="dialog" aria-modal="true">
                 <div class="range-calendar__handle"></div>
+                <div class="range-calendar__header">
+                  <h3 class="range-calendar__title">Выбор периода</h3>
+                  <button type="button" class="range-calendar__close" data-range-calendar-close aria-label="Закрыть календарь">×</button>
+                </div>
                 <div class="range-calendar__selected">
                   <div class="range-calendar__selected-card" data-start-card>
                     <span class="range-calendar__selected-label">Дата от</span>
