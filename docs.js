@@ -10,6 +10,7 @@
   var SETTINGS_LOG_PREFIX = '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438';
   var TELEGRAM_MISSING_MESSAGE = '\u0423 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435\u0442 Telegram ID \u2014 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u0440\u0438\u0434\u0451\u0442.';
   var TELEGRAM_MISSING_OPTION_NOTE = '\u0431\u0435\u0437 TG';
+  var activeRowActionsMenu = null;
 
   try {
     DATE_TIME_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
@@ -3103,8 +3104,108 @@
       'opacity:0.75;' +
       'font-weight:500;' +
       '}' +
+      '.documents-actions{' +
+      'display:flex;' +
+      'justify-content:flex-start;' +
+      'position:relative;' +
+      '}' +
+      '.documents-actions__toggle{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'min-height:34px;' +
+      'padding:8px 12px;' +
+      'border:1px solid rgba(148,163,184,0.45);' +
+      'border-radius:12px;' +
+      'background:rgba(255,255,255,0.72);' +
+      'backdrop-filter:blur(10px);' +
+      '-webkit-backdrop-filter:blur(10px);' +
+      'color:#0f172a;' +
+      'font-size:13px;' +
+      'font-weight:600;' +
+      'cursor:pointer;' +
+      'transition:all 0.2s ease;' +
+      '}' +
+      '.documents-actions__toggle:hover{' +
+      'border-color:rgba(59,130,246,0.45);' +
+      'box-shadow:0 8px 18px rgba(59,130,246,0.18);' +
+      '}' +
+      '.documents-actions__toggle[aria-expanded="true"]{' +
+      'border-color:rgba(59,130,246,0.55);' +
+      'background:rgba(239,246,255,0.92);' +
+      'color:#1d4ed8;' +
+      '}' +
+      '.documents-actions__panel{' +
+      'display:none;' +
+      'position:absolute;' +
+      'top:calc(100% + 8px);' +
+      'left:0;' +
+      'z-index:16;' +
+      'min-width:320px;' +
+      'padding:10px;' +
+      'border-radius:14px;' +
+      'border:1px solid rgba(148,163,184,0.3);' +
+      'background:rgba(255,255,255,0.88);' +
+      'backdrop-filter:blur(14px);' +
+      '-webkit-backdrop-filter:blur(14px);' +
+      'box-shadow:0 20px 36px rgba(15,23,42,0.15);' +
+      'grid-template-columns:repeat(2, minmax(0, 1fr));' +
+      'gap:8px;' +
+      '}' +
+      '.documents-actions__panel--open{' +
+      'display:grid;' +
+      '}' +
+      '.documents-actions__panel .documents-action{' +
+      'width:100%;' +
+      'min-height:34px;' +
+      'margin:0;' +
+      '}' +
+      '@media (max-width:640px){' +
+      '.documents-actions__panel{' +
+      'min-width:270px;' +
+      'grid-template-columns:1fr;' +
+      '}' +
+      '}' +
       '';
     document.head.appendChild(style);
+  }
+
+  function closeActiveRowActionsMenu() {
+    if (!activeRowActionsMenu) {
+      return;
+    }
+    if (activeRowActionsMenu.panel) {
+      activeRowActionsMenu.panel.classList.remove('documents-actions__panel--open');
+      activeRowActionsMenu.panel.hidden = true;
+    }
+    if (activeRowActionsMenu.toggleButton) {
+      activeRowActionsMenu.toggleButton.setAttribute('aria-expanded', 'false');
+    }
+    activeRowActionsMenu = null;
+  }
+
+  function setupRowActionsMenu(actions, toggleButton, panel) {
+    if (!actions || !toggleButton || !panel) {
+      return;
+    }
+
+    toggleButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var isOpen = panel.classList.contains('documents-actions__panel--open');
+      closeActiveRowActionsMenu();
+      if (isOpen) {
+        return;
+      }
+      panel.classList.add('documents-actions__panel--open');
+      panel.hidden = false;
+      toggleButton.setAttribute('aria-expanded', 'true');
+      activeRowActionsMenu = {
+        root: actions,
+        panel: panel,
+        toggleButton: toggleButton
+      };
+    });
   }
 
   function updateStickyHeaderOffsets() {
@@ -3282,6 +3383,15 @@
   }
 
   function handleDocumentClick(event) {
+    if (activeRowActionsMenu) {
+      var clickTarget = event && event.target;
+      var keepOpen = activeRowActionsMenu.root && clickTarget instanceof Node
+        ? activeRowActionsMenu.root.contains(clickTarget)
+        : false;
+      if (!keepOpen) {
+        closeActiveRowActionsMenu();
+      }
+    }
     if (!isPopoverVisible()) {
       return;
     }
@@ -12629,7 +12739,18 @@
     filesCell.appendChild(filesList);
     descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
 
+    ensureSearchStyles();
     var actions = createElement('div', 'documents-actions');
+    var actionsToggleButton = createElement('button', 'documents-actions__toggle', 'Действия');
+    actionsToggleButton.type = 'button';
+    actionsToggleButton.setAttribute('aria-expanded', 'false');
+    actionsToggleButton.setAttribute('aria-label', 'Показать действия по документу');
+    var actionsPanel = createElement('div', 'documents-actions__panel');
+    actionsPanel.setAttribute('role', 'group');
+    actionsPanel.setAttribute('aria-label', 'Действия с документом');
+    actionsPanel.hidden = true;
+    actions.appendChild(actionsToggleButton);
+    actions.appendChild(actionsPanel);
     var isAdmin = isCurrentUserAdmin();
     var canDeleteDocuments = isAdmin || (state.permissions && state.permissions.canDeleteDocuments === true);
     var directorScope = state.access && typeof state.access.adminScope === 'string'
@@ -12645,14 +12766,14 @@
     pdfButton.addEventListener('click', function() {
       handlePdfDownload(pdfButton, doc);
     });
-    actions.appendChild(pdfButton);
+    actionsPanel.appendChild(pdfButton);
 
     var responseButton = createElement('button', 'documents-action documents-action--assign', 'Ответ');
     responseButton.type = 'button';
     responseButton.addEventListener('click', function() {
       openResponseModal(doc);
     });
-    actions.appendChild(responseButton);
+    actionsPanel.appendChild(responseButton);
 
     var briefActionButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
     briefActionButton.type = 'button';
@@ -12697,7 +12818,7 @@
         briefActionButton.disabled = !attachments.length;
       });
     });
-    actions.appendChild(briefActionButton);
+    actionsPanel.appendChild(briefActionButton);
 
     var hasAttachments = Array.isArray(doc.files) && doc.files.length;
     var viewEntry = findCurrentUserViewEntry(doc);
@@ -12715,7 +12836,7 @@
     viewedButton.addEventListener('click', function() {
       markDocumentAsViewed(doc, viewedButton);
     });
-    actions.appendChild(viewedButton);
+    actionsPanel.appendChild(viewedButton);
 
     if (isAdmin && state.permissions && state.permissions.canCreateDocuments) {
       var editButton = createElement('button', 'documents-action documents-action--edit', 'Редактировать');
@@ -12723,7 +12844,7 @@
       editButton.addEventListener('click', function() {
         openDocumentForm(doc);
       });
-      actions.appendChild(editButton);
+      actionsPanel.appendChild(editButton);
     }
 
     if (isAdmin && canDeleteDocuments && !isDirectorRole) {
@@ -12732,8 +12853,9 @@
       deleteButton.addEventListener('click', function() {
         deleteDocument(doc);
       });
-      actions.appendChild(deleteButton);
+      actionsPanel.appendChild(deleteButton);
     }
+    setupRowActionsMenu(actions, actionsToggleButton, actionsPanel);
 
     descriptors.push(buildCellDescriptor(actions, '', 'actions'));
 
