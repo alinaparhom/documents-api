@@ -18084,7 +18084,6 @@ function setupAssignmentControls(card, task) {
   if (comboWrapper) {
     comboWrapper.style.marginBottom = '2px';
   }
-  comboInput.readOnly = true;
   comboInput.dataset.searchUnlocked = 'false';
   comboInput.setAttribute('inputmode', 'none');
   comboInput.classList.add('appdosc-card__assign-search--combo');
@@ -19084,54 +19083,42 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  let waitSecondTapForKeyboard = false;
-  let skipUnlockOnCurrentClick = false;
+  let comboSearchUnlocked = false;
   const unlockComboSearch = () => {
-    comboInput.readOnly = false;
+    comboSearchUnlocked = true;
     comboInput.dataset.searchUnlocked = 'true';
     comboInput.setAttribute('inputmode', 'search');
-    waitSecondTapForKeyboard = false;
     showOptionsList();
     comboInput.focus({ preventScroll: true });
-    requestAnimationFrame(() => {
-      comboInput.focus({ preventScroll: true });
-      const cursor = comboInput.value.length;
-      if (typeof comboInput.setSelectionRange === 'function') {
-        comboInput.setSelectionRange(cursor, cursor);
-      }
-    });
+    const cursor = comboInput.value.length;
+    if (typeof comboInput.setSelectionRange === 'function') {
+      comboInput.setSelectionRange(cursor, cursor);
+    }
     setKeyboardButtonActive(true);
   };
   const relockComboSearch = () => {
-    comboInput.readOnly = true;
-    comboInput.dataset.searchUnlocked = 'false';
     comboInput.setAttribute('inputmode', 'none');
-    waitSecondTapForKeyboard = false;
-    skipUnlockOnCurrentClick = false;
     setKeyboardButtonActive(false);
   };
   const handleKeyboardButtonPress = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    showOptionsList();
     unlockComboSearch();
   };
   keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
   keyboardButton.addEventListener('click', handleKeyboardButtonPress);
 
   comboInput.addEventListener('pointerdown', (event) => {
-    if (comboInput.readOnly) {
-      if (!isComboExpanded()) {
-        event.preventDefault();
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        skipUnlockOnCurrentClick = true;
-        return;
-      }
-      waitSecondTapForKeyboard = true;
+    if (!comboSearchUnlocked) {
+      event.preventDefault();
+      comboSearchUnlocked = true;
+      comboInput.dataset.searchUnlocked = 'true';
+      comboInput.setAttribute('inputmode', 'none');
+      showOptionsList();
+      setKeyboardButtonActive(false);
       return;
     }
-    showOptionsList();
+    unlockComboSearch();
   });
 
   comboInput.addEventListener('focus', () => {
@@ -19139,18 +19126,7 @@ function setupAssignmentControls(card, task) {
   });
 
   comboInput.addEventListener('click', () => {
-    if (comboInput.readOnly) {
-      if (skipUnlockOnCurrentClick) {
-        skipUnlockOnCurrentClick = false;
-        return;
-      }
-      if (!isComboExpanded()) {
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        return;
-      }
-    }
-    if (waitSecondTapForKeyboard && isComboExpanded()) {
+    if (comboSearchUnlocked) {
       unlockComboSearch();
       return;
     }
@@ -19261,7 +19237,6 @@ function setupSubordinateControls(card, task) {
   if (comboWrapper) {
     comboWrapper.style.marginBottom = '2px';
   }
-  searchInput.readOnly = true;
   searchInput.dataset.searchUnlocked = 'false';
   searchInput.setAttribute('inputmode', 'none');
   searchInput.classList.add('appdosc-card__assign-search--combo');
@@ -20114,54 +20089,42 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  let waitSecondTapForKeyboard = false;
-  let skipUnlockOnCurrentClick = false;
+  let subordinateSearchUnlocked = false;
   const unlockSubordinateSearch = () => {
-    searchInput.readOnly = false;
+    subordinateSearchUnlocked = true;
     searchInput.dataset.searchUnlocked = 'true';
     searchInput.setAttribute('inputmode', 'search');
-    waitSecondTapForKeyboard = false;
     showOptionsList();
     searchInput.focus({ preventScroll: true });
-    requestAnimationFrame(() => {
-      searchInput.focus({ preventScroll: true });
-      const cursor = searchInput.value.length;
-      if (typeof searchInput.setSelectionRange === 'function') {
-        searchInput.setSelectionRange(cursor, cursor);
-      }
-    });
+    const cursor = searchInput.value.length;
+    if (typeof searchInput.setSelectionRange === 'function') {
+      searchInput.setSelectionRange(cursor, cursor);
+    }
     setKeyboardButtonActive(true);
   };
   const relockSubordinateSearch = () => {
-    searchInput.readOnly = true;
-    searchInput.dataset.searchUnlocked = 'false';
     searchInput.setAttribute('inputmode', 'none');
-    waitSecondTapForKeyboard = false;
-    skipUnlockOnCurrentClick = false;
     setKeyboardButtonActive(false);
   };
   const handleKeyboardButtonPress = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    showOptionsList();
     unlockSubordinateSearch();
   };
   keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
   keyboardButton.addEventListener('click', handleKeyboardButtonPress);
 
   searchInput.addEventListener('pointerdown', (event) => {
-    if (searchInput.readOnly) {
-      if (!isComboExpanded()) {
-        event.preventDefault();
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        skipUnlockOnCurrentClick = true;
-        return;
-      }
-      waitSecondTapForKeyboard = true;
+    if (!subordinateSearchUnlocked) {
+      event.preventDefault();
+      subordinateSearchUnlocked = true;
+      searchInput.dataset.searchUnlocked = 'true';
+      searchInput.setAttribute('inputmode', 'none');
+      showOptionsList();
+      setKeyboardButtonActive(false);
       return;
     }
-    showOptionsList();
+    unlockSubordinateSearch();
   });
 
   searchInput.addEventListener('focus', () => {
@@ -20169,18 +20132,7 @@ function setupSubordinateControls(card, task) {
   });
 
   searchInput.addEventListener('click', () => {
-    if (searchInput.readOnly) {
-      if (skipUnlockOnCurrentClick) {
-        skipUnlockOnCurrentClick = false;
-        return;
-      }
-      if (!isComboExpanded()) {
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        return;
-      }
-    }
-    if (waitSecondTapForKeyboard && isComboExpanded()) {
+    if (subordinateSearchUnlocked) {
       unlockSubordinateSearch();
       return;
     }
