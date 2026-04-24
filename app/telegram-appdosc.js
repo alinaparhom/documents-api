@@ -18270,6 +18270,7 @@ function setupAssignmentControls(card, task) {
   };
 
   let visibleAssigneeOptions = [];
+  let comboListQuery = '';
   const setComboExpanded = (expanded) => {
     comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     comboInput.dataset.expanded = expanded ? 'true' : 'false';
@@ -18291,10 +18292,34 @@ function setupAssignmentControls(card, task) {
     optionsList.innerHTML = '';
     visibleAssigneeOptions = [];
 
-    const query = normalizeValue(comboInput.value).toLowerCase();
+    const query = normalizeValue(comboListQuery || comboInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
     let visibleCount = 0;
+
+    const inlineSearch = document.createElement('input');
+    inlineSearch.type = 'search';
+    inlineSearch.className = 'appdosc-card__assign-inline-search';
+    inlineSearch.placeholder = 'Поиск в списке…';
+    inlineSearch.value = comboListQuery;
+    inlineSearch.autocomplete = 'off';
+    inlineSearch.style.width = '100%';
+    inlineSearch.style.minHeight = '36px';
+    inlineSearch.style.padding = '8px 10px';
+    inlineSearch.style.marginBottom = '4px';
+    inlineSearch.style.borderRadius = '8px';
+    inlineSearch.style.border = `1px solid ${comboPalette.optionBorder}`;
+    inlineSearch.style.background = comboPalette.optionBg;
+    inlineSearch.style.color = comboPalette.optionColor;
+    inlineSearch.style.fontSize = '13px';
+    inlineSearch.style.boxSizing = 'border-box';
+    inlineSearch.addEventListener('input', () => {
+      comboListQuery = inlineSearch.value;
+      populateComboOptions();
+      optionsList.hidden = false;
+      setComboExpanded(true);
+    });
+    optionsList.appendChild(inlineSearch);
 
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
@@ -18346,8 +18371,8 @@ function setupAssignmentControls(card, task) {
       optionsList.appendChild(option);
     });
 
-    optionsList.hidden = visibleCount === 0;
-    setComboExpanded(visibleCount > 0);
+    optionsList.hidden = totalCount === 0;
+    setComboExpanded(totalCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -19099,6 +19124,7 @@ function setupAssignmentControls(card, task) {
     comboSkipClick = false;
     comboInput.dataset.searchUnlocked = 'false';
     comboInput.setAttribute('inputmode', 'none');
+    comboListQuery = '';
     setKeyboardButtonActive(false);
     comboInput.blur();
     focusBodyForIOS();
@@ -19180,11 +19206,12 @@ function setupAssignmentControls(card, task) {
   });
 
   comboInput.addEventListener('blur', () => {
-    setTimeout(() => {
-      if (document.activeElement !== comboInput) {
-        resetComboState(true);
-      }
-    }, 120);
+    if (comboState === 'search') {
+      comboState = 'list';
+      comboInput.dataset.searchUnlocked = 'false';
+      comboInput.setAttribute('inputmode', 'none');
+      setKeyboardButtonActive(false);
+    }
   });
 
   const handleOutsideComboPointer = (event) => {
@@ -19465,6 +19492,7 @@ function setupSubordinateControls(card, task) {
   };
 
   let visibleSubordinateOptions = [];
+  let subordinateListQuery = '';
   const setComboExpanded = (expanded) => {
     searchInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     searchInput.dataset.expanded = expanded ? 'true' : 'false';
@@ -19485,10 +19513,34 @@ function setupSubordinateControls(card, task) {
   const populateComboOptions = () => {
     optionsList.innerHTML = '';
     visibleSubordinateOptions = [];
-    const query = normalizeValue(searchInput.value).toLowerCase();
+    const query = normalizeValue(subordinateListQuery || searchInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
     let visibleCount = 0;
+    const inlineSearch = document.createElement('input');
+    inlineSearch.type = 'search';
+    inlineSearch.className = 'appdosc-card__assign-inline-search';
+    inlineSearch.placeholder = 'Поиск в списке…';
+    inlineSearch.value = subordinateListQuery;
+    inlineSearch.autocomplete = 'off';
+    inlineSearch.style.width = '100%';
+    inlineSearch.style.minHeight = '36px';
+    inlineSearch.style.padding = '8px 10px';
+    inlineSearch.style.marginBottom = '4px';
+    inlineSearch.style.borderRadius = '8px';
+    inlineSearch.style.border = `1px solid ${comboPalette.optionBorder}`;
+    inlineSearch.style.background = comboPalette.optionBg;
+    inlineSearch.style.color = comboPalette.optionColor;
+    inlineSearch.style.fontSize = '13px';
+    inlineSearch.style.boxSizing = 'border-box';
+    inlineSearch.addEventListener('input', () => {
+      subordinateListQuery = inlineSearch.value;
+      populateComboOptions();
+      optionsList.hidden = false;
+      setComboExpanded(true);
+    });
+    optionsList.appendChild(inlineSearch);
+
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildSubordinateOptionLabel(entry);
@@ -19538,8 +19590,8 @@ function setupSubordinateControls(card, task) {
       optionsList.appendChild(option);
     });
 
-    optionsList.hidden = visibleCount === 0;
-    setComboExpanded(visibleCount > 0);
+    optionsList.hidden = totalCount === 0;
+    setComboExpanded(totalCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -20144,6 +20196,7 @@ function setupSubordinateControls(card, task) {
     subordinateSkipClick = false;
     searchInput.dataset.searchUnlocked = 'false';
     searchInput.setAttribute('inputmode', 'none');
+    subordinateListQuery = '';
     setKeyboardButtonActive(false);
     searchInput.blur();
     focusBodyForIOS();
@@ -20225,11 +20278,12 @@ function setupSubordinateControls(card, task) {
   });
 
   searchInput.addEventListener('blur', () => {
-    setTimeout(() => {
-      if (document.activeElement !== searchInput) {
-        resetSubordinateState(true);
-      }
-    }, 120);
+    if (subordinateState === 'search') {
+      subordinateState = 'list';
+      searchInput.dataset.searchUnlocked = 'false';
+      searchInput.setAttribute('inputmode', 'none');
+      setKeyboardButtonActive(false);
+    }
   });
   const handleOutsideSubordinatePointer = (event) => {
     const target = event.target;
