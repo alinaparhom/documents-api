@@ -19045,6 +19045,10 @@ function setupAssignmentControls(card, task) {
     });
   });
 
+  comboInput.addEventListener('focus', () => {
+    showOptionsList();
+  });
+
   comboInput.addEventListener('change', () => {
     handleAssigneeSelection(comboInput.value);
   });
@@ -19962,6 +19966,10 @@ function setupSubordinateControls(card, task) {
     });
   });
 
+  searchInput.addEventListener('focus', () => {
+    showOptionsList();
+  });
+
   searchInput.addEventListener('change', () => {
     handleSubordinateSelection(searchInput.value);
   });
@@ -19978,6 +19986,12 @@ function setupSubordinateControls(card, task) {
     setTimeout(hideOptionsList, 120);
   });
 
+  document.addEventListener('pointerdown', (event) => {
+    if (!container.contains(event.target)) {
+      hideOptionsList();
+    }
+  }, true);
+
   container.hidden = false;
 
   logSubordinateDebug('control_initialized', {
@@ -19985,4 +19999,4 @@ function setupSubordinateControls(card, task) {
     organization,
     available: assignmentCandidates.length,
   });
-}Error('viewer_open_failed');
+}
