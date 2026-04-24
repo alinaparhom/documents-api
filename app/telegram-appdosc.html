@@ -1676,6 +1676,91 @@
           padding: 3px 6px !important;
         }
       }
+      .appdosc-demo-assign {
+        margin-top: 12px;
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(245, 250, 255, 0.82));
+        box-shadow: 0 10px 20px rgba(30, 64, 120, 0.09);
+        backdrop-filter: blur(12px);
+      }
+
+      .appdosc-demo-assign__title {
+        margin: 0 0 10px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--appdosc-text-primary);
+      }
+
+      .appdosc-demo-assign__row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .appdosc-demo-assign__label {
+        font-size: 12px;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-demo-assign__input {
+        width: 100%;
+        min-height: 42px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(255, 255, 255, 0.85);
+        color: var(--appdosc-text-primary);
+        font-size: 14px;
+        outline: none;
+      }
+
+      .appdosc-demo-assign__input:focus {
+        border-color: rgba(59, 130, 246, 0.6);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+      }
+
+      .appdosc-demo-assign__list {
+        max-height: 180px;
+        overflow: auto;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(255, 255, 255, 0.92);
+        padding: 6px;
+      }
+
+      .appdosc-demo-assign__option {
+        width: 100%;
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: transparent;
+        color: var(--appdosc-text-primary);
+        font-size: 14px;
+        text-align: left;
+      }
+
+      .appdosc-demo-assign__option:active,
+      .appdosc-demo-assign__option[aria-selected='true'] {
+        background: rgba(59, 130, 246, 0.14);
+      }
+
+      .appdosc-demo-assign__chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .appdosc-demo-assign__chip {
+        border-radius: 999px;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        background: rgba(219, 234, 254, 0.85);
+        color: #1e3a8a;
+        font-size: 12px;
+        padding: 6px 10px;
+      }
     </style>
   </head>
   <body>
@@ -1845,6 +1930,21 @@
               <option value="" selected disabled>Выберите задачу из списка</option>
             </select>
           </div>
+          <section class="appdosc-demo-assign" data-demo-assign>
+            <h3 class="appdosc-demo-assign__title">Тест: поиск + назначение (Telegram Mini App)</h3>
+            <div class="appdosc-demo-assign__row" data-demo-field="responsible">
+              <span class="appdosc-demo-assign__label">Ответственный</span>
+              <input class="appdosc-demo-assign__input" type="search" placeholder="1-й тап: список, 2-й тап: поиск" readonly inputmode="none" />
+              <div class="appdosc-demo-assign__list" hidden></div>
+              <div class="appdosc-demo-assign__chips"></div>
+            </div>
+            <div class="appdosc-demo-assign__row" data-demo-field="subordinate">
+              <span class="appdosc-demo-assign__label">Подчинённый</span>
+              <input class="appdosc-demo-assign__input" type="search" placeholder="1-й тап: список, 2-й тап: поиск" readonly inputmode="none" />
+              <div class="appdosc-demo-assign__list" hidden></div>
+              <div class="appdosc-demo-assign__chips"></div>
+            </div>
+          </section>
         </div>
       </section>
 

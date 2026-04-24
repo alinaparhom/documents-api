@@ -16443,6 +16443,159 @@ function updateOrganizationAccessMaps() {
   });
 }
 
+function initDemoAssignmentWidget() {
+  const demoContainer = document.querySelector('[data-demo-assign]');
+  if (!(demoContainer instanceof HTMLElement)) {
+    return;
+  }
+
+  const directory = [
+    { id: '1', name: 'Алексей Ковалёв' },
+    { id: '2', name: 'Мария Смирнова' },
+    { id: '3', name: 'Иван Петров' },
+    { id: '4', name: 'Ольга Никитина' },
+    { id: '5', name: 'Сергей Орлов' },
+    { id: '6', name: 'Елена Романова' },
+  ];
+
+  const setupField = (fieldElement) => {
+    if (!(fieldElement instanceof HTMLElement)) {
+      return;
+    }
+    const input = fieldElement.querySelector('.appdosc-demo-assign__input');
+    const list = fieldElement.querySelector('.appdosc-demo-assign__list');
+    const chips = fieldElement.querySelector('.appdosc-demo-assign__chips');
+    if (!(input instanceof HTMLInputElement) || !(list instanceof HTMLElement) || !(chips instanceof HTMLElement)) {
+      return;
+    }
+
+    const selectedIds = new Set();
+    let isOpen = false;
+    let keyboardUnlocked = false;
+    let skipClickUnlock = false;
+
+    const lockInput = () => {
+      keyboardUnlocked = false;
+      input.readOnly = true;
+      input.setAttribute('inputmode', 'none');
+    };
+
+    const unlockInput = () => {
+      keyboardUnlocked = true;
+      input.readOnly = false;
+      input.setAttribute('inputmode', 'search');
+      input.focus({ preventScroll: true });
+      requestAnimationFrame(() => {
+        input.focus({ preventScroll: true });
+        const cursorPosition = input.value.length;
+        if (typeof input.setSelectionRange === 'function') {
+          input.setSelectionRange(cursorPosition, cursorPosition);
+        }
+      });
+    };
+
+    const updateChips = () => {
+      const selectedUsers = directory.filter((user) => selectedIds.has(user.id));
+      chips.innerHTML = selectedUsers
+        .map((user) => `<span class="appdosc-demo-assign__chip">${escapeHtml(user.name)}</span>`)
+        .join('');
+    };
+
+    const renderList = () => {
+      const query = normalizeValue(input.value).toLowerCase();
+      const visibleUsers = directory.filter((user) => user.name.toLowerCase().includes(query));
+      if (!visibleUsers.length) {
+        list.innerHTML = '<div class="appdosc-demo-assign__option" aria-disabled="true">Ничего не найдено</div>';
+        return;
+      }
+      list.innerHTML = visibleUsers.map((user) => {
+        const selected = selectedIds.has(user.id);
+        return `<button type="button" class="appdosc-demo-assign__option" data-id="${escapeHtml(user.id)}" aria-selected="${selected ? 'true' : 'false'}">${escapeHtml(user.name)}</button>`;
+      }).join('');
+    };
+
+    const openList = () => {
+      isOpen = true;
+      list.hidden = false;
+      renderList();
+    };
+
+    const closeList = () => {
+      isOpen = false;
+      list.hidden = true;
+      input.value = '';
+      lockInput();
+    };
+
+    lockInput();
+
+    input.addEventListener('pointerdown', (event) => {
+      if (!isOpen) {
+        event.preventDefault();
+        openList();
+        skipClickUnlock = true;
+        return;
+      }
+      if (!keyboardUnlocked) {
+        skipClickUnlock = false;
+      }
+    });
+
+    input.addEventListener('click', () => {
+      if (!isOpen) {
+        openList();
+        return;
+      }
+      if (!keyboardUnlocked) {
+        if (skipClickUnlock) {
+          skipClickUnlock = false;
+          return;
+        }
+        unlockInput();
+        return;
+      }
+      renderList();
+    });
+
+    input.addEventListener('input', () => {
+      renderList();
+      if (!isOpen) {
+        openList();
+      }
+    });
+
+    list.addEventListener('click', (event) => {
+      const option = event.target instanceof HTMLElement ? event.target.closest('.appdosc-demo-assign__option[data-id]') : null;
+      if (!(option instanceof HTMLElement)) {
+        return;
+      }
+      const userId = option.dataset.id;
+      if (!userId) {
+        return;
+      }
+      if (selectedIds.has(userId)) {
+        selectedIds.delete(userId);
+      } else {
+        selectedIds.add(userId);
+      }
+      updateChips();
+      renderList();
+    });
+
+    document.addEventListener('pointerdown', (event) => {
+      const target = event.target;
+      if (target instanceof Node && fieldElement.contains(target)) {
+        return;
+      }
+      if (isOpen) {
+        closeList();
+      }
+    }, true);
+  };
+
+  Array.from(demoContainer.querySelectorAll('[data-demo-field]')).forEach(setupField);
+}
+
 function bootstrap() {
   if (typeof window !== 'undefined') {
     window.__DOCS_PDF_LOGGER__ = (entry) => {
@@ -16458,6 +16611,7 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
+  initDemoAssignmentWidget();
   initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
@@ -20216,4 +20370,4 @@ function setupSubordinateControls(card, task) {
     organization,
     available: assignmentCandidates.length,
   });
-}Error('viewer_open_failed');
+}
