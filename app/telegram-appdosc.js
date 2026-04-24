@@ -19085,6 +19085,7 @@ function setupAssignmentControls(card, task) {
   });
 
   let comboSearchUnlocked = false;
+  let comboSkipClickUnlock = false;
   const focusBodyForIOS = () => {
     if (!document.body || typeof document.body.focus !== 'function') {
       return;
@@ -19099,6 +19100,7 @@ function setupAssignmentControls(card, task) {
     comboInput.setAttribute('inputmode', 'none');
     comboInput.dataset.searchUnlocked = 'false';
     comboSearchUnlocked = false;
+    comboSkipClickUnlock = false;
     setKeyboardButtonActive(false);
     focusBodyForIOS();
   };
@@ -19129,6 +19131,7 @@ function setupAssignmentControls(card, task) {
     if (!comboSearchUnlocked) {
       event.preventDefault();
       comboSearchUnlocked = true;
+      comboSkipClickUnlock = true;
       comboInput.dataset.searchUnlocked = 'true';
       comboInput.setAttribute('inputmode', 'none');
       showOptionsList();
@@ -19143,6 +19146,19 @@ function setupAssignmentControls(card, task) {
   });
 
   comboInput.addEventListener('click', () => {
+    if (comboSkipClickUnlock) {
+      comboSkipClickUnlock = false;
+      showOptionsList();
+      return;
+    }
+    if (!comboSearchUnlocked) {
+      comboSearchUnlocked = true;
+      comboInput.dataset.searchUnlocked = 'true';
+      comboInput.setAttribute('inputmode', 'none');
+      showOptionsList();
+      setKeyboardButtonActive(false);
+      return;
+    }
     if (comboSearchUnlocked) {
       unlockComboSearch();
       return;
@@ -20111,6 +20127,7 @@ function setupSubordinateControls(card, task) {
   });
 
   let subordinateSearchUnlocked = false;
+  let subordinateSkipClickUnlock = false;
   const focusBodyForIOS = () => {
     if (!document.body || typeof document.body.focus !== 'function') {
       return;
@@ -20125,6 +20142,7 @@ function setupSubordinateControls(card, task) {
     searchInput.setAttribute('inputmode', 'none');
     searchInput.dataset.searchUnlocked = 'false';
     subordinateSearchUnlocked = false;
+    subordinateSkipClickUnlock = false;
     setKeyboardButtonActive(false);
     focusBodyForIOS();
   };
@@ -20155,6 +20173,7 @@ function setupSubordinateControls(card, task) {
     if (!subordinateSearchUnlocked) {
       event.preventDefault();
       subordinateSearchUnlocked = true;
+      subordinateSkipClickUnlock = true;
       searchInput.dataset.searchUnlocked = 'true';
       searchInput.setAttribute('inputmode', 'none');
       showOptionsList();
@@ -20169,6 +20188,19 @@ function setupSubordinateControls(card, task) {
   });
 
   searchInput.addEventListener('click', () => {
+    if (subordinateSkipClickUnlock) {
+      subordinateSkipClickUnlock = false;
+      showOptionsList();
+      return;
+    }
+    if (!subordinateSearchUnlocked) {
+      subordinateSearchUnlocked = true;
+      searchInput.dataset.searchUnlocked = 'true';
+      searchInput.setAttribute('inputmode', 'none');
+      showOptionsList();
+      setKeyboardButtonActive(false);
+      return;
+    }
     if (subordinateSearchUnlocked) {
       unlockSubordinateSearch();
       return;
