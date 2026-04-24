@@ -33,6 +33,61 @@ const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 2500;
 const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
 const ENABLE_TASK_PDF_WARMUP = true;
 const pdfFetchTimeoutUrls = new Set();
+let activeAssignmentDropdown = null;
+let assignmentDropdownListenersBound = false;
+
+function clearActiveAssignmentDropdown(instance) {
+  if (!instance || activeAssignmentDropdown === instance) {
+    activeAssignmentDropdown = null;
+  }
+}
+
+function bindAssignmentDropdownDocumentListeners() {
+  if (assignmentDropdownListenersBound) {
+    return;
+  }
+  assignmentDropdownListenersBound = true;
+
+  const handleDocumentPointerDown = (event) => {
+    if (!activeAssignmentDropdown || !event) {
+      return;
+    }
+    const target = event.target;
+    if (!target) {
+      return;
+    }
+    const { container, trigger, list, hide } = activeAssignmentDropdown;
+    if (
+      (container && container.contains(target))
+      || (trigger && (trigger === target || (typeof trigger.contains === 'function' && trigger.contains(target))))
+      || (list && (list === target || (typeof list.contains === 'function' && list.contains(target))))
+    ) {
+      return;
+    }
+    hide(false);
+  };
+
+  const handleDocumentEscape = (event) => {
+    if (!activeAssignmentDropdown || !event || event.key !== 'Escape') {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    activeAssignmentDropdown.hide(true);
+  };
+
+  document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+  document.addEventListener('touchstart', handleDocumentPointerDown, true);
+  document.addEventListener('keydown', handleDocumentEscape, true);
+}
+
+function setActiveAssignmentDropdown(instance) {
+  bindAssignmentDropdownDocumentListeners();
+  if (activeAssignmentDropdown && activeAssignmentDropdown !== instance && typeof activeAssignmentDropdown.hide === 'function') {
+    activeAssignmentDropdown.hide(false);
+  }
+  activeAssignmentDropdown = instance;
+}
 
 function normalizePdfBinaryCacheKey(url) {
   const normalized = normalizeValue(url);
@@ -18198,20 +18253,43 @@ function setupAssignmentControls(card, task) {
   };
 
   let visibleAssigneeOptions = [];
+  const dropdownInstance = {
+    container,
+    trigger: comboInput,
+    list: optionsList,
+    hide: (restoreFocus) => {
+      hideOptionsList(restoreFocus);
+    },
+  };
+  const stopDropdownPropagation = (event) => {
+    if (!event) {
+      return;
+    }
+    event.stopPropagation();
+  };
   const setComboExpanded = (expanded) => {
     comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     comboInput.dataset.expanded = expanded ? 'true' : 'false';
   };
   const isComboExpanded = () => comboInput.dataset.expanded === 'true';
-  const hideOptionsList = () => {
+  const hideOptionsList = (restoreFocus = false) => {
     optionsList.hidden = true;
     setComboExpanded(false);
+    clearActiveAssignmentDropdown(dropdownInstance);
+    if (restoreFocus) {
+      comboInput.focus({ preventScroll: true });
+    }
   };
   const showOptionsList = () => {
     populateComboOptions();
     const hasOptions = visibleAssigneeOptions.length > 0;
     optionsList.hidden = !hasOptions;
     setComboExpanded(hasOptions);
+    if (hasOptions) {
+      setActiveAssignmentDropdown(dropdownInstance);
+    } else {
+      clearActiveAssignmentDropdown(dropdownInstance);
+    }
     return hasOptions;
   };
 
@@ -18264,8 +18342,10 @@ function setupAssignmentControls(card, task) {
       option.style.touchAction = 'manipulation';
       option.addEventListener('pointerdown', (event) => {
         event.preventDefault();
+        event.stopPropagation();
         handleAssigneeSelection(value);
       });
+      option.addEventListener('touchstart', stopDropdownPropagation, { passive: true });
       option.addEventListener('mouseenter', () => {
         option.style.background = comboPalette.optionHover;
       });
@@ -19015,6 +19095,7 @@ function setupAssignmentControls(card, task) {
   let waitSecondTapForKeyboard = false;
 
   comboInput.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
     if (isComboExpanded()) {
       return;
     }
@@ -19023,7 +19104,9 @@ function setupAssignmentControls(card, task) {
     waitSecondTapForKeyboard = true;
   });
 
-  comboInput.addEventListener('click', () => {
+  comboInput.addEventListener('touchstart', stopDropdownPropagation, { passive: true });
+  comboInput.addEventListener('click', (event) => {
+    event.stopPropagation();
     if (waitSecondTapForKeyboard) {
       comboInput.readOnly = false;
       comboInput.dataset.searchUnlocked = 'true';
@@ -19061,11 +19144,8 @@ function setupAssignmentControls(card, task) {
     setTimeout(hideOptionsList, 120);
   });
 
-  document.addEventListener('pointerdown', (event) => {
-    if (!container.contains(event.target)) {
-      hideOptionsList();
-    }
-  }, true);
+  optionsList.addEventListener('pointerdown', stopDropdownPropagation);
+  optionsList.addEventListener('touchstart', stopDropdownPropagation, { passive: true });
 
   container.hidden = false;
 }
@@ -19265,20 +19345,43 @@ function setupSubordinateControls(card, task) {
   };
 
   let visibleSubordinateOptions = [];
+  const dropdownInstance = {
+    container,
+    trigger: searchInput,
+    list: optionsList,
+    hide: (restoreFocus) => {
+      hideOptionsList(restoreFocus);
+    },
+  };
+  const stopDropdownPropagation = (event) => {
+    if (!event) {
+      return;
+    }
+    event.stopPropagation();
+  };
   const setComboExpanded = (expanded) => {
     searchInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     searchInput.dataset.expanded = expanded ? 'true' : 'false';
   };
   const isComboExpanded = () => searchInput.dataset.expanded === 'true';
-  const hideOptionsList = () => {
+  const hideOptionsList = (restoreFocus = false) => {
     optionsList.hidden = true;
     setComboExpanded(false);
+    clearActiveAssignmentDropdown(dropdownInstance);
+    if (restoreFocus) {
+      searchInput.focus({ preventScroll: true });
+    }
   };
   const showOptionsList = () => {
     populateComboOptions();
     const hasOptions = visibleSubordinateOptions.length > 0;
     optionsList.hidden = !hasOptions;
     setComboExpanded(hasOptions);
+    if (hasOptions) {
+      setActiveAssignmentDropdown(dropdownInstance);
+    } else {
+      clearActiveAssignmentDropdown(dropdownInstance);
+    }
     return hasOptions;
   };
 
@@ -19328,8 +19431,10 @@ function setupSubordinateControls(card, task) {
       option.style.touchAction = 'manipulation';
       option.addEventListener('pointerdown', (event) => {
         event.preventDefault();
+        event.stopPropagation();
         handleSubordinateSelection(value);
       });
+      option.addEventListener('touchstart', stopDropdownPropagation, { passive: true });
       option.addEventListener('mouseenter', () => {
         option.style.background = comboPalette.optionHover;
       });
@@ -19932,6 +20037,7 @@ function setupSubordinateControls(card, task) {
   let waitSecondTapForKeyboard = false;
 
   searchInput.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
     if (isComboExpanded()) {
       return;
     }
@@ -19940,7 +20046,9 @@ function setupSubordinateControls(card, task) {
     waitSecondTapForKeyboard = true;
   });
 
-  searchInput.addEventListener('click', () => {
+  searchInput.addEventListener('touchstart', stopDropdownPropagation, { passive: true });
+  searchInput.addEventListener('click', (event) => {
+    event.stopPropagation();
     if (waitSecondTapForKeyboard) {
       searchInput.readOnly = false;
       searchInput.dataset.searchUnlocked = 'true';
@@ -19977,6 +20085,9 @@ function setupSubordinateControls(card, task) {
   searchInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
+
+  optionsList.addEventListener('pointerdown', stopDropdownPropagation);
+  optionsList.addEventListener('touchstart', stopDropdownPropagation, { passive: true });
 
   container.hidden = false;
 
