@@ -18102,15 +18102,17 @@ function setupAssignmentControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '168px';
+  optionsList.style.maxHeight = '220px';
   optionsList.style.overflowY = 'auto';
-  optionsList.style.borderRadius = '12px';
+  optionsList.style.borderRadius = '14px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
   optionsList.style.background = comboPalette.listBg;
-  optionsList.style.backdropFilter = 'blur(10px)';
-  optionsList.style.webkitBackdropFilter = 'blur(10px)';
+  optionsList.style.backdropFilter = 'blur(14px)';
+  optionsList.style.webkitBackdropFilter = 'blur(14px)';
   optionsList.style.boxShadow = comboPalette.shadow;
-  optionsList.style.padding = '4px';
+  optionsList.style.padding = '6px';
+  optionsList.style.display = 'grid';
+  optionsList.style.gap = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
 
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
@@ -18275,7 +18277,7 @@ function setupAssignmentControls(card, task) {
       option.style.borderRadius = '9px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-      option.style.marginBottom = '3px';
+      option.style.marginBottom = '0';
       option.style.touchAction = 'manipulation';
       option.addEventListener('pointerdown', (event) => {
         event.preventDefault();
@@ -19026,7 +19028,7 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  comboInput.addEventListener('click', () => {
+  const handleComboTap = () => {
     populateComboOptions();
     const hasVisibleOptions = visibleAssigneeOptions.length > 0;
     if (!hasVisibleOptions) {
@@ -19047,6 +19049,21 @@ function setupAssignmentControls(card, task) {
         comboInput.focus({ preventScroll: true });
       });
     }
+  };
+
+  comboInput.addEventListener('pointerdown', (event) => {
+    if (!comboInput.hasAttribute('readonly')) {
+      return;
+    }
+    event.preventDefault();
+    handleComboTap();
+  });
+
+  comboInput.addEventListener('click', () => {
+    if (comboInput.hasAttribute('readonly')) {
+      return;
+    }
+    handleComboTap();
   });
 
   comboInput.addEventListener('change', () => {
@@ -19166,15 +19183,17 @@ function setupSubordinateControls(card, task) {
   optionsList.style.top = 'calc(100% + 8px)';
   optionsList.style.zIndex = '50';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = '168px';
+  optionsList.style.maxHeight = '220px';
   optionsList.style.overflowY = 'auto';
-  optionsList.style.borderRadius = '12px';
+  optionsList.style.borderRadius = '14px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
   optionsList.style.background = comboPalette.listBg;
-  optionsList.style.backdropFilter = 'blur(10px)';
-  optionsList.style.webkitBackdropFilter = 'blur(10px)';
+  optionsList.style.backdropFilter = 'blur(14px)';
+  optionsList.style.webkitBackdropFilter = 'blur(14px)';
   optionsList.style.boxShadow = comboPalette.shadow;
-  optionsList.style.padding = '4px';
+  optionsList.style.padding = '6px';
+  optionsList.style.display = 'grid';
+  optionsList.style.gap = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
 
   if (!assignmentCandidates.length) {
@@ -19339,7 +19358,7 @@ function setupSubordinateControls(card, task) {
       option.style.borderRadius = '9px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-      option.style.marginBottom = '3px';
+      option.style.marginBottom = '0';
       option.style.touchAction = 'manipulation';
       option.addEventListener('pointerdown', (event) => {
         event.preventDefault();
@@ -19943,7 +19962,7 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('click', () => {
+  const handleSubordinateComboTap = () => {
     populateComboOptions();
     const hasVisibleOptions = visibleSubordinateOptions.length > 0;
     if (!hasVisibleOptions) {
@@ -19964,6 +19983,21 @@ function setupSubordinateControls(card, task) {
         searchInput.focus({ preventScroll: true });
       });
     }
+  };
+
+  searchInput.addEventListener('pointerdown', (event) => {
+    if (!searchInput.hasAttribute('readonly')) {
+      return;
+    }
+    event.preventDefault();
+    handleSubordinateComboTap();
+  });
+
+  searchInput.addEventListener('click', () => {
+    if (searchInput.hasAttribute('readonly')) {
+      return;
+    }
+    handleSubordinateComboTap();
   });
 
   searchInput.addEventListener('change', () => {
