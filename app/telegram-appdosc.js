@@ -19071,6 +19071,7 @@ function setupAssignmentControls(card, task) {
     });
     comboInput.value = '';
     populateComboOptions();
+    hideComboKeyboard();
     hideOptionsList();
   };
 
@@ -19084,6 +19085,23 @@ function setupAssignmentControls(card, task) {
   });
 
   let comboSearchUnlocked = false;
+  const focusBodyForIOS = () => {
+    if (!document.body || typeof document.body.focus !== 'function') {
+      return;
+    }
+    if (!document.body.hasAttribute('tabindex')) {
+      document.body.setAttribute('tabindex', '-1');
+    }
+    document.body.focus({ preventScroll: true });
+  };
+  const hideComboKeyboard = () => {
+    comboInput.blur();
+    comboInput.setAttribute('inputmode', 'none');
+    comboInput.dataset.searchUnlocked = 'false';
+    comboSearchUnlocked = false;
+    setKeyboardButtonActive(false);
+    focusBodyForIOS();
+  };
   const unlockComboSearch = () => {
     comboSearchUnlocked = true;
     comboInput.dataset.searchUnlocked = 'true';
@@ -19097,8 +19115,7 @@ function setupAssignmentControls(card, task) {
     setKeyboardButtonActive(true);
   };
   const relockComboSearch = () => {
-    comboInput.setAttribute('inputmode', 'none');
-    setKeyboardButtonActive(false);
+    hideComboKeyboard();
   };
   const handleKeyboardButtonPress = (event) => {
     event.preventDefault();
@@ -19150,11 +19167,14 @@ function setupAssignmentControls(card, task) {
     setTimeout(hideOptionsList, 120);
   });
 
-  document.addEventListener('pointerdown', (event) => {
+  const handleOutsideComboPointer = (event) => {
     const target = event.target;
     if (comboInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
+    hideComboKeyboard();
     hideOptionsList();
-  }, true);
+  };
+  document.addEventListener('pointerdown', handleOutsideComboPointer, true);
+  document.addEventListener('touchstart', handleOutsideComboPointer, { capture: true, passive: true });
 
   container.hidden = false;
 }
@@ -20077,6 +20097,7 @@ function setupSubordinateControls(card, task) {
     }
     searchInput.value = '';
     populateComboOptions();
+    hideSubordinateKeyboard();
     hideOptionsList();
   };
 
@@ -20090,6 +20111,23 @@ function setupSubordinateControls(card, task) {
   });
 
   let subordinateSearchUnlocked = false;
+  const focusBodyForIOS = () => {
+    if (!document.body || typeof document.body.focus !== 'function') {
+      return;
+    }
+    if (!document.body.hasAttribute('tabindex')) {
+      document.body.setAttribute('tabindex', '-1');
+    }
+    document.body.focus({ preventScroll: true });
+  };
+  const hideSubordinateKeyboard = () => {
+    searchInput.blur();
+    searchInput.setAttribute('inputmode', 'none');
+    searchInput.dataset.searchUnlocked = 'false';
+    subordinateSearchUnlocked = false;
+    setKeyboardButtonActive(false);
+    focusBodyForIOS();
+  };
   const unlockSubordinateSearch = () => {
     subordinateSearchUnlocked = true;
     searchInput.dataset.searchUnlocked = 'true';
@@ -20103,8 +20141,7 @@ function setupSubordinateControls(card, task) {
     setKeyboardButtonActive(true);
   };
   const relockSubordinateSearch = () => {
-    searchInput.setAttribute('inputmode', 'none');
-    setKeyboardButtonActive(false);
+    hideSubordinateKeyboard();
   };
   const handleKeyboardButtonPress = (event) => {
     event.preventDefault();
@@ -20155,11 +20192,14 @@ function setupSubordinateControls(card, task) {
     relockSubordinateSearch();
     setTimeout(hideOptionsList, 120);
   });
-  document.addEventListener('pointerdown', (event) => {
+  const handleOutsideSubordinatePointer = (event) => {
     const target = event.target;
     if (searchInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
+    hideSubordinateKeyboard();
     hideOptionsList();
-  }, true);
+  };
+  document.addEventListener('pointerdown', handleOutsideSubordinatePointer, true);
+  document.addEventListener('touchstart', handleOutsideSubordinatePointer, { capture: true, passive: true });
 
   container.hidden = false;
 
