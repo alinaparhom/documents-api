@@ -13,6 +13,7 @@
   const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
+  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь деловой ответ на претензию по этому документу';
   const VISION_BATCH_SIZE = 5;
   const MAX_FILES_PER_REQUEST = 5;
   const MAX_FILES_PER_REQUEST_MOBILE = 2;
@@ -50,7 +51,7 @@
       label: 'Ответ ИИ',
       icon: '🤖',
       hint: 'ИИ сам подготовит ответ на основе файлов.',
-      placeholder: 'Например: Подготовь деловой ответ на претензию по этому документу',
+      placeholder: DEFAULT_RESPONSE_AI_PROMPT_TEXT,
     },
   };
   let jsZipLoaderPromise = null;
@@ -1898,7 +1899,7 @@
             </select>
           </div>
           <div class="tg-ai-chat__input-row">
-            <textarea class="tg-ai-chat__input" data-prompt-input rows="2" placeholder="Например: Подготовь деловой ответ на претензию по этому документу"></textarea>
+            <textarea class="tg-ai-chat__input" data-prompt-input rows="2" placeholder="${escapeHtml(DEFAULT_RESPONSE_AI_PROMPT_TEXT)}">${escapeHtml(DEFAULT_RESPONSE_AI_PROMPT_TEXT)}</textarea>
             <button type="button" class="tg-ai-chat__icon-btn" data-voice-btn aria-label="Голосовой ввод">🎤</button>
             <button type="button" class="tg-ai-chat__send" data-send-btn>Отправить</button>
           </div>
@@ -1932,6 +1933,7 @@
     let speechSupported = false;
     let suppressVoiceEndStatus = false;
     let currentResponseMode = RESPONSE_GENERATION_MODES.response_ai.value;
+    let improveAiDraftPrompt = '';
 
     renderFiles(filesList, files);
     // Прогреваем зависимости заранее, чтобы первый запуск был стабильнее.
@@ -2014,7 +2016,10 @@
       if (styleSelect) styleSelect.disabled = disabled;
       if (promptInput) promptInput.disabled = disabled;
       if (sendButton) sendButton.disabled = disabled;
-      if (voiceButton) voiceButton.disabled = disabled || !speechSupported;
+      if (voiceButton) {
+        const voiceBlockedByMode = currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value;
+        voiceButton.disabled = disabled || !speechSupported || voiceBlockedByMode;
+      }
       modeButtons.forEach((button) => {
         button.disabled = disabled;
       });
@@ -2022,6 +2027,10 @@
 
     const applyResponseModeUi = (modeValue) => {
       const nextMode = RESPONSE_GENERATION_MODES[modeValue] ? modeValue : RESPONSE_GENERATION_MODES.response_ai.value;
+      const prevMode = currentResponseMode;
+      if (promptInput && prevMode === RESPONSE_GENERATION_MODES.improve_ai.value) {
+        improveAiDraftPrompt = promptInput.value || '';
+      }
       currentResponseMode = nextMode;
       modeButtons.forEach((button) => {
         const isActive = normalize(button.dataset.responseMode) === nextMode;
@@ -2030,6 +2039,18 @@
       const modeMeta = RESPONSE_GENERATION_MODES[nextMode];
       if (promptInput && modeMeta && modeMeta.placeholder) {
         promptInput.placeholder = modeMeta.placeholder;
+        if (nextMode === RESPONSE_GENERATION_MODES.response_ai.value) {
+          promptInput.value = DEFAULT_RESPONSE_AI_PROMPT_TEXT;
+          promptInput.readOnly = true;
+        } else {
+          promptInput.readOnly = false;
+          promptInput.value = improveAiDraftPrompt;
+        }
+        promptInput.dispatchEvent(new Event('input'));
+      }
+      if (voiceButton) {
+        const voiceBlockedByMode = nextMode === RESPONSE_GENERATION_MODES.response_ai.value;
+        voiceButton.disabled = isSending || !speechSupported || voiceBlockedByMode;
       }
       if (status && modeMeta) {
         status.textContent = `${modeMeta.icon} ${modeMeta.hint}`;
@@ -2038,6 +2059,7 @@
 
     const appendPromptText = (chunk) => {
       if (!promptInput) return;
+      if (promptInput.readOnly) return;
       const prev = normalize(promptInput.value);
       const next = normalize(chunk);
       promptInput.value = prev && next ? `${prev} ${next}` : (next || prev);
@@ -2124,6 +2146,10 @@
     }
 
     voiceButton?.addEventListener('click', () => {
+      if (currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value) {
+        status.textContent = 'В режиме «Ответ ИИ» запрос фиксированный и не редактируется.';
+        return;
+      }
       if (!recognition || !speechSupported) {
         status.textContent = 'На этом устройстве голосовой ввод недоступен.';
         return;
