@@ -18066,7 +18066,10 @@ function setupAssignmentControls(card, task) {
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
+    comboWrapper.style.overflow = 'visible';
   }
+  container.style.overflow = 'visible';
+  card.style.overflow = 'visible';
   comboInput.readOnly = true;
   comboInput.dataset.searchUnlocked = 'false';
   comboInput.setAttribute('inputmode', 'none');
@@ -18084,14 +18087,13 @@ function setupAssignmentControls(card, task) {
   comboInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   comboInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
   optionsList.hidden = true;
-  optionsList.style.position = 'fixed';
+  optionsList.style.position = 'absolute';
   optionsList.style.left = '0';
-  optionsList.style.top = '0';
-  optionsList.style.width = '0';
-  optionsList.style.right = 'auto';
-  optionsList.style.zIndex = '2147483647';
+  optionsList.style.right = '0';
+  optionsList.style.top = 'calc(100% + 8px)';
+  optionsList.style.zIndex = '9999';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = 'min(410px, calc(100vh - 24px))';
+  optionsList.style.maxHeight = '410px';
   optionsList.style.overflowY = 'auto';
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
@@ -18199,62 +18201,20 @@ function setupAssignmentControls(card, task) {
   };
 
   let visibleAssigneeOptions = [];
-  let comboOverlayBound = false;
   const setComboExpanded = (expanded) => {
     comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     comboInput.dataset.expanded = expanded ? 'true' : 'false';
   };
   const isComboExpanded = () => comboInput.dataset.expanded === 'true';
-  const repositionComboOverlay = () => {
-    if (optionsList.hidden) {
-      return;
-    }
-    const rect = comboInput.getBoundingClientRect();
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const spaceBelow = Math.max(0, viewportHeight - rect.bottom - 12);
-    const spaceAbove = Math.max(0, rect.top - 12);
-    const placeAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
-    const maxHeight = Math.max(140, Math.min(410, placeAbove ? spaceAbove : spaceBelow));
-
-    optionsList.style.left = `${Math.max(8, Math.round(rect.left))}px`;
-    optionsList.style.width = `${Math.max(220, Math.round(rect.width))}px`;
-    optionsList.style.maxHeight = `${Math.round(maxHeight)}px`;
-    optionsList.style.top = placeAbove
-      ? `${Math.max(8, Math.round(rect.top - maxHeight - 8))}px`
-      : `${Math.round(rect.bottom + 8)}px`;
-  };
-  const bindComboOverlay = () => {
-    if (comboOverlayBound) {
-      return;
-    }
-    comboOverlayBound = true;
-    window.addEventListener('resize', repositionComboOverlay, { passive: true });
-    window.addEventListener('scroll', repositionComboOverlay, { passive: true });
-  };
-  const unbindComboOverlay = () => {
-    if (!comboOverlayBound) {
-      return;
-    }
-    comboOverlayBound = false;
-    window.removeEventListener('resize', repositionComboOverlay);
-    window.removeEventListener('scroll', repositionComboOverlay);
-  };
   const hideOptionsList = () => {
     optionsList.hidden = true;
     setComboExpanded(false);
-    unbindComboOverlay();
   };
   const showOptionsList = () => {
     populateComboOptions();
     const hasOptions = visibleAssigneeOptions.length > 0;
     optionsList.hidden = !hasOptions;
     setComboExpanded(hasOptions);
-    if (hasOptions) {
-      repositionComboOverlay();
-      bindComboOverlay();
-    } else {
-      unbindComboOverlay();
-    }
     return hasOptions;
   };
 
@@ -19177,7 +19137,10 @@ function setupSubordinateControls(card, task) {
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
+    comboWrapper.style.overflow = 'visible';
   }
+  container.style.overflow = 'visible';
+  card.style.overflow = 'visible';
   searchInput.readOnly = true;
   searchInput.dataset.searchUnlocked = 'false';
   searchInput.setAttribute('inputmode', 'none');
@@ -19195,14 +19158,13 @@ function setupSubordinateControls(card, task) {
   searchInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   searchInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
   optionsList.hidden = true;
-  optionsList.style.position = 'fixed';
+  optionsList.style.position = 'absolute';
   optionsList.style.left = '0';
-  optionsList.style.top = '0';
-  optionsList.style.width = '0';
-  optionsList.style.right = 'auto';
-  optionsList.style.zIndex = '2147483647';
+  optionsList.style.right = '0';
+  optionsList.style.top = 'calc(100% + 8px)';
+  optionsList.style.zIndex = '9999';
   optionsList.style.marginTop = '0';
-  optionsList.style.maxHeight = 'min(410px, calc(100vh - 24px))';
+  optionsList.style.maxHeight = '410px';
   optionsList.style.overflowY = 'auto';
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
@@ -19313,62 +19275,20 @@ function setupSubordinateControls(card, task) {
   };
 
   let visibleSubordinateOptions = [];
-  let comboOverlayBound = false;
   const setComboExpanded = (expanded) => {
     searchInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     searchInput.dataset.expanded = expanded ? 'true' : 'false';
   };
   const isComboExpanded = () => searchInput.dataset.expanded === 'true';
-  const repositionComboOverlay = () => {
-    if (optionsList.hidden) {
-      return;
-    }
-    const rect = searchInput.getBoundingClientRect();
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const spaceBelow = Math.max(0, viewportHeight - rect.bottom - 12);
-    const spaceAbove = Math.max(0, rect.top - 12);
-    const placeAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
-    const maxHeight = Math.max(140, Math.min(410, placeAbove ? spaceAbove : spaceBelow));
-
-    optionsList.style.left = `${Math.max(8, Math.round(rect.left))}px`;
-    optionsList.style.width = `${Math.max(220, Math.round(rect.width))}px`;
-    optionsList.style.maxHeight = `${Math.round(maxHeight)}px`;
-    optionsList.style.top = placeAbove
-      ? `${Math.max(8, Math.round(rect.top - maxHeight - 8))}px`
-      : `${Math.round(rect.bottom + 8)}px`;
-  };
-  const bindComboOverlay = () => {
-    if (comboOverlayBound) {
-      return;
-    }
-    comboOverlayBound = true;
-    window.addEventListener('resize', repositionComboOverlay, { passive: true });
-    window.addEventListener('scroll', repositionComboOverlay, { passive: true });
-  };
-  const unbindComboOverlay = () => {
-    if (!comboOverlayBound) {
-      return;
-    }
-    comboOverlayBound = false;
-    window.removeEventListener('resize', repositionComboOverlay);
-    window.removeEventListener('scroll', repositionComboOverlay);
-  };
   const hideOptionsList = () => {
     optionsList.hidden = true;
     setComboExpanded(false);
-    unbindComboOverlay();
   };
   const showOptionsList = () => {
     populateComboOptions();
     const hasOptions = visibleSubordinateOptions.length > 0;
     optionsList.hidden = !hasOptions;
     setComboExpanded(hasOptions);
-    if (hasOptions) {
-      repositionComboOverlay();
-      bindComboOverlay();
-    } else {
-      unbindComboOverlay();
-    }
     return hasOptions;
   };
 
