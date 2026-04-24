@@ -1034,7 +1034,7 @@
     { key: 'resolution', label: 'Резолюция', group: 'resolution', searchable: true, searchHint: 'Введите текст резолюции' },
     { key: 'dueDate', label: 'Срок', group: 'control', searchable: true, searchHint: 'Например: 01.04.2024' },
     { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' },
-    { key: 'status', label: 'Статус', group: 'control', searchable: true, searchHint: 'Введите статус' },
+    { key: 'status', label: 'Статус', group: 'control', searchable: true, searchHint: 'Например: Не выбран или !выполнено' },
     { key: 'files', label: 'Файлы', group: 'files', searchable: false },
     { key: 'actions', label: 'Действия', group: 'files', searchable: false }
   ];
@@ -3419,18 +3419,45 @@
     return string.replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase();
   }
 
-  function valueMatchesQuery(value, query) {
+  function isEmptyStatusQueryToken(token) {
+    if (!token) {
+      return false;
+    }
+    return token === 'невыбран'
+      || token === 'невыбрано'
+      || token === 'безстатуса'
+      || token === 'пустойстатус'
+      || token === 'пусто';
+  }
+
+  function valueMatchesQuery(value, query, columnKey) {
     var normalizedValue = normalizeValueForMatch(value);
     var normalizedQuery = normalizeValueForMatch(query);
     if (!normalizedQuery) {
       return true;
     }
     var parts = normalizedQuery.split(' ');
+    var compactValue = normalizedValue.replace(/\s+/g, '');
     for (var i = 0; i < parts.length; i += 1) {
-      if (!parts[i]) {
+      var token = parts[i];
+      if (!token) {
         continue;
       }
-      if (normalizedValue.indexOf(parts[i]) === -1) {
+      var isNegative = token.charAt(0) === '!';
+      var part = isNegative ? token.slice(1) : token;
+      if (!part) {
+        continue;
+      }
+      var normalizedPart = part.replace(/\s+/g, '');
+      var partMatched = normalizedValue.indexOf(part) !== -1 || compactValue.indexOf(normalizedPart) !== -1;
+      if (columnKey === 'status' && !normalizedValue && isEmptyStatusQueryToken(normalizedPart)) {
+        partMatched = true;
+      }
+      if (isNegative) {
+        if (partMatched) {
+          return false;
+        }
+      } else if (!partMatched) {
         return false;
       }
     }
@@ -3480,6 +3507,10 @@
     var dueFormatted = formatDate(doc.dueDate);
     values.dueDate = dueFormatted === '—' ? '' : dueFormatted;
     values.status = resolveCurrentUserStatus(doc) || (doc.status ? String(doc.status) : '');
+    values.status = values.status ? String(values.status).trim() : '';
+    if (!values.status) {
+      values.status = 'Не выбран';
+    }
     values.instruction = doc.instruction ? String(doc.instruction) : '';
 
     var instructionAssignments = buildInstructionAssignments(doc);
@@ -3656,7 +3687,7 @@
       if (!query) {
         continue;
       }
-      if (!valueMatchesQuery(values[key], query)) {
+      if (!valueMatchesQuery(values[key], query, key)) {
         return false;
       }
     }
@@ -12548,7 +12579,7 @@
         var valueForMatch = filterValues && Object.prototype.hasOwnProperty.call(filterValues, columnKey)
           ? filterValues[columnKey]
           : displayValue;
-        if (valueMatchesQuery(valueForMatch, state.filters[columnKey])) {
+        if (valueMatchesQuery(valueForMatch, state.filters[columnKey], columnKey)) {
           normalizedClass += (normalizedClass ? ' ' : '') + 'documents-cell--highlight';
         }
       }
