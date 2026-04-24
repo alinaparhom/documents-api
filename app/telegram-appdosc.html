@@ -688,6 +688,37 @@
         gap: 10px;
       }
 
+      .appdosc-card__assign-alt-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .appdosc-card__assign-alt-input {
+        width: 100%;
+        min-height: 38px;
+        border-radius: 12px;
+        border: 1px solid var(--appdosc-surface-glass-border);
+        background: var(--appdosc-surface-glass);
+        color: var(--appdosc-text);
+        font-size: 13px;
+        padding: 8px 10px;
+        outline: none;
+        box-sizing: border-box;
+      }
+
+      .appdosc-card__assign-alt-input:focus {
+        border-color: rgba(59, 130, 246, 0.62);
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
+      }
+
+      @media (max-width: 560px) {
+        .appdosc-card__assign-alt-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
       .appdosc__user-name {
         font-size: clamp(32px, 6vw, 46px) !important;
         line-height: 1.08 !important;
@@ -2169,6 +2200,24 @@
                 autocomplete="off"
               />
               <div class="appdosc-card__assign-combo-list" data-card-assignee-options role="listbox" hidden></div>
+              <div class="appdosc-card__assign-alt-grid">
+                <input
+                  type="search"
+                  class="appdosc-card__assign-alt-input"
+                  data-card-assignee-combo-alt-one
+                  placeholder="Быстрый поиск #1"
+                  aria-label="Быстрый поиск ответственного 1"
+                  autocomplete="off"
+                />
+                <input
+                  type="search"
+                  class="appdosc-card__assign-alt-input"
+                  data-card-assignee-combo-alt-two
+                  placeholder="Быстрый поиск #2"
+                  aria-label="Быстрый поиск ответственного 2"
+                  autocomplete="off"
+                />
+              </div>
               <span class="appdosc-card__assign-search-meta" data-card-assignee-search-meta></span>
             </label>
             <div class="appdosc-card__assign-entries" data-card-assignee-entries></div>
@@ -2202,6 +2251,24 @@
                 autocomplete="off"
               />
               <div class="appdosc-card__assign-combo-list" data-card-subordinate-options role="listbox" hidden></div>
+              <div class="appdosc-card__assign-alt-grid">
+                <input
+                  type="search"
+                  class="appdosc-card__assign-alt-input"
+                  data-card-subordinate-search-alt-one
+                  placeholder="Быстрый поиск #1"
+                  aria-label="Быстрый поиск подчинённого 1"
+                  autocomplete="off"
+                />
+                <input
+                  type="search"
+                  class="appdosc-card__assign-alt-input"
+                  data-card-subordinate-search-alt-two
+                  placeholder="Быстрый поиск #2"
+                  aria-label="Быстрый поиск подчинённого 2"
+                  autocomplete="off"
+                />
+              </div>
               <span class="appdosc-card__assign-search-meta" data-card-subordinate-search-meta></span>
             </label>
             <div class="appdosc-card__assign-entries" data-card-subordinate-entries></div>

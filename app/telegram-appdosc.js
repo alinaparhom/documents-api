@@ -18041,6 +18041,8 @@ function setupAssignmentControls(card, task) {
   }
 
   const comboInput = container.querySelector('[data-card-assignee-combo]');
+  const comboAltOneInput = container.querySelector('[data-card-assignee-combo-alt-one]');
+  const comboAltTwoInput = container.querySelector('[data-card-assignee-combo-alt-two]');
   const optionsList = container.querySelector('[data-card-assignee-options]');
   const searchMeta = container.querySelector('[data-card-assignee-search-meta]');
   const entriesContainer = container.querySelector('[data-card-assignee-entries]');
@@ -19061,6 +19063,36 @@ function setupAssignmentControls(card, task) {
     setTimeout(hideOptionsList, 120);
   });
 
+  const bindAlternateComboInput = (inputElement) => {
+    if (!inputElement) {
+      return;
+    }
+    inputElement.addEventListener('focus', () => {
+      comboInput.value = normalizeValue(inputElement.value);
+      showOptionsList();
+    });
+    inputElement.addEventListener('input', () => {
+      comboInput.value = normalizeValue(inputElement.value);
+      populateComboOptions();
+      if (visibleAssigneeOptions.length > 0) {
+        optionsList.hidden = false;
+        setComboExpanded(true);
+      }
+    });
+    inputElement.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') {
+        return;
+      }
+      event.preventDefault();
+      comboInput.value = normalizeValue(inputElement.value);
+      handleAssigneeSelection(comboInput.value);
+      inputElement.value = '';
+    });
+  };
+
+  bindAlternateComboInput(comboAltOneInput);
+  bindAlternateComboInput(comboAltTwoInput);
+
   document.addEventListener('pointerdown', (event) => {
     if (!container.contains(event.target)) {
       hideOptionsList();
@@ -19104,6 +19136,8 @@ function setupSubordinateControls(card, task) {
   }
 
   const searchInput = container.querySelector('[data-card-subordinate-search]');
+  const searchAltOneInput = container.querySelector('[data-card-subordinate-search-alt-one]');
+  const searchAltTwoInput = container.querySelector('[data-card-subordinate-search-alt-two]');
   const optionsList = container.querySelector('[data-card-subordinate-options]');
   const searchMeta = container.querySelector('[data-card-subordinate-search-meta]');
   const entriesContainer = container.querySelector('[data-card-subordinate-entries]');
@@ -19167,6 +19201,12 @@ function setupSubordinateControls(card, task) {
 
   if (!assignmentCandidates.length) {
     searchInput.disabled = true;
+    if (searchAltOneInput) {
+      searchAltOneInput.disabled = true;
+    }
+    if (searchAltTwoInput) {
+      searchAltTwoInput.disabled = true;
+    }
     searchMeta.textContent = 'Подчинённые для назначения отсутствуют.';
   }
 
@@ -19977,6 +20017,36 @@ function setupSubordinateControls(card, task) {
   searchInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
+
+  const bindAlternateSubordinateInput = (inputElement) => {
+    if (!inputElement) {
+      return;
+    }
+    inputElement.addEventListener('focus', () => {
+      searchInput.value = normalizeValue(inputElement.value);
+      showOptionsList();
+    });
+    inputElement.addEventListener('input', () => {
+      searchInput.value = normalizeValue(inputElement.value);
+      populateComboOptions();
+      if (visibleSubordinateOptions.length > 0) {
+        optionsList.hidden = false;
+        setComboExpanded(true);
+      }
+    });
+    inputElement.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') {
+        return;
+      }
+      event.preventDefault();
+      searchInput.value = normalizeValue(inputElement.value);
+      handleSubordinateSelection(searchInput.value);
+      inputElement.value = '';
+    });
+  };
+
+  bindAlternateSubordinateInput(searchAltOneInput);
+  bindAlternateSubordinateInput(searchAltTwoInput);
 
   container.hidden = false;
 
