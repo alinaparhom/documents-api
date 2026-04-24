@@ -19133,7 +19133,12 @@ function setupAssignmentControls(card, task) {
     unlockComboSearch();
   };
   keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
-  keyboardButton.addEventListener('click', handleKeyboardButtonPress);
+  keyboardButton.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    handleKeyboardButtonPress(event);
+  });
 
   comboInput.addEventListener('pointerdown', (event) => {
     if (comboInput.readOnly) {
@@ -19190,14 +19195,23 @@ function setupAssignmentControls(card, task) {
     setTimeout(hideOptionsList, 120);
   });
 
+  let lastTouchDismissAt = 0;
   const handleOutsideDismiss = (event) => {
+    if (event.type === 'touchstart') {
+      lastTouchDismissAt = Date.now();
+    }
+    if (event.type === 'pointerdown' && Date.now() - lastTouchDismissAt < 450) {
+      return;
+    }
     const target = event.target;
     if (comboInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
     dismissComboInteraction();
   };
-  const outsideDismissEvent = window.PointerEvent ? 'pointerdown' : 'mousedown';
-  document.addEventListener(outsideDismissEvent, handleOutsideDismiss, true);
-  if (!window.PointerEvent) {
+  if (window.PointerEvent) {
+    document.addEventListener('pointerdown', handleOutsideDismiss, true);
+    document.addEventListener('touchstart', handleOutsideDismiss, true);
+  } else {
+    document.addEventListener('mousedown', handleOutsideDismiss, true);
     document.addEventListener('touchstart', handleOutsideDismiss, true);
   }
 
@@ -20184,7 +20198,12 @@ function setupSubordinateControls(card, task) {
     unlockSubordinateSearch();
   };
   keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
-  keyboardButton.addEventListener('click', handleKeyboardButtonPress);
+  keyboardButton.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    handleKeyboardButtonPress(event);
+  });
 
   searchInput.addEventListener('pointerdown', (event) => {
     if (searchInput.readOnly) {
@@ -20240,14 +20259,23 @@ function setupSubordinateControls(card, task) {
     relockSubordinateSearch();
     setTimeout(hideOptionsList, 120);
   });
+  let lastTouchDismissAt = 0;
   const handleOutsideDismiss = (event) => {
+    if (event.type === 'touchstart') {
+      lastTouchDismissAt = Date.now();
+    }
+    if (event.type === 'pointerdown' && Date.now() - lastTouchDismissAt < 450) {
+      return;
+    }
     const target = event.target;
     if (searchInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
     dismissComboInteraction();
   };
-  const outsideDismissEvent = window.PointerEvent ? 'pointerdown' : 'mousedown';
-  document.addEventListener(outsideDismissEvent, handleOutsideDismiss, true);
-  if (!window.PointerEvent) {
+  if (window.PointerEvent) {
+    document.addEventListener('pointerdown', handleOutsideDismiss, true);
+    document.addEventListener('touchstart', handleOutsideDismiss, true);
+  } else {
+    document.addEventListener('mousedown', handleOutsideDismiss, true);
     document.addEventListener('touchstart', handleOutsideDismiss, true);
   }
 
