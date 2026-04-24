@@ -18135,8 +18135,8 @@ function setupAssignmentControls(card, task) {
   keyboardButton.setAttribute('aria-label', 'Открыть клавиатуру для поиска');
   keyboardButton.style.position = 'absolute';
   keyboardButton.style.right = '8px';
-  keyboardButton.style.top = '50%';
-  keyboardButton.style.transform = 'translateY(-50%)';
+  keyboardButton.style.top = '0';
+  keyboardButton.style.transform = 'translateY(0)';
   keyboardButton.style.width = '30px';
   keyboardButton.style.height = '30px';
   keyboardButton.style.borderRadius = '9px';
@@ -18154,6 +18154,17 @@ function setupAssignmentControls(card, task) {
   if (keyboardButtonHost && !keyboardButtonHost.contains(keyboardButton)) {
     keyboardButtonHost.appendChild(keyboardButton);
   }
+  const positionKeyboardButton = () => {
+    if (!keyboardButtonHost || !comboInput) {
+      return;
+    }
+    const inputTop = comboInput.offsetTop || 0;
+    const inputHeight = comboInput.offsetHeight || 40;
+    const buttonTop = inputTop + Math.max(0, Math.round((inputHeight - 30) / 2));
+    keyboardButton.style.top = `${buttonTop}px`;
+  };
+  positionKeyboardButton();
+  window.addEventListener('resize', positionKeyboardButton);
   const setKeyboardButtonActive = (active) => {
     keyboardButton.dataset.active = active ? 'true' : 'false';
     keyboardButton.style.display = 'inline-flex';
@@ -18273,6 +18284,7 @@ function setupAssignmentControls(card, task) {
     setComboExpanded(false);
   };
   const showOptionsList = () => {
+    positionKeyboardButton();
     populateComboOptions();
     const hasOptions = visibleAssigneeOptions.length > 0;
     optionsList.hidden = !hasOptions;
@@ -19304,8 +19316,8 @@ function setupSubordinateControls(card, task) {
   keyboardButton.setAttribute('aria-label', 'Открыть клавиатуру для поиска');
   keyboardButton.style.position = 'absolute';
   keyboardButton.style.right = '8px';
-  keyboardButton.style.top = '50%';
-  keyboardButton.style.transform = 'translateY(-50%)';
+  keyboardButton.style.top = '0';
+  keyboardButton.style.transform = 'translateY(0)';
   keyboardButton.style.width = '30px';
   keyboardButton.style.height = '30px';
   keyboardButton.style.borderRadius = '9px';
@@ -19323,6 +19335,17 @@ function setupSubordinateControls(card, task) {
   if (keyboardButtonHost && !keyboardButtonHost.contains(keyboardButton)) {
     keyboardButtonHost.appendChild(keyboardButton);
   }
+  const positionKeyboardButton = () => {
+    if (!keyboardButtonHost || !searchInput) {
+      return;
+    }
+    const inputTop = searchInput.offsetTop || 0;
+    const inputHeight = searchInput.offsetHeight || 40;
+    const buttonTop = inputTop + Math.max(0, Math.round((inputHeight - 30) / 2));
+    keyboardButton.style.top = `${buttonTop}px`;
+  };
+  positionKeyboardButton();
+  window.addEventListener('resize', positionKeyboardButton);
   const setKeyboardButtonActive = (active) => {
     keyboardButton.dataset.active = active ? 'true' : 'false';
     keyboardButton.style.display = 'inline-flex';
@@ -19445,6 +19468,7 @@ function setupSubordinateControls(card, task) {
     setComboExpanded(false);
   };
   const showOptionsList = () => {
+    positionKeyboardButton();
     populateComboOptions();
     const hasOptions = visibleSubordinateOptions.length > 0;
     optionsList.hidden = !hasOptions;
