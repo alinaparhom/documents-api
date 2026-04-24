@@ -18999,6 +18999,9 @@ function setupAssignmentControls(card, task) {
   };
 
   const openSheet = () => {
+    if (comboSheet.parentElement !== document.body) {
+      document.body.appendChild(comboSheet);
+    }
     comboSheet.hidden = false;
     comboInput.value = '';
     populateComboOptions();
@@ -19872,6 +19875,9 @@ function setupSubordinateControls(card, task) {
   };
 
   const openSheet = () => {
+    if (pickerSheet.parentElement !== document.body) {
+      document.body.appendChild(pickerSheet);
+    }
     pickerSheet.hidden = false;
     searchInput.value = '';
     populateComboOptions();
