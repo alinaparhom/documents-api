@@ -1687,7 +1687,6 @@
         min-width: 0;
       }
 
-      .appdosc__task-filter-field input,
       .appdosc__task-filter-field select {
         width: 100%;
         height: 34px;
@@ -1705,6 +1704,261 @@
         align-items: flex-end;
         justify-content: flex-end;
         min-width: 0;
+      }
+
+      .appdosc__task-filter-period {
+        grid-column: 1 / span 2;
+      }
+
+      .task-period-button {
+        width: 100%;
+        min-height: 72px;
+        padding: 14px 16px;
+        border: 1px solid #dbe4f3;
+        border-radius: 20px;
+        background: #ffffff;
+        box-shadow: 0 8px 24px rgba(31, 64, 120, 0.08);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        text-align: left;
+      }
+
+      .task-period-button__icon {
+        font-size: 22px;
+      }
+
+      .task-period-button__content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .task-period-button__label {
+        font-size: 13px;
+        color: #75839b;
+      }
+
+      .task-period-button__value {
+        margin-top: 4px;
+        font-size: 18px;
+        font-weight: 700;
+        color: #101828;
+      }
+
+      .task-period-button__chevron {
+        font-size: 22px;
+        color: #74839a;
+      }
+
+      .range-calendar[hidden] {
+        display: none;
+      }
+
+      .range-calendar {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+      }
+
+      .range-calendar__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.35);
+      }
+
+      .range-calendar__panel {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-height: 92vh;
+        background: #f5f7fb;
+        border-radius: 24px 24px 0 0;
+        padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+        box-shadow: 0 -16px 40px rgba(15, 23, 42, 0.18);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .range-calendar__handle {
+        width: 56px;
+        height: 5px;
+        margin: 4px auto 16px;
+        border-radius: 999px;
+        background: #cfd6e4;
+      }
+
+      .range-calendar__selected {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .range-calendar__selected-card {
+        min-height: 72px;
+        padding: 12px 16px;
+        border: 0;
+        border-radius: 16px;
+        background: #ffffff;
+        box-shadow: 0 6px 20px rgba(15, 23, 42, 0.07);
+        text-align: left;
+        position: relative;
+      }
+
+      .range-calendar__selected-label {
+        display: block;
+        font-size: 13px;
+        font-weight: 700;
+        color: #8a94a6;
+      }
+
+      .range-calendar__selected-value {
+        display: block;
+        margin-top: 5px;
+        font-size: 20px;
+        font-weight: 800;
+        color: #111827;
+      }
+
+      .range-calendar__selected-clear {
+        position: absolute;
+        right: 14px;
+        top: 20px;
+        color: #8a94a6;
+        font-size: 22px;
+      }
+
+      .range-calendar__weekdays {
+        margin-top: 22px;
+        padding: 0 4px;
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        color: #7b8494;
+        font-size: 14px;
+        font-weight: 800;
+        text-align: center;
+      }
+
+      .range-calendar__months {
+        margin-top: 12px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 96px;
+      }
+
+      .range-calendar__month {
+        margin-bottom: 14px;
+        padding: 22px 16px 24px;
+        border-radius: 22px;
+        background: #ffffff;
+        box-shadow: 0 8px 24px rgba(31, 64, 120, 0.06);
+      }
+
+      .range-calendar__month-title {
+        margin: 0 0 18px;
+        font-size: 26px;
+        font-weight: 900;
+        color: #111827;
+      }
+
+      .range-calendar__grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        row-gap: 8px;
+      }
+
+      .range-calendar__day {
+        position: relative;
+        min-height: 58px;
+        border: 0;
+        background: transparent;
+        padding: 4px 0;
+        color: #111827;
+      }
+
+      .range-calendar__day-inner {
+        position: relative;
+        z-index: 2;
+        width: 48px;
+        min-height: 54px;
+        margin: 0 auto;
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .range-calendar__day-number {
+        font-size: 22px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .range-calendar__day-count {
+        margin-top: 5px;
+        font-size: 12px;
+        font-weight: 800;
+        color: #8792a5;
+        line-height: 1;
+      }
+
+      .range-calendar__day-count.is-good {
+        color: #2ca95f;
+      }
+
+      .range-calendar__day.is-in-range {
+        background: #eaf2ff;
+      }
+
+      .range-calendar__day.is-range-start .range-calendar__day-inner,
+      .range-calendar__day.is-range-end .range-calendar__day-inner {
+        background: #1677ff;
+        color: #ffffff;
+      }
+
+      .range-calendar__day.is-range-start .range-calendar__day-count,
+      .range-calendar__day.is-range-end .range-calendar__day-count {
+        color: #ffffff;
+      }
+
+      .range-calendar__day.is-range-start {
+        border-radius: 14px 0 0 14px;
+      }
+
+      .range-calendar__day.is-range-end {
+        border-radius: 0 14px 14px 0;
+      }
+
+      .range-calendar__day.is-single {
+        border-radius: 14px;
+      }
+
+      .range-calendar__footer {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        bottom: calc(14px + env(safe-area-inset-bottom));
+        background: linear-gradient(to top, #f5f7fb 70%, rgba(245, 247, 251, 0));
+        padding-top: 18px;
+      }
+
+      .range-calendar__submit {
+        width: 100%;
+        min-height: 58px;
+        border: 0;
+        border-radius: 18px;
+        background: #2daa4f;
+        color: #ffffff;
+        font-size: 20px;
+        font-weight: 900;
+        box-shadow: 0 10px 24px rgba(45, 170, 79, 0.28);
+      }
+
+      .range-calendar__submit:disabled {
+        background: #c9d2df;
+        box-shadow: none;
       }
 
       .appdosc__task-filter-reset {
@@ -1735,7 +1989,6 @@
         color: rgba(203, 213, 225, 0.92);
       }
 
-      :root[data-theme='dark'] .appdosc__task-filter-field input,
       :root[data-theme='dark'] .appdosc__task-filter-field select,
       :root[data-theme='dark'] .appdosc__task-filter-quick-btn,
       :root[data-theme='dark'] .appdosc__task-filter-reset {
@@ -1784,6 +2037,10 @@
         }
 
         .appdosc__task-filter-quick {
+          grid-column: 1 / -1;
+        }
+
+        .appdosc__task-filter-period {
           grid-column: 1 / -1;
         }
 
@@ -2087,14 +2344,16 @@
               </button>
             </div>
             <div class="appdosc__task-filter-panel" id="appdosc-task-filter-panel" data-task-filter-panel hidden>
-              <label class="appdosc__task-filter-field">
-                <span>Дата от</span>
-                <input type="date" data-filter-date-from />
-              </label>
-              <label class="appdosc__task-filter-field">
-                <span>Дата до</span>
-                <input type="date" data-filter-date-to />
-              </label>
+              <div class="appdosc__task-filter-period">
+                <button type="button" class="task-period-button" data-period-button>
+                  <span class="task-period-button__icon">📅</span>
+                  <span class="task-period-button__content">
+                    <span class="task-period-button__label">Период</span>
+                    <span class="task-period-button__value" data-period-button-value>Сегодня</span>
+                  </span>
+                  <span class="task-period-button__chevron">⌄</span>
+                </button>
+              </div>
               <div class="appdosc__task-filter-quick" data-filter-quick>
                 <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="today">Сегодня</button>
                 <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="week">Неделя</button>
@@ -2121,6 +2380,31 @@
               </div>
             </div>
             <div class="appdosc__table-meta tasks-updated" hidden>Обновление не выполнялось</div>
+          </div>
+          <div class="range-calendar" data-range-calendar hidden>
+            <div class="range-calendar__backdrop" data-range-calendar-backdrop></div>
+            <div class="range-calendar__panel" role="dialog" aria-modal="true">
+              <div class="range-calendar__handle"></div>
+              <div class="range-calendar__selected">
+                <button type="button" class="range-calendar__selected-card" data-clear-start>
+                  <span class="range-calendar__selected-label">Дата от</span>
+                  <span class="range-calendar__selected-value" data-start-label>Не выбрана</span>
+                  <span class="range-calendar__selected-clear">×</span>
+                </button>
+                <button type="button" class="range-calendar__selected-card" data-clear-end>
+                  <span class="range-calendar__selected-label">Дата до</span>
+                  <span class="range-calendar__selected-value" data-end-label>Не выбрана</span>
+                  <span class="range-calendar__selected-clear">×</span>
+                </button>
+              </div>
+              <div class="range-calendar__weekdays">
+                <span>ПН</span><span>ВТ</span><span>СР</span><span>ЧТ</span><span>ПТ</span><span>СБ</span><span>ВС</span>
+              </div>
+              <div class="range-calendar__months" data-calendar-months></div>
+              <div class="range-calendar__footer">
+                <button type="button" class="range-calendar__submit" data-calendar-submit disabled>Выберите даты</button>
+              </div>
+            </div>
           </div>
           <div class="appdosc__cards tasks-list" data-cards-container aria-live="polite">
             <div class="appdosc__cards-placeholder" data-placeholder>Задачи отсутствуют</div>

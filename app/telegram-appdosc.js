@@ -2067,6 +2067,7 @@ sharedState = state;
 
 const elements = {};
 let pdfViewerInstance = null;
+let rangeCalendarInstance = null;
 
 function ensureDirectorState() {
   if (!state.director || typeof state.director !== 'object') {
@@ -2777,8 +2778,16 @@ function initElements() {
   elements.overdue = document.querySelector('[data-overdue]');
   elements.taskFilterToggle = document.querySelector('[data-task-filter-toggle]');
   elements.taskFilterPanel = document.querySelector('[data-task-filter-panel]');
-  elements.filterDateFrom = document.querySelector('[data-filter-date-from]');
-  elements.filterDateTo = document.querySelector('[data-filter-date-to]');
+  elements.periodButton = document.querySelector('[data-period-button]');
+  elements.periodButtonValue = document.querySelector('[data-period-button-value]');
+  elements.rangeCalendarRoot = document.querySelector('[data-range-calendar]');
+  elements.rangeCalendarBackdrop = document.querySelector('[data-range-calendar-backdrop]');
+  elements.rangeCalendarMonths = document.querySelector('[data-calendar-months]');
+  elements.rangeCalendarStartLabel = document.querySelector('[data-start-label]');
+  elements.rangeCalendarEndLabel = document.querySelector('[data-end-label]');
+  elements.rangeCalendarClearStart = document.querySelector('[data-clear-start]');
+  elements.rangeCalendarClearEnd = document.querySelector('[data-clear-end]');
+  elements.rangeCalendarSubmit = document.querySelector('[data-calendar-submit]');
   elements.filterQuickButtons = Array.from(document.querySelectorAll('[data-filter-quick-btn]'));
   elements.filterResetButton = document.querySelector('[data-filter-reset]');
   elements.filterGroupType = document.querySelector('[data-filter-group-type]');
@@ -2802,6 +2811,7 @@ function initElements() {
   elements.viewerBrief = document.querySelector('[data-viewer-brief]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
   setTaskFilterPanelExpanded(false);
+  initCompactRangeCalendar();
 
   logIosStage('elements_initialized', {
     cardsContainer: Boolean(elements.cardsContainer),
@@ -3517,6 +3527,11 @@ function updateStateFromPayload(payload) {
 
   const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
   state.tasks = sanitizedTasks;
+  if (rangeCalendarInstance && typeof rangeCalendarInstance.setTaskCounts === 'function') {
+    const payloadTaskCounts = normalizeTaskCounts(payload?.taskDateStats?.items);
+    const fallbackTaskCounts = normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks));
+    rangeCalendarInstance.setTaskCounts(Object.keys(payloadTaskCounts).length ? payloadTaskCounts : fallbackTaskCounts);
+  }
   const activePreviewKeys = applyTaskAttachmentPreviewCache(state.tasks, previousPreviewEntries);
   cleanupTaskAttachmentPreviewCache(activePreviewKeys);
   updateVisibleTasks();
@@ -4016,6 +4031,92 @@ function getCompactGroupEntries(task, groupType) {
   return [];
 }
 
+function normalizeTaskCounts(items) {
+  const result = {};
+  if (!Array.isArray(items)) {
+    return result;
+  }
+  items.forEach((item) => {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+    const date = normalizeDateInputValue(item.date);
+    const count = Number(item.count);
+    if (!date || !Number.isFinite(count) || count <= 0) {
+      return;
+    }
+    result[date] = Math.round(count);
+  });
+  return result;
+}
+
+function buildTaskCountItemsFromTasks(tasks) {
+  if (!Array.isArray(tasks) || !tasks.length) {
+    return [];
+  }
+  const counts = new Map();
+  tasks.forEach((task) => {
+    const date = task && typeof task === 'object'
+      ? normalizeDateInputValue(formatDateInputValue(getTaskDateForCompactFilter(task)))
+      : '';
+    if (!date) {
+      return;
+    }
+    counts.set(date, (counts.get(date) || 0) + 1);
+  });
+  return Array.from(counts.entries()).map(([date, count]) => ({ date, count }));
+}
+
+function formatRangeCalendarButtonValue(startDate, endDate) {
+  if (!startDate) {
+    return 'Сегодня';
+  }
+  if (!endDate || startDate === endDate) {
+    return formatRangeCalendarLongDate(startDate);
+  }
+  return formatRangeCalendarRange(startDate, endDate);
+}
+
+function formatRangeCalendarShortDate(dateKey) {
+  const date = parseDate(dateKey);
+  if (!date) {
+    return 'Не выбрана';
+  }
+  return `${date.getDate()} ${getRangeCalendarMonthNameGenitive(date)}`;
+}
+
+function formatRangeCalendarLongDate(dateKey) {
+  return formatRangeCalendarShortDate(dateKey);
+}
+
+function formatRangeCalendarRange(start, end) {
+  const startObj = parseDate(start);
+  const endObj = parseDate(end);
+  if (!startObj || !endObj) {
+    return 'Сегодня';
+  }
+  const startDay = startObj.getDate();
+  const endDay = endObj.getDate();
+  const sameMonth = startObj.getMonth() === endObj.getMonth()
+    && startObj.getFullYear() === endObj.getFullYear();
+
+  if (sameMonth) {
+    return `${startDay}–${endDay} ${getRangeCalendarMonthNameGenitive(endObj)}`;
+  }
+
+  return `${startDay} ${getRangeCalendarMonthNameGenitive(startObj)} — ${endDay} ${getRangeCalendarMonthNameGenitive(endObj)}`;
+}
+
+function getRangeCalendarMonthName(date) {
+  const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+  return months[date.getMonth()];
+}
+
+function getRangeCalendarMonthNameGenitive(date) {
+  const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+  return months[date.getMonth()];
+}
+
 function syncCompactFilterGroupOptions() {
   if (!(elements.filterGroupValue instanceof HTMLSelectElement)) {
     return;
@@ -4127,13 +4228,250 @@ function resetCompactFilters() {
   state.compactFilters.groupValue = '';
 }
 
+function initRangeCalendar(options = {}) {
+  const root = elements.rangeCalendarRoot;
+  const openButton = elements.periodButton;
+  const openButtonValue = elements.periodButtonValue;
+  const backdrop = elements.rangeCalendarBackdrop;
+  const monthsContainer = elements.rangeCalendarMonths;
+  const startLabel = elements.rangeCalendarStartLabel;
+  const endLabel = elements.rangeCalendarEndLabel;
+  const clearStartButton = elements.rangeCalendarClearStart;
+  const clearEndButton = elements.rangeCalendarClearEnd;
+  const submitButton = elements.rangeCalendarSubmit;
+
+  if (!(root instanceof HTMLElement)
+    || !(openButton instanceof HTMLElement)
+    || !(monthsContainer instanceof HTMLElement)
+    || !(startLabel instanceof HTMLElement)
+    || !(endLabel instanceof HTMLElement)
+    || !(submitButton instanceof HTMLButtonElement)) {
+    return null;
+  }
+
+  let taskCounts = options.taskCounts && typeof options.taskCounts === 'object' ? { ...options.taskCounts } : {};
+  const onChange = typeof options.onChange === 'function' ? options.onChange : () => {};
+  const monthsToRender = Number.isFinite(Number(options.monthsToRender))
+    ? Math.max(1, Math.round(Number(options.monthsToRender)))
+    : 4;
+  let startDate = normalizeDateInputValue(options.startDate);
+  let endDate = normalizeDateInputValue(options.endDate);
+
+  function open() {
+    root.hidden = false;
+    renderMonths();
+    updateSelection();
+  }
+
+  function close() {
+    root.hidden = true;
+  }
+
+  function submit() {
+    if (!startDate) {
+      return;
+    }
+    if (!endDate) {
+      endDate = startDate;
+    }
+    if (openButtonValue instanceof HTMLElement) {
+      openButtonValue.textContent = formatRangeCalendarButtonValue(startDate, endDate);
+    }
+    close();
+    onChange({ startDate, endDate });
+  }
+
+  function renderMonths() {
+    monthsContainer.innerHTML = '';
+    const base = options.baseDate ? parseDate(options.baseDate) : new Date();
+    const safeBase = base || new Date();
+    const firstMonth = new Date(safeBase.getFullYear(), safeBase.getMonth(), 1);
+    for (let i = 0; i < monthsToRender; i += 1) {
+      const monthDate = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + i, 1);
+      monthsContainer.appendChild(renderMonth(monthDate));
+    }
+  }
+
+  function renderMonth(monthDate) {
+    const month = document.createElement('section');
+    month.className = 'range-calendar__month';
+
+    const title = document.createElement('h3');
+    title.className = 'range-calendar__month-title';
+    title.textContent = getRangeCalendarMonthName(monthDate);
+
+    const grid = document.createElement('div');
+    grid.className = 'range-calendar__grid';
+
+    const year = monthDate.getFullYear();
+    const monthIndex = monthDate.getMonth();
+    const firstDay = new Date(year, monthIndex, 1);
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const offset = getMondayOffset(firstDay);
+
+    for (let i = 0; i < offset; i += 1) {
+      grid.appendChild(document.createElement('div'));
+    }
+
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = new Date(year, monthIndex, day);
+      const dateKey = formatDateInputValue(date);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'range-calendar__day';
+      button.dataset.date = dateKey;
+
+      const inner = document.createElement('span');
+      inner.className = 'range-calendar__day-inner';
+      const number = document.createElement('span');
+      number.className = 'range-calendar__day-number';
+      number.textContent = String(day);
+      inner.appendChild(number);
+
+      const count = Number(taskCounts[dateKey] || 0);
+      if (count > 0) {
+        const countEl = document.createElement('span');
+        countEl.className = 'range-calendar__day-count';
+        countEl.textContent = String(count);
+        if (count <= 5) {
+          countEl.classList.add('is-good');
+        }
+        inner.appendChild(countEl);
+      }
+      button.appendChild(inner);
+      button.addEventListener('click', () => handleDateClick(dateKey));
+      grid.appendChild(button);
+    }
+
+    month.appendChild(title);
+    month.appendChild(grid);
+    return month;
+  }
+
+  function handleDateClick(dateKey) {
+    if (!startDate || (startDate && endDate)) {
+      startDate = dateKey;
+      endDate = '';
+    } else {
+      endDate = dateKey;
+      if (compareDateKeys(endDate, startDate) < 0) {
+        const tmp = startDate;
+        startDate = endDate;
+        endDate = tmp;
+      }
+    }
+    updateSelection();
+  }
+
+  function getSubmitText() {
+    if (!startDate) {
+      return 'Выберите даты';
+    }
+    if (!endDate || startDate === endDate) {
+      return `Выбрать ${formatRangeCalendarLongDate(startDate)}`;
+    }
+    return `Выбрать ${formatRangeCalendarRange(startDate, endDate)}`;
+  }
+
+  function updateSelection() {
+    startLabel.textContent = startDate ? formatRangeCalendarShortDate(startDate) : 'Не выбрана';
+    endLabel.textContent = endDate ? formatRangeCalendarShortDate(endDate) : 'Не выбрана';
+    submitButton.disabled = !startDate;
+    submitButton.textContent = getSubmitText();
+    const dayButtons = root.querySelectorAll('.range-calendar__day');
+    dayButtons.forEach((button) => {
+      const dateKey = button.dataset.date || '';
+      button.classList.remove('is-in-range', 'is-range-start', 'is-range-end', 'is-single');
+      if (!startDate) {
+        return;
+      }
+      const effectiveEnd = endDate || startDate;
+      if (dateKey === startDate && dateKey === effectiveEnd) {
+        button.classList.add('is-range-start', 'is-range-end', 'is-single');
+        return;
+      }
+      if (dateKey === startDate) {
+        button.classList.add('is-range-start');
+      }
+      if (dateKey === effectiveEnd) {
+        button.classList.add('is-range-end');
+      }
+      if (compareDateKeys(dateKey, startDate) > 0 && compareDateKeys(dateKey, effectiveEnd) < 0) {
+        button.classList.add('is-in-range');
+      }
+    });
+  }
+
+  openButton.addEventListener('click', open);
+  if (backdrop instanceof HTMLElement) {
+    backdrop.addEventListener('click', close);
+  }
+  submitButton.addEventListener('click', submit);
+  if (clearStartButton instanceof HTMLElement) {
+    clearStartButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      startDate = '';
+      endDate = '';
+      updateSelection();
+    });
+  }
+  if (clearEndButton instanceof HTMLElement) {
+    clearEndButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      endDate = '';
+      updateSelection();
+    });
+  }
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !root.hidden) {
+      close();
+    }
+  });
+
+  renderMonths();
+  updateSelection();
+
+  return {
+    open,
+    close,
+    getValue() {
+      return { startDate: startDate || '', endDate: endDate || '' };
+    },
+    setValue(nextStartDate, nextEndDate) {
+      startDate = normalizeDateInputValue(nextStartDate);
+      endDate = normalizeDateInputValue(nextEndDate || nextStartDate);
+      if (openButtonValue instanceof HTMLElement) {
+        openButtonValue.textContent = formatRangeCalendarButtonValue(startDate, endDate);
+      }
+      updateSelection();
+    },
+    clear() {
+      startDate = '';
+      endDate = '';
+      updateSelection();
+      if (openButtonValue instanceof HTMLElement) {
+        openButtonValue.textContent = 'Сегодня';
+      }
+    },
+    setTaskCounts(nextTaskCounts) {
+      taskCounts = nextTaskCounts && typeof nextTaskCounts === 'object' ? { ...nextTaskCounts } : {};
+      renderMonths();
+      updateSelection();
+    },
+  };
+}
+
 function syncCompactFilterPanelState() {
   setTaskFilterPanelExpanded(state.compactFilters.expanded);
-  if (elements.filterDateFrom instanceof HTMLInputElement) {
-    elements.filterDateFrom.value = normalizeDateInputValue(state.compactFilters.dateFrom);
-  }
-  if (elements.filterDateTo instanceof HTMLInputElement) {
-    elements.filterDateTo.value = normalizeDateInputValue(state.compactFilters.dateTo);
+  if (rangeCalendarInstance && typeof rangeCalendarInstance.setValue === 'function') {
+    const startDate = normalizeDateInputValue(state.compactFilters.dateFrom);
+    const endDate = normalizeDateInputValue(state.compactFilters.dateTo);
+    rangeCalendarInstance.setValue(startDate, endDate);
+  } else if (elements.periodButtonValue instanceof HTMLElement) {
+    elements.periodButtonValue.textContent = formatRangeCalendarButtonValue(
+      normalizeDateInputValue(state.compactFilters.dateFrom),
+      normalizeDateInputValue(state.compactFilters.dateTo),
+    );
   }
   if (elements.filterGroupType instanceof HTMLSelectElement) {
     elements.filterGroupType.value = normalizeValue(state.compactFilters.groupType);
@@ -4150,6 +4488,22 @@ function syncCompactFilterPanelState() {
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
   }
+}
+
+function initCompactRangeCalendar() {
+  rangeCalendarInstance = initRangeCalendar({
+    monthsToRender: 4,
+    startDate: state.compactFilters.dateFrom,
+    endDate: state.compactFilters.dateTo,
+    taskCounts: normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks)),
+    onChange({ startDate, endDate }) {
+      state.compactFilters.dateFrom = normalizeDateInputValue(startDate);
+      state.compactFilters.dateTo = normalizeDateInputValue(endDate);
+      state.compactFilters.quickPreset = '';
+      updateVisibleTasks();
+      safeRender('compact_filter_period');
+    },
+  });
 }
 
 function ensureExpandedCardSet() {
@@ -16179,22 +16533,6 @@ function attachEvents() {
       setTaskFilterPanelExpanded(!state.compactFilters.expanded);
     });
   }
-  if (elements.filterDateFrom) {
-    elements.filterDateFrom.addEventListener('change', (event) => {
-      state.compactFilters.dateFrom = normalizeDateInputValue(event.target.value);
-      state.compactFilters.quickPreset = '';
-      updateVisibleTasks();
-      safeRender('compact_filter_date_from');
-    });
-  }
-  if (elements.filterDateTo) {
-    elements.filterDateTo.addEventListener('change', (event) => {
-      state.compactFilters.dateTo = normalizeDateInputValue(event.target.value);
-      state.compactFilters.quickPreset = '';
-      updateVisibleTasks();
-      safeRender('compact_filter_date_to');
-    });
-  }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
       if (!(button instanceof HTMLElement)) {
@@ -16352,6 +16690,25 @@ function normalizeDateInputValue(value) {
   }
 
   return formatDateInputValue(trimmed);
+}
+
+function compareDateKeys(a, b) {
+  const dateA = parseDate(a);
+  const dateB = parseDate(b);
+  if (!dateA || !dateB) {
+    return 0;
+  }
+  dateA.setHours(0, 0, 0, 0);
+  dateB.setHours(0, 0, 0, 0);
+  return dateA.getTime() - dateB.getTime();
+}
+
+function getMondayOffset(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return 0;
+  }
+  const day = date.getDay();
+  return day === 0 ? 6 : day - 1;
 }
 
 function parseDate(value) {
