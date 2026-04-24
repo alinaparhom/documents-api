@@ -2019,6 +2019,9 @@ const state = {
     quickPreset: '',
     groupType: '',
     groupValue: '',
+    extraGroupEnabled: false,
+    extraGroupType: '',
+    extraGroupValue: '',
   },
   access: {
     responsibles: {},
@@ -2794,6 +2797,11 @@ function initElements() {
   elements.filterResetButton = document.querySelector('[data-filter-reset]');
   elements.filterGroupType = document.querySelector('[data-filter-group-type]');
   elements.filterGroupValue = document.querySelector('[data-filter-group-value]');
+  elements.filterExtraGroupRow = document.querySelector('[data-filter-extra-group-row]');
+  elements.filterGroupTypeExtra = document.querySelector('[data-filter-group-type-extra]');
+  elements.filterGroupValueExtra = document.querySelector('[data-filter-group-value-extra]');
+  elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
+  elements.filterGroupRemoveButton = document.querySelector('[data-filter-group-remove]');
   elements.status = document.querySelector('[data-status]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
@@ -4120,36 +4128,51 @@ function getRangeCalendarMonthNameGenitive(date) {
 }
 
 function syncCompactFilterGroupOptions() {
-  if (!(elements.filterGroupValue instanceof HTMLSelectElement)) {
-    return;
-  }
-  const type = normalizeValue(state.compactFilters.groupType);
-  const select = elements.filterGroupValue;
-  select.innerHTML = '';
-  if (!type) {
-    select.disabled = true;
-    select.appendChild(new Option('Сначала выберите группировку', ''));
-    state.compactFilters.groupValue = '';
-    return;
+  function syncSingleGroup(type, value, select, setStateValue) {
+    if (!(select instanceof HTMLSelectElement)) {
+      return '';
+    }
+    const normalizedType = normalizeValue(type);
+    select.innerHTML = '';
+    if (!normalizedType) {
+      select.disabled = true;
+      select.appendChild(new Option('Сначала выберите группировку', ''));
+      setStateValue('');
+      return '';
+    }
+
+    const values = new Map();
+    state.tasks.forEach((task) => {
+      getCompactGroupEntries(task, normalizedType).forEach((entry) => {
+        if (entry && entry.value && !values.has(entry.value)) {
+          values.set(entry.value, entry.label || entry.value);
+        }
+      });
+    });
+    const options = Array.from(values.entries())
+      .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'ru'));
+    select.disabled = options.length === 0;
+    select.appendChild(new Option(options.length ? 'Все' : 'Нет данных', ''));
+    options.forEach(([optionValue, label]) => select.appendChild(new Option(label, optionValue)));
+    const normalizedValue = normalizeValue(value);
+    const nextValue = values.has(normalizedValue) ? normalizedValue : '';
+    setStateValue(nextValue);
+    select.value = nextValue;
+    return nextValue;
   }
 
-  const values = new Map();
-  state.tasks.forEach((task) => {
-    getCompactGroupEntries(task, type).forEach((entry) => {
-      if (entry && entry.value && !values.has(entry.value)) {
-        values.set(entry.value, entry.label || entry.value);
-      }
-    });
-  });
-  const options = Array.from(values.entries())
-    .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'ru'));
-  select.disabled = options.length === 0;
-  select.appendChild(new Option(options.length ? 'Все' : 'Нет данных', ''));
-  options.forEach(([value, label]) => select.appendChild(new Option(label, value)));
-  if (!values.has(state.compactFilters.groupValue)) {
-    state.compactFilters.groupValue = '';
-  }
-  select.value = state.compactFilters.groupValue;
+  syncSingleGroup(
+    state.compactFilters.groupType,
+    state.compactFilters.groupValue,
+    elements.filterGroupValue,
+    (next) => { state.compactFilters.groupValue = next; },
+  );
+  syncSingleGroup(
+    state.compactFilters.extraGroupType,
+    state.compactFilters.extraGroupValue,
+    elements.filterGroupValueExtra,
+    (next) => { state.compactFilters.extraGroupValue = next; },
+  );
 }
 
 function applyCompactFilters(visibleItems) {
@@ -4161,6 +4184,9 @@ function applyCompactFilters(visibleItems) {
   const dateTo = normalizeDateInputValue(state.compactFilters.dateTo);
   const groupType = normalizeValue(state.compactFilters.groupType);
   const groupValue = normalizeValue(state.compactFilters.groupValue);
+  const extraEnabled = state.compactFilters.extraGroupEnabled === true;
+  const extraGroupType = extraEnabled ? normalizeValue(state.compactFilters.extraGroupType) : '';
+  const extraGroupValue = extraEnabled ? normalizeValue(state.compactFilters.extraGroupValue) : '';
   const parsedFrom = dateFrom ? parseDate(dateFrom) : null;
   const parsedTo = dateTo ? parseDate(dateTo) : null;
   if (parsedFrom) {
@@ -4191,7 +4217,15 @@ function applyCompactFilters(visibleItems) {
     }
     if (groupType && groupValue) {
       const values = getCompactGroupEntries(task, groupType).map((entry) => entry.value);
-      return values.includes(groupValue);
+      if (!values.includes(groupValue)) {
+        return false;
+      }
+    }
+    if (extraGroupType && extraGroupValue) {
+      const values = getCompactGroupEntries(task, extraGroupType).map((entry) => entry.value);
+      if (!values.includes(extraGroupValue)) {
+        return false;
+      }
     }
     return true;
   });
@@ -4228,6 +4262,9 @@ function resetCompactFilters() {
   state.compactFilters.quickPreset = '';
   state.compactFilters.groupType = '';
   state.compactFilters.groupValue = '';
+  state.compactFilters.extraGroupEnabled = false;
+  state.compactFilters.extraGroupType = '';
+  state.compactFilters.extraGroupValue = '';
 }
 
 function initRangeCalendar(options = {}) {
@@ -4536,6 +4573,15 @@ function syncCompactFilterPanelState() {
   if (elements.filterGroupType instanceof HTMLSelectElement) {
     elements.filterGroupType.value = normalizeValue(state.compactFilters.groupType);
   }
+  if (elements.filterExtraGroupRow instanceof HTMLElement) {
+    elements.filterExtraGroupRow.hidden = state.compactFilters.extraGroupEnabled !== true;
+  }
+  if (elements.filterGroupAddButton instanceof HTMLElement) {
+    elements.filterGroupAddButton.hidden = state.compactFilters.extraGroupEnabled === true;
+  }
+  if (elements.filterGroupTypeExtra instanceof HTMLSelectElement) {
+    elements.filterGroupTypeExtra.value = normalizeValue(state.compactFilters.extraGroupType);
+  }
   syncCompactFilterGroupOptions();
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
@@ -4551,7 +4597,10 @@ function syncCompactFilterPanelState() {
 }
 
 function initCompactRangeCalendar() {
+  const now = new Date();
+  const yearBase = `${now.getFullYear()}-01-01`;
   rangeCalendarInstance = initRangeCalendar({
+    baseDate: yearBase,
     monthsToRender: 12,
     startDate: state.compactFilters.dateFrom,
     endDate: state.compactFilters.dateTo,
@@ -16626,6 +16675,38 @@ function attachEvents() {
       state.compactFilters.groupValue = normalizeValue(event.target.value);
       updateVisibleTasks();
       safeRender('compact_filter_group_value');
+    });
+  }
+  if (elements.filterGroupAddButton) {
+    elements.filterGroupAddButton.addEventListener('click', () => {
+      state.compactFilters.extraGroupEnabled = true;
+      updateVisibleTasks();
+      safeRender('compact_filter_group_add');
+    });
+  }
+  if (elements.filterGroupRemoveButton) {
+    elements.filterGroupRemoveButton.addEventListener('click', () => {
+      state.compactFilters.extraGroupEnabled = false;
+      state.compactFilters.extraGroupType = '';
+      state.compactFilters.extraGroupValue = '';
+      updateVisibleTasks();
+      safeRender('compact_filter_group_remove');
+    });
+  }
+  if (elements.filterGroupTypeExtra) {
+    elements.filterGroupTypeExtra.addEventListener('change', (event) => {
+      state.compactFilters.extraGroupType = normalizeValue(event.target.value);
+      state.compactFilters.extraGroupValue = '';
+      syncCompactFilterGroupOptions();
+      updateVisibleTasks();
+      safeRender('compact_filter_group_type_extra');
+    });
+  }
+  if (elements.filterGroupValueExtra) {
+    elements.filterGroupValueExtra.addEventListener('change', (event) => {
+      state.compactFilters.extraGroupValue = normalizeValue(event.target.value);
+      updateVisibleTasks();
+      safeRender('compact_filter_group_value_extra');
     });
   }
   if (elements.filterResetButton) {

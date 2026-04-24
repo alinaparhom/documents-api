@@ -1712,20 +1712,20 @@
 
       .task-period-button {
         width: 100%;
-        min-height: 72px;
-        padding: 14px 16px;
+        min-height: 40px;
+        padding: 8px 10px;
         border: 1px solid #dbe4f3;
-        border-radius: 20px;
+        border-radius: 12px;
         background: #ffffff;
-        box-shadow: 0 8px 24px rgba(31, 64, 120, 0.08);
+        box-shadow: 0 4px 14px rgba(31, 64, 120, 0.08);
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 8px;
         text-align: left;
       }
 
       .task-period-button__icon {
-        font-size: 22px;
+        font-size: 14px;
       }
 
       .task-period-button__content {
@@ -1735,19 +1735,19 @@
       }
 
       .task-period-button__label {
-        font-size: 13px;
+        font-size: 10px;
         color: #75839b;
       }
 
       .task-period-button__value {
-        margin-top: 4px;
-        font-size: 18px;
+        margin-top: 1px;
+        font-size: 11px;
         font-weight: 700;
         color: #101828;
       }
 
       .task-period-button__chevron {
-        font-size: 22px;
+        font-size: 14px;
         color: #74839a;
       }
 
@@ -1789,26 +1789,28 @@
       .range-calendar__close {
         position: absolute;
         right: 14px;
-        top: calc(10px + env(safe-area-inset-top));
-        width: 40px;
-        height: 40px;
+        top: calc(2px + env(safe-area-inset-top));
+        width: 32px;
+        height: 32px;
         border: 0;
-        border-radius: 12px;
+        border-radius: 10px;
         background: rgba(255, 255, 255, 0.9);
         color: #5f6f87;
-        font-size: 28px;
+        font-size: 22px;
         line-height: 1;
+        z-index: 5;
       }
 
       .range-calendar__selected {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 12px;
+        padding-right: 40px;
       }
 
       .range-calendar__selected-card {
-        min-height: 72px;
-        padding: 12px 16px;
+        min-height: 54px;
+        padding: 8px 10px;
         border: 0;
         border-radius: 16px;
         background: #ffffff;
@@ -1819,34 +1821,34 @@
 
       .range-calendar__selected-label {
         display: block;
-        font-size: 13px;
+        font-size: 10px;
         font-weight: 700;
         color: #8a94a6;
       }
 
       .range-calendar__selected-value {
         display: block;
-        margin-top: 5px;
-        font-size: 20px;
+        margin-top: 2px;
+        font-size: 12px;
         font-weight: 800;
         color: #111827;
       }
 
       .range-calendar__selected-clear {
         position: absolute;
-        right: 14px;
-        top: 20px;
+        right: 10px;
+        top: 14px;
         color: #8a94a6;
-        font-size: 22px;
+        font-size: 16px;
       }
 
       .range-calendar__weekdays {
-        margin-top: 22px;
+        margin-top: 12px;
         padding: 0 4px;
         display: grid;
         grid-template-columns: repeat(7, 1fr);
         color: #7b8494;
-        font-size: 14px;
+        font-size: 10px;
         font-weight: 800;
         text-align: center;
         position: sticky;
@@ -1876,7 +1878,7 @@
 
       .range-calendar__month-title {
         margin: 0 0 18px;
-        font-size: 26px;
+        font-size: 14px;
         font-weight: 900;
         color: #111827;
       }
@@ -1889,7 +1891,7 @@
 
       .range-calendar__day {
         position: relative;
-        min-height: 58px;
+        min-height: 42px;
         border: 0;
         background: transparent;
         padding: 4px 0;
@@ -1899,8 +1901,8 @@
       .range-calendar__day-inner {
         position: relative;
         z-index: 2;
-        width: 48px;
-        min-height: 54px;
+        width: 34px;
+        min-height: 38px;
         margin: 0 auto;
         border-radius: 12px;
         display: flex;
@@ -1910,14 +1912,14 @@
       }
 
       .range-calendar__day-number {
-        font-size: 22px;
+        font-size: 11px;
         font-weight: 900;
         line-height: 1;
       }
 
       .range-calendar__day-count {
-        margin-top: 5px;
-        font-size: 12px;
+        margin-top: 3px;
+        font-size: 8px;
         font-weight: 800;
         color: #8792a5;
         line-height: 1;
@@ -1964,7 +1966,7 @@
 
       .range-calendar__total {
         margin: 0 0 10px;
-        font-size: 14px;
+        font-size: 11px;
         font-weight: 700;
         color: #5f6f87;
         text-align: center;
@@ -1976,14 +1978,38 @@
 
       .range-calendar__submit {
         width: 100%;
-        min-height: 58px;
+        min-height: 44px;
         border: 0;
-        border-radius: 18px;
+        border-radius: 14px;
         background: #2daa4f;
         color: #ffffff;
-        font-size: 20px;
+        font-size: 13px;
         font-weight: 900;
-        box-shadow: 0 10px 24px rgba(45, 170, 79, 0.28);
+        box-shadow: 0 6px 14px rgba(45, 170, 79, 0.24);
+      }
+
+      .appdosc__task-filter-groups {
+        display: grid;
+        gap: 8px;
+      }
+
+      .appdosc__task-filter-group-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 8px;
+        align-items: end;
+      }
+
+      .appdosc__task-filter-group-add,
+      .appdosc__task-filter-group-remove {
+        height: 34px;
+        min-width: 34px;
+        border: 1px solid rgba(148, 163, 184, 0.34);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--appdosc-text-primary);
+        font-size: 18px;
+        font-weight: 700;
       }
 
       .range-calendar__submit:disabled {
@@ -2027,7 +2053,9 @@
 
       :root[data-theme='dark'] .appdosc__task-filter-field select,
       :root[data-theme='dark'] .appdosc__task-filter-quick-btn,
-      :root[data-theme='dark'] .appdosc__task-filter-reset {
+      :root[data-theme='dark'] .appdosc__task-filter-reset,
+      :root[data-theme='dark'] .appdosc__task-filter-group-add,
+      :root[data-theme='dark'] .appdosc__task-filter-group-remove {
         background: rgba(15, 23, 42, 0.74);
         border-color: rgba(148, 163, 184, 0.46);
         color: #e2e8f0;
@@ -2396,21 +2424,44 @@
                 <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="month">Месяц</button>
                 <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
               </div>
-              <label class="appdosc__task-filter-field">
-                <span>Группировка</span>
-                <select data-filter-group-type>
-                  <option value="">Без группировки</option>
-                  <option value="correspondent">Корреспондент</option>
-                  <option value="responsible">Ответственный</option>
-                  <option value="subordinate">Подчинённый</option>
-                </select>
-              </label>
-              <label class="appdosc__task-filter-field">
-                <span>Значение</span>
-                <select data-filter-group-value disabled>
-                  <option value="">Сначала выберите группировку</option>
-                </select>
-              </label>
+              <div class="appdosc__task-filter-groups">
+                <div class="appdosc__task-filter-group-row">
+                  <label class="appdosc__task-filter-field">
+                    <span>Группировка</span>
+                    <select data-filter-group-type>
+                      <option value="">Без группировки</option>
+                      <option value="correspondent">Корреспондент</option>
+                      <option value="responsible">Ответственный</option>
+                      <option value="subordinate">Подчинённый</option>
+                    </select>
+                  </label>
+                  <label class="appdosc__task-filter-field">
+                    <span>Значение</span>
+                    <select data-filter-group-value disabled>
+                      <option value="">Сначала выберите группировку</option>
+                    </select>
+                  </label>
+                  <button type="button" class="appdosc__task-filter-group-add" data-filter-group-add title="Добавить группировку">+</button>
+                </div>
+                <div class="appdosc__task-filter-group-row" data-filter-extra-group-row hidden>
+                  <label class="appdosc__task-filter-field">
+                    <span>Группировка 2</span>
+                    <select data-filter-group-type-extra>
+                      <option value="">Без группировки</option>
+                      <option value="correspondent">Корреспондент</option>
+                      <option value="responsible">Ответственный</option>
+                      <option value="subordinate">Подчинённый</option>
+                    </select>
+                  </label>
+                  <label class="appdosc__task-filter-field">
+                    <span>Значение 2</span>
+                    <select data-filter-group-value-extra disabled>
+                      <option value="">Сначала выберите группировку</option>
+                    </select>
+                  </label>
+                  <button type="button" class="appdosc__task-filter-group-remove" data-filter-group-remove title="Удалить группировку">−</button>
+                </div>
+              </div>
               <div class="appdosc__task-filter-actions">
                 <button type="button" class="appdosc__task-filter-reset" data-filter-reset>Сброс</button>
               </div>
