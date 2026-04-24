@@ -18185,6 +18185,7 @@ function setupAssignmentControls(card, task) {
   currentIdentifiers.forEach(registerAssignedKey);
 
   const updateSearchMeta = (query, visibleCount, totalCount) => {
+    const showScrollHint = visibleCount > 5;
     if (visibleCount <= 0) {
       searchMeta.textContent = query
         ? 'Совпадений не найдено. Попробуйте изменить запрос.'
@@ -18193,11 +18194,15 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!query) {
-      searchMeta.textContent = `Все ответственные: ${visibleCount}`;
+      searchMeta.textContent = showScrollHint
+        ? `Все ответственные: ${visibleCount} • Листайте вниз`
+        : `Все ответственные: ${visibleCount}`;
       return;
     }
 
-    searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
+    searchMeta.textContent = showScrollHint
+      ? `Найдено: ${visibleCount} из ${totalCount} • Листайте список`
+      : `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
   let visibleAssigneeOptions = [];
@@ -19095,9 +19100,9 @@ function setupAssignmentControls(card, task) {
   });
 
   document.addEventListener('pointerdown', (event) => {
-    if (!container.contains(event.target)) {
-      hideOptionsList();
-    }
+    const target = event.target;
+    if (comboInput.contains(target) || optionsList.contains(target)) return;
+    hideOptionsList();
   }, true);
 
   container.hidden = false;
@@ -19285,6 +19290,7 @@ function setupSubordinateControls(card, task) {
   };
 
   const updateSearchMeta = (query, visibleCount, totalCount) => {
+    const showScrollHint = visibleCount > 5;
     if (visibleCount <= 0) {
       searchMeta.textContent = query
         ? 'Совпадений не найдено. Уточните ФИО.'
@@ -19293,11 +19299,15 @@ function setupSubordinateControls(card, task) {
     }
 
     if (!query) {
-      searchMeta.textContent = `Показаны все: ${visibleCount}`;
+      searchMeta.textContent = showScrollHint
+        ? `Показаны все: ${visibleCount} • Листайте вниз`
+        : `Показаны все: ${visibleCount}`;
       return;
     }
 
-    searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
+    searchMeta.textContent = showScrollHint
+      ? `Найдено: ${visibleCount} из ${totalCount} • Листайте список`
+      : `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
   let visibleSubordinateOptions = [];
@@ -20043,6 +20053,11 @@ function setupSubordinateControls(card, task) {
     relockSubordinateSearch();
     setTimeout(hideOptionsList, 120);
   });
+  document.addEventListener('pointerdown', (event) => {
+    const target = event.target;
+    if (searchInput.contains(target) || optionsList.contains(target)) return;
+    hideOptionsList();
+  }, true);
 
   container.hidden = false;
 
