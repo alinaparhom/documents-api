@@ -19306,13 +19306,11 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  let waitSecondTapForKeyboard = false;
   let skipUnlockOnCurrentClick = false;
   const unlockComboSearch = () => {
     comboInput.readOnly = false;
     comboInput.dataset.searchUnlocked = 'true';
     comboInput.setAttribute('inputmode', 'search');
-    waitSecondTapForKeyboard = false;
     showOptionsList();
     comboInput.focus({ preventScroll: true });
     requestAnimationFrame(() => {
@@ -19328,7 +19326,6 @@ function setupAssignmentControls(card, task) {
     comboInput.readOnly = true;
     comboInput.dataset.searchUnlocked = 'false';
     comboInput.setAttribute('inputmode', 'none');
-    waitSecondTapForKeyboard = false;
     skipUnlockOnCurrentClick = false;
     setKeyboardButtonActive(false);
   };
@@ -19346,11 +19343,10 @@ function setupAssignmentControls(card, task) {
       if (!isComboExpanded()) {
         event.preventDefault();
         showOptionsList();
-        waitSecondTapForKeyboard = true;
         skipUnlockOnCurrentClick = true;
         return;
       }
-      waitSecondTapForKeyboard = true;
+      skipUnlockOnCurrentClick = false;
       return;
     }
     showOptionsList();
@@ -19366,13 +19362,6 @@ function setupAssignmentControls(card, task) {
         skipUnlockOnCurrentClick = false;
         return;
       }
-      if (!isComboExpanded()) {
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        return;
-      }
-    }
-    if (waitSecondTapForKeyboard && isComboExpanded()) {
       unlockComboSearch();
       return;
     }
@@ -20336,13 +20325,11 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  let waitSecondTapForKeyboard = false;
   let skipUnlockOnCurrentClick = false;
   const unlockSubordinateSearch = () => {
     searchInput.readOnly = false;
     searchInput.dataset.searchUnlocked = 'true';
     searchInput.setAttribute('inputmode', 'search');
-    waitSecondTapForKeyboard = false;
     showOptionsList();
     searchInput.focus({ preventScroll: true });
     requestAnimationFrame(() => {
@@ -20358,7 +20345,6 @@ function setupSubordinateControls(card, task) {
     searchInput.readOnly = true;
     searchInput.dataset.searchUnlocked = 'false';
     searchInput.setAttribute('inputmode', 'none');
-    waitSecondTapForKeyboard = false;
     skipUnlockOnCurrentClick = false;
     setKeyboardButtonActive(false);
   };
@@ -20376,11 +20362,10 @@ function setupSubordinateControls(card, task) {
       if (!isComboExpanded()) {
         event.preventDefault();
         showOptionsList();
-        waitSecondTapForKeyboard = true;
         skipUnlockOnCurrentClick = true;
         return;
       }
-      waitSecondTapForKeyboard = true;
+      skipUnlockOnCurrentClick = false;
       return;
     }
     showOptionsList();
@@ -20396,13 +20381,6 @@ function setupSubordinateControls(card, task) {
         skipUnlockOnCurrentClick = false;
         return;
       }
-      if (!isComboExpanded()) {
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        return;
-      }
-    }
-    if (waitSecondTapForKeyboard && isComboExpanded()) {
       unlockSubordinateSearch();
       return;
     }
