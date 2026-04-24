@@ -18088,10 +18088,13 @@ function setupAssignmentControls(card, task) {
   optionsList.style.left = '0';
   optionsList.style.right = '0';
   optionsList.style.top = 'calc(100% + 8px)';
-  optionsList.style.zIndex = '50';
+  optionsList.style.zIndex = '9999';
   optionsList.style.marginTop = '0';
   optionsList.style.maxHeight = '410px';
   optionsList.style.overflowY = 'auto';
+  optionsList.style.overflowX = 'hidden';
+  optionsList.style.overscrollBehavior = 'contain';
+  optionsList.style.touchAction = 'pan-y';
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
   optionsList.style.background = comboPalette.listBg;
@@ -18202,15 +18205,36 @@ function setupAssignmentControls(card, task) {
     comboInput.dataset.expanded = expanded ? 'true' : 'false';
   };
   const isComboExpanded = () => comboInput.dataset.expanded === 'true';
+  const positionOptionsList = () => {
+    if (optionsList.hidden) {
+      return;
+    }
+    const rect = comboInput.getBoundingClientRect();
+    const viewportHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+    const spaceBelow = Math.max(120, viewportHeight - rect.bottom - 10);
+    const spaceAbove = Math.max(120, rect.top - 10);
+    const openUpward = spaceBelow < 180 && spaceAbove > spaceBelow;
+    optionsList.style.position = 'fixed';
+    optionsList.style.left = `${Math.max(8, rect.left)}px`;
+    optionsList.style.width = `${Math.max(220, rect.width)}px`;
+    optionsList.style.right = 'auto';
+    optionsList.style.top = openUpward ? 'auto' : `${Math.max(8, rect.bottom + 6)}px`;
+    optionsList.style.bottom = openUpward ? `${Math.max(8, viewportHeight - rect.top + 6)}px` : 'auto';
+    optionsList.style.maxHeight = `${Math.min(320, openUpward ? spaceAbove : spaceBelow)}px`;
+  };
   const hideOptionsList = () => {
     optionsList.hidden = true;
     setComboExpanded(false);
+    optionsList.style.bottom = 'auto';
   };
   const showOptionsList = () => {
     populateComboOptions();
     const hasOptions = visibleAssigneeOptions.length > 0;
     optionsList.hidden = !hasOptions;
     setComboExpanded(hasOptions);
+    if (hasOptions) {
+      positionOptionsList();
+    }
     return hasOptions;
   };
 
@@ -18275,6 +18299,9 @@ function setupAssignmentControls(card, task) {
 
     optionsList.hidden = visibleCount === 0;
     setComboExpanded(visibleCount > 0);
+    if (visibleCount > 0) {
+      positionOptionsList();
+    }
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -19181,10 +19208,13 @@ function setupSubordinateControls(card, task) {
   optionsList.style.left = '0';
   optionsList.style.right = '0';
   optionsList.style.top = 'calc(100% + 8px)';
-  optionsList.style.zIndex = '50';
+  optionsList.style.zIndex = '9999';
   optionsList.style.marginTop = '0';
   optionsList.style.maxHeight = '410px';
   optionsList.style.overflowY = 'auto';
+  optionsList.style.overflowX = 'hidden';
+  optionsList.style.overscrollBehavior = 'contain';
+  optionsList.style.touchAction = 'pan-y';
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
   optionsList.style.background = comboPalette.listBg;
@@ -19298,15 +19328,36 @@ function setupSubordinateControls(card, task) {
     searchInput.dataset.expanded = expanded ? 'true' : 'false';
   };
   const isComboExpanded = () => searchInput.dataset.expanded === 'true';
+  const positionOptionsList = () => {
+    if (optionsList.hidden) {
+      return;
+    }
+    const rect = searchInput.getBoundingClientRect();
+    const viewportHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+    const spaceBelow = Math.max(120, viewportHeight - rect.bottom - 10);
+    const spaceAbove = Math.max(120, rect.top - 10);
+    const openUpward = spaceBelow < 180 && spaceAbove > spaceBelow;
+    optionsList.style.position = 'fixed';
+    optionsList.style.left = `${Math.max(8, rect.left)}px`;
+    optionsList.style.width = `${Math.max(220, rect.width)}px`;
+    optionsList.style.right = 'auto';
+    optionsList.style.top = openUpward ? 'auto' : `${Math.max(8, rect.bottom + 6)}px`;
+    optionsList.style.bottom = openUpward ? `${Math.max(8, viewportHeight - rect.top + 6)}px` : 'auto';
+    optionsList.style.maxHeight = `${Math.min(320, openUpward ? spaceAbove : spaceBelow)}px`;
+  };
   const hideOptionsList = () => {
     optionsList.hidden = true;
     setComboExpanded(false);
+    optionsList.style.bottom = 'auto';
   };
   const showOptionsList = () => {
     populateComboOptions();
     const hasOptions = visibleSubordinateOptions.length > 0;
     optionsList.hidden = !hasOptions;
     setComboExpanded(hasOptions);
+    if (hasOptions) {
+      positionOptionsList();
+    }
     return hasOptions;
   };
 
@@ -19368,6 +19419,9 @@ function setupSubordinateControls(card, task) {
 
     optionsList.hidden = visibleCount === 0;
     setComboExpanded(visibleCount > 0);
+    if (visibleCount > 0) {
+      positionOptionsList();
+    }
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
