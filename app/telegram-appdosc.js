@@ -2798,11 +2798,9 @@ function initElements() {
   elements.filterGroupType = document.querySelector('[data-filter-group-type]');
   elements.filterGroupValue = document.querySelector('[data-filter-group-value]');
   elements.filterExtraGroupRow = document.querySelector('[data-filter-extra-group-row]');
-  elements.filterExtraGroupControls = document.querySelector('[data-filter-extra-group-controls]');
   elements.filterGroupTypeExtra = document.querySelector('[data-filter-group-type-extra]');
   elements.filterGroupValueExtra = document.querySelector('[data-filter-group-value-extra]');
-  elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
-  elements.filterGroupRemoveButton = document.querySelector('[data-filter-group-remove]');
+  elements.filterGroupToggleButton = document.querySelector('[data-filter-group-toggle]');
   elements.status = document.querySelector('[data-status]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
@@ -4185,9 +4183,12 @@ function applyCompactFilters(visibleItems) {
   const dateTo = normalizeDateInputValue(state.compactFilters.dateTo);
   const groupType = normalizeValue(state.compactFilters.groupType);
   const groupValue = normalizeValue(state.compactFilters.groupValue);
-  const extraEnabled = state.compactFilters.extraGroupEnabled === true;
-  const extraGroupType = extraEnabled ? normalizeValue(state.compactFilters.extraGroupType) : '';
-  const extraGroupValue = extraEnabled ? normalizeValue(state.compactFilters.extraGroupValue) : '';
+  const extraGroupType = state.compactFilters.extraGroupEnabled === true
+    ? normalizeValue(state.compactFilters.extraGroupType)
+    : '';
+  const extraGroupValue = state.compactFilters.extraGroupEnabled === true
+    ? normalizeValue(state.compactFilters.extraGroupValue)
+    : '';
   const parsedFrom = dateFrom ? parseDate(dateFrom) : null;
   const parsedTo = dateTo ? parseDate(dateTo) : null;
   if (parsedFrom) {
@@ -4216,15 +4217,17 @@ function applyCompactFilters(visibleItems) {
         return false;
       }
     }
-    if (groupType && groupValue) {
-      const values = getCompactGroupEntries(task, groupType).map((entry) => entry.value);
-      if (!values.includes(groupValue)) {
-        return false;
+    const groupFilters = [
+      { type: groupType, value: groupValue },
+      { type: extraGroupType, value: extraGroupValue },
+    ];
+    for (let i = 0; i < groupFilters.length; i += 1) {
+      const currentFilter = groupFilters[i];
+      if (!currentFilter.type || !currentFilter.value) {
+        continue;
       }
-    }
-    if (extraGroupType && extraGroupValue) {
-      const values = getCompactGroupEntries(task, extraGroupType).map((entry) => entry.value);
-      if (!values.includes(extraGroupValue)) {
+      const values = getCompactGroupEntries(task, currentFilter.type).map((entry) => entry.value);
+      if (!values.includes(currentFilter.value)) {
         return false;
       }
     }
@@ -4577,11 +4580,14 @@ function syncCompactFilterPanelState() {
   if (elements.filterExtraGroupRow instanceof HTMLElement) {
     elements.filterExtraGroupRow.hidden = state.compactFilters.extraGroupEnabled !== true;
   }
-  if (elements.filterExtraGroupControls instanceof HTMLElement) {
-    elements.filterExtraGroupControls.hidden = state.compactFilters.extraGroupEnabled !== true;
-  }
-  if (elements.filterGroupAddButton instanceof HTMLElement) {
-    elements.filterGroupAddButton.hidden = state.compactFilters.extraGroupEnabled === true;
+  if (elements.filterGroupToggleButton instanceof HTMLButtonElement) {
+    if (state.compactFilters.extraGroupEnabled === true) {
+      elements.filterGroupToggleButton.textContent = '− Убрать вторую группировку';
+      elements.filterGroupToggleButton.setAttribute('title', 'Убрать вторую группировку');
+    } else {
+      elements.filterGroupToggleButton.textContent = '+ Добавить вторую группировку';
+      elements.filterGroupToggleButton.setAttribute('title', 'Добавить вторую группировку');
+    }
   }
   if (elements.filterGroupTypeExtra instanceof HTMLSelectElement) {
     elements.filterGroupTypeExtra.value = normalizeValue(state.compactFilters.extraGroupType);
@@ -16681,20 +16687,17 @@ function attachEvents() {
       safeRender('compact_filter_group_value');
     });
   }
-  if (elements.filterGroupAddButton) {
-    elements.filterGroupAddButton.addEventListener('click', () => {
-      state.compactFilters.extraGroupEnabled = true;
+  if (elements.filterGroupToggleButton) {
+    elements.filterGroupToggleButton.addEventListener('click', () => {
+      const isEnabled = state.compactFilters.extraGroupEnabled === true;
+      state.compactFilters.extraGroupEnabled = !isEnabled;
+      if (isEnabled) {
+        state.compactFilters.extraGroupType = '';
+        state.compactFilters.extraGroupValue = '';
+      }
+      syncCompactFilterGroupOptions();
       updateVisibleTasks();
-      safeRender('compact_filter_group_add');
-    });
-  }
-  if (elements.filterGroupRemoveButton) {
-    elements.filterGroupRemoveButton.addEventListener('click', () => {
-      state.compactFilters.extraGroupEnabled = false;
-      state.compactFilters.extraGroupType = '';
-      state.compactFilters.extraGroupValue = '';
-      updateVisibleTasks();
-      safeRender('compact_filter_group_remove');
+      safeRender('compact_filter_group_toggle');
     });
   }
   if (elements.filterGroupTypeExtra) {
