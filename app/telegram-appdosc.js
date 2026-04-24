@@ -16449,14 +16449,57 @@ function initDemoAssignmentWidget() {
     return;
   }
 
-  const directory = [
-    { id: '1', name: 'Алексей Ковалёв' },
-    { id: '2', name: 'Мария Смирнова' },
-    { id: '3', name: 'Иван Петров' },
-    { id: '4', name: 'Ольга Никитина' },
-    { id: '5', name: 'Сергей Орлов' },
-    { id: '6', name: 'Елена Романова' },
-  ];
+  const collectContextEntries = (role) => {
+    const isSubordinateRole = role === 'subordinate';
+    const organizations = Array.isArray(state.organizations) ? state.organizations : [];
+    const uniqueOrganizations = new Set();
+
+    organizations.forEach((item) => {
+      if (!item || typeof item !== 'object') {
+        return;
+      }
+      const organization = normalizeValue(item.name || item.organization);
+      if (organization) {
+        uniqueOrganizations.add(organization);
+      }
+    });
+
+    if (!uniqueOrganizations.size) {
+      const visibleTasks = Array.isArray(state.visibleTasks) ? state.visibleTasks : [];
+      visibleTasks.forEach((task) => {
+        const organization = normalizeValue(getTaskOrganization(task));
+        if (organization) {
+          uniqueOrganizations.add(organization);
+        }
+      });
+    }
+
+    const rawEntries = [];
+    uniqueOrganizations.forEach((organization) => {
+      const responsibles = getResponsiblesForOrganization(organization);
+      const subordinates = getSubordinatesForOrganization(organization);
+      const candidates = isSubordinateRole
+        ? buildAssignmentCandidateList([], subordinates)
+        : buildAssignmentCandidateList(responsibles, subordinates);
+      rawEntries.push(...candidates);
+    });
+
+    const byId = new Map();
+    rawEntries.forEach((entry) => {
+      const id = resolveResponsibleOptionValue(entry);
+      if (!id) {
+        return;
+      }
+      if (!byId.has(id)) {
+        byId.set(id, entry);
+      }
+    });
+
+    return Array.from(byId.values()).map((entry) => ({
+      id: resolveResponsibleOptionValue(entry),
+      label: isSubordinateRole ? buildSubordinateOptionLabel(entry) : buildResponsibleOptionLabel(entry),
+    }));
+  };
 
   const setupField = (fieldElement) => {
     if (!(fieldElement instanceof HTMLElement)) {
@@ -16470,9 +16513,13 @@ function initDemoAssignmentWidget() {
     }
 
     const selectedIds = new Set();
+    const selectedLabels = new Map();
     let isOpen = false;
     let keyboardUnlocked = false;
     let skipClickUnlock = false;
+
+    const role = fieldElement.dataset.demoField === 'subordinate' ? 'subordinate' : 'responsible';
+    const getDirectory = () => collectContextEntries(role);
 
     const lockInput = () => {
       keyboardUnlocked = false;
@@ -16495,22 +16542,32 @@ function initDemoAssignmentWidget() {
     };
 
     const updateChips = () => {
-      const selectedUsers = directory.filter((user) => selectedIds.has(user.id));
-      chips.innerHTML = selectedUsers
-        .map((user) => `<span class="appdosc-demo-assign__chip">${escapeHtml(user.name)}</span>`)
-        .join('');
+      const directory = getDirectory();
+      const labelsById = new Map(directory.map((user) => [user.id, user.label]));
+      const selectedUsers = Array.from(selectedIds).map((id) => {
+        const label = labelsById.get(id) || selectedLabels.get(id) || id;
+        return { id, label };
+      });
+      chips.innerHTML = selectedUsers.map((user) => (
+        `<span class="appdosc-demo-assign__chip">${escapeHtml(user.label.split('•')[0].trim())}</span>`
+      )).join('');
     };
 
     const renderList = () => {
+      const directory = getDirectory();
       const query = normalizeValue(input.value).toLowerCase();
-      const visibleUsers = directory.filter((user) => user.name.toLowerCase().includes(query));
+      if (!directory.length) {
+        list.innerHTML = '<div class="appdosc-demo-assign__option" aria-disabled="true">В контексте пока нет пользователей</div>';
+        return;
+      }
+      const visibleUsers = directory.filter((user) => user.label.toLowerCase().includes(query));
       if (!visibleUsers.length) {
         list.innerHTML = '<div class="appdosc-demo-assign__option" aria-disabled="true">Ничего не найдено</div>';
         return;
       }
       list.innerHTML = visibleUsers.map((user) => {
         const selected = selectedIds.has(user.id);
-        return `<button type="button" class="appdosc-demo-assign__option" data-id="${escapeHtml(user.id)}" aria-selected="${selected ? 'true' : 'false'}">${escapeHtml(user.name)}</button>`;
+        return `<button type="button" class="appdosc-demo-assign__option" data-id="${escapeHtml(user.id)}" aria-selected="${selected ? 'true' : 'false'}">${escapeHtml(user.label)}</button>`;
       }).join('');
     };
 
@@ -16564,6 +16621,12 @@ function initDemoAssignmentWidget() {
       }
     });
 
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeList();
+      }
+    });
+
     list.addEventListener('click', (event) => {
       const option = event.target instanceof HTMLElement ? event.target.closest('.appdosc-demo-assign__option[data-id]') : null;
       if (!(option instanceof HTMLElement)) {
@@ -16575,8 +16638,13 @@ function initDemoAssignmentWidget() {
       }
       if (selectedIds.has(userId)) {
         selectedIds.delete(userId);
+        selectedLabels.delete(userId);
       } else {
         selectedIds.add(userId);
+        const optionLabel = normalizeValue(option.textContent);
+        if (optionLabel) {
+          selectedLabels.set(userId, optionLabel);
+        }
       }
       updateChips();
       renderList();
