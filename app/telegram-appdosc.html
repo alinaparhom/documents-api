@@ -263,11 +263,7 @@
 
       .appdosc-assignee-picker__search-wrap {
         margin-top: 10px;
-        position: sticky;
-        bottom: 0;
-        z-index: 2;
-        padding-top: 8px;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.96) 28%);
+        flex: 0 0 auto;
       }
 
       .appdosc-assignee-picker__search {
@@ -2373,7 +2369,6 @@
                     <h3 class="appdosc-assignee-picker__title">Выберите ответственного</h3>
                     <button type="button" class="appdosc-assignee-picker__close" data-assignee-close aria-label="Закрыть">×</button>
                   </div>
-                  <div class="appdosc-assignee-picker__list appdosc-card__assign-combo-list" data-assignee-list data-card-assignee-options role="listbox"></div>
                   <div class="appdosc-assignee-picker__search-wrap">
                     <span class="appdosc-card__assign-search-meta" data-card-assignee-search-meta></span>
                     <input
@@ -2386,6 +2381,7 @@
                       enterkeyhint="search"
                     />
                   </div>
+                  <div class="appdosc-assignee-picker__list appdosc-card__assign-combo-list" data-assignee-list data-card-assignee-options role="listbox"></div>
                 </div>
               </div>
             </div>
@@ -2430,7 +2426,6 @@
                     <h3 class="appdosc-assignee-picker__title">Выберите подчинённого</h3>
                     <button type="button" class="appdosc-assignee-picker__close" data-assignee-close aria-label="Закрыть">×</button>
                   </div>
-                  <div class="appdosc-assignee-picker__list appdosc-card__assign-combo-list" data-assignee-list data-card-subordinate-options role="listbox"></div>
                   <div class="appdosc-assignee-picker__search-wrap">
                     <span class="appdosc-card__assign-search-meta" data-card-subordinate-search-meta></span>
                     <input
@@ -2443,6 +2438,7 @@
                       enterkeyhint="search"
                     />
                   </div>
+                  <div class="appdosc-assignee-picker__list appdosc-card__assign-combo-list" data-assignee-list data-card-subordinate-options role="listbox"></div>
                 </div>
               </div>
             </div>
