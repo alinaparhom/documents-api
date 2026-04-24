@@ -18214,9 +18214,17 @@ function setupAssignmentControls(card, task) {
     comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     comboInput.dataset.expanded = expanded ? 'true' : 'false';
   };
+  const isComboExpanded = () => comboInput.dataset.expanded === 'true';
   const hideOptionsList = () => {
     optionsList.hidden = true;
     setComboExpanded(false);
+  };
+  const showOptionsList = () => {
+    populateComboOptions();
+    const hasOptions = visibleAssigneeOptions.length > 0;
+    optionsList.hidden = !hasOptions;
+    setComboExpanded(hasOptions);
+    return hasOptions;
   };
 
   const populateComboOptions = () => {
@@ -19015,10 +19023,34 @@ function setupAssignmentControls(card, task) {
     }
   });
 
+  let waitSecondTapForKeyboard = false;
+
+  comboInput.addEventListener('pointerdown', (event) => {
+    if (isComboExpanded()) {
+      return;
+    }
+    event.preventDefault();
+    showOptionsList();
+    waitSecondTapForKeyboard = true;
+  });
+
   comboInput.addEventListener('click', () => {
-    populateComboOptions();
-    optionsList.hidden = visibleAssigneeOptions.length === 0;
-    setComboExpanded(visibleAssigneeOptions.length > 0);
+    if (waitSecondTapForKeyboard) {
+      waitSecondTapForKeyboard = false;
+      return;
+    }
+    if (!isComboExpanded()) {
+      showOptionsList();
+      return;
+    }
+    comboInput.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      comboInput.focus({ preventScroll: true });
+      const cursor = comboInput.value.length;
+      if (typeof comboInput.setSelectionRange === 'function') {
+        comboInput.setSelectionRange(cursor, cursor);
+      }
+    });
   });
 
   comboInput.addEventListener('change', () => {
@@ -19036,6 +19068,12 @@ function setupAssignmentControls(card, task) {
   comboInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (!container.contains(event.target)) {
+      hideOptionsList();
+    }
+  }, true);
 
   container.hidden = false;
 }
