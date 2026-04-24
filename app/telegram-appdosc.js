@@ -18081,9 +18081,12 @@ function setupAssignmentControls(card, task) {
       scrollThumb: 'rgba(123, 173, 255, 0.62)',
       scrollTrack: 'rgba(123, 173, 255, 0.18)',
     };
-  if (comboWrapper) {
-    comboWrapper.style.position = 'relative';
-    comboWrapper.style.marginBottom = '2px';
+  const keyboardButtonHost = comboWrapper || comboInput.parentElement;
+  if (keyboardButtonHost) {
+    keyboardButtonHost.style.position = 'relative';
+    if (comboWrapper) {
+      comboWrapper.style.marginBottom = '2px';
+    }
   }
   comboInput.readOnly = true;
   comboInput.dataset.searchUnlocked = 'false';
@@ -18145,14 +18148,15 @@ function setupAssignmentControls(card, task) {
   keyboardButton.style.justifyContent = 'center';
   keyboardButton.style.cursor = 'pointer';
   keyboardButton.style.padding = '0';
-  keyboardButton.style.zIndex = '2';
+  keyboardButton.style.zIndex = '160';
   keyboardButton.style.backdropFilter = 'blur(6px)';
   keyboardButton.style.webkitBackdropFilter = 'blur(6px)';
-  if (comboWrapper && !comboWrapper.contains(keyboardButton)) {
-    comboWrapper.appendChild(keyboardButton);
+  if (keyboardButtonHost && !keyboardButtonHost.contains(keyboardButton)) {
+    keyboardButtonHost.appendChild(keyboardButton);
   }
   const setKeyboardButtonActive = (active) => {
     keyboardButton.dataset.active = active ? 'true' : 'false';
+    keyboardButton.style.display = 'inline-flex';
     keyboardButton.style.opacity = '1';
     keyboardButton.style.visibility = 'visible';
     keyboardButton.style.background = active ? comboPalette.optionHover : comboPalette.optionBg;
@@ -19246,9 +19250,12 @@ function setupSubordinateControls(card, task) {
       scrollThumb: 'rgba(123, 173, 255, 0.62)',
       scrollTrack: 'rgba(123, 173, 255, 0.18)',
     };
-  if (comboWrapper) {
-    comboWrapper.style.position = 'relative';
-    comboWrapper.style.marginBottom = '2px';
+  const keyboardButtonHost = comboWrapper || searchInput.parentElement;
+  if (keyboardButtonHost) {
+    keyboardButtonHost.style.position = 'relative';
+    if (comboWrapper) {
+      comboWrapper.style.marginBottom = '2px';
+    }
   }
   searchInput.readOnly = true;
   searchInput.dataset.searchUnlocked = 'false';
@@ -19310,14 +19317,15 @@ function setupSubordinateControls(card, task) {
   keyboardButton.style.justifyContent = 'center';
   keyboardButton.style.cursor = 'pointer';
   keyboardButton.style.padding = '0';
-  keyboardButton.style.zIndex = '2';
+  keyboardButton.style.zIndex = '160';
   keyboardButton.style.backdropFilter = 'blur(6px)';
   keyboardButton.style.webkitBackdropFilter = 'blur(6px)';
-  if (comboWrapper && !comboWrapper.contains(keyboardButton)) {
-    comboWrapper.appendChild(keyboardButton);
+  if (keyboardButtonHost && !keyboardButtonHost.contains(keyboardButton)) {
+    keyboardButtonHost.appendChild(keyboardButton);
   }
   const setKeyboardButtonActive = (active) => {
     keyboardButton.dataset.active = active ? 'true' : 'false';
+    keyboardButton.style.display = 'inline-flex';
     keyboardButton.style.opacity = '1';
     keyboardButton.style.visibility = 'visible';
     keyboardButton.style.background = active ? comboPalette.optionHover : comboPalette.optionBg;
