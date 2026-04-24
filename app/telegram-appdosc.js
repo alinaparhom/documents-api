@@ -15798,9 +15798,12 @@ function buildAssigneeOptionSubtitle(entry) {
   if (!entry || typeof entry !== 'object') {
     return '';
   }
-  return normalizeValue(entry.department)
-    || normalizeValue(entry.note)
-    || normalizeValue(entry.email)
+  return normalizeValue(entry.position)
+    || normalizeValue(entry.role)
+    || normalizeValue(entry.post)
+    || normalizeValue(entry.jobTitle)
+    || normalizeValue(entry.title)
+    || normalizeValue(entry.department)
     || '';
 }
 
@@ -18277,7 +18280,8 @@ function setupAssignmentControls(card, task) {
       }
 
       visibleCount += 1;
-      visibleAssigneeOptions.push({ value, label, entry });
+      const canSelect = Boolean(resolveEntryTelegramId(entry));
+      visibleAssigneeOptions.push({ value, label, entry, selectable: canSelect });
 
       const option = document.createElement('button');
       option.type = 'button';
@@ -18286,6 +18290,7 @@ function setupAssignmentControls(card, task) {
       option.style.background = comboPalette.optionBg;
       option.style.border = `1px solid ${comboPalette.optionBorder}`;
       option.style.color = comboPalette.optionColor;
+      option.disabled = !canSelect;
 
       const avatar = createPickerOptionAvatar(entry, label);
 
@@ -18298,19 +18303,31 @@ function setupAssignmentControls(card, task) {
 
       const roleNode = document.createElement('span');
       roleNode.className = 'appdosc-assignee-picker__option-role';
-      const roleTitle = buildAssigneeOptionSubtitle(entry) || 'Сотрудник Telegram';
-      const roleIcon = document.createElement('i');
-      roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
-      roleIcon.setAttribute('aria-hidden', 'true');
-      roleNode.append(roleIcon);
-      roleNode.append(document.createTextNode(roleTitle));
+      const roleTitle = buildAssigneeOptionSubtitle(entry);
+      if (roleTitle) {
+        const roleIcon = document.createElement('i');
+        roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
+        roleIcon.setAttribute('aria-hidden', 'true');
+        roleNode.append(roleIcon);
+        roleNode.append(document.createTextNode(roleTitle));
+      } else {
+        roleNode.hidden = true;
+      }
 
       main.append(nameNode, roleNode);
       option.append(avatar, main);
+      if (!canSelect) {
+        const lockBadge = document.createElement('span');
+        lockBadge.className = 'appdosc-assignee-picker__option-badge';
+        lockBadge.textContent = 'Нет Telegram ID';
+        option.append(lockBadge);
+      }
 
-      option.addEventListener('click', () => {
-        handleAssigneeSelection(value);
-      });
+      if (canSelect) {
+        option.addEventListener('click', () => {
+          handleAssigneeSelection(value);
+        });
+      }
       option.addEventListener('mouseenter', () => {
         option.style.background = comboPalette.optionHover;
       });
@@ -18936,9 +18953,12 @@ function setupAssignmentControls(card, task) {
   const handleAssigneeSelection = (preferredValue = '') => {
     const inputValue = normalizeValue(preferredValue || comboInput.value);
     const selectedOption = visibleAssigneeOptions.find((option) => (
+      option.selectable !== false
+      && (
       normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
       || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
-    )) || visibleAssigneeOptions[0] || null;
+      )
+    )) || visibleAssigneeOptions.find((option) => option.selectable !== false) || null;
 
     const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
@@ -19343,7 +19363,8 @@ function setupSubordinateControls(card, task) {
       }
 
       visibleCount += 1;
-      visibleSubordinateOptions.push({ value, label, entry });
+      const canSelect = Boolean(resolveEntryTelegramId(entry));
+      visibleSubordinateOptions.push({ value, label, entry, selectable: canSelect });
       const option = document.createElement('button');
       option.type = 'button';
       option.className = 'appdosc-card__assign-option appdosc-assignee-picker__option';
@@ -19351,6 +19372,7 @@ function setupSubordinateControls(card, task) {
       option.style.background = comboPalette.optionBg;
       option.style.border = `1px solid ${comboPalette.optionBorder}`;
       option.style.color = comboPalette.optionColor;
+      option.disabled = !canSelect;
 
       const avatar = createPickerOptionAvatar(entry, label);
 
@@ -19363,19 +19385,31 @@ function setupSubordinateControls(card, task) {
 
       const roleNode = document.createElement('span');
       roleNode.className = 'appdosc-assignee-picker__option-role';
-      const roleTitle = buildAssigneeOptionSubtitle(entry) || 'Сотрудник Telegram';
-      const roleIcon = document.createElement('i');
-      roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
-      roleIcon.setAttribute('aria-hidden', 'true');
-      roleNode.append(roleIcon);
-      roleNode.append(document.createTextNode(roleTitle));
+      const roleTitle = buildAssigneeOptionSubtitle(entry);
+      if (roleTitle) {
+        const roleIcon = document.createElement('i');
+        roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
+        roleIcon.setAttribute('aria-hidden', 'true');
+        roleNode.append(roleIcon);
+        roleNode.append(document.createTextNode(roleTitle));
+      } else {
+        roleNode.hidden = true;
+      }
 
       main.append(nameNode, roleNode);
       option.append(avatar, main);
+      if (!canSelect) {
+        const lockBadge = document.createElement('span');
+        lockBadge.className = 'appdosc-assignee-picker__option-badge';
+        lockBadge.textContent = 'Нет Telegram ID';
+        option.append(lockBadge);
+      }
 
-      option.addEventListener('click', () => {
-        handleSubordinateSelection(value);
-      });
+      if (canSelect) {
+        option.addEventListener('click', () => {
+          handleSubordinateSelection(value);
+        });
+      }
       option.addEventListener('mouseenter', () => {
         option.style.background = comboPalette.optionHover;
       });
@@ -19891,9 +19925,12 @@ function setupSubordinateControls(card, task) {
   const handleSubordinateSelection = (preferredValue = '') => {
     const inputValue = normalizeValue(preferredValue || searchInput.value);
     const selectedOption = visibleSubordinateOptions.find((option) => (
+      option.selectable !== false
+      && (
       normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
       || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
-    )) || visibleSubordinateOptions[0] || null;
+      )
+    )) || visibleSubordinateOptions.find((option) => option.selectable !== false) || null;
     const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
       return;
