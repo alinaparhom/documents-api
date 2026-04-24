@@ -19051,13 +19051,19 @@ function setupAssignmentControls(card, task) {
     }
   };
 
-  comboInput.addEventListener('pointerdown', (event) => {
+  const handleLockedComboPointer = (event) => {
     if (!comboInput.hasAttribute('readonly')) {
       return;
     }
     event.preventDefault();
     handleComboTap();
-  });
+  };
+  if (typeof window !== 'undefined' && 'PointerEvent' in window) {
+    comboInput.addEventListener('pointerdown', handleLockedComboPointer);
+  } else {
+    comboInput.addEventListener('touchstart', handleLockedComboPointer, { passive: false });
+    comboInput.addEventListener('mousedown', handleLockedComboPointer);
+  }
 
   comboInput.addEventListener('click', () => {
     if (comboInput.hasAttribute('readonly')) {
@@ -19081,6 +19087,16 @@ function setupAssignmentControls(card, task) {
   comboInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
+  document.addEventListener('pointerdown', (event) => {
+    const target = event && event.target;
+    if (!target) {
+      return;
+    }
+    if ((comboWrapper && comboWrapper.contains(target)) || optionsList.contains(target)) {
+      return;
+    }
+    hideOptionsList();
+  }, true);
 
   lockComboInputForList();
 
@@ -19985,13 +20001,19 @@ function setupSubordinateControls(card, task) {
     }
   };
 
-  searchInput.addEventListener('pointerdown', (event) => {
+  const handleLockedSubordinatePointer = (event) => {
     if (!searchInput.hasAttribute('readonly')) {
       return;
     }
     event.preventDefault();
     handleSubordinateComboTap();
-  });
+  };
+  if (typeof window !== 'undefined' && 'PointerEvent' in window) {
+    searchInput.addEventListener('pointerdown', handleLockedSubordinatePointer);
+  } else {
+    searchInput.addEventListener('touchstart', handleLockedSubordinatePointer, { passive: false });
+    searchInput.addEventListener('mousedown', handleLockedSubordinatePointer);
+  }
 
   searchInput.addEventListener('click', () => {
     if (searchInput.hasAttribute('readonly')) {
@@ -20015,6 +20037,16 @@ function setupSubordinateControls(card, task) {
   searchInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
+  document.addEventListener('pointerdown', (event) => {
+    const target = event && event.target;
+    if (!target) {
+      return;
+    }
+    if ((comboWrapper && comboWrapper.contains(target)) || optionsList.contains(target)) {
+      return;
+    }
+    hideOptionsList();
+  }, true);
 
   lockComboInputForList();
 
