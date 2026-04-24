@@ -18051,37 +18051,25 @@ function setupAssignmentControls(card, task) {
     return;
   }
   const comboWrapper = comboInput.closest('.appdosc-card__assign-selector');
-  const isDarkTheme = (state.telegram.colorScheme || 'light') === 'dark'
-    || document.body.classList.contains('appdosc--dark');
-  const comboPalette = isDarkTheme
-    ? {
-      inputBg: 'rgba(24, 36, 67, 0.82)',
-      inputBorder: 'rgba(124, 166, 255, 0.34)',
-      inputColor: '#ecf3ff',
-      listBg: 'rgba(20, 31, 59, 0.95)',
-      listBorder: 'rgba(118, 163, 255, 0.36)',
-      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
-      optionBg: 'rgba(255, 255, 255, 0.04)',
-      optionBorder: 'rgba(141, 181, 255, 0.18)',
-      optionColor: '#eff5ff',
-      optionHover: 'rgba(123, 173, 255, 0.24)',
-    }
-    : {
-      inputBg: 'rgba(255, 255, 255, 0.72)',
-      inputBorder: 'rgba(110, 154, 255, 0.35)',
-      inputColor: '#12325f',
-      listBg: 'rgba(255, 255, 255, 0.92)',
-      listBorder: 'rgba(110, 154, 255, 0.4)',
-      shadow: '0 12px 28px rgba(42, 82, 150, 0.18)',
-      optionBg: 'rgba(255, 255, 255, 0.5)',
-      optionBorder: 'rgba(114, 157, 255, 0.2)',
-      optionColor: '#1c3762',
-      optionHover: 'rgba(134, 180, 255, 0.22)',
-    };
+  const comboPalette = {
+    inputBg: 'rgba(24, 36, 67, 0.82)',
+    inputBorder: 'rgba(124, 166, 255, 0.34)',
+    inputColor: '#ecf3ff',
+    listBg: 'rgba(20, 31, 59, 0.95)',
+    listBorder: 'rgba(118, 163, 255, 0.36)',
+    shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+    optionBg: 'rgba(255, 255, 255, 0.04)',
+    optionBorder: 'rgba(141, 181, 255, 0.18)',
+    optionColor: '#eff5ff',
+    optionHover: 'rgba(123, 173, 255, 0.24)',
+  };
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
   }
+  comboInput.readOnly = true;
+  comboInput.dataset.searchUnlocked = 'false';
+  comboInput.setAttribute('inputmode', 'none');
   comboInput.classList.add('appdosc-card__assign-search--combo');
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   comboInput.style.width = '100%';
@@ -18563,9 +18551,10 @@ function setupAssignmentControls(card, task) {
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Отозвать';
     removeButton.disabled = false;
-    removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
-    removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
-    removeButton.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)';
+    removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
+    removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
+    removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
+    removeButton.style.color = 'var(--appdosc-assign-remove-text)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
     actions.style.width = '100%';
@@ -19036,6 +19025,9 @@ function setupAssignmentControls(card, task) {
 
   comboInput.addEventListener('click', () => {
     if (waitSecondTapForKeyboard) {
+      comboInput.readOnly = false;
+      comboInput.dataset.searchUnlocked = 'true';
+      comboInput.setAttribute('inputmode', 'search');
       waitSecondTapForKeyboard = false;
       return;
     }
@@ -19123,37 +19115,25 @@ function setupSubordinateControls(card, task) {
   }
 
   const comboWrapper = searchInput.closest('.appdosc-card__assign-selector');
-  const isDarkTheme = (state.telegram.colorScheme || 'light') === 'dark'
-    || document.body.classList.contains('appdosc--dark');
-  const comboPalette = isDarkTheme
-    ? {
-      inputBg: 'rgba(24, 36, 67, 0.82)',
-      inputBorder: 'rgba(124, 166, 255, 0.34)',
-      inputColor: '#ecf3ff',
-      listBg: 'rgba(20, 31, 59, 0.95)',
-      listBorder: 'rgba(118, 163, 255, 0.36)',
-      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
-      optionBg: 'rgba(255, 255, 255, 0.04)',
-      optionBorder: 'rgba(141, 181, 255, 0.18)',
-      optionColor: '#eff5ff',
-      optionHover: 'rgba(123, 173, 255, 0.24)',
-    }
-    : {
-      inputBg: 'rgba(255, 255, 255, 0.72)',
-      inputBorder: 'rgba(110, 154, 255, 0.35)',
-      inputColor: '#12325f',
-      listBg: 'rgba(255, 255, 255, 0.92)',
-      listBorder: 'rgba(110, 154, 255, 0.4)',
-      shadow: '0 12px 28px rgba(42, 82, 150, 0.18)',
-      optionBg: 'rgba(255, 255, 255, 0.5)',
-      optionBorder: 'rgba(114, 157, 255, 0.2)',
-      optionColor: '#1c3762',
-      optionHover: 'rgba(134, 180, 255, 0.22)',
-    };
+  const comboPalette = {
+    inputBg: 'rgba(24, 36, 67, 0.82)',
+    inputBorder: 'rgba(124, 166, 255, 0.34)',
+    inputColor: '#ecf3ff',
+    listBg: 'rgba(20, 31, 59, 0.95)',
+    listBorder: 'rgba(118, 163, 255, 0.36)',
+    shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+    optionBg: 'rgba(255, 255, 255, 0.04)',
+    optionBorder: 'rgba(141, 181, 255, 0.18)',
+    optionColor: '#eff5ff',
+    optionHover: 'rgba(123, 173, 255, 0.24)',
+  };
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
   }
+  searchInput.readOnly = true;
+  searchInput.dataset.searchUnlocked = 'false';
+  searchInput.setAttribute('inputmode', 'none');
   searchInput.classList.add('appdosc-card__assign-search--combo');
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   searchInput.style.width = '100%';
@@ -19554,9 +19534,10 @@ function setupSubordinateControls(card, task) {
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Отозвать';
     removeButton.disabled = false;
-    removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
-    removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
-    removeButton.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)';
+    removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
+    removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
+    removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
+    removeButton.style.color = 'var(--appdosc-assign-remove-text)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
     actions.style.width = '100%';
@@ -19961,6 +19942,9 @@ function setupSubordinateControls(card, task) {
 
   searchInput.addEventListener('click', () => {
     if (waitSecondTapForKeyboard) {
+      searchInput.readOnly = false;
+      searchInput.dataset.searchUnlocked = 'true';
+      searchInput.setAttribute('inputmode', 'search');
       waitSecondTapForKeyboard = false;
       return;
     }
