@@ -10,6 +10,7 @@
   var SETTINGS_LOG_PREFIX = '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438';
   var TELEGRAM_MISSING_MESSAGE = '\u0423 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435\u0442 Telegram ID \u2014 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u0440\u0438\u0434\u0451\u0442.';
   var TELEGRAM_MISSING_OPTION_NOTE = '\u0431\u0435\u0437 TG';
+  var activeRowActionsMenu = null;
 
   try {
     DATE_TIME_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
@@ -1013,14 +1014,15 @@
   }
 
   var TABLE_GROUPS = [
-    { key: 'flow', label: 'Входящие и исходящие', span: 7 },
+    { key: 'flow', label: 'Входящие и исходящие', span: 8 },
     { key: 'execution', label: 'Исполнение', span: 5 },
     { key: 'resolution', label: 'Резолюция', span: 1 },
     { key: 'control', label: 'Контроль', span: 3 },
-    { key: 'files', label: 'Файлы и действия', span: 2 }
+    { key: 'files', label: 'Файлы', span: 1 }
   ];
   var TABLE_COLUMNS = [
     { key: 'entryNumber', label: '№', group: 'flow', searchable: true, searchHint: 'Введите номер записи' },
+    { key: 'actions', label: 'Действия', group: 'flow', searchable: false },
     { key: 'registryNumber', label: 'Рег. №', group: 'flow', searchable: true, searchHint: 'Введите регистрационный номер' },
     { key: 'registrationDate', label: 'Дата регистрации', group: 'flow', searchable: true, searchHint: 'Например: 12.03.2024' },
     { key: 'direction', label: 'Тип', group: 'flow', searchable: true, searchHint: 'Введите входящий или исходящий' },
@@ -1036,8 +1038,7 @@
     { key: 'dueDate', label: 'Срок', group: 'control', searchable: true, searchHint: 'Например: 01.04.2024' },
     { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' },
     { key: 'status', label: 'Статус', group: 'control', searchable: true, searchHint: 'Введите статус' },
-    { key: 'files', label: 'Файлы', group: 'files', searchable: false },
-    { key: 'actions', label: 'Действия', group: 'files', searchable: false }
+    { key: 'files', label: 'Файлы', group: 'files', searchable: false }
   ];
   var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
@@ -3103,8 +3104,108 @@
       'opacity:0.75;' +
       'font-weight:500;' +
       '}' +
+      '.documents-actions{' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'align-items:flex-start;' +
+      'width:100%;' +
+      'position:relative;' +
+      '}' +
+      '.documents-actions__toggle{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'min-height:34px;' +
+      'padding:8px 12px;' +
+      'border:1px solid rgba(148,163,184,0.45);' +
+      'border-radius:12px;' +
+      'background:rgba(255,255,255,0.72);' +
+      'backdrop-filter:blur(10px);' +
+      '-webkit-backdrop-filter:blur(10px);' +
+      'color:#0f172a;' +
+      'font-size:13px;' +
+      'font-weight:600;' +
+      'cursor:pointer;' +
+      'transition:all 0.2s ease;' +
+      '}' +
+      '.documents-actions__toggle:hover{' +
+      'border-color:rgba(59,130,246,0.45);' +
+      'box-shadow:0 8px 18px rgba(59,130,246,0.18);' +
+      '}' +
+      '.documents-actions__toggle[aria-expanded="true"]{' +
+      'border-color:rgba(59,130,246,0.55);' +
+      'background:rgba(239,246,255,0.92);' +
+      'color:#1d4ed8;' +
+      '}' +
+      '.documents-actions__panel{' +
+      'display:none;' +
+      'position:relative;' +
+      'z-index:1;' +
+      'width:100%;' +
+      'margin-top:8px;' +
+      'padding:8px;' +
+      'border-radius:14px;' +
+      'border:1px solid rgba(148,163,184,0.3);' +
+      'background:rgba(255,255,255,0.88);' +
+      'backdrop-filter:blur(14px);' +
+      '-webkit-backdrop-filter:blur(14px);' +
+      'box-shadow:0 20px 36px rgba(15,23,42,0.15);' +
+      'display:flex;' +
+      'flex-wrap:wrap;' +
+      'align-items:center;' +
+      'align-content:flex-start;' +
+      'row-gap:8px;' +
+      'column-gap:8px;' +
+      'gap:8px;' +
+      '}' +
+      '.documents-actions__panel--open{' +
+      'display:flex;' +
+      '}' +
+      '@media (max-width:640px){' +
+      '.documents-actions__panel{' +
+      'padding:6px;' +
+      '}' +
+      '}' +
       '';
     document.head.appendChild(style);
+  }
+
+  function closeActiveRowActionsMenu() {
+    if (!activeRowActionsMenu) {
+      return;
+    }
+    if (activeRowActionsMenu.panel) {
+      activeRowActionsMenu.panel.classList.remove('documents-actions__panel--open');
+      activeRowActionsMenu.panel.hidden = true;
+    }
+    if (activeRowActionsMenu.toggleButton) {
+      activeRowActionsMenu.toggleButton.setAttribute('aria-expanded', 'false');
+    }
+    activeRowActionsMenu = null;
+  }
+
+  function setupRowActionsMenu(actions, toggleButton, panel) {
+    if (!actions || !toggleButton || !panel) {
+      return;
+    }
+
+    toggleButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var isOpen = panel.classList.contains('documents-actions__panel--open');
+      closeActiveRowActionsMenu();
+      if (isOpen) {
+        return;
+      }
+      panel.classList.add('documents-actions__panel--open');
+      panel.hidden = false;
+      toggleButton.setAttribute('aria-expanded', 'true');
+      activeRowActionsMenu = {
+        root: actions,
+        panel: panel,
+        toggleButton: toggleButton
+      };
+    });
   }
 
   function updateStickyHeaderOffsets() {
@@ -3282,6 +3383,15 @@
   }
 
   function handleDocumentClick(event) {
+    if (activeRowActionsMenu) {
+      var clickTarget = event && event.target;
+      var keepOpen = activeRowActionsMenu.root && clickTarget instanceof Node
+        ? activeRowActionsMenu.root.contains(clickTarget)
+        : false;
+      if (!keepOpen) {
+        closeActiveRowActionsMenu();
+      }
+    }
     if (!isPopoverVisible()) {
       return;
     }
@@ -12571,65 +12681,22 @@
       ? filterValues.__viewState
       : collectAssigneeViewState(doc);
 
+    var attachments = Array.isArray(doc.files) ? doc.files : [];
     var descriptors = [];
     descriptors.push(buildCellDescriptor(displayNumber, '', 'entryNumber'));
-    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
-    descriptors.push(buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate'));
-    descriptors.push(buildCellDescriptor(doc.direction || '—', '', 'direction'));
-    descriptors.push(buildCellDescriptor(doc.correspondent || '—', '', 'correspondent'));
-    descriptors.push(buildCellDescriptor(doc.documentNumber || '—', '', 'documentNumber'));
-    descriptors.push(buildCellDescriptor(formatDate(doc.documentDate), '', 'documentDate'));
-    descriptors.push(buildCellDescriptor(doc.executor || '—', '', 'executor'));
-    descriptors.push(buildCellDescriptor(createDirectorCell(doc), 'documents-cell--director', 'director'));
-    descriptors.push(buildCellDescriptor(createAssigneeCell(doc, viewState), 'documents-cell--assignee', 'assignee'));
-    descriptors.push(buildCellDescriptor(
-      createSubordinateCell(doc, viewState),
-      'documents-cell--assignee documents-cell--subordinates',
-      'subordinates'
-    ));
-    descriptors.push(buildCellDescriptor(doc.summary || '—', '', 'summary'));
-    descriptors.push(buildCellDescriptor(doc.resolution || '—', '', 'resolution'));
-    descriptors.push(buildCellDescriptor(createDueDateCell(doc), '', 'dueDate'));
-    descriptors.push(buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction'));
-    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
 
-    var filesCell = createElement('div', 'documents-files');
-    var attachments = Array.isArray(doc.files) ? doc.files : [];
-    var filesSummary = createElement('div', 'documents-files__summary', 'Файлы (' + attachments.length + ')');
-    filesCell.appendChild(filesSummary);
-
-    var filesList = createElement('div', 'documents-files__list');
-    if (attachments.length) {
-      attachments.forEach(function(file) {
-        var itemWrap = createElement('div', 'documents-file-item');
-        var link = createElement('a', 'documents-file-link', getAttachmentName(file));
-        link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        var meta = [];
-        if (file.size) {
-          meta.push(formatSize(file.size));
-        }
-        if (file.uploadedAt) {
-          meta.push(formatDateTime(file.uploadedAt));
-        }
-        if (meta.length) {
-          link.title = meta.join(' • ');
-        }
-        link.addEventListener('click', function(event) {
-          event.preventDefault();
-          handleAttachmentPreview(doc, file, link);
-        });
-        itemWrap.appendChild(link);
-        filesList.appendChild(itemWrap);
-      });
-    } else {
-      filesList.textContent = '—';
-    }
-    filesCell.appendChild(filesList);
-    descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
-
+    ensureSearchStyles();
     var actions = createElement('div', 'documents-actions');
+    var actionsToggleButton = createElement('button', 'documents-actions__toggle', 'Действия');
+    actionsToggleButton.type = 'button';
+    actionsToggleButton.setAttribute('aria-expanded', 'false');
+    actionsToggleButton.setAttribute('aria-label', 'Показать действия по документу');
+    var actionsPanel = createElement('div', 'documents-actions__panel');
+    actionsPanel.setAttribute('role', 'group');
+    actionsPanel.setAttribute('aria-label', 'Действия с документом');
+    actionsPanel.hidden = true;
+    actions.appendChild(actionsToggleButton);
+    actions.appendChild(actionsPanel);
     var isAdmin = isCurrentUserAdmin();
     var canDeleteDocuments = isAdmin || (state.permissions && state.permissions.canDeleteDocuments === true);
     var directorScope = state.access && typeof state.access.adminScope === 'string'
@@ -12645,14 +12712,14 @@
     pdfButton.addEventListener('click', function() {
       handlePdfDownload(pdfButton, doc);
     });
-    actions.appendChild(pdfButton);
+    actionsPanel.appendChild(pdfButton);
 
     var responseButton = createElement('button', 'documents-action documents-action--assign', 'Ответ');
     responseButton.type = 'button';
     responseButton.addEventListener('click', function() {
       openResponseModal(doc);
     });
-    actions.appendChild(responseButton);
+    actionsPanel.appendChild(responseButton);
 
     var briefActionButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
     briefActionButton.type = 'button';
@@ -12697,9 +12764,9 @@
         briefActionButton.disabled = !attachments.length;
       });
     });
-    actions.appendChild(briefActionButton);
+    actionsPanel.appendChild(briefActionButton);
 
-    var hasAttachments = Array.isArray(doc.files) && doc.files.length;
+    var hasAttachments = attachments.length > 0;
     var viewEntry = findCurrentUserViewEntry(doc);
     var alreadyViewed = Boolean(viewEntry && viewEntry.viewedAt);
     var viewedButton = createElement('button', 'documents-action documents-action--viewed', 'Просмотрено');
@@ -12715,7 +12782,7 @@
     viewedButton.addEventListener('click', function() {
       markDocumentAsViewed(doc, viewedButton);
     });
-    actions.appendChild(viewedButton);
+    actionsPanel.appendChild(viewedButton);
 
     if (isAdmin && state.permissions && state.permissions.canCreateDocuments) {
       var editButton = createElement('button', 'documents-action documents-action--edit', 'Редактировать');
@@ -12723,7 +12790,7 @@
       editButton.addEventListener('click', function() {
         openDocumentForm(doc);
       });
-      actions.appendChild(editButton);
+      actionsPanel.appendChild(editButton);
     }
 
     if (isAdmin && canDeleteDocuments && !isDirectorRole) {
@@ -12732,10 +12799,65 @@
       deleteButton.addEventListener('click', function() {
         deleteDocument(doc);
       });
-      actions.appendChild(deleteButton);
+      actionsPanel.appendChild(deleteButton);
     }
-
+    setupRowActionsMenu(actions, actionsToggleButton, actionsPanel);
     descriptors.push(buildCellDescriptor(actions, '', 'actions'));
+
+    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
+    descriptors.push(buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate'));
+    descriptors.push(buildCellDescriptor(doc.direction || '—', '', 'direction'));
+    descriptors.push(buildCellDescriptor(doc.correspondent || '—', '', 'correspondent'));
+    descriptors.push(buildCellDescriptor(doc.documentNumber || '—', '', 'documentNumber'));
+    descriptors.push(buildCellDescriptor(formatDate(doc.documentDate), '', 'documentDate'));
+    descriptors.push(buildCellDescriptor(doc.executor || '—', '', 'executor'));
+    descriptors.push(buildCellDescriptor(createDirectorCell(doc), 'documents-cell--director', 'director'));
+    descriptors.push(buildCellDescriptor(createAssigneeCell(doc, viewState), 'documents-cell--assignee', 'assignee'));
+    descriptors.push(buildCellDescriptor(
+      createSubordinateCell(doc, viewState),
+      'documents-cell--assignee documents-cell--subordinates',
+      'subordinates'
+    ));
+    descriptors.push(buildCellDescriptor(doc.summary || '—', '', 'summary'));
+    descriptors.push(buildCellDescriptor(doc.resolution || '—', '', 'resolution'));
+    descriptors.push(buildCellDescriptor(createDueDateCell(doc), '', 'dueDate'));
+    descriptors.push(buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction'));
+    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
+
+    var filesCell = createElement('div', 'documents-files');
+    var filesSummary = createElement('div', 'documents-files__summary', 'Файлы (' + attachments.length + ')');
+    filesCell.appendChild(filesSummary);
+
+    var filesList = createElement('div', 'documents-files__list');
+    if (attachments.length) {
+      attachments.forEach(function(file) {
+        var itemWrap = createElement('div', 'documents-file-item');
+        var link = createElement('a', 'documents-file-link', getAttachmentName(file));
+        link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        var meta = [];
+        if (file.size) {
+          meta.push(formatSize(file.size));
+        }
+        if (file.uploadedAt) {
+          meta.push(formatDateTime(file.uploadedAt));
+        }
+        if (meta.length) {
+          link.title = meta.join(' • ');
+        }
+        link.addEventListener('click', function(event) {
+          event.preventDefault();
+          handleAttachmentPreview(doc, file, link);
+        });
+        itemWrap.appendChild(link);
+        filesList.appendChild(itemWrap);
+      });
+    } else {
+      filesList.textContent = '—';
+    }
+    filesCell.appendChild(filesList);
+    descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
 
     while (tr.children.length > descriptors.length) {
       tr.removeChild(tr.lastChild);
