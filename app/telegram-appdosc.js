@@ -18214,9 +18214,20 @@ function setupAssignmentControls(card, task) {
     comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     comboInput.dataset.expanded = expanded ? 'true' : 'false';
   };
+  const lockComboInputForList = () => {
+    comboInput.setAttribute('readonly', 'readonly');
+    comboInput.setAttribute('inputmode', 'none');
+    comboInput.dataset.interactionMode = 'list';
+  };
+  const unlockComboInputForSearch = () => {
+    comboInput.removeAttribute('readonly');
+    comboInput.setAttribute('inputmode', 'search');
+    comboInput.dataset.interactionMode = 'search';
+  };
   const hideOptionsList = () => {
     optionsList.hidden = true;
     setComboExpanded(false);
+    lockComboInputForList();
   };
 
   const populateComboOptions = () => {
@@ -19017,8 +19028,25 @@ function setupAssignmentControls(card, task) {
 
   comboInput.addEventListener('click', () => {
     populateComboOptions();
-    optionsList.hidden = visibleAssigneeOptions.length === 0;
-    setComboExpanded(visibleAssigneeOptions.length > 0);
+    const hasVisibleOptions = visibleAssigneeOptions.length > 0;
+    if (!hasVisibleOptions) {
+      optionsList.hidden = true;
+      setComboExpanded(false);
+      return;
+    }
+    if (optionsList.hidden) {
+      optionsList.hidden = false;
+      setComboExpanded(true);
+      lockComboInputForList();
+      comboInput.blur();
+      return;
+    }
+    if (comboInput.hasAttribute('readonly')) {
+      unlockComboInputForSearch();
+      requestAnimationFrame(() => {
+        comboInput.focus({ preventScroll: true });
+      });
+    }
   });
 
   comboInput.addEventListener('change', () => {
@@ -19036,6 +19064,8 @@ function setupAssignmentControls(card, task) {
   comboInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
+
+  lockComboInputForList();
 
   container.hidden = false;
 }
@@ -19251,9 +19281,20 @@ function setupSubordinateControls(card, task) {
     searchInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     searchInput.dataset.expanded = expanded ? 'true' : 'false';
   };
+  const lockComboInputForList = () => {
+    searchInput.setAttribute('readonly', 'readonly');
+    searchInput.setAttribute('inputmode', 'none');
+    searchInput.dataset.interactionMode = 'list';
+  };
+  const unlockComboInputForSearch = () => {
+    searchInput.removeAttribute('readonly');
+    searchInput.setAttribute('inputmode', 'search');
+    searchInput.dataset.interactionMode = 'search';
+  };
   const hideOptionsList = () => {
     optionsList.hidden = true;
     setComboExpanded(false);
+    lockComboInputForList();
   };
 
   const populateComboOptions = () => {
@@ -19904,8 +19945,25 @@ function setupSubordinateControls(card, task) {
 
   searchInput.addEventListener('click', () => {
     populateComboOptions();
-    optionsList.hidden = visibleSubordinateOptions.length === 0;
-    setComboExpanded(visibleSubordinateOptions.length > 0);
+    const hasVisibleOptions = visibleSubordinateOptions.length > 0;
+    if (!hasVisibleOptions) {
+      optionsList.hidden = true;
+      setComboExpanded(false);
+      return;
+    }
+    if (optionsList.hidden) {
+      optionsList.hidden = false;
+      setComboExpanded(true);
+      lockComboInputForList();
+      searchInput.blur();
+      return;
+    }
+    if (searchInput.hasAttribute('readonly')) {
+      unlockComboInputForSearch();
+      requestAnimationFrame(() => {
+        searchInput.focus({ preventScroll: true });
+      });
+    }
   });
 
   searchInput.addEventListener('change', () => {
@@ -19923,6 +19981,8 @@ function setupSubordinateControls(card, task) {
   searchInput.addEventListener('blur', () => {
     setTimeout(hideOptionsList, 120);
   });
+
+  lockComboInputForList();
 
   container.hidden = false;
 
