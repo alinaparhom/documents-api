@@ -15796,15 +15796,9 @@ function buildSubordinateOptionLabel(entry) {
 
 function buildAssigneeOptionSubtitle(entry) {
   if (!entry || typeof entry !== 'object') {
-    return '';
+    return 'не указана';
   }
-  return normalizeValue(entry.position)
-    || normalizeValue(entry.role)
-    || normalizeValue(entry.post)
-    || normalizeValue(entry.jobTitle)
-    || normalizeValue(entry.title)
-    || normalizeValue(entry.department)
-    || '';
+  return normalizeValue(entry.position) || 'не указана';
 }
 
 function formatDocumentCell(task) {
@@ -18304,15 +18298,11 @@ function setupAssignmentControls(card, task) {
       const roleNode = document.createElement('span');
       roleNode.className = 'appdosc-assignee-picker__option-role';
       const roleTitle = buildAssigneeOptionSubtitle(entry);
-      if (roleTitle) {
-        const roleIcon = document.createElement('i');
-        roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
-        roleIcon.setAttribute('aria-hidden', 'true');
-        roleNode.append(roleIcon);
-        roleNode.append(document.createTextNode(roleTitle));
-      } else {
-        roleNode.hidden = true;
-      }
+      const roleIcon = document.createElement('i');
+      roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
+      roleIcon.setAttribute('aria-hidden', 'true');
+      roleNode.append(roleIcon);
+      roleNode.append(document.createTextNode(roleTitle));
 
       main.append(nameNode, roleNode);
       option.append(avatar, main);
@@ -19386,15 +19376,11 @@ function setupSubordinateControls(card, task) {
       const roleNode = document.createElement('span');
       roleNode.className = 'appdosc-assignee-picker__option-role';
       const roleTitle = buildAssigneeOptionSubtitle(entry);
-      if (roleTitle) {
-        const roleIcon = document.createElement('i');
-        roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
-        roleIcon.setAttribute('aria-hidden', 'true');
-        roleNode.append(roleIcon);
-        roleNode.append(document.createTextNode(roleTitle));
-      } else {
-        roleNode.hidden = true;
-      }
+      const roleIcon = document.createElement('i');
+      roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
+      roleIcon.setAttribute('aria-hidden', 'true');
+      roleNode.append(roleIcon);
+      roleNode.append(document.createTextNode(roleTitle));
 
       main.append(nameNode, roleNode);
       option.append(avatar, main);
