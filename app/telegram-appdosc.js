@@ -2784,8 +2784,11 @@ function initElements() {
   elements.rangeCalendarMonths = document.querySelector('[data-calendar-months]');
   elements.rangeCalendarStartLabel = document.querySelector('[data-start-label]');
   elements.rangeCalendarEndLabel = document.querySelector('[data-end-label]');
+  elements.rangeCalendarStartCard = document.querySelector('[data-start-card]');
+  elements.rangeCalendarEndCard = document.querySelector('[data-end-card]');
   elements.rangeCalendarClearStart = document.querySelector('[data-clear-start]');
   elements.rangeCalendarClearEnd = document.querySelector('[data-clear-end]');
+  elements.rangeCalendarTotal = document.querySelector('[data-calendar-total]');
   elements.rangeCalendarSubmit = document.querySelector('[data-calendar-submit]');
   elements.rangeCalendar = null;
   elements.filterQuickButtons = Array.from(document.querySelectorAll('[data-filter-quick-btn]'));
@@ -4179,8 +4182,11 @@ function initRangeCalendar(options = {}) {
   const monthsContainer = elements.rangeCalendarMonths;
   const startLabel = elements.rangeCalendarStartLabel;
   const endLabel = elements.rangeCalendarEndLabel;
+  const startCard = elements.rangeCalendarStartCard;
+  const endCard = elements.rangeCalendarEndCard;
   const clearStartButton = elements.rangeCalendarClearStart;
   const clearEndButton = elements.rangeCalendarClearEnd;
+  const totalLabel = elements.rangeCalendarTotal;
   const submitButton = elements.rangeCalendarSubmit;
   if (!(root instanceof HTMLElement) || !(openButton instanceof HTMLElement)
     || !(monthsContainer instanceof HTMLElement) || !(submitButton instanceof HTMLButtonElement)) {
@@ -4193,9 +4199,11 @@ function initRangeCalendar(options = {}) {
   let taskCounts = options.taskCounts && typeof options.taskCounts === 'object' ? options.taskCounts : {};
   let startDate = normalizeDateInputValue(options.startDate || '');
   let endDate = normalizeDateInputValue(options.endDate || '');
+  let isPickingRange = false;
 
   function open() {
     root.hidden = false;
+    isPickingRange = false;
     renderMonths();
     updateSelection();
   }
@@ -4215,13 +4223,15 @@ function initRangeCalendar(options = {}) {
       openButtonValue.textContent = formatRangeButton(startDate, endDate);
     }
     close();
+    isPickingRange = false;
     onChange({ startDate, endDate });
   }
 
   function handleDateClick(dateKey) {
-    if (!startDate || (startDate && endDate)) {
+    if (!startDate || (startDate && endDate && !isPickingRange)) {
       startDate = dateKey;
       endDate = '';
+      isPickingRange = true;
     } else {
       endDate = dateKey;
       if (compareDateKeys(endDate, startDate) < 0) {
@@ -4229,6 +4239,7 @@ function initRangeCalendar(options = {}) {
         startDate = endDate;
         endDate = tmp;
       }
+      isPickingRange = false;
     }
     updateSelection();
   }
@@ -4299,8 +4310,22 @@ function initRangeCalendar(options = {}) {
     if (endLabel instanceof HTMLElement) {
       endLabel.textContent = endDate ? formatLongDate(endDate) : 'Не выбрана';
     }
+    if (startCard instanceof HTMLElement) {
+      setClass(startCard, 'is-empty', !startDate);
+    }
+    if (endCard instanceof HTMLElement) {
+      setClass(endCard, 'is-empty', !endDate);
+    }
     submitButton.disabled = !startDate;
     submitButton.textContent = getSubmitText();
+    if (totalLabel instanceof HTMLElement) {
+      const taskCount = getTaskTotalInSelectedRange();
+      if (!startDate) {
+        totalLabel.textContent = 'Выберите даты';
+      } else {
+        totalLabel.textContent = `Задач за период: ${taskCount}`;
+      }
+    }
     const dayButtons = root.querySelectorAll('.range-calendar__day');
     dayButtons.forEach((button) => {
       if (!(button instanceof HTMLElement)) {
@@ -4338,6 +4363,20 @@ function initRangeCalendar(options = {}) {
     return `Выбрать ${formatRangeButton(startDate, endDate)}`;
   }
 
+  function getTaskTotalInSelectedRange() {
+    if (!startDate) {
+      return 0;
+    }
+    const effectiveEnd = endDate || startDate;
+    let sum = 0;
+    Object.keys(taskCounts).forEach((key) => {
+      if (compareDateKeys(key, startDate) >= 0 && compareDateKeys(key, effectiveEnd) <= 0) {
+        sum += Number(taskCounts[key] || 0);
+      }
+    });
+    return sum;
+  }
+
   function setTaskCounts(nextTaskCounts) {
     taskCounts = nextTaskCounts && typeof nextTaskCounts === 'object' ? nextTaskCounts : {};
     if (!root.hidden) {
@@ -4353,16 +4392,24 @@ function initRangeCalendar(options = {}) {
   submitButton.addEventListener('click', submit);
   if (clearStartButton instanceof HTMLElement) {
     clearStartButton.addEventListener('click', (event) => {
+      event.preventDefault();
       event.stopPropagation();
       startDate = '';
       endDate = '';
+      isPickingRange = false;
+      if (openButtonValue instanceof HTMLElement) {
+        openButtonValue.textContent = 'Сегодня';
+      }
       updateSelection();
+      onChange({ startDate: '', endDate: '' });
     });
   }
   if (clearEndButton instanceof HTMLElement) {
     clearEndButton.addEventListener('click', (event) => {
+      event.preventDefault();
       event.stopPropagation();
       endDate = '';
+      isPickingRange = true;
       updateSelection();
     });
   }
@@ -4392,6 +4439,7 @@ function initRangeCalendar(options = {}) {
         startDate = endDate;
         endDate = tmp;
       }
+      isPickingRange = false;
       updateSelection();
       if (openButtonValue instanceof HTMLElement) {
         openButtonValue.textContent = startDate ? formatRangeButton(startDate, endDate || startDate) : 'Сегодня';
@@ -4400,6 +4448,7 @@ function initRangeCalendar(options = {}) {
     clear() {
       startDate = '';
       endDate = '';
+      isPickingRange = false;
       updateSelection();
       if (openButtonValue instanceof HTMLElement) {
         openButtonValue.textContent = 'Сегодня';

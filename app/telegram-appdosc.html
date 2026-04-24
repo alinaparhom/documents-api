@@ -1765,14 +1765,25 @@
         position: absolute;
         left: 0;
         right: 0;
+        top: 0;
         bottom: 0;
-        max-height: 92vh;
-        background: #f5f7fb;
+        height: calc(100dvh - env(safe-area-inset-top));
+        max-height: calc(100dvh - env(safe-area-inset-top));
+        background: linear-gradient(180deg, #f7faff 0%, #f3f7ff 100%);
         border-radius: 24px 24px 0 0;
         padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
         box-shadow: 0 -16px 40px rgba(15, 23, 42, 0.18);
         display: flex;
         flex-direction: column;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+
+      @supports (height: 1lvh) {
+        .range-calendar__panel {
+          height: calc(100lvh - env(safe-area-inset-top));
+          max-height: calc(100lvh - env(safe-area-inset-top));
+        }
       }
 
       .range-calendar__handle {
@@ -1800,6 +1811,10 @@
         position: relative;
       }
 
+      .range-calendar__selected-card.is-empty .range-calendar__selected-value {
+        color: #9aa6bb;
+      }
+
       .range-calendar__selected-label {
         display: block;
         font-size: 13px;
@@ -1816,11 +1831,17 @@
       }
 
       .range-calendar__selected-clear {
+        border: 0;
+        background: transparent;
+        cursor: pointer;
         position: absolute;
         right: 14px;
-        top: 20px;
+        top: 16px;
         color: #8a94a6;
-        font-size: 22px;
+        font-size: 24px;
+        line-height: 1;
+        width: 28px;
+        height: 28px;
       }
 
       .range-calendar__weekdays {
@@ -1836,6 +1857,8 @@
 
       .range-calendar__months {
         margin-top: 12px;
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
         padding-bottom: 96px;
@@ -1882,6 +1905,7 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
+        transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
       }
 
       .range-calendar__day-number {
@@ -1903,13 +1927,14 @@
       }
 
       .range-calendar__day.is-in-range {
-        background: #eaf2ff;
+        background: linear-gradient(180deg, #eaf2ff 0%, #e5eeff 100%);
       }
 
       .range-calendar__day.is-range-start .range-calendar__day-inner,
       .range-calendar__day.is-range-end .range-calendar__day-inner {
         background: #1677ff;
         color: #ffffff;
+        box-shadow: 0 10px 20px rgba(22, 119, 255, 0.35);
       }
 
       .range-calendar__day.is-range-start .range-calendar__day-count,
@@ -1929,6 +1954,10 @@
         border-radius: 14px;
       }
 
+      .range-calendar__day:active .range-calendar__day-inner {
+        transform: scale(0.96);
+      }
+
       .range-calendar__footer {
         position: absolute;
         left: 14px;
@@ -1936,6 +1965,14 @@
         bottom: calc(14px + env(safe-area-inset-bottom));
         background: linear-gradient(to top, #f5f7fb 70%, rgba(245, 247, 251, 0));
         padding-top: 18px;
+      }
+
+      .range-calendar__period-total {
+        margin-bottom: 10px;
+        text-align: center;
+        font-size: 14px;
+        color: #4b5c7a;
+        font-weight: 700;
       }
 
       .range-calendar__submit {
@@ -2385,16 +2422,16 @@
               <div class="range-calendar__panel" role="dialog" aria-modal="true">
                 <div class="range-calendar__handle"></div>
                 <div class="range-calendar__selected">
-                  <button type="button" class="range-calendar__selected-card" data-clear-start>
+                  <div class="range-calendar__selected-card" data-start-card>
                     <span class="range-calendar__selected-label">Дата от</span>
                     <span class="range-calendar__selected-value" data-start-label>Не выбрана</span>
-                    <span class="range-calendar__selected-clear">×</span>
-                  </button>
-                  <button type="button" class="range-calendar__selected-card" data-clear-end>
+                    <button type="button" class="range-calendar__selected-clear" data-clear-start aria-label="Очистить дату от">×</button>
+                  </div>
+                  <div class="range-calendar__selected-card" data-end-card>
                     <span class="range-calendar__selected-label">Дата до</span>
                     <span class="range-calendar__selected-value" data-end-label>Не выбрана</span>
-                    <span class="range-calendar__selected-clear">×</span>
-                  </button>
+                    <button type="button" class="range-calendar__selected-clear" data-clear-end aria-label="Очистить дату до">×</button>
+                  </div>
                 </div>
                 <div class="range-calendar__weekdays">
                   <span>ПН</span>
@@ -2407,6 +2444,7 @@
                 </div>
                 <div class="range-calendar__months" data-calendar-months></div>
                 <div class="range-calendar__footer">
+                  <div class="range-calendar__period-total" data-calendar-total>Выберите даты</div>
                   <button type="button" class="range-calendar__submit" data-calendar-submit disabled>Выберите даты</button>
                 </div>
               </div>
