@@ -1837,6 +1837,20 @@ function applyEntryTaskId(entryTaskId, source, startParam) {
   if (!normalized) {
     return;
   }
+  const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
+  const comboPalette = isLightTheme
+    ? {
+      optionBg: 'rgba(84, 126, 212, 0.07)',
+      optionBorder: 'rgba(94, 136, 219, 0.22)',
+      optionColor: '#1d2d4c',
+      optionHover: 'rgba(84, 126, 212, 0.16)',
+    }
+    : {
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    };
 
   if (!state.entryTaskId) {
     state.entryTaskId = normalized;
@@ -18040,140 +18054,47 @@ function setupAssignmentControls(card, task) {
     return;
   }
 
-  const comboInput = container.querySelector('[data-card-assignee-combo]');
+  const comboButton = container.querySelector('[data-card-assignee-combo]');
+  const comboButtonText = container.querySelector('[data-card-assignee-button-text]');
+  const comboSheet = container.querySelector('[data-card-assignee-sheet]');
+  const comboBackdrop = container.querySelector('[data-assignee-backdrop]');
+  const comboClose = container.querySelector('[data-assignee-close]');
+  const comboInput = container.querySelector('[data-card-assignee-search]');
   const optionsList = container.querySelector('[data-card-assignee-options]');
   const searchMeta = container.querySelector('[data-card-assignee-search-meta]');
   const entriesContainer = container.querySelector('[data-card-assignee-entries]');
   const bulkButton = container.querySelector('[data-card-assign-submit]');
   const bulkCount = container.querySelector('[data-card-assign-count]');
-  if (!comboInput || !optionsList || !searchMeta || !entriesContainer || !bulkButton || !bulkCount) {
+  if (
+    !comboButton
+    || !comboButtonText
+    || !comboSheet
+    || !comboBackdrop
+    || !comboClose
+    || !comboInput
+    || !optionsList
+    || !searchMeta
+    || !entriesContainer
+    || !bulkButton
+    || !bulkCount
+  ) {
     container.remove();
     return;
   }
-  const comboWrapper = comboInput.closest('.appdosc-card__assign-selector');
   const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
   const comboPalette = isLightTheme
     ? {
-      inputBg: 'rgba(255, 255, 255, 0.92)',
-      inputBorder: 'rgba(80, 120, 201, 0.26)',
-      inputColor: '#1c2a46',
-      listBg: 'rgba(255, 255, 255, 0.96)',
-      listBorder: 'rgba(80, 120, 201, 0.28)',
-      shadow: '0 10px 26px rgba(73, 102, 158, 0.16)',
       optionBg: 'rgba(84, 126, 212, 0.07)',
       optionBorder: 'rgba(94, 136, 219, 0.22)',
       optionColor: '#1d2d4c',
       optionHover: 'rgba(84, 126, 212, 0.16)',
-      scrollThumb: 'rgba(84, 126, 212, 0.55)',
-      scrollTrack: 'rgba(84, 126, 212, 0.14)',
     }
     : {
-      inputBg: 'rgba(24, 36, 67, 0.82)',
-      inputBorder: 'rgba(124, 166, 255, 0.34)',
-      inputColor: '#ecf3ff',
-      listBg: 'rgba(20, 31, 59, 0.95)',
-      listBorder: 'rgba(118, 163, 255, 0.36)',
-      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
       optionBg: 'rgba(255, 255, 255, 0.04)',
       optionBorder: 'rgba(141, 181, 255, 0.18)',
       optionColor: '#eff5ff',
       optionHover: 'rgba(123, 173, 255, 0.24)',
-      scrollThumb: 'rgba(123, 173, 255, 0.62)',
-      scrollTrack: 'rgba(123, 173, 255, 0.18)',
     };
-  if (comboWrapper) {
-    comboWrapper.style.marginBottom = '2px';
-  }
-  comboInput.readOnly = true;
-  comboInput.dataset.searchUnlocked = 'false';
-  comboInput.setAttribute('inputmode', 'none');
-  comboInput.classList.add('appdosc-card__assign-search--combo');
-  optionsList.classList.add('appdosc-card__assign-combo-list--compact');
-  comboInput.style.width = '100%';
-  comboInput.style.minHeight = '40px';
-  comboInput.style.padding = '8px 44px 8px 11px';
-  comboInput.style.borderRadius = '12px';
-  comboInput.style.border = `1px solid ${comboPalette.inputBorder}`;
-  comboInput.style.background = comboPalette.inputBg;
-  comboInput.style.color = comboPalette.inputColor;
-  comboInput.style.fontSize = '14px';
-  comboInput.style.lineHeight = '1.35';
-  comboInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  comboInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
-  optionsList.hidden = true;
-  optionsList.style.position = 'relative';
-  optionsList.style.left = 'auto';
-  optionsList.style.right = 'auto';
-  optionsList.style.top = 'auto';
-  optionsList.style.zIndex = '120';
-  optionsList.style.marginTop = '8px';
-  optionsList.style.maxHeight = '260px';
-  optionsList.style.width = '100%';
-  optionsList.style.overflowY = 'scroll';
-  optionsList.style.overflowX = 'hidden';
-  optionsList.style.overscrollBehavior = 'contain';
-  optionsList.style.touchAction = 'pan-y';
-  optionsList.style.scrollbarGutter = 'stable';
-  optionsList.style.scrollbarWidth = 'thin';
-  optionsList.style.scrollbarColor = `${comboPalette.scrollThumb} ${comboPalette.scrollTrack}`;
-  optionsList.style.borderRadius = '12px';
-  optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
-  optionsList.style.background = comboPalette.listBg;
-  optionsList.style.backdropFilter = 'blur(10px)';
-  optionsList.style.webkitBackdropFilter = 'blur(10px)';
-  optionsList.style.boxShadow = comboPalette.shadow;
-  optionsList.style.padding = '4px';
-  optionsList.style.webkitOverflowScrolling = 'touch';
-  let inputShell = comboInput.parentElement && comboInput.parentElement.classList.contains('appdosc-card__assign-input-shell')
-    ? comboInput.parentElement
-    : null;
-  if (!inputShell && comboInput.parentNode) {
-    inputShell = document.createElement('div');
-    inputShell.className = 'appdosc-card__assign-input-shell';
-    inputShell.style.position = 'relative';
-    inputShell.style.width = '100%';
-    inputShell.style.display = 'block';
-    comboInput.parentNode.insertBefore(inputShell, comboInput);
-    inputShell.appendChild(comboInput);
-  }
-  const keyboardButton = document.createElement('button');
-  keyboardButton.type = 'button';
-  keyboardButton.className = 'appdosc-card__assign-keyboard-toggle';
-  keyboardButton.textContent = '⌨️';
-  keyboardButton.setAttribute('aria-label', 'Открыть клавиатуру для поиска');
-  keyboardButton.style.position = 'absolute';
-  keyboardButton.style.right = '8px';
-  keyboardButton.style.top = '50%';
-  keyboardButton.style.transform = 'translateY(-50%)';
-  keyboardButton.style.width = '30px';
-  keyboardButton.style.height = '30px';
-  keyboardButton.style.borderRadius = '9px';
-  keyboardButton.style.border = `1px solid ${comboPalette.optionBorder}`;
-  keyboardButton.style.background = comboPalette.optionBg;
-  keyboardButton.style.color = comboPalette.optionColor;
-  keyboardButton.style.display = 'inline-flex';
-  keyboardButton.style.alignItems = 'center';
-  keyboardButton.style.justifyContent = 'center';
-  keyboardButton.style.cursor = 'pointer';
-  keyboardButton.style.padding = '0';
-  keyboardButton.style.zIndex = '160';
-  keyboardButton.style.backdropFilter = 'blur(6px)';
-  keyboardButton.style.webkitBackdropFilter = 'blur(6px)';
-  if (inputShell && !inputShell.contains(keyboardButton)) {
-    inputShell.appendChild(keyboardButton);
-  }
-  const setKeyboardButtonActive = (active) => {
-    keyboardButton.dataset.active = active ? 'true' : 'false';
-    keyboardButton.style.display = 'inline-flex';
-    keyboardButton.style.opacity = '1';
-    keyboardButton.style.visibility = 'visible';
-    keyboardButton.style.background = active ? comboPalette.optionHover : comboPalette.optionBg;
-    keyboardButton.style.border = `1px solid ${active ? comboPalette.inputBorder : comboPalette.optionBorder}`;
-    keyboardButton.style.boxShadow = active
-      ? '0 0 0 2px rgba(123, 173, 255, 0.18)'
-      : 'none';
-  };
-  setKeyboardButtonActive(false);
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
   const currentIdentifiers = getTaskResponsibleIdentifiers(task).filter((id) => !directorIdentifiers.has(id));
@@ -18272,12 +18193,12 @@ function setupAssignmentControls(card, task) {
 
   let visibleAssigneeOptions = [];
   const setComboExpanded = (expanded) => {
-    comboInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    comboInput.dataset.expanded = expanded ? 'true' : 'false';
+    comboButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    comboButton.dataset.expanded = expanded ? 'true' : 'false';
   };
-  const isComboExpanded = () => comboInput.dataset.expanded === 'true';
+  const isComboExpanded = () => comboButton.dataset.expanded === 'true';
   const hideOptionsList = () => {
-    optionsList.hidden = true;
+    optionsList.innerHTML = '';
     setComboExpanded(false);
   };
   const showOptionsList = () => {
@@ -18329,7 +18250,7 @@ function setupAssignmentControls(card, task) {
       option.style.fontSize = '14px';
       option.style.lineHeight = '1.35';
       option.style.padding = '7px 10px';
-      option.style.minHeight = '38px';
+      option.style.minHeight = '44px';
       option.style.borderRadius = '9px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -19072,96 +18993,37 @@ function setupAssignmentControls(card, task) {
     });
     comboInput.value = '';
     populateComboOptions();
+    comboButtonText.textContent = label;
+    comboButton.classList.add('is-selected');
+    closeSheet();
+  };
+
+  const openSheet = () => {
+    comboSheet.hidden = false;
+    comboInput.value = '';
+    populateComboOptions();
+    setComboExpanded(true);
+  };
+
+  const closeSheet = () => {
+    comboInput.blur();
+    comboSheet.hidden = true;
     hideOptionsList();
   };
 
+  comboButton.addEventListener('click', openSheet);
+  comboBackdrop.addEventListener('click', closeSheet);
+  comboClose.addEventListener('click', closeSheet);
+
   comboInput.addEventListener('input', () => {
-    const wasOpen = !optionsList.hidden;
     populateComboOptions();
-    if (wasOpen && visibleAssigneeOptions.length > 0) {
-      optionsList.hidden = false;
-      setComboExpanded(true);
-    }
-  });
-
-  let waitSecondTapForKeyboard = false;
-  let skipUnlockOnCurrentClick = false;
-  const unlockComboSearch = () => {
-    comboInput.readOnly = false;
-    comboInput.dataset.searchUnlocked = 'true';
-    comboInput.setAttribute('inputmode', 'search');
-    waitSecondTapForKeyboard = false;
-    showOptionsList();
-    comboInput.focus({ preventScroll: true });
-    requestAnimationFrame(() => {
-      comboInput.focus({ preventScroll: true });
-      const cursor = comboInput.value.length;
-      if (typeof comboInput.setSelectionRange === 'function') {
-        comboInput.setSelectionRange(cursor, cursor);
-      }
-    });
-    setKeyboardButtonActive(true);
-  };
-  const relockComboSearch = () => {
-    comboInput.readOnly = true;
-    comboInput.dataset.searchUnlocked = 'false';
-    comboInput.setAttribute('inputmode', 'none');
-    waitSecondTapForKeyboard = false;
-    skipUnlockOnCurrentClick = false;
-    setKeyboardButtonActive(false);
-  };
-  const handleKeyboardButtonPress = (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    showOptionsList();
-    unlockComboSearch();
-  };
-  keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
-  keyboardButton.addEventListener('click', handleKeyboardButtonPress);
-
-  comboInput.addEventListener('pointerdown', (event) => {
-    if (comboInput.readOnly) {
-      if (!isComboExpanded()) {
-        event.preventDefault();
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        skipUnlockOnCurrentClick = true;
-        return;
-      }
-      waitSecondTapForKeyboard = true;
-      return;
-    }
-    showOptionsList();
-  });
-
-  comboInput.addEventListener('focus', () => {
-    showOptionsList();
-  });
-
-  comboInput.addEventListener('click', () => {
-    if (comboInput.readOnly) {
-      if (skipUnlockOnCurrentClick) {
-        skipUnlockOnCurrentClick = false;
-        return;
-      }
-      if (!isComboExpanded()) {
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        return;
-      }
-    }
-    if (waitSecondTapForKeyboard && isComboExpanded()) {
-      unlockComboSearch();
-      return;
-    }
-    showOptionsList();
-  });
-
-  comboInput.addEventListener('change', () => {
-    handleAssigneeSelection(comboInput.value);
   });
 
   comboInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !comboSheet.hidden) {
+      closeSheet();
+      return;
+    }
     if (event.key !== 'Enter') {
       return;
     }
@@ -19169,16 +19031,11 @@ function setupAssignmentControls(card, task) {
     handleAssigneeSelection(comboInput.value);
   });
 
-  comboInput.addEventListener('blur', () => {
-    relockComboSearch();
-    setTimeout(hideOptionsList, 120);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !comboSheet.hidden) {
+      closeSheet();
+    }
   });
-
-  document.addEventListener('pointerdown', (event) => {
-    const target = event.target;
-    if (comboInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
-    hideOptionsList();
-  }, true);
 
   container.hidden = false;
 }
@@ -19216,143 +19073,50 @@ function setupSubordinateControls(card, task) {
     return;
   }
 
+  const pickerButton = container.querySelector('[data-card-subordinate-button]');
+  const pickerButtonText = container.querySelector('[data-card-subordinate-button-text]');
+  const pickerSheet = container.querySelector('[data-card-subordinate-sheet]');
+  const pickerBackdrop = container.querySelector('[data-assignee-backdrop]');
+  const pickerClose = container.querySelector('[data-assignee-close]');
   const searchInput = container.querySelector('[data-card-subordinate-search]');
   const optionsList = container.querySelector('[data-card-subordinate-options]');
   const searchMeta = container.querySelector('[data-card-subordinate-search-meta]');
   const entriesContainer = container.querySelector('[data-card-subordinate-entries]');
   const bulkButton = container.querySelector('[data-card-subordinate-submit]');
   const bulkCount = container.querySelector('[data-card-subordinate-count]');
-  if (!searchInput || !optionsList || !searchMeta || !entriesContainer || !bulkButton || !bulkCount) {
+  if (
+    !pickerButton
+    || !pickerButtonText
+    || !pickerSheet
+    || !pickerBackdrop
+    || !pickerClose
+    || !searchInput
+    || !optionsList
+    || !searchMeta
+    || !entriesContainer
+    || !bulkButton
+    || !bulkCount
+  ) {
     container.remove();
     return;
   }
-
-  const comboWrapper = searchInput.closest('.appdosc-card__assign-selector');
   const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
   const comboPalette = isLightTheme
     ? {
-      inputBg: 'rgba(255, 255, 255, 0.92)',
-      inputBorder: 'rgba(80, 120, 201, 0.26)',
-      inputColor: '#1c2a46',
-      listBg: 'rgba(255, 255, 255, 0.96)',
-      listBorder: 'rgba(80, 120, 201, 0.28)',
-      shadow: '0 10px 26px rgba(73, 102, 158, 0.16)',
       optionBg: 'rgba(84, 126, 212, 0.07)',
       optionBorder: 'rgba(94, 136, 219, 0.22)',
       optionColor: '#1d2d4c',
       optionHover: 'rgba(84, 126, 212, 0.16)',
-      scrollThumb: 'rgba(84, 126, 212, 0.55)',
-      scrollTrack: 'rgba(84, 126, 212, 0.14)',
     }
     : {
-      inputBg: 'rgba(24, 36, 67, 0.82)',
-      inputBorder: 'rgba(124, 166, 255, 0.34)',
-      inputColor: '#ecf3ff',
-      listBg: 'rgba(20, 31, 59, 0.95)',
-      listBorder: 'rgba(118, 163, 255, 0.36)',
-      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
       optionBg: 'rgba(255, 255, 255, 0.04)',
       optionBorder: 'rgba(141, 181, 255, 0.18)',
       optionColor: '#eff5ff',
       optionHover: 'rgba(123, 173, 255, 0.24)',
-      scrollThumb: 'rgba(123, 173, 255, 0.62)',
-      scrollTrack: 'rgba(123, 173, 255, 0.18)',
     };
-  if (comboWrapper) {
-    comboWrapper.style.marginBottom = '2px';
-  }
-  searchInput.readOnly = true;
-  searchInput.dataset.searchUnlocked = 'false';
-  searchInput.setAttribute('inputmode', 'none');
-  searchInput.classList.add('appdosc-card__assign-search--combo');
-  optionsList.classList.add('appdosc-card__assign-combo-list--compact');
-  searchInput.style.width = '100%';
-  searchInput.style.minHeight = '40px';
-  searchInput.style.padding = '8px 44px 8px 11px';
-  searchInput.style.borderRadius = '12px';
-  searchInput.style.border = `1px solid ${comboPalette.inputBorder}`;
-  searchInput.style.background = comboPalette.inputBg;
-  searchInput.style.color = comboPalette.inputColor;
-  searchInput.style.fontSize = '14px';
-  searchInput.style.lineHeight = '1.35';
-  searchInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  searchInput.style.boxShadow = '0 6px 16px rgba(45, 92, 170, 0.12)';
-  optionsList.hidden = true;
-  optionsList.style.position = 'relative';
-  optionsList.style.left = 'auto';
-  optionsList.style.right = 'auto';
-  optionsList.style.top = 'auto';
-  optionsList.style.zIndex = '120';
-  optionsList.style.marginTop = '8px';
-  optionsList.style.maxHeight = '260px';
-  optionsList.style.width = '100%';
-  optionsList.style.overflowY = 'scroll';
-  optionsList.style.overflowX = 'hidden';
-  optionsList.style.overscrollBehavior = 'contain';
-  optionsList.style.touchAction = 'pan-y';
-  optionsList.style.scrollbarGutter = 'stable';
-  optionsList.style.scrollbarWidth = 'thin';
-  optionsList.style.scrollbarColor = `${comboPalette.scrollThumb} ${comboPalette.scrollTrack}`;
-  optionsList.style.borderRadius = '12px';
-  optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
-  optionsList.style.background = comboPalette.listBg;
-  optionsList.style.backdropFilter = 'blur(10px)';
-  optionsList.style.webkitBackdropFilter = 'blur(10px)';
-  optionsList.style.boxShadow = comboPalette.shadow;
-  optionsList.style.padding = '4px';
-  optionsList.style.webkitOverflowScrolling = 'touch';
-  let inputShell = searchInput.parentElement && searchInput.parentElement.classList.contains('appdosc-card__assign-input-shell')
-    ? searchInput.parentElement
-    : null;
-  if (!inputShell && searchInput.parentNode) {
-    inputShell = document.createElement('div');
-    inputShell.className = 'appdosc-card__assign-input-shell';
-    inputShell.style.position = 'relative';
-    inputShell.style.width = '100%';
-    inputShell.style.display = 'block';
-    searchInput.parentNode.insertBefore(inputShell, searchInput);
-    inputShell.appendChild(searchInput);
-  }
-  const keyboardButton = document.createElement('button');
-  keyboardButton.type = 'button';
-  keyboardButton.className = 'appdosc-card__assign-keyboard-toggle';
-  keyboardButton.textContent = '⌨️';
-  keyboardButton.setAttribute('aria-label', 'Открыть клавиатуру для поиска');
-  keyboardButton.style.position = 'absolute';
-  keyboardButton.style.right = '8px';
-  keyboardButton.style.top = '50%';
-  keyboardButton.style.transform = 'translateY(-50%)';
-  keyboardButton.style.width = '30px';
-  keyboardButton.style.height = '30px';
-  keyboardButton.style.borderRadius = '9px';
-  keyboardButton.style.border = `1px solid ${comboPalette.optionBorder}`;
-  keyboardButton.style.background = comboPalette.optionBg;
-  keyboardButton.style.color = comboPalette.optionColor;
-  keyboardButton.style.display = 'inline-flex';
-  keyboardButton.style.alignItems = 'center';
-  keyboardButton.style.justifyContent = 'center';
-  keyboardButton.style.cursor = 'pointer';
-  keyboardButton.style.padding = '0';
-  keyboardButton.style.zIndex = '160';
-  keyboardButton.style.backdropFilter = 'blur(6px)';
-  keyboardButton.style.webkitBackdropFilter = 'blur(6px)';
-  if (inputShell && !inputShell.contains(keyboardButton)) {
-    inputShell.appendChild(keyboardButton);
-  }
-  const setKeyboardButtonActive = (active) => {
-    keyboardButton.dataset.active = active ? 'true' : 'false';
-    keyboardButton.style.display = 'inline-flex';
-    keyboardButton.style.opacity = '1';
-    keyboardButton.style.visibility = 'visible';
-    keyboardButton.style.background = active ? comboPalette.optionHover : comboPalette.optionBg;
-    keyboardButton.style.border = `1px solid ${active ? comboPalette.inputBorder : comboPalette.optionBorder}`;
-    keyboardButton.style.boxShadow = active
-      ? '0 0 0 2px rgba(123, 173, 255, 0.18)'
-      : 'none';
-  };
-  setKeyboardButtonActive(false);
   if (!assignmentCandidates.length) {
     searchInput.disabled = true;
+    pickerButton.disabled = true;
     searchMeta.textContent = 'Подчинённые для назначения отсутствуют.';
   }
 
@@ -19452,12 +19216,12 @@ function setupSubordinateControls(card, task) {
 
   let visibleSubordinateOptions = [];
   const setComboExpanded = (expanded) => {
-    searchInput.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    searchInput.dataset.expanded = expanded ? 'true' : 'false';
+    pickerButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    pickerButton.dataset.expanded = expanded ? 'true' : 'false';
   };
-  const isComboExpanded = () => searchInput.dataset.expanded === 'true';
+  const isComboExpanded = () => pickerButton.dataset.expanded === 'true';
   const hideOptionsList = () => {
-    optionsList.hidden = true;
+    optionsList.innerHTML = '';
     setComboExpanded(false);
   };
   const showOptionsList = () => {
@@ -19506,7 +19270,7 @@ function setupSubordinateControls(card, task) {
       option.style.fontSize = '14px';
       option.style.lineHeight = '1.35';
       option.style.padding = '7px 10px';
-      option.style.minHeight = '38px';
+      option.style.minHeight = '44px';
       option.style.borderRadius = '9px';
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -20102,96 +19866,36 @@ function setupSubordinateControls(card, task) {
     }
     searchInput.value = '';
     populateComboOptions();
+    pickerButtonText.textContent = label;
+    pickerButton.classList.add('is-selected');
+    closeSheet();
+  };
+
+  const openSheet = () => {
+    pickerSheet.hidden = false;
+    searchInput.value = '';
+    populateComboOptions();
+    setComboExpanded(true);
+  };
+  const closeSheet = () => {
+    searchInput.blur();
+    pickerSheet.hidden = true;
     hideOptionsList();
   };
 
+  pickerButton.addEventListener('click', openSheet);
+  pickerBackdrop.addEventListener('click', closeSheet);
+  pickerClose.addEventListener('click', closeSheet);
+
   searchInput.addEventListener('input', () => {
-    const wasOpen = !optionsList.hidden;
     populateComboOptions();
-    if (wasOpen && visibleSubordinateOptions.length > 0) {
-      optionsList.hidden = false;
-      setComboExpanded(true);
-    }
-  });
-
-  let waitSecondTapForKeyboard = false;
-  let skipUnlockOnCurrentClick = false;
-  const unlockSubordinateSearch = () => {
-    searchInput.readOnly = false;
-    searchInput.dataset.searchUnlocked = 'true';
-    searchInput.setAttribute('inputmode', 'search');
-    waitSecondTapForKeyboard = false;
-    showOptionsList();
-    searchInput.focus({ preventScroll: true });
-    requestAnimationFrame(() => {
-      searchInput.focus({ preventScroll: true });
-      const cursor = searchInput.value.length;
-      if (typeof searchInput.setSelectionRange === 'function') {
-        searchInput.setSelectionRange(cursor, cursor);
-      }
-    });
-    setKeyboardButtonActive(true);
-  };
-  const relockSubordinateSearch = () => {
-    searchInput.readOnly = true;
-    searchInput.dataset.searchUnlocked = 'false';
-    searchInput.setAttribute('inputmode', 'none');
-    waitSecondTapForKeyboard = false;
-    skipUnlockOnCurrentClick = false;
-    setKeyboardButtonActive(false);
-  };
-  const handleKeyboardButtonPress = (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    showOptionsList();
-    unlockSubordinateSearch();
-  };
-  keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
-  keyboardButton.addEventListener('click', handleKeyboardButtonPress);
-
-  searchInput.addEventListener('pointerdown', (event) => {
-    if (searchInput.readOnly) {
-      if (!isComboExpanded()) {
-        event.preventDefault();
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        skipUnlockOnCurrentClick = true;
-        return;
-      }
-      waitSecondTapForKeyboard = true;
-      return;
-    }
-    showOptionsList();
-  });
-
-  searchInput.addEventListener('focus', () => {
-    showOptionsList();
-  });
-
-  searchInput.addEventListener('click', () => {
-    if (searchInput.readOnly) {
-      if (skipUnlockOnCurrentClick) {
-        skipUnlockOnCurrentClick = false;
-        return;
-      }
-      if (!isComboExpanded()) {
-        showOptionsList();
-        waitSecondTapForKeyboard = true;
-        return;
-      }
-    }
-    if (waitSecondTapForKeyboard && isComboExpanded()) {
-      unlockSubordinateSearch();
-      return;
-    }
-    showOptionsList();
-  });
-
-  searchInput.addEventListener('change', () => {
-    handleSubordinateSelection(searchInput.value);
   });
 
   searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !pickerSheet.hidden) {
+      closeSheet();
+      return;
+    }
     if (event.key !== 'Enter') {
       return;
     }
@@ -20199,15 +19903,11 @@ function setupSubordinateControls(card, task) {
     handleSubordinateSelection(searchInput.value);
   });
 
-  searchInput.addEventListener('blur', () => {
-    relockSubordinateSearch();
-    setTimeout(hideOptionsList, 120);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !pickerSheet.hidden) {
+      closeSheet();
+    }
   });
-  document.addEventListener('pointerdown', (event) => {
-    const target = event.target;
-    if (searchInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
-    hideOptionsList();
-  }, true);
 
   container.hidden = false;
 
