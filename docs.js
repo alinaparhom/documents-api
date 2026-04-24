@@ -1014,14 +1014,15 @@
   }
 
   var TABLE_GROUPS = [
-    { key: 'flow', label: 'Входящие и исходящие', span: 7 },
+    { key: 'flow', label: 'Входящие и исходящие', span: 8 },
     { key: 'execution', label: 'Исполнение', span: 5 },
     { key: 'resolution', label: 'Резолюция', span: 1 },
     { key: 'control', label: 'Контроль', span: 3 },
-    { key: 'files', label: 'Файлы и действия', span: 2 }
+    { key: 'files', label: 'Файлы', span: 1 }
   ];
   var TABLE_COLUMNS = [
     { key: 'entryNumber', label: '№', group: 'flow', searchable: true, searchHint: 'Введите номер записи' },
+    { key: 'actions', label: 'Действия', group: 'flow', searchable: false },
     { key: 'registryNumber', label: 'Рег. №', group: 'flow', searchable: true, searchHint: 'Введите регистрационный номер' },
     { key: 'registrationDate', label: 'Дата регистрации', group: 'flow', searchable: true, searchHint: 'Например: 12.03.2024' },
     { key: 'direction', label: 'Тип', group: 'flow', searchable: true, searchHint: 'Введите входящий или исходящий' },
@@ -1037,8 +1038,7 @@
     { key: 'dueDate', label: 'Срок', group: 'control', searchable: true, searchHint: 'Например: 01.04.2024' },
     { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' },
     { key: 'status', label: 'Статус', group: 'control', searchable: true, searchHint: 'Введите статус' },
-    { key: 'files', label: 'Файлы', group: 'files', searchable: false },
-    { key: 'actions', label: 'Действия', group: 'files', searchable: false }
+    { key: 'files', label: 'Файлы', group: 'files', searchable: false }
   ];
   var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
@@ -3106,7 +3106,9 @@
       '}' +
       '.documents-actions{' +
       'display:flex;' +
-      'justify-content:flex-start;' +
+      'flex-direction:column;' +
+      'align-items:flex-start;' +
+      'width:100%;' +
       'position:relative;' +
       '}' +
       '.documents-actions__toggle{' +
@@ -3137,13 +3139,11 @@
       '}' +
       '.documents-actions__panel{' +
       'display:none;' +
-      'position:absolute;' +
-      'top:calc(100% + 8px);' +
-      'left:0;' +
-      'z-index:16;' +
-      'min-width:320px;' +
-      'max-width:420px;' +
-      'padding:10px;' +
+      'position:relative;' +
+      'z-index:1;' +
+      'width:100%;' +
+      'margin-top:8px;' +
+      'padding:8px;' +
       'border-radius:14px;' +
       'border:1px solid rgba(148,163,184,0.3);' +
       'background:rgba(255,255,255,0.88);' +
@@ -3163,8 +3163,7 @@
       '}' +
       '@media (max-width:640px){' +
       '.documents-actions__panel{' +
-      'min-width:270px;' +
-      'max-width:300px;' +
+      'padding:6px;' +
       '}' +
       '}' +
       '';
@@ -12682,63 +12681,9 @@
       ? filterValues.__viewState
       : collectAssigneeViewState(doc);
 
+    var attachments = Array.isArray(doc.files) ? doc.files : [];
     var descriptors = [];
     descriptors.push(buildCellDescriptor(displayNumber, '', 'entryNumber'));
-    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
-    descriptors.push(buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate'));
-    descriptors.push(buildCellDescriptor(doc.direction || '—', '', 'direction'));
-    descriptors.push(buildCellDescriptor(doc.correspondent || '—', '', 'correspondent'));
-    descriptors.push(buildCellDescriptor(doc.documentNumber || '—', '', 'documentNumber'));
-    descriptors.push(buildCellDescriptor(formatDate(doc.documentDate), '', 'documentDate'));
-    descriptors.push(buildCellDescriptor(doc.executor || '—', '', 'executor'));
-    descriptors.push(buildCellDescriptor(createDirectorCell(doc), 'documents-cell--director', 'director'));
-    descriptors.push(buildCellDescriptor(createAssigneeCell(doc, viewState), 'documents-cell--assignee', 'assignee'));
-    descriptors.push(buildCellDescriptor(
-      createSubordinateCell(doc, viewState),
-      'documents-cell--assignee documents-cell--subordinates',
-      'subordinates'
-    ));
-    descriptors.push(buildCellDescriptor(doc.summary || '—', '', 'summary'));
-    descriptors.push(buildCellDescriptor(doc.resolution || '—', '', 'resolution'));
-    descriptors.push(buildCellDescriptor(createDueDateCell(doc), '', 'dueDate'));
-    descriptors.push(buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction'));
-    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
-
-    var filesCell = createElement('div', 'documents-files');
-    var attachments = Array.isArray(doc.files) ? doc.files : [];
-    var filesSummary = createElement('div', 'documents-files__summary', 'Файлы (' + attachments.length + ')');
-    filesCell.appendChild(filesSummary);
-
-    var filesList = createElement('div', 'documents-files__list');
-    if (attachments.length) {
-      attachments.forEach(function(file) {
-        var itemWrap = createElement('div', 'documents-file-item');
-        var link = createElement('a', 'documents-file-link', getAttachmentName(file));
-        link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        var meta = [];
-        if (file.size) {
-          meta.push(formatSize(file.size));
-        }
-        if (file.uploadedAt) {
-          meta.push(formatDateTime(file.uploadedAt));
-        }
-        if (meta.length) {
-          link.title = meta.join(' • ');
-        }
-        link.addEventListener('click', function(event) {
-          event.preventDefault();
-          handleAttachmentPreview(doc, file, link);
-        });
-        itemWrap.appendChild(link);
-        filesList.appendChild(itemWrap);
-      });
-    } else {
-      filesList.textContent = '—';
-    }
-    filesCell.appendChild(filesList);
-    descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
 
     ensureSearchStyles();
     var actions = createElement('div', 'documents-actions');
@@ -12821,7 +12766,7 @@
     });
     actionsPanel.appendChild(briefActionButton);
 
-    var hasAttachments = Array.isArray(doc.files) && doc.files.length;
+    var hasAttachments = attachments.length > 0;
     var viewEntry = findCurrentUserViewEntry(doc);
     var alreadyViewed = Boolean(viewEntry && viewEntry.viewedAt);
     var viewedButton = createElement('button', 'documents-action documents-action--viewed', 'Просмотрено');
@@ -12857,8 +12802,62 @@
       actionsPanel.appendChild(deleteButton);
     }
     setupRowActionsMenu(actions, actionsToggleButton, actionsPanel);
-
     descriptors.push(buildCellDescriptor(actions, '', 'actions'));
+
+    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
+    descriptors.push(buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate'));
+    descriptors.push(buildCellDescriptor(doc.direction || '—', '', 'direction'));
+    descriptors.push(buildCellDescriptor(doc.correspondent || '—', '', 'correspondent'));
+    descriptors.push(buildCellDescriptor(doc.documentNumber || '—', '', 'documentNumber'));
+    descriptors.push(buildCellDescriptor(formatDate(doc.documentDate), '', 'documentDate'));
+    descriptors.push(buildCellDescriptor(doc.executor || '—', '', 'executor'));
+    descriptors.push(buildCellDescriptor(createDirectorCell(doc), 'documents-cell--director', 'director'));
+    descriptors.push(buildCellDescriptor(createAssigneeCell(doc, viewState), 'documents-cell--assignee', 'assignee'));
+    descriptors.push(buildCellDescriptor(
+      createSubordinateCell(doc, viewState),
+      'documents-cell--assignee documents-cell--subordinates',
+      'subordinates'
+    ));
+    descriptors.push(buildCellDescriptor(doc.summary || '—', '', 'summary'));
+    descriptors.push(buildCellDescriptor(doc.resolution || '—', '', 'resolution'));
+    descriptors.push(buildCellDescriptor(createDueDateCell(doc), '', 'dueDate'));
+    descriptors.push(buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction'));
+    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
+
+    var filesCell = createElement('div', 'documents-files');
+    var filesSummary = createElement('div', 'documents-files__summary', 'Файлы (' + attachments.length + ')');
+    filesCell.appendChild(filesSummary);
+
+    var filesList = createElement('div', 'documents-files__list');
+    if (attachments.length) {
+      attachments.forEach(function(file) {
+        var itemWrap = createElement('div', 'documents-file-item');
+        var link = createElement('a', 'documents-file-link', getAttachmentName(file));
+        link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        var meta = [];
+        if (file.size) {
+          meta.push(formatSize(file.size));
+        }
+        if (file.uploadedAt) {
+          meta.push(formatDateTime(file.uploadedAt));
+        }
+        if (meta.length) {
+          link.title = meta.join(' • ');
+        }
+        link.addEventListener('click', function(event) {
+          event.preventDefault();
+          handleAttachmentPreview(doc, file, link);
+        });
+        itemWrap.appendChild(link);
+        filesList.appendChild(itemWrap);
+      });
+    } else {
+      filesList.textContent = '—';
+    }
+    filesCell.appendChild(filesList);
+    descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
 
     while (tr.children.length > descriptors.length) {
       tr.removeChild(tr.lastChild);
