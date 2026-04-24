@@ -18092,7 +18092,7 @@ function setupAssignmentControls(card, task) {
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   comboInput.style.width = '100%';
   comboInput.style.minHeight = '40px';
-  comboInput.style.padding = '8px 11px';
+  comboInput.style.padding = '8px 44px 8px 11px';
   comboInput.style.borderRadius = '12px';
   comboInput.style.border = `1px solid ${comboPalette.inputBorder}`;
   comboInput.style.background = comboPalette.inputBg;
@@ -18125,6 +18125,32 @@ function setupAssignmentControls(card, task) {
   optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
+  const keyboardButton = document.createElement('button');
+  keyboardButton.type = 'button';
+  keyboardButton.className = 'appdosc-card__assign-keyboard-toggle';
+  keyboardButton.textContent = '⌨️';
+  keyboardButton.setAttribute('aria-label', 'Открыть клавиатуру для поиска');
+  keyboardButton.style.position = 'absolute';
+  keyboardButton.style.right = '8px';
+  keyboardButton.style.top = '50%';
+  keyboardButton.style.transform = 'translateY(-50%)';
+  keyboardButton.style.width = '30px';
+  keyboardButton.style.height = '30px';
+  keyboardButton.style.borderRadius = '9px';
+  keyboardButton.style.border = `1px solid ${comboPalette.optionBorder}`;
+  keyboardButton.style.background = comboPalette.optionBg;
+  keyboardButton.style.color = comboPalette.optionColor;
+  keyboardButton.style.display = 'inline-flex';
+  keyboardButton.style.alignItems = 'center';
+  keyboardButton.style.justifyContent = 'center';
+  keyboardButton.style.cursor = 'pointer';
+  keyboardButton.style.padding = '0';
+  keyboardButton.style.zIndex = '2';
+  keyboardButton.style.backdropFilter = 'blur(6px)';
+  keyboardButton.style.webkitBackdropFilter = 'blur(6px)';
+  if (comboWrapper && !comboWrapper.contains(keyboardButton)) {
+    comboWrapper.appendChild(keyboardButton);
+  }
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
   const currentIdentifiers = getTaskResponsibleIdentifiers(task).filter((id) => !directorIdentifiers.has(id));
@@ -19059,6 +19085,14 @@ function setupAssignmentControls(card, task) {
     waitSecondTapForKeyboard = false;
     skipUnlockOnCurrentClick = false;
   };
+  const handleKeyboardButtonPress = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    showOptionsList();
+    unlockComboSearch();
+  };
+  keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
+  keyboardButton.addEventListener('click', handleKeyboardButtonPress);
 
   comboInput.addEventListener('pointerdown', (event) => {
     if (comboInput.readOnly) {
@@ -19117,7 +19151,7 @@ function setupAssignmentControls(card, task) {
 
   document.addEventListener('pointerdown', (event) => {
     const target = event.target;
-    if (comboInput.contains(target) || optionsList.contains(target)) return;
+    if (comboInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
     hideOptionsList();
   }, true);
 
@@ -19210,7 +19244,7 @@ function setupSubordinateControls(card, task) {
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   searchInput.style.width = '100%';
   searchInput.style.minHeight = '40px';
-  searchInput.style.padding = '8px 11px';
+  searchInput.style.padding = '8px 44px 8px 11px';
   searchInput.style.borderRadius = '12px';
   searchInput.style.border = `1px solid ${comboPalette.inputBorder}`;
   searchInput.style.background = comboPalette.inputBg;
@@ -19243,6 +19277,32 @@ function setupSubordinateControls(card, task) {
   optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
+  const keyboardButton = document.createElement('button');
+  keyboardButton.type = 'button';
+  keyboardButton.className = 'appdosc-card__assign-keyboard-toggle';
+  keyboardButton.textContent = '⌨️';
+  keyboardButton.setAttribute('aria-label', 'Открыть клавиатуру для поиска');
+  keyboardButton.style.position = 'absolute';
+  keyboardButton.style.right = '8px';
+  keyboardButton.style.top = '50%';
+  keyboardButton.style.transform = 'translateY(-50%)';
+  keyboardButton.style.width = '30px';
+  keyboardButton.style.height = '30px';
+  keyboardButton.style.borderRadius = '9px';
+  keyboardButton.style.border = `1px solid ${comboPalette.optionBorder}`;
+  keyboardButton.style.background = comboPalette.optionBg;
+  keyboardButton.style.color = comboPalette.optionColor;
+  keyboardButton.style.display = 'inline-flex';
+  keyboardButton.style.alignItems = 'center';
+  keyboardButton.style.justifyContent = 'center';
+  keyboardButton.style.cursor = 'pointer';
+  keyboardButton.style.padding = '0';
+  keyboardButton.style.zIndex = '2';
+  keyboardButton.style.backdropFilter = 'blur(6px)';
+  keyboardButton.style.webkitBackdropFilter = 'blur(6px)';
+  if (comboWrapper && !comboWrapper.contains(keyboardButton)) {
+    comboWrapper.appendChild(keyboardButton);
+  }
   if (!assignmentCandidates.length) {
     searchInput.disabled = true;
     searchMeta.textContent = 'Подчинённые для назначения отсутствуют.';
@@ -20030,6 +20090,14 @@ function setupSubordinateControls(card, task) {
     waitSecondTapForKeyboard = false;
     skipUnlockOnCurrentClick = false;
   };
+  const handleKeyboardButtonPress = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    showOptionsList();
+    unlockSubordinateSearch();
+  };
+  keyboardButton.addEventListener('pointerdown', handleKeyboardButtonPress);
+  keyboardButton.addEventListener('click', handleKeyboardButtonPress);
 
   searchInput.addEventListener('pointerdown', (event) => {
     if (searchInput.readOnly) {
@@ -20087,7 +20155,7 @@ function setupSubordinateControls(card, task) {
   });
   document.addEventListener('pointerdown', (event) => {
     const target = event.target;
-    if (searchInput.contains(target) || optionsList.contains(target)) return;
+    if (searchInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
     hideOptionsList();
   }, true);
 
