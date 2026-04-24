@@ -19067,6 +19067,36 @@ function setupAssignmentControls(card, task) {
     if (!inputElement) {
       return;
     }
+    inputElement.readOnly = true;
+    inputElement.dataset.searchUnlocked = 'false';
+    inputElement.setAttribute('inputmode', 'none');
+    let waitSecondTapForKeyboardOnAlt = false;
+
+    inputElement.addEventListener('pointerdown', (event) => {
+      if (isComboExpanded()) {
+        return;
+      }
+      event.preventDefault();
+      comboInput.value = normalizeValue(inputElement.value);
+      showOptionsList();
+      waitSecondTapForKeyboardOnAlt = true;
+    });
+
+    inputElement.addEventListener('click', () => {
+      if (waitSecondTapForKeyboardOnAlt && isComboExpanded()) {
+        inputElement.readOnly = false;
+        inputElement.dataset.searchUnlocked = 'true';
+        inputElement.setAttribute('inputmode', 'search');
+        waitSecondTapForKeyboardOnAlt = false;
+        inputElement.focus({ preventScroll: true });
+        return;
+      }
+      if (!isComboExpanded()) {
+        comboInput.value = normalizeValue(inputElement.value);
+        showOptionsList();
+      }
+    });
+
     inputElement.addEventListener('focus', () => {
       comboInput.value = normalizeValue(inputElement.value);
       showOptionsList();
@@ -19087,6 +19117,16 @@ function setupAssignmentControls(card, task) {
       comboInput.value = normalizeValue(inputElement.value);
       handleAssigneeSelection(comboInput.value);
       inputElement.value = '';
+      inputElement.readOnly = true;
+      inputElement.dataset.searchUnlocked = 'false';
+      inputElement.setAttribute('inputmode', 'none');
+    });
+    inputElement.addEventListener('blur', () => {
+      if (!isComboExpanded()) {
+        inputElement.readOnly = true;
+        inputElement.dataset.searchUnlocked = 'false';
+        inputElement.setAttribute('inputmode', 'none');
+      }
     });
   };
 
@@ -20022,6 +20062,36 @@ function setupSubordinateControls(card, task) {
     if (!inputElement) {
       return;
     }
+    inputElement.readOnly = true;
+    inputElement.dataset.searchUnlocked = 'false';
+    inputElement.setAttribute('inputmode', 'none');
+    let waitSecondTapForKeyboardOnAlt = false;
+
+    inputElement.addEventListener('pointerdown', (event) => {
+      if (isComboExpanded()) {
+        return;
+      }
+      event.preventDefault();
+      searchInput.value = normalizeValue(inputElement.value);
+      showOptionsList();
+      waitSecondTapForKeyboardOnAlt = true;
+    });
+
+    inputElement.addEventListener('click', () => {
+      if (waitSecondTapForKeyboardOnAlt && isComboExpanded()) {
+        inputElement.readOnly = false;
+        inputElement.dataset.searchUnlocked = 'true';
+        inputElement.setAttribute('inputmode', 'search');
+        waitSecondTapForKeyboardOnAlt = false;
+        inputElement.focus({ preventScroll: true });
+        return;
+      }
+      if (!isComboExpanded()) {
+        searchInput.value = normalizeValue(inputElement.value);
+        showOptionsList();
+      }
+    });
+
     inputElement.addEventListener('focus', () => {
       searchInput.value = normalizeValue(inputElement.value);
       showOptionsList();
@@ -20042,6 +20112,16 @@ function setupSubordinateControls(card, task) {
       searchInput.value = normalizeValue(inputElement.value);
       handleSubordinateSelection(searchInput.value);
       inputElement.value = '';
+      inputElement.readOnly = true;
+      inputElement.dataset.searchUnlocked = 'false';
+      inputElement.setAttribute('inputmode', 'none');
+    });
+    inputElement.addEventListener('blur', () => {
+      if (!isComboExpanded()) {
+        inputElement.readOnly = true;
+        inputElement.dataset.searchUnlocked = 'false';
+        inputElement.setAttribute('inputmode', 'none');
+      }
     });
   };
 
