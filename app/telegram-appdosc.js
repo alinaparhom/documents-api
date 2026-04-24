@@ -18081,12 +18081,8 @@ function setupAssignmentControls(card, task) {
       scrollThumb: 'rgba(123, 173, 255, 0.62)',
       scrollTrack: 'rgba(123, 173, 255, 0.18)',
     };
-  const keyboardButtonHost = comboWrapper || comboInput.parentElement;
-  if (keyboardButtonHost) {
-    keyboardButtonHost.style.position = 'relative';
-    if (comboWrapper) {
-      comboWrapper.style.marginBottom = '2px';
-    }
+  if (comboWrapper) {
+    comboWrapper.style.marginBottom = '2px';
   }
   comboInput.readOnly = true;
   comboInput.dataset.searchUnlocked = 'false';
@@ -18128,6 +18124,18 @@ function setupAssignmentControls(card, task) {
   optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
+  let inputShell = comboInput.parentElement && comboInput.parentElement.classList.contains('appdosc-card__assign-input-shell')
+    ? comboInput.parentElement
+    : null;
+  if (!inputShell && comboInput.parentNode) {
+    inputShell = document.createElement('div');
+    inputShell.className = 'appdosc-card__assign-input-shell';
+    inputShell.style.position = 'relative';
+    inputShell.style.width = '100%';
+    inputShell.style.display = 'block';
+    comboInput.parentNode.insertBefore(inputShell, comboInput);
+    inputShell.appendChild(comboInput);
+  }
   const keyboardButton = document.createElement('button');
   keyboardButton.type = 'button';
   keyboardButton.className = 'appdosc-card__assign-keyboard-toggle';
@@ -18135,8 +18143,8 @@ function setupAssignmentControls(card, task) {
   keyboardButton.setAttribute('aria-label', 'Открыть клавиатуру для поиска');
   keyboardButton.style.position = 'absolute';
   keyboardButton.style.right = '8px';
-  keyboardButton.style.top = '0';
-  keyboardButton.style.transform = 'translateY(0)';
+  keyboardButton.style.top = '50%';
+  keyboardButton.style.transform = 'translateY(-50%)';
   keyboardButton.style.width = '30px';
   keyboardButton.style.height = '30px';
   keyboardButton.style.borderRadius = '9px';
@@ -18151,20 +18159,9 @@ function setupAssignmentControls(card, task) {
   keyboardButton.style.zIndex = '160';
   keyboardButton.style.backdropFilter = 'blur(6px)';
   keyboardButton.style.webkitBackdropFilter = 'blur(6px)';
-  if (keyboardButtonHost && !keyboardButtonHost.contains(keyboardButton)) {
-    keyboardButtonHost.appendChild(keyboardButton);
+  if (inputShell && !inputShell.contains(keyboardButton)) {
+    inputShell.appendChild(keyboardButton);
   }
-  const positionKeyboardButton = () => {
-    if (!keyboardButtonHost || !comboInput) {
-      return;
-    }
-    const inputTop = comboInput.offsetTop || 0;
-    const inputHeight = comboInput.offsetHeight || 40;
-    const buttonTop = inputTop + Math.max(0, Math.round((inputHeight - 30) / 2));
-    keyboardButton.style.top = `${buttonTop}px`;
-  };
-  positionKeyboardButton();
-  window.addEventListener('resize', positionKeyboardButton);
   const setKeyboardButtonActive = (active) => {
     keyboardButton.dataset.active = active ? 'true' : 'false';
     keyboardButton.style.display = 'inline-flex';
@@ -18284,7 +18281,6 @@ function setupAssignmentControls(card, task) {
     setComboExpanded(false);
   };
   const showOptionsList = () => {
-    positionKeyboardButton();
     populateComboOptions();
     const hasOptions = visibleAssigneeOptions.length > 0;
     optionsList.hidden = !hasOptions;
@@ -19262,12 +19258,8 @@ function setupSubordinateControls(card, task) {
       scrollThumb: 'rgba(123, 173, 255, 0.62)',
       scrollTrack: 'rgba(123, 173, 255, 0.18)',
     };
-  const keyboardButtonHost = comboWrapper || searchInput.parentElement;
-  if (keyboardButtonHost) {
-    keyboardButtonHost.style.position = 'relative';
-    if (comboWrapper) {
-      comboWrapper.style.marginBottom = '2px';
-    }
+  if (comboWrapper) {
+    comboWrapper.style.marginBottom = '2px';
   }
   searchInput.readOnly = true;
   searchInput.dataset.searchUnlocked = 'false';
@@ -19309,6 +19301,18 @@ function setupSubordinateControls(card, task) {
   optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
+  let inputShell = searchInput.parentElement && searchInput.parentElement.classList.contains('appdosc-card__assign-input-shell')
+    ? searchInput.parentElement
+    : null;
+  if (!inputShell && searchInput.parentNode) {
+    inputShell = document.createElement('div');
+    inputShell.className = 'appdosc-card__assign-input-shell';
+    inputShell.style.position = 'relative';
+    inputShell.style.width = '100%';
+    inputShell.style.display = 'block';
+    searchInput.parentNode.insertBefore(inputShell, searchInput);
+    inputShell.appendChild(searchInput);
+  }
   const keyboardButton = document.createElement('button');
   keyboardButton.type = 'button';
   keyboardButton.className = 'appdosc-card__assign-keyboard-toggle';
@@ -19316,8 +19320,8 @@ function setupSubordinateControls(card, task) {
   keyboardButton.setAttribute('aria-label', 'Открыть клавиатуру для поиска');
   keyboardButton.style.position = 'absolute';
   keyboardButton.style.right = '8px';
-  keyboardButton.style.top = '0';
-  keyboardButton.style.transform = 'translateY(0)';
+  keyboardButton.style.top = '50%';
+  keyboardButton.style.transform = 'translateY(-50%)';
   keyboardButton.style.width = '30px';
   keyboardButton.style.height = '30px';
   keyboardButton.style.borderRadius = '9px';
@@ -19332,20 +19336,9 @@ function setupSubordinateControls(card, task) {
   keyboardButton.style.zIndex = '160';
   keyboardButton.style.backdropFilter = 'blur(6px)';
   keyboardButton.style.webkitBackdropFilter = 'blur(6px)';
-  if (keyboardButtonHost && !keyboardButtonHost.contains(keyboardButton)) {
-    keyboardButtonHost.appendChild(keyboardButton);
+  if (inputShell && !inputShell.contains(keyboardButton)) {
+    inputShell.appendChild(keyboardButton);
   }
-  const positionKeyboardButton = () => {
-    if (!keyboardButtonHost || !searchInput) {
-      return;
-    }
-    const inputTop = searchInput.offsetTop || 0;
-    const inputHeight = searchInput.offsetHeight || 40;
-    const buttonTop = inputTop + Math.max(0, Math.round((inputHeight - 30) / 2));
-    keyboardButton.style.top = `${buttonTop}px`;
-  };
-  positionKeyboardButton();
-  window.addEventListener('resize', positionKeyboardButton);
   const setKeyboardButtonActive = (active) => {
     keyboardButton.dataset.active = active ? 'true' : 'false';
     keyboardButton.style.display = 'inline-flex';
@@ -19468,7 +19461,6 @@ function setupSubordinateControls(card, task) {
     setComboExpanded(false);
   };
   const showOptionsList = () => {
-    positionKeyboardButton();
     populateComboOptions();
     const hasOptions = visibleSubordinateOptions.length > 0;
     optionsList.hidden = !hasOptions;
