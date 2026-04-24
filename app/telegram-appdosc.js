@@ -18151,6 +18151,17 @@ function setupAssignmentControls(card, task) {
   if (comboWrapper && !comboWrapper.contains(keyboardButton)) {
     comboWrapper.appendChild(keyboardButton);
   }
+  const setKeyboardButtonActive = (active) => {
+    keyboardButton.dataset.active = active ? 'true' : 'false';
+    keyboardButton.style.opacity = '1';
+    keyboardButton.style.visibility = 'visible';
+    keyboardButton.style.background = active ? comboPalette.optionHover : comboPalette.optionBg;
+    keyboardButton.style.border = `1px solid ${active ? comboPalette.inputBorder : comboPalette.optionBorder}`;
+    keyboardButton.style.boxShadow = active
+      ? '0 0 0 2px rgba(123, 173, 255, 0.18)'
+      : 'none';
+  };
+  setKeyboardButtonActive(false);
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
   const currentIdentifiers = getTaskResponsibleIdentifiers(task).filter((id) => !directorIdentifiers.has(id));
@@ -19077,6 +19088,7 @@ function setupAssignmentControls(card, task) {
         comboInput.setSelectionRange(cursor, cursor);
       }
     });
+    setKeyboardButtonActive(true);
   };
   const relockComboSearch = () => {
     comboInput.readOnly = true;
@@ -19084,6 +19096,7 @@ function setupAssignmentControls(card, task) {
     comboInput.setAttribute('inputmode', 'none');
     waitSecondTapForKeyboard = false;
     skipUnlockOnCurrentClick = false;
+    setKeyboardButtonActive(false);
   };
   const handleKeyboardButtonPress = (event) => {
     event.preventDefault();
@@ -19303,6 +19316,17 @@ function setupSubordinateControls(card, task) {
   if (comboWrapper && !comboWrapper.contains(keyboardButton)) {
     comboWrapper.appendChild(keyboardButton);
   }
+  const setKeyboardButtonActive = (active) => {
+    keyboardButton.dataset.active = active ? 'true' : 'false';
+    keyboardButton.style.opacity = '1';
+    keyboardButton.style.visibility = 'visible';
+    keyboardButton.style.background = active ? comboPalette.optionHover : comboPalette.optionBg;
+    keyboardButton.style.border = `1px solid ${active ? comboPalette.inputBorder : comboPalette.optionBorder}`;
+    keyboardButton.style.boxShadow = active
+      ? '0 0 0 2px rgba(123, 173, 255, 0.18)'
+      : 'none';
+  };
+  setKeyboardButtonActive(false);
   if (!assignmentCandidates.length) {
     searchInput.disabled = true;
     searchMeta.textContent = 'Подчинённые для назначения отсутствуют.';
@@ -20082,6 +20106,7 @@ function setupSubordinateControls(card, task) {
         searchInput.setSelectionRange(cursor, cursor);
       }
     });
+    setKeyboardButtonActive(true);
   };
   const relockSubordinateSearch = () => {
     searchInput.readOnly = true;
@@ -20089,6 +20114,7 @@ function setupSubordinateControls(card, task) {
     searchInput.setAttribute('inputmode', 'none');
     waitSecondTapForKeyboard = false;
     skipUnlockOnCurrentClick = false;
+    setKeyboardButtonActive(false);
   };
   const handleKeyboardButtonPress = (event) => {
     event.preventDefault();
