@@ -909,11 +909,15 @@
         min-height: 80px !important;
         padding: 12px !important;
         display: grid !important;
-        grid-template-columns: minmax(0, 1fr) auto !important;
-        grid-template-areas: "main actions" !important;
+        grid-template-columns: auto minmax(0, 1fr) auto !important;
+        grid-template-areas: "icon main actions" !important;
         gap: 10px !important;
         align-items: center !important;
         cursor: pointer;
+      }
+
+      .appdosc-card__header > .task-icon {
+        grid-area: icon !important;
       }
 
       .appdosc-card__header::after {
@@ -921,7 +925,23 @@
         display: none !important;
       }
 
-      .task-icon { display: none !important; }
+      .task-icon {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(95, 140, 205, 0.38);
+        background: linear-gradient(165deg, rgba(255, 255, 255, 0.86), rgba(220, 234, 255, 0.82));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74), 0 6px 14px rgba(107, 145, 198, 0.24);
+        flex: 0 0 34px;
+      }
+
+      .task-icon svg {
+        width: 20px;
+        height: 20px;
+      }
 
       .task-main {
         grid-area: main !important;
@@ -1072,11 +1092,9 @@
         font: inherit !important;
       }
 
-      .appdosc-card[data-expanded='false'] .task-icon { display: none !important; }
-
       .appdosc-card[data-expanded='false'] .appdosc-card__header {
-        grid-template-columns: minmax(0, 1fr) auto !important;
-        grid-template-areas: "main actions" "compact actions" !important;
+        grid-template-columns: auto minmax(0, 1fr) auto !important;
+        grid-template-areas: "icon main actions" "icon compact actions" !important;
         grid-template-rows: auto auto !important;
         min-height: 64px !important;
         padding: 8px 10px !important;
@@ -1087,8 +1105,19 @@
         backdrop-filter: none;
       }
 
+      .appdosc-card[data-expanded='false'] .task-icon {
+        grid-area: icon !important;
+        align-self: start !important;
+        margin-top: 2px !important;
+      }
+
       .appdosc-card[data-expanded='false'] .appdosc-card__status {
-        display: none !important;
+        display: inline-flex !important;
+        max-width: 110px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        justify-content: center;
       }
 
       .appdosc-card__subtitle {
@@ -1132,7 +1161,7 @@
         grid-area: actions !important;
         display: flex !important;
         align-items: center !important;
-        gap: 6px !important;
+        gap: 8px !important;
         justify-self: end !important;
       }
 
@@ -1152,8 +1181,8 @@
 
       .appdosc-card__side::after {
         content: '';
-        width: 10px;
-        height: 10px;
+        width: 8px;
+        height: 8px;
         border-right: 2px solid var(--appdosc-task-chevron-color);
         border-bottom: 2px solid var(--appdosc-task-chevron-color);
         transform: rotate(45deg);
@@ -1170,7 +1199,7 @@
       .appdosc-card__compact-actions {
         position: static !important;
         grid-area: compact !important;
-        margin-top: 2px !important;
+        margin-top: 0 !important;
         display: grid !important;
         justify-items: start !important;
       }
