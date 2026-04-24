@@ -2798,6 +2798,7 @@ function initElements() {
   elements.filterGroupType = document.querySelector('[data-filter-group-type]');
   elements.filterGroupValue = document.querySelector('[data-filter-group-value]');
   elements.filterExtraGroupRow = document.querySelector('[data-filter-extra-group-row]');
+  elements.filterExtraGroupControls = document.querySelector('[data-filter-extra-group-controls]');
   elements.filterGroupTypeExtra = document.querySelector('[data-filter-group-type-extra]');
   elements.filterGroupValueExtra = document.querySelector('[data-filter-group-value-extra]');
   elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
@@ -4575,6 +4576,9 @@ function syncCompactFilterPanelState() {
   }
   if (elements.filterExtraGroupRow instanceof HTMLElement) {
     elements.filterExtraGroupRow.hidden = state.compactFilters.extraGroupEnabled !== true;
+  }
+  if (elements.filterExtraGroupControls instanceof HTMLElement) {
+    elements.filterExtraGroupControls.hidden = state.compactFilters.extraGroupEnabled !== true;
   }
   if (elements.filterGroupAddButton instanceof HTMLElement) {
     elements.filterGroupAddButton.hidden = state.compactFilters.extraGroupEnabled === true;
