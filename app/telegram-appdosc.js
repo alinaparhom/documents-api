@@ -2785,9 +2785,11 @@ function initElements() {
   elements.rangeCalendarMonths = document.querySelector('[data-calendar-months]');
   elements.rangeCalendarStartLabel = document.querySelector('[data-start-label]');
   elements.rangeCalendarEndLabel = document.querySelector('[data-end-label]');
+  elements.rangeCalendarClose = document.querySelector('[data-range-calendar-close]');
   elements.rangeCalendarClearStart = document.querySelector('[data-clear-start]');
   elements.rangeCalendarClearEnd = document.querySelector('[data-clear-end]');
   elements.rangeCalendarSubmit = document.querySelector('[data-calendar-submit]');
+  elements.rangeCalendarTotal = document.querySelector('[data-calendar-total]');
   elements.filterQuickButtons = Array.from(document.querySelectorAll('[data-filter-quick-btn]'));
   elements.filterResetButton = document.querySelector('[data-filter-reset]');
   elements.filterGroupType = document.querySelector('[data-filter-group-type]');
@@ -4238,7 +4240,9 @@ function initRangeCalendar(options = {}) {
   const endLabel = elements.rangeCalendarEndLabel;
   const clearStartButton = elements.rangeCalendarClearStart;
   const clearEndButton = elements.rangeCalendarClearEnd;
+  const closeButton = elements.rangeCalendarClose;
   const submitButton = elements.rangeCalendarSubmit;
+  const totalLabel = elements.rangeCalendarTotal;
 
   if (!(root instanceof HTMLElement)
     || !(openButton instanceof HTMLElement)
@@ -4259,12 +4263,15 @@ function initRangeCalendar(options = {}) {
 
   function open() {
     root.hidden = false;
+    document.body.classList.add('range-calendar-open');
     renderMonths();
     updateSelection();
+    scrollToRelevantMonth();
   }
 
   function close() {
     root.hidden = true;
+    document.body.classList.remove('range-calendar-open');
   }
 
   function submit() {
@@ -4295,6 +4302,7 @@ function initRangeCalendar(options = {}) {
   function renderMonth(monthDate) {
     const month = document.createElement('section');
     month.className = 'range-calendar__month';
+    month.dataset.monthKey = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
 
     const title = document.createElement('h3');
     title.className = 'range-calendar__month-title';
@@ -4373,11 +4381,54 @@ function initRangeCalendar(options = {}) {
     return `Выбрать ${formatRangeCalendarRange(startDate, endDate)}`;
   }
 
+  function getTotalForSelectedRange() {
+    if (!startDate) {
+      return 0;
+    }
+    const effectiveEnd = endDate || startDate;
+    let total = 0;
+    Object.keys(taskCounts).forEach((dateKey) => {
+      if (compareDateKeys(dateKey, startDate) < 0 || compareDateKeys(dateKey, effectiveEnd) > 0) {
+        return;
+      }
+      const count = Number(taskCounts[dateKey] || 0);
+      if (Number.isFinite(count) && count > 0) {
+        total += Math.round(count);
+      }
+    });
+    return total;
+  }
+
+  function scrollToRelevantMonth() {
+    const focusDate = startDate || formatDateInputValue(new Date());
+    const parsed = parseDate(focusDate);
+    if (!parsed) {
+      monthsContainer.scrollTop = 0;
+      return;
+    }
+    const monthKey = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+    const target = monthsContainer.querySelector(`[data-month-key="${monthKey}"]`);
+    if (!(target instanceof HTMLElement)) {
+      monthsContainer.scrollTop = 0;
+      return;
+    }
+    monthsContainer.scrollTop = Math.max(0, target.offsetTop - 10);
+  }
+
   function updateSelection() {
     startLabel.textContent = startDate ? formatRangeCalendarShortDate(startDate) : 'Не выбрана';
     endLabel.textContent = endDate ? formatRangeCalendarShortDate(endDate) : 'Не выбрана';
     submitButton.disabled = !startDate;
     submitButton.textContent = getSubmitText();
+    if (totalLabel instanceof HTMLElement) {
+      if (!startDate) {
+        totalLabel.hidden = true;
+      } else {
+        const total = getTotalForSelectedRange();
+        totalLabel.hidden = false;
+        totalLabel.textContent = `Найдено задач за период: ${total}`;
+      }
+    }
     const dayButtons = root.querySelectorAll('.range-calendar__day');
     dayButtons.forEach((button) => {
       const dateKey = button.dataset.date || '';
@@ -4405,6 +4456,9 @@ function initRangeCalendar(options = {}) {
   openButton.addEventListener('click', open);
   if (backdrop instanceof HTMLElement) {
     backdrop.addEventListener('click', close);
+  }
+  if (closeButton instanceof HTMLElement) {
+    closeButton.addEventListener('click', close);
   }
   submitButton.addEventListener('click', submit);
   if (clearStartButton instanceof HTMLElement) {
@@ -4492,7 +4546,7 @@ function syncCompactFilterPanelState() {
 
 function initCompactRangeCalendar() {
   rangeCalendarInstance = initRangeCalendar({
-    monthsToRender: 4,
+    monthsToRender: 12,
     startDate: state.compactFilters.dateFrom,
     endDate: state.compactFilters.dateTo,
     taskCounts: normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks)),
