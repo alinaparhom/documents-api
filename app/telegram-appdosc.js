@@ -4253,6 +4253,10 @@ function initRangeCalendar(options = {}) {
     return null;
   }
 
+  if (root.parentElement !== document.body) {
+    document.body.appendChild(root);
+  }
+
   let taskCounts = options.taskCounts && typeof options.taskCounts === 'object' ? { ...options.taskCounts } : {};
   const onChange = typeof options.onChange === 'function' ? options.onChange : () => {};
   const monthsToRender = Number.isFinite(Number(options.monthsToRender))
@@ -4264,6 +4268,7 @@ function initRangeCalendar(options = {}) {
   function open() {
     root.hidden = false;
     document.body.classList.add('range-calendar-open');
+    document.documentElement.classList.add('range-calendar-open');
     renderMonths();
     updateSelection();
     scrollToRelevantMonth();
@@ -4272,6 +4277,7 @@ function initRangeCalendar(options = {}) {
   function close() {
     root.hidden = true;
     document.body.classList.remove('range-calendar-open');
+    document.documentElement.classList.remove('range-calendar-open');
   }
 
   function submit() {
