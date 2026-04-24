@@ -2781,6 +2781,7 @@ function initElements() {
   elements.periodButtonValue = document.querySelector('[data-period-button-value]');
   elements.rangeCalendarRoot = document.querySelector('[data-range-calendar]');
   elements.rangeCalendarBackdrop = document.querySelector('[data-range-calendar-backdrop]');
+  elements.rangeCalendarYear = document.querySelector('[data-calendar-year]');
   elements.rangeCalendarMonths = document.querySelector('[data-calendar-months]');
   elements.rangeCalendarStartLabel = document.querySelector('[data-start-label]');
   elements.rangeCalendarEndLabel = document.querySelector('[data-end-label]');
@@ -4317,6 +4318,7 @@ function initRangeCalendar(options = {}) {
   const openButton = elements.periodButton;
   const openButtonValue = elements.periodButtonValue;
   const backdrop = elements.rangeCalendarBackdrop;
+  const yearSelect = elements.rangeCalendarYear;
   const monthsContainer = elements.rangeCalendarMonths;
   const startLabel = elements.rangeCalendarStartLabel;
   const endLabel = elements.rangeCalendarEndLabel;
@@ -4346,11 +4348,15 @@ function initRangeCalendar(options = {}) {
     : 4;
   let startDate = normalizeDateInputValue(options.startDate);
   let endDate = normalizeDateInputValue(options.endDate);
+  const initialDate = parseDate(startDate) || parseDate(options.baseDate) || new Date();
+  let selectedYear = initialDate.getFullYear();
 
   function open() {
     root.hidden = false;
     document.body.classList.add('range-calendar-open');
     document.documentElement.classList.add('range-calendar-open');
+    syncYearWithSelection();
+    ensureYearOptions();
     renderMonths();
     updateSelection();
     scrollToRelevantMonth();
@@ -4378,13 +4384,61 @@ function initRangeCalendar(options = {}) {
 
   function renderMonths() {
     monthsContainer.innerHTML = '';
-    const base = options.baseDate ? parseDate(options.baseDate) : new Date();
-    const safeBase = base || new Date();
-    const firstMonth = new Date(safeBase.getFullYear(), safeBase.getMonth(), 1);
+    const firstMonth = new Date(selectedYear, 0, 1);
     for (let i = 0; i < monthsToRender; i += 1) {
       const monthDate = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + i, 1);
       monthsContainer.appendChild(renderMonth(monthDate));
     }
+  }
+
+  function collectAvailableYears() {
+    const years = new Set();
+    years.add(selectedYear);
+    years.add(new Date().getFullYear());
+    Object.keys(taskCounts).forEach((dateKey) => {
+      const match = /^(\d{4})-\d{2}-\d{2}$/.exec(dateKey);
+      if (match) {
+        years.add(Number(match[1]));
+      }
+    });
+    const list = Array.from(years).filter((value) => Number.isFinite(value));
+    if (list.length === 0) {
+      list.push(new Date().getFullYear());
+    }
+    const minYear = Math.min(...list) - 1;
+    const maxYear = Math.max(...list) + 2;
+    const expanded = [];
+    for (let year = minYear; year <= maxYear; year += 1) {
+      expanded.push(year);
+    }
+    return expanded;
+  }
+
+  function ensureYearOptions() {
+    if (!(yearSelect instanceof HTMLSelectElement)) {
+      return;
+    }
+    const years = collectAvailableYears();
+    yearSelect.innerHTML = '';
+    years.forEach((year) => {
+      const option = document.createElement('option');
+      option.value = String(year);
+      option.textContent = String(year);
+      yearSelect.appendChild(option);
+    });
+    yearSelect.value = String(selectedYear);
+  }
+
+  function syncYearWithSelection() {
+    const parsedStart = parseDate(startDate);
+    if (parsedStart instanceof Date) {
+      selectedYear = parsedStart.getFullYear();
+      return;
+    }
+    if (Number.isFinite(selectedYear)) {
+      return;
+    }
+    selectedYear = new Date().getFullYear();
   }
 
   function renderMonth(monthDate) {
@@ -4488,7 +4542,11 @@ function initRangeCalendar(options = {}) {
   }
 
   function scrollToRelevantMonth() {
-    const focusDate = startDate || formatDateInputValue(new Date());
+    const today = new Date();
+    const fallbackDate = selectedYear === today.getFullYear()
+      ? formatDateInputValue(today)
+      : `${selectedYear}-01-01`;
+    const focusDate = startDate || fallbackDate;
     const parsed = parseDate(focusDate);
     if (!parsed) {
       monthsContainer.scrollTop = 0;
@@ -4548,6 +4606,18 @@ function initRangeCalendar(options = {}) {
   if (closeButton instanceof HTMLElement) {
     closeButton.addEventListener('click', close);
   }
+  if (yearSelect instanceof HTMLSelectElement) {
+    yearSelect.addEventListener('change', () => {
+      const nextYear = Number(yearSelect.value);
+      if (!Number.isFinite(nextYear)) {
+        return;
+      }
+      selectedYear = Math.round(nextYear);
+      renderMonths();
+      updateSelection();
+      scrollToRelevantMonth();
+    });
+  }
   submitButton.addEventListener('click', submit);
   if (clearStartButton instanceof HTMLElement) {
     clearStartButton.addEventListener('click', (event) => {
@@ -4570,6 +4640,7 @@ function initRangeCalendar(options = {}) {
     }
   });
 
+  ensureYearOptions();
   renderMonths();
   updateSelection();
 
@@ -4582,6 +4653,9 @@ function initRangeCalendar(options = {}) {
     setValue(nextStartDate, nextEndDate) {
       startDate = normalizeDateInputValue(nextStartDate);
       endDate = normalizeDateInputValue(nextEndDate || nextStartDate);
+      syncYearWithSelection();
+      ensureYearOptions();
+      renderMonths();
       if (openButtonValue instanceof HTMLElement) {
         openButtonValue.textContent = formatRangeCalendarButtonValue(startDate, endDate);
       }
@@ -4597,6 +4671,7 @@ function initRangeCalendar(options = {}) {
     },
     setTaskCounts(nextTaskCounts) {
       taskCounts = nextTaskCounts && typeof nextTaskCounts === 'object' ? { ...nextTaskCounts } : {};
+      ensureYearOptions();
       renderMonths();
       updateSelection();
     },

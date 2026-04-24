@@ -1810,6 +1810,24 @@
         padding-right: 40px;
       }
 
+      .range-calendar__toolbar {
+        margin-top: 10px;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .range-calendar__year-select {
+        min-width: 108px;
+        height: 36px;
+        border-radius: 11px;
+        border: 1px solid rgba(145, 158, 181, 0.34);
+        background: rgba(255, 255, 255, 0.92);
+        color: #1f2937;
+        font-size: 16px;
+        font-weight: 700;
+        padding: 0 12px;
+      }
+
       .range-calendar__selected-card {
         min-height: 68px;
         padding: 12px 14px;
@@ -1853,7 +1871,7 @@
         display: grid;
         grid-template-columns: repeat(7, 1fr);
         color: #8d97a8;
-        font-size: 16px;
+        font-size: 19px;
         font-weight: 800;
         text-align: center;
         position: sticky;
@@ -1886,7 +1904,7 @@
 
       .range-calendar__month-title {
         margin: 0 0 18px;
-        font-size: 32px;
+        font-size: 38px;
         font-weight: 900;
         color: #111827;
       }
@@ -1934,21 +1952,20 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        border: 1px solid rgba(226, 232, 240, 0.9);
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.9));
-        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+        border: 0.8px solid rgba(195, 208, 229, 0.82);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 253, 0.92));
         transition: all 0.2s ease;
       }
 
       .range-calendar__day-number {
-        font-size: 30px;
+        font-size: 36px;
         font-weight: 900;
         line-height: 1;
       }
 
       .range-calendar__day-count {
         margin-top: 3px;
-        font-size: 14px;
+        font-size: 17px;
         font-weight: 800;
         color: #8792a5;
         line-height: 1;
@@ -1968,21 +1985,19 @@
 
       .range-calendar__day.is-in-range::before {
         opacity: 1;
-        background: linear-gradient(180deg, rgba(37, 99, 235, 0.14), rgba(37, 99, 235, 0.1));
+        background: linear-gradient(180deg, rgba(37, 99, 235, 0.26), rgba(37, 99, 235, 0.2));
       }
 
       .range-calendar__day.is-in-range .range-calendar__day-inner {
-        background: linear-gradient(180deg, rgba(246, 250, 255, 0.98), rgba(241, 245, 253, 0.96));
-        border-color: rgba(37, 99, 235, 0.2);
-        box-shadow: 0 6px 14px rgba(37, 99, 235, 0.12);
+        background: linear-gradient(180deg, rgba(232, 243, 255, 0.98), rgba(221, 236, 255, 0.95));
+        border-color: rgba(37, 99, 235, 0.34);
       }
 
       .range-calendar__day.is-range-start .range-calendar__day-inner,
       .range-calendar__day.is-range-end .range-calendar__day-inner {
-        background: linear-gradient(160deg, #1d78f2, #0b66e4);
+        background: linear-gradient(160deg, #2d8cff, #1379f1);
         color: #ffffff;
-        border-color: rgba(255, 255, 255, 0.55);
-        box-shadow: 0 8px 18px rgba(29, 120, 242, 0.34);
+        border-color: rgba(255, 255, 255, 0.62);
       }
 
       .range-calendar__day.is-range-start .range-calendar__day-count,
@@ -2011,10 +2026,9 @@
       }
 
       .range-calendar__day.is-single .range-calendar__day-inner {
-        background: linear-gradient(160deg, #1d78f2, #0b66e4);
+        background: linear-gradient(160deg, #2d8cff, #1379f1);
         color: #ffffff;
-        border-color: rgba(255, 255, 255, 0.56);
-        box-shadow: 0 8px 18px rgba(29, 120, 242, 0.34);
+        border-color: rgba(255, 255, 255, 0.62);
       }
 
       .range-calendar__day.is-single .range-calendar__day-count {
@@ -2173,6 +2187,12 @@
         border-color: rgba(148, 163, 184, 0.35);
       }
 
+      :root[data-theme='dark'] .range-calendar__year-select {
+        background: rgba(15, 23, 42, 0.76);
+        color: #e2e8f0;
+        border-color: rgba(148, 163, 184, 0.44);
+      }
+
       :root[data-theme='dark'] .range-calendar__month-title,
       :root[data-theme='dark'] .range-calendar__selected-value,
       :root[data-theme='dark'] .range-calendar__day {
@@ -2186,25 +2206,23 @@
 
       :root[data-theme='dark'] .range-calendar__day-inner {
         background: linear-gradient(180deg, rgba(30, 41, 59, 0.82), rgba(15, 23, 42, 0.86));
-        border-color: rgba(148, 163, 184, 0.28);
-        box-shadow: 0 5px 14px rgba(2, 6, 23, 0.34);
+        border-color: rgba(148, 163, 184, 0.22);
       }
 
       :root[data-theme='dark'] .range-calendar__day.is-in-range::before {
-        background: linear-gradient(180deg, rgba(59, 130, 246, 0.24), rgba(59, 130, 246, 0.14));
+        background: linear-gradient(180deg, rgba(59, 130, 246, 0.34), rgba(59, 130, 246, 0.24));
       }
 
       :root[data-theme='dark'] .range-calendar__day.is-in-range .range-calendar__day-inner {
-        background: linear-gradient(180deg, rgba(30, 58, 104, 0.38), rgba(30, 41, 59, 0.9));
-        border-color: rgba(96, 165, 250, 0.32);
+        background: linear-gradient(180deg, rgba(27, 63, 114, 0.6), rgba(30, 52, 88, 0.9));
+        border-color: rgba(96, 165, 250, 0.46);
       }
 
       :root[data-theme='dark'] .range-calendar__day.is-range-start .range-calendar__day-inner,
       :root[data-theme='dark'] .range-calendar__day.is-range-end .range-calendar__day-inner,
       :root[data-theme='dark'] .range-calendar__day.is-single .range-calendar__day-inner {
-        background: linear-gradient(160deg, #1d78f2, #0b66e4);
+        background: linear-gradient(160deg, #3a95ff, #2084f8);
         border-color: rgba(255, 255, 255, 0.32);
-        box-shadow: 0 6px 14px rgba(29, 120, 242, 0.34);
       }
 
       :root[data-theme='dark'] .range-calendar__footer {
@@ -2213,19 +2231,25 @@
 
       @media (max-width: 520px) {
         .range-calendar__selected-label {
-          font-size: 12px;
+          font-size: 14px;
         }
 
         .range-calendar__selected-value {
-          font-size: 18px;
+          font-size: 22px;
+        }
+
+        .range-calendar__year-select {
+          height: 34px;
+          min-width: 100px;
+          font-size: 14px;
         }
 
         .range-calendar__weekdays {
-          font-size: 12px;
+          font-size: 14px;
         }
 
         .range-calendar__month-title {
-          font-size: 22px;
+          font-size: 27px;
         }
 
         .range-calendar__day {
@@ -2237,11 +2261,11 @@
         }
 
         .range-calendar__day-number {
-          font-size: 16px;
+          font-size: 19px;
         }
 
         .range-calendar__day-count {
-          font-size: 10px;
+          font-size: 12px;
         }
 
         .appdosc-viewer__controls {
@@ -2629,6 +2653,9 @@
                   <span class="range-calendar__selected-value" data-end-label>Не выбрана</span>
                   <span class="range-calendar__selected-clear">×</span>
                 </button>
+              </div>
+              <div class="range-calendar__toolbar">
+                <select class="range-calendar__year-select" data-calendar-year aria-label="Выбор года"></select>
               </div>
               <div class="range-calendar__weekdays">
                 <span>ПН</span><span>ВТ</span><span>СР</span><span>ЧТ</span><span>ПТ</span><span>СБ</span><span>ВС</span>
