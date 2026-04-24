@@ -18067,9 +18067,9 @@ function setupAssignmentControls(card, task) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
   }
-  comboInput.readOnly = true;
-  comboInput.dataset.searchUnlocked = 'false';
-  comboInput.setAttribute('inputmode', 'none');
+  comboInput.readOnly = false;
+  comboInput.dataset.searchUnlocked = 'true';
+  comboInput.setAttribute('inputmode', 'search');
   comboInput.classList.add('appdosc-card__assign-search--combo');
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   comboInput.style.width = '100%';
@@ -18261,9 +18261,8 @@ function setupAssignmentControls(card, task) {
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       option.style.marginBottom = '3px';
-      option.style.touchAction = 'manipulation';
-      option.addEventListener('pointerdown', (event) => {
-        event.preventDefault();
+      option.style.touchAction = 'auto';
+      option.addEventListener('click', () => {
         handleAssigneeSelection(value);
       });
       option.addEventListener('mouseenter', () => {
@@ -19012,29 +19011,16 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  let waitSecondTapForKeyboard = false;
-
-  comboInput.addEventListener('pointerdown', (event) => {
-    if (isComboExpanded()) {
-      return;
-    }
-    event.preventDefault();
+  comboInput.addEventListener('pointerdown', () => {
     showOptionsList();
-    waitSecondTapForKeyboard = true;
+  });
+
+  comboInput.addEventListener('focus', () => {
+    showOptionsList();
   });
 
   comboInput.addEventListener('click', () => {
-    if (waitSecondTapForKeyboard) {
-      comboInput.readOnly = false;
-      comboInput.dataset.searchUnlocked = 'true';
-      comboInput.setAttribute('inputmode', 'search');
-      waitSecondTapForKeyboard = false;
-      return;
-    }
-    if (!isComboExpanded()) {
-      showOptionsList();
-      return;
-    }
+    showOptionsList();
     comboInput.focus({ preventScroll: true });
     requestAnimationFrame(() => {
       comboInput.focus({ preventScroll: true });
@@ -19131,9 +19117,9 @@ function setupSubordinateControls(card, task) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
   }
-  searchInput.readOnly = true;
-  searchInput.dataset.searchUnlocked = 'false';
-  searchInput.setAttribute('inputmode', 'none');
+  searchInput.readOnly = false;
+  searchInput.dataset.searchUnlocked = 'true';
+  searchInput.setAttribute('inputmode', 'search');
   searchInput.classList.add('appdosc-card__assign-search--combo');
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   searchInput.style.width = '100%';
@@ -19325,9 +19311,8 @@ function setupSubordinateControls(card, task) {
       option.style.cursor = 'pointer';
       option.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       option.style.marginBottom = '3px';
-      option.style.touchAction = 'manipulation';
-      option.addEventListener('pointerdown', (event) => {
-        event.preventDefault();
+      option.style.touchAction = 'auto';
+      option.addEventListener('click', () => {
         handleSubordinateSelection(value);
       });
       option.addEventListener('mouseenter', () => {
@@ -19929,29 +19914,16 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  let waitSecondTapForKeyboard = false;
-
-  searchInput.addEventListener('pointerdown', (event) => {
-    if (isComboExpanded()) {
-      return;
-    }
-    event.preventDefault();
+  searchInput.addEventListener('pointerdown', () => {
     showOptionsList();
-    waitSecondTapForKeyboard = true;
+  });
+
+  searchInput.addEventListener('focus', () => {
+    showOptionsList();
   });
 
   searchInput.addEventListener('click', () => {
-    if (waitSecondTapForKeyboard) {
-      searchInput.readOnly = false;
-      searchInput.dataset.searchUnlocked = 'true';
-      searchInput.setAttribute('inputmode', 'search');
-      waitSecondTapForKeyboard = false;
-      return;
-    }
-    if (!isComboExpanded()) {
-      showOptionsList();
-      return;
-    }
+    showOptionsList();
     searchInput.focus({ preventScroll: true });
     requestAnimationFrame(() => {
       searchInput.focus({ preventScroll: true });
