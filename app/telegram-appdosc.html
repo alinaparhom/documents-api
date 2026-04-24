@@ -1764,24 +1764,23 @@
         position: absolute;
         left: 0;
         right: 0;
-        top: 0;
         bottom: 0;
-        height: calc(100dvh - env(safe-area-inset-top));
-        max-height: calc(100dvh - env(safe-area-inset-top));
-        background: linear-gradient(180deg, #f7faff 0%, #f3f7ff 100%);
-        border-radius: 24px 24px 0 0;
-        padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
-        box-shadow: 0 -16px 40px rgba(15, 23, 42, 0.18);
+        height: 85vh;
+        max-height: 85vh;
+        background: rgba(255, 255, 255, 0.96);
+        border-radius: 20px 20px 0 0;
+        padding: 8px 16px calc(12px + env(safe-area-inset-bottom));
+        box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.16);
         display: flex;
         flex-direction: column;
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
       }
 
       @supports (height: 1lvh) {
         .range-calendar__panel {
-          height: calc(100lvh - env(safe-area-inset-top));
-          max-height: calc(100lvh - env(safe-area-inset-top));
+          height: 85lvh;
+          max-height: 85lvh;
         }
       }
 
@@ -1890,7 +1889,7 @@
         min-height: 0;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
-        padding-bottom: 96px;
+        padding-bottom: 16px;
       }
 
       .range-calendar__month {
@@ -1992,8 +1991,8 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: linear-gradient(to top, #f5f7fb 70%, rgba(245, 247, 251, 0));
-        padding-top: 18px;
+        background: linear-gradient(to top, rgba(255, 255, 255, 0.98) 70%, rgba(255, 255, 255, 0));
+        padding-top: 12px;
         padding-bottom: calc(10px + env(safe-area-inset-bottom));
       }
 
@@ -2034,7 +2033,7 @@
       }
 
       :root[data-theme='dark'] .range-calendar__panel {
-        background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+        background: rgba(15, 23, 42, 0.96);
       }
 
       :root[data-theme='dark'] .range-calendar__title,
@@ -2063,7 +2062,7 @@
       }
 
       :root[data-theme='dark'] .range-calendar__footer {
-        background: linear-gradient(to top, rgba(17, 24, 39, 0.96) 70%, rgba(17, 24, 39, 0));
+        background: linear-gradient(to top, rgba(15, 23, 42, 0.98) 70%, rgba(15, 23, 42, 0));
       }
 
       .appdosc__task-filter-actions {

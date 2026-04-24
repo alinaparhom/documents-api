@@ -4206,6 +4206,7 @@ function initRangeCalendar(options = {}) {
   let isPickingRange = false;
 
   function open() {
+    setTaskFilterPanelExpanded(false);
     root.hidden = false;
     isPickingRange = false;
     renderMonths();
