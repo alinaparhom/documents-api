@@ -13774,7 +13774,7 @@
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
     var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ ИИ');
-    var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
+    var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить текст');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
     var toolbar = createElement('div', 'documents-responses-toolbar');
@@ -13798,6 +13798,7 @@
     hiddenInput.multiple = true;
     hiddenInput.hidden = true;
     var isResponseModalClosed = false;
+    var responseUploadInProgress = false;
 
     function closeResponseModal() {
       if (isResponseModalClosed) {
@@ -13839,6 +13840,20 @@
         showMessage('success', 'Добавлено файлов: ' + addedCount + ' (' + sourceLabel + ').');
       }
       return addedCount;
+    }
+
+    function uploadFilesImmediately() {
+      if (responseUploadInProgress || !pendingFiles.length) {
+        return Promise.resolve();
+      }
+      responseUploadInProgress = true;
+      return uploadPendingFiles()
+        .catch(function(error) {
+          showMessage('error', 'Не удалось автоматически загрузить ответы: ' + error.message);
+        })
+        .finally(function() {
+          responseUploadInProgress = false;
+        });
     }
 
     function getClipboardFiles(event) {
@@ -14178,8 +14193,11 @@
       if (!selected.length) {
         return;
       }
-      mergePendingFiles(selected, 'выбор');
+      var added = mergePendingFiles(selected, 'выбор');
       hiddenInput.value = '';
+      if (added > 0) {
+        uploadFilesImmediately();
+      }
     });
 
     addButton.type = 'button';
@@ -14225,7 +14243,10 @@
       var droppedFiles = event.dataTransfer && event.dataTransfer.files
         ? Array.from(event.dataTransfer.files)
         : [];
-      mergePendingFiles(droppedFiles, 'перетаскивание');
+      var added = mergePendingFiles(droppedFiles, 'перетаскивание');
+      if (added > 0) {
+        uploadFilesImmediately();
+      }
     });
     modal.addEventListener('paste', function(event) {
       var files = getClipboardFiles(event);
@@ -14233,7 +14254,10 @@
         return;
       }
       event.preventDefault();
-      mergePendingFiles(files, 'буфер обмена');
+      var added = mergePendingFiles(files, 'буфер обмена');
+      if (added > 0) {
+        uploadFilesImmediately();
+      }
     });
 
     messageInput.addEventListener('input', function() {
