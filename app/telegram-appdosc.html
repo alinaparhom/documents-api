@@ -1992,9 +1992,14 @@
         width: 100%;
       }
 
+      .appdosc__task-filter-group-list {
+        display: grid;
+        gap: 8px;
+      }
+
       .appdosc__task-filter-group-row {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
         gap: 8px;
         align-items: end;
       }
@@ -2005,15 +2010,26 @@
         width: 100%;
       }
 
-      .appdosc__task-filter-group-toggle {
-        height: 34px;
-        width: 100%;
+      .appdosc__task-filter-group-add,
+      .appdosc__task-filter-group-remove {
+        height: 28px;
+        width: 28px;
         border: 1px solid rgba(148, 163, 184, 0.34);
-        border-radius: 10px;
+        border-radius: 8px;
         background: rgba(255, 255, 255, 0.82);
         color: var(--appdosc-text-primary);
-        font-size: 12px;
+        font-size: 16px;
         font-weight: 700;
+        line-height: 1;
+        padding: 0;
+      }
+
+      .appdosc__task-filter-group-add {
+        margin-left: auto;
+      }
+
+      .appdosc__task-filter-group-remove:disabled {
+        opacity: 0.45;
       }
 
       .range-calendar__submit:disabled {
@@ -2058,7 +2074,8 @@
       :root[data-theme='dark'] .appdosc__task-filter-field select,
       :root[data-theme='dark'] .appdosc__task-filter-quick-btn,
       :root[data-theme='dark'] .appdosc__task-filter-reset,
-      :root[data-theme='dark'] .appdosc__task-filter-group-toggle {
+      :root[data-theme='dark'] .appdosc__task-filter-group-add,
+      :root[data-theme='dark'] .appdosc__task-filter-group-remove {
         background: rgba(15, 23, 42, 0.74);
         border-color: rgba(148, 163, 184, 0.46);
         color: #e2e8f0;
@@ -2428,42 +2445,9 @@
                 <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
               </div>
               <div class="appdosc__task-filter-groups">
-                <div class="appdosc__task-filter-group-row">
-                  <label class="appdosc__task-filter-field">
-                    <span>Группировка</span>
-                    <select data-filter-group-type>
-                      <option value="">Без группировки</option>
-                      <option value="correspondent">Корреспондент</option>
-                      <option value="responsible">Ответственный</option>
-                      <option value="subordinate">Подчинённый</option>
-                    </select>
-                  </label>
-                  <label class="appdosc__task-filter-field">
-                    <span>Значение</span>
-                    <select data-filter-group-value disabled>
-                      <option value="">Сначала выберите группировку</option>
-                    </select>
-                  </label>
-                </div>
+                <div class="appdosc__task-filter-group-list" data-filter-group-list></div>
                 <div class="appdosc__task-filter-group-controls">
-                  <button type="button" class="appdosc__task-filter-group-toggle" data-filter-group-toggle title="Добавить вторую группировку">+ Добавить вторую группировку</button>
-                </div>
-                <div class="appdosc__task-filter-group-row" data-filter-extra-group-row hidden>
-                  <label class="appdosc__task-filter-field">
-                    <span>Группировка 2</span>
-                    <select data-filter-group-type-extra>
-                      <option value="">Без группировки</option>
-                      <option value="correspondent">Корреспондент</option>
-                      <option value="responsible">Ответственный</option>
-                      <option value="subordinate">Подчинённый</option>
-                    </select>
-                  </label>
-                  <label class="appdosc__task-filter-field">
-                    <span>Значение 2</span>
-                    <select data-filter-group-value-extra disabled>
-                      <option value="">Сначала выберите группировку</option>
-                    </select>
-                  </label>
+                  <button type="button" class="appdosc__task-filter-group-add" data-filter-group-add title="Добавить группировку">+</button>
                 </div>
               </div>
               <div class="appdosc__task-filter-actions">
