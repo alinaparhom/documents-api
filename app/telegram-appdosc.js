@@ -18124,6 +18124,18 @@ function setupAssignmentControls(card, task) {
   optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
+  const updateOptionsViewportBounds = () => {
+    const viewportHeight = window.visualViewport && Number(window.visualViewport.height)
+      ? Number(window.visualViewport.height)
+      : window.innerHeight;
+    const dynamicHeight = Math.max(160, Math.floor(viewportHeight * 0.34));
+    optionsList.style.maxHeight = `${Math.min(260, dynamicHeight)}px`;
+  };
+  updateOptionsViewportBounds();
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateOptionsViewportBounds);
+  }
+  window.addEventListener('resize', updateOptionsViewportBounds);
   let inputShell = comboInput.parentElement && comboInput.parentElement.classList.contains('appdosc-card__assign-input-shell')
     ? comboInput.parentElement
     : null;
@@ -19110,6 +19122,13 @@ function setupAssignmentControls(card, task) {
     skipUnlockOnCurrentClick = false;
     setKeyboardButtonActive(false);
   };
+  const dismissComboInteraction = () => {
+    relockComboSearch();
+    hideOptionsList();
+    if (document.activeElement === comboInput) {
+      comboInput.blur();
+    }
+  };
   const handleKeyboardButtonPress = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -19174,11 +19193,14 @@ function setupAssignmentControls(card, task) {
     setTimeout(hideOptionsList, 120);
   });
 
-  document.addEventListener('pointerdown', (event) => {
+  const handleOutsideDismiss = (event) => {
     const target = event.target;
     if (comboInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
-    hideOptionsList();
-  }, true);
+    dismissComboInteraction();
+  };
+  document.addEventListener('pointerdown', handleOutsideDismiss, true);
+  document.addEventListener('touchstart', handleOutsideDismiss, true);
+  document.addEventListener('mousedown', handleOutsideDismiss, true);
 
   container.hidden = false;
 }
@@ -19301,6 +19323,18 @@ function setupSubordinateControls(card, task) {
   optionsList.style.boxShadow = comboPalette.shadow;
   optionsList.style.padding = '4px';
   optionsList.style.webkitOverflowScrolling = 'touch';
+  const updateOptionsViewportBounds = () => {
+    const viewportHeight = window.visualViewport && Number(window.visualViewport.height)
+      ? Number(window.visualViewport.height)
+      : window.innerHeight;
+    const dynamicHeight = Math.max(160, Math.floor(viewportHeight * 0.34));
+    optionsList.style.maxHeight = `${Math.min(260, dynamicHeight)}px`;
+  };
+  updateOptionsViewportBounds();
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateOptionsViewportBounds);
+  }
+  window.addEventListener('resize', updateOptionsViewportBounds);
   let inputShell = searchInput.parentElement && searchInput.parentElement.classList.contains('appdosc-card__assign-input-shell')
     ? searchInput.parentElement
     : null;
@@ -20140,6 +20174,13 @@ function setupSubordinateControls(card, task) {
     skipUnlockOnCurrentClick = false;
     setKeyboardButtonActive(false);
   };
+  const dismissComboInteraction = () => {
+    relockSubordinateSearch();
+    hideOptionsList();
+    if (document.activeElement === searchInput) {
+      searchInput.blur();
+    }
+  };
   const handleKeyboardButtonPress = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -20203,11 +20244,14 @@ function setupSubordinateControls(card, task) {
     relockSubordinateSearch();
     setTimeout(hideOptionsList, 120);
   });
-  document.addEventListener('pointerdown', (event) => {
+  const handleOutsideDismiss = (event) => {
     const target = event.target;
     if (searchInput.contains(target) || optionsList.contains(target) || keyboardButton.contains(target)) return;
-    hideOptionsList();
-  }, true);
+    dismissComboInteraction();
+  };
+  document.addEventListener('pointerdown', handleOutsideDismiss, true);
+  document.addEventListener('touchstart', handleOutsideDismiss, true);
+  document.addEventListener('mousedown', handleOutsideDismiss, true);
 
   container.hidden = false;
 
