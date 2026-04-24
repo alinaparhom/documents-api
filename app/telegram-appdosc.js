@@ -18051,18 +18051,36 @@ function setupAssignmentControls(card, task) {
     return;
   }
   const comboWrapper = comboInput.closest('.appdosc-card__assign-selector');
-  const comboPalette = {
-    inputBg: 'rgba(24, 36, 67, 0.82)',
-    inputBorder: 'rgba(124, 166, 255, 0.34)',
-    inputColor: '#ecf3ff',
-    listBg: 'rgba(20, 31, 59, 0.95)',
-    listBorder: 'rgba(118, 163, 255, 0.36)',
-    shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
-    optionBg: 'rgba(255, 255, 255, 0.04)',
-    optionBorder: 'rgba(141, 181, 255, 0.18)',
-    optionColor: '#eff5ff',
-    optionHover: 'rgba(123, 173, 255, 0.24)',
-  };
+  const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
+  const comboPalette = isLightTheme
+    ? {
+      inputBg: 'rgba(255, 255, 255, 0.92)',
+      inputBorder: 'rgba(80, 120, 201, 0.26)',
+      inputColor: '#1c2a46',
+      listBg: 'rgba(255, 255, 255, 0.96)',
+      listBorder: 'rgba(80, 120, 201, 0.28)',
+      shadow: '0 10px 26px rgba(73, 102, 158, 0.16)',
+      optionBg: 'rgba(84, 126, 212, 0.07)',
+      optionBorder: 'rgba(94, 136, 219, 0.22)',
+      optionColor: '#1d2d4c',
+      optionHover: 'rgba(84, 126, 212, 0.16)',
+      scrollThumb: 'rgba(84, 126, 212, 0.55)',
+      scrollTrack: 'rgba(84, 126, 212, 0.14)',
+    }
+    : {
+      inputBg: 'rgba(24, 36, 67, 0.82)',
+      inputBorder: 'rgba(124, 166, 255, 0.34)',
+      inputColor: '#ecf3ff',
+      listBg: 'rgba(20, 31, 59, 0.95)',
+      listBorder: 'rgba(118, 163, 255, 0.36)',
+      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+      scrollThumb: 'rgba(123, 173, 255, 0.62)',
+      scrollTrack: 'rgba(123, 173, 255, 0.18)',
+    };
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
@@ -18092,10 +18110,13 @@ function setupAssignmentControls(card, task) {
   optionsList.style.marginTop = '8px';
   optionsList.style.maxHeight = '260px';
   optionsList.style.width = '100%';
-  optionsList.style.overflowY = 'auto';
+  optionsList.style.overflowY = 'scroll';
   optionsList.style.overflowX = 'hidden';
   optionsList.style.overscrollBehavior = 'contain';
   optionsList.style.touchAction = 'pan-y';
+  optionsList.style.scrollbarGutter = 'stable';
+  optionsList.style.scrollbarWidth = 'thin';
+  optionsList.style.scrollbarColor = `${comboPalette.scrollThumb} ${comboPalette.scrollTrack}`;
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
   optionsList.style.background = comboPalette.listBg;
@@ -18185,7 +18206,6 @@ function setupAssignmentControls(card, task) {
   currentIdentifiers.forEach(registerAssignedKey);
 
   const updateSearchMeta = (query, visibleCount, totalCount) => {
-    const showScrollHint = visibleCount > 5;
     if (visibleCount <= 0) {
       searchMeta.textContent = query
         ? 'Совпадений не найдено. Попробуйте изменить запрос.'
@@ -18194,15 +18214,11 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!query) {
-      searchMeta.textContent = showScrollHint
-        ? `Все ответственные: ${visibleCount} • Листайте вниз`
-        : `Все ответственные: ${visibleCount}`;
+      searchMeta.textContent = `Все ответственные: ${visibleCount}`;
       return;
     }
 
-    searchMeta.textContent = showScrollHint
-      ? `Найдено: ${visibleCount} из ${totalCount} • Листайте список`
-      : `Найдено: ${visibleCount} из ${totalCount}`;
+    searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
   let visibleAssigneeOptions = [];
@@ -19153,18 +19169,36 @@ function setupSubordinateControls(card, task) {
   }
 
   const comboWrapper = searchInput.closest('.appdosc-card__assign-selector');
-  const comboPalette = {
-    inputBg: 'rgba(24, 36, 67, 0.82)',
-    inputBorder: 'rgba(124, 166, 255, 0.34)',
-    inputColor: '#ecf3ff',
-    listBg: 'rgba(20, 31, 59, 0.95)',
-    listBorder: 'rgba(118, 163, 255, 0.36)',
-    shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
-    optionBg: 'rgba(255, 255, 255, 0.04)',
-    optionBorder: 'rgba(141, 181, 255, 0.18)',
-    optionColor: '#eff5ff',
-    optionHover: 'rgba(123, 173, 255, 0.24)',
-  };
+  const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
+  const comboPalette = isLightTheme
+    ? {
+      inputBg: 'rgba(255, 255, 255, 0.92)',
+      inputBorder: 'rgba(80, 120, 201, 0.26)',
+      inputColor: '#1c2a46',
+      listBg: 'rgba(255, 255, 255, 0.96)',
+      listBorder: 'rgba(80, 120, 201, 0.28)',
+      shadow: '0 10px 26px rgba(73, 102, 158, 0.16)',
+      optionBg: 'rgba(84, 126, 212, 0.07)',
+      optionBorder: 'rgba(94, 136, 219, 0.22)',
+      optionColor: '#1d2d4c',
+      optionHover: 'rgba(84, 126, 212, 0.16)',
+      scrollThumb: 'rgba(84, 126, 212, 0.55)',
+      scrollTrack: 'rgba(84, 126, 212, 0.14)',
+    }
+    : {
+      inputBg: 'rgba(24, 36, 67, 0.82)',
+      inputBorder: 'rgba(124, 166, 255, 0.34)',
+      inputColor: '#ecf3ff',
+      listBg: 'rgba(20, 31, 59, 0.95)',
+      listBorder: 'rgba(118, 163, 255, 0.36)',
+      shadow: '0 12px 28px rgba(3, 10, 28, 0.42)',
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+      scrollThumb: 'rgba(123, 173, 255, 0.62)',
+      scrollTrack: 'rgba(123, 173, 255, 0.18)',
+    };
   if (comboWrapper) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
@@ -19194,10 +19228,13 @@ function setupSubordinateControls(card, task) {
   optionsList.style.marginTop = '8px';
   optionsList.style.maxHeight = '260px';
   optionsList.style.width = '100%';
-  optionsList.style.overflowY = 'auto';
+  optionsList.style.overflowY = 'scroll';
   optionsList.style.overflowX = 'hidden';
   optionsList.style.overscrollBehavior = 'contain';
   optionsList.style.touchAction = 'pan-y';
+  optionsList.style.scrollbarGutter = 'stable';
+  optionsList.style.scrollbarWidth = 'thin';
+  optionsList.style.scrollbarColor = `${comboPalette.scrollThumb} ${comboPalette.scrollTrack}`;
   optionsList.style.borderRadius = '12px';
   optionsList.style.border = `1px solid ${comboPalette.listBorder}`;
   optionsList.style.background = comboPalette.listBg;
@@ -19290,7 +19327,6 @@ function setupSubordinateControls(card, task) {
   };
 
   const updateSearchMeta = (query, visibleCount, totalCount) => {
-    const showScrollHint = visibleCount > 5;
     if (visibleCount <= 0) {
       searchMeta.textContent = query
         ? 'Совпадений не найдено. Уточните ФИО.'
@@ -19299,15 +19335,11 @@ function setupSubordinateControls(card, task) {
     }
 
     if (!query) {
-      searchMeta.textContent = showScrollHint
-        ? `Показаны все: ${visibleCount} • Листайте вниз`
-        : `Показаны все: ${visibleCount}`;
+      searchMeta.textContent = `Показаны все: ${visibleCount}`;
       return;
     }
 
-    searchMeta.textContent = showScrollHint
-      ? `Найдено: ${visibleCount} из ${totalCount} • Листайте список`
-      : `Найдено: ${visibleCount} из ${totalCount}`;
+    searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
   let visibleSubordinateOptions = [];
