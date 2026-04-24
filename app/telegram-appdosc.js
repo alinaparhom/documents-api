@@ -19023,20 +19023,34 @@ function setupAssignmentControls(card, task) {
     }
   });
 
+  let waitSecondTapForKeyboard = false;
+
   comboInput.addEventListener('pointerdown', (event) => {
     if (isComboExpanded()) {
       return;
     }
     event.preventDefault();
     showOptionsList();
+    waitSecondTapForKeyboard = true;
   });
 
   comboInput.addEventListener('click', () => {
+    if (waitSecondTapForKeyboard) {
+      waitSecondTapForKeyboard = false;
+      return;
+    }
     if (!isComboExpanded()) {
       showOptionsList();
       return;
     }
     comboInput.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      comboInput.focus({ preventScroll: true });
+      const cursor = comboInput.value.length;
+      if (typeof comboInput.setSelectionRange === 'function') {
+        comboInput.setSelectionRange(cursor, cursor);
+      }
+    });
   });
 
   comboInput.addEventListener('change', () => {
