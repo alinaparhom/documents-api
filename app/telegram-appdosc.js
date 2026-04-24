@@ -18082,6 +18082,9 @@ function setupAssignmentControls(card, task) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
   }
+  comboInput.readOnly = true;
+  comboInput.dataset.searchUnlocked = 'false';
+  comboInput.setAttribute('inputmode', 'none');
   comboInput.classList.add('appdosc-card__assign-search--combo');
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   comboInput.style.width = '100%';
@@ -18563,9 +18566,9 @@ function setupAssignmentControls(card, task) {
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Отозвать';
     removeButton.disabled = false;
-    removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
-    removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
-    removeButton.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)';
+    removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
+    removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
+    removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
     actions.style.width = '100%';
@@ -19036,6 +19039,9 @@ function setupAssignmentControls(card, task) {
 
   comboInput.addEventListener('click', () => {
     if (waitSecondTapForKeyboard) {
+      comboInput.readOnly = false;
+      comboInput.dataset.searchUnlocked = 'true';
+      comboInput.setAttribute('inputmode', 'search');
       waitSecondTapForKeyboard = false;
       return;
     }
@@ -19154,6 +19160,9 @@ function setupSubordinateControls(card, task) {
     comboWrapper.style.position = 'relative';
     comboWrapper.style.marginBottom = '2px';
   }
+  searchInput.readOnly = true;
+  searchInput.dataset.searchUnlocked = 'false';
+  searchInput.setAttribute('inputmode', 'none');
   searchInput.classList.add('appdosc-card__assign-search--combo');
   optionsList.classList.add('appdosc-card__assign-combo-list--compact');
   searchInput.style.width = '100%';
@@ -19554,9 +19563,9 @@ function setupSubordinateControls(card, task) {
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Отозвать';
     removeButton.disabled = false;
-    removeButton.style.border = '2px solid rgba(24, 123, 255, 0.95)';
-    removeButton.style.background = 'rgba(8, 22, 58, 0.45)';
-    removeButton.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)';
+    removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
+    removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
+    removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
     actions.style.width = '100%';
@@ -19961,6 +19970,9 @@ function setupSubordinateControls(card, task) {
 
   searchInput.addEventListener('click', () => {
     if (waitSecondTapForKeyboard) {
+      searchInput.readOnly = false;
+      searchInput.dataset.searchUnlocked = 'true';
+      searchInput.setAttribute('inputmode', 'search');
       waitSecondTapForKeyboard = false;
       return;
     }
