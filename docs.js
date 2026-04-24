@@ -1935,6 +1935,8 @@
       '.documents-responses-message-counter{font-weight:600;color:#64748b;}' +
       '.documents-responses-message textarea{width:100%;min-height:92px;max-height:200px;resize:vertical;border:1px solid rgba(148,163,184,0.4);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.45;color:#0f172a;background:rgba(255,255,255,0.98);box-sizing:border-box;}' +
       '.documents-responses-message textarea:focus{outline:none;border-color:rgba(37,99,235,0.55);box-shadow:0 0 0 3px rgba(37,99,235,0.12);}' +
+      '.documents-responses-message-actions{display:flex;justify-content:flex-end;}' +
+      '.documents-responses-message-actions .documents-button{width:100%;max-width:220px;}' +
       '.documents-responses-table-wrap{overflow:auto;border:1px solid rgba(226,232,240,0.95);border-radius:18px;background:rgba(255,255,255,0.8);min-height:0;}' +
       '.documents-responses-table{width:100%;border-collapse:collapse;font-size:13px;color:#0f172a;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px 10px;border-bottom:1px solid rgba(226,232,240,0.85);text-align:left;vertical-align:middle;}' +
@@ -1981,6 +1983,7 @@
       '.documents-responses-dropzone{flex-direction:column;align-items:flex-start;}' +
       '.documents-responses-dropzone-badge{white-space:normal;}' +
       '.documents-responses-message textarea{min-height:80px;}' +
+      '.documents-responses-message-actions .documents-button{max-width:none;}' +
       '.documents-responses-table th,.documents-responses-table td{padding:8px;}' +
       '.documents-brief-modal{padding:8px;align-items:flex-end;}' +
       '.documents-brief-panel{width:100%;max-height:calc(100vh - 16px);border-radius:20px;}' +
@@ -13774,7 +13777,7 @@
     var title = createElement('div', 'documents-responses-title', 'Загрузить ответ');
     var headerActions = createElement('div', 'documents-responses-actions');
     var aiButton = createElement('button', 'documents-button documents-button--ai', 'Ответ ИИ');
-    var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить');
+    var saveButton = createElement('button', 'documents-button documents-button--primary', 'Сохранить текст');
     var closeButton = createElement('button', 'documents-button documents-button--secondary', 'Закрыть');
     var body = createElement('div', 'documents-responses-body');
     var toolbar = createElement('div', 'documents-responses-toolbar');
@@ -13788,6 +13791,7 @@
     var messageWrap = createElement('div', 'documents-responses-message');
     var messageLabel = createElement('label', 'documents-responses-message-label', 'Текстовый ответ (.txt)');
     var messageCounter = createElement('span', 'documents-responses-message-counter', '0 / 12000');
+    var messageActions = createElement('div', 'documents-responses-message-actions');
     var messageInput = document.createElement('textarea');
     messageInput.placeholder = 'Напишите комментарий к задаче. Можно сохранить только текст без прикрепления файлов.';
     messageInput.maxLength = 12000;
@@ -13798,6 +13802,7 @@
     hiddenInput.multiple = true;
     hiddenInput.hidden = true;
     var isResponseModalClosed = false;
+    var responseUploadInProgress = false;
 
     function closeResponseModal() {
       if (isResponseModalClosed) {
@@ -13839,6 +13844,20 @@
         showMessage('success', 'Добавлено файлов: ' + addedCount + ' (' + sourceLabel + ').');
       }
       return addedCount;
+    }
+
+    function uploadFilesImmediately() {
+      if (responseUploadInProgress || !pendingFiles.length) {
+        return Promise.resolve();
+      }
+      responseUploadInProgress = true;
+      return uploadPendingFiles()
+        .catch(function(error) {
+          showMessage('error', 'Не удалось автоматически загрузить ответы: ' + error.message);
+        })
+        .finally(function() {
+          responseUploadInProgress = false;
+        });
     }
 
     function getClipboardFiles(event) {
@@ -14178,8 +14197,11 @@
       if (!selected.length) {
         return;
       }
-      mergePendingFiles(selected, 'выбор');
+      var added = mergePendingFiles(selected, 'выбор');
       hiddenInput.value = '';
+      if (added > 0) {
+        uploadFilesImmediately();
+      }
     });
 
     addButton.type = 'button';
@@ -14225,7 +14247,10 @@
       var droppedFiles = event.dataTransfer && event.dataTransfer.files
         ? Array.from(event.dataTransfer.files)
         : [];
-      mergePendingFiles(droppedFiles, 'перетаскивание');
+      var added = mergePendingFiles(droppedFiles, 'перетаскивание');
+      if (added > 0) {
+        uploadFilesImmediately();
+      }
     });
     modal.addEventListener('paste', function(event) {
       var files = getClipboardFiles(event);
@@ -14233,7 +14258,10 @@
         return;
       }
       event.preventDefault();
-      mergePendingFiles(files, 'буфер обмена');
+      var added = mergePendingFiles(files, 'буфер обмена');
+      if (added > 0) {
+        uploadFilesImmediately();
+      }
     });
 
     messageInput.addEventListener('input', function() {
@@ -14430,7 +14458,6 @@
     });
 
     headerActions.appendChild(aiButton);
-    headerActions.appendChild(saveButton);
     headerActions.appendChild(closeButton);
     header.appendChild(title);
     header.appendChild(headerActions);
@@ -14444,6 +14471,8 @@
     messageLabel.appendChild(messageCounter);
     messageWrap.appendChild(messageLabel);
     messageWrap.appendChild(messageInput);
+    messageActions.appendChild(saveButton);
+    messageWrap.appendChild(messageActions);
     toolbar.appendChild(messageWrap);
     body.appendChild(toolbar);
     body.appendChild(tableWrap);
