@@ -1946,64 +1946,103 @@ function docs_build_assignment_notification_message(array $record, array $assign
 
     $assigneeName = sanitize_text_field($assignee['name'] ?? '', 200);
     if ($assigneeName !== '') {
-        $lines[] = '📌 ' . $assigneeName . ', вам назначена новая задача от:';
+        $lines[] = '📌 ' . $assigneeName . ', вам задача!';
     } else {
-        $lines[] = '📌 Вам назначена новая задача от:';
+        $lines[] = '📌 Вам задача!';
     }
 
-    $directorNames = docs_collect_director_names_from_record($record);
-    $directorLabel = !empty($directorNames) ? implode(', ', $directorNames) : 'не указан';
-    $lines[] = 'Директор: ' . $directorLabel;
-
     $assignedByName = sanitize_text_field($assignee['assignedBy'] ?? '', 200);
-    $assignedByRole = docs_normalize_assignment_role((string) ($assignee['assignedByRole'] ?? ''));
-    if ($assignedByName !== '') {
-        if ($assignedByRole === 'admin') {
-            $lines[] = 'Администратор: ' . $assignedByName;
-        } elseif ($assignedByRole === 'responsible') {
-            $lines[] = 'Ответственный: ' . $assignedByName;
-        } elseif ($assignedByRole === 'subordinate') {
-            $lines[] = 'Подчинённый: ' . $assignedByName;
+    $assignedByLabel = $assignedByName;
+    if ($assignedByLabel === '') {
+        $directorNames = docs_collect_director_names_from_record($record);
+        $assignedByLabel = !empty($directorNames) ? implode(', ', $directorNames) : '';
+    }
+    if ($assignedByLabel === '') {
+        $assignedByLabel = 'не указан';
+    }
+
+    $lines[] = '';
+    $lines[] = '👤 От: ' . $assignedByLabel;
+
+    $registryNumber = sanitize_text_field($record['registryNumber'] ?? '', 120);
+    $documentDate = docs_format_human_date($record['documentDate'] ?? '');
+    if ($registryNumber !== '' || $documentDate !== '') {
+        $incomingParts = [];
+        if ($registryNumber !== '') {
+            $incomingParts[] = $registryNumber;
+        }
+        if ($documentDate !== '') {
+            $incomingParts[] = 'от ' . $documentDate;
+        }
+        $lines[] = '📄 Вх. №: ' . implode(' ', $incomingParts);
+    } else {
+        $lines[] = '📄 Вх. №: не указан';
+    }
+
+    $statusRaw = sanitize_text_field((string) ($record['status'] ?? ''), 120);
+    $status = sanitize_status($statusRaw, true);
+    $lines[] = '📌 Статус: ' . $status;
+
+    $recordDueDate = docs_format_human_date($record['dueDate'] ?? '');
+    $dueDisplay = $assignmentDueFormatted !== '' ? $assignmentDueFormatted : $recordDueDate;
+    $lines[] = '⏳ Срок: ' . ($dueDisplay !== '' ? $dueDisplay : 'не указан');
+
+    $content = $assignmentInstruction !== '' ? docs_truncate_notification_text($assignmentInstruction, 700) : '';
+    if ($content === '') {
+        $content = sanitize_text_field($record['summary'] ?? '', 800);
+    }
+    if ($content === '') {
+        $content = sanitize_text_field($record['correspondent'] ?? '', 350);
+    }
+    $lines[] = '';
+    $lines[] = '📝 Содержание:';
+    $lines[] = $content !== '' ? $content : 'не указано';
+
+    $responsibleNames = docs_collect_responsible_names_from_record($record);
+    $subordinateNames = docs_collect_subordinate_names_from_record($record);
+    $peopleLines = [];
+    foreach ($responsibleNames as $name) {
+        $value = sanitize_text_field((string) $name, 200);
+        if ($value !== '') {
+            $peopleLines[] = '— ' . $value;
+        }
+    }
+    foreach ($subordinateNames as $name) {
+        $value = sanitize_text_field((string) $name, 200);
+        if ($value !== '') {
+            $peopleLines[] = '— ' . $value;
+        }
+    }
+    if (!empty($peopleLines)) {
+        $lines[] = '';
+        $lines[] = '👥 Ответственные:';
+        foreach ($peopleLines as $personLine) {
+            $lines[] = $personLine;
         }
     }
 
     $organizationName = sanitize_text_field($organization, 160);
     if ($organizationName !== '') {
-        $lines[] = 'Организация: ' . $organizationName;
+        $lines[] = '';
+        $lines[] = '🏢 Организация: ' . $organizationName;
     }
-
-    $registryNumber = sanitize_text_field($record['registryNumber'] ?? '', 120);
-    if ($registryNumber !== '') {
-        $lines[] = 'Рег. №: ' . $registryNumber;
-    }
-
-    $content = sanitize_text_field($record['correspondent'] ?? '', 200);
-    if ($content === '') {
-        $content = sanitize_text_field($record['summary'] ?? '', 200);
-    }
-    $lines[] = 'Содержание: ' . ($content !== '' ? $content : 'не указано');
-
-    $lines[] = 'Поручение:' . ($assignmentInstruction !== '' ? ' ' . docs_truncate_notification_text($assignmentInstruction, 350) : '');
-
-    $recordDueDate = docs_format_human_date($record['dueDate'] ?? '');
-    $dueDisplay = $assignmentDueFormatted !== '' ? $assignmentDueFormatted : $recordDueDate;
-    $lines[] = 'Срок: ' . ($dueDisplay !== '' ? $dueDisplay : 'не указан');
-
-    $responsibleNames = docs_collect_responsible_names_from_record($record);
-    $responsibleLabel = !empty($responsibleNames) ? implode(', ', $responsibleNames) : 'не указаны';
-    $lines[] = 'Ответственные: ' . $responsibleLabel;
-
-    $subordinateNames = docs_collect_subordinate_names_from_record($record);
-    $subordinateLabel = !empty($subordinateNames) ? implode(', ', $subordinateNames) : 'не указаны';
-    $lines[] = 'Подчинённые: ' . $subordinateLabel;
 
     $fileNames = docs_collect_file_names_from_record($record);
-    $fileLabel = !empty($fileNames) ? implode(', ', $fileNames) : 'не указаны';
-    $lines[] = 'Файлы: ' . $fileLabel;
+    if (!empty($fileNames)) {
+        $lines[] = '';
+        $lines[] = '📎 Файлы:';
+        foreach ($fileNames as $fileName) {
+            $normalizedFileName = sanitize_text_field((string) $fileName, 255);
+            if ($normalizedFileName === '') {
+                continue;
+            }
+            $lines[] = docs_truncate_notification_text($normalizedFileName, 40);
+        }
+    }
 
     if ($appUrl !== '') {
         $lines[] = '';
-        $lines[] = '';
+        $lines[] = '👇';
         $lines[] = 'Открыть задачу: кнопка ниже.';
     }
 
