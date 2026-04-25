@@ -1014,16 +1014,17 @@
   }
 
   var TABLE_GROUPS = [
-    { key: 'flow', label: 'Входящие и исходящие', span: 9 },
+    { key: 'flow', label: 'Входящие и исходящие', span: 10 },
     { key: 'execution', label: 'Исполнение', span: 5 },
     { key: 'resolution', label: 'Резолюция', span: 1 },
-    { key: 'control', label: 'Контроль', span: 3 }
+    { key: 'control', label: 'Контроль', span: 2 }
   ];
   var TABLE_COLUMNS = [
     { key: 'entryNumber', label: '№', group: 'flow', searchable: true, searchHint: 'Введите номер записи' },
+    { key: 'registryNumber', label: 'Рег. №', group: 'flow', searchable: true, searchHint: 'Введите регистрационный номер' },
     { key: 'actions', label: 'Действия', group: 'flow', searchable: false },
     { key: 'files', label: 'Файлы', group: 'flow', searchable: false },
-    { key: 'registryNumber', label: 'Рег. №', group: 'flow', searchable: true, searchHint: 'Введите регистрационный номер' },
+    { key: 'status', label: 'Статус', group: 'flow', searchable: true, searchHint: 'Введите статус' },
     { key: 'registrationDate', label: 'Дата регистрации', group: 'flow', searchable: true, searchHint: 'Например: 12.03.2024' },
     { key: 'direction', label: 'Тип', group: 'flow', searchable: true, searchHint: 'Введите входящий или исходящий' },
     { key: 'correspondent', label: 'Корреспондент', group: 'flow', searchable: true, searchHint: 'Введите имя корреспондента' },
@@ -1036,8 +1037,7 @@
     { key: 'summary', label: 'Содержание', group: 'execution', searchable: true, searchHint: 'Введите ключевые слова' },
     { key: 'resolution', label: 'Резолюция', group: 'resolution', searchable: true, searchHint: 'Введите текст резолюции' },
     { key: 'dueDate', label: 'Срок', group: 'control', searchable: true, searchHint: 'Например: 01.04.2024' },
-    { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' },
-    { key: 'status', label: 'Статус', group: 'control', searchable: true, searchHint: 'Введите статус' }
+    { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' }
   ];
   var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
@@ -12523,12 +12523,18 @@
     tr._cellSignatures = {};
 
     function toggleRowExpanded(forceState) {
+      var nextExpanded = typeof forceState === 'boolean'
+        ? forceState
+        : tr.getAttribute('aria-expanded') !== 'true';
       if (typeof forceState === 'boolean') {
         setTableRowExpanded(tr, doc && doc.id, forceState);
-        return;
+      } else {
+        var currentlyExpanded = tr.getAttribute('aria-expanded') === 'true';
+        setTableRowExpanded(tr, doc && doc.id, !currentlyExpanded);
       }
-      var currentlyExpanded = tr.getAttribute('aria-expanded') === 'true';
-      setTableRowExpanded(tr, doc && doc.id, !currentlyExpanded);
+      if (nextExpanded) {
+        recordDocumentView(doc, 'row_expand_auto_view');
+      }
     }
 
     function isInteractiveElement(element) {
@@ -12765,24 +12771,6 @@
     });
     actionsPanel.appendChild(briefActionButton);
 
-    var hasAttachments = attachments.length > 0;
-    var viewEntry = findCurrentUserViewEntry(doc);
-    var alreadyViewed = Boolean(viewEntry && viewEntry.viewedAt);
-    var viewedButton = createElement('button', 'documents-action documents-action--viewed', 'Просмотрено');
-    viewedButton.type = 'button';
-    viewedButton.disabled = !hasAttachments || alreadyViewed;
-    if (!hasAttachments) {
-      viewedButton.title = 'Нет прикреплённых файлов.';
-    } else if (alreadyViewed) {
-      viewedButton.title = 'Уже просмотрено.';
-    } else {
-      viewedButton.title = 'Отметить как просмотренное.';
-    }
-    viewedButton.addEventListener('click', function() {
-      markDocumentAsViewed(doc, viewedButton);
-    });
-    actionsPanel.appendChild(viewedButton);
-
     if (isAdmin && state.permissions && state.permissions.canCreateDocuments) {
       var editButton = createElement('button', 'documents-action documents-action--edit', 'Редактировать');
       editButton.type = 'button';
@@ -12801,6 +12789,8 @@
       actionsPanel.appendChild(deleteButton);
     }
     setupRowActionsMenu(actions, actionsToggleButton, actionsPanel);
+
+    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
     descriptors.push(buildCellDescriptor(actions, '', 'actions'));
 
     var filesCell = createElement('div', 'documents-files');
@@ -12837,8 +12827,8 @@
     }
     filesCell.appendChild(filesList);
     descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
+    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
 
-    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
     descriptors.push(buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate'));
     descriptors.push(buildCellDescriptor(doc.direction || '—', '', 'direction'));
     descriptors.push(buildCellDescriptor(doc.correspondent || '—', '', 'correspondent'));
@@ -12856,7 +12846,6 @@
     descriptors.push(buildCellDescriptor(doc.resolution || '—', '', 'resolution'));
     descriptors.push(buildCellDescriptor(createDueDateCell(doc), '', 'dueDate'));
     descriptors.push(buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction'));
-    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
 
     while (tr.children.length > descriptors.length) {
       tr.removeChild(tr.lastChild);
