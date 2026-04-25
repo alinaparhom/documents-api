@@ -2781,6 +2781,8 @@ function initElements() {
   elements.periodButtonValue = document.querySelector('[data-period-button-value]');
   elements.rangeCalendarRoot = document.querySelector('[data-range-calendar]');
   elements.rangeCalendarBackdrop = document.querySelector('[data-range-calendar-backdrop]');
+  elements.rangeCalendarYear = document.querySelector('[data-calendar-year]');
+  elements.rangeCalendarActiveDate = document.querySelector('[data-calendar-active-date]');
   elements.rangeCalendarMonths = document.querySelector('[data-calendar-months]');
   elements.rangeCalendarStartLabel = document.querySelector('[data-start-label]');
   elements.rangeCalendarEndLabel = document.querySelector('[data-end-label]');
@@ -4078,7 +4080,7 @@ function buildTaskCountItemsFromTasks(tasks) {
 
 function formatRangeCalendarButtonValue(startDate, endDate) {
   if (!startDate) {
-    return 'Сегодня';
+    return 'Даты не указаны';
   }
   if (!endDate || startDate === endDate) {
     return formatRangeCalendarLongDate(startDate);
@@ -4102,7 +4104,7 @@ function formatRangeCalendarRange(start, end) {
   const startObj = parseDate(start);
   const endObj = parseDate(end);
   if (!startObj || !endObj) {
-    return 'Сегодня';
+    return 'Даты не указаны';
   }
   const startDay = startObj.getDate();
   const endDay = endObj.getDate();
@@ -4317,6 +4319,8 @@ function initRangeCalendar(options = {}) {
   const openButton = elements.periodButton;
   const openButtonValue = elements.periodButtonValue;
   const backdrop = elements.rangeCalendarBackdrop;
+  const yearSelect = elements.rangeCalendarYear;
+  const activeDateLabel = elements.rangeCalendarActiveDate;
   const monthsContainer = elements.rangeCalendarMonths;
   const startLabel = elements.rangeCalendarStartLabel;
   const endLabel = elements.rangeCalendarEndLabel;
@@ -4346,11 +4350,19 @@ function initRangeCalendar(options = {}) {
     : 4;
   let startDate = normalizeDateInputValue(options.startDate);
   let endDate = normalizeDateInputValue(options.endDate);
+  const initialDate = parseDate(startDate) || parseDate(options.baseDate) || new Date();
+  let selectedYear = initialDate.getFullYear();
+  const holidayMonthDays = new Set([
+    '01-01', '01-02', '01-03', '01-04', '01-05', '01-06', '01-07', '01-08',
+    '02-23', '03-08', '05-01', '05-09', '06-12', '11-04',
+  ]);
 
   function open() {
     root.hidden = false;
     document.body.classList.add('range-calendar-open');
     document.documentElement.classList.add('range-calendar-open');
+    syncYearWithSelection();
+    ensureYearOptions();
     renderMonths();
     updateSelection();
     scrollToRelevantMonth();
@@ -4363,28 +4375,73 @@ function initRangeCalendar(options = {}) {
   }
 
   function submit() {
-    if (!startDate) {
-      return;
-    }
-    if (!endDate) {
+    if (startDate && !endDate) {
       endDate = startDate;
     }
     if (openButtonValue instanceof HTMLElement) {
       openButtonValue.textContent = formatRangeCalendarButtonValue(startDate, endDate);
     }
     close();
-    onChange({ startDate, endDate });
+    onChange({ startDate: startDate || '', endDate: endDate || '' });
   }
 
   function renderMonths() {
     monthsContainer.innerHTML = '';
-    const base = options.baseDate ? parseDate(options.baseDate) : new Date();
-    const safeBase = base || new Date();
-    const firstMonth = new Date(safeBase.getFullYear(), safeBase.getMonth(), 1);
+    const firstMonth = new Date(selectedYear, 0, 1);
     for (let i = 0; i < monthsToRender; i += 1) {
       const monthDate = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + i, 1);
       monthsContainer.appendChild(renderMonth(monthDate));
     }
+  }
+
+  function collectAvailableYears() {
+    const years = new Set();
+    years.add(selectedYear);
+    years.add(new Date().getFullYear());
+    Object.keys(taskCounts).forEach((dateKey) => {
+      const match = /^(\d{4})-\d{2}-\d{2}$/.exec(dateKey);
+      if (match) {
+        years.add(Number(match[1]));
+      }
+    });
+    const list = Array.from(years).filter((value) => Number.isFinite(value));
+    if (list.length === 0) {
+      list.push(new Date().getFullYear());
+    }
+    const minYear = Math.min(...list) - 1;
+    const maxYear = Math.max(...list) + 2;
+    const expanded = [];
+    for (let year = minYear; year <= maxYear; year += 1) {
+      expanded.push(year);
+    }
+    return expanded;
+  }
+
+  function ensureYearOptions() {
+    if (!(yearSelect instanceof HTMLSelectElement)) {
+      return;
+    }
+    const years = collectAvailableYears();
+    yearSelect.innerHTML = '';
+    years.forEach((year) => {
+      const option = document.createElement('option');
+      option.value = String(year);
+      option.textContent = String(year);
+      yearSelect.appendChild(option);
+    });
+    yearSelect.value = String(selectedYear);
+  }
+
+  function syncYearWithSelection() {
+    const parsedStart = parseDate(startDate);
+    if (parsedStart instanceof Date) {
+      selectedYear = parsedStart.getFullYear();
+      return;
+    }
+    if (Number.isFinite(selectedYear)) {
+      return;
+    }
+    selectedYear = new Date().getFullYear();
   }
 
   function renderMonth(monthDate) {
@@ -4394,7 +4451,7 @@ function initRangeCalendar(options = {}) {
 
     const title = document.createElement('h3');
     title.className = 'range-calendar__month-title';
-    title.textContent = getRangeCalendarMonthName(monthDate);
+    title.textContent = `${getRangeCalendarMonthName(monthDate)} ${monthDate.getFullYear()}`;
 
     const grid = document.createElement('div');
     grid.className = 'range-calendar__grid';
@@ -4405,24 +4462,38 @@ function initRangeCalendar(options = {}) {
     const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
     const offset = getMondayOffset(firstDay);
 
-    for (let i = 0; i < offset; i += 1) {
-      grid.appendChild(document.createElement('div'));
-    }
-
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const date = new Date(year, monthIndex, day);
+    const cellsInGrid = Math.ceil((offset + daysInMonth) / 7) * 7;
+    const prevMonthDays = new Date(year, monthIndex, 0).getDate();
+    for (let i = 0; i < cellsInGrid; i += 1) {
+      const day = i - offset + 1;
+      const isOutsideMonth = day < 1 || day > daysInMonth;
+      const date = isOutsideMonth
+        ? (day < 1 ? new Date(year, monthIndex - 1, prevMonthDays + day) : new Date(year, monthIndex + 1, day - daysInMonth))
+        : new Date(year, monthIndex, day);
       const dateKey = formatDateInputValue(date);
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'range-calendar__day';
       button.dataset.date = dateKey;
+      if (isOutsideMonth) {
+        button.classList.add('is-outside');
+      }
 
       const inner = document.createElement('span');
       inner.className = 'range-calendar__day-inner';
       const number = document.createElement('span');
       number.className = 'range-calendar__day-number';
-      number.textContent = String(day);
+      number.textContent = String(date.getDate());
       inner.appendChild(number);
+
+      const dayOfWeek = date.getDay();
+      const dayMonth = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        button.classList.add('is-weekend');
+      }
+      if (holidayMonthDays.has(dayMonth)) {
+        button.classList.add('is-holiday');
+      }
 
       const count = Number(taskCounts[dateKey] || 0);
       if (count > 0) {
@@ -4435,7 +4506,9 @@ function initRangeCalendar(options = {}) {
         inner.appendChild(countEl);
       }
       button.appendChild(inner);
-      button.addEventListener('click', () => handleDateClick(dateKey));
+      if (!isOutsideMonth) {
+        button.addEventListener('click', () => handleDateClick(dateKey));
+      }
       grid.appendChild(button);
     }
 
@@ -4461,7 +4534,7 @@ function initRangeCalendar(options = {}) {
 
   function getSubmitText() {
     if (!startDate) {
-      return 'Выберите даты';
+      return 'Сохранить без дат';
     }
     if (!endDate || startDate === endDate) {
       return `Выбрать ${formatRangeCalendarLongDate(startDate)}`;
@@ -4488,7 +4561,11 @@ function initRangeCalendar(options = {}) {
   }
 
   function scrollToRelevantMonth() {
-    const focusDate = startDate || formatDateInputValue(new Date());
+    const today = new Date();
+    const fallbackDate = selectedYear === today.getFullYear()
+      ? formatDateInputValue(today)
+      : `${selectedYear}-01-01`;
+    const focusDate = startDate || fallbackDate;
     const parsed = parseDate(focusDate);
     if (!parsed) {
       monthsContainer.scrollTop = 0;
@@ -4504,10 +4581,14 @@ function initRangeCalendar(options = {}) {
   }
 
   function updateSelection() {
+    const activeRangeText = startDate ? formatRangeCalendarButtonValue(startDate, endDate) : 'Даты не указаны';
     startLabel.textContent = startDate ? formatRangeCalendarShortDate(startDate) : 'Не выбрана';
     endLabel.textContent = endDate ? formatRangeCalendarShortDate(endDate) : 'Не выбрана';
-    submitButton.disabled = !startDate;
+    submitButton.disabled = false;
     submitButton.textContent = getSubmitText();
+    if (activeDateLabel instanceof HTMLElement) {
+      activeDateLabel.textContent = activeRangeText;
+    }
     if (totalLabel instanceof HTMLElement) {
       if (!startDate) {
         totalLabel.hidden = true;
@@ -4548,6 +4629,18 @@ function initRangeCalendar(options = {}) {
   if (closeButton instanceof HTMLElement) {
     closeButton.addEventListener('click', close);
   }
+  if (yearSelect instanceof HTMLSelectElement) {
+    yearSelect.addEventListener('change', () => {
+      const nextYear = Number(yearSelect.value);
+      if (!Number.isFinite(nextYear)) {
+        return;
+      }
+      selectedYear = Math.round(nextYear);
+      renderMonths();
+      updateSelection();
+      scrollToRelevantMonth();
+    });
+  }
   submitButton.addEventListener('click', submit);
   if (clearStartButton instanceof HTMLElement) {
     clearStartButton.addEventListener('click', (event) => {
@@ -4570,6 +4663,7 @@ function initRangeCalendar(options = {}) {
     }
   });
 
+  ensureYearOptions();
   renderMonths();
   updateSelection();
 
@@ -4582,6 +4676,9 @@ function initRangeCalendar(options = {}) {
     setValue(nextStartDate, nextEndDate) {
       startDate = normalizeDateInputValue(nextStartDate);
       endDate = normalizeDateInputValue(nextEndDate || nextStartDate);
+      syncYearWithSelection();
+      ensureYearOptions();
+      renderMonths();
       if (openButtonValue instanceof HTMLElement) {
         openButtonValue.textContent = formatRangeCalendarButtonValue(startDate, endDate);
       }
@@ -4592,11 +4689,12 @@ function initRangeCalendar(options = {}) {
       endDate = '';
       updateSelection();
       if (openButtonValue instanceof HTMLElement) {
-        openButtonValue.textContent = 'Сегодня';
+        openButtonValue.textContent = 'Даты не указаны';
       }
     },
     setTaskCounts(nextTaskCounts) {
       taskCounts = nextTaskCounts && typeof nextTaskCounts === 'object' ? { ...nextTaskCounts } : {};
+      ensureYearOptions();
       renderMonths();
       updateSelection();
     },
