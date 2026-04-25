@@ -2782,7 +2782,6 @@ function initElements() {
   elements.rangeCalendarRoot = document.querySelector('[data-range-calendar]');
   elements.rangeCalendarBackdrop = document.querySelector('[data-range-calendar-backdrop]');
   elements.rangeCalendarYear = document.querySelector('[data-calendar-year]');
-  elements.rangeCalendarActiveDate = document.querySelector('[data-calendar-active-date]');
   elements.rangeCalendarMonths = document.querySelector('[data-calendar-months]');
   elements.rangeCalendarStartLabel = document.querySelector('[data-start-label]');
   elements.rangeCalendarEndLabel = document.querySelector('[data-end-label]');
@@ -4128,6 +4127,48 @@ function getRangeCalendarMonthNameGenitive(date) {
   return months[date.getMonth()];
 }
 
+const BELARUS_FIXED_HOLIDAYS = new Set([
+  '01-01', '01-02', '01-07', '03-08', '05-01', '05-09', '07-03', '11-07', '12-25',
+]);
+const belarusRadunitsaCache = new Map();
+
+function getOrthodoxEasterDate(year) {
+  const a = year % 4;
+  const b = year % 7;
+  const c = year % 19;
+  const d = (19 * c + 15) % 30;
+  const e = (2 * a + 4 * b - d + 34) % 7;
+  const month = Math.floor((d + e + 114) / 31) - 1;
+  const day = ((d + e + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month, day + 13));
+}
+
+function getBelarusRadunitsaDateKey(year) {
+  if (belarusRadunitsaCache.has(year)) {
+    return belarusRadunitsaCache.get(year) || '';
+  }
+  const easter = getOrthodoxEasterDate(year);
+  if (!(easter instanceof Date) || Number.isNaN(easter.getTime())) {
+    belarusRadunitsaCache.set(year, '');
+    return '';
+  }
+  easter.setUTCDate(easter.getUTCDate() + 9);
+  const key = `${easter.getUTCFullYear()}-${String(easter.getUTCMonth() + 1).padStart(2, '0')}-${String(easter.getUTCDate()).padStart(2, '0')}`;
+  belarusRadunitsaCache.set(year, key);
+  return key;
+}
+
+function isBelarusHoliday(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return false;
+  }
+  const monthDay = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  if (BELARUS_FIXED_HOLIDAYS.has(monthDay)) {
+    return true;
+  }
+  return formatDateInputValue(date) === getBelarusRadunitsaDateKey(date.getFullYear());
+}
+
 function syncCompactFilterGroupOptions() {
   if (!(elements.filterGroupList instanceof HTMLElement)) {
     return;
@@ -4320,7 +4361,6 @@ function initRangeCalendar(options = {}) {
   const openButtonValue = elements.periodButtonValue;
   const backdrop = elements.rangeCalendarBackdrop;
   const yearSelect = elements.rangeCalendarYear;
-  const activeDateLabel = elements.rangeCalendarActiveDate;
   const monthsContainer = elements.rangeCalendarMonths;
   const startLabel = elements.rangeCalendarStartLabel;
   const endLabel = elements.rangeCalendarEndLabel;
@@ -4352,10 +4392,6 @@ function initRangeCalendar(options = {}) {
   let endDate = normalizeDateInputValue(options.endDate);
   const initialDate = parseDate(startDate) || parseDate(options.baseDate) || new Date();
   let selectedYear = initialDate.getFullYear();
-  const holidayMonthDays = new Set([
-    '01-01', '01-02', '01-03', '01-04', '01-05', '01-06', '01-07', '01-08',
-    '02-23', '03-08', '05-01', '05-09', '06-12', '11-04',
-  ]);
 
   function open() {
     root.hidden = false;
@@ -4487,11 +4523,10 @@ function initRangeCalendar(options = {}) {
       inner.appendChild(number);
 
       const dayOfWeek = date.getDay();
-      const dayMonth = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       if (dayOfWeek === 0 || dayOfWeek === 6) {
         button.classList.add('is-weekend');
       }
-      if (holidayMonthDays.has(dayMonth)) {
+      if (isBelarusHoliday(date)) {
         button.classList.add('is-holiday');
       }
 
@@ -4499,7 +4534,7 @@ function initRangeCalendar(options = {}) {
       if (count > 0) {
         const countEl = document.createElement('span');
         countEl.className = 'range-calendar__day-count';
-        countEl.textContent = String(count);
+        countEl.textContent = count > 99 ? '99+' : String(count);
         if (count <= 5) {
           countEl.classList.add('is-good');
         }
@@ -4581,14 +4616,10 @@ function initRangeCalendar(options = {}) {
   }
 
   function updateSelection() {
-    const activeRangeText = startDate ? formatRangeCalendarButtonValue(startDate, endDate) : 'Даты не указаны';
     startLabel.textContent = startDate ? formatRangeCalendarShortDate(startDate) : 'Не выбрана';
     endLabel.textContent = endDate ? formatRangeCalendarShortDate(endDate) : 'Не выбрана';
     submitButton.disabled = false;
     submitButton.textContent = getSubmitText();
-    if (activeDateLabel instanceof HTMLElement) {
-      activeDateLabel.textContent = activeRangeText;
-    }
     if (totalLabel instanceof HTMLElement) {
       if (!startDate) {
         totalLabel.hidden = true;
