@@ -12807,6 +12807,8 @@
       actionsPanel.appendChild(deleteButton);
     }
     setupRowActionsMenu(actions, actionsToggleButton, actionsPanel);
+
+    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
     descriptors.push(buildCellDescriptor(actions, '', 'actions'));
 
     var filesCell = createElement('div', 'documents-files');
@@ -12843,8 +12845,8 @@
     }
     filesCell.appendChild(filesList);
     descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
+    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
 
-    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
     descriptors.push(buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate'));
     descriptors.push(buildCellDescriptor(doc.direction || '—', '', 'direction'));
     descriptors.push(buildCellDescriptor(doc.correspondent || '—', '', 'correspondent'));
@@ -12862,7 +12864,6 @@
     descriptors.push(buildCellDescriptor(doc.resolution || '—', '', 'resolution'));
     descriptors.push(buildCellDescriptor(createDueDateCell(doc), '', 'dueDate'));
     descriptors.push(buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction'));
-    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
 
     while (tr.children.length > descriptors.length) {
       tr.removeChild(tr.lastChild);
