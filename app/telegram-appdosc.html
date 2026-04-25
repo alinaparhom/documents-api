@@ -1694,6 +1694,7 @@
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         box-sizing: border-box;
+        font-size: 13px;
       }
 
       .appdosc__task-filter-panel[hidden] {
@@ -1724,7 +1725,7 @@
         background: transparent;
         color: var(--appdosc-text-primary);
         padding: 0 10px;
-        font-size: 10.5px;
+        font-size: 12px;
         font-weight: 600;
       }
 
@@ -1741,7 +1742,7 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
-        font-size: 12px;
+        font-size: 13px;
         color: var(--appdosc-text-muted);
         min-width: 0;
       }
@@ -1754,7 +1755,7 @@
         background: rgba(255, 255, 255, 0.82);
         color: var(--appdosc-text-primary);
         padding: 0 10px;
-        font-size: 12px;
+        font-size: 13px;
         box-sizing: border-box;
       }
 
@@ -1794,13 +1795,13 @@
       }
 
       .task-period-button__label {
-        font-size: 10px;
+        font-size: 11px;
         color: #75839b;
       }
 
       .task-period-button__value {
         margin-top: 1px;
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 700;
         color: #101828;
       }
@@ -2218,23 +2219,22 @@
 
       .appdosc__task-filter-group-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px;
         gap: 8px;
         align-items: end;
-        position: relative;
-        padding-right: 26px;
       }
 
       .appdosc__task-filter-group-controls {
         display: flex;
         justify-content: flex-end;
+        gap: 6px;
         width: 100%;
       }
 
       .appdosc__task-filter-group-add,
       .appdosc__task-filter-group-remove {
-        height: 28px;
-        width: 28px;
+        height: 30px;
+        width: 30px;
         border: 1px solid rgba(148, 163, 184, 0.34);
         border-radius: 10px;
         background: rgba(255, 255, 255, 0.82);
@@ -2245,14 +2245,8 @@
         padding: 0;
       }
 
-      .appdosc__task-filter-group-add {
-        margin-left: 0;
-      }
-
       .appdosc__task-filter-group-remove {
-        position: absolute;
-        right: -2px;
-        top: 20px;
+        position: static;
       }
 
       .appdosc__task-filter-group-remove:disabled {
