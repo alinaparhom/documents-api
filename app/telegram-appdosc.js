@@ -2721,7 +2721,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
   </footer>
@@ -5044,13 +5043,6 @@ function createCard(task, index, anchorRegistry) {
   applyStatusBadge(card, statusText, normalizedStatus, task);
   populateCardFiles(card, task.files);
 
-  const organization = getTaskOrganization(task);
-  const directorView = organization && userIsDirectorForOrganization(organization);
-
-  const viewButton = card.querySelector('[data-card-view]');
-  if (viewButton) {
-    viewButton.addEventListener('click', () => handleCardView(viewButton, task));
-  }
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -5063,7 +5055,7 @@ function createCard(task, index, anchorRegistry) {
   setupAssignmentControls(card, task);
   setupSubordinateControls(card, task);
 
-  initializeCardExpansion(card);
+  initializeCardExpansion(card, task);
 
   return card;
 }
@@ -5770,7 +5762,26 @@ function setCardExpandedState(card, expanded) {
   });
 }
 
-function initializeCardExpansion(card) {
+function syncTaskViewedByExpand(card, task, trigger) {
+  if (!task || !task.id) {
+    return;
+  }
+  const timestamp = new Date().toISOString();
+  applyLocalTaskViewUpdate(task, timestamp);
+  if (card) {
+    updateCardViewInfo(card, task);
+  }
+  registerTaskView(task, timestamp, card).catch((error) => {
+    logViewerDebug('task_view_register_failed', {
+      message: error instanceof Error ? error.message : String(error),
+      taskId: task.id || '',
+      organization: getTaskOrganization(task),
+      trigger: trigger || 'card_expand',
+    });
+  });
+}
+
+function initializeCardExpansion(card, task) {
   if (!(card instanceof HTMLElement)) {
     return;
   }
@@ -5808,7 +5819,11 @@ function initializeCardExpansion(card) {
         return;
       }
     }
-    setCardExpandedState(card, card.dataset.expanded !== 'true');
+    const nextExpanded = card.dataset.expanded !== 'true';
+    setCardExpandedState(card, nextExpanded);
+    if (nextExpanded) {
+      syncTaskViewedByExpand(card, task, 'card_expand_click');
+    }
   };
 
   const handleKeydown = (event) => {
@@ -5821,7 +5836,11 @@ function initializeCardExpansion(card) {
     }
     event.preventDefault();
     ignoreNextClick = true;
-    setCardExpandedState(card, card.dataset.expanded !== 'true');
+    const nextExpanded = card.dataset.expanded !== 'true';
+    setCardExpandedState(card, nextExpanded);
+    if (nextExpanded) {
+      syncTaskViewedByExpand(card, task, 'card_expand_keyboard');
+    }
   };
 
   toggles.forEach((toggle) => {

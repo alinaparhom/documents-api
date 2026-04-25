@@ -12523,12 +12523,19 @@
     tr._cellSignatures = {};
 
     function toggleRowExpanded(forceState) {
+      var nextExpanded;
       if (typeof forceState === 'boolean') {
-        setTableRowExpanded(tr, doc && doc.id, forceState);
+        nextExpanded = forceState;
+        setTableRowExpanded(tr, doc && doc.id, nextExpanded);
+      } else {
+        var currentlyExpanded = tr.getAttribute('aria-expanded') === 'true';
+        nextExpanded = !currentlyExpanded;
+        setTableRowExpanded(tr, doc && doc.id, nextExpanded);
+      }
+      if (nextExpanded) {
+        recordDocumentView(doc, 'row_expand');
         return;
       }
-      var currentlyExpanded = tr.getAttribute('aria-expanded') === 'true';
-      setTableRowExpanded(tr, doc && doc.id, !currentlyExpanded);
     }
 
     function isInteractiveElement(element) {
