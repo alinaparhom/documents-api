@@ -960,9 +960,9 @@
         justify-self: stretch;
         align-self: stretch;
         box-sizing: border-box;
-        min-height: 44px;
+        min-height: 48px;
         margin: 0 !important;
-        padding: 0 12px !important;
+        padding: 0 10px !important;
         border-radius: 12px !important;
         justify-content: flex-start;
         overflow: hidden;
@@ -972,18 +972,46 @@
       }
 
       .appdosc__badge-icon {
-        width: 22px;
-        height: 22px;
-        border-radius: 8px;
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        font-size: 12px;
-        background: rgba(15, 23, 42, 0.28);
+        flex-shrink: 0;
+        font-size: 17px;
+        line-height: 1;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(229, 238, 252, 0.95));
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        box-shadow: 0 3px 8px rgba(15, 23, 42, 0.14);
       }
 
       .appdosc__badge-label {
         line-height: 1.2;
+      }
+
+      .appdosc__badge--distributed .appdosc__badge-icon {
+        border-color: rgba(100, 116, 139, 0.45);
+      }
+
+      .appdosc__badge--accent .appdosc__badge-icon {
+        border-color: rgba(59, 130, 246, 0.5);
+      }
+
+      .appdosc__badge--info .appdosc__badge-icon {
+        border-color: rgba(14, 165, 233, 0.48);
+      }
+
+      .appdosc__badge--success .appdosc__badge-icon {
+        border-color: rgba(34, 197, 94, 0.52);
+      }
+
+      .appdosc__badge--danger .appdosc__badge-icon {
+        border-color: rgba(239, 68, 68, 0.5);
+      }
+
+      .appdosc__badge--warn .appdosc__badge-icon {
+        border-color: rgba(245, 158, 11, 0.52);
       }
 
       .appdosc__refresh-icon {
@@ -1581,6 +1609,13 @@
         .appdosc__summary-list .appdosc__badge {
           min-height: 36px;
           font-size: 12px !important;
+        }
+
+        .appdosc__badge-icon {
+          width: 24px;
+          height: 24px;
+          font-size: 14px;
+          border-radius: 8px;
         }
 
         .appdosc__task-nav-label {
@@ -2253,6 +2288,12 @@
         color: rgba(203, 213, 225, 0.92);
       }
 
+      :root[data-theme='dark'] .appdosc__badge-icon {
+        background: linear-gradient(180deg, rgba(30, 41, 59, 0.86), rgba(15, 23, 42, 0.92));
+        border-color: rgba(148, 163, 184, 0.4);
+        box-shadow: 0 3px 8px rgba(2, 6, 23, 0.35);
+      }
+
       :root[data-theme='dark'] .appdosc__task-filter-field select,
       :root[data-theme='dark'] .appdosc__task-filter-quick-group,
       :root[data-theme='dark'] .appdosc__task-filter-reset,
@@ -2632,7 +2673,7 @@
                 data-status-filter="cancelled"
                 aria-pressed="false"
               >
-                <span class="appdosc__badge-icon" aria-hidden="true">⨯</span>
+                <span class="appdosc__badge-icon" aria-hidden="true">❌</span>
                 <span class="appdosc__badge-label">0 отменено</span>
               </button>
               <button
