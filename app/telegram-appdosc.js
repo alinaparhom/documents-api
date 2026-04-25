@@ -2721,7 +2721,6 @@ const FALLBACK_CARD_TEMPLATE = `
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
   </footer>
@@ -5047,10 +5046,6 @@ function createCard(task, index, anchorRegistry) {
   const organization = getTaskOrganization(task);
   const directorView = organization && userIsDirectorForOrganization(organization);
 
-  const viewButton = card.querySelector('[data-card-view]');
-  if (viewButton) {
-    viewButton.addEventListener('click', () => handleCardView(viewButton, task));
-  }
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -5752,12 +5747,73 @@ function populateCardFiles(card, files) {
   }
 }
 
-function setCardExpandedState(card, expanded) {
+
+function markCardTaskAsViewedOnExpand(card) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  const task = card._taskData;
+  if (!task || !task.id || !isTaskAssignedToCurrentUser(task)) {
+    return;
+  }
+
+  const currentEntry = getTaskViewEntryForCurrentUser(task);
+  if (currentEntry && currentEntry.viewedAt) {
+    updateCardViewInfo(card, task);
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  applyLocalTaskViewUpdate(task, timestamp);
+  updateCardViewInfo(card, task);
+  registerTaskView(task, timestamp, card, 'mini_app_expand').catch((error) => {
+    logViewerDebug('task_expand_register_failed', {
+      message: error instanceof Error ? error.message : String(error),
+      taskId: task.id || '',
+      organization: getTaskOrganization(task),
+    });
+  });
+}
+
+function isTaskAssignedToCurrentUser(task) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+
+  if (isTaskAssignedToCurrentDirector(task)) {
+    return true;
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+
+  const pools = [];
+  if (Array.isArray(task.assignees)) {
+    pools.push(...task.assignees);
+  }
+  if (task.assignee && typeof task.assignee === 'object') {
+    pools.push(task.assignee);
+  }
+  if (Array.isArray(task.responsibles)) {
+    pools.push(...task.responsibles);
+  }
+  if (Array.isArray(task.subordinates)) {
+    pools.push(...task.subordinates);
+  }
+
+  return pools.some((entry) => entryMatchesUser(entry, ids, names));
+}
+
+function setCardExpandedState(card, expanded, options = {}) {
   if (!(card instanceof HTMLElement)) {
     return;
   }
 
   const isExpanded = Boolean(expanded);
+  const wasExpanded = card.dataset.expanded === 'true';
   card.dataset.expanded = isExpanded ? 'true' : 'false';
   setClass(card, 'appdosc-card--collapsed', !isExpanded);
   rememberCardExpansion(card, isExpanded);
@@ -5768,6 +5824,10 @@ function setCardExpandedState(card, expanded) {
       toggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
     }
   });
+
+  if (!options.silent && !wasExpanded && isExpanded) {
+    markCardTaskAsViewedOnExpand(card);
+  }
 }
 
 function initializeCardExpansion(card) {
@@ -5788,7 +5848,7 @@ function initializeCardExpansion(card) {
     (toggle) => toggle instanceof HTMLElement,
   );
 
-  setCardExpandedState(card, card.dataset.expanded !== 'false');
+  setCardExpandedState(card, card.dataset.expanded !== 'false', { silent: true });
 
   if (!toggles.length) {
     return;
@@ -7937,7 +7997,7 @@ function syncTaskViewEntry(task, response, fallbackTimestamp) {
   }
 }
 
-async function registerTaskView(task, timestamp, card) {
+async function registerTaskView(task, timestamp, card, trigger = 'mini_app_view') {
   if (!task || !task.id) {
     return;
   }
@@ -7953,7 +8013,7 @@ async function registerTaskView(task, timestamp, card) {
     organization,
     documentId: task.id,
     viewedAt: timestamp,
-    trigger: 'mini_app_view',
+    trigger,
   };
 
   const headers = { 'Content-Type': 'application/json' };
@@ -11343,7 +11403,7 @@ async function handleCardView(button, task) {
   if (card) {
     updateCardViewInfo(card, task);
   }
-  registerTaskView(task, timestamp, card).catch((error) => {
+  registerTaskView(task, timestamp, card, "mini_app_view").catch((error) => {
     logViewerDebug('task_view_register_failed', {
       message: error instanceof Error ? error.message : String(error),
       taskId: task.id || '',
