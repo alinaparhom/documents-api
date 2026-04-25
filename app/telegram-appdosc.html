@@ -960,9 +960,9 @@
         justify-self: stretch;
         align-self: stretch;
         box-sizing: border-box;
-        min-height: 44px;
+        min-height: 48px;
         margin: 0 !important;
-        padding: 0 12px !important;
+        padding: 0 10px !important;
         border-radius: 12px !important;
         justify-content: flex-start;
         overflow: hidden;
@@ -972,18 +972,46 @@
       }
 
       .appdosc__badge-icon {
-        width: 22px;
-        height: 22px;
-        border-radius: 8px;
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        font-size: 12px;
-        background: rgba(15, 23, 42, 0.28);
+        flex-shrink: 0;
+        font-size: 17px;
+        line-height: 1;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(229, 238, 252, 0.95));
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        box-shadow: 0 3px 8px rgba(15, 23, 42, 0.14);
       }
 
       .appdosc__badge-label {
         line-height: 1.2;
+      }
+
+      .appdosc__badge--distributed .appdosc__badge-icon {
+        border-color: rgba(100, 116, 139, 0.45);
+      }
+
+      .appdosc__badge--accent .appdosc__badge-icon {
+        border-color: rgba(59, 130, 246, 0.5);
+      }
+
+      .appdosc__badge--info .appdosc__badge-icon {
+        border-color: rgba(14, 165, 233, 0.48);
+      }
+
+      .appdosc__badge--success .appdosc__badge-icon {
+        border-color: rgba(34, 197, 94, 0.52);
+      }
+
+      .appdosc__badge--danger .appdosc__badge-icon {
+        border-color: rgba(239, 68, 68, 0.5);
+      }
+
+      .appdosc__badge--warn .appdosc__badge-icon {
+        border-color: rgba(245, 158, 11, 0.52);
       }
 
       .appdosc__refresh-icon {
@@ -1060,11 +1088,21 @@
       }
 
       .appdosc__table-title.tasks-title {
-        font-size: clamp(24px, 6.2vw, 34px) !important;
-        line-height: 1 !important;
-        font-weight: 760 !important;
-        letter-spacing: -0.04em !important;
+        font-size: 15px !important;
+        line-height: 1.2 !important;
+        font-weight: 600 !important;
+        letter-spacing: 0 !important;
         color: var(--appdosc-task-title-color) !important;
+      }
+
+      .appdosc__table-card.tasks-panel .appdosc__refresh,
+      .appdosc__table-card.tasks-panel .appdosc__filter-toggle,
+      .appdosc__table-card.tasks-panel .task-period-button,
+      .appdosc__table-card.tasks-panel .appdosc__task-filter-reset,
+      .appdosc__table-card.tasks-panel .appdosc__cards-placeholder {
+        font-size: 15px !important;
+        line-height: 1.2 !important;
+        font-weight: 600 !important;
       }
 
       .appdosc__table-meta.tasks-updated {
@@ -1083,7 +1121,7 @@
       .tasks-refresh {
         min-height: 40px !important;
         padding: 8px 14px !important;
-        border-radius: 16px !important;
+        border-radius: 10px !important;
         border: 1px solid var(--appdosc-task-refresh-border) !important;
         background: var(--appdosc-task-refresh-bg) !important;
         color: var(--appdosc-task-refresh-text) !important;
@@ -1554,7 +1592,8 @@
         -webkit-appearance: none;
         min-height: 45px !important;
         padding-right: 44px !important;
-        border-radius: 14px !important;
+        border-radius: 10px !important;
+        font-size: 12px !important;
         background-image: linear-gradient(45deg, transparent 50%, #cbd5e1 50%), linear-gradient(135deg, #cbd5e1 50%, transparent 50%);
         background-position: calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px);
         background-size: 6px 6px, 6px 6px;
@@ -1582,6 +1621,13 @@
           font-size: 12px !important;
         }
 
+        .appdosc__badge-icon {
+          width: 24px;
+          height: 24px;
+          font-size: 14px;
+          border-radius: 8px;
+        }
+
         .appdosc__task-nav-label {
           font-size: 14px !important;
           white-space: nowrap;
@@ -1596,7 +1642,7 @@
         align-items: center;
         gap: 6px;
         height: 34px;
-        border-radius: 12px;
+        border-radius: 10px;
         border: 1px solid rgba(148, 163, 184, 0.34);
         background: rgba(255, 255, 255, 0.7);
         backdrop-filter: blur(8px);
@@ -1642,7 +1688,7 @@
         gap: 10px;
         width: 100%;
         padding: 10px;
-        border-radius: 14px;
+        border-radius: 10px;
         border: 1px solid rgba(148, 163, 184, 0.3);
         background: rgba(255, 255, 255, 0.62);
         backdrop-filter: blur(10px);
@@ -1656,19 +1702,34 @@
 
       .appdosc__task-filter-quick {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 6px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px;
+      }
+
+      .appdosc__task-filter-quick-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 9px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.86);
       }
 
       .appdosc__task-filter-quick-btn {
-        height: 28px;
-        border-radius: 999px;
-        border: 1px solid rgba(148, 163, 184, 0.3);
-        background: rgba(255, 255, 255, 0.86);
+        height: 27px;
+        border-radius: 0;
+        border: 0;
+        border-right: 1px solid rgba(148, 163, 184, 0.25);
+        background: transparent;
         color: var(--appdosc-text-primary);
         padding: 0 10px;
-        font-size: 12px;
+        font-size: 10.5px;
         font-weight: 600;
+      }
+
+      .appdosc__task-filter-quick-btn:last-child {
+        border-right: 0;
       }
 
       .appdosc__task-filter-quick-btn.is-active {
@@ -1693,7 +1754,7 @@
         background: rgba(255, 255, 255, 0.82);
         color: var(--appdosc-text-primary);
         padding: 0 10px;
-        font-size: 13px;
+        font-size: 12px;
         box-sizing: border-box;
       }
 
@@ -1713,7 +1774,7 @@
         min-height: 40px;
         padding: 8px 10px;
         border: 1px solid #dbe4f3;
-        border-radius: 12px;
+        border-radius: 10px;
         background: #ffffff;
         box-shadow: 0 4px 14px rgba(31, 64, 120, 0.08);
         display: flex;
@@ -1805,44 +1866,82 @@
 
       .range-calendar__selected {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         gap: 12px;
-        padding-right: 40px;
+        align-items: center;
+        padding-right: 0;
+      }
+
+      .range-calendar__year-select {
+        min-width: 108px;
+        height: 36px;
+        border-radius: 11px;
+        border: 1px solid rgba(145, 158, 181, 0.34);
+        background: rgba(255, 255, 255, 0.92);
+        color: #1f2937;
+        font-size: 16px;
+        font-weight: 700;
+        padding: 0 12px;
+        transition: border-color 0.2s ease, transform 0.2s ease;
+        box-shadow: 0 5px 14px rgba(30, 64, 120, 0.08);
+      }
+
+      .range-calendar__top-year {
+        position: absolute;
+        right: 54px;
+        top: calc(3px + env(safe-area-inset-top));
+        width: 96px;
+        z-index: 4;
+      }
+
+      .range-calendar__top-year .range-calendar__year-select {
+        width: 100%;
+        height: 32px;
+        font-size: 13px;
+      }
+
+      .range-calendar__year-select:focus {
+        outline: none;
+        border-color: rgba(34, 114, 255, 0.58);
+        transform: translateY(-1px);
       }
 
       .range-calendar__selected-card {
-        min-height: 56px;
-        padding: 8px 10px;
-        border: 1px solid rgba(116, 131, 154, 0.18);
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.72);
+        min-height: 68px;
+        padding: 12px 14px;
+        border: 1px solid rgba(203, 213, 225, 0.8);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.9);
         backdrop-filter: blur(10px);
-        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
         text-align: left;
         position: relative;
+        animation: range-fade-in 0.25s ease both;
       }
 
       .range-calendar__selected-label {
         display: block;
-        font-size: 10px;
-        font-weight: 700;
-        color: #8a94a6;
+        font-size: 14px;
+        font-weight: 600;
+        color: #8b95a7;
       }
 
       .range-calendar__selected-value {
         display: block;
-        margin-top: 2px;
-        font-size: 12px;
+        margin-top: 4px;
+        font-size: 24px;
+        line-height: 1.05;
         font-weight: 800;
+        letter-spacing: -0.02em;
         color: #111827;
       }
 
       .range-calendar__selected-clear {
         position: absolute;
-        right: 10px;
+        right: 12px;
         top: 14px;
-        color: #8a94a6;
-        font-size: 16px;
+        color: #9aa4b4;
+        font-size: 26px;
       }
 
       .range-calendar__weekdays {
@@ -1850,8 +1949,8 @@
         padding: 0 4px;
         display: grid;
         grid-template-columns: repeat(7, 1fr);
-        color: #7b8494;
-        font-size: 10px;
+        color: #8d97a8;
+        font-size: 19px;
         font-weight: 800;
         text-align: center;
         position: sticky;
@@ -1861,6 +1960,10 @@
         backdrop-filter: blur(8px);
         padding-top: 8px;
         padding-bottom: 8px;
+      }
+
+      .range-calendar__weekday-weekend {
+        color: #d35a6f;
       }
 
       .range-calendar__months {
@@ -1875,16 +1978,28 @@
       .range-calendar__month {
         margin-bottom: 14px;
         padding: 22px 16px 24px;
-        border-radius: 22px;
+        border-radius: 8px;
         border: 1px solid rgba(125, 147, 179, 0.22);
         background: rgba(255, 255, 255, 0.76);
         backdrop-filter: blur(14px);
         box-shadow: 0 12px 30px rgba(31, 64, 120, 0.08);
+        animation: range-month-in 0.22s ease both;
+      }
+
+      @keyframes range-month-in {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
 
       .range-calendar__month-title {
         margin: 0 0 18px;
-        font-size: 14px;
+        font-size: 38px;
         font-weight: 900;
         color: #111827;
       }
@@ -1898,13 +2013,14 @@
 
       .range-calendar__day {
         position: relative;
-        min-height: 46px;
+        min-height: 74px;
         border: 0;
         background: transparent;
         padding: 2px 0;
         color: #111827;
         border-radius: 12px;
         transition: background-color 0.18s ease, transform 0.18s ease;
+        animation: range-fade-in 0.25s ease both;
       }
 
       .range-calendar__day::before {
@@ -1925,35 +2041,46 @@
         position: relative;
         z-index: 2;
         width: calc(100% - 4px);
-        min-height: 42px;
+        min-height: 66px;
         margin: 0 auto;
         border-radius: 10px;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        border: 1px solid rgba(130, 150, 182, 0.2);
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 251, 255, 0.82));
-        box-shadow: 0 4px 12px rgba(31, 64, 120, 0.08);
+        border: 0.8px solid rgba(195, 208, 229, 0.82);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 253, 0.92));
         transition: all 0.2s ease;
+        overflow: hidden;
       }
 
       .range-calendar__day-number {
-        font-size: 11px;
+        font-size: 36px;
         font-weight: 900;
         line-height: 1;
       }
 
       .range-calendar__day-count {
-        margin-top: 3px;
-        font-size: 8px;
-        font-weight: 800;
-        color: #8792a5;
+        position: absolute;
+        right: 4px;
+        bottom: 4px;
+        max-width: calc(100% - 10px);
+        font-size: 12px;
+        font-weight: 900;
+        color: #2ca95f;
         line-height: 1;
+        padding: 2px 5px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.98);
+        border: 1px solid rgba(44, 169, 95, 0.34);
+        box-shadow: 0 2px 6px rgba(44, 169, 95, 0.16);
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        overflow: hidden;
       }
 
       .range-calendar__day:active .range-calendar__day-inner {
-        transform: scale(0.96);
+        transform: scale(0.94);
       }
 
       .range-calendar__day-count.is-good {
@@ -1966,26 +2093,21 @@
 
       .range-calendar__day.is-in-range::before {
         opacity: 1;
-        background: linear-gradient(180deg, rgba(244, 114, 182, 0.16), rgba(251, 113, 133, 0.1));
+        background: linear-gradient(180deg, rgba(37, 99, 235, 0.38), rgba(37, 99, 235, 0.3));
       }
 
       .range-calendar__day.is-in-range .range-calendar__day-inner {
-        background: linear-gradient(180deg, rgba(255, 252, 255, 0.98), rgba(255, 244, 250, 0.96));
-        border-color: rgba(244, 114, 182, 0.22);
-        box-shadow: 0 6px 14px rgba(236, 72, 153, 0.12);
+        background: linear-gradient(180deg, rgba(211, 230, 255, 0.99), rgba(188, 216, 252, 0.96));
+        border-color: rgba(24, 87, 206, 0.44);
+        transform: translateY(-1px);
       }
 
       .range-calendar__day.is-range-start .range-calendar__day-inner,
       .range-calendar__day.is-range-end .range-calendar__day-inner {
-        background: linear-gradient(160deg, #f9a8d4, #fbcfe8);
-        color: #7a284e;
-        border-color: rgba(255, 255, 255, 0.55);
-        box-shadow: 0 5px 12px rgba(236, 72, 153, 0.18);
-      }
-
-      .range-calendar__day.is-range-start .range-calendar__day-count,
-      .range-calendar__day.is-range-end .range-calendar__day-count {
-        color: #8c365b;
+        background: linear-gradient(160deg, #1f84ff, #0b6be2);
+        color: #ffffff;
+        border-color: rgba(255, 255, 255, 0.62);
+        animation: range-pulse 0.35s ease;
       }
 
       .range-calendar__day.is-range-start {
@@ -2009,14 +2131,45 @@
       }
 
       .range-calendar__day.is-single .range-calendar__day-inner {
-        background: linear-gradient(160deg, #f9a8d4, #fbcfe8);
-        color: #7a284e;
-        border-color: rgba(255, 255, 255, 0.56);
-        box-shadow: 0 5px 12px rgba(236, 72, 153, 0.18);
+        background: linear-gradient(160deg, #1f84ff, #0b6be2);
+        color: #ffffff;
+        border-color: rgba(255, 255, 255, 0.62);
+        animation: range-pulse 0.35s ease;
       }
 
-      .range-calendar__day.is-single .range-calendar__day-count {
-        color: #8c365b;
+      .range-calendar__day.is-weekend .range-calendar__day-number,
+      .range-calendar__day.is-holiday .range-calendar__day-number,
+      .range-calendar__day.is-outside.is-weekend .range-calendar__day-number,
+      .range-calendar__day.is-outside.is-holiday .range-calendar__day-number {
+        color: #d35a6f;
+      }
+
+      .range-calendar__day.is-outside {
+        pointer-events: none;
+        opacity: 0.56;
+      }
+
+      .range-calendar__day.is-outside .range-calendar__day-inner {
+        background: rgba(242, 246, 252, 0.75);
+      }
+
+      .range-calendar__panel {
+        animation: range-sheet-in 0.28s ease both;
+      }
+
+      @keyframes range-sheet-in {
+        from { opacity: 0; transform: translateY(18px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes range-fade-in {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes range-pulse {
+        0% { transform: scale(0.94); }
+        100% { transform: scale(1); }
       }
 
       .range-calendar__footer {
@@ -2065,14 +2218,16 @@
 
       .appdosc__task-filter-group-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         gap: 8px;
         align-items: end;
+        position: relative;
+        padding-right: 26px;
       }
 
       .appdosc__task-filter-group-controls {
         display: flex;
-        justify-content: stretch;
+        justify-content: flex-end;
         width: 100%;
       }
 
@@ -2081,7 +2236,7 @@
         height: 28px;
         width: 28px;
         border: 1px solid rgba(148, 163, 184, 0.34);
-        border-radius: 8px;
+        border-radius: 10px;
         background: rgba(255, 255, 255, 0.82);
         color: var(--appdosc-text-primary);
         font-size: 16px;
@@ -2091,7 +2246,13 @@
       }
 
       .appdosc__task-filter-group-add {
-        margin-left: auto;
+        margin-left: 0;
+      }
+
+      .appdosc__task-filter-group-remove {
+        position: absolute;
+        right: -2px;
+        top: 20px;
       }
 
       .appdosc__task-filter-group-remove:disabled {
@@ -2137,14 +2298,42 @@
         color: rgba(203, 213, 225, 0.92);
       }
 
+      :root[data-theme='dark'] .appdosc__badge-icon {
+        background: linear-gradient(180deg, rgba(30, 41, 59, 0.86), rgba(15, 23, 42, 0.92));
+        border-color: rgba(148, 163, 184, 0.4);
+        box-shadow: 0 3px 8px rgba(2, 6, 23, 0.35);
+      }
+
       :root[data-theme='dark'] .appdosc__task-filter-field select,
-      :root[data-theme='dark'] .appdosc__task-filter-quick-btn,
+      :root[data-theme='dark'] .appdosc__task-filter-quick-group,
       :root[data-theme='dark'] .appdosc__task-filter-reset,
       :root[data-theme='dark'] .appdosc__task-filter-group-add,
       :root[data-theme='dark'] .appdosc__task-filter-group-remove {
         background: rgba(15, 23, 42, 0.74);
         border-color: rgba(148, 163, 184, 0.46);
         color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-quick-btn {
+        background: transparent;
+        color: #e2e8f0;
+        border-right-color: rgba(148, 163, 184, 0.3);
+      }
+
+      :root[data-theme='dark'] .task-period-button {
+        background: rgba(15, 23, 42, 0.78);
+        border-color: rgba(148, 163, 184, 0.46);
+        color: #e2e8f0;
+        box-shadow: none;
+      }
+
+      :root[data-theme='dark'] .task-period-button__label,
+      :root[data-theme='dark'] .task-period-button__chevron {
+        color: #9fb0c8;
+      }
+
+      :root[data-theme='dark'] .task-period-button__value {
+        color: #f1f5f9;
       }
 
       :root[data-theme='dark'] .appdosc__task-filter-quick-btn.is-active {
@@ -2164,11 +2353,21 @@
         color: #94a3b8;
       }
 
+      :root[data-theme='dark'] .range-calendar__weekday-weekend {
+        color: #ff9eb0;
+      }
+
       :root[data-theme='dark'] .range-calendar__month,
       :root[data-theme='dark'] .range-calendar__selected-card,
       :root[data-theme='dark'] .range-calendar__close {
         background: rgba(15, 23, 42, 0.62);
         border-color: rgba(148, 163, 184, 0.35);
+      }
+
+      :root[data-theme='dark'] .range-calendar__year-select {
+        background: rgba(15, 23, 42, 0.76);
+        color: #e2e8f0;
+        border-color: rgba(148, 163, 184, 0.44);
       }
 
       :root[data-theme='dark'] .range-calendar__month-title,
@@ -2184,25 +2383,39 @@
 
       :root[data-theme='dark'] .range-calendar__day-inner {
         background: linear-gradient(180deg, rgba(30, 41, 59, 0.82), rgba(15, 23, 42, 0.86));
-        border-color: rgba(148, 163, 184, 0.28);
-        box-shadow: 0 5px 14px rgba(2, 6, 23, 0.34);
+        border-color: rgba(148, 163, 184, 0.22);
       }
 
       :root[data-theme='dark'] .range-calendar__day.is-in-range::before {
-        background: linear-gradient(180deg, rgba(244, 114, 182, 0.24), rgba(244, 114, 182, 0.14));
+        background: linear-gradient(180deg, rgba(59, 130, 246, 0.34), rgba(59, 130, 246, 0.24));
       }
 
       :root[data-theme='dark'] .range-calendar__day.is-in-range .range-calendar__day-inner {
-        background: linear-gradient(180deg, rgba(112, 51, 84, 0.34), rgba(30, 41, 59, 0.9));
-        border-color: rgba(244, 114, 182, 0.28);
+        background: linear-gradient(180deg, rgba(27, 63, 114, 0.6), rgba(30, 52, 88, 0.9));
+        border-color: rgba(96, 165, 250, 0.46);
       }
 
       :root[data-theme='dark'] .range-calendar__day.is-range-start .range-calendar__day-inner,
       :root[data-theme='dark'] .range-calendar__day.is-range-end .range-calendar__day-inner,
       :root[data-theme='dark'] .range-calendar__day.is-single .range-calendar__day-inner {
-        background: linear-gradient(160deg, #be185d, #ec4899);
+        background: linear-gradient(160deg, #3091ff, #117af2);
         border-color: rgba(255, 255, 255, 0.32);
-        box-shadow: 0 6px 14px rgba(190, 24, 93, 0.28);
+      }
+
+      :root[data-theme='dark'] .range-calendar__day.is-weekend .range-calendar__day-number,
+      :root[data-theme='dark'] .range-calendar__day.is-holiday .range-calendar__day-number {
+        color: #ff9eb0;
+      }
+
+      :root[data-theme='dark'] .range-calendar__day.is-outside .range-calendar__day-inner {
+        background: rgba(23, 34, 52, 0.74);
+      }
+
+      :root[data-theme='dark'] .range-calendar__day-count {
+        background: rgba(15, 23, 42, 0.8);
+        color: #4ade80;
+        border-color: rgba(74, 222, 128, 0.42);
+        box-shadow: 0 2px 8px rgba(74, 222, 128, 0.18);
       }
 
       :root[data-theme='dark'] .range-calendar__footer {
@@ -2210,6 +2423,53 @@
       }
 
       @media (max-width: 520px) {
+        .range-calendar__selected-label {
+          font-size: 14px;
+        }
+
+        .range-calendar__selected-value {
+          font-size: 22px;
+        }
+
+        .range-calendar__year-select {
+          height: 30px;
+          min-width: 90px;
+          font-size: 12px;
+        }
+
+        .range-calendar__top-year {
+          right: 50px;
+          top: calc(4px + env(safe-area-inset-top));
+          width: 88px;
+        }
+
+        .range-calendar__weekdays {
+          font-size: 14px;
+        }
+
+        .range-calendar__month-title {
+          font-size: 27px;
+        }
+
+        .range-calendar__day {
+          min-height: 52px;
+        }
+
+        .range-calendar__day-inner {
+          min-height: 48px;
+        }
+
+        .range-calendar__day-number {
+          font-size: 19px;
+        }
+
+        .range-calendar__day-count {
+          font-size: 10px;
+          right: 2px;
+          bottom: 2px;
+          padding: 2px 4px;
+        }
+
         .appdosc-viewer__controls {
           gap: 6px;
         }
@@ -2245,6 +2505,7 @@
 
         .appdosc__task-filter-quick {
           grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 4px;
         }
 
         .appdosc__task-filter-period {
@@ -2422,7 +2683,7 @@
                 data-status-filter="cancelled"
                 aria-pressed="false"
               >
-                <span class="appdosc__badge-icon" aria-hidden="true">⨯</span>
+                <span class="appdosc__badge-icon" aria-hidden="true">❌</span>
                 <span class="appdosc__badge-label">0 отменено</span>
               </button>
               <button
@@ -2556,16 +2817,20 @@
                   <span class="task-period-button__icon">📅</span>
                   <span class="task-period-button__content">
                     <span class="task-period-button__label">Период</span>
-                    <span class="task-period-button__value" data-period-button-value>Сегодня</span>
+                    <span class="task-period-button__value" data-period-button-value>Даты не указаны</span>
                   </span>
                   <span class="task-period-button__chevron">⌄</span>
                 </button>
               </div>
               <div class="appdosc__task-filter-quick" data-filter-quick>
-                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="today">Сегодня</button>
-                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="week">Неделя</button>
-                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="month">Месяц</button>
-                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
+                <div class="appdosc__task-filter-quick-group">
+                  <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="today">Сегодня</button>
+                  <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="week">Неделя</button>
+                </div>
+                <div class="appdosc__task-filter-quick-group">
+                  <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="month">Месяц</button>
+                  <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
+                </div>
               </div>
               <div class="appdosc__task-filter-groups">
                 <div class="appdosc__task-filter-group-list" data-filter-group-list></div>
@@ -2583,6 +2848,9 @@
             <div class="range-calendar__backdrop" data-range-calendar-backdrop></div>
             <div class="range-calendar__panel" role="dialog" aria-modal="true">
               <div class="range-calendar__handle"></div>
+              <div class="range-calendar__top-year">
+                <select class="range-calendar__year-select" data-calendar-year aria-label="Выбор года"></select>
+              </div>
               <button type="button" class="range-calendar__close" data-range-calendar-close aria-label="Закрыть календарь">×</button>
               <div class="range-calendar__selected">
                 <button type="button" class="range-calendar__selected-card" data-clear-start>
@@ -2597,7 +2865,7 @@
                 </button>
               </div>
               <div class="range-calendar__weekdays">
-                <span>ПН</span><span>ВТ</span><span>СР</span><span>ЧТ</span><span>ПТ</span><span>СБ</span><span>ВС</span>
+                <span>ПН</span><span>ВТ</span><span>СР</span><span>ЧТ</span><span>ПТ</span><span class="range-calendar__weekday-weekend">СБ</span><span class="range-calendar__weekday-weekend">ВС</span>
               </div>
               <div class="range-calendar__months" data-calendar-months></div>
               <div class="range-calendar__footer">
