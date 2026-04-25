@@ -2722,7 +2722,6 @@ const FALLBACK_CARD_TEMPLATE = `
     </div>
     <div class="appdosc-card__actions">
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
-      <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
   </footer>
   <div class="appdosc-card__assign" data-card-assign hidden>

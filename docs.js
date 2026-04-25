@@ -12771,24 +12771,6 @@
     });
     actionsPanel.appendChild(briefActionButton);
 
-    var hasAttachments = attachments.length > 0;
-    var viewEntry = findCurrentUserViewEntry(doc);
-    var alreadyViewed = Boolean(viewEntry && viewEntry.viewedAt);
-    var viewedButton = createElement('button', 'documents-action documents-action--viewed', 'Просмотрено');
-    viewedButton.type = 'button';
-    viewedButton.disabled = !hasAttachments || alreadyViewed;
-    if (!hasAttachments) {
-      viewedButton.title = 'Нет прикреплённых файлов.';
-    } else if (alreadyViewed) {
-      viewedButton.title = 'Уже просмотрено.';
-    } else {
-      viewedButton.title = 'Отметить как просмотренное.';
-    }
-    viewedButton.addEventListener('click', function() {
-      markDocumentAsViewed(doc, viewedButton);
-    });
-    actionsPanel.appendChild(viewedButton);
-
     if (isAdmin && state.permissions && state.permissions.canCreateDocuments) {
       var editButton = createElement('button', 'documents-action documents-action--edit', 'Редактировать');
       editButton.type = 'button';
