@@ -1024,6 +1024,7 @@
     { key: 'registryNumber', label: 'Рег. №', group: 'flow', searchable: true, searchHint: 'Введите регистрационный номер' },
     { key: 'actions', label: 'Действия', group: 'flow', searchable: false },
     { key: 'files', label: 'Файлы', group: 'flow', searchable: false },
+    { key: 'status', label: 'Статус', group: 'control', searchable: true, searchHint: 'Введите статус' },
     { key: 'registrationDate', label: 'Дата регистрации', group: 'flow', searchable: true, searchHint: 'Например: 12.03.2024' },
     { key: 'direction', label: 'Тип', group: 'flow', searchable: true, searchHint: 'Введите входящий или исходящий' },
     { key: 'correspondent', label: 'Корреспондент', group: 'flow', searchable: true, searchHint: 'Введите имя корреспондента' },
@@ -1036,8 +1037,7 @@
     { key: 'summary', label: 'Содержание', group: 'execution', searchable: true, searchHint: 'Введите ключевые слова' },
     { key: 'resolution', label: 'Резолюция', group: 'resolution', searchable: true, searchHint: 'Введите текст резолюции' },
     { key: 'dueDate', label: 'Срок', group: 'control', searchable: true, searchHint: 'Например: 01.04.2024' },
-    { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' },
-    { key: 'status', label: 'Статус', group: 'control', searchable: true, searchHint: 'Введите статус' }
+    { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' }
   ];
   var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
@@ -12844,6 +12844,7 @@
     }
     filesCell.appendChild(filesList);
     descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
+    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
 
     descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
     descriptors.push(buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate'));
@@ -12863,7 +12864,6 @@
     descriptors.push(buildCellDescriptor(doc.resolution || '—', '', 'resolution'));
     descriptors.push(buildCellDescriptor(createDueDateCell(doc), '', 'dueDate'));
     descriptors.push(buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction'));
-    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
 
     while (tr.children.length > descriptors.length) {
       tr.removeChild(tr.lastChild);
