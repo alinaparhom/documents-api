@@ -1946,9 +1946,9 @@ function docs_build_assignment_notification_message(array $record, array $assign
 
     $assigneeName = sanitize_text_field($assignee['name'] ?? '', 200);
     if ($assigneeName !== '') {
-        $lines[] = '📌 ' . $assigneeName . ', вам задача!';
+        $lines[] = $assigneeName . ', вам задача! 📌';
     } else {
-        $lines[] = '📌 Вам задача!';
+        $lines[] = 'Вам задача! 📌';
     }
 
     $assignedByName = sanitize_text_field($assignee['assignedBy'] ?? '', 200);
@@ -1962,7 +1962,7 @@ function docs_build_assignment_notification_message(array $record, array $assign
     }
 
     $lines[] = '';
-    $lines[] = '👤 От: ' . $assignedByLabel;
+    $lines[] = 'от: ' . $assignedByLabel;
 
     $registryNumber = sanitize_text_field($record['registryNumber'] ?? '', 120);
     $documentDate = docs_format_human_date($record['documentDate'] ?? '');
@@ -1974,75 +1974,60 @@ function docs_build_assignment_notification_message(array $record, array $assign
         if ($documentDate !== '') {
             $incomingParts[] = 'от ' . $documentDate;
         }
-        $lines[] = '📄 Вх. №: ' . implode(' ', $incomingParts);
+        $lines[] = 'Вх. №: ' . implode(' ', $incomingParts);
     } else {
-        $lines[] = '📄 Вх. №: не указан';
+        $lines[] = 'Вх. №: не указан';
     }
 
-    $statusRaw = sanitize_text_field((string) ($record['status'] ?? ''), 120);
-    $status = sanitize_status($statusRaw, true);
-    $lines[] = '📌 Статус: ' . $status;
+    $content = sanitize_text_field($record['correspondent'] ?? '', 350);
+    if ($content === '') {
+        $content = sanitize_text_field($record['summary'] ?? '', 350);
+    }
+    $lines[] = 'Содержание: ' . ($content !== '' ? $content : 'не указано');
+
+    $instruction = $assignmentInstruction !== '' ? docs_truncate_notification_text($assignmentInstruction, 350) : 'не указано';
+    $lines[] = 'Поручение: ' . $instruction;
 
     $recordDueDate = docs_format_human_date($record['dueDate'] ?? '');
     $dueDisplay = $assignmentDueFormatted !== '' ? $assignmentDueFormatted : $recordDueDate;
-    $lines[] = '⏳ Срок: ' . ($dueDisplay !== '' ? $dueDisplay : 'не указан');
-
-    $content = $assignmentInstruction !== '' ? docs_truncate_notification_text($assignmentInstruction, 700) : '';
-    if ($content === '') {
-        $content = sanitize_text_field($record['summary'] ?? '', 800);
-    }
-    if ($content === '') {
-        $content = sanitize_text_field($record['correspondent'] ?? '', 350);
-    }
-    $lines[] = '';
-    $lines[] = '📝 Содержание:';
-    $lines[] = $content !== '' ? $content : 'не указано';
+    $lines[] = 'Срок: ' . ($dueDisplay !== '' ? $dueDisplay : 'не указан');
 
     $responsibleNames = docs_collect_responsible_names_from_record($record);
+    $responsibleLabel = !empty($responsibleNames) ? implode(', ', array_map(static function ($name): string {
+        return sanitize_text_field((string) $name, 200);
+    }, $responsibleNames)) : 'не указаны';
+
     $subordinateNames = docs_collect_subordinate_names_from_record($record);
-    $peopleLines = [];
-    foreach ($responsibleNames as $name) {
-        $value = sanitize_text_field((string) $name, 200);
-        if ($value !== '') {
-            $peopleLines[] = '— ' . $value;
-        }
-    }
-    foreach ($subordinateNames as $name) {
-        $value = sanitize_text_field((string) $name, 200);
-        if ($value !== '') {
-            $peopleLines[] = '— ' . $value;
-        }
-    }
-    if (!empty($peopleLines)) {
-        $lines[] = '';
-        $lines[] = '👥 Ответственные:';
-        foreach ($peopleLines as $personLine) {
-            $lines[] = $personLine;
-        }
-    }
+    $subordinateLabel = !empty($subordinateNames) ? implode(', ', array_map(static function ($name): string {
+        return sanitize_text_field((string) $name, 200);
+    }, $subordinateNames)) : 'не указаны';
 
-    $organizationName = sanitize_text_field($organization, 160);
-    if ($organizationName !== '') {
-        $lines[] = '';
-        $lines[] = '🏢 Организация: ' . $organizationName;
-    }
+    $lines[] = '';
+    $lines[] = 'Ответственные: ' . $responsibleLabel;
+    $lines[] = 'Подчинённые: ' . $subordinateLabel;
 
+    $lines[] = '';
+    $lines[] = 'Файлы:';
     $fileNames = docs_collect_file_names_from_record($record);
     if (!empty($fileNames)) {
-        $lines[] = '';
-        $lines[] = '📎 Файлы:';
         foreach ($fileNames as $fileName) {
             $normalizedFileName = sanitize_text_field((string) $fileName, 255);
             if ($normalizedFileName === '') {
                 continue;
             }
-            $lines[] = docs_truncate_notification_text($normalizedFileName, 40);
+
+            if (mb_strlen($normalizedFileName, 'UTF-8') > 40) {
+                $normalizedFileName = rtrim(mb_substr($normalizedFileName, 0, 40, 'UTF-8')) . '...';
+            }
+
+            $lines[] = $normalizedFileName;
         }
+    } else {
+        $lines[] = 'не указаны';
     }
 
     if ($appUrl !== '') {
         $lines[] = '';
-        $lines[] = '👇';
         $lines[] = 'Открыть задачу: кнопка ниже.';
     }
 
