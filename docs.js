@@ -1021,9 +1021,9 @@
   ];
   var TABLE_COLUMNS = [
     { key: 'entryNumber', label: '№', group: 'flow', searchable: true, searchHint: 'Введите номер записи' },
+    { key: 'registryNumber', label: 'Рег. №', group: 'flow', searchable: true, searchHint: 'Введите регистрационный номер' },
     { key: 'actions', label: 'Действия', group: 'flow', searchable: false },
     { key: 'files', label: 'Файлы', group: 'flow', searchable: false },
-    { key: 'registryNumber', label: 'Рег. №', group: 'flow', searchable: true, searchHint: 'Введите регистрационный номер' },
     { key: 'registrationDate', label: 'Дата регистрации', group: 'flow', searchable: true, searchHint: 'Например: 12.03.2024' },
     { key: 'direction', label: 'Тип', group: 'flow', searchable: true, searchHint: 'Введите входящий или исходящий' },
     { key: 'correspondent', label: 'Корреспондент', group: 'flow', searchable: true, searchHint: 'Введите имя корреспондента' },
