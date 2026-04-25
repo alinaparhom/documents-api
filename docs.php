@@ -1946,63 +1946,87 @@ function docs_build_assignment_notification_message(array $record, array $assign
 
     $assigneeName = sanitize_text_field($assignee['name'] ?? '', 200);
     if ($assigneeName !== '') {
-        $lines[] = '📌 ' . $assigneeName . ', вам назначена новая задача от:';
+        $lines[] = $assigneeName . ', вам задача! 📌';
     } else {
-        $lines[] = '📌 Вам назначена новая задача от:';
+        $lines[] = 'Вам задача! 📌';
     }
-
-    $directorNames = docs_collect_director_names_from_record($record);
-    $directorLabel = !empty($directorNames) ? implode(', ', $directorNames) : 'не указан';
-    $lines[] = 'Директор: ' . $directorLabel;
 
     $assignedByName = sanitize_text_field($assignee['assignedBy'] ?? '', 200);
-    $assignedByRole = docs_normalize_assignment_role((string) ($assignee['assignedByRole'] ?? ''));
-    if ($assignedByName !== '') {
-        if ($assignedByRole === 'admin') {
-            $lines[] = 'Администратор: ' . $assignedByName;
-        } elseif ($assignedByRole === 'responsible') {
-            $lines[] = 'Ответственный: ' . $assignedByName;
-        } elseif ($assignedByRole === 'subordinate') {
-            $lines[] = 'Подчинённый: ' . $assignedByName;
-        }
+    $assignedByLabel = $assignedByName;
+    if ($assignedByLabel === '') {
+        $directorNames = docs_collect_director_names_from_record($record);
+        $assignedByLabel = !empty($directorNames) ? implode(', ', $directorNames) : '';
+    }
+    if ($assignedByLabel === '') {
+        $assignedByLabel = 'не указан';
     }
 
-    $organizationName = sanitize_text_field($organization, 160);
-    if ($organizationName !== '') {
-        $lines[] = 'Организация: ' . $organizationName;
-    }
+    $lines[] = '';
+    $lines[] = 'от: ' . $assignedByLabel;
 
     $registryNumber = sanitize_text_field($record['registryNumber'] ?? '', 120);
-    if ($registryNumber !== '') {
-        $lines[] = 'Рег. №: ' . $registryNumber;
+    $documentDate = docs_format_human_date($record['documentDate'] ?? '');
+    if ($registryNumber !== '' || $documentDate !== '') {
+        $incomingParts = [];
+        if ($registryNumber !== '') {
+            $incomingParts[] = $registryNumber;
+        }
+        if ($documentDate !== '') {
+            $incomingParts[] = 'от ' . $documentDate;
+        }
+        $lines[] = 'Вх. №: ' . implode(' ', $incomingParts);
+    } else {
+        $lines[] = 'Вх. №: не указан';
     }
 
-    $content = sanitize_text_field($record['correspondent'] ?? '', 200);
+    $content = sanitize_text_field($record['correspondent'] ?? '', 350);
     if ($content === '') {
-        $content = sanitize_text_field($record['summary'] ?? '', 200);
+        $content = sanitize_text_field($record['summary'] ?? '', 350);
     }
     $lines[] = 'Содержание: ' . ($content !== '' ? $content : 'не указано');
 
-    $lines[] = 'Поручение:' . ($assignmentInstruction !== '' ? ' ' . docs_truncate_notification_text($assignmentInstruction, 350) : '');
+    $instruction = $assignmentInstruction !== '' ? docs_truncate_notification_text($assignmentInstruction, 350) : 'не указано';
+    $lines[] = 'Поручение: ' . $instruction;
 
     $recordDueDate = docs_format_human_date($record['dueDate'] ?? '');
     $dueDisplay = $assignmentDueFormatted !== '' ? $assignmentDueFormatted : $recordDueDate;
     $lines[] = 'Срок: ' . ($dueDisplay !== '' ? $dueDisplay : 'не указан');
 
     $responsibleNames = docs_collect_responsible_names_from_record($record);
-    $responsibleLabel = !empty($responsibleNames) ? implode(', ', $responsibleNames) : 'не указаны';
-    $lines[] = 'Ответственные: ' . $responsibleLabel;
+    $responsibleLabel = !empty($responsibleNames) ? implode(', ', array_map(static function ($name): string {
+        return sanitize_text_field((string) $name, 200);
+    }, $responsibleNames)) : 'не указаны';
 
     $subordinateNames = docs_collect_subordinate_names_from_record($record);
-    $subordinateLabel = !empty($subordinateNames) ? implode(', ', $subordinateNames) : 'не указаны';
+    $subordinateLabel = !empty($subordinateNames) ? implode(', ', array_map(static function ($name): string {
+        return sanitize_text_field((string) $name, 200);
+    }, $subordinateNames)) : 'не указаны';
+
+    $lines[] = '';
+    $lines[] = 'Ответственные: ' . $responsibleLabel;
     $lines[] = 'Подчинённые: ' . $subordinateLabel;
 
+    $lines[] = '';
+    $lines[] = 'Файлы:';
     $fileNames = docs_collect_file_names_from_record($record);
-    $fileLabel = !empty($fileNames) ? implode(', ', $fileNames) : 'не указаны';
-    $lines[] = 'Файлы: ' . $fileLabel;
+    if (!empty($fileNames)) {
+        foreach ($fileNames as $fileName) {
+            $normalizedFileName = sanitize_text_field((string) $fileName, 255);
+            if ($normalizedFileName === '') {
+                continue;
+            }
+
+            if (mb_strlen($normalizedFileName, 'UTF-8') > 40) {
+                $normalizedFileName = rtrim(mb_substr($normalizedFileName, 0, 40, 'UTF-8')) . '...';
+            }
+
+            $lines[] = $normalizedFileName;
+        }
+    } else {
+        $lines[] = 'не указаны';
+    }
 
     if ($appUrl !== '') {
-        $lines[] = '';
         $lines[] = '';
         $lines[] = 'Открыть задачу: кнопка ниже.';
     }
