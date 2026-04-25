@@ -5051,6 +5051,7 @@ function createCard(task, index, anchorRegistry) {
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
   }
+
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -5063,7 +5064,7 @@ function createCard(task, index, anchorRegistry) {
   setupAssignmentControls(card, task);
   setupSubordinateControls(card, task);
 
-  initializeCardExpansion(card);
+  initializeCardExpansion(card, task);
 
   return card;
 }
@@ -5770,7 +5771,32 @@ function setCardExpandedState(card, expanded) {
   });
 }
 
-function initializeCardExpansion(card) {
+function markTaskAsViewedOnExpand(card, task) {
+  if (!(card instanceof HTMLElement) || !task || typeof task !== 'object') {
+    return;
+  }
+  const currentEntry = getTaskViewEntryForCurrentUser(task);
+  if (currentEntry && currentEntry.viewedAt) {
+    return;
+  }
+  if (task.__autoViewPending) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  task.__autoViewPending = true;
+  applyLocalTaskViewUpdate(task, timestamp);
+  updateCardViewInfo(card, task);
+  registerTaskView(task, timestamp, card)
+    .catch(() => {
+      // Ошибку логирует registerTaskView в вызывающих сценариях.
+    })
+    .finally(() => {
+      task.__autoViewPending = false;
+    });
+}
+
+function initializeCardExpansion(card, task) {
   if (!(card instanceof HTMLElement)) {
     return;
   }
@@ -5808,7 +5834,11 @@ function initializeCardExpansion(card) {
         return;
       }
     }
-    setCardExpandedState(card, card.dataset.expanded !== 'true');
+    const shouldExpand = card.dataset.expanded !== 'true';
+    setCardExpandedState(card, shouldExpand);
+    if (shouldExpand) {
+      markTaskAsViewedOnExpand(card, task);
+    }
   };
 
   const handleKeydown = (event) => {
@@ -5821,7 +5851,11 @@ function initializeCardExpansion(card) {
     }
     event.preventDefault();
     ignoreNextClick = true;
-    setCardExpandedState(card, card.dataset.expanded !== 'true');
+    const shouldExpand = card.dataset.expanded !== 'true';
+    setCardExpandedState(card, shouldExpand);
+    if (shouldExpand) {
+      markTaskAsViewedOnExpand(card, task);
+    }
   };
 
   toggles.forEach((toggle) => {
