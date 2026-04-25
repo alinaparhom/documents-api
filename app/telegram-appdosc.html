@@ -1060,10 +1060,10 @@
       }
 
       .appdosc__table-title.tasks-title {
-        font-size: clamp(24px, 6.2vw, 34px) !important;
-        line-height: 1 !important;
-        font-weight: 760 !important;
-        letter-spacing: -0.04em !important;
+        font-size: 13px !important;
+        line-height: 1.2 !important;
+        font-weight: 600 !important;
+        letter-spacing: 0 !important;
         color: var(--appdosc-task-title-color) !important;
       }
 
@@ -1083,7 +1083,7 @@
       .tasks-refresh {
         min-height: 40px !important;
         padding: 8px 14px !important;
-        border-radius: 16px !important;
+        border-radius: 10px !important;
         border: 1px solid var(--appdosc-task-refresh-border) !important;
         background: var(--appdosc-task-refresh-bg) !important;
         color: var(--appdosc-task-refresh-text) !important;
@@ -1554,7 +1554,8 @@
         -webkit-appearance: none;
         min-height: 45px !important;
         padding-right: 44px !important;
-        border-radius: 14px !important;
+        border-radius: 10px !important;
+        font-size: 12px !important;
         background-image: linear-gradient(45deg, transparent 50%, #cbd5e1 50%), linear-gradient(135deg, #cbd5e1 50%, transparent 50%);
         background-position: calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px);
         background-size: 6px 6px, 6px 6px;
@@ -1596,7 +1597,7 @@
         align-items: center;
         gap: 6px;
         height: 34px;
-        border-radius: 12px;
+        border-radius: 10px;
         border: 1px solid rgba(148, 163, 184, 0.34);
         background: rgba(255, 255, 255, 0.7);
         backdrop-filter: blur(8px);
@@ -1642,7 +1643,7 @@
         gap: 10px;
         width: 100%;
         padding: 10px;
-        border-radius: 14px;
+        border-radius: 10px;
         border: 1px solid rgba(148, 163, 184, 0.3);
         background: rgba(255, 255, 255, 0.62);
         backdrop-filter: blur(10px);
@@ -1656,19 +1657,34 @@
 
       .appdosc__task-filter-quick {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 6px;
+      }
+
+      .appdosc__task-filter-quick-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 10px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.86);
       }
 
       .appdosc__task-filter-quick-btn {
         height: 28px;
-        border-radius: 999px;
-        border: 1px solid rgba(148, 163, 184, 0.3);
-        background: rgba(255, 255, 255, 0.86);
+        border-radius: 0;
+        border: 0;
+        border-right: 1px solid rgba(148, 163, 184, 0.25);
+        background: transparent;
         color: var(--appdosc-text-primary);
         padding: 0 10px;
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 600;
+      }
+
+      .appdosc__task-filter-quick-btn:last-child {
+        border-right: 0;
       }
 
       .appdosc__task-filter-quick-btn.is-active {
@@ -1693,7 +1709,7 @@
         background: rgba(255, 255, 255, 0.82);
         color: var(--appdosc-text-primary);
         padding: 0 10px;
-        font-size: 13px;
+        font-size: 12px;
         box-sizing: border-box;
       }
 
@@ -1713,7 +1729,7 @@
         min-height: 40px;
         padding: 8px 10px;
         border: 1px solid #dbe4f3;
-        border-radius: 12px;
+        border-radius: 10px;
         background: #ffffff;
         box-shadow: 0 4px 14px rgba(31, 64, 120, 0.08);
         display: flex;
@@ -1805,7 +1821,7 @@
 
       .range-calendar__selected {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         gap: 12px;
         align-items: center;
         padding-right: 40px;
@@ -1823,6 +1839,19 @@
         padding: 0 12px;
         transition: border-color 0.2s ease, transform 0.2s ease;
         box-shadow: 0 5px 14px rgba(30, 64, 120, 0.08);
+      }
+
+      .range-calendar__top-year {
+        position: absolute;
+        left: 50%;
+        top: calc(8px + env(safe-area-inset-top));
+        transform: translateX(-50%);
+        width: 110px;
+        z-index: 4;
+      }
+
+      .range-calendar__top-year .range-calendar__year-select {
+        width: 100%;
       }
 
       .range-calendar__year-select:focus {
@@ -2157,7 +2186,7 @@
         height: 28px;
         width: 28px;
         border: 1px solid rgba(148, 163, 184, 0.34);
-        border-radius: 8px;
+        border-radius: 10px;
         background: rgba(255, 255, 255, 0.82);
         color: var(--appdosc-text-primary);
         font-size: 16px;
@@ -2214,13 +2243,35 @@
       }
 
       :root[data-theme='dark'] .appdosc__task-filter-field select,
-      :root[data-theme='dark'] .appdosc__task-filter-quick-btn,
+      :root[data-theme='dark'] .appdosc__task-filter-quick-group,
       :root[data-theme='dark'] .appdosc__task-filter-reset,
       :root[data-theme='dark'] .appdosc__task-filter-group-add,
       :root[data-theme='dark'] .appdosc__task-filter-group-remove {
         background: rgba(15, 23, 42, 0.74);
         border-color: rgba(148, 163, 184, 0.46);
         color: #e2e8f0;
+      }
+
+      :root[data-theme='dark'] .appdosc__task-filter-quick-btn {
+        background: transparent;
+        color: #e2e8f0;
+        border-right-color: rgba(148, 163, 184, 0.3);
+      }
+
+      :root[data-theme='dark'] .task-period-button {
+        background: rgba(15, 23, 42, 0.78);
+        border-color: rgba(148, 163, 184, 0.46);
+        color: #e2e8f0;
+        box-shadow: none;
+      }
+
+      :root[data-theme='dark'] .task-period-button__label,
+      :root[data-theme='dark'] .task-period-button__chevron {
+        color: #9fb0c8;
+      }
+
+      :root[data-theme='dark'] .task-period-button__value {
+        color: #f1f5f9;
       }
 
       :root[data-theme='dark'] .appdosc__task-filter-quick-btn.is-active {
@@ -2383,7 +2434,7 @@
         }
 
         .appdosc__task-filter-quick {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-columns: 1fr;
         }
 
         .appdosc__task-filter-period {
@@ -2701,10 +2752,14 @@
                 </button>
               </div>
               <div class="appdosc__task-filter-quick" data-filter-quick>
-                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="today">Сегодня</button>
-                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="week">Неделя</button>
-                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="month">Месяц</button>
-                <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
+                <div class="appdosc__task-filter-quick-group">
+                  <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="today">Сегодня</button>
+                  <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="week">Неделя</button>
+                </div>
+                <div class="appdosc__task-filter-quick-group">
+                  <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="month">Месяц</button>
+                  <button type="button" class="appdosc__task-filter-quick-btn" data-filter-quick-btn="quarter">3 месяца</button>
+                </div>
               </div>
               <div class="appdosc__task-filter-groups">
                 <div class="appdosc__task-filter-group-list" data-filter-group-list></div>
@@ -2722,6 +2777,9 @@
             <div class="range-calendar__backdrop" data-range-calendar-backdrop></div>
             <div class="range-calendar__panel" role="dialog" aria-modal="true">
               <div class="range-calendar__handle"></div>
+              <div class="range-calendar__top-year">
+                <select class="range-calendar__year-select" data-calendar-year aria-label="Выбор года"></select>
+              </div>
               <button type="button" class="range-calendar__close" data-range-calendar-close aria-label="Закрыть календарь">×</button>
               <div class="range-calendar__selected">
                 <button type="button" class="range-calendar__selected-card" data-clear-start>
@@ -2734,7 +2792,6 @@
                   <span class="range-calendar__selected-value" data-end-label>Не выбрана</span>
                   <span class="range-calendar__selected-clear">×</span>
                 </button>
-                <select class="range-calendar__year-select" data-calendar-year aria-label="Выбор года"></select>
               </div>
               <div class="range-calendar__weekdays">
                 <span>ПН</span><span>ВТ</span><span>СР</span><span>ЧТ</span><span>ПТ</span><span class="range-calendar__weekday-weekend">СБ</span><span class="range-calendar__weekday-weekend">ВС</span>
