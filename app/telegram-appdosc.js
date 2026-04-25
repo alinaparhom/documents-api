@@ -4126,6 +4126,26 @@ function getRangeCalendarMonthNameGenitive(date) {
   return months[date.getMonth()];
 }
 
+function isRangeCalendarWeekend(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return false;
+  }
+  const day = date.getDay();
+  return day === 0 || day === 6;
+}
+
+function isRangeCalendarHoliday(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return false;
+  }
+  const fixedHolidayKeys = new Set([
+    '01-01', '01-02', '01-03', '01-04', '01-05', '01-06', '01-07', '01-08',
+    '02-23', '03-08', '05-01', '05-09', '06-12', '11-04',
+  ]);
+  const key = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return fixedHolidayKeys.has(key);
+}
+
 function syncCompactFilterGroupOptions() {
   if (!(elements.filterGroupList instanceof HTMLElement)) {
     return;
@@ -4394,7 +4414,14 @@ function initRangeCalendar(options = {}) {
 
     const title = document.createElement('h3');
     title.className = 'range-calendar__month-title';
-    title.textContent = getRangeCalendarMonthName(monthDate);
+    const titleText = document.createElement('span');
+    titleText.className = 'range-calendar__month-title-text';
+    titleText.textContent = getRangeCalendarMonthName(monthDate);
+    const titleYear = document.createElement('span');
+    titleYear.className = 'range-calendar__month-title-year';
+    titleYear.textContent = String(monthDate.getFullYear());
+    title.appendChild(titleText);
+    title.appendChild(titleYear);
 
     const grid = document.createElement('div');
     grid.className = 'range-calendar__grid';
@@ -4404,44 +4431,67 @@ function initRangeCalendar(options = {}) {
     const firstDay = new Date(year, monthIndex, 1);
     const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
     const offset = getMondayOffset(firstDay);
+    const prevMonth = new Date(year, monthIndex, 0);
+    const prevMonthDays = prevMonth.getDate();
+    const trailingDays = (7 - ((offset + daysInMonth) % 7)) % 7;
 
     for (let i = 0; i < offset; i += 1) {
-      grid.appendChild(document.createElement('div'));
+      const previousDay = prevMonthDays - offset + i + 1;
+      const date = new Date(year, monthIndex - 1, previousDay);
+      grid.appendChild(renderDayButton(date, previousDay, true));
     }
 
     for (let day = 1; day <= daysInMonth; day += 1) {
       const date = new Date(year, monthIndex, day);
-      const dateKey = formatDateInputValue(date);
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'range-calendar__day';
-      button.dataset.date = dateKey;
+      grid.appendChild(renderDayButton(date, day, false));
+    }
 
-      const inner = document.createElement('span');
-      inner.className = 'range-calendar__day-inner';
-      const number = document.createElement('span');
-      number.className = 'range-calendar__day-number';
-      number.textContent = String(day);
-      inner.appendChild(number);
-
-      const count = Number(taskCounts[dateKey] || 0);
-      if (count > 0) {
-        const countEl = document.createElement('span');
-        countEl.className = 'range-calendar__day-count';
-        countEl.textContent = String(count);
-        if (count <= 5) {
-          countEl.classList.add('is-good');
-        }
-        inner.appendChild(countEl);
-      }
-      button.appendChild(inner);
-      button.addEventListener('click', () => handleDateClick(dateKey));
-      grid.appendChild(button);
+    for (let day = 1; day <= trailingDays; day += 1) {
+      const date = new Date(year, monthIndex + 1, day);
+      grid.appendChild(renderDayButton(date, day, true));
     }
 
     month.appendChild(title);
     month.appendChild(grid);
     return month;
+  }
+
+  function renderDayButton(date, visibleDayNumber, isOtherMonth) {
+    const dateKey = formatDateInputValue(date);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'range-calendar__day';
+    button.dataset.date = dateKey;
+    if (isOtherMonth) {
+      button.classList.add('is-other-month');
+    }
+    if (isRangeCalendarWeekend(date)) {
+      button.classList.add('is-weekend');
+    }
+    if (isRangeCalendarHoliday(date)) {
+      button.classList.add('is-holiday');
+    }
+
+    const inner = document.createElement('span');
+    inner.className = 'range-calendar__day-inner';
+    const number = document.createElement('span');
+    number.className = 'range-calendar__day-number';
+    number.textContent = String(visibleDayNumber);
+    inner.appendChild(number);
+
+    const count = Number(taskCounts[dateKey] || 0);
+    if (count > 0) {
+      const countEl = document.createElement('span');
+      countEl.className = 'range-calendar__day-count';
+      countEl.textContent = String(count);
+      if (count <= 5) {
+        countEl.classList.add('is-good');
+      }
+      inner.appendChild(countEl);
+    }
+    button.appendChild(inner);
+    button.addEventListener('click', () => handleDateClick(dateKey));
+    return button;
   }
 
   function handleDateClick(dateKey) {

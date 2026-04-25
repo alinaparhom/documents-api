@@ -1874,37 +1874,57 @@
 
       .range-calendar__month {
         margin-bottom: 14px;
-        padding: 22px 16px 24px;
+        padding: 18px 14px 16px;
         border-radius: 22px;
         border: 1px solid rgba(125, 147, 179, 0.22);
         background: rgba(255, 255, 255, 0.76);
         backdrop-filter: blur(14px);
         box-shadow: 0 12px 30px rgba(31, 64, 120, 0.08);
+        animation: rangeCalendarMonthIn 0.28s ease both;
       }
 
       .range-calendar__month-title {
-        margin: 0 0 18px;
+        margin: 0 0 12px;
         font-size: 14px;
         font-weight: 900;
         color: #111827;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .range-calendar__month-title-text {
+        white-space: nowrap;
+      }
+
+      .range-calendar__month-title-year {
+        border: 1px solid rgba(236, 72, 153, 0.24);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 11px;
+        font-weight: 800;
+        color: #9d174d;
+        background: rgba(253, 242, 248, 0.82);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
       }
 
       .range-calendar__grid {
         display: grid;
         grid-template-columns: repeat(7, 1fr);
-        row-gap: 6px;
-        column-gap: 2px;
+        gap: 6px;
       }
 
       .range-calendar__day {
         position: relative;
-        min-height: 46px;
+        width: 100%;
+        aspect-ratio: 1 / 1;
         border: 0;
         background: transparent;
-        padding: 2px 0;
+        padding: 0;
         color: #111827;
         border-radius: 12px;
-        transition: background-color 0.18s ease, transform 0.18s ease;
+        transition: background-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
       }
 
       .range-calendar__day::before {
@@ -1924,8 +1944,8 @@
       .range-calendar__day-inner {
         position: relative;
         z-index: 2;
-        width: calc(100% - 4px);
-        min-height: 42px;
+        width: 100%;
+        height: 100%;
         margin: 0 auto;
         border-radius: 10px;
         display: flex;
@@ -1939,7 +1959,7 @@
       }
 
       .range-calendar__day-number {
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 900;
         line-height: 1;
       }
@@ -1954,6 +1974,29 @@
 
       .range-calendar__day:active .range-calendar__day-inner {
         transform: scale(0.96);
+      }
+
+      .range-calendar__day:hover .range-calendar__day-inner {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 18px rgba(31, 64, 120, 0.12);
+      }
+
+      .range-calendar__day.is-other-month {
+        opacity: 0.54;
+      }
+
+      .range-calendar__day.is-weekend .range-calendar__day-number,
+      .range-calendar__day.is-holiday .range-calendar__day-number {
+        color: #d1436b;
+      }
+
+      .range-calendar__day.is-holiday .range-calendar__day-inner {
+        background: linear-gradient(180deg, rgba(255, 247, 247, 0.98), rgba(255, 237, 240, 0.9));
+        border-color: rgba(209, 67, 107, 0.2);
+      }
+
+      .range-calendar__weekday--weekend {
+        color: #d1436b;
       }
 
       .range-calendar__day-count.is-good {
@@ -2017,6 +2060,17 @@
 
       .range-calendar__day.is-single .range-calendar__day-count {
         color: #8c365b;
+      }
+
+      @keyframes rangeCalendarMonthIn {
+        from {
+          opacity: 0;
+          transform: translateY(8px) scale(0.99);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
       }
 
       .range-calendar__footer {
@@ -2177,9 +2231,21 @@
         color: #e2e8f0;
       }
 
+      :root[data-theme='dark'] .range-calendar__month-title-year {
+        color: #f9a8d4;
+        border-color: rgba(244, 114, 182, 0.36);
+        background: rgba(76, 29, 53, 0.52);
+      }
+
       :root[data-theme='dark'] .range-calendar__selected-label,
       :root[data-theme='dark'] .range-calendar__day-count {
         color: #94a3b8;
+      }
+
+      :root[data-theme='dark'] .range-calendar__day.is-weekend .range-calendar__day-number,
+      :root[data-theme='dark'] .range-calendar__day.is-holiday .range-calendar__day-number,
+      :root[data-theme='dark'] .range-calendar__weekday--weekend {
+        color: #fb7185;
       }
 
       :root[data-theme='dark'] .range-calendar__day-inner {
@@ -2597,7 +2663,7 @@
                 </button>
               </div>
               <div class="range-calendar__weekdays">
-                <span>ПН</span><span>ВТ</span><span>СР</span><span>ЧТ</span><span>ПТ</span><span>СБ</span><span>ВС</span>
+                <span>ПН</span><span>ВТ</span><span>СР</span><span>ЧТ</span><span>ПТ</span><span class="range-calendar__weekday--weekend">СБ</span><span class="range-calendar__weekday--weekend">ВС</span>
               </div>
               <div class="range-calendar__months" data-calendar-months></div>
               <div class="range-calendar__footer">
