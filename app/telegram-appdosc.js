@@ -5063,7 +5063,7 @@ function createCard(task, index, anchorRegistry) {
   setupAssignmentControls(card, task);
   setupSubordinateControls(card, task);
 
-  initializeCardExpansion(card);
+  initializeCardExpansion(card, task);
 
   return card;
 }
@@ -5752,11 +5752,12 @@ function populateCardFiles(card, files) {
   }
 }
 
-function setCardExpandedState(card, expanded) {
+function setCardExpandedState(card, expanded, options = null) {
   if (!(card instanceof HTMLElement)) {
     return;
   }
 
+  const wasExpanded = card.dataset.expanded === 'true';
   const isExpanded = Boolean(expanded);
   card.dataset.expanded = isExpanded ? 'true' : 'false';
   setClass(card, 'appdosc-card--collapsed', !isExpanded);
@@ -5768,9 +5769,13 @@ function setCardExpandedState(card, expanded) {
       toggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
     }
   });
+
+  if (!wasExpanded && isExpanded && options && options.task) {
+    autoMarkTaskViewedOnExpand(options.task, card);
+  }
 }
 
-function initializeCardExpansion(card) {
+function initializeCardExpansion(card, task = null) {
   if (!(card instanceof HTMLElement)) {
     return;
   }
@@ -5788,7 +5793,7 @@ function initializeCardExpansion(card) {
     (toggle) => toggle instanceof HTMLElement,
   );
 
-  setCardExpandedState(card, card.dataset.expanded !== 'false');
+  setCardExpandedState(card, card.dataset.expanded !== 'false', { task });
 
   if (!toggles.length) {
     return;
@@ -5808,7 +5813,7 @@ function initializeCardExpansion(card) {
         return;
       }
     }
-    setCardExpandedState(card, card.dataset.expanded !== 'true');
+    setCardExpandedState(card, card.dataset.expanded !== 'true', { task });
   };
 
   const handleKeydown = (event) => {
@@ -5821,7 +5826,7 @@ function initializeCardExpansion(card) {
     }
     event.preventDefault();
     ignoreNextClick = true;
-    setCardExpandedState(card, card.dataset.expanded !== 'true');
+    setCardExpandedState(card, card.dataset.expanded !== 'true', { task });
   };
 
   toggles.forEach((toggle) => {
@@ -7982,6 +7987,41 @@ async function registerTaskView(task, timestamp, card) {
   if (card) {
     updateCardViewInfo(card, task);
   }
+}
+
+function autoMarkTaskViewedOnExpand(task, card) {
+  if (!task || typeof task !== 'object' || !task.id) {
+    return;
+  }
+
+  const existingEntry = getTaskViewEntryForCurrentUser(task);
+  if (existingEntry && existingEntry.viewedAt) {
+    return;
+  }
+
+  if (task.__expandViewPending) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  task.__expandViewPending = true;
+
+  applyLocalTaskViewUpdate(task, timestamp);
+  if (card) {
+    updateCardViewInfo(card, task);
+  }
+
+  registerTaskView(task, timestamp, card)
+    .catch((error) => {
+      logViewerDebug('task_expand_register_view_failed', {
+        message: error instanceof Error ? error.message : String(error),
+        taskId: task.id || '',
+        organization: getTaskOrganization(task),
+      });
+    })
+    .finally(() => {
+      task.__expandViewPending = false;
+    });
 }
 
 function buildTaskViewLogDetails(task, extra) {
