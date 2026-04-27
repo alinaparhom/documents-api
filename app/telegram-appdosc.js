@@ -5181,15 +5181,12 @@ function createCard(task, index, anchorRegistry) {
 
   const taskListMode = normalizeTaskListMode(state.taskListMode);
   if (taskListMode === 'informative') {
-    const letterNumber = normalizeValue(task.registryNumber || task.entryNumber || task.id) || '—';
-    const dateText = registrationDate !== '—' ? registrationDate : 'дата не указана';
-    const correspondentText = senderCompact && senderCompact !== 'не указан' ? senderCompact : 'не указан';
-    setCardField(card, '[data-field="document"]', `Письмо №${letterNumber} • ${dateText} • от «${correspondentText}»`, {
-      fallback: 'Письмо • данные не указаны',
+    setCardField(card, '[data-field="document"]', compactContent, {
+      fallback: 'Не указано',
       setTitle: false,
     });
-    setCardField(card, '[data-field="organization"]', `Тема: ${compactContent} • Корреспондент: ${correspondentText}`, {
-      fallback: 'Тема: не указана',
+    setCardField(card, '[data-field="organization"]', '', {
+      fallback: '',
       setTitle: false,
     });
   } else {
