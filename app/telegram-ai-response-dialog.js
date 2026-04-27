@@ -61,6 +61,10 @@
     return String(value || '').trim();
   }
 
+  function normalizePromptVersion(value) {
+    return String(value || '').trim();
+  }
+
   function isIosClient() {
     try {
       const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
@@ -757,6 +761,7 @@
     const images = [];
     const extractedTexts = [];
     const fileErrors = [];
+    let appliedPromptVersion = '';
     const preparedResults = new Array(selectedFiles.length);
     const queue = selectedFiles.map((currentFile, index) => ({ currentFile, index }));
     const maxConcurrency = profile.maxConcurrency;
@@ -842,9 +847,10 @@
       });
       const textOnlyPayload = textOnlyRequest && textOnlyRequest.payload;
       if (textOnlyRequest && textOnlyRequest.response && textOnlyRequest.response.ok && textOnlyPayload && textOnlyPayload.ok === true) {
+        appliedPromptVersion = normalizePromptVersion(textOnlyPayload.promptVersion) || appliedPromptVersion;
         const textOnlySummary = normalize(textOnlyPayload.response || textOnlyPayload.summary);
         if (textOnlySummary) {
-          return textOnlySummary;
+          return { text: textOnlySummary, promptVersion: appliedPromptVersion };
         }
       }
       throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать текстовые файлы через summary pipeline.');
@@ -896,6 +902,7 @@
       if (!response || !response.ok || !result || result.ok !== true) {
         throw new Error((result && result.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
       }
+      appliedPromptVersion = normalizePromptVersion(result.promptVersion) || appliedPromptVersion;
       partialAnswers.push(normalize(result.response || result.summary));
     }
 
@@ -918,6 +925,7 @@
       });
       const mergePayload = mergeRequest && mergeRequest.payload;
       if (mergeRequest && mergeRequest.response && mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
+        appliedPromptVersion = normalizePromptVersion(mergePayload.promptVersion) || appliedPromptVersion;
         finalSummary = normalize(mergePayload.response || mergePayload.summary) || finalSummary;
       }
     }
@@ -927,7 +935,7 @@
     if (fileErrors.length) {
       finalSummary += `\n\n⚠️ Не удалось обработать часть файлов (${fileErrors.length}).`;
     }
-    return finalSummary;
+    return { text: finalSummary, promptVersion: appliedPromptVersion };
   }
 
   async function loadSelectedFileAsBlob(file) {
@@ -2284,7 +2292,7 @@
         const startedAt = Date.now();
         const loadingBubble = createLoadingBubble(messages);
 
-        const answerRaw = await requestTelegramVisionResponse({
+        const responseData = await requestTelegramVisionResponse({
           prompt: effectivePrompt,
           systemPrompt: '',
           tone: styleMeta.value,
@@ -2306,6 +2314,8 @@
           }
           status.textContent = 'Загрузка → Подготовка → Ответ';
         });
+        const answerRaw = normalize(responseData && responseData.text);
+        const promptVersion = normalizePromptVersion(responseData && responseData.promptVersion);
         const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
         lastAiAnswer = answer;
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
@@ -2319,10 +2329,14 @@
           <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
           <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
           <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
+          ${promptVersion ? `<span class="tg-ai-chat__chip">Правила: ${escapeHtml(promptVersion)}</span>` : ''}
         `;
+        if (promptVersion && typeof console !== 'undefined' && typeof console.info === 'function') {
+          console.info('[Telegram AI] promptVersion:', promptVersion);
+        }
         status.textContent = skippedFilesCount > 0
-          ? `Данные переданы. ${skippedFilesCount} файлов пропущено.`
-          : 'Данные переданы.';
+          ? `Данные переданы. ${skippedFilesCount} файлов пропущено.${promptVersion ? ' Версия правил: ' + promptVersion : ''}`
+          : `Данные переданы.${promptVersion ? ' Версия правил: ' + promptVersion : ''}`;
       } catch (error) {
         lastAiAnswer = '';
         const loadingNode = messages && messages.querySelector ? messages.querySelector('.tg-ai-chat__bubble--loading') : null;

@@ -29,7 +29,7 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
-  var DEFAULT_AI_BEHAVIOR = 'ТЫ — ИИ В РЕЖИМЕ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».\n'    + '\n'    + 'ЦЕЛЬ: ДАТЬ ГОТОВЫЙ ДЕЛОВОЙ ТЕКСТ ОТВЕТА ДЛЯ ВСТАВКИ В ДОКУМЕНТ.\n'    + '\n'    + '=== ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ===\n'    + '1. СЧИТАЙ, ЧТО ТЫ СОТРУДНИК ОРГАНИЗАЦИИ, КОТОРОЙ ПРИШЁЛ ЭТОТ ФАЙЛ ИЛИ НАБОР ФАЙЛОВ.\n'    + '2. ПЕРЕД ОТВЕТОМ ОПРЕДЕЛИ ТИП ВХОДЯЩЕГО ДОКУМЕНТА: ПРЕТЕНЗИЯ, ЗАПРОС, ПОРУЧЕНИЕ ИЛИ ИНФОРМАЦИОННОЕ ПИСЬМО.\n'    + '3. НЕ СЧИТАЙ ДОКУМЕНТ ПРЕТЕНЗИЕЙ АВТОМАТИЧЕСКИ ТОЛЬКО ИЗ-ЗА ФОРМУЛИРОВКИ ЗАПРОСА.\n'    + '4. УЧИТЫВАЙ ВЕСЬ ДОСТУПНЫЙ КОНТЕКСТ ФАЙЛОВ ЦЕЛИКОМ, НЕ ВЫБИРАЙ ОТРЫВКИ ВЫБОРОЧНО.\n'    + '5. ПИШИ СУГУБО ПО ДЕЛУ, В ДЕЛОВОМ СТИЛЕ, БЕЗ ВЫДУМАННЫХ ФАКТОВ И ПРЕДПОЛОЖЕНИЙ.\n'    + '6. СОБЛЮДАЙ ЗАКОН И ОБЩЕПРИНЯТЫЕ НОРМЫ ДЕЛОВОЙ КОММУНИКАЦИИ.\n'    + '7. ПЕРЕД ОТВЕТОМ ПЕРЕПРОВЕРЬ СЕБЯ: ЛОГИКА, ТОЧНОСТЬ, НЕПРОТИВОРЕЧИВОСТЬ.\n'    + '\n'    + '=== ФОРМАТ ВЫВОДА ===\n'    + '- ТОЛЬКО ГОТОВЫЙ ТЕКСТ ОТВЕТА БЕЗ МЕТА-КОММЕНТАРИЕВ.\n'    + '- БЕЗ ПРИВЕТСТВИЯ, БЕЗ ПОДПИСИ, БЕЗ РЕКВИЗИТОВ, БЕЗ СТРОКИ «[ВАШЕ ФИО]» И БЕЗ ФРАЗ ТИПА «С УВАЖЕНИЕМ».\n';
+  var DEFAULT_AI_BEHAVIOR = 'UX-подсказка: нужен готовый деловой ответ для вставки в документ. Точные бизнес-правила и формат задаёт сервер.';
 
   var STYLE_OPTIONS = [
     { value: 'positive', label: 'Положительный (одобрение, выполнение)' },
@@ -883,6 +883,10 @@
       return 'Сетевая ошибка. Проверьте интернет и повторите.';
     }
     return String(error.message || 'Ошибка ИИ. Попробуйте ещё раз.');
+  }
+
+  function normalizePromptVersion(value) {
+    return String(value || '').trim();
   }
 
   function hasUsefulExtractedText(text) {
@@ -2371,7 +2375,8 @@
       templateDraft: '',
       templateFile: null,
       lastErrorFingerprint: '',
-      lastErrorTs: 0
+      lastErrorTs: 0,
+      lastPromptVersion: ''
     };
     state.aiMode = 'paid';
     state.visionMode = true;
@@ -3534,8 +3539,13 @@
         messages.appendChild(createMessage('assistant', finalResponse));
         var responseMode = String(payload && payload.mode ? payload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
         var responseTime = Number(payload && payload.timeMs) > 0 ? Number(payload.timeMs) : (Date.now() - requestStartedAt);
-        var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload.tokensUsed) : 0;
-        messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—')));
+        var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload && payload.tokensUsed) : 0;
+        var promptVersion = normalizePromptVersion(payload && payload.promptVersion);
+        state.lastPromptVersion = promptVersion;
+        messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—') + (promptVersion ? ' • Правила: ' + promptVersion : '')));
+        if (promptVersion && typeof console !== 'undefined' && typeof console.info === 'function') {
+          console.info('[AI] promptVersion:', promptVersion);
+        }
         state.lastAssistantMessage = String(finalResponse || '');
       } catch (error) {
         logAiError(error, { model: state.model, responseStyle: state.responseStyle });
@@ -3564,7 +3574,12 @@
             var retryMode = String(secondPayload && secondPayload.mode ? secondPayload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
             var retryTime = Number(secondPayload && secondPayload.timeMs) > 0 ? Number(secondPayload.timeMs) : (Date.now() - requestStartedAt);
             var retryTokens = Number(secondPayload && secondPayload.tokensUsed) > 0 ? Number(secondPayload.tokensUsed) : 0;
-            messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—')));
+            var retryPromptVersion = normalizePromptVersion(secondPayload && secondPayload.promptVersion);
+            state.lastPromptVersion = retryPromptVersion;
+            messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—') + (retryPromptVersion ? ' • Правила: ' + retryPromptVersion : '')));
+            if (retryPromptVersion && typeof console !== 'undefined' && typeof console.info === 'function') {
+              console.info('[AI] promptVersion:', retryPromptVersion);
+            }
             state.lastAssistantMessage = String(retryText || '');
             setLoading(false);
             messages.scrollTop = messages.scrollHeight;
