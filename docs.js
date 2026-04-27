@@ -3862,9 +3862,15 @@
       if (state.filterOrder.indexOf(columnKey) === -1) {
         state.filterOrder.push(columnKey);
       }
+      var filteredColumn = getColumnDefinition(columnKey);
+      var filteredColumnLabel = filteredColumn ? filteredColumn.label : columnKey;
+      showMessage('info', 'Фильтр обновлён: «' + filteredColumnLabel + '» → ' + trimmed + '.');
     } else {
       if (Object.prototype.hasOwnProperty.call(state.filters, columnKey)) {
         delete state.filters[columnKey];
+        var clearedColumn = getColumnDefinition(columnKey);
+        var clearedColumnLabel = clearedColumn ? clearedColumn.label : columnKey;
+        showMessage('info', 'Фильтр очищен: «' + clearedColumnLabel + '».');
       }
       state.filterOrder = state.filterOrder.filter(function(key) {
         return key !== columnKey;
@@ -13481,6 +13487,15 @@
       state.activeSortColumn = '';
       state.activeSortDirection = '';
     }
+    var column = getColumnDefinition(columnKey);
+    var label = column ? column.label : columnKey;
+    var sortMessage = 'Сортировка отключена: «' + label + '».';
+    if (state.activeSortColumn === columnKey && state.activeSortDirection === 'asc') {
+      sortMessage = 'Сортировка обновлена: «' + label + '» (по возрастанию).';
+    } else if (state.activeSortColumn === columnKey && state.activeSortDirection === 'desc') {
+      sortMessage = 'Сортировка обновлена: «' + label + '» (по убыванию).';
+    }
+    showMessage('info', sortMessage);
     updateSortHeaderStates();
     updateTable();
   }
