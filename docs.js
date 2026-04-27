@@ -600,6 +600,8 @@
     searchInput: null,
     searchApply: null,
     searchReset: null,
+    actionToast: null,
+    actionToastTimer: 0,
     searchButtons: {},
     sortButtons: {},
     headerCells: {},
@@ -2909,20 +2911,22 @@
       '.documents-header-content{' +
       'display:flex;' +
       'align-items:center;' +
-      'justify-content:flex-start;' +
+      'justify-content:stretch;' +
       'width:100%;' +
-      'gap:6px;' +
+      'gap:0;' +
       'flex-wrap:nowrap;' +
+      'position:relative;' +
+      'min-height:34px;' +
       '}' +
       '.documents-header-sort-button{' +
       'display:inline-flex;' +
       'align-items:center;' +
       'gap:4px;' +
+      'width:100%;' +
       'min-width:0;' +
-      'flex:1 1 auto;' +
       'border:none;' +
       'background:transparent;' +
-      'padding:8px 0;' +
+      'padding:6px 72px 6px 0;' +
       'text-align:left;' +
       'cursor:pointer;' +
       '}' +
@@ -2955,20 +2959,20 @@
       '}' +
       '.documents-table__header-cell--searchable{' +
       'user-select:none;' +
-      'border-radius:12px;' +
+      'border-radius:10px;' +
       'transition:background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;' +
       'display:inline-flex;' +
       'align-items:center;' +
       'justify-content:center;' +
-      'width:40px;' +
-      'height:40px;' +
-      'min-width:40px;' +
+      'width:28px;' +
+      'height:28px;' +
+      'min-width:28px;' +
       'padding:0;' +
       'border:1px solid rgba(255,255,255,0.65);' +
       'background:rgba(255,255,255,0.45);' +
       'backdrop-filter:blur(10px);' +
       '-webkit-backdrop-filter:blur(10px);' +
-      'box-shadow:0 6px 16px rgba(15,23,42,0.12);' +
+      'box-shadow:0 4px 10px rgba(15,23,42,0.1);' +
       'color:#334155;' +
       'cursor:pointer;' +
       'touch-action:manipulation;' +
@@ -2995,17 +2999,26 @@
       'color:#1d4ed8;' +
       '}' +
       '.documents-header-filter-icon{' +
-      'width:18px;' +
-      'height:18px;' +
+      'width:15px;' +
+      'height:15px;' +
       'display:block;' +
+      '}' +
+      '.documents-header-controls{' +
+      'position:absolute;' +
+      'right:0;' +
+      'top:50%;' +
+      'transform:translateY(-50%);' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'gap:4px;' +
       '}' +
       '.documents-column-drag-handle{' +
       'display:inline-flex;' +
       'align-items:center;' +
       'justify-content:center;' +
-      'width:20px;' +
-      'min-width:20px;' +
-      'height:22px;' +
+      'width:24px;' +
+      'min-width:24px;' +
+      'height:24px;' +
       'border:1px solid rgba(148,163,184,0.35);' +
       'border-radius:8px;' +
       'background:rgba(255,255,255,0.62);' +
@@ -3020,6 +3033,37 @@
       'padding:0;' +
       'margin-left:2px;' +
       'flex:0 0 auto;' +
+      '}' +
+      '@media (max-width: 768px){' +
+      '.documents-table__header-cell--searchable{width:40px;height:40px;min-width:40px;}' +
+      '.documents-column-drag-handle{width:30px;min-width:30px;height:30px;}' +
+      '.documents-header-sort-button{padding-right:84px;}' +
+      '}' +
+      '.documents-action-toast{' +
+      'position:fixed;' +
+      'left:50%;' +
+      'bottom:18px;' +
+      'transform:translate(-50%, 12px);' +
+      'z-index:4200;' +
+      'min-width:240px;' +
+      'max-width:min(92vw, 520px);' +
+      'padding:10px 14px;' +
+      'border-radius:14px;' +
+      'background:rgba(255,255,255,0.72);' +
+      'border:1px solid rgba(255,255,255,0.75);' +
+      'backdrop-filter:blur(14px);' +
+      '-webkit-backdrop-filter:blur(14px);' +
+      'box-shadow:0 14px 34px rgba(15,23,42,0.2);' +
+      'font-size:13px;' +
+      'line-height:1.35;' +
+      'color:#0f172a;' +
+      'opacity:0;' +
+      'pointer-events:none;' +
+      'transition:opacity 0.25s ease, transform 0.25s ease;' +
+      '}' +
+      '.documents-action-toast--visible{' +
+      'opacity:1;' +
+      'transform:translate(-50%, 0);' +
       '}' +
       '.documents-column-drag-handle:active{' +
       'cursor:grabbing;' +
@@ -3403,6 +3447,39 @@
     });
   }
 
+  function ensureActionToast() {
+    ensureSearchStyles();
+    if (elements.actionToast) {
+      return elements.actionToast;
+    }
+    var toast = createElement('div', 'documents-action-toast');
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    toast.setAttribute('aria-atomic', 'true');
+    document.body.appendChild(toast);
+    elements.actionToast = toast;
+    return toast;
+  }
+
+  function showActionToast(message) {
+    if (!message) {
+      return;
+    }
+    var toast = ensureActionToast();
+    toast.textContent = message;
+    toast.classList.add('documents-action-toast--visible');
+    if (elements.actionToastTimer) {
+      clearTimeout(elements.actionToastTimer);
+      elements.actionToastTimer = 0;
+    }
+    elements.actionToastTimer = setTimeout(function() {
+      if (elements.actionToast) {
+        elements.actionToast.classList.remove('documents-action-toast--visible');
+      }
+      elements.actionToastTimer = 0;
+    }, 1800);
+  }
+
   function bindSearchEvents() {
     if (searchEventsBound) {
       return;
@@ -3464,6 +3541,9 @@
     }
     if (elements.searchLabel) {
       elements.searchLabel.textContent = definition ? 'Поиск: ' + definition.label : 'Поиск';
+    }
+    if (definition && definition.label) {
+      showActionToast('Открыт фильтр: «' + definition.label + '».');
     }
     if (elements.searchInput) {
       elements.searchInput.placeholder = definition && definition.searchHint
@@ -3864,13 +3944,13 @@
       }
       var filteredColumn = getColumnDefinition(columnKey);
       var filteredColumnLabel = filteredColumn ? filteredColumn.label : columnKey;
-      showMessage('info', 'Фильтр обновлён: «' + filteredColumnLabel + '» → ' + trimmed + '.');
+      showActionToast('Фильтр обновлён: «' + filteredColumnLabel + '» → ' + trimmed + '.');
     } else {
       if (Object.prototype.hasOwnProperty.call(state.filters, columnKey)) {
         delete state.filters[columnKey];
         var clearedColumn = getColumnDefinition(columnKey);
         var clearedColumnLabel = clearedColumn ? clearedColumn.label : columnKey;
-        showMessage('info', 'Фильтр очищен: «' + clearedColumnLabel + '».');
+        showActionToast('Фильтр очищен: «' + clearedColumnLabel + '».');
       }
       state.filterOrder = state.filterOrder.filter(function(key) {
         return key !== columnKey;
@@ -13495,7 +13575,7 @@
     } else if (state.activeSortColumn === columnKey && state.activeSortDirection === 'desc') {
       sortMessage = 'Сортировка обновлена: «' + label + '» (по убыванию).';
     }
-    showMessage('info', sortMessage);
+    showActionToast(sortMessage);
     updateSortHeaderStates();
     updateTable();
   }
@@ -16959,6 +17039,7 @@
       });
       headerContent.appendChild(sortButton);
       elements.sortButtons[column.key] = sortButton;
+      var controls = createElement('div', 'documents-header-controls');
       if (column.searchable) {
         var filterButton = createElement('button', 'documents-table__header-cell--searchable');
         filterButton.type = 'button';
@@ -16971,7 +17052,7 @@
           event.stopPropagation();
           openSearchPopover(column.key, filterButton);
         });
-        headerContent.appendChild(filterButton);
+        controls.appendChild(filterButton);
         elements.searchButtons[column.key] = filterButton;
       }
       var dragHandle = createElement('button', 'documents-column-drag-handle', '⋮⋮');
@@ -16983,7 +17064,8 @@
         event.preventDefault();
         event.stopPropagation();
       });
-      headerContent.appendChild(dragHandle);
+      controls.appendChild(dragHandle);
+      headerContent.appendChild(controls);
       setElementColumnWidth(headerCell, getEffectiveColumnWidth(column.key));
       headerRow.appendChild(headerCell);
     });
