@@ -1369,56 +1369,31 @@
   }
 
   async function shareGeneratedPreviewEverywhere(previewPayload) {
-    const previewUrlRaw = normalize(previewPayload && previewPayload.previewUrl);
-    const previewUrl = previewUrlRaw ? toAbsoluteUrl(previewUrlRaw) : '';
     const generatedFileName = normalize(previewPayload && previewPayload.fileName) || 'template-answer.docx';
-    const shareTitle = 'Документ из предварительного просмотра';
-    const shareText = 'Отправляю документ из «Ответ с помощью ИИ».';
-
-    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-      let blob = (previewPayload && previewPayload.blob instanceof Blob)
-        ? previewPayload.blob
-        : null;
-      if (!blob) {
-        try {
-          blob = await resolveGeneratedDocxBlob(previewPayload);
-        } catch (_) {
-          blob = null;
-        }
-      }
-      if (blob) {
-        try {
-          const file = new File([blob], generatedFileName, { type: blob.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-          if (!navigator.canShare || navigator.canShare({ files: [file] })) {
-            await navigator.share({ title: shareTitle, text: shareText, files: [file] });
-            return 'shared_file';
-          }
-        } catch (_) {}
-      }
-      try {
-        await navigator.share({
-          title: shareTitle,
-          text: shareText,
-          ...(previewUrl ? { url: previewUrl } : {}),
-        });
-        return 'shared_link';
-      } catch (_) {}
+    const blob = (previewPayload && previewPayload.blob instanceof Blob)
+      ? previewPayload.blob
+      : await resolveGeneratedDocxBlob(previewPayload);
+    if (!blob || !blob.size) {
+      throw new Error('Не удалось подготовить файл для отправки.');
     }
 
-    const shareFallbackText = previewUrl || shareText;
-    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && shareFallbackText) {
-      try {
-        await navigator.clipboard.writeText(shareFallbackText);
-        return 'copied';
-      } catch (_) {}
+    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
+      throw new Error('На этом устройстве нет системной функции «Поделиться» файлом.');
     }
 
-    if (previewUrl && typeof window !== 'undefined' && typeof window.open === 'function') {
-      const opened = window.open(previewUrl, '_blank', 'noopener');
-      if (opened) return 'opened_link';
+    const file = new File([blob], generatedFileName, {
+      type: blob.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
+      throw new Error('Это устройство не поддерживает отправку файлов через «Поделиться».');
     }
 
-    throw new Error('Не удалось поделиться документом на этом устройстве.');
+    await navigator.share({
+      title: 'Документ из предварительного просмотра',
+      text: 'Отправляю сгенерированный документ.',
+      files: [file],
+    });
+    return 'shared_file';
   }
 
   async function ensureDocxPreviewLibrariesLoaded() {
@@ -1610,10 +1585,8 @@
       previewShareBtn.disabled = true;
       previewShareBtn.textContent = '…';
       try {
-        const mode = await shareGeneratedPreviewEverywhere(previewPayload);
-        statusNode.textContent = mode === 'copied'
-          ? 'Ссылка скопирована. Вставьте её в любое приложение.'
-          : 'Окно «Поделиться» открыто.';
+        await shareGeneratedPreviewEverywhere(previewPayload);
+        statusNode.textContent = 'Окно «Поделиться» открыто. Отправляется сам файл DOCX.';
       } catch (error) {
         statusNode.textContent = (error && error.message) || 'Не удалось открыть «Поделиться».';
       } finally {
