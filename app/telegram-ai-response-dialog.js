@@ -1369,31 +1369,30 @@
   }
 
   async function shareGeneratedPreviewEverywhere(previewPayload) {
-    const generatedFileName = normalize(previewPayload && previewPayload.fileName) || 'template-answer.docx';
-    const blob = (previewPayload && previewPayload.blob instanceof Blob)
-      ? previewPayload.blob
-      : await resolveGeneratedDocxBlob(previewPayload);
-    if (!blob || !blob.size) {
-      throw new Error('Не удалось подготовить файл для отправки.');
+    const sourceUrl = normalize(previewPayload && previewPayload.previewUrl)
+      ? toAbsoluteUrl(previewPayload.previewUrl)
+      : '';
+    if (!sourceUrl) {
+      throw new Error('Нет публичной ссылки на документ для отправки.');
     }
-
-    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
-      throw new Error('На этом устройстве нет системной функции «Поделиться» файлом.');
-    }
-
-    const file = new File([blob], generatedFileName, {
-      type: blob.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    });
-    if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
-      throw new Error('Это устройство не поддерживает отправку файлов через «Поделиться».');
-    }
-
-    await navigator.share({
+    const shareText = 'Посмотри документ';
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      await navigator.share({
       title: 'Документ из предварительного просмотра',
-      text: 'Отправляю сгенерированный документ.',
-      files: [file],
+      text: shareText,
+      url: sourceUrl,
     });
-    return 'shared_file';
+      return 'native_share';
+    }
+
+    const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+    if (telegramWebApp && typeof telegramWebApp.openTelegramLink === 'function') {
+      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(sourceUrl)}&text=${encodeURIComponent(shareText)}`;
+      telegramWebApp.openTelegramLink(shareUrl);
+      return 'telegram_link_share';
+    }
+
+    throw new Error('Поделиться не поддерживается на этом устройстве.');
   }
 
   async function ensureDocxPreviewLibrariesLoaded() {
@@ -1586,7 +1585,7 @@
       previewShareBtn.textContent = '…';
       try {
         await shareGeneratedPreviewEverywhere(previewPayload);
-        statusNode.textContent = 'Окно «Поделиться» открыто. Отправляется сам файл DOCX.';
+        statusNode.textContent = 'Окно «Поделиться» открыто.';
       } catch (error) {
         statusNode.textContent = (error && error.message) || 'Не удалось открыть «Поделиться».';
       } finally {
