@@ -1021,7 +1021,11 @@
       .tg-ai-chat__messages::-webkit-scrollbar-thumb,.tg-ai-chat__files-list::-webkit-scrollbar-thumb,.tg-ai-template-editor__body::-webkit-scrollbar-thumb,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:10px}
       .tg-ai-chat__messages::-webkit-scrollbar-thumb:hover,.tg-ai-chat__files-list::-webkit-scrollbar-thumb:hover,.tg-ai-template-editor__body::-webkit-scrollbar-thumb:hover,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb:hover{background:#64748b}
       .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px);animation:tg-fade-in .25s ease}
+      .tg-ai-chat[data-opening="true"]{opacity:0;backdrop-filter:blur(2px)}
+      .tg-ai-chat[data-opening="false"]{opacity:1;backdrop-filter:blur(10px);transition:opacity .28s ease,backdrop-filter .28s ease}
       .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:var(--tg-bg-gradient);box-shadow:0 20px 50px rgba(15,23,42,.22);animation:tg-scale-in .2s cubic-bezier(.2,.9,.4,1.1)}
+      .tg-ai-chat[data-opening="true"] .tg-ai-chat__card{opacity:0;transform:translateY(20px) scale(.975)}
+      .tg-ai-chat[data-opening="false"] .tg-ai-chat__card{opacity:1;transform:translateY(0) scale(1);transition:transform .34s cubic-bezier(.2,.8,.2,1),opacity .3s ease}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
       .tg-ai-chat__head-main{display:grid;gap:7px;min-width:0}
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
@@ -1065,8 +1069,6 @@
       .tg-ai-chat__file[data-state="error"]{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.95)}
       .tg-ai-chat__file[data-state="error"] .tg-ai-chat__file-state{background:rgba(239,68,68,.16);color:#b91c1c}
       .tg-ai-chat__file input{accent-color:#2563eb}
-      .tg-ai-chat__meta{display:flex;flex-wrap:wrap;gap:7px;padding:7px 12px;border-top:1px solid rgba(226,232,240,.7);background:rgba(255,255,255,.88)}
-      .tg-ai-chat__chip{padding:4px 8px;border:1px solid rgba(203,213,225,.95);border-radius:999px;background:#fff;font-size:12px;color:#334155}
       .tg-ai-chat__loading{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid rgba(148,163,184,.3);border-radius:13px;background:rgba(255,255,255,.86);backdrop-filter:blur(8px);color:#334155;font-size:12px}
       .tg-ai-chat__spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(14,165,233,.25);border-top-color:#0ea5e9;animation:tg-ai-spin .9s linear infinite}
       .tg-ai-chat__dots{display:inline-flex;align-items:center;gap:3px}
@@ -1091,8 +1093,9 @@
       .tg-ai-generated-preview__zoom{display:inline-flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:rgba(255,255,255,.95)}
       .tg-ai-generated-preview__zoom-btn{border:none;background:rgba(241,245,249,.9);color:#0f172a;border-radius:8px;min-width:28px;height:28px;font-weight:800}
       .tg-ai-generated-preview__zoom-value{font-size:12px;min-width:42px;text-align:center;color:#334155;font-weight:700}
-      .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
+      .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon,.tg-ai-generated-preview__share{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
+      .tg-ai-generated-preview__share{min-width:36px;padding:0 10px;font-size:16px;line-height:1}
       .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
       .tg-ai-generated-preview__menu[hidden]{display:none}
       .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
@@ -1365,6 +1368,33 @@
     return false;
   }
 
+  async function shareGeneratedPreviewEverywhere(previewPayload) {
+    const sourceUrl = normalize(previewPayload && previewPayload.previewUrl)
+      ? toAbsoluteUrl(previewPayload.previewUrl)
+      : '';
+    if (!sourceUrl) {
+      throw new Error('Нет публичной ссылки на документ для отправки.');
+    }
+    const shareText = 'Посмотри документ';
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      await navigator.share({
+      title: 'Документ из предварительного просмотра',
+      text: shareText,
+      url: sourceUrl,
+    });
+      return 'native_share';
+    }
+
+    const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+    if (telegramWebApp && typeof telegramWebApp.openTelegramLink === 'function') {
+      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(sourceUrl)}&text=${encodeURIComponent(shareText)}`;
+      telegramWebApp.openTelegramLink(shareUrl);
+      return 'telegram_link_share';
+    }
+
+    throw new Error('Поделиться не поддерживается на этом устройстве.');
+  }
+
   async function ensureDocxPreviewLibrariesLoaded() {
     await loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', () => Boolean(window.JSZip && typeof window.JSZip.loadAsync === 'function'));
     await loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', () => Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync)));
@@ -1469,6 +1499,7 @@
             <div class="tg-ai-generated-preview__hint">Просмотр через Office Viewer</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
+            <button type="button" class="tg-ai-generated-preview__share" data-preview-share title="Поделиться" aria-label="Поделиться">↗</button>
             <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
             <button type="button" class="tg-ai-generated-preview__close-icon" data-preview-close-icon aria-label="Закрыть">×</button>
           </div>
@@ -1500,6 +1531,7 @@
     const attachBtn = overlay.querySelector('[data-preview-attach]');
     const menuNode = overlay.querySelector('[data-preview-menu]');
     const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
+    const previewShareBtn = overlay.querySelector('[data-preview-share]');
     const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const previewUrl = normalize(previewPayload.previewUrl);
@@ -1545,6 +1577,20 @@
           downloadBtn.disabled = false;
           downloadBtn.textContent = 'Скачать';
         }
+      }
+    });
+    previewShareBtn?.addEventListener('click', async () => {
+      const prevText = previewShareBtn.textContent;
+      previewShareBtn.disabled = true;
+      previewShareBtn.textContent = '…';
+      try {
+        await shareGeneratedPreviewEverywhere(previewPayload);
+        statusNode.textContent = 'Окно «Поделиться» открыто.';
+      } catch (error) {
+        statusNode.textContent = (error && error.message) || 'Не удалось открыть «Поделиться».';
+      } finally {
+        previewShareBtn.disabled = false;
+        previewShareBtn.textContent = prevText;
       }
     });
     if (attachBtn) {
@@ -1867,6 +1913,7 @@
 
     const overlay = document.createElement('div');
     overlay.className = 'tg-ai-chat';
+    overlay.dataset.opening = 'true';
     overlay.innerHTML = `
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">
@@ -1905,10 +1952,12 @@
             <button type="button" class="tg-ai-chat__send" data-send-btn>Отправить</button>
           </div>
         </div>
-        <div class="tg-ai-chat__meta" data-meta></div>
       </div>
     `;
     document.body.appendChild(overlay);
+    requestAnimationFrame(() => {
+      overlay.dataset.opening = 'false';
+    });
 
     const selected = new Set();
     const fileWarmupState = new Map();
@@ -1919,7 +1968,6 @@
     const filesPanel = overlay.querySelector('[data-files]');
     const filesList = overlay.querySelector('[data-files-list]');
     const filesToggleButton = overlay.querySelector('[data-files-toggle]');
-    const meta = overlay.querySelector('[data-meta]');
     const styleSelect = overlay.querySelector('[data-style-select]');
     const modeButtons = Array.from(overlay.querySelectorAll('[data-response-mode]'));
     const templateButton = overlay.querySelector('[data-template-btn]');
@@ -2276,13 +2324,11 @@
         }
 
         lastAiAnswer = '';
-        meta.innerHTML = '';
         createBubble(messages, userPrompt, 'user');
         if (skippedFilesCount > 0) {
           createBubble(messages, `${skippedFilesCount} файлов пропущено.`, 'assistant');
         }
         status.textContent = 'Загрузка → Подготовка → Ответ';
-        const startedAt = Date.now();
         const loadingBubble = createLoadingBubble(messages);
 
         const answerRaw = await requestTelegramVisionResponse({
@@ -2312,15 +2358,6 @@
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
 
-        const elapsed = Date.now() - startedAt;
-        meta.innerHTML = `
-          <span class="tg-ai-chat__chip">Режим: vision</span>
-          <span class="tg-ai-chat__chip">Сценарий: ${currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value ? 'Ответ (редактирование)' : 'Ответ ИИ'}</span>
-          <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
-          <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
-          <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
-          <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
-        `;
         status.textContent = skippedFilesCount > 0
           ? `Данные переданы. ${skippedFilesCount} файлов пропущено.`
           : 'Данные переданы.';
