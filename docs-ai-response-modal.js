@@ -29,8 +29,6 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
-  var DEFAULT_AI_BEHAVIOR = 'UX-подсказка: нужен готовый деловой ответ для вставки в документ. Точные бизнес-правила и формат задаёт сервер.';
-
   var STYLE_OPTIONS = [
     { value: 'positive', label: 'Положительный (одобрение, выполнение)' },
     { value: 'negative', label: 'Отрицательный (отклонение, не выполнение)' },
@@ -1772,9 +1770,6 @@
     formData.append('presence_penalty', String(generationParameters.presence_penalty));
     formData.append('responseStyle', state.responseStyle);
     var behaviorText = String(state.aiBehavior || '').trim();
-    if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
-      behaviorText = '';
-    }
     if (behaviorText.length > 10000) {
       behaviorText = behaviorText.slice(0, 10000);
     }
@@ -2355,7 +2350,7 @@
       responseStyle: STYLE_OPTIONS[0].value,
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
-        : DEFAULT_AI_BEHAVIOR,
+        : '',
       contextDetail: config.contextDetail === 'brief' ? 'brief' : 'detailed',
       contextSettings: buildContextSettings(config),
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
@@ -2580,6 +2575,7 @@
     contextDetailField.appendChild(contextDetailSelect);
     var settingsInput = createElement('textarea', 'ai-chat-modal__textarea');
     settingsInput.rows = 8;
+    settingsInput.placeholder = 'Опционально: короткая UX-подсказка для ИИ. Можно оставить пустым.';
     settingsInput.style.maxHeight = '260px';
     settingsInput.style.minHeight = '160px';
     settingsInput.value = state.aiBehavior;
