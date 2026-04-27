@@ -1033,7 +1033,6 @@
       .tg-ai-chat__sub{font-size:11px;color:#64748b;margin-top:1px;line-height:1.35}
       .tg-ai-chat__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.9);color:#0f172a;border-radius:11px;padding:6px 11px;min-height:34px;font-weight:700}
       .tg-ai-chat__head-btn{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);color:#0f172a;border-radius:11px;padding:0 10px;min-height:34px;font-size:12px;font-weight:700}
-      .tg-ai-chat__head-btn--icon{display:inline-flex;align-items:center;justify-content:center;min-width:34px;padding:0 8px;font-size:17px;line-height:1}
       .tg-ai-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
       .tg-ai-chat__bubble{max-width:92%;padding:9px 11px;border-radius:13px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
@@ -1150,7 +1149,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__head-btn--icon{width:100%;font-size:16px}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1369,56 +1368,6 @@
     return false;
   }
 
-  function buildTelegramShareUrl(answerText) {
-    const normalizedText = normalize(answerText);
-    const maxLength = 3900;
-    const safeText = normalizedText.length > maxLength
-      ? `${normalizedText.slice(0, maxLength)}…`
-      : normalizedText;
-    return `https://t.me/share/url?text=${encodeURIComponent(`🤖 Ответ ИИ:\n\n${safeText}`)}`;
-  }
-
-  async function shareAiAnswerToTelegram(answerText) {
-    const normalizedText = normalize(answerText);
-    if (!normalizedText) {
-      throw new Error('Сначала получите ответ ИИ, потом можно поделиться.');
-    }
-
-    const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
-    const shareText = `🤖 Ответ ИИ:\n\n${normalizedText}`;
-    if (telegramWebApp && typeof telegramWebApp.switchInlineQuery === 'function') {
-      try {
-        telegramWebApp.switchInlineQuery(shareText.slice(0, 256), ['users', 'groups', 'channels']);
-        return 'inline_query';
-      } catch (_) {}
-    }
-    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-      try {
-        await navigator.share({ text: shareText });
-        return 'navigator_share';
-      } catch (_) {}
-    }
-
-    const shareUrl = buildTelegramShareUrl(normalizedText);
-    if (telegramWebApp && typeof telegramWebApp.openTelegramLink === 'function') {
-      try {
-        telegramWebApp.openTelegramLink(shareUrl);
-        return 'telegram_link';
-      } catch (_) {}
-    }
-    if (telegramWebApp && typeof telegramWebApp.openLink === 'function') {
-      try {
-        telegramWebApp.openLink(shareUrl);
-        return 'open_link';
-      } catch (_) {}
-    }
-    if (typeof window !== 'undefined' && typeof window.open === 'function') {
-      const opened = window.open(shareUrl, '_blank', 'noopener');
-      if (opened) return 'window_open';
-    }
-    throw new Error('Не удалось открыть Telegram для отправки.');
-  }
-
   async function shareGeneratedPreviewEverywhere(previewPayload) {
     const previewUrlRaw = normalize(previewPayload && previewPayload.previewUrl);
     const previewUrl = previewUrlRaw ? toAbsoluteUrl(previewUrlRaw) : '';
@@ -1427,9 +1376,16 @@
     const shareText = 'Отправляю документ из «Ответ с помощью ИИ».';
 
     if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-      const blob = (previewPayload && previewPayload.blob instanceof Blob)
+      let blob = (previewPayload && previewPayload.blob instanceof Blob)
         ? previewPayload.blob
         : null;
+      if (!blob) {
+        try {
+          blob = await resolveGeneratedDocxBlob(previewPayload);
+        } catch (_) {
+          blob = null;
+        }
+      }
       if (blob) {
         try {
           const file = new File([blob], generatedFileName, { type: blob.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
@@ -1998,7 +1954,6 @@
             </div>
           </div>
           <div class="tg-ai-chat__head-actions">
-            <button type="button" class="tg-ai-chat__head-btn tg-ai-chat__head-btn--icon" data-share-btn aria-label="Поделиться ответом ИИ" title="Поделиться">↗</button>
             <button type="button" class="tg-ai-chat__head-btn" data-template-btn>📄 Шаблон</button>
             <button type="button" class="tg-ai-chat__close" data-close>✕</button>
           </div>
@@ -2043,7 +1998,6 @@
     const filesToggleButton = overlay.querySelector('[data-files-toggle]');
     const styleSelect = overlay.querySelector('[data-style-select]');
     const modeButtons = Array.from(overlay.querySelectorAll('[data-response-mode]'));
-    const shareButton = overlay.querySelector('[data-share-btn]');
     const templateButton = overlay.querySelector('[data-template-btn]');
     const promptInput = overlay.querySelector('[data-prompt-input]');
     const sendButton = overlay.querySelector('[data-send-btn]');
@@ -2510,23 +2464,6 @@
           status.textContent = normalize(message) || 'Готово.';
         },
       });
-    });
-
-    shareButton?.addEventListener('click', async () => {
-      if (isSending) {
-        status.textContent = 'Дождитесь завершения генерации ответа.';
-        return;
-      }
-      if (!lastAiAnswer) {
-        status.textContent = 'Сначала получите ответ ИИ, затем нажмите «Поделиться».';
-        return;
-      }
-      try {
-        await shareAiAnswerToTelegram(lastAiAnswer);
-        status.textContent = 'Открыл Telegram: выберите друга и отправьте ответ.';
-      } catch (error) {
-        status.textContent = (error && error.message) || 'Не удалось открыть окно «Поделиться».';
-      }
     });
 
     updateFilesToggleLabel();
