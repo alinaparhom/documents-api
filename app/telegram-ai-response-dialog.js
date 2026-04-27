@@ -13,7 +13,7 @@
   const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
-  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь деловой ответ на входящее письмо/обращение по этим документам';
+  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь готовый текст ответа для вставки в шаблон: сразу по делу, без приветствия и без прощаний, по этим документам';
   const VISION_BATCH_SIZE = 5;
   const VISION_BATCH_SIZE_MOBILE = 1;
   const MAX_FILES_PER_REQUEST = 5;
@@ -124,7 +124,21 @@
     const normalizedText = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
     if (!normalizedText) return '';
     const lines = normalizedText.split('\n');
+    const greetingLinePattern = /^\s*(уважаем(ый|ая|ые)|добрый\s+(день|вечер|утро)|здравствуй(те)?|приветствую|коллеги|господа|товарищи)\b/i;
     const signatureLinePattern = /^\s*(с\s+уважением[,.!:\-\s]*|с\s+наилучшими\s+пожеланиями[,.!:\-\s]*|подпись|реквизиты?|контакты?|тел\.?|e-?mail|(?:\[)?ваше\s+фио(?:\])?|фио|руководитель\b|директор\b|генеральный\s+директор\b|исполнитель\b)/i;
+    let startIndex = 0;
+    while (startIndex < lines.length) {
+      const current = String(lines[startIndex] || '').trim();
+      if (!current) {
+        startIndex += 1;
+        continue;
+      }
+      if (greetingLinePattern.test(current)) {
+        startIndex += 1;
+        continue;
+      }
+      break;
+    }
     let cutIndex = lines.length;
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const current = String(lines[index] || '').trim();
@@ -134,7 +148,7 @@
       }
     }
     const cleaned = lines
-      .slice(0, cutIndex)
+      .slice(startIndex, cutIndex)
       .join('\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
