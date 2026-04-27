@@ -2908,7 +2908,7 @@
       'align-items:center;' +
       'justify-content:space-between;' +
       'width:100%;' +
-      'gap:6px;' +
+      'gap:4px;' +
       'flex-wrap:nowrap;' +
       '}' +
       '.documents-table__header-cell .documents-header-label{' +
@@ -2948,20 +2948,23 @@
       'display:inline-flex;' +
       'align-items:center;' +
       'justify-content:center;' +
-      'width:26px;' +
-      'min-width:26px;' +
-      'height:28px;' +
+      'width:20px;' +
+      'min-width:20px;' +
+      'height:22px;' +
       'border:1px solid rgba(148,163,184,0.35);' +
-      'border-radius:10px;' +
-      'background:rgba(255,255,255,0.72);' +
+      'border-radius:8px;' +
+      'background:rgba(255,255,255,0.62);' +
       'backdrop-filter:blur(10px);' +
-      'font-size:15px;' +
+      'font-size:12px;' +
       'font-weight:700;' +
       'line-height:1;' +
       'color:#64748b;' +
       'cursor:grab;' +
       'touch-action:none;' +
       'user-select:none;' +
+      'padding:0;' +
+      'margin-left:2px;' +
+      'flex:0 0 auto;' +
       '}' +
       '.documents-column-drag-handle:active{' +
       'cursor:grabbing;' +
@@ -2983,7 +2986,7 @@
       '.documents-column-drop-line{' +
       'position:absolute;' +
       'top:0;' +
-      'bottom:0;' +
+      'height:100%;' +
       'width:2px;' +
       'background:linear-gradient(180deg,#38bdf8,#2563eb);' +
       'box-shadow:0 0 0 1px rgba(255,255,255,0.65);' +
@@ -16571,7 +16574,11 @@
         lineX = headerCells[dropIndex].getBoundingClientRect().left;
       }
       var wrapperRect = elements.tableWrapper.getBoundingClientRect();
-      elements.columnDropLine.style.left = Math.max(0, lineX - wrapperRect.left - 1) + 'px';
+      var scrollLeft = elements.tableWrapper.scrollLeft || 0;
+      var scrollTop = elements.tableWrapper.scrollTop || 0;
+      elements.columnDropLine.style.left = Math.max(0, lineX - wrapperRect.left + scrollLeft - 1) + 'px';
+      elements.columnDropLine.style.top = scrollTop + 'px';
+      elements.columnDropLine.style.height = Math.max(0, elements.tableWrapper.clientHeight) + 'px';
       elements.columnDropLine.style.display = 'block';
     }
 
@@ -16590,6 +16597,16 @@
       if (dragState.ghost) {
         dragState.ghost.style.left = Math.round(event.clientX + 12) + 'px';
         dragState.ghost.style.top = Math.round(event.clientY + 10) + 'px';
+      }
+      if (elements.tableWrapper) {
+        var wrapperRect = elements.tableWrapper.getBoundingClientRect();
+        var edgePadding = 36;
+        var scrollStep = 20;
+        if (event.clientX < wrapperRect.left + edgePadding) {
+          elements.tableWrapper.scrollLeft = Math.max(0, elements.tableWrapper.scrollLeft - scrollStep);
+        } else if (event.clientX > wrapperRect.right - edgePadding) {
+          elements.tableWrapper.scrollLeft += scrollStep;
+        }
       }
       updateDropLine(event.clientX);
       event.preventDefault();
