@@ -963,6 +963,7 @@
     setToolbarState();
     updateTable();
     refreshColumnWidthsIfNeeded();
+    refreshColumnOrderIfNeeded();
     updateClockUserDisplay();
     refreshPersonalSettingsIfNeeded(normalized);
     syncPresenceTracking();
@@ -1039,6 +1040,10 @@
     { key: 'dueDate', label: 'Срок', group: 'control', searchable: true, searchHint: 'Например: 01.04.2024' },
     { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' }
   ];
+  var TABLE_COLUMN_KEYS = TABLE_COLUMNS.map(function(column) {
+    return column.key;
+  });
+  var COLUMN_ORDER_STORAGE_PREFIX = 'documents:column-order:';
   var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
   var INSTRUCTION_OPTIONS = ['В работу', 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
@@ -1094,6 +1099,12 @@
     columnWidthOverrides: null,
     columnVisibility: {},
     columnWidths: {},
+    columnOrder: TABLE_COLUMN_KEYS.slice(),
+    columnOrderProfile: '',
+    columnOrderOrganization: '',
+    columnOrderProfileKey: '',
+    columnOrderLoaded: false,
+    columnOrderLoadingPromise: null,
     columnWidthProfile: '',
     columnWidthOrganization: '',
     columnWidthProfileKey: '',
@@ -2895,9 +2906,10 @@
       '.documents-header-content{' +
       'display:flex;' +
       'align-items:center;' +
+      'justify-content:space-between;' +
       'width:100%;' +
       'gap:6px;' +
-      'flex-wrap:wrap;' +
+      'flex-wrap:nowrap;' +
       '}' +
       '.documents-table__header-cell .documents-header-label{' +
       'display:block;' +
@@ -2931,6 +2943,53 @@
       '}' +
       '.documents-table__header-cell--active .documents-header-label{' +
       'color:#1d4ed8;' +
+      '}' +
+      '.documents-column-drag-handle{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'width:26px;' +
+      'min-width:26px;' +
+      'height:28px;' +
+      'border:1px solid rgba(148,163,184,0.35);' +
+      'border-radius:10px;' +
+      'background:rgba(255,255,255,0.72);' +
+      'backdrop-filter:blur(10px);' +
+      'font-size:15px;' +
+      'font-weight:700;' +
+      'line-height:1;' +
+      'color:#64748b;' +
+      'cursor:grab;' +
+      'touch-action:none;' +
+      'user-select:none;' +
+      '}' +
+      '.documents-column-drag-handle:active{' +
+      'cursor:grabbing;' +
+      '}' +
+      '.documents-column-drag-ghost{' +
+      'position:fixed;' +
+      'z-index:4000;' +
+      'pointer-events:none;' +
+      'padding:8px 10px;' +
+      'border-radius:12px;' +
+      'background:rgba(255,255,255,0.85);' +
+      'border:1px solid rgba(191,219,254,0.95);' +
+      'box-shadow:0 12px 24px rgba(15,23,42,0.2);' +
+      'backdrop-filter:blur(10px);' +
+      'font-size:13px;' +
+      'font-weight:700;' +
+      'color:#0f172a;' +
+      '}' +
+      '.documents-column-drop-line{' +
+      'position:absolute;' +
+      'top:0;' +
+      'bottom:0;' +
+      'width:2px;' +
+      'background:linear-gradient(180deg,#38bdf8,#2563eb);' +
+      'box-shadow:0 0 0 1px rgba(255,255,255,0.65);' +
+      'z-index:15;' +
+      'pointer-events:none;' +
+      'display:none;' +
       '}' +
       '.documents-search-popover{' +
       'position:fixed;' +
@@ -11822,6 +11881,93 @@
     return 200;
   }
 
+  function getDefaultColumnOrder() {
+    return TABLE_COLUMN_KEYS.slice();
+  }
+
+  function normalizeColumnOrder(order) {
+    var defaults = getDefaultColumnOrder();
+    if (!Array.isArray(order)) {
+      return defaults;
+    }
+    var allowed = {};
+    TABLE_COLUMN_KEYS.forEach(function(key) {
+      allowed[key] = true;
+    });
+    var normalized = [];
+    var seen = {};
+    for (var i = 0; i < order.length; i += 1) {
+      var candidate = String(order[i] || '');
+      if (!candidate || !allowed[candidate] || seen[candidate]) {
+        continue;
+      }
+      seen[candidate] = true;
+      normalized.push(candidate);
+    }
+    for (var j = 0; j < defaults.length; j += 1) {
+      var key = defaults[j];
+      if (!seen[key]) {
+        normalized.push(key);
+      }
+    }
+    return normalized;
+  }
+
+  function getOrderedColumns(orderOverride) {
+    var order = normalizeColumnOrder(orderOverride || state.columnOrder);
+    var columns = [];
+    for (var i = 0; i < order.length; i += 1) {
+      var column = TABLE_COLUMN_MAP[order[i]];
+      if (column) {
+        columns.push(column);
+      }
+    }
+    return columns;
+  }
+
+  function getColumnOrderStorageKey() {
+    if (!state.organization) {
+      return '';
+    }
+    return COLUMN_ORDER_STORAGE_PREFIX + state.organization + ':' + getAccessProfileKey(state.access);
+  }
+
+  function saveColumnOrderToLocalStorage(order) {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    var key = getColumnOrderStorageKey();
+    if (!key) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, JSON.stringify(normalizeColumnOrder(order)));
+    } catch (error) {
+      if (typeof docsLogger.warn === 'function') {
+        docsLogger.warn('Не удалось сохранить порядок столбцов в localStorage:', error);
+      }
+    }
+  }
+
+  function loadColumnOrderFromLocalStorage() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return null;
+    }
+    var key = getColumnOrderStorageKey();
+    if (!key) {
+      return null;
+    }
+    try {
+      var raw = window.localStorage.getItem(key);
+      if (!raw) {
+        return null;
+      }
+      return normalizeColumnOrder(JSON.parse(raw));
+    } catch (error) {
+      return null;
+    }
+  }
+
   function cloneColumnWidthMap(source) {
     var clone = {};
     if (!source || typeof source !== 'object') {
@@ -12132,6 +12278,165 @@
         loadColumnWidths(state.organization, true).catch(function(error) {
           if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
             docsLogger.warn('Не удалось обновить настройки ширины столбцов:', error);
+          }
+        });
+      }
+    }
+  }
+
+  function updateTableHeaderByColumnOrder() {
+    if (!elements.headerRow || !elements.groupRow || !elements.table) {
+      return;
+    }
+    var orderedColumns = getOrderedColumns();
+    state.columnOrder = normalizeColumnOrder(orderedColumns.map(function(column) { return column.key; }));
+
+    if (elements.columnCols) {
+      orderedColumns.forEach(function(column) {
+        var col = elements.columnCols[column.key];
+        if (col && col.parentNode) {
+          col.parentNode.appendChild(col);
+        }
+      });
+    }
+
+    orderedColumns.forEach(function(column) {
+      var headerCell = elements.headerCells && elements.headerCells[column.key];
+      if (headerCell && headerCell.parentNode === elements.headerRow) {
+        elements.headerRow.appendChild(headerCell);
+      }
+    });
+
+    elements.groupRow.textContent = '';
+    var lastGroup = '';
+    var currentCell = null;
+    orderedColumns.forEach(function(column) {
+      if (column.group !== lastGroup) {
+        currentCell = createElement('th', '');
+        currentCell.dataset.groupKey = column.group;
+        var group = null;
+        for (var i = 0; i < TABLE_GROUPS.length; i += 1) {
+          if (TABLE_GROUPS[i].key === column.group) {
+            group = TABLE_GROUPS[i];
+            break;
+          }
+        }
+        currentCell.textContent = group ? group.label : '';
+        currentCell.colSpan = 1;
+        currentCell.setAttribute('colspan', '1');
+        elements.groupRow.appendChild(currentCell);
+        lastGroup = column.group;
+        return;
+      }
+      if (currentCell) {
+        currentCell.colSpan += 1;
+        currentCell.setAttribute('colspan', String(currentCell.colSpan));
+      }
+    });
+
+    if (elements.tableTopSpacer && elements.tableTopSpacer.firstChild) {
+      elements.tableTopSpacer.firstChild.colSpan = orderedColumns.length;
+    }
+    if (elements.tableBottomSpacer && elements.tableBottomSpacer.firstChild) {
+      elements.tableBottomSpacer.firstChild.colSpan = orderedColumns.length;
+    }
+  }
+
+  function applyColumnOrder(order, options) {
+    var normalized = normalizeColumnOrder(order);
+    state.columnOrder = normalized;
+    updateTableHeaderByColumnOrder();
+    if (!options || options.render !== false) {
+      state.rowCache.clear();
+      clearVirtualTableRows(true);
+      scheduleVirtualTableRender();
+    }
+  }
+
+  function loadColumnOrder(organization, force) {
+    if (!organization) {
+      applyColumnOrder(getDefaultColumnOrder(), { render: true });
+      state.columnOrderLoaded = false;
+      state.columnOrderOrganization = '';
+      return Promise.resolve(state.columnOrder);
+    }
+    if (!force && state.columnOrderLoaded && state.columnOrderOrganization === organization) {
+      return Promise.resolve(state.columnOrder);
+    }
+    if (!force && state.columnOrderLoadingPromise) {
+      return state.columnOrderLoadingPromise;
+    }
+
+    var localOrder = loadColumnOrderFromLocalStorage();
+    if (localOrder && localOrder.length) {
+      applyColumnOrder(localOrder, { render: true });
+    }
+
+    var promise = fetch(buildApiUrl('load_column_order', { organization: organization }), { credentials: 'same-origin' })
+      .then(handleResponse)
+      .then(function(data) {
+        var normalized = normalizeColumnOrder(data && data.columns);
+        state.columnOrderProfile = data && data.profile ? String(data.profile) : state.columnOrderProfile;
+        state.columnOrderOrganization = organization;
+        state.columnOrderProfileKey = getAccessProfileKey(state.access);
+        state.columnOrderLoaded = true;
+        applyColumnOrder(normalized, { render: true });
+        saveColumnOrderToLocalStorage(normalized);
+        return normalized;
+      })
+      .catch(function(error) {
+        state.columnOrderLoaded = false;
+        if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось загрузить порядок столбцов:', error);
+        }
+        throw error;
+      })
+      .finally(function() {
+        if (state.columnOrderLoadingPromise === promise) {
+          state.columnOrderLoadingPromise = null;
+        }
+      });
+    state.columnOrderLoadingPromise = promise;
+    return promise;
+  }
+
+  function saveColumnOrder(order) {
+    if (!state.organization) {
+      return Promise.reject(new Error('Организация не определена.'));
+    }
+    var normalized = normalizeColumnOrder(order);
+    saveColumnOrderToLocalStorage(normalized);
+    return fetch(buildApiUrl('save_column_order', { organization: state.organization }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        action: 'save_column_order',
+        organization: state.organization,
+        columns: normalized
+      })
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        var serverOrder = normalizeColumnOrder(data && data.columns);
+        state.columnOrderProfile = data && data.profile ? String(data.profile) : state.columnOrderProfile;
+        state.columnOrderOrganization = state.organization;
+        state.columnOrderProfileKey = getAccessProfileKey(state.access);
+        state.columnOrderLoaded = true;
+        saveColumnOrderToLocalStorage(serverOrder);
+        return serverOrder;
+      });
+  }
+
+  function refreshColumnOrderIfNeeded() {
+    var key = getAccessProfileKey(state.access);
+    if (state.columnOrderProfileKey !== key) {
+      state.columnOrderProfileKey = key;
+      state.columnOrderLoaded = false;
+      if (state.organization) {
+        loadColumnOrder(state.organization, true).catch(function(error) {
+          if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
+            docsLogger.warn('Не удалось обновить порядок столбцов:', error);
           }
         });
       }
@@ -12687,8 +12992,8 @@
       : collectAssigneeViewState(doc);
 
     var attachments = Array.isArray(doc.files) ? doc.files : [];
-    var descriptors = [];
-    descriptors.push(buildCellDescriptor(displayNumber, '', 'entryNumber'));
+    var descriptorsByKey = {};
+    descriptorsByKey.entryNumber = buildCellDescriptor(displayNumber, '', 'entryNumber');
 
     ensureSearchStyles();
     var actions = createElement('div', 'documents-actions');
@@ -12790,8 +13095,8 @@
     }
     setupRowActionsMenu(actions, actionsToggleButton, actionsPanel);
 
-    descriptors.push(buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber'));
-    descriptors.push(buildCellDescriptor(actions, '', 'actions'));
+    descriptorsByKey.registryNumber = buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber');
+    descriptorsByKey.actions = buildCellDescriptor(actions, '', 'actions');
 
     var filesCell = createElement('div', 'documents-files');
     var filesSummary = createElement('div', 'documents-files__summary', 'Файлы (' + attachments.length + ')');
@@ -12826,26 +13131,33 @@
       filesList.textContent = '—';
     }
     filesCell.appendChild(filesList);
-    descriptors.push(buildCellDescriptor(filesCell, '', 'files'));
-    descriptors.push(buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status'));
+    descriptorsByKey.files = buildCellDescriptor(filesCell, '', 'files');
+    descriptorsByKey.status = buildCellDescriptor(createStatusCell(doc), 'documents-cell--status', 'status');
 
-    descriptors.push(buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate'));
-    descriptors.push(buildCellDescriptor(doc.direction || '—', '', 'direction'));
-    descriptors.push(buildCellDescriptor(doc.correspondent || '—', '', 'correspondent'));
-    descriptors.push(buildCellDescriptor(doc.documentNumber || '—', '', 'documentNumber'));
-    descriptors.push(buildCellDescriptor(formatDate(doc.documentDate), '', 'documentDate'));
-    descriptors.push(buildCellDescriptor(doc.executor || '—', '', 'executor'));
-    descriptors.push(buildCellDescriptor(createDirectorCell(doc), 'documents-cell--director', 'director'));
-    descriptors.push(buildCellDescriptor(createAssigneeCell(doc, viewState), 'documents-cell--assignee', 'assignee'));
-    descriptors.push(buildCellDescriptor(
+    descriptorsByKey.registrationDate = buildCellDescriptor(formatDate(doc.registrationDate), '', 'registrationDate');
+    descriptorsByKey.direction = buildCellDescriptor(doc.direction || '—', '', 'direction');
+    descriptorsByKey.correspondent = buildCellDescriptor(doc.correspondent || '—', '', 'correspondent');
+    descriptorsByKey.documentNumber = buildCellDescriptor(doc.documentNumber || '—', '', 'documentNumber');
+    descriptorsByKey.documentDate = buildCellDescriptor(formatDate(doc.documentDate), '', 'documentDate');
+    descriptorsByKey.executor = buildCellDescriptor(doc.executor || '—', '', 'executor');
+    descriptorsByKey.director = buildCellDescriptor(createDirectorCell(doc), 'documents-cell--director', 'director');
+    descriptorsByKey.assignee = buildCellDescriptor(createAssigneeCell(doc, viewState), 'documents-cell--assignee', 'assignee');
+    descriptorsByKey.subordinates = buildCellDescriptor(
       createSubordinateCell(doc, viewState),
       'documents-cell--assignee documents-cell--subordinates',
       'subordinates'
-    ));
-    descriptors.push(buildCellDescriptor(doc.summary || '—', '', 'summary'));
-    descriptors.push(buildCellDescriptor(doc.resolution || '—', '', 'resolution'));
-    descriptors.push(buildCellDescriptor(createDueDateCell(doc), '', 'dueDate'));
-    descriptors.push(buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction'));
+    );
+    descriptorsByKey.summary = buildCellDescriptor(doc.summary || '—', '', 'summary');
+    descriptorsByKey.resolution = buildCellDescriptor(doc.resolution || '—', '', 'resolution');
+    descriptorsByKey.dueDate = buildCellDescriptor(createDueDateCell(doc), '', 'dueDate');
+    descriptorsByKey.instruction = buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction');
+
+    var descriptors = [];
+    getOrderedColumns().forEach(function(column) {
+      if (descriptorsByKey[column.key]) {
+        descriptors.push(descriptorsByKey[column.key]);
+      }
+    });
 
     while (tr.children.length > descriptors.length) {
       tr.removeChild(tr.lastChild);
@@ -13042,7 +13354,7 @@
     var row = createElement('tr', className);
     row.setAttribute('aria-hidden', 'true');
     var cell = document.createElement('td');
-    cell.colSpan = TABLE_COLUMNS.length;
+    cell.colSpan = normalizeColumnOrder(state.columnOrder).length;
     cell.style.padding = '0';
     cell.style.border = '0';
     cell.style.height = '0px';
@@ -16177,6 +16489,163 @@
     });
   }
 
+  function bindColumnDragAndDrop() {
+    if (!elements.headerRow || elements.headerRow.dataset.columnDragBound === 'true') {
+      return;
+    }
+    elements.headerRow.dataset.columnDragBound = 'true';
+
+    var dragState = null;
+
+    function cleanupDrag() {
+      if (!dragState) {
+        return;
+      }
+      if (dragState.ghost && dragState.ghost.parentNode) {
+        dragState.ghost.parentNode.removeChild(dragState.ghost);
+      }
+      if (elements.columnDropLine) {
+        elements.columnDropLine.style.display = 'none';
+      }
+      if (dragState.handle) {
+        dragState.handle.classList.remove('is-dragging');
+      }
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      dragState = null;
+    }
+
+    function updateDropLine(clientX) {
+      if (!dragState || !elements.columnDropLine) {
+        return;
+      }
+      var orderedColumns = getOrderedColumns();
+      var headerCells = orderedColumns.map(function(column) {
+        return elements.headerCells && elements.headerCells[column.key] ? elements.headerCells[column.key] : null;
+      }).filter(Boolean);
+      if (!headerCells.length) {
+        return;
+      }
+
+      var dropIndex = headerCells.length;
+      for (var i = 0; i < headerCells.length; i += 1) {
+        var rect = headerCells[i].getBoundingClientRect();
+        var center = rect.left + rect.width / 2;
+        if (clientX < center) {
+          dropIndex = i;
+          break;
+        }
+      }
+      dragState.dropIndex = dropIndex;
+
+      var lineX = 0;
+      if (dropIndex >= headerCells.length) {
+        var lastRect = headerCells[headerCells.length - 1].getBoundingClientRect();
+        lineX = lastRect.right;
+      } else {
+        lineX = headerCells[dropIndex].getBoundingClientRect().left;
+      }
+      var wrapperRect = elements.tableWrapper.getBoundingClientRect();
+      elements.columnDropLine.style.left = Math.max(0, lineX - wrapperRect.left - 1) + 'px';
+      elements.columnDropLine.style.display = 'block';
+    }
+
+    function handlePointerMove(event) {
+      if (!dragState || event.pointerId !== dragState.pointerId) {
+        return;
+      }
+      var dx = event.clientX - dragState.startX;
+      var dy = event.clientY - dragState.startY;
+      if (!dragState.started && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        dragState.started = true;
+      }
+      if (!dragState.started) {
+        return;
+      }
+      if (dragState.ghost) {
+        dragState.ghost.style.left = Math.round(event.clientX + 12) + 'px';
+        dragState.ghost.style.top = Math.round(event.clientY + 10) + 'px';
+      }
+      updateDropLine(event.clientX);
+      event.preventDefault();
+    }
+
+    function handlePointerUp(event) {
+      if (!dragState || event.pointerId !== dragState.pointerId) {
+        return;
+      }
+      var currentDrag = dragState;
+      cleanupDrag();
+
+      if (!currentDrag.started || typeof currentDrag.dropIndex !== 'number') {
+        return;
+      }
+      var order = normalizeColumnOrder(state.columnOrder);
+      var fromIndex = order.indexOf(currentDrag.columnKey);
+      if (fromIndex < 0) {
+        return;
+      }
+      var toIndex = currentDrag.dropIndex;
+      if (toIndex > fromIndex) {
+        toIndex -= 1;
+      }
+      if (toIndex < 0) {
+        toIndex = 0;
+      }
+      if (toIndex >= order.length) {
+        toIndex = order.length - 1;
+      }
+      if (fromIndex === toIndex) {
+        return;
+      }
+      var moved = order.splice(fromIndex, 1)[0];
+      order.splice(toIndex, 0, moved);
+      applyColumnOrder(order, { render: true });
+      applyColumnWidths();
+      saveColumnOrder(order).catch(function(error) {
+        showMessage('warning', 'Порядок сохранён локально, но не отправлен на сервер: ' + error.message);
+      });
+    }
+
+    elements.headerRow.addEventListener('pointerdown', function(event) {
+      var handle = event.target && typeof event.target.closest === 'function'
+        ? event.target.closest('.documents-column-drag-handle')
+        : null;
+      if (!handle) {
+        return;
+      }
+      var columnKey = handle.dataset.dragColumn || '';
+      if (!columnKey) {
+        return;
+      }
+      var headerCell = elements.headerCells && elements.headerCells[columnKey] ? elements.headerCells[columnKey] : null;
+      if (!headerCell) {
+        return;
+      }
+      var label = headerCell.querySelector('.documents-header-label');
+      var ghost = createElement('div', 'documents-column-drag-ghost', label ? label.textContent : columnKey);
+      document.body.appendChild(ghost);
+
+      dragState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        started: false,
+        columnKey: columnKey,
+        handle: handle,
+        ghost: ghost,
+        dropIndex: null
+      };
+      handle.classList.add('is-dragging');
+      updateDropLine(event.clientX);
+      window.addEventListener('pointermove', handlePointerMove, { passive: false });
+      window.addEventListener('pointerup', handlePointerUp);
+      window.addEventListener('pointercancel', handlePointerUp);
+      event.preventDefault();
+    });
+  }
+
   function buildLayout(host) {
     host.innerHTML = '';
 
@@ -16282,13 +16751,14 @@
     var filterBar = createElement('div', 'documents-filter-bar documents-filter-bar--hidden');
 
     var tableWrapper = createElement('div', 'documents-table-wrapper');
+    tableWrapper.style.position = 'relative';
     tableWrapper.style.maxHeight = '100vh';
     tableWrapper.style.overflow = 'auto';
     tableWrapper.style.webkitOverflowScrolling = 'touch';
     var table = createElement('table', 'documents-table');
     var colgroup = createElement('colgroup', 'documents-table__colgroup');
     elements.columnCols = {};
-    TABLE_COLUMNS.forEach(function(column) {
+    getOrderedColumns().forEach(function(column) {
       var col = document.createElement('col');
       col.dataset.columnKey = column.key;
       elements.columnCols[column.key] = col;
@@ -16299,14 +16769,22 @@
     var groupRow = createElement('tr', 'documents-table__group-row');
     elements.groupRow = groupRow;
     elements.groupCells = {};
-    TABLE_GROUPS.forEach(function(group) {
-      var groupCell = createElement('th', '');
-      groupCell.dataset.groupKey = group.key;
-      groupCell.colSpan = group.span;
-      groupCell.setAttribute('colspan', group.span);
-      groupCell.textContent = group.label;
-      elements.groupCells[group.key] = groupCell;
-      groupRow.appendChild(groupCell);
+    var previousGroupKey = '';
+    var currentGroupCell = null;
+    getOrderedColumns().forEach(function(column) {
+      if (column.group !== previousGroupKey) {
+        var group = TABLE_GROUPS.filter(function(item) { return item.key === column.group; })[0] || null;
+        currentGroupCell = createElement('th', '');
+        currentGroupCell.dataset.groupKey = column.group;
+        currentGroupCell.colSpan = 1;
+        currentGroupCell.setAttribute('colspan', '1');
+        currentGroupCell.textContent = group ? group.label : '';
+        groupRow.appendChild(currentGroupCell);
+        previousGroupKey = column.group;
+      } else if (currentGroupCell) {
+        currentGroupCell.colSpan += 1;
+        currentGroupCell.setAttribute('colspan', String(currentGroupCell.colSpan));
+      }
     });
     thead.appendChild(groupRow);
 
@@ -16314,7 +16792,7 @@
     elements.headerRow = headerRow;
     elements.searchButtons = {};
     elements.headerCells = {};
-    TABLE_COLUMNS.forEach(function(column) {
+    getOrderedColumns().forEach(function(column) {
       var headerCell = createElement('th', 'documents-table__header-cell');
       headerCell.setAttribute('scope', 'col');
       headerCell.dataset.columnKey = column.key;
@@ -16323,6 +16801,16 @@
       headerCell.appendChild(headerContent);
       var label = createElement('span', 'documents-header-label', column.label);
       headerContent.appendChild(label);
+      var dragHandle = createElement('button', 'documents-column-drag-handle', '⋮⋮');
+      dragHandle.type = 'button';
+      dragHandle.dataset.dragColumn = column.key;
+      dragHandle.setAttribute('aria-label', 'Перетащить столбец «' + column.label + '»');
+      dragHandle.title = 'Перетащить столбец';
+      dragHandle.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      headerContent.appendChild(dragHandle);
       if (column.searchable) {
         headerCell.classList.add('documents-table__header-cell--searchable');
         headerCell.title = 'Поиск по столбцу «' + column.label + '»';
@@ -16348,6 +16836,8 @@
     var tbody = createElement('tbody', '');
     table.appendChild(tbody);
     tableWrapper.appendChild(table);
+    var dropLine = createElement('div', 'documents-column-drop-line');
+    tableWrapper.appendChild(dropLine);
 
     var empty = createElement('div', 'documents-empty', 'Загрузка реестра документов...');
     tableWrapper.appendChild(empty);
@@ -16378,8 +16868,10 @@
     elements.tableBody = tbody;
     elements.tableScroll = tableWrapper;
     elements.emptyState = empty;
+    elements.columnDropLine = dropLine;
 
     bindVirtualTableScroll(tableWrapper);
+    bindColumnDragAndDrop();
 
     updateResponsibleButtonState();
     updateUnviewedButtonState();
@@ -16444,6 +16936,12 @@
       promise: null,
       lastLoadedAt: 0
     };
+    var initialColumnOrder = loadColumnOrderFromLocalStorage();
+    if (initialColumnOrder && initialColumnOrder.length) {
+      state.columnOrder = initialColumnOrder;
+    } else {
+      state.columnOrder = getDefaultColumnOrder();
+    }
     buildLayout(host);
     applyVisualSettings(state.visualSettings);
     setToolbarState();
@@ -16461,6 +16959,11 @@
     bootstrapDocsSettingsIfReady();
 
     if (state.organization) {
+      loadColumnOrder(state.organization).catch(function(error) {
+        if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось загрузить порядок столбцов:', error);
+        }
+      });
       loadColumnWidths(state.organization).catch(function(error) {
         if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось загрузить настройки ширины столбцов:', error);
