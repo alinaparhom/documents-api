@@ -12307,6 +12307,30 @@
       }
     });
 
+    if (elements.tableBody) {
+      var bodyRows = elements.tableBody.querySelectorAll('tr');
+      for (var rowIndex = 0; rowIndex < bodyRows.length; rowIndex += 1) {
+        var row = bodyRows[rowIndex];
+        if (!row || row.classList.contains('documents-table__spacer')) {
+          continue;
+        }
+        var cellMap = {};
+        var cells = row.querySelectorAll('td');
+        for (var cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
+          var cell = cells[cellIndex];
+          if (cell && cell.dataset && cell.dataset.columnKey) {
+            cellMap[cell.dataset.columnKey] = cell;
+          }
+        }
+        orderedColumns.forEach(function(column) {
+          var targetCell = cellMap[column.key];
+          if (targetCell && targetCell.parentNode === row) {
+            row.appendChild(targetCell);
+          }
+        });
+      }
+    }
+
     elements.groupRow.textContent = '';
     var lastGroup = '';
     var currentCell = null;
