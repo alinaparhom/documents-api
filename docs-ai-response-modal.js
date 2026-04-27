@@ -885,9 +885,6 @@
     return String(error.message || 'Ошибка ИИ. Попробуйте ещё раз.');
   }
 
-  function normalizePromptVersion(value) {
-    return String(value || '').trim();
-  }
 
   function hasUsefulExtractedText(text) {
     var normalized = String(text || '').trim();
@@ -2375,8 +2372,7 @@
       templateDraft: '',
       templateFile: null,
       lastErrorFingerprint: '',
-      lastErrorTs: 0,
-      lastPromptVersion: ''
+      lastErrorTs: 0
     };
     state.aiMode = 'paid';
     state.visionMode = true;
@@ -3540,12 +3536,7 @@
         var responseMode = String(payload && payload.mode ? payload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
         var responseTime = Number(payload && payload.timeMs) > 0 ? Number(payload.timeMs) : (Date.now() - requestStartedAt);
         var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload && payload.tokensUsed) : 0;
-        var promptVersion = normalizePromptVersion(payload && payload.promptVersion);
-        state.lastPromptVersion = promptVersion;
-        messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—') + (promptVersion ? ' • Правила: ' + promptVersion : '')));
-        if (promptVersion && typeof console !== 'undefined' && typeof console.info === 'function') {
-          console.info('[AI] promptVersion:', promptVersion);
-        }
+        messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—')));
         state.lastAssistantMessage = String(finalResponse || '');
       } catch (error) {
         logAiError(error, { model: state.model, responseStyle: state.responseStyle });
@@ -3574,12 +3565,7 @@
             var retryMode = String(secondPayload && secondPayload.mode ? secondPayload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
             var retryTime = Number(secondPayload && secondPayload.timeMs) > 0 ? Number(secondPayload.timeMs) : (Date.now() - requestStartedAt);
             var retryTokens = Number(secondPayload && secondPayload.tokensUsed) > 0 ? Number(secondPayload.tokensUsed) : 0;
-            var retryPromptVersion = normalizePromptVersion(secondPayload && secondPayload.promptVersion);
-            state.lastPromptVersion = retryPromptVersion;
-            messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—') + (retryPromptVersion ? ' • Правила: ' + retryPromptVersion : '')));
-            if (retryPromptVersion && typeof console !== 'undefined' && typeof console.info === 'function') {
-              console.info('[AI] promptVersion:', retryPromptVersion);
-            }
+            messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(secondPayload && secondPayload.model ? secondPayload.model : state.model || '—') + ' • Время: ' + retryTime + ' мс • Токены: ' + (retryTokens || '—')));
             state.lastAssistantMessage = String(retryText || '');
             setLoading(false);
             messages.scrollTop = messages.scrollHeight;
