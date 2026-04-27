@@ -5188,7 +5188,7 @@ function createCard(task, index, anchorRegistry) {
       fallback: 'Письмо • данные не указаны',
       setTitle: false,
     });
-    setCardField(card, '[data-field="organization"]', `Тема: ${compactContent}`, {
+    setCardField(card, '[data-field="organization"]', `Тема: ${compactContent} • Корреспондент: ${correspondentText}`, {
       fallback: 'Тема: не указана',
       setTitle: false,
     });
