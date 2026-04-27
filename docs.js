@@ -601,6 +601,7 @@
     searchApply: null,
     searchReset: null,
     searchButtons: {},
+    sortButtons: {},
     headerCells: {},
     groupCells: {}
   };
@@ -1131,6 +1132,8 @@
     unviewedCount: 0,
     activeSearchColumn: '',
     activeSearchButton: null,
+    activeSortColumn: '',
+    activeSortDirection: '',
     access: createDefaultAccessContext(),
     permissions: { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false },
     userAssignmentKeyMap: null,
@@ -2906,10 +2909,27 @@
       '.documents-header-content{' +
       'display:flex;' +
       'align-items:center;' +
-      'justify-content:space-between;' +
+      'justify-content:flex-start;' +
       'width:100%;' +
-      'gap:4px;' +
+      'gap:6px;' +
       'flex-wrap:nowrap;' +
+      '}' +
+      '.documents-header-sort-button{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'gap:4px;' +
+      'min-width:0;' +
+      'flex:1 1 auto;' +
+      'border:none;' +
+      'background:transparent;' +
+      'padding:8px 0;' +
+      'text-align:left;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-header-sort-button:focus-visible{' +
+      'outline:2px solid rgba(37,99,235,0.35);' +
+      'outline-offset:2px;' +
+      'border-radius:8px;' +
       '}' +
       '.documents-table__header-cell .documents-header-label{' +
       'display:block;' +
@@ -2921,14 +2941,42 @@
       'min-width:0;' +
       'transition:color 0.2s ease;' +
       '}' +
+      '.documents-header-sort-indicator{' +
+      'font-size:12px;' +
+      'line-height:1;' +
+      'color:#2563eb;' +
+      'opacity:0;' +
+      'transition:opacity 0.2s ease, transform 0.2s ease;' +
+      'transform:translateY(1px);' +
+      '}' +
+      '.documents-table__header-cell--sorted .documents-header-sort-indicator{' +
+      'opacity:1;' +
+      'transform:translateY(0);' +
+      '}' +
       '.documents-table__header-cell--searchable{' +
-      'cursor:pointer;' +
       'user-select:none;' +
-      'border-radius:0;' +
-      'transition:background-color 0.2s ease;' +
+      'border-radius:12px;' +
+      'transition:background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'width:40px;' +
+      'height:40px;' +
+      'min-width:40px;' +
+      'padding:0;' +
+      'border:1px solid rgba(255,255,255,0.65);' +
+      'background:rgba(255,255,255,0.45);' +
+      'backdrop-filter:blur(10px);' +
+      '-webkit-backdrop-filter:blur(10px);' +
+      'box-shadow:0 6px 16px rgba(15,23,42,0.12);' +
+      'color:#334155;' +
+      'cursor:pointer;' +
+      'touch-action:manipulation;' +
       '}' +
       '.documents-table__header-cell--searchable:hover{' +
-      'background:rgba(37,99,235,0.08);' +
+      'background:rgba(255,255,255,0.62);' +
+      'border-color:rgba(37,99,235,0.32);' +
+      'box-shadow:0 10px 22px rgba(37,99,235,0.18);' +
       '}' +
       '.documents-table__header-cell--searchable:focus,' +
       '.documents-table__header-cell--searchable:focus-visible{' +
@@ -2939,10 +2987,17 @@
       'outline:none;' +
       '}' +
       '.documents-table__header-cell--active{' +
-      'background:rgba(37,99,235,0.12);' +
+      'background:rgba(219,234,254,0.72);' +
+      'border-color:rgba(37,99,235,0.42);' +
+      'color:#1d4ed8;' +
       '}' +
       '.documents-table__header-cell--active .documents-header-label{' +
       'color:#1d4ed8;' +
+      '}' +
+      '.documents-header-filter-icon{' +
+      'width:18px;' +
+      'height:18px;' +
+      'display:block;' +
       '}' +
       '.documents-column-drag-handle{' +
       'display:inline-flex;' +
@@ -3874,6 +3929,35 @@
     }
     updateResponsibleButtonState();
     updateUnviewedButtonState();
+  }
+
+  function updateSortHeaderStates() {
+    if (!elements.sortButtons) {
+      return;
+    }
+    for (var key in elements.sortButtons) {
+      if (!Object.prototype.hasOwnProperty.call(elements.sortButtons, key)) {
+        continue;
+      }
+      var button = elements.sortButtons[key];
+      if (!button) {
+        continue;
+      }
+      var indicator = button.querySelector('.documents-header-sort-indicator');
+      var cell = elements.headerCells && elements.headerCells[key] ? elements.headerCells[key] : null;
+      var isActive = state.activeSortColumn === key && !!state.activeSortDirection;
+      if (cell) {
+        cell.classList.toggle('documents-table__header-cell--sorted', isActive);
+      }
+      if (indicator) {
+        indicator.textContent = state.activeSortDirection === 'desc' && isActive ? '▼' : '▲';
+      }
+      var column = getColumnDefinition(key);
+      var label = column ? column.label : key;
+      var sortState = isActive ? (state.activeSortDirection === 'desc' ? 'по убыванию' : 'по возрастанию') : 'без сортировки';
+      button.setAttribute('aria-label', 'Сортировать колонку ' + label + ' (' + sortState + ')');
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    }
   }
 
   function createFilterChip(columnKey, value) {
@@ -13353,9 +13437,17 @@
 
   function applyTableSorting(entries) {
     var list = Array.isArray(entries) ? entries.slice() : [];
-    var sorting = state.visualSettings && state.visualSettings.sorting
-      ? normalizeSortingSettings(state.visualSettings.sorting)
-      : buildDefaultSortingSettings();
+    var sorting = null;
+    if (state.activeSortColumn && state.activeSortDirection) {
+      sorting = {
+        enabled: true,
+        rules: [{ column: state.activeSortColumn, direction: state.activeSortDirection }]
+      };
+    } else {
+      sorting = state.visualSettings && state.visualSettings.sorting
+        ? normalizeSortingSettings(state.visualSettings.sorting)
+        : buildDefaultSortingSettings();
+    }
     if (!sorting.enabled || !sorting.rules.length) {
       return list;
     }
@@ -13374,6 +13466,23 @@
       return (left && typeof left.index === 'number' ? left.index : 0) - (right && typeof right.index === 'number' ? right.index : 0);
     });
     return list;
+  }
+
+  function toggleColumnSort(columnKey) {
+    if (!columnKey) {
+      return;
+    }
+    if (state.activeSortColumn !== columnKey) {
+      state.activeSortColumn = columnKey;
+      state.activeSortDirection = 'asc';
+    } else if (state.activeSortDirection === 'asc') {
+      state.activeSortDirection = 'desc';
+    } else {
+      state.activeSortColumn = '';
+      state.activeSortDirection = '';
+    }
+    updateSortHeaderStates();
+    updateTable();
   }
 
   function createTableSpacerRow(className) {
@@ -16812,6 +16921,7 @@
     var headerRow = createElement('tr', 'documents-table__header-row');
     elements.headerRow = headerRow;
     elements.searchButtons = {};
+    elements.sortButtons = {};
     elements.headerCells = {};
     getOrderedColumns().forEach(function(column) {
       var headerCell = createElement('th', 'documents-table__header-cell');
@@ -16820,8 +16930,35 @@
       elements.headerCells[column.key] = headerCell;
       var headerContent = createElement('div', 'documents-header-content');
       headerCell.appendChild(headerContent);
+      var sortButton = createElement('button', 'documents-header-sort-button');
+      sortButton.type = 'button';
       var label = createElement('span', 'documents-header-label', column.label);
-      headerContent.appendChild(label);
+      var sortIndicator = createElement('span', 'documents-header-sort-indicator', '▲');
+      sortIndicator.setAttribute('aria-hidden', 'true');
+      sortButton.appendChild(label);
+      sortButton.appendChild(sortIndicator);
+      sortButton.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleColumnSort(column.key);
+      });
+      headerContent.appendChild(sortButton);
+      elements.sortButtons[column.key] = sortButton;
+      if (column.searchable) {
+        var filterButton = createElement('button', 'documents-table__header-cell--searchable');
+        filterButton.type = 'button';
+        filterButton.title = 'Открыть фильтр по колонке «' + column.label + '»';
+        filterButton.setAttribute('aria-label', 'Открыть фильтр по колонке ' + column.label);
+        filterButton.setAttribute('aria-haspopup', 'dialog');
+        filterButton.innerHTML = '<svg class="documents-header-filter-icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"></circle><path d="M16 16L20.2 20.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg>';
+        filterButton.addEventListener('click', function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openSearchPopover(column.key, filterButton);
+        });
+        headerContent.appendChild(filterButton);
+        elements.searchButtons[column.key] = filterButton;
+      }
       var dragHandle = createElement('button', 'documents-column-drag-handle', '⋮⋮');
       dragHandle.type = 'button';
       dragHandle.dataset.dragColumn = column.key;
@@ -16832,23 +16969,6 @@
         event.stopPropagation();
       });
       headerContent.appendChild(dragHandle);
-      if (column.searchable) {
-        headerCell.classList.add('documents-table__header-cell--searchable');
-        headerCell.title = 'Поиск по столбцу «' + column.label + '»';
-        headerCell.setAttribute('tabindex', '0');
-        headerCell.setAttribute('aria-haspopup', 'dialog');
-        headerCell.addEventListener('click', function() {
-          openSearchPopover(column.key, headerCell);
-        });
-        headerCell.addEventListener('keydown', function(event) {
-          var key = event.key || '';
-          if (key === 'Enter' || key === ' ' || key === 'Spacebar' || key === 'Space') {
-            event.preventDefault();
-            openSearchPopover(column.key, headerCell);
-          }
-        });
-        elements.searchButtons[column.key] = headerCell;
-      }
       setElementColumnWidth(headerCell, getEffectiveColumnWidth(column.key));
       headerRow.appendChild(headerCell);
     });
@@ -16897,6 +17017,7 @@
     updateResponsibleButtonState();
     updateUnviewedButtonState();
     updateSearchButtonStates();
+    updateSortHeaderStates();
     updateFilterBar();
     ensureSearchPopover(document.body);
     bindSearchEvents();
