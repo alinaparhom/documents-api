@@ -1066,8 +1066,6 @@
       .tg-ai-chat__file[data-state="error"]{border-color:rgba(239,68,68,.35);background:rgba(254,242,242,.95)}
       .tg-ai-chat__file[data-state="error"] .tg-ai-chat__file-state{background:rgba(239,68,68,.16);color:#b91c1c}
       .tg-ai-chat__file input{accent-color:#2563eb}
-      .tg-ai-chat__meta{display:flex;flex-wrap:wrap;gap:7px;padding:7px 12px;border-top:1px solid rgba(226,232,240,.7);background:rgba(255,255,255,.88)}
-      .tg-ai-chat__chip{padding:4px 8px;border:1px solid rgba(203,213,225,.95);border-radius:999px;background:#fff;font-size:12px;color:#334155}
       .tg-ai-chat__loading{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid rgba(148,163,184,.3);border-radius:13px;background:rgba(255,255,255,.86);backdrop-filter:blur(8px);color:#334155;font-size:12px}
       .tg-ai-chat__spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(14,165,233,.25);border-top-color:#0ea5e9;animation:tg-ai-spin .9s linear infinite}
       .tg-ai-chat__dots{display:inline-flex;align-items:center;gap:3px}
@@ -1957,7 +1955,6 @@
             <button type="button" class="tg-ai-chat__send" data-send-btn>Отправить</button>
           </div>
         </div>
-        <div class="tg-ai-chat__meta" data-meta></div>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -1971,7 +1968,6 @@
     const filesPanel = overlay.querySelector('[data-files]');
     const filesList = overlay.querySelector('[data-files-list]');
     const filesToggleButton = overlay.querySelector('[data-files-toggle]');
-    const meta = overlay.querySelector('[data-meta]');
     const styleSelect = overlay.querySelector('[data-style-select]');
     const modeButtons = Array.from(overlay.querySelectorAll('[data-response-mode]'));
     const shareButton = overlay.querySelector('[data-share-btn]');
@@ -2329,13 +2325,11 @@
         }
 
         lastAiAnswer = '';
-        meta.innerHTML = '';
         createBubble(messages, userPrompt, 'user');
         if (skippedFilesCount > 0) {
           createBubble(messages, `${skippedFilesCount} файлов пропущено.`, 'assistant');
         }
         status.textContent = 'Загрузка → Подготовка → Ответ';
-        const startedAt = Date.now();
         const loadingBubble = createLoadingBubble(messages);
 
         const answerRaw = await requestTelegramVisionResponse({
@@ -2365,15 +2359,6 @@
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
 
-        const elapsed = Date.now() - startedAt;
-        meta.innerHTML = `
-          <span class="tg-ai-chat__chip">Режим: vision</span>
-          <span class="tg-ai-chat__chip">Сценарий: ${currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value ? 'Ответ (редактирование)' : 'Ответ ИИ'}</span>
-          <span class="tg-ai-chat__chip">Стиль: ${styleMeta.label}</span>
-          <span class="tg-ai-chat__chip">Файлов: ${selectedFiles.length}</span>
-          <span class="tg-ai-chat__chip">OCR: Vision pipeline</span>
-          <span class="tg-ai-chat__chip">Время: ${Number(elapsed) || 0} мс</span>
-        `;
         status.textContent = skippedFilesCount > 0
           ? `Данные переданы. ${skippedFilesCount} файлов пропущено.`
           : 'Данные переданы.';
