@@ -3270,11 +3270,13 @@
   }
 
   function updateStickyHeaderOffsets() {
-    if (!elements.groupRow || !elements.headerRow) {
+    if (!elements.headerRow) {
       return;
     }
-    var groupHeight = elements.groupRow.offsetHeight || 0;
-    elements.groupRow.style.setProperty('--documents-sticky-top', '0px');
+    var groupHeight = elements.groupRow ? (elements.groupRow.offsetHeight || 0) : 0;
+    if (elements.groupRow) {
+      elements.groupRow.style.setProperty('--documents-sticky-top', '0px');
+    }
     elements.headerRow.style.setProperty('--documents-sticky-top', groupHeight + 'px');
   }
 
@@ -12288,7 +12290,7 @@
   }
 
   function updateTableHeaderByColumnOrder() {
-    if (!elements.headerRow || !elements.groupRow || !elements.table) {
+    if (!elements.headerRow || !elements.table) {
       return;
     }
     var orderedColumns = getOrderedColumns();
@@ -12334,32 +12336,9 @@
       }
     }
 
-    elements.groupRow.textContent = '';
-    var lastGroup = '';
-    var currentCell = null;
-    orderedColumns.forEach(function(column) {
-      if (column.group !== lastGroup) {
-        currentCell = createElement('th', '');
-        currentCell.dataset.groupKey = column.group;
-        var group = null;
-        for (var i = 0; i < TABLE_GROUPS.length; i += 1) {
-          if (TABLE_GROUPS[i].key === column.group) {
-            group = TABLE_GROUPS[i];
-            break;
-          }
-        }
-        currentCell.textContent = group ? group.label : '';
-        currentCell.colSpan = 1;
-        currentCell.setAttribute('colspan', '1');
-        elements.groupRow.appendChild(currentCell);
-        lastGroup = column.group;
-        return;
-      }
-      if (currentCell) {
-        currentCell.colSpan += 1;
-        currentCell.setAttribute('colspan', String(currentCell.colSpan));
-      }
-    });
+    if (elements.groupRow) {
+      elements.groupRow.textContent = '';
+    }
 
     if (elements.tableTopSpacer && elements.tableTopSpacer.firstChild) {
       elements.tableTopSpacer.firstChild.colSpan = orderedColumns.length;
@@ -16827,27 +16806,8 @@
     });
     table.appendChild(colgroup);
     var thead = createElement('thead', 'documents-table__head');
-    var groupRow = createElement('tr', 'documents-table__group-row');
-    elements.groupRow = groupRow;
+    elements.groupRow = null;
     elements.groupCells = {};
-    var previousGroupKey = '';
-    var currentGroupCell = null;
-    getOrderedColumns().forEach(function(column) {
-      if (column.group !== previousGroupKey) {
-        var group = TABLE_GROUPS.filter(function(item) { return item.key === column.group; })[0] || null;
-        currentGroupCell = createElement('th', '');
-        currentGroupCell.dataset.groupKey = column.group;
-        currentGroupCell.colSpan = 1;
-        currentGroupCell.setAttribute('colspan', '1');
-        currentGroupCell.textContent = group ? group.label : '';
-        groupRow.appendChild(currentGroupCell);
-        previousGroupKey = column.group;
-      } else if (currentGroupCell) {
-        currentGroupCell.colSpan += 1;
-        currentGroupCell.setAttribute('colspan', String(currentGroupCell.colSpan));
-      }
-    });
-    thead.appendChild(groupRow);
 
     var headerRow = createElement('tr', 'documents-table__header-row');
     elements.headerRow = headerRow;
