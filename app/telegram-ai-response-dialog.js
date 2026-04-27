@@ -13,7 +13,7 @@
   const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
-  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь готовый текст ответа для вставки в шаблон: сразу по делу, без приветствия и без прощаний, по этим документам';
+  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь готовый ответ сотрудника для вставки в шаблон по этим документам: сразу по делу, без пересказа файла, без приветствия и без прощаний';
   const VISION_BATCH_SIZE = 5;
   const VISION_BATCH_SIZE_MOBILE = 1;
   const MAX_FILES_PER_REQUEST = 5;
