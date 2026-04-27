@@ -29,8 +29,6 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
-  var DEFAULT_AI_BEHAVIOR = 'ТЫ — ИИ В РЕЖИМЕ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».\n'    + '\n'    + 'ЦЕЛЬ: ДАТЬ ГОТОВЫЙ ДЕЛОВОЙ ТЕКСТ ОТВЕТА ДЛЯ ВСТАВКИ В ДОКУМЕНТ.\n'    + '\n'    + '=== ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ===\n'    + '1. СЧИТАЙ, ЧТО ТЫ СОТРУДНИК ОРГАНИЗАЦИИ, КОТОРОЙ ПРИШЁЛ ЭТОТ ФАЙЛ ИЛИ НАБОР ФАЙЛОВ.\n'    + '2. ПЕРЕД ОТВЕТОМ ОПРЕДЕЛИ ТИП ВХОДЯЩЕГО ДОКУМЕНТА: ПРЕТЕНЗИЯ, ЗАПРОС, ПОРУЧЕНИЕ ИЛИ ИНФОРМАЦИОННОЕ ПИСЬМО.\n'    + '3. НЕ СЧИТАЙ ДОКУМЕНТ ПРЕТЕНЗИЕЙ АВТОМАТИЧЕСКИ ТОЛЬКО ИЗ-ЗА ФОРМУЛИРОВКИ ЗАПРОСА.\n'    + '4. УЧИТЫВАЙ ВЕСЬ ДОСТУПНЫЙ КОНТЕКСТ ФАЙЛОВ ЦЕЛИКОМ, НЕ ВЫБИРАЙ ОТРЫВКИ ВЫБОРОЧНО.\n'    + '5. ПИШИ СУГУБО ПО ДЕЛУ, В ДЕЛОВОМ СТИЛЕ, БЕЗ ВЫДУМАННЫХ ФАКТОВ И ПРЕДПОЛОЖЕНИЙ.\n'    + '6. СОБЛЮДАЙ ЗАКОН И ОБЩЕПРИНЯТЫЕ НОРМЫ ДЕЛОВОЙ КОММУНИКАЦИИ.\n'    + '7. ПЕРЕД ОТВЕТОМ ПЕРЕПРОВЕРЬ СЕБЯ: ЛОГИКА, ТОЧНОСТЬ, НЕПРОТИВОРЕЧИВОСТЬ.\n'    + '\n'    + '=== ФОРМАТ ВЫВОДА ===\n'    + '- ТОЛЬКО ГОТОВЫЙ ТЕКСТ ОТВЕТА БЕЗ МЕТА-КОММЕНТАРИЕВ.\n'    + '- БЕЗ ПРИВЕТСТВИЯ, БЕЗ ПОДПИСИ, БЕЗ РЕКВИЗИТОВ, БЕЗ СТРОКИ «[ВАШЕ ФИО]» И БЕЗ ФРАЗ ТИПА «С УВАЖЕНИЕМ».\n';
-
   var STYLE_OPTIONS = [
     { value: 'positive', label: 'Положительный (одобрение, выполнение)' },
     { value: 'negative', label: 'Отрицательный (отклонение, не выполнение)' },
@@ -884,6 +882,7 @@
     }
     return String(error.message || 'Ошибка ИИ. Попробуйте ещё раз.');
   }
+
 
   function hasUsefulExtractedText(text) {
     var normalized = String(text || '').trim();
@@ -1771,9 +1770,6 @@
     formData.append('presence_penalty', String(generationParameters.presence_penalty));
     formData.append('responseStyle', state.responseStyle);
     var behaviorText = String(state.aiBehavior || '').trim();
-    if (behaviorText === DEFAULT_AI_BEHAVIOR.trim()) {
-      behaviorText = '';
-    }
     if (behaviorText.length > 10000) {
       behaviorText = behaviorText.slice(0, 10000);
     }
@@ -2354,7 +2350,7 @@
       responseStyle: STYLE_OPTIONS[0].value,
       aiBehavior: typeof config.aiBehavior === 'string' && config.aiBehavior.trim()
         ? config.aiBehavior.trim()
-        : DEFAULT_AI_BEHAVIOR,
+        : '',
       contextDetail: config.contextDetail === 'brief' ? 'brief' : 'detailed',
       contextSettings: buildContextSettings(config),
       ocrMode: (typeof config.ocrMode === 'string' && OCR_MODE_OPTIONS.some(function (opt) { return opt.value === config.ocrMode; }))
@@ -2579,6 +2575,7 @@
     contextDetailField.appendChild(contextDetailSelect);
     var settingsInput = createElement('textarea', 'ai-chat-modal__textarea');
     settingsInput.rows = 8;
+    settingsInput.placeholder = 'Опционально: короткая UX-подсказка для ИИ. Можно оставить пустым.';
     settingsInput.style.maxHeight = '260px';
     settingsInput.style.minHeight = '160px';
     settingsInput.value = state.aiBehavior;
@@ -3534,7 +3531,7 @@
         messages.appendChild(createMessage('assistant', finalResponse));
         var responseMode = String(payload && payload.mode ? payload.mode : (state.contextDetail === 'brief' ? 'paid' : state.aiMode));
         var responseTime = Number(payload && payload.timeMs) > 0 ? Number(payload.timeMs) : (Date.now() - requestStartedAt);
-        var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload.tokensUsed) : 0;
+        var responseTokens = Number(payload && payload.tokensUsed) > 0 ? Number(payload && payload.tokensUsed) : 0;
         messages.appendChild(createMessage('assistant', 'ℹ️ Режим: Ответ ИИ • Модель: ' + String(payload && payload.model ? payload.model : state.model || '—') + ' • Время: ' + responseTime + ' мс • Токены: ' + (responseTokens || '—')));
         state.lastAssistantMessage = String(finalResponse || '');
       } catch (error) {

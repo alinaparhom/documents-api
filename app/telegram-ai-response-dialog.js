@@ -61,6 +61,7 @@
     return String(value || '').trim();
   }
 
+
   function isIosClient() {
     try {
       const ua = String((globalScope && globalScope.navigator && globalScope.navigator.userAgent) || '');
