@@ -29,7 +29,7 @@ const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
 const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
 const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 3 * 1000;
 const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 1500;
-const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 2500;
+const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 1200;
 const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
 const ENABLE_TASK_PDF_WARMUP = true;
 const pdfFetchTimeoutUrls = new Set();
@@ -17798,6 +17798,16 @@ async function resolveTaskForAiDialog(task, options = {}) {
     return task;
   }
 
+  const localFiles = Array.isArray(task.files) ? task.files : [];
+  if (localFiles.length) {
+    return {
+      ...task,
+      files: localFiles,
+      responses: Array.isArray(task.responses) ? task.responses : [],
+      __aiSnapshotStatus: 'local_fast',
+    };
+  }
+
   const startedAt = Date.now();
   const timeoutMsRaw = Number(options && options.timeoutMs);
   const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
@@ -18582,9 +18592,6 @@ function createResponseUploadControls(task, entry, setStatus) {
       const taskForDialog = await resolveTaskForAiDialog(task, {
         timeoutMs: AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS,
       });
-      if (typeof setStatus === 'function' && taskForDialog && taskForDialog.__aiSnapshotStatus !== 'ok' && taskForDialog.__aiSnapshotStatus !== 'legacy') {
-        setStatus('info', 'Открываю по локальным данным, часть файлов может появиться позже.');
-      }
       const files = Array.isArray(taskForDialog && taskForDialog.files) ? taskForDialog.files : [];
       if (!files.length) {
         if (typeof setStatus === 'function') {
