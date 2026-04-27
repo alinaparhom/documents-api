@@ -12403,13 +12403,19 @@
       .then(handleResponse)
       .then(function(data) {
         var normalized = normalizeColumnOrder(data && data.columns);
+        var defaults = getDefaultColumnOrder();
+        var localDiffersFromDefault = Boolean(localOrder && localOrder.length && !columnOrdersEqual(localOrder, defaults));
+        var serverIsDefault = columnOrdersEqual(normalized, defaults);
+        var effectiveOrder = localDiffersFromDefault && serverIsDefault
+          ? localOrder
+          : normalized;
         state.columnOrderProfile = data && data.profile ? String(data.profile) : state.columnOrderProfile;
         state.columnOrderOrganization = organization;
         state.columnOrderProfileKey = getAccessProfileKey(state.access);
         state.columnOrderLoaded = true;
-        applyColumnOrder(normalized, { render: true });
-        saveColumnOrderToLocalStorage(normalized);
-        return normalized;
+        applyColumnOrder(effectiveOrder, { render: true });
+        saveColumnOrderToLocalStorage(effectiveOrder);
+        return effectiveOrder;
       })
       .catch(function(error) {
         state.columnOrderLoaded = false;
@@ -12425,6 +12431,20 @@
       });
     state.columnOrderLoadingPromise = promise;
     return promise;
+  }
+
+  function columnOrdersEqual(a, b) {
+    var left = normalizeColumnOrder(a);
+    var right = normalizeColumnOrder(b);
+    if (left.length !== right.length) {
+      return false;
+    }
+    for (var i = 0; i < left.length; i += 1) {
+      if (left[i] !== right[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function saveColumnOrder(order) {
