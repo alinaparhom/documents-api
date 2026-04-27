@@ -13,8 +13,9 @@
   const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
-  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь деловой ответ на претензию по этому документу';
+  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь деловой ответ на входящее письмо/обращение по этим документам';
   const VISION_BATCH_SIZE = 5;
+  const VISION_BATCH_SIZE_MOBILE = 1;
   const MAX_FILES_PER_REQUEST = 5;
   const MAX_FILES_PER_REQUEST_MOBILE = 2;
   const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
@@ -22,6 +23,7 @@
   const VISION_CONCURRENCY_DEFAULT = 3;
   const VISION_CONCURRENCY_MOBILE = 1;
   const AI_PDF_PAGE_LIMIT = 5;
+  const AI_PDF_PAGE_LIMIT_MOBILE = 3;
   const PDF_RENDER_SCALE = 1.25;
   const PDF_JPEG_QUALITY = 0.82;
   const PDF_WORKER_CANDIDATES = [
@@ -106,6 +108,8 @@
       maxConcurrency: fastMobile ? VISION_CONCURRENCY_MOBILE : VISION_CONCURRENCY_DEFAULT,
       maxFilesPerRequest: fastMobile ? MAX_FILES_PER_REQUEST_MOBILE : MAX_FILES_PER_REQUEST,
       maxFileSizeBytes: fastMobile ? MAX_FILE_SIZE_BYTES_MOBILE : MAX_FILE_SIZE_BYTES,
+      visionBatchSize: fastMobile ? VISION_BATCH_SIZE_MOBILE : VISION_BATCH_SIZE,
+      pdfPageLimit: fastMobile ? AI_PDF_PAGE_LIMIT_MOBILE : AI_PDF_PAGE_LIMIT,
     };
   }
 
@@ -646,7 +650,7 @@
     throw lastError || new Error('Не удалось инициализировать PDF worker.');
   }
 
-  async function buildVisionPayloadFromFile(file, onProgress) {
+  async function buildVisionPayloadFromFile(file, onProgress, options = {}) {
     if (!(file instanceof File)) {
       throw new Error('Файл не выбран.');
     }
@@ -676,7 +680,8 @@
       const pdf = await openPdfDocumentWithWorkerFallback(pdfjsLib, bytes);
       const totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
-      const pages = Array.from({ length: Math.min(totalPages, AI_PDF_PAGE_LIMIT) }, (_, i) => i + 1);
+      const pageLimit = Math.max(1, Number(options.pdfPageLimit) || AI_PDF_PAGE_LIMIT);
+      const pages = Array.from({ length: Math.min(totalPages, pageLimit) }, (_, i) => i + 1);
       const pagesLabel = `${pages.length}/${totalPages}`;
       const images = [];
       for (let index = 0; index < pages.length; index += 1) {
@@ -699,7 +704,7 @@
         const dataUrl = await readBlobAsDataUrl(blob);
         images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
       }
-      return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images, totalPages, selectedPages: pages };
+      return { kind: 'multimodal', messageText: `Проанализируй первые ${pages.length} страниц(ы) этого PDF`, images, totalPages, selectedPages: pages };
     }
 
     if (isText) {
@@ -782,7 +787,7 @@
         try {
           onStatus('Подготовка', 'prepare');
           const prepared = await withTimeout(
-            buildVisionPayloadFromFile(sourceFile, () => onStatus('Подготовка', 'prepare')),
+            buildVisionPayloadFromFile(sourceFile, () => onStatus('Подготовка', 'prepare'), { pdfPageLimit: profile.pdfPageLimit }),
             profile.prepareTimeoutMs,
             'Превышено время обработки файла.',
           );
@@ -850,7 +855,7 @@
       throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать текстовые файлы через summary pipeline.');
     }
 
-    const batches = chunkItems(images, VISION_BATCH_SIZE);
+    const batches = chunkItems(images, Math.max(1, Number(profile.visionBatchSize) || VISION_BATCH_SIZE));
     const partialAnswers = [];
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
@@ -1145,6 +1150,11 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+      .tg-ai-chat--lite{background:rgba(15,23,42,.42)!important;backdrop-filter:none!important;animation:none!important}
+      .tg-ai-chat--lite .tg-ai-chat__card,.tg-ai-chat--lite .tg-ai-template-preview__card,.tg-ai-chat--lite .tg-ai-generated-preview__card,.tg-ai-chat--lite .tg-ai-template-editor__card{background:#fff!important;box-shadow:0 10px 24px rgba(15,23,42,.14)!important;animation:none!important}
+      .tg-ai-chat--lite .tg-ai-chat__mode-switch,.tg-ai-chat--lite .tg-ai-chat__loading,.tg-ai-chat--lite .tg-ai-generated-preview__menu,.tg-ai-chat--lite .tg-ai-generated-preview__loading-card{backdrop-filter:none!important}
+      .tg-ai-chat--lite .tg-ai-chat__send,.tg-ai-chat--lite .tg-ai-generated-preview__btn--primary,.tg-ai-chat--lite .tg-ai-template-editor__btn--primary{background:#2563eb!important;box-shadow:none!important}
+      .tg-ai-chat--lite .tg-ai-chat__spinner,.tg-ai-chat--lite .tg-ai-chat__dots span,.tg-ai-chat--lite .tg-ai-generated-preview__bar::after{animation:none!important}
       @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
@@ -1863,9 +1873,10 @@
 
     const task = context && context.task ? context.task : {};
     const files = Array.isArray(task && task.files) ? task.files : [];
+    const clientProfile = getClientVisionProfile();
 
     const overlay = document.createElement('div');
-    overlay.className = 'tg-ai-chat';
+    overlay.className = clientProfile.isFastMobile ? 'tg-ai-chat tg-ai-chat--lite' : 'tg-ai-chat';
     overlay.innerHTML = `
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">

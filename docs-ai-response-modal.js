@@ -29,7 +29,7 @@
   var MAX_TEMPLATE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
   var pdfJsReadyPromise = null;
   var mammothReadyPromise = null;
-  var DEFAULT_AI_BEHAVIOR = 'ТЫ — ИИ В РЕЖИМЕ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».\n'    + '\n'    + 'ЦЕЛЬ: ДАТЬ ГОТОВЫЙ ДЕЛОВОЙ ТЕКСТ ОТВЕТА ДЛЯ ВСТАВКИ В ДОКУМЕНТ.\n'    + '\n'    + '=== ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ===\n'    + '1. СЧИТАЙ, ЧТО ТЫ СОТРУДНИК ОРГАНИЗАЦИИ, КОТОРОЙ ПРИШЁЛ ЭТОТ ФАЙЛ ИЛИ НАБОР ФАЙЛОВ.\n'    + '2. УЧИТЫВАЙ ВЕСЬ ДОСТУПНЫЙ КОНТЕКСТ ФАЙЛОВ ЦЕЛИКОМ, НЕ ВЫБИРАЙ ОТРЫВКИ ВЫБОРОЧНО.\n'    + '3. ПИШИ СУГУБО ПО ДЕЛУ, В ДЕЛОВОМ СТИЛЕ, БЕЗ ВЫДУМАННЫХ ФАКТОВ И ПРЕДПОЛОЖЕНИЙ.\n'    + '4. СОБЛЮДАЙ ЗАКОН И ОБЩЕПРИНЯТЫЕ НОРМЫ ДЕЛОВОЙ КОММУНИКАЦИИ.\n'    + '5. ПЕРЕД ОТВЕТОМ ПЕРЕПРОВЕРЬ СЕБЯ: ЛОГИКА, ТОЧНОСТЬ, НЕПРОТИВОРЕЧИВОСТЬ.\n'    + '6. ЕСЛИ В КОНТЕКСТЕ НЕТ НУЖНОЙ КОМПЕТЕНЦИИ ИЛИ ДАННЫХ — ПРЯМО НАПИШИ ОБ ЭТОМ В ОТВЕТЕ.\n'    + '\n'    + '=== ФОРМАТ ВЫВОДА ===\n'    + '- ТОЛЬКО ГОТОВЫЙ ТЕКСТ ОТВЕТА БЕЗ МЕТА-КОММЕНТАРИЕВ.\n'    + '- БЕЗ ПРИВЕТСТВИЯ, БЕЗ ПОДПИСИ, БЕЗ РЕКВИЗИТОВ, БЕЗ СТРОКИ «[ВАШЕ ФИО]» И БЕЗ ФРАЗ ТИПА «С УВАЖЕНИЕМ».\n';
+  var DEFAULT_AI_BEHAVIOR = 'Режим: деловой ответ от лица организации.\n'    + 'Определи тип каждого документа, не считай всё претензией автоматически и дай один практичный итог по всем файлам.\n'    + 'Пиши только готовый текст ответа без приветствия, подписи и реквизитов.';
 
   var STYLE_OPTIONS = [
     { value: 'positive', label: 'Положительный (одобрение, выполнение)' },
@@ -1198,6 +1198,7 @@
       '.ai-chat-modal__ocr-hint{margin-top:4px;padding:6px 8px;border-radius:8px;background:rgba(239,246,255,.8);border:1px solid rgba(147,197,253,.55);font-size:11px;color:#1e3a8a;line-height:1.35;}' +
       '.ai-chat-modal__export-area--highlight{box-shadow:0 0 0 2px rgba(37,99,235,.18) inset;border-radius:10px;transition:box-shadow .2s ease;}' +
       '@keyframes ai-chat-spin{to{transform:rotate(360deg);}}' +
+      '@media (max-width:860px), (prefers-reduced-motion:reduce){.ai-chat-modal{background:rgba(15,23,42,.45);backdrop-filter:none;}.ai-chat-modal__panel{background:#fff;box-shadow:0 10px 24px rgba(15,23,42,.14);backdrop-filter:none;}.ai-chat-modal__context,.ai-chat-modal__settings,.ai-chat-editor{backdrop-filter:none;}.ai-chat-modal__send,.ai-chat-editor__btn--primary{background:#2563eb;box-shadow:none;}.ai-chat-spinner{animation:none;}}' +
       '@media (max-width:860px){.ai-chat-modal{padding:6px;}.ai-chat-modal__panel{width:100%;height:100%;border-radius:12px;}.ai-chat-modal__settings{grid-template-columns:1fr;}.ai-chat-modal__top-bar{grid-template-columns:1fr;}.ai-chat-msg{max-width:92%;}.ai-chat-modal__composer{flex-wrap:wrap;}.ai-chat-modal__send{flex:1 1 47%;}.ai-chat-modal__export-btn{flex:1 1 48%;}.ai-chat-editor__toolbar{position:sticky;top:0;z-index:2;}.ai-chat-editor__select{flex:1;}.ai-chat-editor__surface{min-height:220px;font-size:16px;}.ai-chat-template-surface{min-height:220px;}}';
     document.head.appendChild(style);
   }
