@@ -1021,7 +1021,11 @@
       .tg-ai-chat__messages::-webkit-scrollbar-thumb,.tg-ai-chat__files-list::-webkit-scrollbar-thumb,.tg-ai-template-editor__body::-webkit-scrollbar-thumb,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:10px}
       .tg-ai-chat__messages::-webkit-scrollbar-thumb:hover,.tg-ai-chat__files-list::-webkit-scrollbar-thumb:hover,.tg-ai-template-editor__body::-webkit-scrollbar-thumb:hover,.tg-ai-generated-preview__viewport::-webkit-scrollbar-thumb:hover{background:#64748b}
       .tg-ai-chat{position:fixed;inset:0;z-index:3700;display:flex;align-items:flex-end;justify-content:center;padding:10px;background:rgba(15,23,42,.38);backdrop-filter:blur(10px);animation:tg-fade-in .25s ease}
+      .tg-ai-chat[data-opening="true"]{opacity:0;backdrop-filter:blur(2px)}
+      .tg-ai-chat[data-opening="false"]{opacity:1;backdrop-filter:blur(10px);transition:opacity .28s ease,backdrop-filter .28s ease}
       .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:var(--tg-bg-gradient);box-shadow:0 20px 50px rgba(15,23,42,.22);animation:tg-scale-in .2s cubic-bezier(.2,.9,.4,1.1)}
+      .tg-ai-chat[data-opening="true"] .tg-ai-chat__card{opacity:0;transform:translateY(20px) scale(.975)}
+      .tg-ai-chat[data-opening="false"] .tg-ai-chat__card{opacity:1;transform:translateY(0) scale(1);transition:transform .34s cubic-bezier(.2,.8,.2,1),opacity .3s ease}
       .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
       .tg-ai-chat__head-main{display:grid;gap:7px;min-width:0}
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
@@ -1090,8 +1094,9 @@
       .tg-ai-generated-preview__zoom{display:inline-flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:rgba(255,255,255,.95)}
       .tg-ai-generated-preview__zoom-btn{border:none;background:rgba(241,245,249,.9);color:#0f172a;border-radius:8px;min-width:28px;height:28px;font-weight:800}
       .tg-ai-generated-preview__zoom-value{font-size:12px;min-width:42px;text-align:center;color:#334155;font-weight:700}
-      .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
+      .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon,.tg-ai-generated-preview__share{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
+      .tg-ai-generated-preview__share{min-width:36px;padding:0 10px;font-size:16px;line-height:1}
       .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
       .tg-ai-generated-preview__menu[hidden]{display:none}
       .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
@@ -1414,6 +1419,52 @@
     throw new Error('Не удалось открыть Telegram для отправки.');
   }
 
+  async function shareGeneratedPreviewEverywhere(previewPayload) {
+    const previewUrlRaw = normalize(previewPayload && previewPayload.previewUrl);
+    const previewUrl = previewUrlRaw ? toAbsoluteUrl(previewUrlRaw) : '';
+    const generatedFileName = normalize(previewPayload && previewPayload.fileName) || 'template-answer.docx';
+    const shareTitle = 'Документ из предварительного просмотра';
+    const shareText = 'Отправляю документ из «Ответ с помощью ИИ».';
+
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      const blob = (previewPayload && previewPayload.blob instanceof Blob)
+        ? previewPayload.blob
+        : null;
+      if (blob) {
+        try {
+          const file = new File([blob], generatedFileName, { type: blob.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+          if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+            await navigator.share({ title: shareTitle, text: shareText, files: [file] });
+            return 'shared_file';
+          }
+        } catch (_) {}
+      }
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          ...(previewUrl ? { url: previewUrl } : {}),
+        });
+        return 'shared_link';
+      } catch (_) {}
+    }
+
+    const shareFallbackText = previewUrl || shareText;
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && shareFallbackText) {
+      try {
+        await navigator.clipboard.writeText(shareFallbackText);
+        return 'copied';
+      } catch (_) {}
+    }
+
+    if (previewUrl && typeof window !== 'undefined' && typeof window.open === 'function') {
+      const opened = window.open(previewUrl, '_blank', 'noopener');
+      if (opened) return 'opened_link';
+    }
+
+    throw new Error('Не удалось поделиться документом на этом устройстве.');
+  }
+
   async function ensureDocxPreviewLibrariesLoaded() {
     await loadBriefScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js', () => Boolean(window.JSZip && typeof window.JSZip.loadAsync === 'function'));
     await loadBriefScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js', () => Boolean((window.docx && window.docx.renderAsync) || (window.docxPreview && window.docxPreview.renderAsync)));
@@ -1518,6 +1569,7 @@
             <div class="tg-ai-generated-preview__hint">Просмотр через Office Viewer</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
+            <button type="button" class="tg-ai-generated-preview__share" data-preview-share title="Поделиться" aria-label="Поделиться">↗</button>
             <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
             <button type="button" class="tg-ai-generated-preview__close-icon" data-preview-close-icon aria-label="Закрыть">×</button>
           </div>
@@ -1549,6 +1601,7 @@
     const attachBtn = overlay.querySelector('[data-preview-attach]');
     const menuNode = overlay.querySelector('[data-preview-menu]');
     const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
+    const previewShareBtn = overlay.querySelector('[data-preview-share]');
     const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const previewUrl = normalize(previewPayload.previewUrl);
@@ -1594,6 +1647,22 @@
           downloadBtn.disabled = false;
           downloadBtn.textContent = 'Скачать';
         }
+      }
+    });
+    previewShareBtn?.addEventListener('click', async () => {
+      const prevText = previewShareBtn.textContent;
+      previewShareBtn.disabled = true;
+      previewShareBtn.textContent = '…';
+      try {
+        const mode = await shareGeneratedPreviewEverywhere(previewPayload);
+        statusNode.textContent = mode === 'copied'
+          ? 'Ссылка скопирована. Вставьте её в любое приложение.'
+          : 'Окно «Поделиться» открыто.';
+      } catch (error) {
+        statusNode.textContent = (error && error.message) || 'Не удалось открыть «Поделиться».';
+      } finally {
+        previewShareBtn.disabled = false;
+        previewShareBtn.textContent = prevText;
       }
     });
     if (attachBtn) {
@@ -1916,6 +1985,7 @@
 
     const overlay = document.createElement('div');
     overlay.className = 'tg-ai-chat';
+    overlay.dataset.opening = 'true';
     overlay.innerHTML = `
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">
@@ -1958,6 +2028,9 @@
       </div>
     `;
     document.body.appendChild(overlay);
+    requestAnimationFrame(() => {
+      overlay.dataset.opening = 'false';
+    });
 
     const selected = new Set();
     const fileWarmupState = new Map();
