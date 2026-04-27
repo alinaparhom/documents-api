@@ -13,7 +13,7 @@
   const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
-  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь деловой ответ на претензию по этому документу';
+  const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь деловой ответ на входящее письмо/обращение по этому документу';
   const VISION_BATCH_SIZE = 5;
   const MAX_FILES_PER_REQUEST = 5;
   const MAX_FILES_PER_REQUEST_MOBILE = 2;
