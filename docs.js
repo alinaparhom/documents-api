@@ -603,6 +603,8 @@
     actionToast: null,
     actionToastTimer: 0,
     searchButtons: {},
+    searchFields: {},
+    searchInputs: {},
     sortButtons: {},
     headerCells: {},
     groupCells: {}
@@ -1088,6 +1090,8 @@
     return { key: column.key, label: column.label };
   });
   var searchEventsBound = false;
+  var searchDebounceTimers = {};
+  var SEARCH_DEBOUNCE_MS = 300;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -2961,7 +2965,7 @@
       'right:0;' +
       'user-select:none;' +
       'border-radius:10px;' +
-      'transition:background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;' +
+      'transition:background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;' +
       'display:inline-flex;' +
       'align-items:center;' +
       'justify-content:center;' +
@@ -3032,11 +3036,44 @@
       'margin-left:0;' +
       'flex:0 0 auto;' +
       '}' +
+      '.documents-header-search{' +
+      'display:none;' +
+      'margin-top:6px;' +
+      '}' +
+      '.documents-header-search--visible{' +
+      'display:block;' +
+      '}' +
+      '.documents-header-search__input{' +
+      'width:100%;' +
+      'height:34px;' +
+      'padding:8px 10px;' +
+      'border-radius:10px;' +
+      'border:1px solid rgba(148,163,184,0.42);' +
+      'background:rgba(255,255,255,0.84);' +
+      'font-size:13px;' +
+      'color:#0f172a;' +
+      'transition:border-color 0.2s ease, box-shadow 0.2s ease;' +
+      '}' +
+      '.documents-header-search__input:focus{' +
+      'outline:none;' +
+      'border-color:#2563eb;' +
+      'box-shadow:0 0 0 3px rgba(37,99,235,0.14);' +
+      '}' +
+      '.documents-column-drag-handle{' +
+      'opacity:0;' +
+      'transition:opacity 0.16s ease, background-color 0.16s ease;' +
+      '}' +
+      '.documents-table__header-cell:hover .documents-column-drag-handle,' +
+      '.documents-table__header-cell:focus-within .documents-column-drag-handle,' +
+      '.documents-column-drag-handle.is-dragging{' +
+      'opacity:1;' +
+      '}' +
       '@media (max-width: 768px){' +
       '.documents-header-content{min-height:48px;}' +
       '.documents-header-sort-button{padding-top:18px;padding-right:38px;}' +
       '.documents-table__header-cell--searchable{width:32px;height:32px;min-width:32px;top:0;right:0;}' +
-      '.documents-column-drag-handle{width:26px;min-width:26px;height:26px;right:0;bottom:0;}' +
+      '.documents-column-drag-handle{width:26px;min-width:26px;height:26px;right:0;bottom:0;opacity:1;}' +
+      '.documents-header-search__input{height:36px;font-size:14px;}' +
       '}' +
       '.documents-action-toast{' +
       'position:fixed;' +
@@ -3379,71 +3416,11 @@
   }
 
   function isPopoverVisible() {
-    return !!(elements.searchPopover && elements.searchPopover.classList.contains('documents-search-popover--visible'));
+    return !!state.activeSearchColumn;
   }
 
-  function ensureSearchPopover(container) {
+  function ensureSearchPopover() {
     ensureSearchStyles();
-    if (elements.searchPopover || !container) {
-      return;
-    }
-    var popover = createElement('div', 'documents-search-popover documents-search-popover--hidden');
-    var content = createElement('div', 'documents-search-popover__content');
-    var label = createElement('div', 'documents-search-popover__label', 'Поиск');
-    var input = document.createElement('input');
-    input.type = 'search';
-    input.className = 'documents-search-popover__input';
-    input.placeholder = 'Введите запрос';
-    input.setAttribute('autocapitalize', 'off');
-    input.setAttribute('autocomplete', 'off');
-    input.setAttribute('spellcheck', 'false');
-
-    var actions = createElement('div', 'documents-search-popover__actions');
-    var applyButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--apply', 'Искать');
-    applyButton.type = 'button';
-    var resetButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--reset', 'Сброс');
-    resetButton.type = 'button';
-
-    actions.appendChild(applyButton);
-    actions.appendChild(resetButton);
-
-    content.appendChild(label);
-    content.appendChild(input);
-    content.appendChild(actions);
-    popover.appendChild(content);
-
-    container.appendChild(popover);
-
-    elements.searchPopover = popover;
-    elements.searchLabel = label;
-    elements.searchInput = input;
-    elements.searchApply = applyButton;
-    elements.searchReset = resetButton;
-
-    popover.setAttribute('aria-hidden', 'true');
-    popover.setAttribute('role', 'dialog');
-    popover.setAttribute('aria-modal', 'false');
-
-    applyButton.addEventListener('click', function() {
-      applyPopoverFilter();
-    });
-    resetButton.addEventListener('click', function() {
-      resetPopoverFilter();
-    });
-    input.addEventListener('keydown', function(event) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        applyPopoverFilter();
-      } else if (event.key === 'Escape') {
-        handleSearchEscape(event);
-      }
-    });
-
-    popover.addEventListener('keydown', function(event) {
-      if (event.key === 'Escape') {
-        handleSearchEscape(event);
-      }
-    });
   }
 
   function ensureActionToast() {
@@ -3490,90 +3467,62 @@
     searchEventsBound = true;
   }
 
-  function positionSearchPopover(anchor) {
-    if (!elements.searchPopover || !anchor) {
+  function positionSearchPopover() {
+    return;
+  }
+
+  function scheduleColumnFilter(columnKey, value) {
+    if (!columnKey) {
       return;
     }
-    var rect = anchor.getBoundingClientRect();
-    var popover = elements.searchPopover;
-    var width = popover.offsetWidth || 300;
-    var height = popover.offsetHeight || 160;
-    var top = rect.bottom + 8;
-    var left = rect.left + rect.width / 2 - width / 2;
-    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || width;
-    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || height;
-
-    if (left + width > viewportWidth - 16) {
-      left = viewportWidth - width - 16;
+    if (searchDebounceTimers[columnKey]) {
+      clearTimeout(searchDebounceTimers[columnKey]);
     }
-    if (left < 16) {
-      left = 16;
-    }
-    if (top + height > viewportHeight - 16) {
-      top = rect.top - height - 8;
-    }
-    if (top < 16) {
-      top = 16;
-    }
-
-    popover.style.left = left + 'px';
-    popover.style.top = top + 'px';
+    searchDebounceTimers[columnKey] = setTimeout(function() {
+      applyFilter(columnKey, value);
+      searchDebounceTimers[columnKey] = 0;
+    }, SEARCH_DEBOUNCE_MS);
   }
 
   function openSearchPopover(columnKey, button) {
     if (!columnKey || !button) {
       return;
     }
-    ensureSearchPopover(document.body);
+    ensureSearchPopover();
     bindSearchEvents();
+
+    var field = elements.searchFields && elements.searchFields[columnKey] ? elements.searchFields[columnKey] : null;
+    var input = elements.searchInputs && elements.searchInputs[columnKey] ? elements.searchInputs[columnKey] : null;
+    var alreadyOpen = state.activeSearchColumn === columnKey && field && field.classList.contains('documents-header-search--visible');
+
+    closeSearchPopover();
+    if (alreadyOpen || !field || !input) {
+      return;
+    }
 
     state.activeSearchColumn = columnKey;
     state.activeSearchButton = button;
-
-    var popover = elements.searchPopover;
     var definition = getColumnDefinition(columnKey);
-    if (popover) {
-      popover.dataset.columnKey = columnKey;
-      popover.classList.remove('documents-search-popover--hidden');
-      popover.classList.add('documents-search-popover--visible');
-      popover.setAttribute('aria-hidden', 'false');
-    }
-    if (elements.searchLabel) {
-      elements.searchLabel.textContent = definition ? 'Поиск: ' + definition.label : 'Поиск';
-    }
+    field.classList.add('documents-header-search--visible');
     if (definition && definition.label) {
       showActionToast('Открыт фильтр: «' + definition.label + '».');
     }
-    if (elements.searchInput) {
-      elements.searchInput.placeholder = definition && definition.searchHint
-        ? definition.searchHint
-        : 'Введите запрос';
-      elements.searchInput.value = state.filters[columnKey] || '';
-      window.setTimeout(function() {
-        if (elements.searchInput) {
-          elements.searchInput.focus({ preventScroll: true });
-          elements.searchInput.select();
-        }
-      }, 0);
-    }
-
-    if (popover) {
-      positionSearchPopover(button);
-    }
+    input.placeholder = definition && definition.searchHint ? definition.searchHint : 'Поиск...';
+    input.value = state.filters[columnKey] || '';
+    window.setTimeout(function() {
+      if (elements.searchInputs && elements.searchInputs[columnKey]) {
+        elements.searchInputs[columnKey].focus({ preventScroll: true });
+        elements.searchInputs[columnKey].select();
+      }
+    }, 0);
     updateSearchButtonStates();
   }
 
   function closeSearchPopover() {
-    if (!elements.searchPopover) {
-      state.activeSearchColumn = '';
-      state.activeSearchButton = null;
-      updateSearchButtonStates();
-      return;
+    var activeColumn = state.activeSearchColumn;
+    if (activeColumn && elements.searchFields && elements.searchFields[activeColumn]) {
+      elements.searchFields[activeColumn].classList.remove('documents-header-search--visible');
     }
-    elements.searchPopover.classList.remove('documents-search-popover--visible');
-    elements.searchPopover.classList.add('documents-search-popover--hidden');
-    elements.searchPopover.setAttribute('aria-hidden', 'true');
-    elements.searchPopover.dataset.columnKey = '';
     state.activeSearchColumn = '';
     state.activeSearchButton = null;
     updateSearchButtonStates();
@@ -3592,10 +3541,13 @@
     if (!isPopoverVisible()) {
       return;
     }
-    if (elements.searchPopover && elements.searchPopover.contains(event.target)) {
+    if (state.activeSearchButton && state.activeSearchButton.contains(event.target)) {
       return;
     }
-    if (state.activeSearchButton && state.activeSearchButton.contains(event.target)) {
+    var activeInput = state.activeSearchColumn && elements.searchInputs
+      ? elements.searchInputs[state.activeSearchColumn]
+      : null;
+    if (activeInput && activeInput.contains(event.target)) {
       return;
     }
     closeSearchPopover();
@@ -3609,28 +3561,25 @@
   }
 
   function applyPopoverFilter() {
-    if (!elements.searchPopover) {
-      return;
-    }
-    var columnKey = elements.searchPopover.dataset.columnKey || state.activeSearchColumn;
+    var columnKey = state.activeSearchColumn;
     if (!columnKey) {
       closeSearchPopover();
       return;
     }
-    var value = elements.searchInput ? elements.searchInput.value : '';
+    var value = elements.searchInputs && elements.searchInputs[columnKey]
+      ? elements.searchInputs[columnKey].value
+      : '';
     applyFilter(columnKey, value);
-    closeSearchPopover();
   }
 
   function resetPopoverFilter() {
-    if (!elements.searchPopover) {
-      return;
-    }
-    var columnKey = elements.searchPopover.dataset.columnKey || state.activeSearchColumn;
+    var columnKey = state.activeSearchColumn;
     if (columnKey) {
       applyFilter(columnKey, '');
+      if (elements.searchInputs && elements.searchInputs[columnKey]) {
+        elements.searchInputs[columnKey].value = '';
+      }
     }
-    closeSearchPopover();
   }
 
   function handleSearchEscape(event) {
@@ -3645,7 +3594,7 @@
     } else if (typeof event.stopPropagation === 'function') {
       event.stopPropagation();
     }
-    resetPopoverFilter();
+    closeSearchPopover();
   }
 
   function normalizeValueForMatch(value) {
@@ -3965,6 +3914,9 @@
       return;
     }
     delete state.filters[columnKey];
+    if (elements.searchInputs && elements.searchInputs[columnKey]) {
+      elements.searchInputs[columnKey].value = '';
+    }
     state.filterOrder = state.filterOrder.filter(function(key) {
       return key !== columnKey;
     });
@@ -3982,6 +3934,16 @@
     }
     state.filters = {};
     state.filterOrder = [];
+    if (elements.searchInputs) {
+      for (var key in elements.searchInputs) {
+        if (!Object.prototype.hasOwnProperty.call(elements.searchInputs, key)) {
+          continue;
+        }
+        if (elements.searchInputs[key]) {
+          elements.searchInputs[key].value = '';
+        }
+      }
+    }
     state.showUnassignedOnly = false;
     state.showUnviewedOnly = false;
     closeSearchPopover();
@@ -4010,6 +3972,15 @@
         button.classList.add('documents-table__header-cell--active');
       } else {
         button.classList.remove('documents-table__header-cell--active');
+      }
+      button.setAttribute('aria-expanded', isCurrent ? 'true' : 'false');
+      var field = elements.searchFields && elements.searchFields[key] ? elements.searchFields[key] : null;
+      if (field) {
+        field.classList.toggle('documents-header-search--visible', isCurrent);
+      }
+      var cell = elements.headerCells && elements.headerCells[key] ? elements.headerCells[key] : null;
+      if (cell) {
+        cell.classList.toggle('documents-table__header-cell--active', isCurrent || hasFilter);
       }
     }
     updateResponsibleButtonState();
@@ -17015,6 +16986,8 @@
     var headerRow = createElement('tr', 'documents-table__header-row');
     elements.headerRow = headerRow;
     elements.searchButtons = {};
+    elements.searchFields = {};
+    elements.searchInputs = {};
     elements.sortButtons = {};
     elements.headerCells = {};
     getOrderedColumns().forEach(function(column) {
@@ -17042,9 +17015,9 @@
       if (column.searchable) {
         var filterButton = createElement('button', 'documents-table__header-cell--searchable');
         filterButton.type = 'button';
-        filterButton.title = 'Открыть фильтр по колонке «' + column.label + '»';
-        filterButton.setAttribute('aria-label', 'Открыть фильтр по колонке ' + column.label);
-        filterButton.setAttribute('aria-haspopup', 'dialog');
+        filterButton.title = 'Поиск по колонке «' + column.label + '»';
+        filterButton.setAttribute('aria-label', 'Поиск по колонке ' + column.label);
+        filterButton.setAttribute('aria-expanded', 'false');
         filterButton.innerHTML = '<svg class="documents-header-filter-icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"></circle><path d="M16 16L20.2 20.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg>';
         filterButton.addEventListener('click', function(event) {
           event.preventDefault();
@@ -17065,6 +17038,43 @@
       });
       headerControls.appendChild(dragHandle);
       headerContent.appendChild(headerControls);
+      if (column.searchable) {
+        var searchField = createElement('div', 'documents-header-search');
+        var searchInput = document.createElement('input');
+        searchInput.type = 'search';
+        searchInput.className = 'documents-header-search__input';
+        searchInput.placeholder = column.searchHint || 'Поиск...';
+        searchInput.value = state.filters[column.key] || '';
+        searchInput.setAttribute('autocapitalize', 'off');
+        searchInput.setAttribute('autocomplete', 'off');
+        searchInput.setAttribute('spellcheck', 'false');
+        searchInput.addEventListener('click', function(event) {
+          event.stopPropagation();
+        });
+        searchInput.addEventListener('input', function(event) {
+          var target = event.target;
+          var targetColumnKey = target && target.dataset ? target.dataset.columnKey : '';
+          scheduleColumnFilter(targetColumnKey, target ? target.value : '');
+        });
+        searchInput.addEventListener('keydown', function(event) {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            var target = event.target;
+            var targetColumnKey = target && target.dataset ? target.dataset.columnKey : '';
+            applyFilter(targetColumnKey, target ? target.value : '');
+          } else if (event.key === 'Escape') {
+            if (typeof event.preventDefault === 'function') {
+              event.preventDefault();
+            }
+            closeSearchPopover();
+          }
+        });
+        searchInput.dataset.columnKey = column.key;
+        searchField.appendChild(searchInput);
+        headerContent.appendChild(searchField);
+        elements.searchFields[column.key] = searchField;
+        elements.searchInputs[column.key] = searchInput;
+      }
       setElementColumnWidth(headerCell, getEffectiveColumnWidth(column.key));
       headerRow.appendChild(headerCell);
     });
