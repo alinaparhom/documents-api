@@ -22,7 +22,7 @@ let aiDialogLoader = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
-const TASK_LIST_MODE_OPTIONS = ['default', 'informative'];
+const TASK_LIST_MODE_OPTIONS = ['default'];
 const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
@@ -3105,7 +3105,7 @@ function writeTaskListModePreference(mode) {
 
 function applyTaskListMode() {
   const mode = normalizeTaskListMode(state.taskListMode);
-  setClass(document.body, 'appdosc--list-mode-informative', mode === 'informative');
+  setClass(document.body, 'appdosc--list-mode-informative', false);
   document.documentElement.setAttribute('data-task-list-mode', mode);
 }
 
