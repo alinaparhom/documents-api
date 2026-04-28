@@ -2915,9 +2915,9 @@
       '}' +
       '.documents-header-content{' +
       'display:flex;' +
-      'justify-content:space-between;' +
-      'align-items:flex-start;' +
-      'gap:8px;' +
+      'flex-direction:column;' +
+      'align-items:stretch;' +
+      'gap:6px;' +
       'width:100%;' +
       'min-height:44px;' +
       'padding:4px 0;' +
@@ -2930,9 +2930,12 @@
       'flex:0 0 auto;' +
       'display:flex;' +
       'flex-direction:row;' +
-      'align-items:flex-start;' +
+      'align-items:center;' +
       'justify-content:flex-end;' +
       'gap:6px;' +
+      'opacity:0;' +
+      'pointer-events:none;' +
+      'transition:opacity 0.16s ease;' +
       '}' +
       '.documents-header-sort-button{' +
       'display:inline-flex;' +
@@ -3024,7 +3027,7 @@
       '.documents-header-controls{' +
       'display:flex;' +
       'flex-direction:row;' +
-      'align-items:flex-start;' +
+      'align-items:center;' +
       'justify-content:flex-end;' +
       'gap:6px;' +
       '}' +
@@ -3078,16 +3081,26 @@
       'opacity:0;' +
       'transition:opacity 0.16s ease, background-color 0.16s ease;' +
       '}' +
+      '.documents-table__header-cell:hover .documents-header-actions,' +
+      '.documents-table__header-cell:focus-within .documents-header-actions,' +
+      '.documents-header-actions:focus-within{' +
+      'opacity:1;' +
+      'pointer-events:auto;' +
+      '}' +
       '.documents-table__header-cell:hover .documents-column-drag-handle,' +
       '.documents-table__header-cell:focus-within .documents-column-drag-handle,' +
       '.documents-column-drag-handle.is-dragging{' +
       'opacity:1;' +
       '}' +
+      '@media (hover: none), (pointer: coarse){' +
+      '.documents-header-actions{opacity:1;pointer-events:auto;}' +
+      '.documents-column-drag-handle{opacity:1;}' +
+      '}' +
       '@media (max-width: 768px){' +
-      '.documents-header-content{min-height:48px;}' +
+      '.documents-header-content{min-height:56px;}' +
       '.documents-header-sort-button{padding-top:14px;}' +
       '.documents-table__header-cell--searchable{width:36px;height:36px;min-width:36px;min-height:36px;}' +
-      '.documents-column-drag-handle{width:36px;min-width:36px;height:36px;min-height:36px;opacity:1;}' +
+      '.documents-column-drag-handle{width:36px;min-width:36px;height:36px;min-height:36px;}' +
       '.documents-header-search__input{height:36px;font-size:14px;}' +
       '}' +
       '.documents-action-toast{' +
