@@ -22,7 +22,7 @@ let aiDialogLoader = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
-const TASK_LIST_MODE_OPTIONS = ['default', 'informative'];
+const TASK_LIST_MODE_OPTIONS = ['default'];
 const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
@@ -3105,8 +3105,7 @@ function writeTaskListModePreference(mode) {
 
 function applyTaskListMode() {
   const mode = normalizeTaskListMode(state.taskListMode);
-  const informative = mode === 'informative';
-  setClass(document.body, 'appdosc--list-mode-informative', informative);
+  setClass(document.body, 'appdosc--list-mode-informative', false);
   document.documentElement.setAttribute('data-task-list-mode', mode);
 }
 
@@ -3123,15 +3122,8 @@ function renderTaskListModeToggle() {
 }
 
 function setTaskListMode(mode, options = {}) {
-  const requestedMode = normalizeTaskListMode(mode);
-  const informativeRequested = requestedMode === 'informative';
-  const nextMode = informativeRequested ? 'default' : requestedMode;
+  const nextMode = normalizeTaskListMode(mode);
   const shouldPersist = options && options.persist !== false;
-
-  if (informativeRequested) {
-    setStatus('info', 'Режим «Информативный» сейчас в разработке. Временно используем стандартный список.');
-  }
-
   if (state.taskListMode === nextMode && options && options.forceRender !== true) {
     renderTaskListModeToggle();
     applyTaskListMode();
