@@ -22,6 +22,8 @@ let aiDialogLoader = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
+const TASK_LIST_MODE_OPTIONS = ['default', 'informative'];
+const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -1982,6 +1984,8 @@ function hydrateTelegramFromInitData(initData) {
 const state = {
   themeMode: 'dark',
   persistedThemeMode: '',
+  taskListMode: 'default',
+  persistedTaskListMode: '',
   isThemeSaving: false,
   telegram: {
     id: '',
@@ -2746,6 +2750,7 @@ function initElements() {
   elements.settingsUserName = document.querySelector('[data-settings-user-name]');
   elements.settingsUserRole = document.querySelector('[data-settings-user-role]');
   elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
+  elements.listModeOptionButtons = Array.from(document.querySelectorAll('[data-list-mode-option]'));
   elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
   elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
@@ -2978,8 +2983,11 @@ function initThemeMode() {
   const webApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   const preferred = webApp && webApp.colorScheme ? webApp.colorScheme : getSystemColorScheme();
   state.themeMode = preferred === 'dark' ? 'dark' : 'light';
+  state.taskListMode = readTaskListModePreference();
   bindSystemThemeListener();
   renderThemeToggle();
+  renderTaskListModeToggle();
+  applyTaskListMode();
   applyTheme();
 }
 
@@ -3039,6 +3047,7 @@ async function persistThemeModePreference(mode) {
       body: JSON.stringify({
         organization,
         themeMode: normalizedMode,
+        taskListMode: normalizeTaskListMode(state.taskListMode),
       }),
     });
     if (!response.ok) {
@@ -3064,6 +3073,71 @@ function setThemeMode(mode, options = {}) {
   if (shouldPersist) {
     persistThemeModePreference(nextMode);
   }
+}
+
+function normalizeTaskListMode(value) {
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return TASK_LIST_MODE_OPTIONS.includes(mode) ? mode : 'default';
+}
+
+function readTaskListModePreference() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return 'default';
+  }
+  try {
+    const stored = window.localStorage.getItem(TASK_LIST_MODE_STORAGE_KEY);
+    return normalizeTaskListMode(stored);
+  } catch (_) {
+    return 'default';
+  }
+}
+
+function writeTaskListModePreference(mode) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(TASK_LIST_MODE_STORAGE_KEY, normalizeTaskListMode(mode));
+  } catch (_) {
+    // ignore storage errors
+  }
+}
+
+function applyTaskListMode() {
+  const mode = normalizeTaskListMode(state.taskListMode);
+  const informative = mode === 'informative';
+  setClass(document.body, 'appdosc--list-mode-informative', informative);
+  document.documentElement.setAttribute('data-task-list-mode', mode);
+}
+
+function renderTaskListModeToggle() {
+  if (!Array.isArray(elements.listModeOptionButtons) || !elements.listModeOptionButtons.length) {
+    return;
+  }
+  const mode = normalizeTaskListMode(state.taskListMode);
+  elements.listModeOptionButtons.forEach((button) => {
+    const buttonMode = normalizeTaskListMode(button.dataset.listModeOption);
+    const isActive = buttonMode === mode;
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function setTaskListMode(mode, options = {}) {
+  const nextMode = normalizeTaskListMode(mode);
+  const shouldPersist = options && options.persist !== false;
+  if (state.taskListMode === nextMode && options && options.forceRender !== true) {
+    renderTaskListModeToggle();
+    applyTaskListMode();
+    return;
+  }
+  state.taskListMode = nextMode;
+  renderTaskListModeToggle();
+  applyTaskListMode();
+  writeTaskListModePreference(nextMode);
+  if (shouldPersist) {
+    persistThemeModePreference(state.themeMode);
+  }
+  safeRender('task_list_mode');
 }
 
 function renderThemeToggle() {
@@ -3640,6 +3714,13 @@ function updateStateFromPayload(payload) {
   }
   if (payloadThemeMode) {
     state.persistedThemeMode = payloadThemeMode;
+  }
+
+  const payloadListModeCandidate = normalizeValue(payload && (payload.taskListMode || payload.listMode || payload.tasksListMode));
+  const payloadTaskListMode = payloadListModeCandidate ? normalizeTaskListMode(payloadListModeCandidate) : '';
+  if (payloadTaskListMode) {
+    setTaskListMode(payloadTaskListMode, { persist: false, forceRender: true });
+    state.persistedTaskListMode = payloadTaskListMode;
   }
 
   if (!state.telegram.role) {
@@ -5095,15 +5176,44 @@ function createCard(task, index, anchorRegistry) {
     || resolveCompactText(task.content)
     || resolveCompactText(task.description)
     || 'Не указано';
-
-  setCardField(card, '[data-field="document"]', compactContent, {
-    fallback: 'Не указано',
-    setTitle: false,
-  });
-  setCardField(card, '[data-field="organization"]', task.organization, {
-    fallback: 'Организация не указана',
-  });
   const registrationDate = formatDate(task.registrationDate);
+  const resolveSenderText = (value) => {
+    if (value && typeof value === 'object') {
+      return normalizeValue(
+        value.name
+          || value.fullName
+          || value.fio
+          || value.title
+          || value.email
+      );
+    }
+    return normalizeValue(value);
+  };
+  const senderCompact = resolveSenderText(task.correspondent)
+    || resolveSenderText(task.sender)
+    || resolveSenderText(task.from)
+    || resolveSenderText(resolveExecutor(task))
+    || 'не указан';
+
+  const taskListMode = normalizeTaskListMode(state.taskListMode);
+  if (taskListMode === 'informative') {
+    setCardField(card, '[data-field="document"]', compactContent, {
+      fallback: 'Не указано',
+      setTitle: false,
+    });
+    setCardField(card, '[data-field="organization"]', '', {
+      fallback: '',
+      setTitle: false,
+    });
+  } else {
+    setCardField(card, '[data-field="document"]', compactContent, {
+      fallback: 'Не указано',
+      setTitle: false,
+    });
+    setCardField(card, '[data-field="organization"]', task.organization, {
+      fallback: 'Организация не указана',
+    });
+  }
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
   applyRegistrationDateHeader(card, registrationDate);
@@ -5164,23 +5274,6 @@ function createCard(task, index, anchorRegistry) {
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
   });
-  const resolveSenderText = (value) => {
-    if (value && typeof value === 'object') {
-      return normalizeValue(
-        value.name
-          || value.fullName
-          || value.fio
-          || value.title
-          || value.email
-      );
-    }
-    return normalizeValue(value);
-  };
-  const senderCompact = resolveSenderText(task.correspondent)
-    || resolveSenderText(task.sender)
-    || resolveSenderText(task.from)
-    || resolveSenderText(resolveExecutor(task))
-    || 'не указан';
   setCardField(card, '[data-field="senderCompact"]', senderCompact, {
     fallback: '—',
     setTitle: false,
@@ -7723,7 +7816,7 @@ function buildTasksSignature(visibleTasks) {
       (task.dueDate || '')
     );
   }
-  return parts.join('|');
+  return `${normalizeTaskListMode(state.taskListMode)}|${parts.join('|')}`;
 }
 
 function resolveFilePreviewSource(file) {
@@ -16971,6 +17064,15 @@ function attachEvents() {
       button.addEventListener('click', () => {
         const nextMode = normalizeThemeMode(button.dataset.themeOption);
         setThemeMode(nextMode);
+        closeSettingsSheet();
+      });
+    });
+  }
+  if (Array.isArray(elements.listModeOptionButtons) && elements.listModeOptionButtons.length) {
+    elements.listModeOptionButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const nextMode = normalizeTaskListMode(button.dataset.listModeOption);
+        setTaskListMode(nextMode);
         closeSettingsSheet();
       });
     });
