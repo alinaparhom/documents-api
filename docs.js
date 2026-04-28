@@ -2915,7 +2915,6 @@
       '}' +
       '.documents-header-content{' +
       'display:flex;' +
-      'flex-wrap:wrap;' +
       'justify-content:space-between;' +
       'align-items:flex-start;' +
       'gap:8px;' +
@@ -2930,8 +2929,9 @@
       '.documents-header-actions{' +
       'flex:0 0 auto;' +
       'display:flex;' +
-      'flex-direction:column;' +
-      'align-items:flex-end;' +
+      'flex-direction:row;' +
+      'align-items:flex-start;' +
+      'justify-content:flex-end;' +
       'gap:6px;' +
       '}' +
       '.documents-header-sort-button{' +
@@ -3023,8 +3023,9 @@
       '}' +
       '.documents-header-controls{' +
       'display:flex;' +
-      'flex-direction:column;' +
-      'align-items:flex-end;' +
+      'flex-direction:row;' +
+      'align-items:flex-start;' +
+      'justify-content:flex-end;' +
       'gap:6px;' +
       '}' +
       '.documents-column-drag-handle{' +
@@ -3052,7 +3053,6 @@
       '.documents-header-search{' +
       'display:none;' +
       'width:100%;' +
-      'flex-basis:100%;' +
       'margin-top:6px;' +
       '}' +
       '.documents-header-search--visible{' +
@@ -17088,7 +17088,7 @@
         });
         searchInput.dataset.columnKey = column.key;
         searchField.appendChild(searchInput);
-        headerContent.appendChild(searchField);
+        headerCell.appendChild(searchField);
         elements.searchFields[column.key] = searchField;
         elements.searchInputs[column.key] = searchInput;
       }
