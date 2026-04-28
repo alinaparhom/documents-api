@@ -1095,8 +1095,8 @@
       .tg-ai-generated-preview__zoom-value{font-size:12px;min-width:42px;text-align:center;color:#334155;font-weight:700}
       .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon,.tg-ai-generated-preview__share{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
-      .tg-ai-generated-preview__share{min-width:36px;padding:0 10px;line-height:1;display:inline-flex;align-items:center;justify-content:center}
-      .tg-ai-generated-preview__share-icon{width:18px;height:18px;display:block}
+      .tg-ai-generated-preview__share{min-width:38px;padding:0 10px;line-height:1;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(140deg,rgba(255,255,255,.96),rgba(219,234,254,.92));box-shadow:0 8px 18px rgba(59,130,246,.16)}
+      .tg-ai-generated-preview__share-icon{width:18px;height:18px;display:block;color:#1d4ed8}
       .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
       .tg-ai-generated-preview__menu[hidden]{display:none}
       .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
@@ -1430,6 +1430,18 @@
       return 'telegram_link_share';
     }
 
+    if (sourceUrl) {
+      try {
+        const subject = encodeURIComponent('Документ из предпросмотра');
+        const body = encodeURIComponent(`Ссылка на документ:\n${sourceUrl}`);
+        const mailtoUrl = `mailto:?subject=${subject}&body=${body}`;
+        if (typeof window !== 'undefined' && typeof window.open === 'function') {
+          window.open(mailtoUrl, '_blank');
+          return 'mailto_share';
+        }
+      } catch (_) {}
+    }
+
     const downloaded = await downloadGeneratedPreviewFile(previewPayload);
     if (downloaded) {
       return 'download_fallback';
@@ -1543,7 +1555,7 @@
           <div class="tg-ai-generated-preview__tools">
             <button type="button" class="tg-ai-generated-preview__share" data-preview-share title="Поделиться" aria-label="Поделиться">
               <svg class="tg-ai-generated-preview__share-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path fill="currentColor" d="M18 8a3 3 0 1 0-2.82-4H15a3 3 0 0 0 .2 1.06l-6.43 3.58a3 3 0 0 0-4.17.84 3 3 0 0 0 1.04 4.11A3 3 0 0 0 8.8 14.4l6.41 3.57A3 3 0 0 0 15 19a3 3 0 1 0 .18-1.01l-6.42-3.58a3 3 0 0 0 0-1.82l6.42-3.58A3 3 0 0 0 18 8Z"/>
+                <path fill="currentColor" d="M3.4 11.5 19.1 4.8c1.5-.6 3 .8 2.5 2.4l-3.1 11.1c-.4 1.5-2.2 2.1-3.4 1.2l-3.1-2.4-2.5 2.4c-.9.8-2.4.2-2.4-1V14l-3.2-1.3c-1.5-.7-1.5-2.8 0-3.5Zm4.8 1.1v3.7l2-1.9c.5-.5 1.2-.5 1.8-.1l2.9 2.3 2.7-9.6-9.4 4 2.1.8c.7.3 1 .9.9 1.6Z"/>
               </svg>
             </button>
             <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
@@ -1635,6 +1647,8 @@
           statusNode.textContent = 'Окно «Поделиться» открыто. Файл прикреплён.';
         } else if (mode === 'native_share_link' || mode === 'telegram_link_share') {
           statusNode.textContent = 'Окно «Поделиться» открыто. Если нужно, прикрепите файл через «Скачать».';
+        } else if (mode === 'mailto_share') {
+          statusNode.textContent = 'Открыт почтовый клиент. Можно отправить ссылку на документ.';
         } else if (mode === 'download_fallback') {
           statusNode.textContent = '«Поделиться» недоступно. Файл отправлен в скачивание.';
         } else {
