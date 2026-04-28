@@ -1368,31 +1368,40 @@
     return false;
   }
 
+  function createShareableDocFile(blob, fileName) {
+    const safeName = normalize(fileName) || 'answer.docx';
+    const mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    try {
+      return new File([blob], safeName, { type: mimeType });
+    } catch (_) {
+      const fallbackBlob = blob.slice(0, blob.size, mimeType);
+      try {
+        Object.defineProperty(fallbackBlob, 'name', { value: safeName, configurable: true });
+      } catch (_) {}
+      return fallbackBlob;
+    }
+  }
+
   async function shareGeneratedPreviewEverywhere(previewPayload) {
-    const sourceUrl = normalize(previewPayload && previewPayload.previewUrl)
-      ? toAbsoluteUrl(previewPayload.previewUrl)
-      : '';
-    if (!sourceUrl) {
-      throw new Error('Нет публичной ссылки на документ для отправки.');
+    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
+      throw new Error('Отправка файла недоступна на этом устройстве. Нажмите «Скачать».');
     }
-    const shareText = 'Посмотри документ';
-    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-      await navigator.share({
-      title: 'Документ из предварительного просмотра',
-      text: shareText,
-      url: sourceUrl,
-    });
-      return 'native_share';
+    const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
+    if (!fileBlob || !fileBlob.size) {
+      throw new Error('Не удалось подготовить файл для отправки.');
     }
-
-    const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
-    if (telegramWebApp && typeof telegramWebApp.openTelegramLink === 'function') {
-      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(sourceUrl)}&text=${encodeURIComponent(shareText)}`;
-      telegramWebApp.openTelegramLink(shareUrl);
-      return 'telegram_link_share';
+    const fileName = normalize(previewPayload && previewPayload.fileName) || 'answer.docx';
+    const shareFile = createShareableDocFile(fileBlob, fileName);
+    const sharePayload = {
+      title: 'Документ из предпросмотра',
+      text: 'Отправляю файл',
+      files: [shareFile],
+    };
+    if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [shareFile] })) {
+      throw new Error('В этом Telegram нельзя отправить файл через «Поделиться». Нажмите «Скачать».');
     }
-
-    throw new Error('Поделиться не поддерживается на этом устройстве.');
+    await navigator.share(sharePayload);
+    return 'native_share_file';
   }
 
   async function ensureDocxPreviewLibrariesLoaded() {
