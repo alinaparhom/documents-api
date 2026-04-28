@@ -2106,22 +2106,8 @@ $styleExampleInstruction = "Ориентируйся на форму ответ�
 if ($effectiveStyle === 'aggressive') {
     $styleInstruction = 'Пиши напористо, уверенно и жёстко, но без оскорблений.';
     $styleExampleInstruction = '';
-} elseif ($effectiveStyle === 'informational') {
-    $styleInstruction = 'Пиши спокойно, нейтрально и максимально информативно.';
 } elseif ($effectiveStyle === 'neutral') {
     $styleInstruction = 'Пиши в нейтральном официально-деловом тоне.';
-} elseif ($effectiveStyle === 'concise') {
-    // Обратная совместимость со старыми значениями
-    $styleInstruction = 'Пиши кратко и строго по делу.';
-    $styleExampleInstruction = '';
-} elseif ($effectiveStyle === 'friendly') {
-    // Обратная совместимость со старыми значениями
-    $styleInstruction = 'Пиши развёрнуто, дружелюбно и понятно.';
-    $styleExampleInstruction = '';
-} elseif ($effectiveStyle === 'technical') {
-    // Обратная совместимость со старыми значениями
-    $styleInstruction = 'Пиши технически, с пояснениями и структурой.';
-    $styleExampleInstruction = '';
 }
 $effectiveBehavior = $aiBehavior !== ''
     ? $aiBehavior

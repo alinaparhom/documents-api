@@ -3105,7 +3105,6 @@ function writeTaskListModePreference(mode) {
 
 function applyTaskListMode() {
   const mode = normalizeTaskListMode(state.taskListMode);
-  setClass(document.body, 'appdosc--list-mode-informative', false);
   document.documentElement.setAttribute('data-task-list-mode', mode);
 }
 
@@ -5194,25 +5193,13 @@ function createCard(task, index, anchorRegistry) {
     || resolveSenderText(resolveExecutor(task))
     || 'не указан';
 
-  const taskListMode = normalizeTaskListMode(state.taskListMode);
-  if (taskListMode === 'informative') {
-    setCardField(card, '[data-field="document"]', compactContent, {
-      fallback: 'Не указано',
-      setTitle: false,
-    });
-    setCardField(card, '[data-field="organization"]', '', {
-      fallback: '',
-      setTitle: false,
-    });
-  } else {
-    setCardField(card, '[data-field="document"]', compactContent, {
-      fallback: 'Не указано',
-      setTitle: false,
-    });
-    setCardField(card, '[data-field="organization"]', task.organization, {
-      fallback: 'Организация не указана',
-    });
-  }
+  setCardField(card, '[data-field="document"]', compactContent, {
+    fallback: 'Не указано',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="organization"]', task.organization, {
+    fallback: 'Организация не указана',
+  });
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
   applyRegistrationDateHeader(card, registrationDate);
