@@ -11795,13 +11795,14 @@
     }
 
     var force = options && options.force === true;
+    var allowUnassigned = options && options.allowUnassigned === true;
     var currentEntry = findCurrentUserViewEntry(doc);
     if (!force && currentEntry && currentEntry.viewedAt) {
       return;
     }
 
     var adminAssignmentOverride = isCurrentUserAdmin() && isDocumentAssignedToAdminRole(doc);
-    if (!force && !adminAssignmentOverride && !isDocumentAssignedToCurrentUser(doc)) {
+    if (!force && !allowUnassigned && !adminAssignmentOverride && !isDocumentAssignedToCurrentUser(doc)) {
       return;
     }
 
@@ -13165,7 +13166,7 @@
         setTableRowExpanded(tr, doc && doc.id, !currentlyExpanded);
       }
       if (nextExpanded) {
-        recordDocumentView(doc, 'row_expand_auto_view');
+        recordDocumentView(doc, 'row_expand_auto_view', { allowUnassigned: true });
       }
     }
 
