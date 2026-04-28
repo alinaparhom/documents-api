@@ -2662,10 +2662,14 @@ const FALLBACK_CARD_TEMPLATE = `
         <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
       </div>
       <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
+      <div class="appdosc-card__compact-info">
+        <span class="appdosc-card__compact-sender" data-field="senderCompactHeader"></span>
+      </div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
     <div class="appdosc-card__side">
       <span class="appdosc-card__status task-status" data-field="status"></span>
+      <span class="appdosc-card__disclosure" data-card-disclosure>Раскрыть</span>
     </div>
     <div class="appdosc-card__summary" data-field="summary">
       <div class="appdosc-card__block-text" data-field="contentCompact"></div>
@@ -5185,6 +5189,10 @@ function createCard(task, index, anchorRegistry) {
     fallback: '—',
     setTitle: false,
   });
+  setCardField(card, '[data-field="senderCompactHeader"]', `От кого: ${senderCompact}`, {
+    fallback: 'От кого: не указан',
+    setTitle: false,
+  });
 
   applyStatusBadge(card, statusText, normalizedStatus, task);
   populateCardFiles(card, task.files);
@@ -5916,6 +5924,11 @@ function setCardExpandedState(card, expanded) {
       toggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
     }
   });
+
+  const disclosure = card.querySelector('[data-card-disclosure]');
+  if (disclosure instanceof HTMLElement) {
+    disclosure.textContent = isExpanded ? 'Свернуть' : 'Раскрыть';
+  }
 }
 
 function initializeCardExpansion(card) {

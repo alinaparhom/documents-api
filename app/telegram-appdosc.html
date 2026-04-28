@@ -1324,7 +1324,10 @@
       }
 
       .appdosc-card[data-expanded='false'] .appdosc-card__status {
-        display: none !important;
+        display: inline-flex !important;
+        min-height: 22px !important;
+        padding: 2px 8px !important;
+        font-size: 10px !important;
       }
 
       .appdosc-card__subtitle {
@@ -1413,6 +1416,40 @@
 
       .appdosc-card[data-expanded='true'] .appdosc-card__compact-actions {
         display: none !important;
+      }
+
+      .appdosc-card__compact-info {
+        display: none;
+      }
+
+      .appdosc-card[data-expanded='false'] .appdosc-card__compact-info {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        margin-top: 2px;
+      }
+
+      .appdosc-card__compact-sender {
+        min-width: 0;
+        font-size: 11px;
+        line-height: 1.35;
+        color: var(--appdosc-task-muted-label);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .appdosc-card__disclosure {
+        font-size: 10px;
+        line-height: 1.2;
+        font-weight: 600;
+        color: var(--appdosc-task-meta-color);
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--appdosc-task-pill-border);
+        background: var(--appdosc-task-pill-bg);
+        white-space: nowrap;
       }
 
       .appdosc-card__summary {
@@ -3046,10 +3083,14 @@
               <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
             </div>
             <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
+            <div class="appdosc-card__compact-info">
+              <span class="appdosc-card__compact-sender" data-field="senderCompactHeader"></span>
+            </div>
             <div class="appdosc-card__subtitle" data-field="organization"></div>
           </div>
           <div class="appdosc-card__side">
             <span class="appdosc-card__status task-status" data-field="status"></span>
+            <span class="appdosc-card__disclosure" data-card-disclosure>Раскрыть</span>
           </div>
           <div class="appdosc-card__summary" data-field="summary"><div class="appdosc-card__block-text" data-field="contentCompact"></div></div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
