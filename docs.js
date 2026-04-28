@@ -600,15 +600,7 @@
     searchInput: null,
     searchApply: null,
     searchReset: null,
-    actionToast: null,
-    actionToastTimer: 0,
-    loadingOverlay: null,
-    loadingOverlayLabel: null,
-    loadingOverlayCounter: 0,
     searchButtons: {},
-    searchFields: {},
-    searchInputs: {},
-    sortButtons: {},
     headerCells: {},
     groupCells: {}
   };
@@ -1093,10 +1085,6 @@
     return { key: column.key, label: column.label };
   });
   var searchEventsBound = false;
-  var searchDebounceTimers = {};
-  var SEARCH_DEBOUNCE_MS = 300;
-  var FILTER_REBUILD_DEBOUNCE_MS = 120;
-  var REGISTRY_REQUEST_TIMEOUT_MS = 15000;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -1124,8 +1112,6 @@
     columnWidthsLoadingPromise: null,
     rowCache: new Map(),
     rowExpandedState: new Map(),
-    filterValuesCache: new Map(),
-    tableUpdateTimer: 0,
     virtualTable: {
       rowHeight: 0,
       minVisibleRows: 30,
@@ -1145,8 +1131,6 @@
     unviewedCount: 0,
     activeSearchColumn: '',
     activeSearchButton: null,
-    activeSortColumn: '',
-    activeSortDirection: '',
     access: createDefaultAccessContext(),
     permissions: { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false },
     userAssignmentKeyMap: null,
@@ -2918,48 +2902,14 @@
       '.documents-table__header-cell{' +
       'position:relative;' +
       'vertical-align:middle;' +
-      'overflow:visible;' +
       '}' +
       '.documents-header-content{' +
       'display:flex;' +
-      'flex-direction:column;' +
-      'align-items:stretch;' +
-      'gap:6px;' +
+      'align-items:center;' +
+      'justify-content:space-between;' +
       'width:100%;' +
-      'min-height:44px;' +
-      'padding:4px 0;' +
-      '}' +
-      '.documents-header-main{' +
-      'min-width:0;' +
-      'flex:1 1 auto;' +
-      '}' +
-      '.documents-header-actions{' +
-      'flex:0 0 auto;' +
-      'display:flex;' +
-      'flex-direction:row;' +
-      'align-items:center;' +
-      'justify-content:flex-end;' +
-      'gap:6px;' +
-      'opacity:0;' +
-      'pointer-events:none;' +
-      'transition:opacity 0.16s ease;' +
-      '}' +
-      '.documents-header-sort-button{' +
-      'display:inline-flex;' +
-      'align-items:center;' +
       'gap:4px;' +
-      'width:100%;' +
-      'min-width:0;' +
-      'border:none;' +
-      'background:transparent;' +
-      'padding:12px 2px 6px 2px;' +
-      'text-align:left;' +
-      'cursor:pointer;' +
-      '}' +
-      '.documents-header-sort-button:focus-visible{' +
-      'outline:2px solid rgba(37,99,235,0.35);' +
-      'outline-offset:2px;' +
-      'border-radius:8px;' +
+      'flex-wrap:nowrap;' +
       '}' +
       '.documents-table__header-cell .documents-header-label{' +
       'display:block;' +
@@ -2967,48 +2917,18 @@
       'color:#0f172a;' +
       'line-height:1.35;' +
       'word-break:break-word;' +
-      'overflow-wrap:anywhere;' +
-      'hyphens:auto;' +
       'flex:1 1 auto;' +
       'min-width:0;' +
       'transition:color 0.2s ease;' +
       '}' +
-      '.documents-header-sort-indicator{' +
-      'font-size:12px;' +
-      'line-height:1;' +
-      'color:#2563eb;' +
-      'opacity:0;' +
-      'transition:opacity 0.2s ease, transform 0.2s ease;' +
-      'transform:translateY(1px);' +
-      '}' +
-      '.documents-table__header-cell--sorted .documents-header-sort-indicator{' +
-      'opacity:1;' +
-      'transform:translateY(0);' +
-      '}' +
       '.documents-table__header-cell--searchable{' +
-      'user-select:none;' +
-      'border-radius:10px;' +
-      'transition:background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;' +
-      'display:inline-flex;' +
-      'align-items:center;' +
-      'justify-content:center;' +
-      'width:28px;' +
-      'height:28px;' +
-      'min-width:28px;' +
-      'padding:0;' +
-      'border:1px solid rgba(255,255,255,0.65);' +
-      'background:rgba(255,255,255,0.45);' +
-      'backdrop-filter:blur(10px);' +
-      '-webkit-backdrop-filter:blur(10px);' +
-      'box-shadow:0 4px 10px rgba(15,23,42,0.1);' +
-      'color:#334155;' +
       'cursor:pointer;' +
-      'touch-action:manipulation;' +
+      'user-select:none;' +
+      'border-radius:0;' +
+      'transition:background-color 0.2s ease;' +
       '}' +
       '.documents-table__header-cell--searchable:hover{' +
-      'background:rgba(255,255,255,0.62);' +
-      'border-color:rgba(37,99,235,0.32);' +
-      'box-shadow:0 10px 22px rgba(37,99,235,0.18);' +
+      'background:rgba(37,99,235,0.08);' +
       '}' +
       '.documents-table__header-cell--searchable:focus,' +
       '.documents-table__header-cell--searchable:focus-visible{' +
@@ -3019,32 +2939,18 @@
       'outline:none;' +
       '}' +
       '.documents-table__header-cell--active{' +
-      'background:rgba(219,234,254,0.72);' +
-      'border-color:rgba(37,99,235,0.42);' +
-      'color:#1d4ed8;' +
+      'background:rgba(37,99,235,0.12);' +
       '}' +
       '.documents-table__header-cell--active .documents-header-label{' +
       'color:#1d4ed8;' +
-      '}' +
-      '.documents-header-filter-icon{' +
-      'width:15px;' +
-      'height:15px;' +
-      'display:block;' +
-      '}' +
-      '.documents-header-controls{' +
-      'display:flex;' +
-      'flex-direction:row;' +
-      'align-items:center;' +
-      'justify-content:flex-end;' +
-      'gap:6px;' +
       '}' +
       '.documents-column-drag-handle{' +
       'display:inline-flex;' +
       'align-items:center;' +
       'justify-content:center;' +
-      'width:24px;' +
-      'min-width:24px;' +
-      'height:24px;' +
+      'width:20px;' +
+      'min-width:20px;' +
+      'height:22px;' +
       'border:1px solid rgba(148,163,184,0.35);' +
       'border-radius:8px;' +
       'background:rgba(255,255,255,0.62);' +
@@ -3057,130 +2963,8 @@
       'touch-action:none;' +
       'user-select:none;' +
       'padding:0;' +
-      'margin-left:0;' +
+      'margin-left:2px;' +
       'flex:0 0 auto;' +
-      '}' +
-      '.documents-header-search{' +
-      'display:none;' +
-      'width:100%;' +
-      'margin-top:6px;' +
-      '}' +
-      '.documents-header-search--visible{' +
-      'display:block;' +
-      '}' +
-      '.documents-header-search__input{' +
-      'width:100%;' +
-      'height:34px;' +
-      'padding:8px 10px;' +
-      'border-radius:10px;' +
-      'border:1px solid rgba(148,163,184,0.42);' +
-      'background:rgba(255,255,255,0.84);' +
-      'font-size:13px;' +
-      'color:#0f172a;' +
-      'transition:border-color 0.2s ease, box-shadow 0.2s ease;' +
-      '}' +
-      '.documents-header-search__input:focus{' +
-      'outline:none;' +
-      'border-color:#2563eb;' +
-      'box-shadow:0 0 0 3px rgba(37,99,235,0.14);' +
-      '}' +
-      '.documents-column-drag-handle{' +
-      'opacity:0;' +
-      'transition:opacity 0.16s ease, background-color 0.16s ease;' +
-      '}' +
-      '.documents-table__header-cell:hover .documents-header-actions,' +
-      '.documents-table__header-cell:focus-within .documents-header-actions,' +
-      '.documents-header-actions:focus-within{' +
-      'opacity:1;' +
-      'pointer-events:auto;' +
-      '}' +
-      '.documents-table__header-cell:hover .documents-column-drag-handle,' +
-      '.documents-table__header-cell:focus-within .documents-column-drag-handle,' +
-      '.documents-column-drag-handle.is-dragging{' +
-      'opacity:1;' +
-      '}' +
-      '@media (hover: none), (pointer: coarse){' +
-      '.documents-header-actions{opacity:1;pointer-events:auto;}' +
-      '.documents-column-drag-handle{opacity:1;}' +
-      '}' +
-      '@media (max-width: 768px){' +
-      '.documents-header-content{min-height:56px;}' +
-      '.documents-header-sort-button{padding-top:14px;}' +
-      '.documents-table__header-cell--searchable{width:36px;height:36px;min-width:36px;min-height:36px;}' +
-      '.documents-column-drag-handle{width:36px;min-width:36px;height:36px;min-height:36px;}' +
-      '.documents-header-search__input{height:36px;font-size:14px;}' +
-      '}' +
-      '.documents-loading-overlay{' +
-      'position:absolute;' +
-      'inset:0;' +
-      'display:flex;' +
-      'align-items:center;' +
-      'justify-content:center;' +
-      'padding:16px;' +
-      'background:rgba(241,245,249,0.72);' +
-      'backdrop-filter:blur(4px);' +
-      '-webkit-backdrop-filter:blur(4px);' +
-      'opacity:0;' +
-      'pointer-events:none;' +
-      'transition:opacity 0.2s ease;' +
-      'z-index:9;' +
-      '}' +
-      '.documents-loading-overlay.is-visible{' +
-      'opacity:1;' +
-      'pointer-events:auto;' +
-      '}' +
-      '.documents-loading-overlay__card{' +
-      'display:flex;' +
-      'align-items:center;' +
-      'gap:10px;' +
-      'padding:10px 14px;' +
-      'border-radius:14px;' +
-      'background:rgba(255,255,255,0.9);' +
-      'border:1px solid rgba(191,219,254,0.8);' +
-      'box-shadow:0 10px 24px rgba(15,23,42,0.15);' +
-      'font-size:13px;' +
-      'color:#0f172a;' +
-      '}' +
-      '.documents-loading-overlay__spinner{' +
-      'width:18px;' +
-      'height:18px;' +
-      'border-radius:999px;' +
-      'border:2px solid rgba(37,99,235,0.2);' +
-      'border-top-color:#2563eb;' +
-      'animation:documents-loading-spin 0.8s linear infinite;' +
-      '}' +
-      '@keyframes documents-loading-spin{to{transform:rotate(360deg);}}' +
-      '@media (hover: none), (pointer: coarse){' +
-      '.documents-table__header-cell--searchable,.documents-column-drag-handle,.documents-loading-overlay__card{' +
-      'backdrop-filter:none;-webkit-backdrop-filter:none;' +
-      '}' +
-      '.documents-loading-overlay{background:rgba(241,245,249,0.92);}' +
-      '}' +
-      '.documents-action-toast{' +
-      'position:fixed;' +
-      'left:50%;' +
-      'bottom:18px;' +
-      'transform:translate(-50%, 12px);' +
-      'z-index:4200;' +
-      'min-width:240px;' +
-      'max-width:min(92vw, 520px);' +
-      'padding:10px 14px;' +
-      'border-radius:14px;' +
-      'background:rgba(255,255,255,0.72);' +
-      'border:1px solid rgba(255,255,255,0.75);' +
-      'backdrop-filter:blur(14px);' +
-      '-webkit-backdrop-filter:blur(14px);' +
-      'box-shadow:0 14px 34px rgba(15,23,42,0.2);' +
-      'font-size:13px;' +
-      'line-height:1.35;' +
-      'color:#0f172a;' +
-      'opacity:0;' +
-      'pointer-events:none;' +
-      'transition:opacity 0.25s ease, transform 0.25s ease;' +
-      '}' +
-      '.documents-action-toast--visible{' +
-      'opacity:1;' +
-      'transform:translate(-50%, 0);' +
       '}' +
       '.documents-column-drag-handle:active{' +
       'cursor:grabbing;' +
@@ -3497,91 +3281,71 @@
   }
 
   function isPopoverVisible() {
-    return !!state.activeSearchColumn;
+    return !!(elements.searchPopover && elements.searchPopover.classList.contains('documents-search-popover--visible'));
   }
 
-  function ensureSearchPopover() {
+  function ensureSearchPopover(container) {
     ensureSearchStyles();
-  }
-
-  function ensureActionToast() {
-    ensureSearchStyles();
-    if (elements.actionToast) {
-      return elements.actionToast;
-    }
-    var toast = createElement('div', 'documents-action-toast');
-    toast.setAttribute('role', 'status');
-    toast.setAttribute('aria-live', 'polite');
-    toast.setAttribute('aria-atomic', 'true');
-    document.body.appendChild(toast);
-    elements.actionToast = toast;
-    return toast;
-  }
-
-  function showActionToast(message) {
-    if (!message) {
+    if (elements.searchPopover || !container) {
       return;
     }
-    var toast = ensureActionToast();
-    toast.textContent = message;
-    toast.classList.add('documents-action-toast--visible');
-    if (elements.actionToastTimer) {
-      clearTimeout(elements.actionToastTimer);
-      elements.actionToastTimer = 0;
-    }
-    elements.actionToastTimer = setTimeout(function() {
-      if (elements.actionToast) {
-        elements.actionToast.classList.remove('documents-action-toast--visible');
-      }
-      elements.actionToastTimer = 0;
-    }, 1800);
-  }
+    var popover = createElement('div', 'documents-search-popover documents-search-popover--hidden');
+    var content = createElement('div', 'documents-search-popover__content');
+    var label = createElement('div', 'documents-search-popover__label', 'Поиск');
+    var input = document.createElement('input');
+    input.type = 'search';
+    input.className = 'documents-search-popover__input';
+    input.placeholder = 'Введите запрос';
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('spellcheck', 'false');
 
-  function ensureLoadingOverlay() {
-    if (elements.loadingOverlay && elements.loadingOverlay.parentNode) {
-      return elements.loadingOverlay;
-    }
-    if (!elements.tableWrapper) {
-      return null;
-    }
-    var overlay = createElement('div', 'documents-loading-overlay');
-    overlay.setAttribute('aria-live', 'polite');
-    overlay.setAttribute('aria-busy', 'false');
-    var card = createElement('div', 'documents-loading-overlay__card');
-    var spinner = createElement('span', 'documents-loading-overlay__spinner');
-    spinner.setAttribute('aria-hidden', 'true');
-    var label = createElement('span', 'documents-loading-overlay__label', 'Загрузка данных…');
-    card.appendChild(spinner);
-    card.appendChild(label);
-    overlay.appendChild(card);
-    elements.tableWrapper.appendChild(overlay);
-    elements.loadingOverlay = overlay;
-    elements.loadingOverlayLabel = label;
-    return overlay;
-  }
+    var actions = createElement('div', 'documents-search-popover__actions');
+    var applyButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--apply', 'Искать');
+    applyButton.type = 'button';
+    var resetButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--reset', 'Сброс');
+    resetButton.type = 'button';
 
-  function setTableLoadingState(active, text) {
-    var overlay = ensureLoadingOverlay();
-    if (!overlay) {
-      return;
-    }
-    if (active) {
-      elements.loadingOverlayCounter = (elements.loadingOverlayCounter || 0) + 1;
-      if (text && elements.loadingOverlayLabel) {
-        elements.loadingOverlayLabel.textContent = text;
+    actions.appendChild(applyButton);
+    actions.appendChild(resetButton);
+
+    content.appendChild(label);
+    content.appendChild(input);
+    content.appendChild(actions);
+    popover.appendChild(content);
+
+    container.appendChild(popover);
+
+    elements.searchPopover = popover;
+    elements.searchLabel = label;
+    elements.searchInput = input;
+    elements.searchApply = applyButton;
+    elements.searchReset = resetButton;
+
+    popover.setAttribute('aria-hidden', 'true');
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-modal', 'false');
+
+    applyButton.addEventListener('click', function() {
+      applyPopoverFilter();
+    });
+    resetButton.addEventListener('click', function() {
+      resetPopoverFilter();
+    });
+    input.addEventListener('keydown', function(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        applyPopoverFilter();
+      } else if (event.key === 'Escape') {
+        handleSearchEscape(event);
       }
-      overlay.classList.add('is-visible');
-      overlay.setAttribute('aria-busy', 'true');
-      return;
-    }
-    elements.loadingOverlayCounter = Math.max(0, (elements.loadingOverlayCounter || 0) - 1);
-    if (elements.loadingOverlayCounter === 0) {
-      overlay.classList.remove('is-visible');
-      overlay.setAttribute('aria-busy', 'false');
-      if (elements.loadingOverlayLabel) {
-        elements.loadingOverlayLabel.textContent = 'Загрузка данных…';
+    });
+
+    popover.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') {
+        handleSearchEscape(event);
       }
-    }
+    });
   }
 
   function bindSearchEvents() {
@@ -3595,62 +3359,87 @@
     searchEventsBound = true;
   }
 
-  function positionSearchPopover() {
-    return;
-  }
-
-  function scheduleColumnFilter(columnKey, value) {
-    if (!columnKey) {
+  function positionSearchPopover(anchor) {
+    if (!elements.searchPopover || !anchor) {
       return;
     }
-    if (searchDebounceTimers[columnKey]) {
-      clearTimeout(searchDebounceTimers[columnKey]);
+    var rect = anchor.getBoundingClientRect();
+    var popover = elements.searchPopover;
+    var width = popover.offsetWidth || 300;
+    var height = popover.offsetHeight || 160;
+    var top = rect.bottom + 8;
+    var left = rect.left + rect.width / 2 - width / 2;
+    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || width;
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || height;
+
+    if (left + width > viewportWidth - 16) {
+      left = viewportWidth - width - 16;
     }
-    searchDebounceTimers[columnKey] = setTimeout(function() {
-      applyFilter(columnKey, value);
-      searchDebounceTimers[columnKey] = 0;
-    }, SEARCH_DEBOUNCE_MS);
+    if (left < 16) {
+      left = 16;
+    }
+    if (top + height > viewportHeight - 16) {
+      top = rect.top - height - 8;
+    }
+    if (top < 16) {
+      top = 16;
+    }
+
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
   }
 
   function openSearchPopover(columnKey, button) {
     if (!columnKey || !button) {
       return;
     }
-    ensureSearchPopover();
+    ensureSearchPopover(document.body);
     bindSearchEvents();
-
-    var field = elements.searchFields && elements.searchFields[columnKey] ? elements.searchFields[columnKey] : null;
-    var input = elements.searchInputs && elements.searchInputs[columnKey] ? elements.searchInputs[columnKey] : null;
-    var alreadyOpen = state.activeSearchColumn === columnKey && field && field.classList.contains('documents-header-search--visible');
-
-    closeSearchPopover();
-    if (alreadyOpen || !field || !input) {
-      return;
-    }
 
     state.activeSearchColumn = columnKey;
     state.activeSearchButton = button;
+
+    var popover = elements.searchPopover;
     var definition = getColumnDefinition(columnKey);
-    field.classList.add('documents-header-search--visible');
-    if (definition && definition.label) {
-      showActionToast('Открыт фильтр: «' + definition.label + '».');
+    if (popover) {
+      popover.dataset.columnKey = columnKey;
+      popover.classList.remove('documents-search-popover--hidden');
+      popover.classList.add('documents-search-popover--visible');
+      popover.setAttribute('aria-hidden', 'false');
     }
-    input.placeholder = definition && definition.searchHint ? definition.searchHint : 'Поиск...';
-    input.value = state.filters[columnKey] || '';
-    window.setTimeout(function() {
-      if (elements.searchInputs && elements.searchInputs[columnKey]) {
-        elements.searchInputs[columnKey].focus({ preventScroll: true });
-        elements.searchInputs[columnKey].select();
-      }
-    }, 0);
+    if (elements.searchLabel) {
+      elements.searchLabel.textContent = definition ? 'Поиск: ' + definition.label : 'Поиск';
+    }
+    if (elements.searchInput) {
+      elements.searchInput.placeholder = definition && definition.searchHint
+        ? definition.searchHint
+        : 'Введите запрос';
+      elements.searchInput.value = state.filters[columnKey] || '';
+      window.setTimeout(function() {
+        if (elements.searchInput) {
+          elements.searchInput.focus({ preventScroll: true });
+          elements.searchInput.select();
+        }
+      }, 0);
+    }
+
+    if (popover) {
+      positionSearchPopover(button);
+    }
     updateSearchButtonStates();
   }
 
   function closeSearchPopover() {
-    var activeColumn = state.activeSearchColumn;
-    if (activeColumn && elements.searchFields && elements.searchFields[activeColumn]) {
-      elements.searchFields[activeColumn].classList.remove('documents-header-search--visible');
+    if (!elements.searchPopover) {
+      state.activeSearchColumn = '';
+      state.activeSearchButton = null;
+      updateSearchButtonStates();
+      return;
     }
+    elements.searchPopover.classList.remove('documents-search-popover--visible');
+    elements.searchPopover.classList.add('documents-search-popover--hidden');
+    elements.searchPopover.setAttribute('aria-hidden', 'true');
+    elements.searchPopover.dataset.columnKey = '';
     state.activeSearchColumn = '';
     state.activeSearchButton = null;
     updateSearchButtonStates();
@@ -3669,13 +3458,10 @@
     if (!isPopoverVisible()) {
       return;
     }
-    if (state.activeSearchButton && state.activeSearchButton.contains(event.target)) {
+    if (elements.searchPopover && elements.searchPopover.contains(event.target)) {
       return;
     }
-    var activeInput = state.activeSearchColumn && elements.searchInputs
-      ? elements.searchInputs[state.activeSearchColumn]
-      : null;
-    if (activeInput && activeInput.contains(event.target)) {
+    if (state.activeSearchButton && state.activeSearchButton.contains(event.target)) {
       return;
     }
     closeSearchPopover();
@@ -3689,25 +3475,28 @@
   }
 
   function applyPopoverFilter() {
-    var columnKey = state.activeSearchColumn;
+    if (!elements.searchPopover) {
+      return;
+    }
+    var columnKey = elements.searchPopover.dataset.columnKey || state.activeSearchColumn;
     if (!columnKey) {
       closeSearchPopover();
       return;
     }
-    var value = elements.searchInputs && elements.searchInputs[columnKey]
-      ? elements.searchInputs[columnKey].value
-      : '';
+    var value = elements.searchInput ? elements.searchInput.value : '';
     applyFilter(columnKey, value);
+    closeSearchPopover();
   }
 
   function resetPopoverFilter() {
-    var columnKey = state.activeSearchColumn;
+    if (!elements.searchPopover) {
+      return;
+    }
+    var columnKey = elements.searchPopover.dataset.columnKey || state.activeSearchColumn;
     if (columnKey) {
       applyFilter(columnKey, '');
-      if (elements.searchInputs && elements.searchInputs[columnKey]) {
-        elements.searchInputs[columnKey].value = '';
-      }
     }
+    closeSearchPopover();
   }
 
   function handleSearchEscape(event) {
@@ -3722,7 +3511,7 @@
     } else if (typeof event.stopPropagation === 'function') {
       event.stopPropagation();
     }
-    closeSearchPopover();
+    resetPopoverFilter();
   }
 
   function normalizeValueForMatch(value) {
@@ -3964,39 +3753,6 @@
     return values;
   }
 
-  function getDocumentFilterCacheKey(doc, originalIndex) {
-    if (!doc || doc.id === undefined || doc.id === null) {
-      return '';
-    }
-    var versionParts = [
-      String(doc.id),
-      String(doc.updatedAt || ''),
-      String(doc.statusUpdatedAt || ''),
-      String(doc.registrationDate || ''),
-      String(doc.dueDate || ''),
-      String(doc.status || ''),
-      String(originalIndex || 0)
-    ];
-    return versionParts.join('|');
-  }
-
-  function getFilterValuesWithCache(doc, originalIndex) {
-    var cacheKey = getDocumentFilterCacheKey(doc, originalIndex);
-    if (!cacheKey) {
-      return computeFilterValues(doc, originalIndex);
-    }
-    var cached = state.filterValuesCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-    var values = computeFilterValues(doc, originalIndex);
-    state.filterValuesCache.set(cacheKey, values);
-    if (state.filterValuesCache.size > 5000) {
-      state.filterValuesCache.clear();
-    }
-    return values;
-  }
-
   function matchesDocumentFilters(values) {
     if (!values) {
       return false;
@@ -4051,15 +3807,9 @@
       if (state.filterOrder.indexOf(columnKey) === -1) {
         state.filterOrder.push(columnKey);
       }
-      var filteredColumn = getColumnDefinition(columnKey);
-      var filteredColumnLabel = filteredColumn ? filteredColumn.label : columnKey;
-      showActionToast('Фильтр обновлён: «' + filteredColumnLabel + '» → ' + trimmed + '.');
     } else {
       if (Object.prototype.hasOwnProperty.call(state.filters, columnKey)) {
         delete state.filters[columnKey];
-        var clearedColumn = getColumnDefinition(columnKey);
-        var clearedColumnLabel = clearedColumn ? clearedColumn.label : columnKey;
-        showActionToast('Фильтр очищен: «' + clearedColumnLabel + '».');
       }
       state.filterOrder = state.filterOrder.filter(function(key) {
         return key !== columnKey;
@@ -4067,7 +3817,7 @@
     }
     updateSearchButtonStates();
     updateFilterBar();
-    scheduleTableUpdate();
+    updateTable();
   }
 
   function removeFilter(columnKey) {
@@ -4075,9 +3825,6 @@
       return;
     }
     delete state.filters[columnKey];
-    if (elements.searchInputs && elements.searchInputs[columnKey]) {
-      elements.searchInputs[columnKey].value = '';
-    }
     state.filterOrder = state.filterOrder.filter(function(key) {
       return key !== columnKey;
     });
@@ -4086,7 +3833,7 @@
     }
     updateSearchButtonStates();
     updateFilterBar();
-    scheduleTableUpdate();
+    updateTable();
   }
 
   function resetAllFilters() {
@@ -4095,16 +3842,6 @@
     }
     state.filters = {};
     state.filterOrder = [];
-    if (elements.searchInputs) {
-      for (var key in elements.searchInputs) {
-        if (!Object.prototype.hasOwnProperty.call(elements.searchInputs, key)) {
-          continue;
-        }
-        if (elements.searchInputs[key]) {
-          elements.searchInputs[key].value = '';
-        }
-      }
-    }
     state.showUnassignedOnly = false;
     state.showUnviewedOnly = false;
     closeSearchPopover();
@@ -4112,7 +3849,7 @@
     updateUnviewedButtonState();
     updateSearchButtonStates();
     updateFilterBar();
-    scheduleTableUpdate();
+    updateTable();
   }
 
   function updateSearchButtonStates() {
@@ -4134,47 +3871,9 @@
       } else {
         button.classList.remove('documents-table__header-cell--active');
       }
-      button.setAttribute('aria-expanded', isCurrent ? 'true' : 'false');
-      var field = elements.searchFields && elements.searchFields[key] ? elements.searchFields[key] : null;
-      if (field) {
-        field.classList.toggle('documents-header-search--visible', isCurrent);
-      }
-      var cell = elements.headerCells && elements.headerCells[key] ? elements.headerCells[key] : null;
-      if (cell) {
-        cell.classList.toggle('documents-table__header-cell--active', isCurrent || hasFilter);
-      }
     }
     updateResponsibleButtonState();
     updateUnviewedButtonState();
-  }
-
-  function updateSortHeaderStates() {
-    if (!elements.sortButtons) {
-      return;
-    }
-    for (var key in elements.sortButtons) {
-      if (!Object.prototype.hasOwnProperty.call(elements.sortButtons, key)) {
-        continue;
-      }
-      var button = elements.sortButtons[key];
-      if (!button) {
-        continue;
-      }
-      var indicator = button.querySelector('.documents-header-sort-indicator');
-      var cell = elements.headerCells && elements.headerCells[key] ? elements.headerCells[key] : null;
-      var isActive = state.activeSortColumn === key && !!state.activeSortDirection;
-      if (cell) {
-        cell.classList.toggle('documents-table__header-cell--sorted', isActive);
-      }
-      if (indicator) {
-        indicator.textContent = state.activeSortDirection === 'desc' && isActive ? '▼' : '▲';
-      }
-      var column = getColumnDefinition(key);
-      var label = column ? column.label : key;
-      var sortState = isActive ? (state.activeSortDirection === 'desc' ? 'по убыванию' : 'по возрастанию') : 'без сортировки';
-      button.setAttribute('aria-label', 'Сортировать колонку ' + label + ' (' + sortState + ')');
-      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    }
   }
 
   function createFilterChip(columnKey, value) {
@@ -11795,14 +11494,13 @@
     }
 
     var force = options && options.force === true;
-    var allowUnassigned = options && options.allowUnassigned === true;
     var currentEntry = findCurrentUserViewEntry(doc);
     if (!force && currentEntry && currentEntry.viewedAt) {
       return;
     }
 
     var adminAssignmentOverride = isCurrentUserAdmin() && isDocumentAssignedToAdminRole(doc);
-    if (!force && !allowUnassigned && !adminAssignmentOverride && !isDocumentAssignedToCurrentUser(doc)) {
+    if (!force && !adminAssignmentOverride && !isDocumentAssignedToCurrentUser(doc)) {
       return;
     }
 
@@ -13166,7 +12864,7 @@
         setTableRowExpanded(tr, doc && doc.id, !currentlyExpanded);
       }
       if (nextExpanded) {
-        recordDocumentView(doc, 'row_expand_auto_view', { allowUnassigned: true });
+        recordDocumentView(doc, 'row_expand_auto_view');
       }
     }
 
@@ -13655,17 +13353,9 @@
 
   function applyTableSorting(entries) {
     var list = Array.isArray(entries) ? entries.slice() : [];
-    var sorting = null;
-    if (state.activeSortColumn && state.activeSortDirection) {
-      sorting = {
-        enabled: true,
-        rules: [{ column: state.activeSortColumn, direction: state.activeSortDirection }]
-      };
-    } else {
-      sorting = state.visualSettings && state.visualSettings.sorting
-        ? normalizeSortingSettings(state.visualSettings.sorting)
-        : buildDefaultSortingSettings();
-    }
+    var sorting = state.visualSettings && state.visualSettings.sorting
+      ? normalizeSortingSettings(state.visualSettings.sorting)
+      : buildDefaultSortingSettings();
     if (!sorting.enabled || !sorting.rules.length) {
       return list;
     }
@@ -13684,32 +13374,6 @@
       return (left && typeof left.index === 'number' ? left.index : 0) - (right && typeof right.index === 'number' ? right.index : 0);
     });
     return list;
-  }
-
-  function toggleColumnSort(columnKey) {
-    if (!columnKey) {
-      return;
-    }
-    if (state.activeSortColumn !== columnKey) {
-      state.activeSortColumn = columnKey;
-      state.activeSortDirection = 'asc';
-    } else if (state.activeSortDirection === 'asc') {
-      state.activeSortDirection = 'desc';
-    } else {
-      state.activeSortColumn = '';
-      state.activeSortDirection = '';
-    }
-    var column = getColumnDefinition(columnKey);
-    var label = column ? column.label : columnKey;
-    var sortMessage = 'Сортировка отключена: «' + label + '».';
-    if (state.activeSortColumn === columnKey && state.activeSortDirection === 'asc') {
-      sortMessage = 'Сортировка обновлена: «' + label + '» (по возрастанию).';
-    } else if (state.activeSortColumn === columnKey && state.activeSortDirection === 'desc') {
-      sortMessage = 'Сортировка обновлена: «' + label + '» (по убыванию).';
-    }
-    showActionToast(sortMessage);
-    updateSortHeaderStates();
-    updateTable();
   }
 
   function createTableSpacerRow(className) {
@@ -13926,7 +13590,7 @@
       if (!documentVisibleForCurrentUser(doc)) {
         continue;
       }
-      var values = getFilterValuesWithCache(doc, i);
+      var values = computeFilterValues(doc, i);
       if (matchesDocumentFilters(values)) {
         filteredEntries.push({ doc: doc, values: values, index: i });
       }
@@ -13964,16 +13628,6 @@
 
     applyColumnWidths();
     setToolbarState();
-  }
-
-  function scheduleTableUpdate() {
-    if (state.tableUpdateTimer) {
-      clearTimeout(state.tableUpdateTimer);
-    }
-    state.tableUpdateTimer = setTimeout(function() {
-      state.tableUpdateTimer = 0;
-      updateTable();
-    }, FILTER_REBUILD_DEBOUNCE_MS);
   }
 
   function handleResponse(response) {
@@ -14146,7 +13800,6 @@
     }
 
     state.documents = processedDocuments;
-    state.filterValuesCache.clear();
 
     for (var cacheKey in state.directorCache) {
       if (!Object.prototype.hasOwnProperty.call(state.directorCache, cacheKey)) {
@@ -14294,7 +13947,6 @@
     if (!target.updatedAt) {
       target.updatedAt = new Date().toISOString();
     }
-    state.filterValuesCache.clear();
   }
 
   function loadRegistry(organization) {
@@ -14307,25 +13959,9 @@
 
     clearMessage();
 
-    if (state.registryRequestController && typeof state.registryRequestController.abort === 'function') {
-      state.registryRequestController.abort();
-    }
-
-    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    state.registryRequestController = controller;
-    var timeoutId = 0;
-    if (controller && typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
-      timeoutId = window.setTimeout(function() {
-        controller.abort();
-      }, REGISTRY_REQUEST_TIMEOUT_MS);
-    }
-
-    setTableLoadingState(true, 'Загружаем реестр…');
-
     return fetch(buildApiUrl('list', { organization: organization }), {
       credentials: 'same-origin',
-      cache: 'no-store',
-      signal: controller ? controller.signal : undefined
+      cache: 'no-store'
     })
       .then(handleResponse)
       .then(function(data) {
@@ -14355,26 +13991,9 @@
         return documents;
       })
       .catch(function(error) {
-        var isSuperseded = controller && state.registryRequestController && state.registryRequestController !== controller;
-        if (isSuperseded) {
-          return Promise.reject(error);
-        }
-        var isAbort = error && (error.name === 'AbortError' || /aborted|abort/i.test(String(error.message || '')));
-        if (isAbort) {
-          error = new Error('Время ожидания истекло. Проверьте интернет и попробуйте ещё раз.');
-        }
         sendClientDiagnostics('registry_load_error', { message: error && error.message ? error.message : String(error) });
         showMessage('error', 'Не удалось загрузить реестр: ' + (error && error.message ? error.message : String(error)));
         throw error;
-      })
-      .finally(function() {
-        if (timeoutId) {
-          window.clearTimeout(timeoutId);
-        }
-        if (state.registryRequestController === controller) {
-          state.registryRequestController = null;
-        }
-        setTableLoadingState(false);
       });
   }
 
@@ -14383,29 +14002,13 @@
       return Promise.reject(new Error('Организация не определена.'));
     }
 
-    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timeoutId = 0;
-    if (controller && typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
-      timeoutId = window.setTimeout(function() {
-        controller.abort();
-      }, REGISTRY_REQUEST_TIMEOUT_MS);
-    }
-    setTableLoadingState(true, 'Обновляем данные…');
-
     return fetch(buildApiUrl('list', { organization: state.organization, cacheBust: Date.now() }), {
       credentials: 'same-origin',
-      cache: 'no-store',
-      signal: controller ? controller.signal : undefined
+      cache: 'no-store'
     })
       .then(handleResponse)
       .then(function(data) {
         return updateStateFromPayload(data);
-      })
-      .finally(function() {
-        if (timeoutId) {
-          window.clearTimeout(timeoutId);
-        }
-        setTableLoadingState(false);
       });
   }
 
@@ -17209,9 +16812,6 @@
     var headerRow = createElement('tr', 'documents-table__header-row');
     elements.headerRow = headerRow;
     elements.searchButtons = {};
-    elements.searchFields = {};
-    elements.searchInputs = {};
-    elements.sortButtons = {};
     elements.headerCells = {};
     getOrderedColumns().forEach(function(column) {
       var headerCell = createElement('th', 'documents-table__header-cell');
@@ -17220,39 +16820,8 @@
       elements.headerCells[column.key] = headerCell;
       var headerContent = createElement('div', 'documents-header-content');
       headerCell.appendChild(headerContent);
-      var headerMain = createElement('div', 'documents-header-main');
-      var headerActions = createElement('div', 'documents-header-actions documents-header-controls');
-      headerContent.appendChild(headerMain);
-      headerContent.appendChild(headerActions);
-      var sortButton = createElement('button', 'documents-header-sort-button');
-      sortButton.type = 'button';
       var label = createElement('span', 'documents-header-label', column.label);
-      var sortIndicator = createElement('span', 'documents-header-sort-indicator', '▲');
-      sortIndicator.setAttribute('aria-hidden', 'true');
-      sortButton.appendChild(label);
-      sortButton.appendChild(sortIndicator);
-      sortButton.addEventListener('click', function(event) {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleColumnSort(column.key);
-      });
-      headerMain.appendChild(sortButton);
-      elements.sortButtons[column.key] = sortButton;
-      if (column.searchable) {
-        var filterButton = createElement('button', 'documents-table__header-cell--searchable');
-        filterButton.type = 'button';
-        filterButton.title = 'Поиск по колонке «' + column.label + '»';
-        filterButton.setAttribute('aria-label', 'Поиск по колонке ' + column.label);
-        filterButton.setAttribute('aria-expanded', 'false');
-        filterButton.innerHTML = '<svg class="documents-header-filter-icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"></circle><path d="M16 16L20.2 20.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg>';
-        filterButton.addEventListener('click', function(event) {
-          event.preventDefault();
-          event.stopPropagation();
-          openSearchPopover(column.key, filterButton);
-        });
-        headerActions.appendChild(filterButton);
-        elements.searchButtons[column.key] = filterButton;
-      }
+      headerContent.appendChild(label);
       var dragHandle = createElement('button', 'documents-column-drag-handle', '⋮⋮');
       dragHandle.type = 'button';
       dragHandle.dataset.dragColumn = column.key;
@@ -17262,43 +16831,23 @@
         event.preventDefault();
         event.stopPropagation();
       });
-      headerActions.appendChild(dragHandle);
+      headerContent.appendChild(dragHandle);
       if (column.searchable) {
-        var searchField = createElement('div', 'documents-header-search');
-        var searchInput = document.createElement('input');
-        searchInput.type = 'search';
-        searchInput.className = 'documents-header-search__input';
-        searchInput.placeholder = column.searchHint || 'Поиск...';
-        searchInput.value = state.filters[column.key] || '';
-        searchInput.setAttribute('autocapitalize', 'off');
-        searchInput.setAttribute('autocomplete', 'off');
-        searchInput.setAttribute('spellcheck', 'false');
-        searchInput.addEventListener('click', function(event) {
-          event.stopPropagation();
+        headerCell.classList.add('documents-table__header-cell--searchable');
+        headerCell.title = 'Поиск по столбцу «' + column.label + '»';
+        headerCell.setAttribute('tabindex', '0');
+        headerCell.setAttribute('aria-haspopup', 'dialog');
+        headerCell.addEventListener('click', function() {
+          openSearchPopover(column.key, headerCell);
         });
-        searchInput.addEventListener('input', function(event) {
-          var target = event.target;
-          var targetColumnKey = target && target.dataset ? target.dataset.columnKey : '';
-          scheduleColumnFilter(targetColumnKey, target ? target.value : '');
-        });
-        searchInput.addEventListener('keydown', function(event) {
-          if (event.key === 'Enter') {
+        headerCell.addEventListener('keydown', function(event) {
+          var key = event.key || '';
+          if (key === 'Enter' || key === ' ' || key === 'Spacebar' || key === 'Space') {
             event.preventDefault();
-            var target = event.target;
-            var targetColumnKey = target && target.dataset ? target.dataset.columnKey : '';
-            applyFilter(targetColumnKey, target ? target.value : '');
-          } else if (event.key === 'Escape') {
-            if (typeof event.preventDefault === 'function') {
-              event.preventDefault();
-            }
-            closeSearchPopover();
+            openSearchPopover(column.key, headerCell);
           }
         });
-        searchInput.dataset.columnKey = column.key;
-        searchField.appendChild(searchInput);
-        headerCell.appendChild(searchField);
-        elements.searchFields[column.key] = searchField;
-        elements.searchInputs[column.key] = searchInput;
+        elements.searchButtons[column.key] = headerCell;
       }
       setElementColumnWidth(headerCell, getEffectiveColumnWidth(column.key));
       headerRow.appendChild(headerCell);
@@ -17348,7 +16897,6 @@
     updateResponsibleButtonState();
     updateUnviewedButtonState();
     updateSearchButtonStates();
-    updateSortHeaderStates();
     updateFilterBar();
     ensureSearchPopover(document.body);
     bindSearchEvents();
