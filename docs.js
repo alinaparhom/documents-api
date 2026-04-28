@@ -2914,11 +2914,25 @@
       'overflow:visible;' +
       '}' +
       '.documents-header-content{' +
-      'display:block;' +
+      'display:flex;' +
+      'flex-wrap:wrap;' +
+      'justify-content:space-between;' +
+      'align-items:flex-start;' +
+      'gap:8px;' +
       'width:100%;' +
-      'position:relative;' +
       'min-height:44px;' +
       'padding:4px 0;' +
+      '}' +
+      '.documents-header-main{' +
+      'min-width:0;' +
+      'flex:1 1 auto;' +
+      '}' +
+      '.documents-header-actions{' +
+      'flex:0 0 auto;' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'align-items:flex-end;' +
+      'gap:6px;' +
       '}' +
       '.documents-header-sort-button{' +
       'display:inline-flex;' +
@@ -2928,7 +2942,7 @@
       'min-width:0;' +
       'border:none;' +
       'background:transparent;' +
-      'padding:16px 34px 6px 2px;' +
+      'padding:12px 2px 6px 2px;' +
       'text-align:left;' +
       'cursor:pointer;' +
       '}' +
@@ -2943,6 +2957,8 @@
       'color:#0f172a;' +
       'line-height:1.35;' +
       'word-break:break-word;' +
+      'overflow-wrap:anywhere;' +
+      'hyphens:auto;' +
       'flex:1 1 auto;' +
       'min-width:0;' +
       'transition:color 0.2s ease;' +
@@ -2960,9 +2976,6 @@
       'transform:translateY(0);' +
       '}' +
       '.documents-table__header-cell--searchable{' +
-      'position:absolute;' +
-      'top:0;' +
-      'right:0;' +
       'user-select:none;' +
       'border-radius:10px;' +
       'transition:background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;' +
@@ -3009,12 +3022,12 @@
       'display:block;' +
       '}' +
       '.documents-header-controls{' +
-      'display:contents;' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'align-items:flex-end;' +
+      'gap:6px;' +
       '}' +
       '.documents-column-drag-handle{' +
-      'position:absolute;' +
-      'right:0;' +
-      'bottom:0;' +
       'display:inline-flex;' +
       'align-items:center;' +
       'justify-content:center;' +
@@ -3038,6 +3051,8 @@
       '}' +
       '.documents-header-search{' +
       'display:none;' +
+      'width:100%;' +
+      'flex-basis:100%;' +
       'margin-top:6px;' +
       '}' +
       '.documents-header-search--visible{' +
@@ -3070,9 +3085,9 @@
       '}' +
       '@media (max-width: 768px){' +
       '.documents-header-content{min-height:48px;}' +
-      '.documents-header-sort-button{padding-top:18px;padding-right:38px;}' +
-      '.documents-table__header-cell--searchable{width:32px;height:32px;min-width:32px;top:0;right:0;}' +
-      '.documents-column-drag-handle{width:26px;min-width:26px;height:26px;right:0;bottom:0;opacity:1;}' +
+      '.documents-header-sort-button{padding-top:14px;}' +
+      '.documents-table__header-cell--searchable{width:36px;height:36px;min-width:36px;min-height:36px;}' +
+      '.documents-column-drag-handle{width:36px;min-width:36px;height:36px;min-height:36px;opacity:1;}' +
       '.documents-header-search__input{height:36px;font-size:14px;}' +
       '}' +
       '.documents-action-toast{' +
@@ -16997,6 +17012,10 @@
       elements.headerCells[column.key] = headerCell;
       var headerContent = createElement('div', 'documents-header-content');
       headerCell.appendChild(headerContent);
+      var headerMain = createElement('div', 'documents-header-main');
+      var headerActions = createElement('div', 'documents-header-actions documents-header-controls');
+      headerContent.appendChild(headerMain);
+      headerContent.appendChild(headerActions);
       var sortButton = createElement('button', 'documents-header-sort-button');
       sortButton.type = 'button';
       var label = createElement('span', 'documents-header-label', column.label);
@@ -17009,9 +17028,8 @@
         event.stopPropagation();
         toggleColumnSort(column.key);
       });
-      headerContent.appendChild(sortButton);
+      headerMain.appendChild(sortButton);
       elements.sortButtons[column.key] = sortButton;
-      var headerControls = createElement('div', 'documents-header-controls');
       if (column.searchable) {
         var filterButton = createElement('button', 'documents-table__header-cell--searchable');
         filterButton.type = 'button';
@@ -17024,7 +17042,7 @@
           event.stopPropagation();
           openSearchPopover(column.key, filterButton);
         });
-        headerControls.appendChild(filterButton);
+        headerActions.appendChild(filterButton);
         elements.searchButtons[column.key] = filterButton;
       }
       var dragHandle = createElement('button', 'documents-column-drag-handle', '⋮⋮');
@@ -17036,8 +17054,7 @@
         event.preventDefault();
         event.stopPropagation();
       });
-      headerControls.appendChild(dragHandle);
-      headerContent.appendChild(headerControls);
+      headerActions.appendChild(dragHandle);
       if (column.searchable) {
         var searchField = createElement('div', 'documents-header-search');
         var searchInput = document.createElement('input');
