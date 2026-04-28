@@ -6407,6 +6407,21 @@ function docs_user_can_create_documents(?array $sessionAuth): bool
 
 function docs_resolve_column_width_owner_id(array $requestContext, ?array $sessionAuth = null): string
 {
+    $explicitUserKey = '';
+    if (isset($requestContext['raw']) && is_array($requestContext['raw'])) {
+        $explicitUserKey = (string) ($requestContext['raw']['user_key'] ?? '');
+    }
+    if ($explicitUserKey !== '') {
+        $normalizedExplicitUserKey = trim($explicitUserKey);
+        if (preg_match('/^[a-z_]+:(.+)$/iu', $normalizedExplicitUserKey, $matches) && isset($matches[1])) {
+            $normalizedExplicitUserKey = (string) $matches[1];
+        }
+        $normalizedExplicitUserKey = docs_normalize_identifier_candidate_value($normalizedExplicitUserKey);
+        if ($normalizedExplicitUserKey !== '') {
+            return substr($normalizedExplicitUserKey, 0, 120);
+        }
+    }
+
     $candidates = [];
 
     if (is_array($sessionAuth)) {
@@ -8211,6 +8226,7 @@ function docs_build_request_user_context(): array
         'telegram_chat_id' => docs_first_non_empty_string($sources, ['telegram_chat_id', 'chat_id', 'chatId']),
         'telegram_username' => docs_first_non_empty_string($sources, ['telegram_username', 'username', 'user_name']),
         'telegram_full_name' => docs_first_non_empty_string($sources, ['telegram_full_name', 'full_name', 'name']),
+        'user_key' => docs_first_non_empty_string($sources, ['user_key', 'userKey', 'settings_user_key']),
     ];
 
     $filter = null;
