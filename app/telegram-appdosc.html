@@ -859,6 +859,66 @@
         border-color: rgba(148, 163, 184, 0.34);
       }
 
+      .appdosc-card__insight {
+        display: none;
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card__insight {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .appdosc-card__insight-chip {
+        min-height: 44px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        background: rgba(255, 255, 255, 0.48);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+      }
+
+      .appdosc-card__insight-label {
+        font-size: 11px;
+        color: var(--appdosc-text-muted);
+        line-height: 1.2;
+      }
+
+      .appdosc-card__insight-value {
+        font-size: 13px;
+        color: var(--appdosc-text-primary);
+        font-weight: 600;
+        line-height: 1.25;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      :root[data-theme='dark'] .appdosc-card__insight-chip {
+        background: rgba(15, 23, 42, 0.46);
+        border-color: rgba(148, 163, 184, 0.34);
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__details,
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__resolution,
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__files {
+        display: none;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__summary {
+        margin-top: 8px;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__footer {
+        margin-top: 10px;
+      }
+
       .appdosc-avatar {
         width: 42px;
         height: 42px;
@@ -3078,6 +3138,24 @@
             <span class="appdosc-card__status task-status" data-field="status"></span>
           </div>
           <div class="appdosc-card__summary" data-field="summary"><div class="appdosc-card__block-text" data-field="contentCompact"></div></div>
+          <div class="appdosc-card__insight" data-field="insight">
+            <div class="appdosc-card__insight-chip">
+              <span class="appdosc-card__insight-label">Срок</span>
+              <span class="appdosc-card__insight-value" data-field="insightDueState">Не указан</span>
+            </div>
+            <div class="appdosc-card__insight-chip">
+              <span class="appdosc-card__insight-label">Исполнитель</span>
+              <span class="appdosc-card__insight-value" data-field="insightExecutor">Не указан</span>
+            </div>
+            <div class="appdosc-card__insight-chip">
+              <span class="appdosc-card__insight-label">Ответы</span>
+              <span class="appdosc-card__insight-value" data-field="insightResponses">Нет ответов</span>
+            </div>
+            <div class="appdosc-card__insight-chip">
+              <span class="appdosc-card__insight-label">Вложения</span>
+              <span class="appdosc-card__insight-value" data-field="insightFiles">0 файлов</span>
+            </div>
+          </div>
           <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
         </header>
         <dl class="appdosc-card__details">
@@ -3299,9 +3377,9 @@
             <span>📋</span>
             <span>Стандартный</span>
           </button>
-          <button type="button" class="appdosc-settings-sheet__list-mode-btn" aria-disabled="true" disabled>
-            <span>🧊</span>
-            <span>Информативный · в разработке</span>
+          <button type="button" class="appdosc-settings-sheet__list-mode-btn" data-list-mode-option="insight" aria-pressed="false">
+            <span>✨</span>
+            <span>Информативный Glass</span>
           </button>
         </div>
       </section>

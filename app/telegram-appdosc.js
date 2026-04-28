@@ -22,7 +22,7 @@ let aiDialogLoader = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
-const TASK_LIST_MODE_OPTIONS = ['default'];
+const TASK_LIST_MODE_OPTIONS = ['default', 'insight'];
 const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
@@ -3105,7 +3105,7 @@ function writeTaskListModePreference(mode) {
 
 function applyTaskListMode() {
   const mode = normalizeTaskListMode(state.taskListMode);
-  setClass(document.body, 'appdosc--list-mode-informative', false);
+  setClass(document.body, 'appdosc--list-mode-insight', mode === 'insight');
   document.documentElement.setAttribute('data-task-list-mode', mode);
 }
 
@@ -5195,7 +5195,7 @@ function createCard(task, index, anchorRegistry) {
     || 'не указан';
 
   const taskListMode = normalizeTaskListMode(state.taskListMode);
-  if (taskListMode === 'informative') {
+  if (taskListMode === 'insight') {
     setCardField(card, '[data-field="document"]', compactContent, {
       fallback: 'Не указано',
       setTitle: false,
@@ -5277,6 +5277,42 @@ function createCard(task, index, anchorRegistry) {
     fallback: '—',
     setTitle: false,
   });
+
+  const dueDate = parseDate(task.dueDate);
+  const dueDateLabel = formatDate(task.dueDate);
+  const dueState = completed
+    ? '✅ Выполнено'
+    : (isOverdue(task)
+      ? `⚠️ Просрочено · ${dueDateLabel}`
+      : (dueDate ? `🗓 До ${dueDateLabel}` : '🗓 Срок не указан'));
+  const executorInsight = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
+  const responseSummaryText = buildTaskResponseSummary(task);
+  const responseRows = normalizeValue(responseSummaryText)
+    ? responseSummaryText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    : [];
+  const responseCount = responseRows.filter((row) => /Ответ:/i.test(row)).length;
+  const filesCount = Array.isArray(task.files) ? task.files.length : 0;
+
+  setCardField(card, '[data-field="insightDueState"]', dueState, {
+    fallback: 'Срок не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightExecutor"]', executorInsight, {
+    fallback: 'Не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightResponses"]', responseCount > 0 ? `${responseCount} ответа` : 'Нет ответов', {
+    fallback: 'Нет ответов',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightFiles"]', filesCount > 0 ? `${filesCount} файлов` : '0 файлов', {
+    fallback: '0 файлов',
+    setTitle: false,
+  });
+  toggleSection(card, '[data-field="insight"]', taskListMode === 'insight');
 
   applyStatusBadge(card, statusText, normalizedStatus, task);
   populateCardFiles(card, task.files);
