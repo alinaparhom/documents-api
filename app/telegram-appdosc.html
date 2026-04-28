@@ -1365,7 +1365,8 @@
         display: none !important;
       }
 
-      .appdosc--list-mode-informative .appdosc-card {
+      body.appdosc--list-mode-informative .appdosc-card,
+      html[data-task-list-mode='informative'] .appdosc-card {
         border-radius: 20px !important;
         border: 1.5px solid rgba(17, 24, 39, 0.38) !important;
         background: rgba(255, 255, 255, 0.86) !important;
@@ -1373,12 +1374,13 @@
         backdrop-filter: blur(10px) saturate(140%);
       }
 
-      .appdosc--list-mode-informative .task-icon {
+      body.appdosc--list-mode-informative .task-icon,
+      html[data-task-list-mode='informative'] .task-icon {
         display: none !important;
       }
 
-      .appdosc--list-mode-informative .appdosc-card__header,
-      .appdosc--list-mode-informative .appdosc-card[data-expanded='false'] .appdosc-card__header {
+      body.appdosc--list-mode-informative .appdosc-card__header,
+      html[data-task-list-mode='informative'] .appdosc-card__header {
         grid-template-columns: minmax(0, 1fr) auto !important;
         grid-template-areas:
           "main actions"
@@ -1391,14 +1393,16 @@
         gap: 10px !important;
       }
 
-      .appdosc--list-mode-informative .task-main {
+      body.appdosc--list-mode-informative .task-main,
+      html[data-task-list-mode='informative'] .task-main {
         grid-area: main !important;
         display: grid !important;
         grid-template-columns: minmax(0, 1fr) !important;
         gap: 8px !important;
       }
 
-      .appdosc--list-mode-informative .task-name {
+      body.appdosc--list-mode-informative .task-name,
+      html[data-task-list-mode='informative'] .task-name {
         margin: 0 !important;
         text-align: left !important;
         font-size: 21px !important;
@@ -1408,16 +1412,19 @@
         -webkit-line-clamp: 2 !important;
       }
 
-      .appdosc--list-mode-informative .appdosc-card__subtitle {
+      body.appdosc--list-mode-informative .appdosc-card__subtitle,
+      html[data-task-list-mode='informative'] .appdosc-card__subtitle {
         display: none !important;
       }
 
-      .appdosc--list-mode-informative .appdosc-card__side {
+      body.appdosc--list-mode-informative .appdosc-card__side,
+      html[data-task-list-mode='informative'] .appdosc-card__side {
         grid-area: badges !important;
         justify-self: start !important;
       }
 
-      .appdosc--list-mode-informative .appdosc-card__status {
+      body.appdosc--list-mode-informative .appdosc-card__status,
+      html[data-task-list-mode='informative'] .appdosc-card__status {
         display: inline-flex !important;
         min-height: 30px !important;
         padding: 0 14px !important;
@@ -1429,7 +1436,8 @@
         font-weight: 600 !important;
       }
 
-      .appdosc--list-mode-informative .task-meta {
+      body.appdosc--list-mode-informative .task-meta,
+      html[data-task-list-mode='informative'] .task-meta {
         grid-area: meta !important;
         position: static !important;
         display: flex !important;
@@ -1438,7 +1446,8 @@
         flex-wrap: wrap !important;
       }
 
-      .appdosc--list-mode-informative .task-number {
+      body.appdosc--list-mode-informative .task-number,
+      html[data-task-list-mode='informative'] .task-number {
         order: 1;
         font-size: 13px !important;
         font-weight: 600 !important;
@@ -1448,7 +1457,8 @@
         background: #d9ccff !important;
       }
 
-      .appdosc--list-mode-informative .task-date {
+      body.appdosc--list-mode-informative .task-date,
+      html[data-task-list-mode='informative'] .task-date {
         order: 2;
         flex: 1 0 100%;
         font-size: 20px !important;
@@ -2681,7 +2691,8 @@
 
         .task-icon { display: none !important; }
 
-        .appdosc--list-mode-informative .task-icon {
+        body.appdosc--list-mode-informative .task-icon,
+        html[data-task-list-mode='informative'] .task-icon {
           display: none !important;
         }
 
@@ -2701,7 +2712,8 @@
           font-size: 10.5px !important;
         }
 
-        .appdosc--list-mode-informative .task-name {
+        body.appdosc--list-mode-informative .task-name,
+        html[data-task-list-mode='informative'] .task-name {
           font-size: 17px !important;
         }
 
@@ -2747,20 +2759,22 @@
           padding: 3px 6px !important;
         }
 
-        .appdosc--list-mode-informative .appdosc-card__status.task-status,
-        .appdosc--list-mode-informative .appdosc-card[data-expanded='false'] .appdosc-card__status {
+        body.appdosc--list-mode-informative .appdosc-card__status.task-status,
+        html[data-task-list-mode='informative'] .appdosc-card__status.task-status {
           max-width: none !important;
           min-height: 28px !important;
           font-size: 12px !important;
           padding: 0 12px !important;
         }
 
-        .appdosc--list-mode-informative .task-number {
+        body.appdosc--list-mode-informative .task-number,
+        html[data-task-list-mode='informative'] .task-number {
           font-size: 12px !important;
           padding: 5px 12px !important;
         }
 
-        .appdosc--list-mode-informative .task-date {
+        body.appdosc--list-mode-informative .task-date,
+        html[data-task-list-mode='informative'] .task-date {
           font-size: 15px !important;
         }
       }
