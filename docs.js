@@ -12503,7 +12503,11 @@
   function getAccessProfileKey(context) {
     var role = context && context.role ? context.role : '';
     var canManage = state.permissions && state.permissions.canManageInstructions ? '1' : '0';
-    return role + ':' + canManage;
+    var userKey = resolveUserKey(context);
+    if (!userKey) {
+      userKey = 'anonymous';
+    }
+    return role + ':' + canManage + ':' + userKey;
   }
 
   function loadColumnWidths(organization, force) {
