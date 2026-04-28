@@ -602,6 +602,9 @@
     searchReset: null,
     actionToast: null,
     actionToastTimer: 0,
+    loadingOverlay: null,
+    loadingOverlayLabel: null,
+    loadingOverlayCounter: 0,
     searchButtons: {},
     searchFields: {},
     searchInputs: {},
@@ -1092,6 +1095,8 @@
   var searchEventsBound = false;
   var searchDebounceTimers = {};
   var SEARCH_DEBOUNCE_MS = 300;
+  var FILTER_REBUILD_DEBOUNCE_MS = 120;
+  var REGISTRY_REQUEST_TIMEOUT_MS = 15000;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -1119,6 +1124,8 @@
     columnWidthsLoadingPromise: null,
     rowCache: new Map(),
     rowExpandedState: new Map(),
+    filterValuesCache: new Map(),
+    tableUpdateTimer: 0,
     virtualTable: {
       rowHeight: 0,
       minVisibleRows: 30,
@@ -2914,11 +2921,28 @@
       'overflow:visible;' +
       '}' +
       '.documents-header-content{' +
-      'display:block;' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'align-items:stretch;' +
+      'gap:6px;' +
       'width:100%;' +
-      'position:relative;' +
       'min-height:44px;' +
       'padding:4px 0;' +
+      '}' +
+      '.documents-header-main{' +
+      'min-width:0;' +
+      'flex:1 1 auto;' +
+      '}' +
+      '.documents-header-actions{' +
+      'flex:0 0 auto;' +
+      'display:flex;' +
+      'flex-direction:row;' +
+      'align-items:center;' +
+      'justify-content:flex-end;' +
+      'gap:6px;' +
+      'opacity:0;' +
+      'pointer-events:none;' +
+      'transition:opacity 0.16s ease;' +
       '}' +
       '.documents-header-sort-button{' +
       'display:inline-flex;' +
@@ -2928,7 +2952,7 @@
       'min-width:0;' +
       'border:none;' +
       'background:transparent;' +
-      'padding:16px 34px 6px 2px;' +
+      'padding:12px 2px 6px 2px;' +
       'text-align:left;' +
       'cursor:pointer;' +
       '}' +
@@ -2943,6 +2967,8 @@
       'color:#0f172a;' +
       'line-height:1.35;' +
       'word-break:break-word;' +
+      'overflow-wrap:anywhere;' +
+      'hyphens:auto;' +
       'flex:1 1 auto;' +
       'min-width:0;' +
       'transition:color 0.2s ease;' +
@@ -2960,9 +2986,6 @@
       'transform:translateY(0);' +
       '}' +
       '.documents-table__header-cell--searchable{' +
-      'position:absolute;' +
-      'top:0;' +
-      'right:0;' +
       'user-select:none;' +
       'border-radius:10px;' +
       'transition:background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;' +
@@ -3009,12 +3032,13 @@
       'display:block;' +
       '}' +
       '.documents-header-controls{' +
-      'display:contents;' +
+      'display:flex;' +
+      'flex-direction:row;' +
+      'align-items:center;' +
+      'justify-content:flex-end;' +
+      'gap:6px;' +
       '}' +
       '.documents-column-drag-handle{' +
-      'position:absolute;' +
-      'right:0;' +
-      'bottom:0;' +
       'display:inline-flex;' +
       'align-items:center;' +
       'justify-content:center;' +
@@ -3038,6 +3062,7 @@
       '}' +
       '.documents-header-search{' +
       'display:none;' +
+      'width:100%;' +
       'margin-top:6px;' +
       '}' +
       '.documents-header-search--visible{' +
@@ -3063,17 +3088,73 @@
       'opacity:0;' +
       'transition:opacity 0.16s ease, background-color 0.16s ease;' +
       '}' +
+      '.documents-table__header-cell:hover .documents-header-actions,' +
+      '.documents-table__header-cell:focus-within .documents-header-actions,' +
+      '.documents-header-actions:focus-within{' +
+      'opacity:1;' +
+      'pointer-events:auto;' +
+      '}' +
       '.documents-table__header-cell:hover .documents-column-drag-handle,' +
       '.documents-table__header-cell:focus-within .documents-column-drag-handle,' +
       '.documents-column-drag-handle.is-dragging{' +
       'opacity:1;' +
       '}' +
+      '@media (hover: none), (pointer: coarse){' +
+      '.documents-header-actions{opacity:1;pointer-events:auto;}' +
+      '.documents-column-drag-handle{opacity:1;}' +
+      '}' +
       '@media (max-width: 768px){' +
-      '.documents-header-content{min-height:48px;}' +
-      '.documents-header-sort-button{padding-top:18px;padding-right:38px;}' +
-      '.documents-table__header-cell--searchable{width:32px;height:32px;min-width:32px;top:0;right:0;}' +
-      '.documents-column-drag-handle{width:26px;min-width:26px;height:26px;right:0;bottom:0;opacity:1;}' +
+      '.documents-header-content{min-height:56px;}' +
+      '.documents-header-sort-button{padding-top:14px;}' +
+      '.documents-table__header-cell--searchable{width:36px;height:36px;min-width:36px;min-height:36px;}' +
+      '.documents-column-drag-handle{width:36px;min-width:36px;height:36px;min-height:36px;}' +
       '.documents-header-search__input{height:36px;font-size:14px;}' +
+      '}' +
+      '.documents-loading-overlay{' +
+      'position:absolute;' +
+      'inset:0;' +
+      'display:flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'padding:16px;' +
+      'background:rgba(241,245,249,0.72);' +
+      'backdrop-filter:blur(4px);' +
+      '-webkit-backdrop-filter:blur(4px);' +
+      'opacity:0;' +
+      'pointer-events:none;' +
+      'transition:opacity 0.2s ease;' +
+      'z-index:9;' +
+      '}' +
+      '.documents-loading-overlay.is-visible{' +
+      'opacity:1;' +
+      'pointer-events:auto;' +
+      '}' +
+      '.documents-loading-overlay__card{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'gap:10px;' +
+      'padding:10px 14px;' +
+      'border-radius:14px;' +
+      'background:rgba(255,255,255,0.9);' +
+      'border:1px solid rgba(191,219,254,0.8);' +
+      'box-shadow:0 10px 24px rgba(15,23,42,0.15);' +
+      'font-size:13px;' +
+      'color:#0f172a;' +
+      '}' +
+      '.documents-loading-overlay__spinner{' +
+      'width:18px;' +
+      'height:18px;' +
+      'border-radius:999px;' +
+      'border:2px solid rgba(37,99,235,0.2);' +
+      'border-top-color:#2563eb;' +
+      'animation:documents-loading-spin 0.8s linear infinite;' +
+      '}' +
+      '@keyframes documents-loading-spin{to{transform:rotate(360deg);}}' +
+      '@media (hover: none), (pointer: coarse){' +
+      '.documents-table__header-cell--searchable,.documents-column-drag-handle,.documents-loading-overlay__card{' +
+      'backdrop-filter:none;-webkit-backdrop-filter:none;' +
+      '}' +
+      '.documents-loading-overlay{background:rgba(241,245,249,0.92);}' +
       '}' +
       '.documents-action-toast{' +
       'position:fixed;' +
@@ -3456,6 +3537,53 @@
     }, 1800);
   }
 
+  function ensureLoadingOverlay() {
+    if (elements.loadingOverlay && elements.loadingOverlay.parentNode) {
+      return elements.loadingOverlay;
+    }
+    if (!elements.tableWrapper) {
+      return null;
+    }
+    var overlay = createElement('div', 'documents-loading-overlay');
+    overlay.setAttribute('aria-live', 'polite');
+    overlay.setAttribute('aria-busy', 'false');
+    var card = createElement('div', 'documents-loading-overlay__card');
+    var spinner = createElement('span', 'documents-loading-overlay__spinner');
+    spinner.setAttribute('aria-hidden', 'true');
+    var label = createElement('span', 'documents-loading-overlay__label', 'Загрузка данных…');
+    card.appendChild(spinner);
+    card.appendChild(label);
+    overlay.appendChild(card);
+    elements.tableWrapper.appendChild(overlay);
+    elements.loadingOverlay = overlay;
+    elements.loadingOverlayLabel = label;
+    return overlay;
+  }
+
+  function setTableLoadingState(active, text) {
+    var overlay = ensureLoadingOverlay();
+    if (!overlay) {
+      return;
+    }
+    if (active) {
+      elements.loadingOverlayCounter = (elements.loadingOverlayCounter || 0) + 1;
+      if (text && elements.loadingOverlayLabel) {
+        elements.loadingOverlayLabel.textContent = text;
+      }
+      overlay.classList.add('is-visible');
+      overlay.setAttribute('aria-busy', 'true');
+      return;
+    }
+    elements.loadingOverlayCounter = Math.max(0, (elements.loadingOverlayCounter || 0) - 1);
+    if (elements.loadingOverlayCounter === 0) {
+      overlay.classList.remove('is-visible');
+      overlay.setAttribute('aria-busy', 'false');
+      if (elements.loadingOverlayLabel) {
+        elements.loadingOverlayLabel.textContent = 'Загрузка данных…';
+      }
+    }
+  }
+
   function bindSearchEvents() {
     if (searchEventsBound) {
       return;
@@ -3836,6 +3964,39 @@
     return values;
   }
 
+  function getDocumentFilterCacheKey(doc, originalIndex) {
+    if (!doc || doc.id === undefined || doc.id === null) {
+      return '';
+    }
+    var versionParts = [
+      String(doc.id),
+      String(doc.updatedAt || ''),
+      String(doc.statusUpdatedAt || ''),
+      String(doc.registrationDate || ''),
+      String(doc.dueDate || ''),
+      String(doc.status || ''),
+      String(originalIndex || 0)
+    ];
+    return versionParts.join('|');
+  }
+
+  function getFilterValuesWithCache(doc, originalIndex) {
+    var cacheKey = getDocumentFilterCacheKey(doc, originalIndex);
+    if (!cacheKey) {
+      return computeFilterValues(doc, originalIndex);
+    }
+    var cached = state.filterValuesCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    var values = computeFilterValues(doc, originalIndex);
+    state.filterValuesCache.set(cacheKey, values);
+    if (state.filterValuesCache.size > 5000) {
+      state.filterValuesCache.clear();
+    }
+    return values;
+  }
+
   function matchesDocumentFilters(values) {
     if (!values) {
       return false;
@@ -3906,7 +4067,7 @@
     }
     updateSearchButtonStates();
     updateFilterBar();
-    updateTable();
+    scheduleTableUpdate();
   }
 
   function removeFilter(columnKey) {
@@ -3925,7 +4086,7 @@
     }
     updateSearchButtonStates();
     updateFilterBar();
-    updateTable();
+    scheduleTableUpdate();
   }
 
   function resetAllFilters() {
@@ -3951,7 +4112,7 @@
     updateUnviewedButtonState();
     updateSearchButtonStates();
     updateFilterBar();
-    updateTable();
+    scheduleTableUpdate();
   }
 
   function updateSearchButtonStates() {
@@ -13764,7 +13925,7 @@
       if (!documentVisibleForCurrentUser(doc)) {
         continue;
       }
-      var values = computeFilterValues(doc, i);
+      var values = getFilterValuesWithCache(doc, i);
       if (matchesDocumentFilters(values)) {
         filteredEntries.push({ doc: doc, values: values, index: i });
       }
@@ -13802,6 +13963,16 @@
 
     applyColumnWidths();
     setToolbarState();
+  }
+
+  function scheduleTableUpdate() {
+    if (state.tableUpdateTimer) {
+      clearTimeout(state.tableUpdateTimer);
+    }
+    state.tableUpdateTimer = setTimeout(function() {
+      state.tableUpdateTimer = 0;
+      updateTable();
+    }, FILTER_REBUILD_DEBOUNCE_MS);
   }
 
   function handleResponse(response) {
@@ -13974,6 +14145,7 @@
     }
 
     state.documents = processedDocuments;
+    state.filterValuesCache.clear();
 
     for (var cacheKey in state.directorCache) {
       if (!Object.prototype.hasOwnProperty.call(state.directorCache, cacheKey)) {
@@ -14121,6 +14293,7 @@
     if (!target.updatedAt) {
       target.updatedAt = new Date().toISOString();
     }
+    state.filterValuesCache.clear();
   }
 
   function loadRegistry(organization) {
@@ -14133,9 +14306,25 @@
 
     clearMessage();
 
+    if (state.registryRequestController && typeof state.registryRequestController.abort === 'function') {
+      state.registryRequestController.abort();
+    }
+
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    state.registryRequestController = controller;
+    var timeoutId = 0;
+    if (controller && typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+      timeoutId = window.setTimeout(function() {
+        controller.abort();
+      }, REGISTRY_REQUEST_TIMEOUT_MS);
+    }
+
+    setTableLoadingState(true, 'Загружаем реестр…');
+
     return fetch(buildApiUrl('list', { organization: organization }), {
       credentials: 'same-origin',
-      cache: 'no-store'
+      cache: 'no-store',
+      signal: controller ? controller.signal : undefined
     })
       .then(handleResponse)
       .then(function(data) {
@@ -14165,9 +14354,26 @@
         return documents;
       })
       .catch(function(error) {
+        var isSuperseded = controller && state.registryRequestController && state.registryRequestController !== controller;
+        if (isSuperseded) {
+          return Promise.reject(error);
+        }
+        var isAbort = error && (error.name === 'AbortError' || /aborted|abort/i.test(String(error.message || '')));
+        if (isAbort) {
+          error = new Error('Время ожидания истекло. Проверьте интернет и попробуйте ещё раз.');
+        }
         sendClientDiagnostics('registry_load_error', { message: error && error.message ? error.message : String(error) });
         showMessage('error', 'Не удалось загрузить реестр: ' + (error && error.message ? error.message : String(error)));
         throw error;
+      })
+      .finally(function() {
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+        }
+        if (state.registryRequestController === controller) {
+          state.registryRequestController = null;
+        }
+        setTableLoadingState(false);
       });
   }
 
@@ -14176,13 +14382,29 @@
       return Promise.reject(new Error('Организация не определена.'));
     }
 
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timeoutId = 0;
+    if (controller && typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+      timeoutId = window.setTimeout(function() {
+        controller.abort();
+      }, REGISTRY_REQUEST_TIMEOUT_MS);
+    }
+    setTableLoadingState(true, 'Обновляем данные…');
+
     return fetch(buildApiUrl('list', { organization: state.organization, cacheBust: Date.now() }), {
       credentials: 'same-origin',
-      cache: 'no-store'
+      cache: 'no-store',
+      signal: controller ? controller.signal : undefined
     })
       .then(handleResponse)
       .then(function(data) {
         return updateStateFromPayload(data);
+      })
+      .finally(function() {
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+        }
+        setTableLoadingState(false);
       });
   }
 
@@ -16997,6 +17219,10 @@
       elements.headerCells[column.key] = headerCell;
       var headerContent = createElement('div', 'documents-header-content');
       headerCell.appendChild(headerContent);
+      var headerMain = createElement('div', 'documents-header-main');
+      var headerActions = createElement('div', 'documents-header-actions documents-header-controls');
+      headerContent.appendChild(headerMain);
+      headerContent.appendChild(headerActions);
       var sortButton = createElement('button', 'documents-header-sort-button');
       sortButton.type = 'button';
       var label = createElement('span', 'documents-header-label', column.label);
@@ -17009,9 +17235,8 @@
         event.stopPropagation();
         toggleColumnSort(column.key);
       });
-      headerContent.appendChild(sortButton);
+      headerMain.appendChild(sortButton);
       elements.sortButtons[column.key] = sortButton;
-      var headerControls = createElement('div', 'documents-header-controls');
       if (column.searchable) {
         var filterButton = createElement('button', 'documents-table__header-cell--searchable');
         filterButton.type = 'button';
@@ -17024,7 +17249,7 @@
           event.stopPropagation();
           openSearchPopover(column.key, filterButton);
         });
-        headerControls.appendChild(filterButton);
+        headerActions.appendChild(filterButton);
         elements.searchButtons[column.key] = filterButton;
       }
       var dragHandle = createElement('button', 'documents-column-drag-handle', '⋮⋮');
@@ -17036,8 +17261,7 @@
         event.preventDefault();
         event.stopPropagation();
       });
-      headerControls.appendChild(dragHandle);
-      headerContent.appendChild(headerControls);
+      headerActions.appendChild(dragHandle);
       if (column.searchable) {
         var searchField = createElement('div', 'documents-header-search');
         var searchInput = document.createElement('input');
@@ -17071,7 +17295,7 @@
         });
         searchInput.dataset.columnKey = column.key;
         searchField.appendChild(searchInput);
-        headerContent.appendChild(searchField);
+        headerCell.appendChild(searchField);
         elements.searchFields[column.key] = searchField;
         elements.searchInputs[column.key] = searchInput;
       }
