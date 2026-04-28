@@ -4541,9 +4541,7 @@ function initRangeCalendar(options = {}) {
         inner.appendChild(countEl);
       }
       button.appendChild(inner);
-      if (!isOutsideMonth) {
-        button.addEventListener('click', () => handleDateClick(dateKey));
-      }
+      button.addEventListener('click', () => handleDateClick(dateKey, { isOutsideMonth }));
       grid.appendChild(button);
     }
 
@@ -4552,7 +4550,8 @@ function initRangeCalendar(options = {}) {
     return month;
   }
 
-  function handleDateClick(dateKey) {
+  function handleDateClick(dateKey, options = {}) {
+    const isOutsideMonth = Boolean(options && options.isOutsideMonth);
     if (!startDate || (startDate && endDate)) {
       startDate = dateKey;
       endDate = '';
@@ -4564,7 +4563,23 @@ function initRangeCalendar(options = {}) {
         endDate = tmp;
       }
     }
+
+    if (isOutsideMonth) {
+      const parsed = parseDate(dateKey);
+      if (parsed instanceof Date) {
+        const nextYear = parsed.getFullYear();
+        if (Number.isFinite(nextYear) && nextYear !== selectedYear) {
+          selectedYear = nextYear;
+          ensureYearOptions();
+          renderMonths();
+        }
+      }
+    }
+
     updateSelection();
+    if (isOutsideMonth) {
+      scrollToRelevantMonth();
+    }
   }
 
   function getSubmitText() {

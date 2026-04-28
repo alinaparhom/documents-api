@@ -2145,12 +2145,18 @@
       }
 
       .range-calendar__day.is-outside {
-        pointer-events: none;
-        opacity: 0.56;
+        opacity: 0.88;
       }
 
       .range-calendar__day.is-outside .range-calendar__day-inner {
-        background: rgba(242, 246, 252, 0.75);
+        background: linear-gradient(180deg, rgba(246, 248, 251, 0.98), rgba(235, 239, 245, 0.94));
+        border-style: dashed;
+        border-color: rgba(148, 163, 184, 0.55);
+      }
+
+      .range-calendar__day.is-outside .range-calendar__day-number {
+        color: #64748b;
+        font-weight: 700;
       }
 
       .range-calendar__panel {
@@ -2408,7 +2414,12 @@
       }
 
       :root[data-theme='dark'] .range-calendar__day.is-outside .range-calendar__day-inner {
-        background: rgba(23, 34, 52, 0.74);
+        background: linear-gradient(180deg, rgba(39, 48, 63, 0.92), rgba(28, 36, 49, 0.9));
+        border-color: rgba(100, 116, 139, 0.62);
+      }
+
+      :root[data-theme='dark'] .range-calendar__day.is-outside .range-calendar__day-number {
+        color: #94a3b8;
       }
 
       :root[data-theme='dark'] .range-calendar__day-count {
