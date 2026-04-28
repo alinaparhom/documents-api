@@ -2636,6 +2636,107 @@
           padding: 3px 6px !important;
         }
       }
+
+      :root[data-task-list-mode='showcase'] body {
+        background:
+          radial-gradient(circle at top, #0d2b4d 0%, #04101f 45%, #020814 100%) !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc__table-card.tasks-panel {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 10px 0 22px !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card {
+        background: linear-gradient(135deg, #07192f, #061528) !important;
+        border: 1px solid #163a63 !important;
+        border-radius: 22px !important;
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3) !important;
+        margin-bottom: 16px !important;
+        overflow: hidden;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card__header {
+        grid-template-columns: 64px minmax(0, 1fr) 24px !important;
+        grid-template-areas: "icon main side" !important;
+        gap: 14px !important;
+        padding: 16px !important;
+        min-height: 92px !important;
+        align-items: start !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .task-icon {
+        display: grid !important;
+        width: 64px;
+        height: 64px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, #123760, #0d2444);
+      }
+
+      :root[data-task-list-mode='showcase'] .task-meta {
+        margin-bottom: 8px;
+      }
+
+      :root[data-task-list-mode='showcase'] .task-name {
+        font-size: 18px !important;
+        font-weight: 800 !important;
+        line-height: 1.25 !important;
+        color: #f8fafc !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card__status {
+        background: rgba(255, 149, 0, 0.18) !important;
+        color: #ff9500 !important;
+        border: none !important;
+        border-radius: 999px !important;
+        font-weight: 800 !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card__status::before {
+        content: "● ";
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card__side::after {
+        content: "⌄";
+        color: #aab9cf;
+        font-size: 24px;
+        line-height: 1;
+        transition: transform 0.25s ease;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card[data-expanded='true'] .appdosc-card__side::after {
+        transform: rotate(180deg);
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card__summary {
+        display: none !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card[data-expanded='false'] .appdosc-card__details,
+      :root[data-task-list-mode='showcase'] .appdosc-card[data-expanded='false'] .appdosc-card__files,
+      :root[data-task-list-mode='showcase'] .appdosc-card[data-expanded='false'] .appdosc-card__resolution,
+      :root[data-task-list-mode='showcase'] .appdosc-card[data-expanded='false'] .appdosc-card__footer {
+        display: none !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card__details,
+      :root[data-task-list-mode='showcase'] .appdosc-card__files,
+      :root[data-task-list-mode='showcase'] .appdosc-card__resolution,
+      :root[data-task-list-mode='showcase'] .appdosc-card__footer {
+        border-top: 1px solid rgba(143, 163, 191, 0.18);
+        padding: 16px !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card__detail dt {
+        color: #8fa3bf !important;
+      }
+
+      :root[data-task-list-mode='showcase'] .appdosc-card__detail dd {
+        color: #f8fafc !important;
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -3299,9 +3400,9 @@
             <span>📋</span>
             <span>Стандартный</span>
           </button>
-          <button type="button" class="appdosc-settings-sheet__list-mode-btn" aria-disabled="true" disabled>
-            <span>🧊</span>
-            <span>Информативный · в разработке</span>
+          <button type="button" class="appdosc-settings-sheet__list-mode-btn" data-list-mode-option="showcase" aria-pressed="false">
+            <span>🎨</span>
+            <span>Новый дизайн</span>
           </button>
         </div>
       </section>
