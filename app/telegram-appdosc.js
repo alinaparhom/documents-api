@@ -5026,6 +5026,7 @@ function createCard(task, index, anchorRegistry) {
   if (!card.hasAttribute('data-card')) {
     card.setAttribute('data-card', '');
   }
+  card.__task = task;
 
   if (anchorRegistry) {
     const anchorId = buildCardAnchorId(task, index, anchorRegistry);
@@ -5890,6 +5891,9 @@ function setCardExpandedState(card, expanded) {
   card.dataset.expanded = isExpanded ? 'true' : 'false';
   setClass(card, 'appdosc-card--collapsed', !isExpanded);
   rememberCardExpansion(card, isExpanded);
+  if (isExpanded && card.__task) {
+    markTaskViewedOnExpand(card.__task, card, 'mini_app_expand_card');
+  }
 
   const toggles = card.querySelectorAll('[data-card-toggle]');
   toggles.forEach((toggle) => {
@@ -8066,7 +8070,7 @@ function syncTaskViewEntry(task, response, fallbackTimestamp) {
   }
 }
 
-async function registerTaskView(task, timestamp, card) {
+async function registerTaskView(task, timestamp, card, trigger = 'mini_app_view') {
   if (!task || !task.id) {
     return;
   }
@@ -8082,7 +8086,7 @@ async function registerTaskView(task, timestamp, card) {
     organization,
     documentId: task.id,
     viewedAt: timestamp,
-    trigger: 'mini_app_view',
+    trigger: normalizeValue(trigger) || 'mini_app_view',
   };
 
   const headers = { 'Content-Type': 'application/json' };
@@ -8111,6 +8115,44 @@ async function registerTaskView(task, timestamp, card) {
   if (card) {
     updateCardViewInfo(card, task);
   }
+}
+
+function markTaskViewedOnExpand(task, card, trigger = 'mini_app_expand') {
+  if (!task || typeof task !== 'object') {
+    return;
+  }
+
+  const currentEntry = getTaskViewEntryForCurrentUser(task);
+  if (currentEntry && currentEntry.viewedAt) {
+    if (card) {
+      updateCardViewInfo(card, task);
+    }
+    return;
+  }
+
+  if (task.__registerViewPending) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  task.__registerViewPending = true;
+  applyLocalTaskViewUpdate(task, timestamp);
+  if (card) {
+    updateCardViewInfo(card, task);
+  }
+
+  registerTaskView(task, timestamp, card, trigger)
+    .catch((error) => {
+      logViewerDebug('task_view_register_failed', {
+        message: error instanceof Error ? error.message : String(error),
+        taskId: task.id || '',
+        organization: getTaskOrganization(task),
+        trigger: normalizeValue(trigger) || 'mini_app_expand',
+      });
+    })
+    .finally(() => {
+      task.__registerViewPending = false;
+    });
 }
 
 function buildTaskViewLogDetails(task, extra) {
@@ -11464,21 +11506,11 @@ async function handleCardView(button, task) {
   }
 
   const card = button.closest('[data-card]');
-  const timestamp = new Date().toISOString();
   const flowStartedAt = performance.now();
 
+  const timestamp = new Date().toISOString();
   logTaskViewClick(task, timestamp);
-  applyLocalTaskViewUpdate(task, timestamp);
-  if (card) {
-    updateCardViewInfo(card, task);
-  }
-  registerTaskView(task, timestamp, card).catch((error) => {
-    logViewerDebug('task_view_register_failed', {
-      message: error instanceof Error ? error.message : String(error),
-      taskId: task.id || '',
-      organization: getTaskOrganization(task),
-    });
-  });
+  markTaskViewedOnExpand(task, card, 'mini_app_view');
 
   const files = resolveTaskViewerFiles(task);
   logViewWatchEvent('task_view_watch_open_click', task, {
