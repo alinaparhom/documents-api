@@ -3123,8 +3123,15 @@ function renderTaskListModeToggle() {
 }
 
 function setTaskListMode(mode, options = {}) {
-  const nextMode = normalizeTaskListMode(mode);
+  const requestedMode = normalizeTaskListMode(mode);
+  const informativeRequested = requestedMode === 'informative';
+  const nextMode = informativeRequested ? 'default' : requestedMode;
   const shouldPersist = options && options.persist !== false;
+
+  if (informativeRequested) {
+    setStatus('info', 'Режим «Информативный» сейчас в разработке. Временно используем стандартный список.');
+  }
+
   if (state.taskListMode === nextMode && options && options.forceRender !== true) {
     renderTaskListModeToggle();
     applyTaskListMode();
