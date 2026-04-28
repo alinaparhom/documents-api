@@ -5134,15 +5134,20 @@ function createCard(task, index, anchorRegistry) {
   const completed = isTaskCompleted(task);
 
   card.classList.remove('appdosc-card--done', 'appdosc-card--control', 'appdosc-card--overdue');
+  card.classList.remove('appdosc-card--tone-done', 'appdosc-card--tone-control', 'appdosc-card--tone-overdue');
 
   if (completed) {
     card.classList.add('appdosc-card--done');
+    card.classList.add('appdosc-card--tone-done');
   } else if (normalizedStatus.includes('контрол')) {
     card.classList.add('appdosc-card--control');
+    card.classList.add('appdosc-card--tone-control');
   }
 
   if (isOverdue(task)) {
     card.classList.add('appdosc-card--overdue');
+    card.classList.remove('appdosc-card--tone-control');
+    card.classList.add('appdosc-card--tone-overdue');
   }
 
   const hasEntry = setCardField(card, '[data-field="entryNumber"]', task.entryNumber ?? index + 1, {
@@ -5281,11 +5286,12 @@ function createCard(task, index, anchorRegistry) {
   const dueDate = parseDate(task.dueDate);
   const dueDateLabel = formatDate(task.dueDate);
   const dueState = completed
-    ? '✅ Выполнено'
+    ? 'Выполнено'
     : (isOverdue(task)
-      ? `⚠️ Просрочено · ${dueDateLabel}`
-      : (dueDate ? `🗓 До ${dueDateLabel}` : '🗓 Срок не указан'));
+      ? `Просрочено · ${dueDateLabel}`
+      : (dueDate ? `До ${dueDateLabel}` : 'Срок не указан'));
   const executorInsight = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
+  const senderInsight = senderCompact === 'не указан' ? 'Не указан' : senderCompact;
   const responseSummaryText = buildTaskResponseSummary(task);
   const responseRows = normalizeValue(responseSummaryText)
     ? responseSummaryText
@@ -5295,6 +5301,17 @@ function createCard(task, index, anchorRegistry) {
     : [];
   const responseCount = responseRows.filter((row) => /Ответ:/i.test(row)).length;
   const filesCount = Array.isArray(task.files) ? task.files.length : 0;
+  const responseLabel = responseCount === 1 ? '1 ответ' : (responseCount > 1 && responseCount < 5 ? `${responseCount} ответа` : `${responseCount} ответов`);
+  const filesLabel = filesCount === 1 ? '1 файл' : (filesCount > 1 && filesCount < 5 ? `${filesCount} файла` : `${filesCount} файлов`);
+
+  setCardField(card, '[data-field="insightSender"]', senderInsight, {
+    fallback: 'Не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightDate"]', registrationDate, {
+    fallback: '—',
+    setTitle: false,
+  });
 
   setCardField(card, '[data-field="insightDueState"]', dueState, {
     fallback: 'Срок не указан',
@@ -5304,11 +5321,11 @@ function createCard(task, index, anchorRegistry) {
     fallback: 'Не указан',
     setTitle: false,
   });
-  setCardField(card, '[data-field="insightResponses"]', responseCount > 0 ? `${responseCount} ответа` : 'Нет ответов', {
+  setCardField(card, '[data-field="insightResponses"]', responseCount > 0 ? responseLabel : 'Нет ответов', {
     fallback: 'Нет ответов',
     setTitle: false,
   });
-  setCardField(card, '[data-field="insightFiles"]', filesCount > 0 ? `${filesCount} файлов` : '0 файлов', {
+  setCardField(card, '[data-field="insightFiles"]', filesCount > 0 ? filesLabel : '0 файлов', {
     fallback: '0 файлов',
     setTitle: false,
   });

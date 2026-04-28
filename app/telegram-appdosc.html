@@ -863,46 +863,13 @@
         display: none;
       }
 
-      :root[data-task-list-mode='insight'] .appdosc-card__insight {
-        margin-top: 10px;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+      :root[data-task-list-mode='insight'] .task-card {
+        border-radius: 16px;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__header {
         gap: 8px;
-      }
-
-      .appdosc-card__insight-chip {
-        min-height: 44px;
-        border-radius: 12px;
-        border: 1px solid rgba(148, 163, 184, 0.28);
-        background: rgba(255, 255, 255, 0.48);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        padding: 8px 10px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        gap: 2px;
-      }
-
-      .appdosc-card__insight-label {
-        font-size: 11px;
-        color: var(--appdosc-text-muted);
-        line-height: 1.2;
-      }
-
-      .appdosc-card__insight-value {
-        font-size: 13px;
-        color: var(--appdosc-text-primary);
-        font-weight: 600;
-        line-height: 1.25;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      :root[data-theme='dark'] .appdosc-card__insight-chip {
-        background: rgba(15, 23, 42, 0.46);
-        border-color: rgba(148, 163, 184, 0.34);
+        padding-bottom: 8px;
       }
 
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__details,
@@ -912,11 +879,131 @@
       }
 
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__summary {
+        margin-top: 6px;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__title,
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__subtitle {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: unset;
+        line-height: 1.3;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__block-text {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: unset;
+        display: block;
+        line-height: 1.35;
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card__insight {
         margin-top: 8px;
+        display: grid;
+        gap: 4px;
+        border-top: 1px solid rgba(148, 163, 184, 0.26);
+        padding-top: 8px;
+      }
+
+      .appdosc-card__insight-row {
+        min-height: 24px;
+        display: grid;
+        grid-template-columns: 88px minmax(0, 1fr);
+        align-items: start;
+        gap: 8px;
+      }
+
+      .appdosc-card__insight-label {
+        font-size: 11px;
+        color: var(--appdosc-text-muted);
+        line-height: 1.3;
+      }
+
+      .appdosc-card__insight-value {
+        font-size: 13px;
+        color: var(--appdosc-text-primary);
+        font-weight: 600;
+        line-height: 1.3;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+
+      .appdosc-card__insight-value--status {
+        display: inline-flex;
+        align-items: center;
+        justify-self: start;
+        border-radius: 999px;
+        padding: 2px 10px;
+        border: 1px solid rgba(96, 165, 250, 0.35);
+        background: rgba(191, 219, 254, 0.28);
+      }
+
+      .task-card.appdosc-card--tone-done .appdosc-card__insight-value--status {
+        border-color: rgba(74, 222, 128, 0.4);
+        background: rgba(187, 247, 208, 0.35);
+        color: #166534;
+      }
+
+      .task-card.appdosc-card--tone-overdue .appdosc-card__insight-value--status {
+        border-color: rgba(248, 113, 113, 0.46);
+        background: rgba(254, 202, 202, 0.4);
+        color: #991b1b;
+      }
+
+      .task-card.appdosc-card--tone-control .appdosc-card__insight-value--status {
+        border-color: rgba(251, 191, 36, 0.45);
+        background: rgba(254, 243, 199, 0.4);
+        color: #92400e;
+      }
+
+      :root[data-theme='dark'] .appdosc-card__insight-value--status {
+        background: rgba(30, 64, 175, 0.28);
+        border-color: rgba(96, 165, 250, 0.5);
+        color: #dbeafe;
+      }
+
+      :root[data-theme='dark'] .task-card.appdosc-card--tone-done .appdosc-card__insight-value--status {
+        color: #bbf7d0;
+        background: rgba(21, 128, 61, 0.25);
+      }
+
+      :root[data-theme='dark'] .task-card.appdosc-card--tone-overdue .appdosc-card__insight-value--status {
+        color: #fecaca;
+        background: rgba(185, 28, 28, 0.25);
+      }
+
+      :root[data-theme='dark'] .task-card.appdosc-card--tone-control .appdosc-card__insight-value--status {
+        color: #fde68a;
+        background: rgba(180, 83, 9, 0.24);
       }
 
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__footer {
-        margin-top: 10px;
+        margin-top: 8px;
+        padding-top: 8px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        align-items: end;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__actions {
+        order: 1;
+        grid-column: 1 / -1;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__deadline--full {
+        order: 2;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__deadline--compact {
+        order: 3;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__action {
+        min-height: 36px;
+        width: 100%;
+        padding: 7px 12px;
       }
 
       .appdosc-avatar {
@@ -3139,19 +3226,27 @@
           </div>
           <div class="appdosc-card__summary" data-field="summary"><div class="appdosc-card__block-text" data-field="contentCompact"></div></div>
           <div class="appdosc-card__insight" data-field="insight">
-            <div class="appdosc-card__insight-chip">
-              <span class="appdosc-card__insight-label">Срок</span>
-              <span class="appdosc-card__insight-value" data-field="insightDueState">Не указан</span>
+            <div class="appdosc-card__insight-row">
+              <span class="appdosc-card__insight-label">От кого</span>
+              <span class="appdosc-card__insight-value" data-field="insightSender">Не указан</span>
             </div>
-            <div class="appdosc-card__insight-chip">
+            <div class="appdosc-card__insight-row">
+              <span class="appdosc-card__insight-label">Дата</span>
+              <span class="appdosc-card__insight-value" data-field="insightDate">—</span>
+            </div>
+            <div class="appdosc-card__insight-row">
               <span class="appdosc-card__insight-label">Исполнитель</span>
               <span class="appdosc-card__insight-value" data-field="insightExecutor">Не указан</span>
             </div>
-            <div class="appdosc-card__insight-chip">
+            <div class="appdosc-card__insight-row">
+              <span class="appdosc-card__insight-label">Срок</span>
+              <span class="appdosc-card__insight-value appdosc-card__insight-value--status" data-field="insightDueState">Не указан</span>
+            </div>
+            <div class="appdosc-card__insight-row">
               <span class="appdosc-card__insight-label">Ответы</span>
               <span class="appdosc-card__insight-value" data-field="insightResponses">Нет ответов</span>
             </div>
-            <div class="appdosc-card__insight-chip">
+            <div class="appdosc-card__insight-row">
               <span class="appdosc-card__insight-label">Вложения</span>
               <span class="appdosc-card__insight-value" data-field="insightFiles">0 файлов</span>
             </div>
