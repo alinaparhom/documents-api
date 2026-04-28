@@ -3105,7 +3105,7 @@ function writeTaskListModePreference(mode) {
 
 function applyTaskListMode() {
   const mode = normalizeTaskListMode(state.taskListMode);
-  setClass(document.body, 'appdosc--list-mode-informative', false);
+  setClass(document.body, 'appdosc--list-mode-informative', mode === 'informative');
   document.documentElement.setAttribute('data-task-list-mode', mode);
 }
 

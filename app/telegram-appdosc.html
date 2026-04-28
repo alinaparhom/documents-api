@@ -859,6 +859,109 @@
         border-color: rgba(148, 163, 184, 0.34);
       }
 
+      body.appdosc--list-mode-informative .appdosc__cards.tasks-list {
+        gap: 14px;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card.task-card {
+        border-radius: 22px !important;
+      }
+
+      body.appdosc--list-mode-informative .task-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 16px;
+        display: inline-grid !important;
+        place-items: center;
+        flex: 0 0 auto;
+        background: linear-gradient(140deg, rgba(47, 128, 255, 0.2), rgba(59, 130, 246, 0.12));
+        border: 1px solid rgba(96, 165, 250, 0.34);
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__header {
+        grid-template-columns: auto minmax(0, 1fr) auto !important;
+        grid-template-areas: "icon main actions" !important;
+        align-items: start !important;
+        min-height: 96px !important;
+        padding: 14px !important;
+        gap: 12px !important;
+      }
+
+      body.appdosc--list-mode-informative .task-icon {
+        grid-area: icon;
+      }
+
+      body.appdosc--list-mode-informative .task-main {
+        gap: 8px !important;
+      }
+
+      body.appdosc--list-mode-informative .task-meta {
+        flex-wrap: wrap;
+        gap: 6px !important;
+      }
+
+      body.appdosc--list-mode-informative .task-main[data-status-label]::after {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+
+      body.appdosc--list-mode-informative .task-name,
+      body.appdosc--list-mode-informative .appdosc-card__title {
+        font-size: 17px !important;
+        font-weight: 700 !important;
+        line-height: 1.3 !important;
+        -webkit-line-clamp: 2;
+      }
+
+      body.appdosc--list-mode-informative .task-date,
+      body.appdosc--list-mode-informative .task-number {
+        font-size: 13px !important;
+        padding: 5px 10px !important;
+        min-height: 26px !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card[data-expanded='false'] .appdosc-card__header {
+        grid-template-areas: "icon main actions" !important;
+        grid-template-columns: auto minmax(0, 1fr) auto !important;
+        min-height: 88px !important;
+        padding: 12px !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card[data-expanded='false'] .task-name,
+      body.appdosc--list-mode-informative .appdosc-card[data-expanded='false'] .appdosc-card__title {
+        white-space: normal !important;
+        text-overflow: clip !important;
+        -webkit-line-clamp: 2 !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__details {
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 14px !important;
+        padding: 0 14px 14px !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__detail dt {
+        font-size: 12px !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__detail dd {
+        font-size: 14px !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__files {
+        padding: 0 14px 14px !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__footer {
+        margin: 0 14px 14px !important;
+      }
+
+      @media (max-width: 420px) {
+        body.appdosc--list-mode-informative .appdosc-card__details {
+          grid-template-columns: 1fr;
+        }
+      }
+
       .appdosc-avatar {
         width: 42px;
         height: 42px;
@@ -3299,9 +3402,9 @@
             <span>📋</span>
             <span>Стандартный</span>
           </button>
-          <button type="button" class="appdosc-settings-sheet__list-mode-btn" aria-disabled="true" disabled>
+          <button type="button" class="appdosc-settings-sheet__list-mode-btn" data-list-mode-option="informative" aria-pressed="false">
             <span>🧊</span>
-            <span>Информативный · в разработке</span>
+            <span>Информативный</span>
           </button>
         </div>
       </section>
