@@ -22,7 +22,7 @@ let aiDialogLoader = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
-const TASK_LIST_MODE_OPTIONS = ['default'];
+const TASK_LIST_MODE_OPTIONS = ['default', 'informative'];
 const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
@@ -3105,7 +3105,7 @@ function writeTaskListModePreference(mode) {
 
 function applyTaskListMode() {
   const mode = normalizeTaskListMode(state.taskListMode);
-  setClass(document.body, 'appdosc--list-mode-informative', false);
+  setClass(document.body, 'appdosc--list-mode-informative', mode === 'informative');
   document.documentElement.setAttribute('data-task-list-mode', mode);
 }
 
@@ -5196,13 +5196,25 @@ function createCard(task, index, anchorRegistry) {
 
   const taskListMode = normalizeTaskListMode(state.taskListMode);
   if (taskListMode === 'informative') {
-    setCardField(card, '[data-field="document"]', compactContent, {
+    const informativeTitle = resolveCompactText(task.title)
+      || resolveCompactText(task.subject)
+      || resolveCompactText(task.documentName)
+      || compactContent;
+    const informativeSubtitle = senderCompact ? `От: ${senderCompact}` : '';
+    setCardField(card, '[data-field="document"]', informativeTitle, {
       fallback: 'Не указано',
       setTitle: false,
     });
-    setCardField(card, '[data-field="organization"]', '', {
+    setCardField(card, '[data-field="organization"]', informativeSubtitle, {
       fallback: '',
       setTitle: false,
+    });
+    const informativeSummary = resolveInstructionSummary(task)
+      || compactContent;
+    setCardField(card, '[data-field="contentCompact"]', informativeSummary, {
+      hideIfEmpty: false,
+      setTitle: false,
+      fallback: 'Не указано',
     });
   } else {
     setCardField(card, '[data-field="document"]', compactContent, {
@@ -5224,11 +5236,13 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  setCardField(card, '[data-field="contentCompact"]', compactContent, {
-    hideIfEmpty: false,
-    setTitle: false,
-    fallback: 'Не указано',
-  });
+  if (taskListMode !== 'informative') {
+    setCardField(card, '[data-field="contentCompact"]', compactContent, {
+      hideIfEmpty: false,
+      setTitle: false,
+      fallback: 'Не указано',
+    });
+  }
   toggleSection(card, '[data-field="summary"]', true);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {

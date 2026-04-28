@@ -854,6 +854,11 @@
         box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18) inset;
       }
 
+      .appdosc-settings-sheet__list-mode-btn small {
+        font-size: 11px;
+        color: var(--appdosc-text-muted);
+      }
+
       :root[data-theme='dark'] .appdosc-settings-sheet__list-mode-btn {
         background: rgba(15, 23, 42, 0.35);
         border-color: rgba(148, 163, 184, 0.34);
@@ -1556,6 +1561,46 @@
         border-radius: 8px !important;
         font-size: 10px !important;
         line-height: 1.1 !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card.task-card {
+        border-radius: 22px !important;
+        border-color: rgba(59, 130, 246, 0.22) !important;
+        box-shadow: 0 14px 34px rgba(59, 130, 246, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.34) !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__header {
+        padding: 14px !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__title {
+        font-size: 14px !important;
+        font-weight: 700 !important;
+        -webkit-line-clamp: 2;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__subtitle {
+        display: block !important;
+        font-size: 12px !important;
+        color: var(--appdosc-task-muted-label) !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__summary {
+        display: block !important;
+        padding: 0 14px 12px !important;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card__summary .appdosc-card__block-text {
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: rgba(148, 163, 184, 0.14);
+        color: var(--appdosc-task-detail-text);
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      body.appdosc--list-mode-informative .appdosc-card[data-expanded='false'] .appdosc-card__summary {
+        display: block !important;
       }
 
       .appdosc-card__assign .appdosc-card__action,
@@ -3299,9 +3344,10 @@
             <span>📋</span>
             <span>Стандартный</span>
           </button>
-          <button type="button" class="appdosc-settings-sheet__list-mode-btn" aria-disabled="true" disabled>
+          <button type="button" class="appdosc-settings-sheet__list-mode-btn" data-list-mode-option="informative" aria-pressed="false">
             <span>🧊</span>
-            <span>Информативный · в разработке</span>
+            <span>Информативный</span>
+            <small>Детальный вид</small>
           </button>
         </div>
       </section>
