@@ -11934,7 +11934,9 @@
     if (!state.organization) {
       return '';
     }
-    return COLUMN_ORDER_STORAGE_PREFIX + state.organization + ':' + getAccessProfileKey(state.access);
+    var userKey = getCurrentUserKey();
+    var userPart = userKey ? ':' + userKey : '';
+    return COLUMN_ORDER_STORAGE_PREFIX + state.organization + ':' + getAccessProfileKey(state.access) + userPart;
   }
 
   function saveColumnOrderToLocalStorage(order) {
@@ -12201,7 +12203,8 @@
   function getAccessProfileKey(context) {
     var role = context && context.role ? context.role : '';
     var canManage = state.permissions && state.permissions.canManageInstructions ? '1' : '0';
-    return role + ':' + canManage;
+    var userKey = getCurrentUserKey();
+    return role + ':' + canManage + ':' + (userKey || 'guest');
   }
 
   function loadColumnWidths(organization, force) {
@@ -12378,7 +12381,11 @@
       applyColumnOrder(localOrder, { render: true });
     }
 
-    var promise = fetch(buildApiUrl('load_column_order', { organization: organization }), { credentials: 'same-origin' })
+    var userKey = getCurrentUserKey();
+    var promise = fetch(buildApiUrl('load_column_order', {
+      organization: organization,
+      user_key: userKey || ''
+    }), { credentials: 'same-origin' })
       .then(handleResponse)
       .then(function(data) {
         var normalized = normalizeColumnOrder(data && data.columns);
@@ -12432,13 +12439,18 @@
     }
     var normalized = normalizeColumnOrder(order);
     saveColumnOrderToLocalStorage(normalized);
-    return fetch(buildApiUrl('save_column_order', { organization: state.organization }), {
+    var userKey = getCurrentUserKey();
+    return fetch(buildApiUrl('save_column_order', {
+      organization: state.organization,
+      user_key: userKey || ''
+    }), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
       body: JSON.stringify({
         action: 'save_column_order',
         organization: state.organization,
+        user_key: userKey || '',
         columns: normalized
       })
     })
