@@ -1095,7 +1095,8 @@
       .tg-ai-generated-preview__zoom-value{font-size:12px;min-width:42px;text-align:center;color:#334155;font-weight:700}
       .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon,.tg-ai-generated-preview__share{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
-      .tg-ai-generated-preview__share{min-width:36px;padding:0 10px;font-size:16px;line-height:1}
+      .tg-ai-generated-preview__share{min-width:36px;padding:0 10px;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+      .tg-ai-generated-preview__share-icon{width:18px;height:18px;display:block}
       .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
       .tg-ai-generated-preview__menu[hidden]{display:none}
       .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
@@ -1383,8 +1384,13 @@
   }
 
   async function shareGeneratedPreviewEverywhere(previewPayload) {
-    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
-      throw new Error('Отправка файла недоступна на этом устройстве. Нажмите «Скачать».');
+    const sourceUrl = normalize(previewPayload && previewPayload.previewUrl)
+      ? toAbsoluteUrl(previewPayload.previewUrl)
+      : '';
+    const shareText = 'Отправляю файл';
+    const shareTitle = 'Документ из предпросмотра';
+    if (typeof navigator === 'undefined') {
+      throw new Error('Отправка недоступна на этом устройстве. Нажмите «Скачать».');
     }
     const fileBlob = await resolveGeneratedDocxBlob(previewPayload);
     if (!fileBlob || !fileBlob.size) {
@@ -1392,16 +1398,43 @@
     }
     const fileName = normalize(previewPayload && previewPayload.fileName) || 'answer.docx';
     const shareFile = createShareableDocFile(fileBlob, fileName);
-    const sharePayload = {
-      title: 'Документ из предпросмотра',
-      text: 'Отправляю файл',
-      files: [shareFile],
-    };
-    if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [shareFile] })) {
-      throw new Error('В этом Telegram нельзя отправить файл через «Поделиться». Нажмите «Скачать».');
+    const hasNativeShare = typeof navigator.share === 'function';
+
+    if (hasNativeShare) {
+      const supportsFileShare = typeof navigator.canShare !== 'function'
+        ? true
+        : navigator.canShare({ files: [shareFile] });
+      if (supportsFileShare) {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          files: [shareFile],
+        });
+        return 'native_share_file';
+      }
+
+      if (sourceUrl) {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: sourceUrl,
+        });
+        return 'native_share_link';
+      }
     }
-    await navigator.share(sharePayload);
-    return 'native_share_file';
+
+    const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
+    if (telegramWebApp && typeof telegramWebApp.openTelegramLink === 'function' && sourceUrl) {
+      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(sourceUrl)}&text=${encodeURIComponent(shareText)}`;
+      telegramWebApp.openTelegramLink(shareUrl);
+      return 'telegram_link_share';
+    }
+
+    const downloaded = await downloadGeneratedPreviewFile(previewPayload);
+    if (downloaded) {
+      return 'download_fallback';
+    }
+    throw new Error('Не удалось открыть «Поделиться». Нажмите «Скачать».');
   }
 
   async function ensureDocxPreviewLibrariesLoaded() {
@@ -1508,7 +1541,11 @@
             <div class="tg-ai-generated-preview__hint">Просмотр через Office Viewer</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
-            <button type="button" class="tg-ai-generated-preview__share" data-preview-share title="Поделиться" aria-label="Поделиться">↗</button>
+            <button type="button" class="tg-ai-generated-preview__share" data-preview-share title="Поделиться" aria-label="Поделиться">
+              <svg class="tg-ai-generated-preview__share-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path fill="currentColor" d="M18 8a3 3 0 1 0-2.82-4H15a3 3 0 0 0 .2 1.06l-6.43 3.58a3 3 0 0 0-4.17.84 3 3 0 0 0 1.04 4.11A3 3 0 0 0 8.8 14.4l6.41 3.57A3 3 0 0 0 15 19a3 3 0 1 0 .18-1.01l-6.42-3.58a3 3 0 0 0 0-1.82l6.42-3.58A3 3 0 0 0 18 8Z"/>
+              </svg>
+            </button>
             <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
             <button type="button" class="tg-ai-generated-preview__close-icon" data-preview-close-icon aria-label="Закрыть">×</button>
           </div>
@@ -1589,17 +1626,25 @@
       }
     });
     previewShareBtn?.addEventListener('click', async () => {
-      const prevText = previewShareBtn.textContent;
+      const prevMarkup = previewShareBtn.innerHTML;
       previewShareBtn.disabled = true;
       previewShareBtn.textContent = '…';
       try {
-        await shareGeneratedPreviewEverywhere(previewPayload);
-        statusNode.textContent = 'Окно «Поделиться» открыто.';
+        const mode = await shareGeneratedPreviewEverywhere(previewPayload);
+        if (mode === 'native_share_file') {
+          statusNode.textContent = 'Окно «Поделиться» открыто. Файл прикреплён.';
+        } else if (mode === 'native_share_link' || mode === 'telegram_link_share') {
+          statusNode.textContent = 'Окно «Поделиться» открыто. Если нужно, прикрепите файл через «Скачать».';
+        } else if (mode === 'download_fallback') {
+          statusNode.textContent = '«Поделиться» недоступно. Файл отправлен в скачивание.';
+        } else {
+          statusNode.textContent = 'Окно «Поделиться» открыто.';
+        }
       } catch (error) {
         statusNode.textContent = (error && error.message) || 'Не удалось открыть «Поделиться».';
       } finally {
         previewShareBtn.disabled = false;
-        previewShareBtn.textContent = prevText;
+        previewShareBtn.innerHTML = prevMarkup;
       }
     });
     if (attachBtn) {
