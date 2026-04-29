@@ -4865,9 +4865,7 @@ function syncCompactFilterPanelState() {
     const overdueByClient = (Array.isArray(state.tasks) ? state.tasks : []).reduce((total, task) => {
       return total + (isTaskOverdueByCompactRule(task) ? 1 : 0);
     }, 0);
-    const overdueByService = Number(state.stats && state.stats.overdue) || 0;
-    const overdueCount = Math.max(overdueByClient, overdueByService);
-    elements.filterOverdueCount.textContent = String(overdueCount);
+    elements.filterOverdueCount.textContent = String(overdueByClient);
     elements.filterOverdueCount.title = state.compactFilters.showOverdueOnly
       ? 'Приоритетный режим: отображаются только просроченные'
       : '';
