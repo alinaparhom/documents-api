@@ -5920,6 +5920,16 @@
     var logHint = createElement('p', 'documents-admin__log-hint', 'В журнал попадает ФИО и Telegram ID каждого пользователя, открывшего мини-приложение.');
     logPanel.appendChild(logHint);
 
+    var authDebugTitle = createElement('h4', 'documents-admin__log-title', 'Диагностика авторизации (текущий пользователь)');
+    logPanel.appendChild(authDebugTitle);
+    var authDebugBox = createElement('pre', 'documents-admin__log-textarea documents-admin__log-auth-debug');
+    authDebugBox.setAttribute('aria-live', 'polite');
+    authDebugBox.style.whiteSpace = 'pre-wrap';
+    authDebugBox.style.minHeight = '120px';
+    authDebugBox.style.marginTop = '8px';
+    authDebugBox.textContent = 'Данные загружаются…';
+    logPanel.appendChild(authDebugBox);
+
     body.appendChild(logPanel);
 
     function buildAdminSection(key, titleText) {
@@ -6043,6 +6053,7 @@
     adminElements.logTextarea = logTextarea;
     adminElements.logCopyButton = logCopy;
     adminElements.logCloseButton = logClose;
+    adminElements.authDebugBox = authDebugBox;
     adminElements.templateModal = templateModal;
     adminElements.templateStatus = templateStatus;
     adminElements.templateName = templateName;
@@ -7098,12 +7109,47 @@
     return lines.join('\n');
   }
 
+
+  function buildAuthDebugPanelPayload() {
+    var access = state && state.access ? state.access : null;
+    var user = access && access.user && typeof access.user === 'object' ? access.user : null;
+    return {
+      organization: state && state.organization ? state.organization : '',
+      role: access && access.role ? access.role : 'guest',
+      authenticated: Boolean(access && access.authenticated),
+      accessGranted: Boolean(access && access.accessGranted),
+      adminScope: access && access.adminScope ? access.adminScope : '',
+      restrictToOwnTasks: shouldRestrictByUserAssignments(),
+      isAdmin: isCurrentUserAdmin(),
+      isDirector: isCurrentUserDirector(),
+      user: user ? {
+        login: user.login || '',
+        fullName: user.fullName || user.name || '',
+        role: user.role || '',
+        responsibleRole: user.responsibleRole || '',
+        authSource: user.authSource || '',
+        telegramId: user.telegramId || user.telegram_id || user.telegram || '',
+        username: user.username || ''
+      } : null,
+      assignmentKeys: state && state.userAssignmentKeyMap ? Object.keys(state.userAssignmentKeyMap) : []
+    };
+  }
+
   function updateAdminLogPanel() {
     ensureAdminModal();
     var logState = ensureAdminUserLogState();
 
     if (!adminElements.logPanel || !adminElements.logButton) {
       return;
+    }
+
+    if (adminElements.authDebugBox) {
+      var authPayload = buildAuthDebugPanelPayload();
+      try {
+        adminElements.authDebugBox.textContent = JSON.stringify(authPayload, null, 2);
+      } catch (authStringifyError) {
+        adminElements.authDebugBox.textContent = 'Не удалось собрать диагностику авторизации.';
+      }
     }
 
     var organizationReady = Boolean(state.organization);
