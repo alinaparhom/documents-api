@@ -4867,11 +4867,7 @@ function syncCompactFilterPanelState() {
     elements.filterOverdueToggle.checked = Boolean(state.compactFilters.showOverdueOnly);
   }
   if (elements.filterOverdueCount instanceof HTMLElement) {
-    const directorState = ensureDirectorState();
-    const compactStats = computeStatsFromTasks(state.tasks, {
-      useDirectorDeadlines: directorState.isActive === true,
-    });
-    elements.filterOverdueCount.textContent = String(Number(compactStats.overdue) || 0);
+    elements.filterOverdueCount.textContent = String(Number(state.stats && state.stats.overdue) || 0);
   }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
