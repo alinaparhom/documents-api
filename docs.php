@@ -8516,6 +8516,7 @@ function docs_set_session_auth(array $auth): void
     $chatId = sanitize_text_field((string) ($auth['chatId'] ?? ''), 80);
     $responsibleNumber = sanitize_text_field((string) ($auth['responsibleNumber'] ?? ''), 60);
     $responsibleRole = sanitize_text_field((string) ($auth['responsibleRole'] ?? ''), 60);
+    $authSource = sanitize_text_field((string) ($auth['authSource'] ?? ''), 80);
     $adminScope = '';
     if ($role === 'admin') {
         $adminScope = sanitize_text_field((string) ($auth['adminScope'] ?? ''), 60);
@@ -8548,6 +8549,10 @@ function docs_set_session_auth(array $auth): void
     if ($responsibleRole !== '') {
         $_SESSION[DOCS_SESSION_KEY]['responsibleRole'] = $responsibleRole;
     }
+
+    if ($authSource !== '') {
+        $_SESSION[DOCS_SESSION_KEY]['authSource'] = $authSource;
+    }
 }
 
 function docs_get_session_auth(): ?array
@@ -8571,6 +8576,7 @@ function docs_get_session_auth(): ?array
     $responsibleNumber = sanitize_text_field((string) ($raw['responsibleNumber'] ?? ''), 60);
     $responsibleRole = sanitize_text_field((string) ($raw['responsibleRole'] ?? ''), 60);
     $adminScope = sanitize_text_field((string) ($raw['adminScope'] ?? ''), 60);
+    $authSource = sanitize_text_field((string) ($raw['authSource'] ?? ''), 80);
 
     $session = [
         'role' => $roleRaw,
@@ -8586,6 +8592,10 @@ function docs_get_session_auth(): ?array
 
     if ($adminScope !== '') {
         $session['adminScope'] = $adminScope;
+    }
+
+    if ($authSource !== '') {
+        $session['authSource'] = $authSource;
     }
 
     if ($chatId !== '') {
@@ -9650,6 +9660,7 @@ function docs_describe_session(?array $auth, ?array $accessContext = null): arra
             'chatId' => sanitize_text_field((string) ($auth['chatId'] ?? ''), 80),
             'responsibleNumber' => sanitize_text_field((string) ($auth['responsibleNumber'] ?? ''), 60),
             'role' => sanitize_text_field((string) ($auth['responsibleRole'] ?? ''), 60),
+            'authSource' => sanitize_text_field((string) ($auth['authSource'] ?? ''), 80),
         ], static function ($value) {
             return $value !== '';
         });
@@ -11260,6 +11271,7 @@ switch ($action) {
                 'login' => $adminUser['login'] ?? $loginValue,
                 'fullName' => $adminUser['name'] ?? '',
                 'telegramId' => '',
+                'authSource' => 'admin_users',
             ]);
 
             $sessionSummary = docs_get_active_session_summary($requestedOrganization);
@@ -11309,6 +11321,7 @@ switch ($action) {
                 'login' => $organizationAdmin['login'] ?? $loginValue,
                 'fullName' => $organizationAdmin['fullName'] ?? '',
                 'telegramId' => '',
+                'authSource' => 'organization_admin',
             ]);
 
             $sessionSummary = docs_get_active_session_summary($requestedOrganization);
@@ -11367,6 +11380,7 @@ switch ($action) {
                 'fullName' => $userCredentials['fullName'] ?? '',
                 'position' => $userCredentials['position'] ?? '',
                 'telegramId' => $userCredentials['telegramId'] ?? '',
+                'authSource' => 'mainadmin',
             ]);
 
             $sessionSummary = docs_get_active_session_summary($requestedOrganization);
@@ -11427,6 +11441,7 @@ switch ($action) {
                 'position' => $directorCredentials['position'] ?? '',
                 'telegramId' => $directorCredentials['telegramId'] ?? '',
                 'adminScope' => $directorCredentials['adminScope'] ?? 'director',
+                'authSource' => 'director',
             ]);
 
             docs_log_auth_attempt('login_flow_checkpoint', array_merge($authLogBase, [
@@ -11513,6 +11528,7 @@ switch ($action) {
                 'chatId' => $responsibleCredentials['chatId'] ?? '',
                 'responsibleNumber' => $responsibleCredentials['responsibleNumber'] ?? '',
                 'responsibleRole' => $responsibleCredentials['responsibleRole'] ?? '',
+                'authSource' => 'responsible',
             ]);
 
             $sessionSummary = docs_get_active_session_summary($requestedOrganization);

@@ -540,7 +540,8 @@
           username: state.access.user.username || '',
           telegramId: state.access.user.telegramId || state.access.user.telegram_id || state.access.user.telegram || '',
           role: state.access.user.role || '',
-          responsibleRole: state.access.user.responsibleRole || ''
+          responsibleRole: state.access.user.responsibleRole || '',
+          authSource: state.access.user.authSource || ''
         } : null,
         assignmentKeysCount: hasKeys ? Object.keys(map).length : 0,
         assignmentKeys: hasKeys ? Object.keys(map) : []
