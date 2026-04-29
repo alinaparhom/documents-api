@@ -3696,6 +3696,28 @@ function updateStateFromPayload(payload) {
   } else {
     state.permissions.canManageSubordinates = Boolean(state.permissions.canManageSubordinates);
   }
+  const accessDebugSummary = {
+    telegramUserId: normalizeValue(payload?.telegramUserId) || state.telegram?.id || null,
+    totalTasks: Array.isArray(state.tasks) ? state.tasks.length : 0,
+    organizationsChecked: typeof payload?.organizationsChecked === 'number' ? payload.organizationsChecked : null,
+    directorMode: {
+      active: Boolean(directorState.isActive),
+      allTasks: directorModeAllTasks,
+      reasons: Array.from(directorModeReasonSet),
+      organizations: directorModeOrganizations,
+    },
+    permissions: {
+      canManageInstructions: Boolean(state.permissions.canManageInstructions),
+      canManageSubordinates: Boolean(state.permissions.canManageSubordinates),
+    },
+    filter: {
+      source: normalizeValue(payload?.filterSource) || null,
+      active: formatTaskFiltersForLog(state.taskFilter),
+    },
+  };
+  console.groupCollapsed('[MiniApp Access Debug] Права пользователя и видимость задач');
+  console.log(accessDebugSummary);
+  console.groupEnd();
   state.organizationsChecked = typeof payload.organizationsChecked === 'number'
     ? payload.organizationsChecked
     : state.organizationsChecked;
