@@ -289,6 +289,18 @@
     return normalized === 'админ' || normalized.indexOf('админ') !== -1;
   }
 
+
+  function isDirectorRoleLabel(roleLabel) {
+    var normalized = normalizeRoleValue(roleLabel);
+    if (!normalized) {
+      return false;
+    }
+    if (normalized === 'director') {
+      return true;
+    }
+    return normalized.indexOf('директор') !== -1;
+  }
+
   function isCurrentUserAdmin() {
     var candidates = [];
     if (state.access && typeof state.access === 'object') {
@@ -309,6 +321,32 @@
     }
     for (var i = 0; i < candidates.length; i += 1) {
       if (isAdminRoleLabel(candidates[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isCurrentUserDirector() {
+    var candidates = [];
+    if (state.access && typeof state.access === 'object') {
+      if (state.access.role) {
+        candidates.push(state.access.role);
+      }
+      if (state.access.user && typeof state.access.user === 'object') {
+        if (state.access.user.role) {
+          candidates.push(state.access.user.role);
+        }
+        if (state.access.user.responsibleRole) {
+          candidates.push(state.access.user.responsibleRole);
+        }
+      }
+    }
+    if (state.effectiveUserRole) {
+      candidates.push(state.effectiveUserRole);
+    }
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (isDirectorRoleLabel(candidates[i])) {
         return true;
       }
     }
@@ -485,6 +523,17 @@
     }
     state.userAssignmentKeyMap = hasKeys ? map : null;
     state.hasUserAssignmentKeys = hasKeys;
+    if (typeof docsLogger.log === 'function') {
+      docsLogger.log('[documents][access] Права пользователя и ключи назначений', {
+        accessRole: state.access ? state.access.role : '',
+        effectiveUserRole: state.effectiveUserRole || '',
+        isAdmin: isCurrentUserAdmin(),
+        isDirector: isCurrentUserDirector(),
+        restrictToOwnTasks: shouldRestrictByUserAssignments(),
+        assignmentKeysCount: hasKeys ? Object.keys(map).length : 0,
+        assignmentKeys: hasKeys ? Object.keys(map) : []
+      });
+    }
   }
 
   function roleRequiresAssignmentRestriction(role) {
@@ -518,13 +567,10 @@
     if (!state.access || state.access.role !== 'user') {
       return false;
     }
-    if (isCurrentUserAdmin()) {
+    if (isCurrentUserAdmin() || isCurrentUserDirector()) {
       return false;
     }
-    if (!state.effectiveUserRole) {
-      return false;
-    }
-    return roleRequiresAssignmentRestriction(state.effectiveUserRole);
+    return true;
   }
 
   function isCurrentUserSubordinate() {
@@ -13597,9 +13643,11 @@
     var documents = Array.isArray(state.documents) ? state.documents : [];
     var filteredEntries = [];
 
+    var hiddenByAccessCount = 0;
     for (var i = 0; i < documents.length; i += 1) {
       var doc = documents[i];
       if (!documentVisibleForCurrentUser(doc)) {
+        hiddenByAccessCount += 1;
         continue;
       }
       var values = computeFilterValues(doc, i);
@@ -13609,6 +13657,18 @@
     }
 
     filteredEntries = applyTableSorting(filteredEntries);
+
+    if (typeof docsLogger.log === 'function') {
+      docsLogger.log('[documents][access] Результат фильтрации документов', {
+        totalDocuments: documents.length,
+        visibleAfterAccess: documents.length - hiddenByAccessCount,
+        hiddenByAccess: hiddenByAccessCount,
+        visibleAfterFilters: filteredEntries.length,
+        restrictToOwnTasks: shouldRestrictByUserAssignments(),
+        isAdmin: isCurrentUserAdmin(),
+        isDirector: isCurrentUserDirector()
+      });
+    }
 
     var filtersActive = hasActiveFilters() || state.showUnassignedOnly;
 
