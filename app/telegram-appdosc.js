@@ -2802,8 +2802,6 @@ function initElements() {
   elements.filterResetButton = document.querySelector('[data-filter-reset]');
   elements.filterGroupList = document.querySelector('[data-filter-group-list]');
   elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
-  elements.filterOverdueToggle = document.querySelector('[data-filter-overdue-toggle]');
-  elements.filterOverdueCount = document.querySelector('[data-filter-overdue-count]');
   elements.status = document.querySelector('[data-status]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
@@ -4690,6 +4688,24 @@ function initRangeCalendar(options = {}) {
     return `Выбрать ${formatRangeCalendarRange(startDate, endDate)}`;
   }
 
+  function getOverdueForSelectedRange() {
+    if (!startDate) {
+      return 0;
+    }
+    const effectiveEnd = endDate || startDate;
+    const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+    return tasks.reduce((total, task) => {
+      const taskDate = normalizeDateInputValue(formatDateInputValue(getTaskDateForCompactFilter(task)));
+      if (!taskDate) {
+        return total;
+      }
+      if (compareDateKeys(taskDate, startDate) < 0 || compareDateKeys(taskDate, effectiveEnd) > 0) {
+        return total;
+      }
+      return total + (isTaskOverdueByCompactRule(task) ? 1 : 0);
+    }, 0);
+  }
+
   function getTotalForSelectedRange() {
     if (!startDate) {
       return 0;
@@ -4739,7 +4755,8 @@ function initRangeCalendar(options = {}) {
       } else {
         const total = getTotalForSelectedRange();
         totalLabel.hidden = false;
-        totalLabel.textContent = `Найдено задач за период: ${total}`;
+        const overdueTotal = getOverdueForSelectedRange();
+        totalLabel.textContent = `Найдено задач за период: ${total} · Просроченных: ${overdueTotal}`;
       }
     }
     const dayButtons = root.querySelectorAll('.range-calendar__day');
@@ -4858,18 +4875,6 @@ function syncCompactFilterPanelState() {
     );
   }
   syncCompactFilterGroupOptions();
-  if (elements.filterOverdueToggle instanceof HTMLInputElement) {
-    elements.filterOverdueToggle.checked = Boolean(state.compactFilters.showOverdueOnly);
-  }
-  if (elements.filterOverdueCount instanceof HTMLElement) {
-    const overdueByClient = (Array.isArray(state.tasks) ? state.tasks : []).reduce((total, task) => {
-      return total + (isTaskOverdueByCompactRule(task) ? 1 : 0);
-    }, 0);
-    elements.filterOverdueCount.textContent = String(overdueByClient);
-    elements.filterOverdueCount.title = state.compactFilters.showOverdueOnly
-      ? 'Приоритетный режим: отображаются только просроченные'
-      : '';
-  }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
       if (!(button instanceof HTMLElement)) {
@@ -17111,49 +17116,6 @@ function attachEvents() {
       syncCompactFilterGroupOptions();
       updateVisibleTasks();
       safeRender('compact_filter_groups_add');
-    });
-  }
-  if (elements.filterOverdueToggle instanceof HTMLInputElement) {
-    elements.filterOverdueToggle.addEventListener('change', () => {
-      const showOverdueOnly = Boolean(elements.filterOverdueToggle.checked);
-      state.compactFilters.showOverdueOnly = showOverdueOnly;
-      if (showOverdueOnly) {
-        state.compactFilters.prevFiltersBeforeOverdue = {
-          taskFilter: Array.isArray(state.taskFilter) ? [...state.taskFilter] : [],
-          dateFrom: state.compactFilters.dateFrom || '',
-          dateTo: state.compactFilters.dateTo || '',
-          quickPreset: state.compactFilters.quickPreset || '',
-          groupFilters: Array.isArray(state.compactFilters.groupFilters)
-            ? state.compactFilters.groupFilters.map((entry) => ({
-              type: normalizeValue(entry?.type),
-              value: normalizeValue(entry?.value),
-            }))
-            : [{ type: '', value: '' }],
-        };
-        state.taskFilter = [];
-        state.compactFilters.dateFrom = '';
-        state.compactFilters.dateTo = '';
-        state.compactFilters.quickPreset = '';
-        state.compactFilters.groupFilters = [{ type: '', value: '' }];
-      } else {
-        const prev = state.compactFilters.prevFiltersBeforeOverdue;
-        if (prev && typeof prev === 'object') {
-          state.taskFilter = Array.isArray(prev.taskFilter) ? [...prev.taskFilter] : [];
-          state.compactFilters.dateFrom = normalizeDateInputValue(prev.dateFrom);
-          state.compactFilters.dateTo = normalizeDateInputValue(prev.dateTo);
-          state.compactFilters.quickPreset = normalizeValue(prev.quickPreset);
-          state.compactFilters.groupFilters = Array.isArray(prev.groupFilters) && prev.groupFilters.length
-            ? prev.groupFilters.map((entry) => ({
-              type: normalizeValue(entry?.type),
-              value: normalizeValue(entry?.value),
-            }))
-            : [{ type: '', value: '' }];
-        }
-        state.compactFilters.prevFiltersBeforeOverdue = null;
-      }
-      syncStatusFilterSelections(state.taskFilter);
-      updateVisibleTasks();
-      safeRender('compact_filter_overdue_toggle');
     });
   }
   if (elements.filterResetButton) {
