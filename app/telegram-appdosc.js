@@ -2664,6 +2664,7 @@ const FALLBACK_CARD_TEMPLATE = `
       <div class="task-meta">
         <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
         <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
+        <span class="task-status-badge" data-field="statusBadge" hidden></span>
       </div>
       <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
@@ -7992,6 +7993,7 @@ function resolveTaskViewerFiles(task) {
 function applyStatusBadge(card, statusText, normalizedStatus, task) {
   const statusElement = card.querySelector('[data-field="status"]');
   const taskMainElement = card.querySelector('.task-main');
+  const statusBadgeElement = card.querySelector('[data-field="statusBadge"]');
   if (!statusElement) {
     return;
   }
@@ -8021,6 +8023,11 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
       delete taskMainElement.dataset.statusLabel;
       delete taskMainElement.dataset.statusTone;
     }
+    if (statusBadgeElement) {
+      statusBadgeElement.hidden = true;
+      statusBadgeElement.textContent = '';
+      statusBadgeElement.removeAttribute('title');
+    }
     return;
   }
 
@@ -8028,6 +8035,11 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   statusElement.hidden = true;
   statusElement.textContent = statusLabel;
   statusElement.title = `Статус задачи: ${statusText}`;
+  if (statusBadgeElement) {
+    statusBadgeElement.hidden = false;
+    statusBadgeElement.textContent = statusLabel;
+    statusBadgeElement.title = `Статус задачи: ${statusText}`;
+  }
   let statusTone = 'accent';
 
   if (isTaskCompleted(task)) {
