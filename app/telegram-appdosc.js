@@ -2022,6 +2022,7 @@ const state = {
     dateTo: '',
     quickPreset: '',
     groupFilters: [{ type: '', value: '' }],
+    showOverdueOnly: false,
   },
   access: {
     responsibles: {},
@@ -2664,6 +2665,7 @@ const FALLBACK_CARD_TEMPLATE = `
       <div class="task-meta">
         <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
         <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
+        <span class="task-status-badge" data-field="statusBadge" hidden></span>
       </div>
       <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
@@ -2799,6 +2801,8 @@ function initElements() {
   elements.filterResetButton = document.querySelector('[data-filter-reset]');
   elements.filterGroupList = document.querySelector('[data-filter-group-list]');
   elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
+  elements.filterOverdueToggle = document.querySelector('[data-filter-overdue-toggle]');
+  elements.filterOverdueCount = document.querySelector('[data-filter-overdue-count]');
   elements.status = document.querySelector('[data-status]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
@@ -4376,6 +4380,15 @@ function applyCompactFilters(visibleItems) {
   }
   return source.filter((item) => {
     const task = item && item.task ? item.task : null;
+    const hasOverdueStatus = getTaskStatusKeyForUser(task) === 'overdue'
+      || normalizeName(getTaskStatusValue(task)).includes('просроч');
+    const matchesOverdueFilter = isOverdue(task) || isDirectorAssignmentOverdue(task) || hasOverdueStatus;
+    if (state.compactFilters.showOverdueOnly && !matchesOverdueFilter) {
+      return false;
+    }
+    if (state.compactFilters.showOverdueOnly) {
+      return true;
+    }
     if (parsedFrom || parsedTo) {
       const taskDate = getTaskDateForCompactFilter(task);
       if (!taskDate) {
@@ -4433,6 +4446,7 @@ function resetCompactFilters() {
   state.compactFilters.dateTo = '';
   state.compactFilters.quickPreset = '';
   state.compactFilters.groupFilters = [{ type: '', value: '' }];
+  state.compactFilters.showOverdueOnly = false;
 }
 
 function initRangeCalendar(options = {}) {
@@ -4840,6 +4854,12 @@ function syncCompactFilterPanelState() {
     );
   }
   syncCompactFilterGroupOptions();
+  if (elements.filterOverdueToggle instanceof HTMLInputElement) {
+    elements.filterOverdueToggle.checked = Boolean(state.compactFilters.showOverdueOnly);
+  }
+  if (elements.filterOverdueCount instanceof HTMLElement) {
+    elements.filterOverdueCount.textContent = String(Number(state.stats && state.stats.overdue) || 0);
+  }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
       if (!(button instanceof HTMLElement)) {
@@ -7992,66 +8012,53 @@ function resolveTaskViewerFiles(task) {
 function applyStatusBadge(card, statusText, normalizedStatus, task) {
   const statusElement = card.querySelector('[data-field="status"]');
   const taskMainElement = card.querySelector('.task-main');
+  const statusBadgeElement = card.querySelector('[data-field="statusBadge"]');
   if (!statusElement) {
     return;
   }
 
-  statusElement.classList.remove(
-    'appdosc-card__status--done',
-    'appdosc-card__status--danger',
-    'appdosc-card__status--warn',
-    'appdosc-card__status--info',
-    'appdosc-card__status--accent',
-    'task-status--done',
-    'task-status--active'
-  );
-  statusElement.classList.add('appdosc-card__status', 'task-status');
-
   if (!normalizeValue(statusText)) {
+    const fallbackStatusLabel = 'Статус не указан';
     statusElement.hidden = true;
     statusElement.textContent = '';
     statusElement.removeAttribute('title');
     if (card && card.dataset) {
       delete card.dataset.statusIcon;
-      delete card.dataset.statusLabel;
-      delete card.dataset.statusTone;
+      card.dataset.statusLabel = fallbackStatusLabel;
+      card.dataset.statusTone = 'accent';
     }
     if (taskMainElement && taskMainElement.dataset) {
       delete taskMainElement.dataset.statusIcon;
-      delete taskMainElement.dataset.statusLabel;
-      delete taskMainElement.dataset.statusTone;
+      taskMainElement.dataset.statusLabel = fallbackStatusLabel;
+      taskMainElement.dataset.statusTone = 'accent';
+    }
+    if (statusBadgeElement) {
+      statusBadgeElement.hidden = false;
+      statusBadgeElement.textContent = fallbackStatusLabel;
+      statusBadgeElement.title = fallbackStatusLabel;
     }
     return;
   }
 
   const statusLabel = `${statusText}`;
   statusElement.hidden = true;
-  statusElement.textContent = statusLabel;
-  statusElement.title = `Статус задачи: ${statusText}`;
+  statusElement.textContent = '';
+  statusElement.removeAttribute('title');
+  if (statusBadgeElement) {
+    statusBadgeElement.hidden = false;
+    statusBadgeElement.textContent = statusLabel;
+    statusBadgeElement.title = `Статус задачи: ${statusText}`;
+  }
   let statusTone = 'accent';
 
   if (isTaskCompleted(task)) {
-    statusElement.classList.add('appdosc-card__status--done');
-    statusElement.classList.add('task-status--done');
     statusTone = 'done';
   } else if (isOverdue(task)) {
-    statusElement.classList.add('appdosc-card__status--danger');
-    statusElement.classList.add('task-status--active');
     statusTone = 'danger';
   } else if (normalizedStatus.includes('контрол')) {
-    statusElement.classList.add('appdosc-card__status--warn');
-    statusElement.classList.add('task-status--active');
     statusTone = 'warn';
   } else if (normalizedStatus.includes('распредел')) {
-    statusElement.classList.add('appdosc-card__status--info');
-    statusElement.classList.add('task-status--active');
     statusTone = 'info';
-  } else if (normalizedStatus.includes('работ') || normalizedStatus.includes('нов')) {
-    statusElement.classList.add('appdosc-card__status--accent');
-    statusElement.classList.add('task-status--active');
-  } else {
-    statusElement.classList.add('appdosc-card__status--accent');
-    statusElement.classList.add('task-status--active');
   }
 
   if (card && card.dataset) {
@@ -17083,6 +17090,22 @@ function attachEvents() {
       syncCompactFilterGroupOptions();
       updateVisibleTasks();
       safeRender('compact_filter_groups_add');
+    });
+  }
+  if (elements.filterOverdueToggle instanceof HTMLInputElement) {
+    elements.filterOverdueToggle.addEventListener('change', () => {
+      const showOverdueOnly = Boolean(elements.filterOverdueToggle.checked);
+      state.compactFilters.showOverdueOnly = showOverdueOnly;
+      const normalizedFilters = normalizeTaskFilters(state.taskFilter);
+      if (showOverdueOnly) {
+        const withoutStatusFilters = normalizedFilters.filter((filter) => !isStatusFilter(filter) && filter !== 'overdue');
+        state.taskFilter = [...withoutStatusFilters, 'overdue'];
+      } else {
+        state.taskFilter = normalizedFilters.filter((filter) => filter !== 'overdue');
+      }
+      syncStatusFilterSelections(state.taskFilter);
+      updateVisibleTasks();
+      safeRender('compact_filter_overdue_toggle');
     });
   }
   if (elements.filterResetButton) {
