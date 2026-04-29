@@ -5591,8 +5591,7 @@ function applyTaskFilter(filters, tasks) {
     return [];
   }
 
-  const directorState = ensureDirectorState();
-  const useDirectorOverdue = directorState.isActive === true;
+  ensureDirectorState();
 
   return source.reduce((result, item, index) => {
     const task = isPlainObject(item) ? item : {};
@@ -5615,7 +5614,7 @@ function applyTaskFilter(filters, tasks) {
     if (statusFilters.length || overdue) {
       matchesStatus = false;
       if (overdue) {
-        matchesStatus = useDirectorOverdue ? isDirectorAssignmentOverdue(task) : isOverdue(task);
+        matchesStatus = isTaskOverdueByCompactRule(task);
       }
       if (!matchesStatus && statusFilters.length) {
         matchesStatus = statusFilters.some((filter) => {
@@ -17348,8 +17347,6 @@ function computeStatsFromTasks(tasks, options = {}) {
   let completed = 0;
   let overdue = 0;
   let active = 0;
-  const useDirectorDeadlines = options.useDirectorDeadlines === true;
-
   tasks.forEach((item) => {
     const task = isPlainObject(item) ? item : {};
     const statusKey = getTaskStatusKeyForUser(task);
@@ -17363,8 +17360,7 @@ function computeStatsFromTasks(tasks, options = {}) {
     if (statusKey === 'cancelled') {
       return;
     }
-    const overdueForDirector = useDirectorDeadlines && isDirectorAssignmentOverdue(task);
-    if (overdueForDirector || (!useDirectorDeadlines && isOverdue(task))) {
+    if (isTaskOverdueByCompactRule(task)) {
       overdue += 1;
       return;
     }
