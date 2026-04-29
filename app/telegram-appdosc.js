@@ -4355,13 +4355,13 @@ function syncCompactFilterGroupOptions() {
 
 function applyCompactFilters(visibleItems) {
   const source = Array.isArray(visibleItems) ? visibleItems : [];
-  if (!source.length) {
-    return [];
-  }
   const useOverdueOnly = state.compactFilters.showOverdueOnly === true;
   const overdueSource = useOverdueOnly
     ? buildVisibleTaskItemsByMatch(state.tasks, () => true)
     : source;
+  if (!overdueSource.length) {
+    return [];
+  }
   const dateFrom = normalizeDateInputValue(state.compactFilters.dateFrom);
   const dateTo = normalizeDateInputValue(state.compactFilters.dateTo);
   const groupFilters = (Array.isArray(state.compactFilters.groupFilters) ? state.compactFilters.groupFilters : [])
@@ -4862,9 +4862,11 @@ function syncCompactFilterPanelState() {
     elements.filterOverdueToggle.checked = Boolean(state.compactFilters.showOverdueOnly);
   }
   if (elements.filterOverdueCount instanceof HTMLElement) {
-    const overdueCount = (Array.isArray(state.tasks) ? state.tasks : []).reduce((total, task) => {
+    const overdueByClient = (Array.isArray(state.tasks) ? state.tasks : []).reduce((total, task) => {
       return total + (isTaskOverdueByCompactRule(task) ? 1 : 0);
     }, 0);
+    const overdueByService = Number(state.stats && state.stats.overdue) || 0;
+    const overdueCount = Math.max(overdueByClient, overdueByService);
     elements.filterOverdueCount.textContent = String(overdueCount);
     elements.filterOverdueCount.title = state.compactFilters.showOverdueOnly
       ? 'Приоритетный режим: отображаются только просроченные'
