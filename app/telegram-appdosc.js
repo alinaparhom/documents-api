@@ -5199,23 +5199,27 @@ function createCard(task, index, anchorRegistry) {
     || resolveSenderText(resolveExecutor(task))
     || 'не указан';
 
+  const headerFromText = `От: ${senderCompact}`;
+  const headerSubjectText = `Тема: ${compactContent}`;
+
   const taskListMode = normalizeTaskListMode(state.taskListMode);
   if (taskListMode === 'insight') {
-    setCardField(card, '[data-field="document"]', compactContent, {
-      fallback: 'Не указано',
+    setCardField(card, '[data-field="document"]', headerFromText, {
+      fallback: 'От: не указан',
       setTitle: false,
     });
-    setCardField(card, '[data-field="organization"]', '', {
-      fallback: '',
+    setCardField(card, '[data-field="organization"]', headerSubjectText, {
+      fallback: 'Тема: не указана',
       setTitle: false,
     });
   } else {
-    setCardField(card, '[data-field="document"]', compactContent, {
-      fallback: 'Не указано',
+    setCardField(card, '[data-field="document"]', headerFromText, {
+      fallback: 'От: не указан',
       setTitle: false,
     });
-    setCardField(card, '[data-field="organization"]', task.organization, {
-      fallback: 'Организация не указана',
+    setCardField(card, '[data-field="organization"]', headerSubjectText, {
+      fallback: 'Тема: не указана',
+      setTitle: false,
     });
   }
   setCardField(card, '[data-field="registry"]', task.registryNumber);
