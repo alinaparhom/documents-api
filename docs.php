@@ -12045,6 +12045,8 @@ switch ($action) {
             respond_error($message, $status, $extra);
         }
         $trustedIdentity = !empty($telegramInitDataContext['valid']) || is_array($sessionAuth);
+        $isTelegramMiniAppRequest = !empty($telegramInitDataContext['present']);
+        $allowBlock2DirectorElevation = $isTelegramMiniAppRequest && $trustedIdentity;
 
         $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
         $payload = [];
@@ -12305,7 +12307,7 @@ switch ($action) {
             if ($canManageOrganizationInstructions) {
                 $directorReasonsForOrganization[] = 'can_manage_instructions';
             }
-            if ($trustedIdentity && !empty($directors) && docs_user_is_block2_member($directors, $requestContext)) {
+            if ($allowBlock2DirectorElevation && !empty($directors) && docs_user_is_block2_member($directors, $requestContext)) {
                 $directorReasonsForOrganization[] = 'block2';
             }
 
@@ -12716,6 +12718,19 @@ switch ($action) {
             }
         }
 
+        if (!$isTelegramMiniAppRequest) {
+            log_docs_event('Website tasks access summary', [
+                'sessionRole' => $sessionRole !== '' ? $sessionRole : 'guest',
+                'sessionResponsibleRole' => $sessionResponsibleRole !== '' ? $sessionResponsibleRole : null,
+                'hasGlobalTaskAccess' => $hasGlobalTaskAccess,
+                'directorModeActive' => $directorModeActive,
+                'directorModeReasons' => !empty($directorModeSummary['reasons']) ? $directorModeSummary['reasons'] : [],
+                'telegramUserId' => $telegramUserId !== '' ? $telegramUserId : null,
+                'totalTasks' => count($tasks),
+                'filterSource' => $requestContext['filterSource'] ?? null,
+                'organizationsChecked' => $totalOrganizations,
+            ]);
+        }
         respond_success([
             'tasks' => array_values($tasks),
             'organizations' => $organizationSummaries,
