@@ -1457,7 +1457,7 @@
         grid-template-columns: minmax(0, 1fr) !important;
         grid-template-rows: auto auto !important;
         min-width: 0 !important;
-        padding: 0 92px 0 0 !important;
+        padding: 0 !important;
         gap: 5px !important;
         font: 500 11px/1.3 Inter, system-ui, sans-serif !important;
       }
@@ -1497,7 +1497,6 @@
       }
 
       .appdosc-card[data-expanded='false'] .appdosc-card__header {
-        position: relative !important;
         grid-template-columns: minmax(0, 1fr) auto !important;
         grid-template-areas: "main actions" "compact actions" !important;
         grid-template-rows: auto auto !important;
@@ -1562,21 +1561,20 @@
       .appdosc-card__side {
         grid-area: actions !important;
         display: flex !important;
-        align-items: flex-start !important;
-        gap: 6px !important;
+        flex-direction: column !important;
+        align-items: flex-end !important;
+        gap: 4px !important;
         justify-self: end !important;
         align-self: start !important;
       }
 
       .appdosc-card[data-expanded='false'] .appdosc-card__side {
-        position: absolute !important;
-        top: 8px !important;
-        right: 10px !important;
+        position: static !important;
         align-self: start !important;
-        display: grid !important;
-        gap: 6px !important;
-        justify-items: end !important;
-        z-index: 2;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        align-items: flex-end !important;
       }
 
       .task-chevron,
@@ -1594,7 +1592,8 @@
         transform: rotate(45deg);
         transition: transform .2s ease;
         flex: 0 0 auto;
-        margin-left: 4px;
+        order: -1;
+        margin: 0 2px 2px 0;
         opacity: .95;
       }
 
