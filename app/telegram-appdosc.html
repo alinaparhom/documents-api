@@ -2481,6 +2481,20 @@
         width: 100%;
       }
 
+      .appdosc__task-filter-overdue-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc__task-filter-overdue-toggle input {
+        width: 16px;
+        height: 16px;
+      }
+
       .appdosc__task-filter-group-add,
 
 
@@ -3084,6 +3098,10 @@
                 <div class="appdosc__task-filter-group-controls">
                   <button type="button" class="appdosc__task-filter-group-add" data-filter-group-add title="Добавить группировку">+</button>
                 </div>
+                <label class="appdosc__task-filter-overdue-toggle">
+                  <input type="checkbox" data-filter-overdue-toggle />
+                  <span>Показать просроченные задачи (<span data-filter-overdue-count>0</span>)</span>
+                </label>
               </div>
               <div class="appdosc__task-filter-actions">
                 <button type="button" class="appdosc__task-filter-reset" data-filter-reset>Сброс</button>

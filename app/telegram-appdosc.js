@@ -2022,6 +2022,7 @@ const state = {
     dateTo: '',
     quickPreset: '',
     groupFilters: [{ type: '', value: '' }],
+    showOverdueOnly: false,
   },
   access: {
     responsibles: {},
@@ -2800,6 +2801,8 @@ function initElements() {
   elements.filterResetButton = document.querySelector('[data-filter-reset]');
   elements.filterGroupList = document.querySelector('[data-filter-group-list]');
   elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
+  elements.filterOverdueToggle = document.querySelector('[data-filter-overdue-toggle]');
+  elements.filterOverdueCount = document.querySelector('[data-filter-overdue-count]');
   elements.status = document.querySelector('[data-status]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
@@ -4377,6 +4380,9 @@ function applyCompactFilters(visibleItems) {
   }
   return source.filter((item) => {
     const task = item && item.task ? item.task : null;
+    if (state.compactFilters.showOverdueOnly && !isOverdue(task)) {
+      return false;
+    }
     if (parsedFrom || parsedTo) {
       const taskDate = getTaskDateForCompactFilter(task);
       if (!taskDate) {
@@ -4434,6 +4440,7 @@ function resetCompactFilters() {
   state.compactFilters.dateTo = '';
   state.compactFilters.quickPreset = '';
   state.compactFilters.groupFilters = [{ type: '', value: '' }];
+  state.compactFilters.showOverdueOnly = false;
 }
 
 function initRangeCalendar(options = {}) {
@@ -4841,6 +4848,12 @@ function syncCompactFilterPanelState() {
     );
   }
   syncCompactFilterGroupOptions();
+  if (elements.filterOverdueToggle instanceof HTMLInputElement) {
+    elements.filterOverdueToggle.checked = Boolean(state.compactFilters.showOverdueOnly);
+  }
+  if (elements.filterOverdueCount instanceof HTMLElement) {
+    elements.filterOverdueCount.textContent = String(Number(state.stats && state.stats.overdue) || 0);
+  }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
       if (!(button instanceof HTMLElement)) {
@@ -17071,6 +17084,13 @@ function attachEvents() {
       syncCompactFilterGroupOptions();
       updateVisibleTasks();
       safeRender('compact_filter_groups_add');
+    });
+  }
+  if (elements.filterOverdueToggle instanceof HTMLInputElement) {
+    elements.filterOverdueToggle.addEventListener('change', () => {
+      state.compactFilters.showOverdueOnly = Boolean(elements.filterOverdueToggle.checked);
+      updateVisibleTasks();
+      safeRender('compact_filter_overdue_toggle');
     });
   }
   if (elements.filterResetButton) {
