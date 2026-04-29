@@ -17088,7 +17088,16 @@ function attachEvents() {
   }
   if (elements.filterOverdueToggle instanceof HTMLInputElement) {
     elements.filterOverdueToggle.addEventListener('change', () => {
-      state.compactFilters.showOverdueOnly = Boolean(elements.filterOverdueToggle.checked);
+      const showOverdueOnly = Boolean(elements.filterOverdueToggle.checked);
+      state.compactFilters.showOverdueOnly = showOverdueOnly;
+      const normalizedFilters = normalizeTaskFilters(state.taskFilter);
+      if (showOverdueOnly) {
+        const withoutStatusFilters = normalizedFilters.filter((filter) => !isStatusFilter(filter) && filter !== 'overdue');
+        state.taskFilter = [...withoutStatusFilters, 'overdue'];
+      } else {
+        state.taskFilter = normalizedFilters.filter((filter) => filter !== 'overdue');
+      }
+      syncStatusFilterSelections(state.taskFilter);
       updateVisibleTasks();
       safeRender('compact_filter_overdue_toggle');
     });
