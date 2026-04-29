@@ -22,7 +22,7 @@ let aiDialogLoader = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
-const TASK_LIST_MODE_OPTIONS = ['default'];
+const TASK_LIST_MODE_OPTIONS = ['default', 'insight'];
 const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
@@ -3105,7 +3105,7 @@ function writeTaskListModePreference(mode) {
 
 function applyTaskListMode() {
   const mode = normalizeTaskListMode(state.taskListMode);
-  setClass(document.body, 'appdosc--list-mode-informative', false);
+  setClass(document.body, 'appdosc--list-mode-insight', mode === 'insight');
   document.documentElement.setAttribute('data-task-list-mode', mode);
 }
 
@@ -5134,15 +5134,20 @@ function createCard(task, index, anchorRegistry) {
   const completed = isTaskCompleted(task);
 
   card.classList.remove('appdosc-card--done', 'appdosc-card--control', 'appdosc-card--overdue');
+  card.classList.remove('appdosc-card--tone-done', 'appdosc-card--tone-control', 'appdosc-card--tone-overdue');
 
   if (completed) {
     card.classList.add('appdosc-card--done');
+    card.classList.add('appdosc-card--tone-done');
   } else if (normalizedStatus.includes('контрол')) {
     card.classList.add('appdosc-card--control');
+    card.classList.add('appdosc-card--tone-control');
   }
 
   if (isOverdue(task)) {
     card.classList.add('appdosc-card--overdue');
+    card.classList.remove('appdosc-card--tone-control');
+    card.classList.add('appdosc-card--tone-overdue');
   }
 
   const hasEntry = setCardField(card, '[data-field="entryNumber"]', task.entryNumber ?? index + 1, {
@@ -5195,7 +5200,7 @@ function createCard(task, index, anchorRegistry) {
     || 'не указан';
 
   const taskListMode = normalizeTaskListMode(state.taskListMode);
-  if (taskListMode === 'informative') {
+  if (taskListMode === 'insight') {
     setCardField(card, '[data-field="document"]', compactContent, {
       fallback: 'Не указано',
       setTitle: false,
@@ -5277,6 +5282,54 @@ function createCard(task, index, anchorRegistry) {
     fallback: '—',
     setTitle: false,
   });
+
+  const dueDate = parseDate(task.dueDate);
+  const dueDateLabel = formatDate(task.dueDate);
+  const dueState = completed
+    ? 'Выполнено'
+    : (isOverdue(task)
+      ? `Просрочено · ${dueDateLabel}`
+      : (dueDate ? `До ${dueDateLabel}` : 'Срок не указан'));
+  const executorInsight = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
+  const senderInsight = senderCompact === 'не указан' ? 'Не указан' : senderCompact;
+  const responseSummaryText = buildTaskResponseSummary(task);
+  const responseRows = normalizeValue(responseSummaryText)
+    ? responseSummaryText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    : [];
+  const responseCount = responseRows.filter((row) => /Ответ:/i.test(row)).length;
+  const filesCount = Array.isArray(task.files) ? task.files.length : 0;
+  const responseLabel = responseCount === 1 ? '1 ответ' : (responseCount > 1 && responseCount < 5 ? `${responseCount} ответа` : `${responseCount} ответов`);
+  const filesLabel = filesCount === 1 ? '1 файл' : (filesCount > 1 && filesCount < 5 ? `${filesCount} файла` : `${filesCount} файлов`);
+
+  setCardField(card, '[data-field="insightSender"]', senderInsight, {
+    fallback: 'Не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightDate"]', registrationDate, {
+    fallback: '—',
+    setTitle: false,
+  });
+
+  setCardField(card, '[data-field="insightDueState"]', dueState, {
+    fallback: 'Срок не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightExecutor"]', executorInsight, {
+    fallback: 'Не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightResponses"]', responseCount > 0 ? responseLabel : 'Нет ответов', {
+    fallback: 'Нет ответов',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightFiles"]', filesCount > 0 ? filesLabel : '0 файлов', {
+    fallback: '0 файлов',
+    setTitle: false,
+  });
+  toggleSection(card, '[data-field="insight"]', taskListMode === 'insight');
 
   applyStatusBadge(card, statusText, normalizedStatus, task);
   populateCardFiles(card, task.files);
