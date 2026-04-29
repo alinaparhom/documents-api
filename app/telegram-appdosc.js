@@ -7998,17 +7998,6 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     return;
   }
 
-  statusElement.classList.remove(
-    'appdosc-card__status--done',
-    'appdosc-card__status--danger',
-    'appdosc-card__status--warn',
-    'appdosc-card__status--info',
-    'appdosc-card__status--accent',
-    'task-status--done',
-    'task-status--active'
-  );
-  statusElement.classList.add('appdosc-card__status', 'task-status');
-
   if (!normalizeValue(statusText)) {
     statusElement.hidden = true;
     statusElement.textContent = '';
@@ -8033,8 +8022,8 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
 
   const statusLabel = `${statusText}`;
   statusElement.hidden = true;
-  statusElement.textContent = statusLabel;
-  statusElement.title = `Статус задачи: ${statusText}`;
+  statusElement.textContent = '';
+  statusElement.removeAttribute('title');
   if (statusBadgeElement) {
     statusBadgeElement.hidden = false;
     statusBadgeElement.textContent = statusLabel;
@@ -8043,27 +8032,13 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   let statusTone = 'accent';
 
   if (isTaskCompleted(task)) {
-    statusElement.classList.add('appdosc-card__status--done');
-    statusElement.classList.add('task-status--done');
     statusTone = 'done';
   } else if (isOverdue(task)) {
-    statusElement.classList.add('appdosc-card__status--danger');
-    statusElement.classList.add('task-status--active');
     statusTone = 'danger';
   } else if (normalizedStatus.includes('контрол')) {
-    statusElement.classList.add('appdosc-card__status--warn');
-    statusElement.classList.add('task-status--active');
     statusTone = 'warn';
   } else if (normalizedStatus.includes('распредел')) {
-    statusElement.classList.add('appdosc-card__status--info');
-    statusElement.classList.add('task-status--active');
     statusTone = 'info';
-  } else if (normalizedStatus.includes('работ') || normalizedStatus.includes('нов')) {
-    statusElement.classList.add('appdosc-card__status--accent');
-    statusElement.classList.add('task-status--active');
-  } else {
-    statusElement.classList.add('appdosc-card__status--accent');
-    statusElement.classList.add('task-status--active');
   }
 
   if (card && card.dataset) {
