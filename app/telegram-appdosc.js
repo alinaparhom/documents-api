@@ -4380,7 +4380,10 @@ function applyCompactFilters(visibleItems) {
   }
   return source.filter((item) => {
     const task = item && item.task ? item.task : null;
-    if (state.compactFilters.showOverdueOnly && !isOverdue(task)) {
+    const hasOverdueStatus = getTaskStatusKeyForUser(task) === 'overdue'
+      || normalizeName(getTaskStatusValue(task)).includes('просроч');
+    const matchesOverdueFilter = isOverdue(task) || isDirectorAssignmentOverdue(task) || hasOverdueStatus;
+    if (state.compactFilters.showOverdueOnly && !matchesOverdueFilter) {
       return false;
     }
     if (parsedFrom || parsedTo) {
