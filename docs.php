@@ -11971,6 +11971,13 @@ switch ($action) {
     case 'mini_app_tasks':
         $requestContext = docs_build_request_user_context();
         $sessionAuth = docs_get_session_auth();
+        $sessionRole = is_array($sessionAuth) ? strtolower((string) ($sessionAuth['role'] ?? '')) : '';
+        $sessionResponsibleRole = is_array($sessionAuth)
+            ? docs_normalize_assignment_role((string) ($sessionAuth['responsibleRole'] ?? ''))
+            : '';
+        $isAdminSession = $sessionRole === 'admin';
+        $isDirectorSession = $sessionRole === 'user' && $sessionResponsibleRole === 'director';
+        $hasGlobalTaskAccess = $isAdminSession || $isDirectorSession;
         $telegramInitDataContext = [];
         if (isset($requestContext['telegramInitData']) && is_array($requestContext['telegramInitData'])) {
             $telegramInitDataContext = $requestContext['telegramInitData'];
@@ -12199,7 +12206,7 @@ switch ($action) {
             }, $filter['ids'])));
         }
 
-        if ($filter === null || empty($filterIds)) {
+        if (($filter === null || empty($filterIds)) && !$hasGlobalTaskAccess) {
             if ($isIosClient) {
                 $iosDebugSteps[] = [
                     'stage' => 'filter_missing',
@@ -12219,6 +12226,9 @@ switch ($action) {
             ]);
         }
 
+        if (!is_array($filter)) {
+            $filter = [];
+        }
         $filter['ids'] = $filterIds;
         $shouldTraceMiniAppUser = docs_should_trace_mini_app_user($filter);
         if ($shouldTraceMiniAppUser) {
@@ -12299,7 +12309,7 @@ switch ($action) {
                 $directorReasonsForOrganization[] = 'block2';
             }
 
-            $isDirectorForOrganization = !empty($directorReasonsForOrganization);
+            $isDirectorForOrganization = $hasGlobalTaskAccess || !empty($directorReasonsForOrganization);
             $effectiveFilter = $filter;
             if ($isDirectorForOrganization) {
                 $filteredRecords = [];
@@ -12695,7 +12705,6 @@ switch ($action) {
         $globalPermission = false;
         $sessionAuthArray = is_array($sessionAuth) ? $sessionAuth : null;
         $canManageSubordinates = docs_user_can_manage_subordinates($sessionAuthArray);
-        $sessionRole = is_array($sessionAuth) ? strtolower((string) ($sessionAuth['role'] ?? '')) : '';
         if ($sessionRole === 'admin') {
             $globalPermission = true;
         } else {
