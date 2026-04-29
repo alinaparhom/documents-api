@@ -2022,6 +2022,8 @@ const state = {
     dateTo: '',
     quickPreset: '',
     groupFilters: [{ type: '', value: '' }],
+    showOverdueOnly: false,
+    prevFiltersBeforeOverdue: null,
   },
   access: {
     responsibles: {},
@@ -2796,6 +2798,8 @@ function initElements() {
   elements.rangeCalendarSubmit = document.querySelector('[data-calendar-submit]');
   elements.rangeCalendarTotal = document.querySelector('[data-calendar-total]');
   elements.filterQuickButtons = Array.from(document.querySelectorAll('[data-filter-quick-btn]'));
+  elements.filterOverdueToggle = document.querySelector('[data-filter-overdue-toggle]');
+  elements.filterOverdueHint = document.querySelector('[data-filter-overdue-hint]');
   elements.filterResetButton = document.querySelector('[data-filter-reset]');
   elements.filterGroupList = document.querySelector('[data-filter-group-list]');
   elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
@@ -3975,7 +3979,9 @@ function updateStats() {
   }
 
   if (elements.overdue) {
-    const resolvedOverdue = Number(overallStats.overdue) || 0;
+    const resolvedOverdue = (Array.isArray(state.tasks) ? state.tasks : []).reduce((acc, task) => {
+      return acc + (isTaskOverdueByCompactRule(task) ? 1 : 0);
+    }, 0);
     setStatusBadgeText(elements.overdue, `${resolvedOverdue} просрочено`);
   }
 
@@ -4349,7 +4355,10 @@ function syncCompactFilterGroupOptions() {
 }
 
 function applyCompactFilters(visibleItems) {
-  const source = Array.isArray(visibleItems) ? visibleItems : [];
+  const overdueMode = state.compactFilters && state.compactFilters.showOverdueOnly === true;
+  const source = overdueMode
+    ? buildVisibleTaskItemsByMatch(state.tasks, (task) => isTaskOverdueByCompactRule(task))
+    : (Array.isArray(visibleItems) ? visibleItems : []);
   if (!source.length) {
     return [];
   }
@@ -4403,6 +4412,47 @@ function applyCompactFilters(visibleItems) {
   });
 }
 
+function isTaskOverdueByCompactRule(task) {
+  const statusLabel = normalizeName(getTaskStatusValue(task));
+  return isOverdue(task) || isDirectorAssignmentOverdue(task) || statusLabel.includes('просроч');
+}
+
+function enableCompactOverdueMode(options = {}) {
+  const keepPrevious = options.keepPrevious === true;
+  if (!keepPrevious) {
+    state.compactFilters.prevFiltersBeforeOverdue = {
+      taskFilter: Array.isArray(state.taskFilter) ? [...state.taskFilter] : [],
+      dateFrom: normalizeDateInputValue(state.compactFilters.dateFrom),
+      dateTo: normalizeDateInputValue(state.compactFilters.dateTo),
+      quickPreset: normalizeValue(state.compactFilters.quickPreset),
+      groupFilters: Array.isArray(state.compactFilters.groupFilters)
+        ? state.compactFilters.groupFilters.map((entry) => ({ type: normalizeValue(entry?.type), value: normalizeValue(entry?.value) }))
+        : [{ type: '', value: '' }],
+    };
+  }
+  state.compactFilters.showOverdueOnly = true;
+  state.taskFilter = [];
+  state.compactFilters.dateFrom = '';
+  state.compactFilters.dateTo = '';
+  state.compactFilters.quickPreset = '';
+  state.compactFilters.groupFilters = [{ type: '', value: '' }];
+}
+
+function disableCompactOverdueMode() {
+  state.compactFilters.showOverdueOnly = false;
+  const prev = state.compactFilters.prevFiltersBeforeOverdue;
+  if (prev && typeof prev === 'object') {
+    state.taskFilter = Array.isArray(prev.taskFilter) ? [...prev.taskFilter] : [];
+    state.compactFilters.dateFrom = normalizeDateInputValue(prev.dateFrom);
+    state.compactFilters.dateTo = normalizeDateInputValue(prev.dateTo);
+    state.compactFilters.quickPreset = normalizeValue(prev.quickPreset);
+    state.compactFilters.groupFilters = Array.isArray(prev.groupFilters) && prev.groupFilters.length
+      ? prev.groupFilters.map((entry) => ({ type: normalizeValue(entry?.type), value: normalizeValue(entry?.value) }))
+      : [{ type: '', value: '' }];
+  }
+  state.compactFilters.prevFiltersBeforeOverdue = null;
+}
+
 function applyCompactQuickPreset(preset) {
   const normalizedPreset = normalizeValue(preset);
   const today = new Date();
@@ -4433,6 +4483,8 @@ function resetCompactFilters() {
   state.compactFilters.dateTo = '';
   state.compactFilters.quickPreset = '';
   state.compactFilters.groupFilters = [{ type: '', value: '' }];
+  state.compactFilters.showOverdueOnly = false;
+  state.compactFilters.prevFiltersBeforeOverdue = null;
 }
 
 function initRangeCalendar(options = {}) {
@@ -4840,6 +4892,15 @@ function syncCompactFilterPanelState() {
     );
   }
   syncCompactFilterGroupOptions();
+  if (elements.filterOverdueToggle instanceof HTMLInputElement) {
+    elements.filterOverdueToggle.checked = state.compactFilters.showOverdueOnly === true;
+  }
+  if (elements.filterOverdueHint instanceof HTMLElement) {
+    elements.filterOverdueHint.textContent = state.compactFilters.showOverdueOnly === true
+      ? 'Режим просроченных приоритетный: остальные фильтры временно отключены.'
+      : '';
+    elements.filterOverdueHint.hidden = state.compactFilters.showOverdueOnly !== true;
+  }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
       if (!(button instanceof HTMLElement)) {
@@ -5676,6 +5737,10 @@ function updateVisibleTasks() {
 
   if (entryTaskId) {
     const matched = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    const matchedTask = matched.length ? matched[0].task : null;
+    if (matchedTask && isTaskOverdueByCompactRule(matchedTask) && normalizeValue(state.telegram.startParam)) {
+      enableCompactOverdueMode({ keepPrevious: true });
+    }
     state.visibleTasks = applyCompactFilters(matched);
     return;
   }
@@ -17083,6 +17148,17 @@ function attachEvents() {
       syncCompactFilterGroupOptions();
       updateVisibleTasks();
       safeRender('compact_filter_groups_add');
+    });
+  }
+  if (elements.filterOverdueToggle instanceof HTMLInputElement) {
+    elements.filterOverdueToggle.addEventListener('change', () => {
+      if (elements.filterOverdueToggle.checked) {
+        enableCompactOverdueMode();
+      } else {
+        disableCompactOverdueMode();
+      }
+      updateVisibleTasks();
+      safeRender('compact_filter_overdue_toggle');
     });
   }
   if (elements.filterResetButton) {
