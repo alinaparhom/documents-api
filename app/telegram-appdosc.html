@@ -1543,6 +1543,11 @@
         display: none !important;
       }
 
+
+      .appdosc-card__side .appdosc-card__status {
+        grid-row: 2;
+      }
+
       .appdosc-card__status::before {
         content: '●';
         color: #f59e0b;
@@ -1560,10 +1565,11 @@
 
       .appdosc-card__side {
         grid-area: actions !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: flex-end !important;
-        gap: 4px !important;
+        display: grid !important;
+        grid-template-rows: auto auto !important;
+        justify-items: end !important;
+        align-content: start !important;
+        row-gap: 4px !important;
         justify-self: end !important;
         align-self: start !important;
       }
@@ -1571,10 +1577,10 @@
       .appdosc-card[data-expanded='false'] .appdosc-card__side {
         position: static !important;
         align-self: start !important;
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 4px !important;
-        align-items: flex-end !important;
+        display: grid !important;
+        grid-template-rows: auto auto !important;
+        justify-items: end !important;
+        row-gap: 4px !important;
       }
 
       .task-chevron,
@@ -1591,9 +1597,8 @@
         border-bottom: 2px solid var(--appdosc-task-chevron-color);
         transform: rotate(45deg);
         transition: transform .2s ease;
-        flex: 0 0 auto;
-        order: -1;
-        margin: 0 2px 2px 0;
+        grid-row: 1;
+        margin: 0 2px 0 0;
         opacity: .95;
       }
 
