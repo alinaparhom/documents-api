@@ -7110,6 +7110,25 @@
   }
 
 
+
+  function resolveAuthSourceFile(authSource, organization) {
+    var source = String(authSource || '').trim().toLowerCase();
+    var org = String(organization || '').trim();
+    if (source === 'admin_users') {
+      return 'lg/user.json';
+    }
+    if (source === 'organization_admin') {
+      return org ? ('documents/' + org + '/.admin.json') : 'documents/<organization>/.admin.json';
+    }
+    if (source === 'mainadmin') {
+      return 'lg/*.mainadmin.json';
+    }
+    if (source === 'director' || source === 'responsible') {
+      return org ? ('documents/' + org + '/settingsdocs.json') : 'documents/<organization>/settingsdocs.json';
+    }
+    return 'unknown';
+  }
+
   function buildAuthDebugPanelPayload() {
     var access = state && state.access ? state.access : null;
     var user = access && access.user && typeof access.user === 'object' ? access.user : null;
@@ -7131,6 +7150,7 @@
         telegramId: user.telegramId || user.telegram_id || user.telegram || '',
         username: user.username || ''
       } : null,
+      adminDetectedFromFile: resolveAuthSourceFile(user ? user.authSource : '', state && state.organization ? state.organization : ''),
       assignmentKeys: state && state.userAssignmentKeyMap ? Object.keys(state.userAssignmentKeyMap) : []
     };
   }
