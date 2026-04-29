@@ -1406,6 +1406,31 @@
         background: var(--appdosc-task-status-info-bg);
       }
 
+
+      :root[data-theme='light'] .task-main[data-status-tone='done'] .task-status-badge {
+        color: #166534;
+        border-color: rgba(34, 197, 94, 0.32);
+        background: linear-gradient(180deg, rgba(240, 253, 244, 0.95), rgba(220, 252, 231, 0.85));
+      }
+
+      :root[data-theme='light'] .task-main[data-status-tone='danger'] .task-status-badge {
+        color: #991b1b;
+        border-color: rgba(239, 68, 68, 0.3);
+        background: linear-gradient(180deg, rgba(254, 242, 242, 0.96), rgba(254, 226, 226, 0.86));
+      }
+
+      :root[data-theme='light'] .task-main[data-status-tone='warn'] .task-status-badge {
+        color: #92400e;
+        border-color: rgba(245, 158, 11, 0.3);
+        background: linear-gradient(180deg, rgba(255, 251, 235, 0.96), rgba(254, 243, 199, 0.86));
+      }
+
+      :root[data-theme='light'] .task-main[data-status-tone='info'] .task-status-badge {
+        color: #0f766e;
+        border-color: rgba(20, 184, 166, 0.3);
+        background: linear-gradient(180deg, rgba(240, 253, 250, 0.96), rgba(204, 251, 241, 0.86));
+      }
+
       .task-meta {
         display: flex !important;
         align-items: center !important;

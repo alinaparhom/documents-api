@@ -8032,7 +8032,8 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   }
 
   const statusLabel = `${statusText}`;
-  statusElement.hidden = true;
+  const isCollapsedCard = card && card.dataset && card.dataset.expanded === 'false';
+  statusElement.hidden = isCollapsedCard;
   statusElement.textContent = statusLabel;
   statusElement.title = `Статус задачи: ${statusText}`;
   if (statusBadgeElement) {
