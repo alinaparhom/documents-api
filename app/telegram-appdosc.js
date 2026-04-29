@@ -3631,6 +3631,15 @@ function updateStateFromPayload(payload) {
   const computedStats = computeStatsFromTasks(state.tasks);
   const payloadStats = isPlainObject(payload?.stats) ? payload.stats : null;
   const statsMismatch = hasStatsMismatch(payloadStats, computedStats);
+  const payloadOverdue = toSafeInteger(payloadStats?.overdue);
+  const computedOverdue = toSafeInteger(computedStats?.overdue);
+
+  if (payloadOverdue !== null && computedOverdue !== null && payloadOverdue !== computedOverdue) {
+    logClientEvent('stats_overdue_mismatch', {
+      payloadOverdue,
+      computedOverdue,
+    });
+  }
 
   if (statsMismatch) {
     logClientEvent('tasks_stats_mismatch', {
@@ -4858,7 +4867,11 @@ function syncCompactFilterPanelState() {
     elements.filterOverdueToggle.checked = Boolean(state.compactFilters.showOverdueOnly);
   }
   if (elements.filterOverdueCount instanceof HTMLElement) {
-    elements.filterOverdueCount.textContent = String(Number(state.stats && state.stats.overdue) || 0);
+    const directorState = ensureDirectorState();
+    const compactStats = computeStatsFromTasks(state.tasks, {
+      useDirectorDeadlines: directorState.isActive === true,
+    });
+    elements.filterOverdueCount.textContent = String(Number(compactStats.overdue) || 0);
   }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
@@ -5605,7 +5618,7 @@ function applyTaskFilter(filters, tasks) {
     if (statusFilters.length || overdue) {
       matchesStatus = false;
       if (overdue) {
-        matchesStatus = useDirectorOverdue ? isDirectorAssignmentOverdue(task) : isOverdue(task);
+        matchesStatus = isTaskOverdueByCurrentMode(task, { useDirectorDeadlines: useDirectorOverdue });
       }
       if (!matchesStatus && statusFilters.length) {
         matchesStatus = statusFilters.some((filter) => {
@@ -17314,8 +17327,7 @@ function computeStatsFromTasks(tasks, options = {}) {
     if (statusKey === 'cancelled') {
       return;
     }
-    const overdueForDirector = useDirectorDeadlines && isDirectorAssignmentOverdue(task);
-    if (overdueForDirector || (!useDirectorDeadlines && isOverdue(task))) {
+    if (isTaskOverdueByCurrentMode(task, { useDirectorDeadlines })) {
       overdue += 1;
       return;
     }
@@ -17331,6 +17343,11 @@ function computeStatsFromTasks(tasks, options = {}) {
     active,
     statuses: statusCounters,
   };
+}
+
+function isTaskOverdueByCurrentMode(task, options = {}) {
+  const useDirectorDeadlines = options.useDirectorDeadlines === true;
+  return useDirectorDeadlines ? isDirectorAssignmentOverdue(task) : isOverdue(task);
 }
 
 function updateOrganizationAccessMaps() {
