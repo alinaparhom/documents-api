@@ -523,8 +523,8 @@
     }
     state.userAssignmentKeyMap = hasKeys ? map : null;
     state.hasUserAssignmentKeys = hasKeys;
-    if (typeof docsLogger.log === 'function') {
-      docsLogger.log('[documents][access] Права пользователя и ключи назначений', {
+    if (typeof console !== 'undefined' && typeof console.log === 'function') {
+      console.log('[documents][access] Права пользователя и ключи назначений', {
         accessRole: state.access ? state.access.role : '',
         effectiveUserRole: state.effectiveUserRole || '',
         isAdmin: isCurrentUserAdmin(),
@@ -13658,8 +13658,8 @@
 
     filteredEntries = applyTableSorting(filteredEntries);
 
-    if (typeof docsLogger.log === 'function') {
-      docsLogger.log('[documents][access] Результат фильтрации документов', {
+    if (typeof console !== 'undefined' && typeof console.log === 'function') {
+      console.log('[documents][access] Результат фильтрации документов', {
         totalDocuments: documents.length,
         visibleAfterAccess: documents.length - hiddenByAccessCount,
         hiddenByAccess: hiddenByAccessCount,
