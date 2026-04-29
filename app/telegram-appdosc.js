@@ -7999,23 +7999,24 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
   }
 
   if (!normalizeValue(statusText)) {
+    const fallbackStatusLabel = 'Статус не указан';
     statusElement.hidden = true;
     statusElement.textContent = '';
     statusElement.removeAttribute('title');
     if (card && card.dataset) {
       delete card.dataset.statusIcon;
-      delete card.dataset.statusLabel;
-      delete card.dataset.statusTone;
+      card.dataset.statusLabel = fallbackStatusLabel;
+      card.dataset.statusTone = 'accent';
     }
     if (taskMainElement && taskMainElement.dataset) {
       delete taskMainElement.dataset.statusIcon;
-      delete taskMainElement.dataset.statusLabel;
-      delete taskMainElement.dataset.statusTone;
+      taskMainElement.dataset.statusLabel = fallbackStatusLabel;
+      taskMainElement.dataset.statusTone = 'accent';
     }
     if (statusBadgeElement) {
-      statusBadgeElement.hidden = true;
-      statusBadgeElement.textContent = '';
-      statusBadgeElement.removeAttribute('title');
+      statusBadgeElement.hidden = false;
+      statusBadgeElement.textContent = fallbackStatusLabel;
+      statusBadgeElement.title = fallbackStatusLabel;
     }
     return;
   }
