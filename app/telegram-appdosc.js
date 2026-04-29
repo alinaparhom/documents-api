@@ -2023,6 +2023,7 @@ const state = {
     quickPreset: '',
     groupFilters: [{ type: '', value: '' }],
     showOverdueOnly: false,
+    prevFiltersBeforeOverdue: null,
   },
   access: {
     responsibles: {},
@@ -4357,6 +4358,10 @@ function applyCompactFilters(visibleItems) {
   if (!source.length) {
     return [];
   }
+  const useOverdueOnly = state.compactFilters.showOverdueOnly === true;
+  const overdueSource = useOverdueOnly
+    ? buildVisibleTaskItemsByMatch(state.tasks, () => true)
+    : source;
   const dateFrom = normalizeDateInputValue(state.compactFilters.dateFrom);
   const dateTo = normalizeDateInputValue(state.compactFilters.dateTo);
   const groupFilters = (Array.isArray(state.compactFilters.groupFilters) ? state.compactFilters.groupFilters : [])
@@ -4378,11 +4383,9 @@ function applyCompactFilters(visibleItems) {
     parsedFrom.setTime(parsedTo.getTime());
     parsedTo.setTime(temp);
   }
-  return source.filter((item) => {
+  return overdueSource.filter((item) => {
     const task = item && item.task ? item.task : null;
-    const hasOverdueStatus = getTaskStatusKeyForUser(task) === 'overdue'
-      || normalizeName(getTaskStatusValue(task)).includes('просроч');
-    const matchesOverdueFilter = isOverdue(task) || isDirectorAssignmentOverdue(task) || hasOverdueStatus;
+    const matchesOverdueFilter = isTaskOverdueByCompactRule(task);
     if (state.compactFilters.showOverdueOnly && !matchesOverdueFilter) {
       return false;
     }
@@ -4447,6 +4450,7 @@ function resetCompactFilters() {
   state.compactFilters.quickPreset = '';
   state.compactFilters.groupFilters = [{ type: '', value: '' }];
   state.compactFilters.showOverdueOnly = false;
+  state.compactFilters.prevFiltersBeforeOverdue = null;
 }
 
 function initRangeCalendar(options = {}) {
@@ -4858,7 +4862,13 @@ function syncCompactFilterPanelState() {
     elements.filterOverdueToggle.checked = Boolean(state.compactFilters.showOverdueOnly);
   }
   if (elements.filterOverdueCount instanceof HTMLElement) {
-    elements.filterOverdueCount.textContent = String(Number(state.stats && state.stats.overdue) || 0);
+    const overdueCount = (Array.isArray(state.tasks) ? state.tasks : []).reduce((total, task) => {
+      return total + (isTaskOverdueByCompactRule(task) ? 1 : 0);
+    }, 0);
+    elements.filterOverdueCount.textContent = String(overdueCount);
+    elements.filterOverdueCount.title = state.compactFilters.showOverdueOnly
+      ? 'Приоритетный режим: отображаются только просроченные'
+      : '';
   }
   if (Array.isArray(elements.filterQuickButtons)) {
     elements.filterQuickButtons.forEach((button) => {
@@ -5688,6 +5698,13 @@ function isTaskExcludedByEntryStatus(task, directorState) {
   return isOverdue(task);
 }
 
+function isTaskOverdueByCompactRule(task) {
+  const statusLabel = normalizeName(getTaskStatusValue(task));
+  return isOverdue(task)
+    || isDirectorAssignmentOverdue(task)
+    || statusLabel.includes('просроч');
+}
+
 function updateVisibleTasks() {
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
@@ -5696,6 +5713,11 @@ function updateVisibleTasks() {
 
   if (entryTaskId) {
     const matched = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    const matchedTask = matched.length ? matched[0].task : null;
+    const isTelegramDeepLink = Boolean(state.telegram.startParam);
+    if (isTelegramDeepLink && isTaskOverdueByCompactRule(matchedTask)) {
+      state.compactFilters.showOverdueOnly = true;
+    }
     state.visibleTasks = applyCompactFilters(matched);
     return;
   }
@@ -17096,12 +17118,39 @@ function attachEvents() {
     elements.filterOverdueToggle.addEventListener('change', () => {
       const showOverdueOnly = Boolean(elements.filterOverdueToggle.checked);
       state.compactFilters.showOverdueOnly = showOverdueOnly;
-      const normalizedFilters = normalizeTaskFilters(state.taskFilter);
       if (showOverdueOnly) {
-        const withoutStatusFilters = normalizedFilters.filter((filter) => !isStatusFilter(filter) && filter !== 'overdue');
-        state.taskFilter = [...withoutStatusFilters, 'overdue'];
+        state.compactFilters.prevFiltersBeforeOverdue = {
+          taskFilter: Array.isArray(state.taskFilter) ? [...state.taskFilter] : [],
+          dateFrom: state.compactFilters.dateFrom || '',
+          dateTo: state.compactFilters.dateTo || '',
+          quickPreset: state.compactFilters.quickPreset || '',
+          groupFilters: Array.isArray(state.compactFilters.groupFilters)
+            ? state.compactFilters.groupFilters.map((entry) => ({
+              type: normalizeValue(entry?.type),
+              value: normalizeValue(entry?.value),
+            }))
+            : [{ type: '', value: '' }],
+        };
+        state.taskFilter = [];
+        state.compactFilters.dateFrom = '';
+        state.compactFilters.dateTo = '';
+        state.compactFilters.quickPreset = '';
+        state.compactFilters.groupFilters = [{ type: '', value: '' }];
       } else {
-        state.taskFilter = normalizedFilters.filter((filter) => filter !== 'overdue');
+        const prev = state.compactFilters.prevFiltersBeforeOverdue;
+        if (prev && typeof prev === 'object') {
+          state.taskFilter = Array.isArray(prev.taskFilter) ? [...prev.taskFilter] : [];
+          state.compactFilters.dateFrom = normalizeDateInputValue(prev.dateFrom);
+          state.compactFilters.dateTo = normalizeDateInputValue(prev.dateTo);
+          state.compactFilters.quickPreset = normalizeValue(prev.quickPreset);
+          state.compactFilters.groupFilters = Array.isArray(prev.groupFilters) && prev.groupFilters.length
+            ? prev.groupFilters.map((entry) => ({
+              type: normalizeValue(entry?.type),
+              value: normalizeValue(entry?.value),
+            }))
+            : [{ type: '', value: '' }];
+        }
+        state.compactFilters.prevFiltersBeforeOverdue = null;
       }
       syncStatusFilterSelections(state.taskFilter);
       updateVisibleTasks();
