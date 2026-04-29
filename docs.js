@@ -524,12 +524,24 @@
     state.userAssignmentKeyMap = hasKeys ? map : null;
     state.hasUserAssignmentKeys = hasKeys;
     if (typeof console !== 'undefined' && typeof console.log === 'function') {
-      console.log('[documents][access] Права пользователя и ключи назначений', {
+      console.log('[documents][auth-debug] Источник прав пользователя', {
         accessRole: state.access ? state.access.role : '',
         effectiveUserRole: state.effectiveUserRole || '',
         isAdmin: isCurrentUserAdmin(),
         isDirector: isCurrentUserDirector(),
         restrictToOwnTasks: shouldRestrictByUserAssignments(),
+        authenticated: Boolean(state.access && state.access.authenticated),
+        accessGranted: Boolean(state.access && state.access.accessGranted),
+        adminScope: state.access && state.access.adminScope ? state.access.adminScope : '',
+        organization: state.access && state.access.organization ? state.access.organization : '',
+        user: state.access && state.access.user ? {
+          id: state.access.user.id || '',
+          login: state.access.user.login || '',
+          username: state.access.user.username || '',
+          telegramId: state.access.user.telegramId || state.access.user.telegram_id || state.access.user.telegram || '',
+          role: state.access.user.role || '',
+          responsibleRole: state.access.user.responsibleRole || ''
+        } : null,
         assignmentKeysCount: hasKeys ? Object.keys(map).length : 0,
         assignmentKeys: hasKeys ? Object.keys(map) : []
       });
@@ -13657,18 +13669,6 @@
     }
 
     filteredEntries = applyTableSorting(filteredEntries);
-
-    if (typeof console !== 'undefined' && typeof console.log === 'function') {
-      console.log('[documents][access] Результат фильтрации документов', {
-        totalDocuments: documents.length,
-        visibleAfterAccess: documents.length - hiddenByAccessCount,
-        hiddenByAccess: hiddenByAccessCount,
-        visibleAfterFilters: filteredEntries.length,
-        restrictToOwnTasks: shouldRestrictByUserAssignments(),
-        isAdmin: isCurrentUserAdmin(),
-        isDirector: isCurrentUserDirector()
-      });
-    }
 
     var filtersActive = hasActiveFilters() || state.showUnassignedOnly;
 
