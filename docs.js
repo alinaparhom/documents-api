@@ -7123,6 +7123,9 @@
     if (source === 'mainadmin') {
       return 'lg/*.mainadmin.json';
     }
+    if (source === 'legacy_admin_session') {
+      return 'legacy session: перезайдите в аккаунт, чтобы получить точный источник';
+    }
     if (source === 'director' || source === 'responsible') {
       return org ? ('documents/' + org + '/settingsdocs.json') : 'documents/<organization>/settingsdocs.json';
     }

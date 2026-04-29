@@ -9652,6 +9652,11 @@ function docs_describe_session(?array $auth, ?array $accessContext = null): arra
         if ($organizationCandidate !== '') {
             $organization = $organizationCandidate;
         }
+        $authSourceValue = sanitize_text_field((string) ($auth['authSource'] ?? ''), 80);
+        if ($authSourceValue === '' && $roleCandidate === 'admin') {
+            $adminScopeHint = sanitize_text_field((string) ($auth['adminScope'] ?? ''), 60);
+            $authSourceValue = $adminScopeHint === 'director' ? 'director' : 'legacy_admin_session';
+        }
         $userData = array_filter([
             'login' => sanitize_text_field((string) ($auth['login'] ?? ''), 120),
             'fullName' => sanitize_text_field((string) ($auth['fullName'] ?? ''), 200),
@@ -9660,7 +9665,7 @@ function docs_describe_session(?array $auth, ?array $accessContext = null): arra
             'chatId' => sanitize_text_field((string) ($auth['chatId'] ?? ''), 80),
             'responsibleNumber' => sanitize_text_field((string) ($auth['responsibleNumber'] ?? ''), 60),
             'role' => sanitize_text_field((string) ($auth['responsibleRole'] ?? ''), 60),
-            'authSource' => sanitize_text_field((string) ($auth['authSource'] ?? ''), 80),
+            'authSource' => $authSourceValue,
         ], static function ($value) {
             return $value !== '';
         });
