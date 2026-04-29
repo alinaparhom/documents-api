@@ -4386,6 +4386,9 @@ function applyCompactFilters(visibleItems) {
     if (state.compactFilters.showOverdueOnly && !matchesOverdueFilter) {
       return false;
     }
+    if (state.compactFilters.showOverdueOnly) {
+      return true;
+    }
     if (parsedFrom || parsedTo) {
       const taskDate = getTaskDateForCompactFilter(task);
       if (!taskDate) {
