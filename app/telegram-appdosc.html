@@ -1491,6 +1491,11 @@
 
       .appdosc-card[data-expanded='false'] .task-icon { display: none !important; }
 
+      .appdosc-card[data-expanded='false'] .appdosc-card__subtitle {
+        display: block !important;
+        font: inherit !important;
+      }
+
       .appdosc-card[data-expanded='false'] .appdosc-card__header {
         grid-template-columns: minmax(0, 1fr) auto !important;
         grid-template-areas: "main actions" "compact actions" !important;
@@ -1509,7 +1514,16 @@
       }
 
       .appdosc-card__subtitle {
-        display: none !important;
+        display: block !important;
+        color: var(--appdosc-task-text-color) !important;
+        font-size: 11px !important;
+        line-height: 1.35 !important;
+        font-weight: 500 !important;
+        margin: 0 !important;
+        min-width: 0 !important;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .appdosc-card__status.task-status {
