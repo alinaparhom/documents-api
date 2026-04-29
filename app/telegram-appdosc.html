@@ -1509,10 +1509,6 @@
         backdrop-filter: none;
       }
 
-      .appdosc-card[data-expanded='false'] .appdosc-card__status {
-        display: none !important;
-      }
-
       .appdosc-card__subtitle {
         display: block !important;
         color: var(--appdosc-task-text-color) !important;
@@ -1526,30 +1522,33 @@
         white-space: nowrap;
       }
 
-      .appdosc-card__status.task-status {
-        display: none !important;
-      }
-
       .appdosc-card__status {
         position: static !important;
-        min-height: 32px !important;
-        padding: 0 10px !important;
-        border-radius: 10px !important;
-        border: 1px solid rgba(63, 140, 255, 0.5) !important;
-        color: #72a9ff !important;
-        background: rgba(29, 63, 117, 0.5) !important;
-        font-size: 12px !important;
+        min-height: 24px !important;
+        padding: 3px 10px !important;
+        border-radius: 999px !important;
+        border: 1px solid rgba(245, 158, 11, 0.45) !important;
+        color: #fbbf24 !important;
+        background: rgba(120, 53, 15, 0.28) !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
         line-height: 1.2;
         display: inline-flex;
         align-items: center;
         gap: 6px;
+        white-space: nowrap !important;
       }
 
       .appdosc-card__status:empty {
         display: none !important;
       }
 
-      .appdosc-card__status::before { content: none !important; }
+      .appdosc-card__status::before {
+        content: '●';
+        color: #f59e0b;
+        font-size: 10px;
+        line-height: 1;
+      }
 
       .appdosc-card--done .appdosc-card__status {
         color: #4ade80 !important;
@@ -1562,9 +1561,10 @@
       .appdosc-card__side {
         grid-area: actions !important;
         display: flex !important;
-        align-items: center !important;
+        align-items: flex-start !important;
         gap: 6px !important;
         justify-self: end !important;
+        align-self: start !important;
       }
 
       .appdosc-card[data-expanded='false'] .appdosc-card__side {
