@@ -6199,21 +6199,6 @@ function docs_user_is_block2_member(array $block2, array $requestContext): bool
         $candidates[] = (string) $requestContext['raw']['telegram_chat_id'];
     }
 
-    if (isset($requestContext['user']['username']) && $requestContext['user']['username'] !== '') {
-        $candidates[] = (string) $requestContext['user']['username'];
-    }
-
-    if (isset($requestContext['user']['fullName']) && $requestContext['user']['fullName'] !== '') {
-        $candidates[] = (string) $requestContext['user']['fullName'];
-    }
-
-    if (isset($requestContext['user']['firstName']) || isset($requestContext['user']['lastName'])) {
-        $full = trim((string) ($requestContext['user']['firstName'] ?? '') . ' ' . (string) ($requestContext['user']['lastName'] ?? ''));
-        if ($full !== '') {
-            $candidates[] = $full;
-        }
-    }
-
     $candidates = array_values(array_unique(array_filter($candidates, static function ($value) {
         return $value !== null && $value !== '';
     })));
@@ -6228,9 +6213,22 @@ function docs_user_is_block2_member(array $block2, array $requestContext): bool
         }
 
         foreach ($candidates as $candidate) {
-            if (docs_entry_matches_candidate($entry, $candidate)) {
-                return true;
+            $normalizedCandidate = docs_normalize_identifier_candidate_value($candidate);
+            if ($normalizedCandidate === '') {
+                continue;
             }
+
+            foreach (['telegram', 'chatId', 'id', 'number', 'email', 'login'] as $field) {
+                if (!isset($entry[$field])) {
+                    continue;
+                }
+
+                $entryValue = docs_normalize_identifier_candidate_value($entry[$field]);
+                if ($entryValue !== '' && hash_equals($entryValue, $normalizedCandidate)) {
+                    return true;
+                }
+            }
+
         }
     }
 
@@ -8222,7 +8220,7 @@ function docs_build_request_user_context(): array
     $identity = docs_first_non_empty_string($sources, ['identity', 'user_identity']);
 
     $rawData = [
-        'telegram_user_id' => docs_first_non_empty_string($sources, ['telegram_user_id', 'telegramId', 'user_id', 'userid', 'id']),
+        'telegram_user_id' => docs_first_non_empty_string($sources, ['telegram_user_id', 'telegramId']),
         'telegram_chat_id' => docs_first_non_empty_string($sources, ['telegram_chat_id', 'chat_id', 'chatId']),
         'telegram_username' => docs_first_non_empty_string($sources, ['telegram_username', 'username', 'user_name']),
         'telegram_full_name' => docs_first_non_empty_string($sources, ['telegram_full_name', 'full_name', 'name']),
@@ -12039,6 +12037,7 @@ switch ($action) {
 
             respond_error($message, $status, $extra);
         }
+        $trustedIdentity = !empty($telegramInitDataContext['valid']) || is_array($sessionAuth);
 
         $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
         $payload = [];
@@ -12286,7 +12285,7 @@ switch ($action) {
                 $responsibles,
                 is_array($prepared) ? $prepared : []
             );
-            $canManageOrganizationInstructions = docs_user_can_manage_instructions(
+            $canManageOrganizationInstructions = $trustedIdentity && docs_user_can_manage_instructions(
                 $organization,
                 $requestContext,
                 is_array($sessionAuth) ? $sessionAuth : null,
@@ -12296,7 +12295,7 @@ switch ($action) {
             if ($canManageOrganizationInstructions) {
                 $directorReasonsForOrganization[] = 'can_manage_instructions';
             }
-            if (!empty($directors) && docs_user_is_block2_member($directors, $requestContext)) {
+            if ($trustedIdentity && !empty($directors) && docs_user_is_block2_member($directors, $requestContext)) {
                 $directorReasonsForOrganization[] = 'block2';
             }
 
