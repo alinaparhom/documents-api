@@ -530,6 +530,7 @@
         isAdmin: isCurrentUserAdmin(),
         isDirector: isCurrentUserDirector(),
         restrictToOwnTasks: shouldRestrictByUserAssignments(),
+      mainadminRestrictedToOwnTasks: Boolean(state && state.access && state.access.user && String(state.access.user.authSource || '').toLowerCase() === 'mainadmin'),
         authenticated: Boolean(state.access && state.access.authenticated),
         accessGranted: Boolean(state.access && state.access.accessGranted),
         adminScope: state.access && state.access.adminScope ? state.access.adminScope : '',
@@ -577,13 +578,25 @@
   }
 
   function shouldRestrictByUserAssignments() {
-    if (!state.access || state.access.role !== 'user') {
+    if (!state.access) {
       return false;
     }
-    if (isCurrentUserAdmin() || isCurrentUserDirector()) {
+    if (isCurrentUserDirector()) {
       return false;
     }
-    return true;
+
+    var authSource = state.access && state.access.user && state.access.user.authSource
+      ? String(state.access.user.authSource).toLowerCase()
+      : '';
+
+    if (isCurrentUserAdmin()) {
+      if (authSource === 'mainadmin') {
+        return true;
+      }
+      return false;
+    }
+
+    return state.access.role === 'user';
   }
 
   function isCurrentUserSubordinate() {
@@ -7142,6 +7155,7 @@
       accessGranted: Boolean(access && access.accessGranted),
       adminScope: access && access.adminScope ? access.adminScope : '',
       restrictToOwnTasks: shouldRestrictByUserAssignments(),
+      mainadminRestrictedToOwnTasks: Boolean(state && state.access && state.access.user && String(state.access.user.authSource || '').toLowerCase() === 'mainadmin'),
       isAdmin: isCurrentUserAdmin(),
       isDirector: isCurrentUserDirector(),
       user: user ? {
