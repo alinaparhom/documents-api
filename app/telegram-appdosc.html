@@ -1363,9 +1363,7 @@
         font: 600 10px/1.2 Inter, system-ui, sans-serif;
         overflow: hidden;
         text-overflow: ellipsis;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
       }
 
 
@@ -1407,25 +1405,25 @@
       :root[data-theme='light'] .task-main[data-status-tone='done'] .task-status-badge {
         color: #065f46;
         border-color: rgba(16, 185, 129, 0.34);
-        background: linear-gradient(180deg, rgba(236, 253, 245, 0.98), rgba(167, 243, 208, 0.78));
+        background: #dcfce7;
       }
 
       :root[data-theme='light'] .task-main[data-status-tone='danger'] .task-status-badge {
         color: #9f1239;
         border-color: rgba(244, 63, 94, 0.34);
-        background: linear-gradient(180deg, rgba(255, 241, 242, 0.98), rgba(254, 205, 211, 0.8));
+        background: #ffe4e6;
       }
 
       :root[data-theme='light'] .task-main[data-status-tone='warn'] .task-status-badge {
         color: #9a3412;
         border-color: rgba(249, 115, 22, 0.32);
-        background: linear-gradient(180deg, rgba(255, 247, 237, 0.98), rgba(254, 215, 170, 0.8));
+        background: #ffedd5;
       }
 
       :root[data-theme='light'] .task-main[data-status-tone='info'] .task-status-badge {
         color: #0f766e;
         border-color: rgba(20, 184, 166, 0.3);
-        background: linear-gradient(180deg, rgba(240, 253, 250, 0.98), rgba(153, 246, 228, 0.76));
+        background: #ccfbf1;
       }
 
 
@@ -1624,29 +1622,21 @@
         row-gap: 4px !important;
       }
 
-      .appdosc-card[data-expanded='false'].appdosc-card--overdue {
+      .appdosc-card.appdosc-card--overdue {
         position: relative;
       }
 
-      .appdosc-card[data-expanded='false'].appdosc-card--overdue::before {
-        content: '⏰';
+      .appdosc-card.appdosc-card--overdue::before {
+        content: '';
         position: absolute;
-        top: 7px;
-        right: 28px;
-        min-width: 16px;
-        height: 16px;
-        padding: 0 4px;
-        border-radius: 999px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 10px;
-        line-height: 1;
-        color: #9f1239;
-        background: linear-gradient(180deg, rgba(255, 246, 246, 0.98), rgba(254, 226, 226, 0.9));
-        border: 1px solid rgba(244, 63, 94, 0.32);
-        box-shadow: 0 4px 10px rgba(244, 63, 94, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.65);
-        animation: overdue-chip-pulse 1.9s ease-in-out infinite;
+        left: 0;
+        top: 8px;
+        bottom: 8px;
+        width: 3px;
+        border-radius: 0 6px 6px 0;
+        background: linear-gradient(180deg, #fb7185, #ef4444);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45), 0 0 12px rgba(239, 68, 68, 0.38);
+        animation: overdue-line-pulse 2s ease-in-out infinite;
         pointer-events: none;
         z-index: 3;
       }
@@ -2466,9 +2456,9 @@
         100% { transform: scale(1); }
       }
 
-      @keyframes overdue-chip-pulse {
-        0%, 100% { box-shadow: 0 4px 10px rgba(244, 63, 94, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.65); }
-        50% { box-shadow: 0 6px 14px rgba(244, 63, 94, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.75); }
+      @keyframes overdue-line-pulse {
+        0%, 100% { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45), 0 0 12px rgba(239, 68, 68, 0.38); }
+        50% { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 16px rgba(239, 68, 68, 0.55); }
       }
 
       .range-calendar__footer {
@@ -2744,11 +2734,9 @@
         box-shadow: 0 2px 8px rgba(74, 222, 128, 0.18);
       }
 
-      :root[data-theme='dark'] .appdosc-card[data-expanded='false'].appdosc-card--overdue::before {
-        color: #ffe4e6;
-        background: linear-gradient(180deg, rgba(190, 24, 93, 0.38), rgba(136, 19, 55, 0.5));
-        border-color: rgba(251, 113, 133, 0.45);
-        box-shadow: 0 6px 14px rgba(190, 24, 93, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      :root[data-theme='dark'] .appdosc-card.appdosc-card--overdue::before {
+        background: linear-gradient(180deg, #fb7185, #f43f5e);
+        box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.92), 0 0 14px rgba(251, 113, 133, 0.5);
       }
 
       :root[data-theme='dark'] .range-calendar__footer {
