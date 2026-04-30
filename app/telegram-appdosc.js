@@ -3929,11 +3929,7 @@ function updateStats() {
   const overallStats = computeStatsFromTasks(state.tasks, { useDirectorDeadlines: directorActive });
 
   let statsSource = 'global';
-  let displayStats = state.stats;
-
   if (directorActive) {
-    const statsTasks = getAssigneeTasksForStats(normalizedFilters, directorState);
-    displayStats = computeStatsFromTasks(statsTasks, { useDirectorDeadlines: true });
     if (usingResponsibleFilter || normalizeResponsibleKey(directorState.selectedResponsibleToken || '')) {
       statsSource = 'responsible';
     } else if (normalizedFilters.some((filter) => isSubordinateFilter(filter))
@@ -3945,13 +3941,14 @@ function updateStats() {
   }
 
   if (state.entryTaskId) {
-    const statsTasks = getVisibleTasksForStats();
-    displayStats = computeStatsFromTasks(statsTasks, { useDirectorDeadlines: directorActive });
     statsSource = 'focused';
   }
 
+  const statsTasks = getVisibleTasksForStats();
+  const uiStats = computeStatsFromTasks(statsTasks, { useDirectorDeadlines: directorActive });
+
   if (elements.total) {
-    const total = Number(displayStats.total) || 0;
+    const total = Number(uiStats.total) || 0;
     elements.total.textContent = `${total} ${formatTaskCountLabel(total)}`;
     if (directorActive) {
       elements.total.dataset.source = statsSource;
@@ -3960,8 +3957,8 @@ function updateStats() {
     }
   }
 
-  const resolvedStatusCounts = isPlainObject(overallStats.statuses)
-    ? overallStats.statuses
+  const resolvedStatusCounts = isPlainObject(uiStats.statuses)
+    ? uiStats.statuses
     : createEmptyStatusCounters();
 
   if (elements.statusBadges) {
@@ -3978,7 +3975,7 @@ function updateStats() {
   }
 
   if (elements.overdue) {
-    const resolvedOverdue = Number(overallStats.overdue) || 0;
+    const resolvedOverdue = Number(uiStats.overdue) || 0;
     setStatusBadgeText(elements.overdue, `${resolvedOverdue} просрочено`);
   }
 
@@ -3992,8 +3989,10 @@ function updateStats() {
     logDirectorDebug('stats_update', {
       filter: filterLabel,
       statsSource,
-      total: Number(displayStats.total) || 0,
-      overdue: Number(displayStats.overdue) || 0,
+      total: Number(uiStats.total) || 0,
+      overdue: Number(uiStats.overdue) || 0,
+      overallTotal: Number(overallStats.total) || 0,
+      overallOverdue: Number(overallStats.overdue) || 0,
       selectedResponsible: directorState.selectedResponsibleToken || null,
     });
   }
@@ -4902,6 +4901,7 @@ function initCompactRangeCalendar() {
       state.compactFilters.dateTo = normalizeDateInputValue(endDate);
       state.compactFilters.quickPreset = '';
       updateVisibleTasks();
+      updateStats();
       safeRender('compact_filter_period');
     },
   });
@@ -16997,6 +16997,7 @@ function handleSummaryBadgeClick(filter) {
   state.taskFilter = nextFilters;
   state.selectedCardAnchor = '';
   updateVisibleTasks();
+  updateStats();
   const reason = nextFilters.length === 0 ? 'task_filter_reset' : 'task_filter_change';
   safeRender(reason);
 }
