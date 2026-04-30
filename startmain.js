@@ -621,18 +621,13 @@
     return result;
   }
 
-  function normalizeTabelAdminsList(payload) {
-    if (!payload || typeof payload !== 'object') {
+  function normalizeMainAdminUsersByBlock(payload, blockKey) {
+    if (!payload || typeof payload !== 'object' || !blockKey) {
       return [];
     }
 
-    var source = [];
     var data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
-
-    if (Array.isArray(data.blockFourUsers)) {
-      source = data.blockFourUsers.slice();
-    }
-
+    var source = Array.isArray(data[blockKey]) ? data[blockKey].slice() : [];
     var result = [];
     var seen = Object.create(null);
 
@@ -657,6 +652,10 @@
     }
 
     return result;
+  }
+
+  function normalizeTabelAdminsList(payload) {
+    return normalizeMainAdminUsersByBlock(payload, 'blockFourUsers');
   }
 
   function normalizeTabelUsersList(payload) {
@@ -714,155 +713,19 @@
   }
 
   function normalizeAllTrackAdminsList(payload) {
-    if (!payload || typeof payload !== 'object') {
-      return [];
-    }
-
-    var source = [];
-    var data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
-
-    if (Array.isArray(data.blockFiveUsers)) {
-      source = data.blockFiveUsers.slice();
-    }
-
-    var result = [];
-    var seen = Object.create(null);
-
-    for (var i = 0; i < source.length; i += 1) {
-      var normalized = normalizeFrontWorksUser({
-        login: source[i] && source[i].login,
-        password: source[i] && source[i].password,
-        name: (source[i] && (source[i].name || source[i].fullName)) || ''
-      });
-
-      if (!normalized) {
-        continue;
-      }
-
-      var loginKey = normalized.login.toLowerCase();
-      if (seen[loginKey]) {
-        continue;
-      }
-
-      seen[loginKey] = true;
-      result.push(normalized);
-    }
-
-    return result;
+    return normalizeMainAdminUsersByBlock(payload, 'blockFiveUsers');
   }
 
   function normalizeOhranaAdminsList(payload) {
-    if (!payload || typeof payload !== 'object') {
-      return [];
-    }
-
-    var source = [];
-    var data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
-
-    if (Array.isArray(data.blockEightUsers)) {
-      source = data.blockEightUsers.slice();
-    }
-
-    var result = [];
-    var seen = Object.create(null);
-
-    for (var i = 0; i < source.length; i += 1) {
-      var normalized = normalizeFrontWorksUser({
-        login: source[i] && source[i].login,
-        password: source[i] && source[i].password,
-        name: (source[i] && (source[i].name || source[i].fullName)) || ''
-      });
-
-      if (!normalized) {
-        continue;
-      }
-
-      var loginKey = normalized.login.toLowerCase();
-      if (seen[loginKey]) {
-        continue;
-      }
-
-      seen[loginKey] = true;
-      result.push(normalized);
-    }
-
-    return result;
+    return normalizeMainAdminUsersByBlock(payload, 'blockEightUsers');
   }
 
   function normalizeZavodAdminsList(payload) {
-    if (!payload || typeof payload !== 'object') {
-      return [];
-    }
-
-    var source = [];
-    var data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
-
-    if (Array.isArray(data.blockNineUsers)) {
-      source = data.blockNineUsers.slice();
-    }
-
-    var result = [];
-    var seen = Object.create(null);
-
-    for (var i = 0; i < source.length; i += 1) {
-      var normalized = normalizeFrontWorksUser({
-        login: source[i] && source[i].login,
-        password: source[i] && source[i].password,
-        name: (source[i] && (source[i].name || source[i].fullName)) || ''
-      });
-
-      if (!normalized) {
-        continue;
-      }
-
-      var loginKey = normalized.login.toLowerCase();
-      if (seen[loginKey]) {
-        continue;
-      }
-
-      seen[loginKey] = true;
-      result.push(normalized);
-    }
-
-    return result;
+    return normalizeMainAdminUsersByBlock(payload, 'blockNineUsers');
   }
 
   function normalizeZa9vkaAdminsList(payload) {
-    if (!payload || typeof payload !== 'object') {
-      return [];
-    }
-
-    var source = [];
-    var data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
-
-    if (Array.isArray(data.blockSevenUsers)) {
-      source = data.blockSevenUsers.slice();
-    }
-
-    var result = [];
-    var seen = Object.create(null);
-
-    for (var i = 0; i < source.length; i += 1) {
-      var normalized = normalizeFrontWorksUser({
-        login: source[i] && source[i].login,
-        password: source[i] && source[i].password,
-        name: (source[i] && (source[i].name || source[i].fullName)) || ''
-      });
-
-      if (!normalized) {
-        continue;
-      }
-
-      var loginKey = normalized.login.toLowerCase();
-      if (seen[loginKey]) {
-        continue;
-      }
-
-      seen[loginKey] = true;
-      result.push(normalized);
-    }
-
-    return result;
+    return normalizeMainAdminUsersByBlock(payload, 'blockSevenUsers');
   }
 
   function normalizeZa9vkaUsersList(payload) {
