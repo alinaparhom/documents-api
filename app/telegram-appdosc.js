@@ -5762,32 +5762,9 @@ function updateVisibleTasks() {
     visible = directorFiltered;
   }
 
-  if (shouldApplyEntryStatusExclusion(normalizedFilters)) {
-    visible = visible.filter(({ task }) => !isTaskExcludedByEntryStatus(task, directorState));
-  }
-
-  if (directorState.isActive) {
-    const { statusFilters } = splitTaskFilters(normalizedFilters);
-    const showCompleted = statusFilters.some((filter) => getStatusFilterKey(filter) === 'done');
-    if (!showCompleted) {
-      const withoutCompleted = visible.filter(({ task }) => {
-        return getTaskStatusKeyForUser(task) !== 'done';
-      });
-
-      if (directorState.completedVisibilityLogged === false) {
-        logDirectorDebug('completed_hidden_for_director', {
-          filter: formatTaskFiltersForLog(normalizedFilters),
-          removed: visible.length - withoutCompleted.length,
-        });
-        directorState.completedVisibilityLogged = true;
-      }
-
-      visible = withoutCompleted;
-    }
-  }
-
   state.visibleTasks = applyCompactFilters(visible);
 }
+
 
 function truncateText(value, limit = 140) {
   if (value === null || value === undefined) {
