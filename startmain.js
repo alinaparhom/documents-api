@@ -4951,23 +4951,13 @@
       var normalizedStatus = typeof statusText === 'string' ? statusText.trim() : '';
       if (!normalizedStatus) {
         statusNode.textContent = '';
-        statusNode.removeAttribute('title');
-        statusNode.removeAttribute('aria-label');
         statusNode.hidden = true;
         statusNode.style.display = 'none';
         return;
       }
       statusNode.hidden = false;
       statusNode.style.display = '';
-      if (tile.classList.contains('is-locked')) {
-        statusNode.textContent = '🔴';
-        statusNode.setAttribute('title', normalizedStatus);
-        statusNode.setAttribute('aria-label', normalizedStatus);
-      } else {
-        statusNode.textContent = normalizedStatus;
-        statusNode.removeAttribute('title');
-        statusNode.removeAttribute('aria-label');
-      }
+      statusNode.textContent = normalizedStatus;
     }
 
     function setTileLocked(tile, locked) {
