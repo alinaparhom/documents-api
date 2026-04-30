@@ -3944,8 +3944,8 @@ function updateStats() {
     statsSource = 'focused';
   }
 
-  const statsTasks = getVisibleTasksForStats();
-  const uiStats = computeStatsFromTasks(statsTasks, { useDirectorDeadlines: directorActive });
+  const uiStatsTasks = getSummaryUiTasks(normalizedFilters, directorState);
+  const uiStats = computeStatsFromTasks(uiStatsTasks, { useDirectorDeadlines: directorActive });
 
   if (elements.total) {
     const total = Number(uiStats.total) || 0;
@@ -5449,6 +5449,21 @@ function extractTasksFromItems(items) {
 
 function getVisibleTasksForStats() {
   return extractTasksFromItems(getVisibleTaskItems());
+}
+
+function getSummaryUiTasks(filters, directorState) {
+  const normalizedFilters = normalizeTaskFilters(filters);
+  const { assigneeFilters } = splitTaskFilters(normalizedFilters);
+  const assigneeOnlyFilter = normalizeTaskFilters(assigneeFilters);
+  const baseFiltered = applyTaskFilter(assigneeOnlyFilter, state.tasks);
+
+  let visible = baseFiltered;
+  if (directorState && directorState.isActive && !hasAssigneeFilters(assigneeOnlyFilter)) {
+    visible = baseFiltered.filter(({ task }) => isTaskAssignedToCurrentDirector(task));
+  }
+
+  const compactVisible = applyCompactFilters(visible);
+  return extractTasksFromItems(compactVisible);
 }
 
 function getAssigneeTasksForStats(filters, directorState) {
