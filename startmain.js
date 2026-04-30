@@ -6120,19 +6120,16 @@
 
             addCandidate(data.login, data.password);
 
-            var blockKeys = ['blockOneUsers', 'blockTwoUsers', 'blockThreeUsers', 'blockFourUsers'];
-            for (var b = 0; b < blockKeys.length; b += 1) {
-              var blockEntries = data[blockKeys[b]];
-              if (!Array.isArray(blockEntries)) {
+            // Для документооборота используем только "свой" блок админов.
+            // Логины из других блоков не добавляем, чтобы не было пересечений между карточками.
+            var documentsBlockKey = 'blockOneUsers';
+            var documentsBlock = Array.isArray(data[documentsBlockKey]) ? data[documentsBlockKey] : [];
+            for (var d = 0; d < documentsBlock.length; d += 1) {
+              var documentsEntry = documentsBlock[d];
+              if (!documentsEntry || typeof documentsEntry !== 'object') {
                 continue;
               }
-              for (var e = 0; e < blockEntries.length; e += 1) {
-                var entry = blockEntries[e];
-                if (!entry || typeof entry !== 'object') {
-                  continue;
-                }
-                addCandidate(entry.login, entry.password);
-              }
+              addCandidate(documentsEntry.login, documentsEntry.password);
             }
 
             if (collected.length === 0) {
