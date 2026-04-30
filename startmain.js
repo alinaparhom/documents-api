@@ -6118,10 +6118,9 @@
               collected.push({ login: loginTrimmed, password: passwordValue });
             }
 
-            addCandidate(data.login, data.password);
-
-            // Для документооборота используем только "свой" блок админов.
-            // Логины из других блоков не добавляем, чтобы не было пересечений между карточками.
+            // Строгая блочная модель доступа:
+            // если пользователь указан в блоке, права есть только в этом блоке.
+            // Поэтому для документооборота берём только его целевой блок.
             var documentsBlockKey = 'blockOneUsers';
             var documentsBlock = Array.isArray(data[documentsBlockKey]) ? data[documentsBlockKey] : [];
             for (var d = 0; d < documentsBlock.length; d += 1) {
