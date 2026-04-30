@@ -1624,21 +1624,23 @@
         row-gap: 4px !important;
       }
 
-      .appdosc-card[data-expanded='false'].appdosc-card--overdue .appdosc-card__side::before {
-        content: '⚠ Просрочено';
-        grid-row: 1;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 18px;
-        padding: 2px 8px;
+      .appdosc-card[data-expanded='false'].appdosc-card--overdue {
+        position: relative;
+      }
+
+      .appdosc-card[data-expanded='false'].appdosc-card--overdue::before {
+        content: '';
+        position: absolute;
+        top: 8px;
+        right: 30px;
+        width: 8px;
+        height: 8px;
         border-radius: 999px;
-        font: 700 10px/1 Inter, system-ui, sans-serif;
-        color: #991b1b;
-        background: linear-gradient(180deg, rgba(255, 250, 250, 0.96), rgba(254, 226, 226, 0.86));
-        border: 1px solid rgba(239, 68, 68, 0.38);
-        box-shadow: 0 4px 10px rgba(239, 68, 68, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.55);
-        animation: overdue-pill-pulse 1.8s ease-in-out infinite;
+        background: #ef4444;
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.92), 0 0 0 5px rgba(239, 68, 68, 0.22);
+        animation: overdue-dot-pulse 1.8s ease-in-out infinite;
+        pointer-events: none;
+        z-index: 3;
       }
 
       .task-chevron,
@@ -1658,10 +1660,6 @@
         grid-row: 1;
         margin: 0 2px 0 0;
         opacity: .95;
-      }
-
-      .appdosc-card[data-expanded='false'].appdosc-card--overdue .appdosc-card__side::after {
-        grid-row: 2;
       }
 
       .appdosc-card[data-expanded='true'] .appdosc-card__side::after {
@@ -2460,9 +2458,9 @@
         100% { transform: scale(1); }
       }
 
-      @keyframes overdue-pill-pulse {
-        0%, 100% { box-shadow: 0 4px 10px rgba(239, 68, 68, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.55); }
-        50% { box-shadow: 0 6px 14px rgba(239, 68, 68, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.62); }
+      @keyframes overdue-dot-pulse {
+        0%, 100% { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.92), 0 0 0 5px rgba(239, 68, 68, 0.22); }
+        50% { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.96), 0 0 0 8px rgba(239, 68, 68, 0.3); }
       }
 
       .range-calendar__footer {
@@ -2738,11 +2736,9 @@
         box-shadow: 0 2px 8px rgba(74, 222, 128, 0.18);
       }
 
-      :root[data-theme='dark'] .appdosc-card[data-expanded='false'].appdosc-card--overdue .appdosc-card__side::before {
-        color: #fecaca;
-        background: linear-gradient(180deg, rgba(127, 29, 29, 0.34), rgba(69, 10, 10, 0.46));
-        border-color: rgba(248, 113, 113, 0.48);
-        box-shadow: 0 6px 14px rgba(127, 29, 29, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      :root[data-theme='dark'] .appdosc-card[data-expanded='false'].appdosc-card--overdue::before {
+        background: #f87171;
+        box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.92), 0 0 0 5px rgba(248, 113, 113, 0.3);
       }
 
       :root[data-theme='dark'] .range-calendar__footer {
