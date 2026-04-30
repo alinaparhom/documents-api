@@ -792,7 +792,7 @@ const STATUS_KEY_SYNONYMS = {
   distributed: ['распределено', 'распределен', 'распределена', 'распределены'],
   accepted: ['принято в работу', 'в работе', 'принято вработу', 'принято в работ'],
   review: ['на проверке', 'на контроле', 'на проверку'],
-  done: ['выполнено', 'завершено'],
+  done: ['выполнено', 'выполнен', 'выполнена', 'выполнены', 'завершено', 'завершен', 'завершена', 'завершены', 'исполнено', 'исполнен', 'исполнена'],
   cancelled: ['отменено'],
 };
 
@@ -16755,7 +16755,11 @@ function isTaskCompleted(task) {
   if (!statusText) {
     return isDirectorCompletionMarked(task);
   }
-  if (statusText.includes('выполн') || statusText.includes('complete') || statusText.includes('готов')) {
+  if (statusText.includes('выполн')
+    || statusText.includes('заверш')
+    || statusText.includes('исполн')
+    || statusText.includes('complete')
+    || statusText.includes('готов')) {
     return true;
   }
 
