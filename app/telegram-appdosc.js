@@ -2643,6 +2643,12 @@ function getTaskStatusKeyForUser(task) {
     return baseKey;
   }
 
+  // Синхронизация с веб-логикой: если задача считается выполненной,
+  // она должна попадать и в статус "Выполнено", и в фильтр по этому статусу.
+  if (isTaskCompleted(task)) {
+    return 'done';
+  }
+
   if (isDirectorCompletionMarked(task)) {
     return 'done';
   }
