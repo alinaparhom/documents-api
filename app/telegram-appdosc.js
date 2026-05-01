@@ -2739,7 +2739,8 @@ const FALLBACK_CARD_TEMPLATE = `
     </div>
     <div class="appdosc-card__actions">
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
-      <button type="button" class="appdosc-card__action" data-card-folder>В папку</button>
+      <select class="appdosc-card__action" data-card-folder-select aria-label="Папка задачи"></select>
+      <span class="appdosc-card__view-info" data-card-folder-info hidden>Сохранено</span>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
   </footer>
@@ -5939,9 +5940,10 @@ function getTaskFolderTaskKey(task) {
 function updateTaskSelector() {
   if (!(elements.folderChips instanceof HTMLElement)) return;
   const chips = [
+    { id: '__add__', name: '＋' },
     { id: '', name: 'Все' },
-    ...state.folders,
     { id: '__none__', name: 'Без папки' },
+    ...(Array.isArray(state.folders) ? state.folders : []),
   ];
   elements.folderChips.innerHTML = '';
   chips.forEach((folder) => {
@@ -5950,34 +5952,52 @@ function updateTaskSelector() {
     button.className = 'appdosc__folder-chip';
     if (state.selectedFolderId === folder.id) button.classList.add('is-active');
     button.textContent = folder.name;
-    button.dataset.folderId = folder.id;
+    button.dataset.folderId = normalizeValue(folder.id);
     button.addEventListener('click', () => handleFolderChipClick(folder.id));
+    if (folder.id && folder.id !== '__add__' && folder.id !== '__none__') {
+      const remove = document.createElement('span');
+      remove.textContent = ' ×';
+      remove.style.opacity = '0.7';
+      remove.addEventListener('click', (event) => {
+        event.stopPropagation();
+        handleFolderDelete(folder.id);
+      });
+      button.appendChild(remove);
+    }
     elements.folderChips.appendChild(button);
   });
   const visibleItems = getVisibleTaskItems();
   if (elements.taskCountInline) elements.taskCountInline.textContent = visibleItems.length ? ` • Задач: ${visibleItems.length}` : '';
 }
 
-function handleFolderChipClick(folderId) {
+function handleFolderDelete(folderId) {
   const normalizedId = normalizeValue(folderId);
-  if (state.selectedFolderId === normalizedId && normalizedId && normalizedId !== '__none__') {
-    const action = window.prompt('1 — Переименовать\n2 — Удалить\n0 — Отмена', '0');
-    if (action === '1') {
-      const folder = state.folders.find((item) => item.id === normalizedId);
-      if (!folder) return;
-      const name = normalizeValue(window.prompt('Новое имя папки', folder.name));
-      if (name) folder.name = name;
-    } else if (action === '2') {
-      state.folders = state.folders.filter((item) => item.id !== normalizedId);
-      Object.keys(state.folderAssignments).forEach((key) => { if (state.folderAssignments[key] === normalizedId) delete state.folderAssignments[key]; });
-      state.selectedFolderId = '';
-    }
-  } else {
-    state.selectedFolderId = normalizedId;
-  }
+  if (!normalizedId) return;
+  state.folders = (state.folders || []).filter((item) => normalizeValue(item.id) !== normalizedId);
+  Object.keys(state.folderAssignments || {}).forEach((key) => {
+    if (normalizeValue(state.folderAssignments[key]) === normalizedId) delete state.folderAssignments[key];
+  });
+  if (state.selectedFolderId === normalizedId) state.selectedFolderId = '';
   persistFolders();
   updateVisibleTasks();
+  safeRender('folder_delete');
+}
+
+function handleFolderChipClick(folderId) {
+  const normalizedId = normalizeValue(folderId);
+  if (normalizedId === '__add__') {
+    openFolderPrompt('create');
+    return;
+  }
+  state.selectedFolderId = normalizedId;
+  updateVisibleTasks();
   safeRender('folder_chip_change');
+}
+
+function showFolderToast(message) {
+  if (!message) return;
+  setStatus('info', message);
+  window.setTimeout(() => clearStatus(), 1800);
 }
 
 function openFolderPrompt(mode) {
@@ -5993,9 +6013,10 @@ function openFolderPrompt(mode) {
 function submitFolderCreate() {
   const input = elements.folderCreateInput instanceof HTMLInputElement ? elements.folderCreateInput : null;
   const name = normalizeValue(input ? input.value : '');
-  if (!name) return;
+  if (!name) { showFolderToast('Введите название папки'); return; }
+  if (name.length > 40) { showFolderToast('Слишком длинное имя папки'); return; }
   const exists = state.folders.some((item) => normalizeName(item && item.name) === normalizeName(name));
-  if (exists) return;
+  if (exists) { showFolderToast('Папка с таким именем уже есть'); return; }
   state.folders.push({ id: `folder_${Date.now().toString(36)}`, name });
   state.selectedFolderId = state.folders[state.folders.length - 1].id;
   if (elements.folderCreatePanel instanceof HTMLElement) elements.folderCreatePanel.hidden = true;
