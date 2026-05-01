@@ -5777,9 +5777,7 @@ function renderLoadingSkeleton() {
     return;
   }
   elements.cardsContainer.innerHTML = '<div class="appdosc-skeleton-list" aria-hidden="true">'
-    + '<div class="appdosc-skeleton-card"></div>'
-    + '<div class="appdosc-skeleton-card"></div>'
-    + '<div class="appdosc-skeleton-card"></div>'
+    + '<div class="appdosc-skeleton-loader"><span class="appdosc-skeleton-loader__dot"></span>Загружаем задачи…</div>'
     + '</div>';
   togglePlaceholder(false);
 }
