@@ -2114,7 +2114,7 @@ async function persistTaskFolderToRegistry(task) {
       organization,
       documentId,
       folderId: normalizeValue(task.folderId) || '',
-      folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
+      folderUserId: resolveCurrentFolderUserId(),
     });
   } catch (error) {
     setStatus('error', 'Не удалось сохранить папку в registry.json');
@@ -2129,7 +2129,7 @@ async function persistFoldersListToRegistry() {
       updateType: 'folder_state',
       organization: normalizeValue(task.organization),
       documentId: normalizeValue(task.id),
-      folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
+      folderUserId: resolveCurrentFolderUserId(),
       folderState: folders.filter((item) => !item.system).map((item) => ({ id: item.id, name: item.name })),
     });
   } catch (error) {
@@ -2142,6 +2142,9 @@ const state = {
   taskListMode: 'default',
   persistedTaskListMode: '',
   isThemeSaving: false,
+  identity: {
+    userId: '',
+  },
   telegram: {
     id: '',
     username: '',
@@ -2497,6 +2500,19 @@ function sanitizeTaskFiles(files) {
   return sanitized;
 }
 
+
+function resolveCurrentFolderUserId() {
+  const systemUserId = normalizeValue(state && state.identity && state.identity.userId);
+  if (systemUserId) {
+    return systemUserId;
+  }
+  return normalizeValue(state && state.telegram && state.telegram.id) || '';
+}
+
+function resolveLegacyTelegramFolderUserId() {
+  return normalizeValue(state && state.telegram && state.telegram.id) || '';
+}
+
 function sanitizeTaskItem(task) {
   if (!isPlainObject(task)) {
     return {};
@@ -2504,14 +2520,24 @@ function sanitizeTaskItem(task) {
 
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
-  const currentUserId = normalizeValue(state?.telegram?.id);
+  const currentUserId = resolveCurrentFolderUserId();
+  const legacyTelegramUserId = resolveLegacyTelegramFolderUserId();
   const folderByUser = isPlainObject(sanitized.folderByUser) ? sanitized.folderByUser : null;
   const userFolderFromTask = currentUserId && folderByUser
     ? normalizeValue(folderByUser[currentUserId]) || null
     : null;
+  const legacyFolderFromTask = !userFolderFromTask && legacyTelegramUserId && folderByUser
+    ? normalizeValue(folderByUser[legacyTelegramUserId]) || null
+    : null;
   const taskId = normalizeValue(sanitized.id);
   if (userFolderFromTask !== null) {
     sanitized.folderId = userFolderFromTask;
+  } else if (legacyFolderFromTask !== null) {
+    sanitized.folderId = legacyFolderFromTask;
+    if (currentUserId && folderByUser && !folderByUser[currentUserId]) {
+      folderByUser[currentUserId] = legacyFolderFromTask;
+      sanitized.folderByUser = folderByUser;
+    }
   } else if (taskId && Object.prototype.hasOwnProperty.call(taskFolderMap, taskId)) {
     sanitized.folderId = normalizeValue(taskFolderMap[taskId]) || null;
   } else {
@@ -3894,6 +3920,11 @@ function updateStateFromPayload(payload) {
     : state.organizationsChecked;
   state.lastUpdated = payload.generatedAt || new Date().toISOString();
   state.userDirectoryEntries = collectUserDirectoryEntries(payload);
+
+  const payloadSystemUserId = normalizeValue(payload && (payload.systemUserId || payload.userId || (payload.user && payload.user.userId)));
+  if (payloadSystemUserId) {
+    state.identity.userId = payloadSystemUserId;
+  }
 
   if (payload.telegramUserId && !state.telegram.id) {
     state.telegram.id = String(payload.telegramUserId);

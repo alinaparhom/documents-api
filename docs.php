@@ -12640,12 +12640,18 @@ switch ($action) {
             }
         }
 
+        $systemUserId = '';
+        if (is_array($sessionAuth) && isset($sessionAuth['user_id']) && $sessionAuth['user_id'] !== '') {
+            $systemUserId = sanitize_text_field((string) $sessionAuth['user_id'], 200);
+        }
+
         $userInfo = null;
         if (isset($requestContext['user']) && is_array($requestContext['user']) && !empty($requestContext['user'])) {
             $userInfo = array_filter([
                 'id' => isset($requestContext['user']['id']) && $requestContext['user']['id'] !== ''
                     ? (string) $requestContext['user']['id']
                     : ($telegramUserId !== '' ? $telegramUserId : null),
+                'userId' => $systemUserId !== '' ? $systemUserId : null,
                 'username' => $requestContext['user']['username'] ?? null,
                 'firstName' => $requestContext['user']['firstName'] ?? null,
                 'lastName' => $requestContext['user']['lastName'] ?? null,
@@ -12715,6 +12721,7 @@ switch ($action) {
             'stats' => $stats,
             'generatedAt' => date('c'),
             'telegramUserId' => $telegramUserId !== '' ? $telegramUserId : null,
+            'systemUserId' => $systemUserId !== '' ? $systemUserId : null,
             'themeMode' => $savedThemeMode !== '' ? $savedThemeMode : null,
             'user' => $userInfo,
             'filterSource' => $requestContext['filterSource'] ?? null,
