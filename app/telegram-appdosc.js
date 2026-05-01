@@ -5957,9 +5957,7 @@ function updateTaskSelector() {
 function handleFolderChipClick(folderId) {
   const normalizedId = normalizeValue(folderId);
   if (state.selectedFolderId === normalizedId && normalizedId && normalizedId !== '__none__') {
-    const action = window.prompt('1 — Переименовать
-2 — Удалить
-0 — Отмена', '0');
+    const action = window.prompt('1 — Переименовать\n2 — Удалить\n0 — Отмена', '0');
     if (action === '1') {
       const folder = state.folders.find((item) => item.id === normalizedId);
       if (!folder) return;
