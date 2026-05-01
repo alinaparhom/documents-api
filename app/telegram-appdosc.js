@@ -1991,15 +1991,16 @@ let activeFolderId = 'all';
 let selectedTaskIds = new Set();
 let folderManageMode = false;
 let taskFolderMap = {};
+let foldersStateJson = '{"folders":[],"taskFolders":{}}';
 
 function loadFoldersFromStorage() {
   try {
-    const raw = window.localStorage ? window.localStorage.getItem('appdoscFolders') : '';
-    const parsed = raw ? JSON.parse(raw) : [];
-    const customFolders = Array.isArray(parsed)
-      ? parsed.filter((folder) => isPlainObject(folder) && !folder.system && normalizeValue(folder.id) && normalizeValue(folder.name))
-        .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }))
-      : [];
+    const raw = normalizeValue((typeof window !== 'undefined' && window.__APPDOSC_FOLDERS_JSON__) || foldersStateJson) || '{"folders":[],"taskFolders":{}}';
+    const parsedRoot = JSON.parse(raw);
+    const parsed = Array.isArray(parsedRoot.folders) ? parsedRoot.folders : [];
+    const customFolders = parsed
+      .filter((folder) => isPlainObject(folder) && !folder.system && normalizeValue(folder.id) && normalizeValue(folder.name))
+      .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }));
     folders = [
       { id: 'all', name: 'Все задачи', system: true },
       { id: 'no-folder', name: 'Без папки', system: true },
@@ -2015,16 +2016,21 @@ function loadFoldersFromStorage() {
 
 function saveFoldersToStorage() {
   try {
-    if (!window.localStorage) return;
     const customFolders = folders.filter((folder) => !folder.system);
-    window.localStorage.setItem('appdoscFolders', JSON.stringify(customFolders));
+    const root = JSON.parse(foldersStateJson || '{"folders":[],"taskFolders":{}}');
+    root.folders = customFolders;
+    foldersStateJson = JSON.stringify(root);
+    if (typeof window !== 'undefined') {
+      window.__APPDOSC_FOLDERS_JSON__ = foldersStateJson;
+    }
   } catch (error) {}
 }
 
 function loadTaskFoldersFromStorage() {
   try {
-    const raw = window.localStorage ? window.localStorage.getItem('appdoscTaskFolders') : '';
-    const parsed = raw ? JSON.parse(raw) : {};
+    const raw = normalizeValue((typeof window !== 'undefined' && window.__APPDOSC_FOLDERS_JSON__) || foldersStateJson) || '{"folders":[],"taskFolders":{}}';
+    const parsedRoot = JSON.parse(raw);
+    const parsed = parsedRoot && isPlainObject(parsedRoot.taskFolders) ? parsedRoot.taskFolders : {};
     taskFolderMap = isPlainObject(parsed) ? parsed : {};
   } catch (error) {
     taskFolderMap = {};
@@ -2033,7 +2039,6 @@ function loadTaskFoldersFromStorage() {
 
 function saveTaskFoldersToStorage() {
   try {
-    if (!window.localStorage) return;
     const map = {};
     state.tasks.forEach((task) => {
       const key = normalizeValue(task && task.id);
@@ -2041,7 +2046,12 @@ function saveTaskFoldersToStorage() {
       map[key] = normalizeValue(task.folderId) || null;
     });
     taskFolderMap = map;
-    window.localStorage.setItem('appdoscTaskFolders', JSON.stringify(map));
+    const root = JSON.parse(foldersStateJson || '{"folders":[],"taskFolders":{}}');
+    root.taskFolders = map;
+    foldersStateJson = JSON.stringify(root);
+    if (typeof window !== 'undefined') {
+      window.__APPDOSC_FOLDERS_JSON__ = foldersStateJson;
+    }
   } catch (error) {}
 }
 
@@ -2062,6 +2072,11 @@ function getFolderName(folderId) {
   if (!folderId) return 'Без папки';
   const folder = folders.find((item) => item.id === folderId);
   return folder ? folder.name : 'Без папки';
+}
+
+function setTaskFolder(task, folderId) {
+  if (!task || typeof task !== 'object') return;
+  task.folderId = normalizeValue(folderId) || null;
 }
 const state = {
   themeMode: 'dark',
@@ -5615,7 +5630,7 @@ function setupTaskFolderControl(card, task) {
   btn.textContent = `${getFolderName(task.folderId)} ▾`;
   btn.onclick = () => {
     openFolderPicker((selectedFolderId) => {
-      task.folderId = selectedFolderId;
+      setTaskFolder(task, selectedFolderId);
       saveState();
       refreshFolderUi();
     });
@@ -5651,7 +5666,7 @@ function renderBulkFolderPanel() {
   panel.style.display='flex';
   panel.innerHTML = `<span>Выбрано: ${selectedTaskIds.size}</span>`;
   const toFolder = document.createElement('button'); toFolder.className='appdosc-card__action'; toFolder.textContent='В папку';
-  toFolder.onclick = ()=>openFolderPicker((selectedFolderId)=>{ selectedTaskIds.forEach((id)=>{ const task=state.tasks.find((t)=>String(t.id)===String(id)); if(task) task.folderId=selectedFolderId;}); selectedTaskIds.clear(); saveState(); refreshFolderUi();});
+  toFolder.onclick = ()=>openFolderPicker((selectedFolderId)=>{ selectedTaskIds.forEach((id)=>{ const task=state.tasks.find((t)=>String(t.id)===String(id)); if(task) setTaskFolder(task, selectedFolderId);}); selectedTaskIds.clear(); saveState(); refreshFolderUi();});
   const cancel = document.createElement('button'); cancel.className='appdosc-card__action'; cancel.textContent='Отмена'; cancel.onclick=()=>{selectedTaskIds.clear(); renderCards(); renderBulkFolderPanel();};
   panel.append(toFolder,cancel);
 }
