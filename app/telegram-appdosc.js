@@ -5208,17 +5208,14 @@ function renderCards() {
 
   const visibleItems = getVisibleTaskItems();
   const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
+  const hasSkeletonLoader = Boolean(elements.cardsContainer.querySelector('.appdosc-skeleton-list'));
 
   const newSignature = buildTasksSignature(visibleItems);
-  if (newSignature && newSignature === lastRenderedTasksSignature) {
+  if (!hasSkeletonLoader && newSignature && newSignature === lastRenderedTasksSignature) {
     return;
   }
   lastRenderedTasksSignature = newSignature;
-
-  const cards = Array.from(elements.cardsContainer.querySelectorAll('[data-card]'));
-  for (const card of cards) {
-    card.remove();
-  }
+  elements.cardsContainer.innerHTML = '';
 
   if (!visibleItems.length) {
     setPlaceholderMessage(hasTasks ? FILTER_PLACEHOLDER_MESSAGE : DEFAULT_PLACEHOLDER_MESSAGE);
