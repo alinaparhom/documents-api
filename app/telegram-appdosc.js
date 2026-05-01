@@ -5907,7 +5907,9 @@ function scrollToCard(anchorId) {
 }
 
 async function persistFolders() {
-  const organization = normalizeValue(getTaskOrganizationFromState()) || normalizeValue(getTaskOrganization(state.tasks[0] || {}));
+  const organization = normalizeValue(
+    Array.isArray(state.tasks) && state.tasks.length ? getTaskOrganization(state.tasks[0]) : '',
+  );
   if (!organization) return;
   try {
     await fetch(FOLDERS_SAVE_ENDPOINT, {
