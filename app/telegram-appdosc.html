@@ -60,20 +60,32 @@
 
           tg.expand?.();
 
-          document.addEventListener('visibilitychange', function() {
-            if (document.visibilityState !== 'visible') {
-              return;
+          const softRefreshTasks = function(reason) {
+            try {
+              const appHooks = window.__APPDOSC_PUBLIC_HOOKS__;
+              if (appHooks && typeof appHooks.loadTasks === 'function') {
+                appHooks.loadTasks(true);
+              }
+            } catch (_) {
+              // ignore hook errors
             }
-            const nextUrl = new URL(window.location.href);
-            nextUrl.searchParams.set('_tg_open_ts', String(Date.now()));
-            window.location.replace(nextUrl.toString());
+            document.dispatchEvent(new CustomEvent('appdosc:soft-refresh', {
+              detail: {
+                reason: reason || 'resume',
+                launchVersion,
+              },
+            }));
+          };
+
+          document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') {
+              softRefreshTasks('visibilitychange');
+            }
           });
 
           window.addEventListener('pageshow', function(event) {
             if (event && event.persisted) {
-              const nextUrl = new URL(window.location.href);
-              nextUrl.searchParams.set('_tg_open_ts', String(Date.now()));
-              window.location.replace(nextUrl.toString());
+              softRefreshTasks('pageshow_persisted');
             }
           });
 
