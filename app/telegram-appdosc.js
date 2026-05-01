@@ -2040,6 +2040,7 @@ const state = {
   folders: [],
   folderAssignments: {},
   selectedFolderId: '',
+  pendingDeleteFolderId: '',
   expandedCards: new Set(),
   entryTaskId: '',
   entryTaskLog: {
@@ -2830,6 +2831,10 @@ function initElements() {
   elements.folderCreateInput = document.querySelector('[data-folder-create-input]');
   elements.folderCreateSaveButton = document.querySelector('[data-folder-create-save]');
   elements.folderCreateCancelButton = document.querySelector('[data-folder-create-cancel]');
+  elements.folderConfirm = document.querySelector('[data-folder-confirm]');
+  elements.folderConfirmText = document.querySelector('[data-folder-confirm-text]');
+  elements.folderConfirmDeleteButton = document.querySelector('[data-folder-confirm-delete]');
+  elements.folderConfirmCancelButtons = Array.from(document.querySelectorAll('[data-folder-confirm-cancel]'));
   elements.taskCountInline = document.querySelector('[data-task-count-inline]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
@@ -5950,8 +5955,10 @@ function updateTaskSelector() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc__folder-chip';
+    if (folder.id === '__add__') button.classList.add('is-active');
     if (state.selectedFolderId === folder.id) button.classList.add('is-active');
     button.textContent = folder.name;
+    button.title = String(folder.name || '');
     button.dataset.folderId = normalizeValue(folder.id);
     button.addEventListener('click', () => handleFolderChipClick(folder.id));
     if (folder.id && folder.id !== '__add__' && folder.id !== '__none__') {
@@ -5973,14 +5980,35 @@ function updateTaskSelector() {
 function handleFolderDelete(folderId) {
   const normalizedId = normalizeValue(folderId);
   if (!normalizedId) return;
+  state.pendingDeleteFolderId = normalizedId;
+  const tasksInFolder = Object.values(state.folderAssignments || {}).filter((value) => normalizeValue(value) === normalizedId).length;
+  if (elements.folderConfirmText instanceof HTMLElement) {
+    elements.folderConfirmText.textContent = `Удалить папку? Задачи не удалятся (${tasksInFolder} шт.)`;
+  }
+  if (elements.folderConfirm instanceof HTMLElement) {
+    elements.folderConfirm.hidden = false;
+  }
+}
+
+function applyFolderDeleteConfirmed() {
+  const normalizedId = normalizeValue(state.pendingDeleteFolderId);
+  if (!normalizedId) return;
   state.folders = (state.folders || []).filter((item) => normalizeValue(item.id) !== normalizedId);
   Object.keys(state.folderAssignments || {}).forEach((key) => {
     if (normalizeValue(state.folderAssignments[key]) === normalizedId) delete state.folderAssignments[key];
   });
   if (state.selectedFolderId === normalizedId) state.selectedFolderId = '';
+  state.pendingDeleteFolderId = '';
+  if (elements.folderConfirm instanceof HTMLElement) elements.folderConfirm.hidden = true;
   persistFolders();
   updateVisibleTasks();
   safeRender('folder_delete');
+  showFolderToast('Папка удалена');
+}
+
+function cancelFolderDelete() {
+  state.pendingDeleteFolderId = '';
+  if (elements.folderConfirm instanceof HTMLElement) elements.folderConfirm.hidden = true;
 }
 
 function handleFolderChipClick(folderId) {
@@ -17107,6 +17135,16 @@ function attachEvents() {
   }
   if (elements.folderCreateCancelButton) {
     elements.folderCreateCancelButton.addEventListener('click', cancelFolderCreate);
+  }
+  if (elements.folderConfirmDeleteButton) {
+    elements.folderConfirmDeleteButton.addEventListener('click', applyFolderDeleteConfirmed);
+  }
+  if (Array.isArray(elements.folderConfirmCancelButtons)) {
+    elements.folderConfirmCancelButtons.forEach((button) => {
+      if (button instanceof HTMLElement) {
+        button.addEventListener('click', cancelFolderDelete);
+      }
+    });
   }
   if (elements.summaryToggle) {
     elements.summaryToggle.addEventListener('click', handleSummaryToggleClick);
