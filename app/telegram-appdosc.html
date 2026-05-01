@@ -1314,11 +1314,27 @@
       }
 
       .appdosc-card.task-card {
+        position: relative;
+        overflow: hidden;
         min-height: auto !important;
         border-radius: 18px !important;
         border: 1px solid var(--appdosc-task-card-border) !important;
         background: var(--appdosc-task-card-bg) !important;
         box-shadow: var(--appdosc-task-card-shadow) !important;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+
+      .appdosc-card.task-card.appdosc-card--overdue::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 8px;
+        bottom: 8px;
+        width: 3px;
+        border-radius: 3px;
+        background: linear-gradient(180deg, rgba(255, 74, 74, 0.98), rgba(235, 64, 64, 0.9));
+        box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
       }
 
       .appdosc-card__header {
@@ -2070,6 +2086,13 @@
         background: rgba(15, 23, 42, 0.78);
       }
 
+
+      .range-calendar__day.is-outside.is-in-range .range-calendar__day-inner {
+        background: linear-gradient(180deg, rgba(213, 228, 252, 0.98), rgba(194, 215, 248, 0.95));
+        border-style: solid;
+        border-color: rgba(59, 130, 246, 0.32);
+      }
+
       .range-calendar__panel {
         position: absolute;
         inset: 0;
@@ -2277,8 +2300,9 @@
         border-radius: 10px;
         background: transparent;
         z-index: 0;
-        transition: background 0.2s ease, opacity 0.2s ease;
+        transition: background 0.28s ease, opacity 0.28s ease, transform 0.28s ease;
         opacity: 0;
+        transform: scaleX(0.92);
       }
 
       .range-calendar__day-inner {
@@ -2337,7 +2361,8 @@
 
       .range-calendar__day.is-in-range::before {
         opacity: 1;
-        background: linear-gradient(180deg, rgba(37, 99, 235, 0.38), rgba(37, 99, 235, 0.3));
+        transform: scaleX(1);
+        background: linear-gradient(180deg, rgba(66, 133, 244, 0.42), rgba(37, 99, 235, 0.3));
       }
 
       .range-calendar__day.is-in-range .range-calendar__day-inner {
@@ -2389,7 +2414,7 @@
       }
 
       .range-calendar__day.is-outside {
-        opacity: 0.88;
+        opacity: 0.96;
       }
 
       .range-calendar__day.is-outside .range-calendar__day-inner {
@@ -3561,3 +3586,4 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </body>
 </html>
+
