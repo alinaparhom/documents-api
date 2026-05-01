@@ -792,7 +792,7 @@ const STATUS_KEY_SYNONYMS = {
   distributed: ['распределено', 'распределен', 'распределена', 'распределены'],
   accepted: ['принято в работу', 'в работе', 'принято вработу', 'принято в работ'],
   review: ['на проверке', 'на контроле', 'на проверку'],
-  done: ['выполнено', 'выполнен', 'выполнена', 'выполнены', 'завершено', 'завершен', 'завершена', 'завершены', 'исполнено', 'исполнен', 'исполнена'],
+  done: ['выполнено', 'завершено'],
   cancelled: ['отменено'],
 };
 
@@ -3929,7 +3929,11 @@ function updateStats() {
   const overallStats = computeStatsFromTasks(state.tasks, { useDirectorDeadlines: directorActive });
 
   let statsSource = 'global';
+  let displayStats = state.stats;
+
   if (directorActive) {
+    const statsTasks = getAssigneeTasksForStats(normalizedFilters, directorState);
+    displayStats = computeStatsFromTasks(statsTasks, { useDirectorDeadlines: true });
     if (usingResponsibleFilter || normalizeResponsibleKey(directorState.selectedResponsibleToken || '')) {
       statsSource = 'responsible';
     } else if (normalizedFilters.some((filter) => isSubordinateFilter(filter))
@@ -3941,14 +3945,13 @@ function updateStats() {
   }
 
   if (state.entryTaskId) {
+    const statsTasks = getVisibleTasksForStats();
+    displayStats = computeStatsFromTasks(statsTasks, { useDirectorDeadlines: directorActive });
     statsSource = 'focused';
   }
 
-  const uiStatsTasks = getSummaryUiTasks(normalizedFilters, directorState);
-  const uiStats = computeStatsFromTasks(uiStatsTasks, { useDirectorDeadlines: directorActive });
-
   if (elements.total) {
-    const total = Number(uiStats.total) || 0;
+    const total = Number(displayStats.total) || 0;
     elements.total.textContent = `${total} ${formatTaskCountLabel(total)}`;
     if (directorActive) {
       elements.total.dataset.source = statsSource;
@@ -3957,8 +3960,8 @@ function updateStats() {
     }
   }
 
-  const resolvedStatusCounts = isPlainObject(uiStats.statuses)
-    ? uiStats.statuses
+  const resolvedStatusCounts = isPlainObject(overallStats.statuses)
+    ? overallStats.statuses
     : createEmptyStatusCounters();
 
   if (elements.statusBadges) {
@@ -3975,7 +3978,7 @@ function updateStats() {
   }
 
   if (elements.overdue) {
-    const resolvedOverdue = Number(uiStats.overdue) || 0;
+    const resolvedOverdue = Number(overallStats.overdue) || 0;
     setStatusBadgeText(elements.overdue, `${resolvedOverdue} просрочено`);
   }
 
@@ -3989,10 +3992,8 @@ function updateStats() {
     logDirectorDebug('stats_update', {
       filter: filterLabel,
       statsSource,
-      total: Number(uiStats.total) || 0,
-      overdue: Number(uiStats.overdue) || 0,
-      overallTotal: Number(overallStats.total) || 0,
-      overallOverdue: Number(overallStats.overdue) || 0,
+      total: Number(displayStats.total) || 0,
+      overdue: Number(displayStats.overdue) || 0,
       selectedResponsible: directorState.selectedResponsibleToken || null,
     });
   }
@@ -4901,7 +4902,6 @@ function initCompactRangeCalendar() {
       state.compactFilters.dateTo = normalizeDateInputValue(endDate);
       state.compactFilters.quickPreset = '';
       updateVisibleTasks();
-      updateStats();
       safeRender('compact_filter_period');
     },
   });
@@ -5451,21 +5451,6 @@ function getVisibleTasksForStats() {
   return extractTasksFromItems(getVisibleTaskItems());
 }
 
-function getSummaryUiTasks(filters, directorState) {
-  const normalizedFilters = normalizeTaskFilters(filters);
-  const { assigneeFilters } = splitTaskFilters(normalizedFilters);
-  const assigneeOnlyFilter = normalizeTaskFilters(assigneeFilters);
-  const baseFiltered = applyTaskFilter(assigneeOnlyFilter, state.tasks);
-
-  let visible = baseFiltered;
-  if (directorState && directorState.isActive && !hasAssigneeFilters(assigneeOnlyFilter)) {
-    visible = baseFiltered.filter(({ task }) => isTaskAssignedToCurrentDirector(task));
-  }
-
-  const compactVisible = applyCompactFilters(visible);
-  return extractTasksFromItems(compactVisible);
-}
-
 function getAssigneeTasksForStats(filters, directorState) {
   if (!directorState || directorState.isActive !== true) {
     return getVisibleTasksForStats();
@@ -5762,9 +5747,32 @@ function updateVisibleTasks() {
     visible = directorFiltered;
   }
 
+  if (shouldApplyEntryStatusExclusion(normalizedFilters)) {
+    visible = visible.filter(({ task }) => !isTaskExcludedByEntryStatus(task, directorState));
+  }
+
+  if (directorState.isActive) {
+    const { statusFilters } = splitTaskFilters(normalizedFilters);
+    const showCompleted = statusFilters.some((filter) => getStatusFilterKey(filter) === 'done');
+    if (!showCompleted) {
+      const withoutCompleted = visible.filter(({ task }) => {
+        return getTaskStatusKeyForUser(task) !== 'done';
+      });
+
+      if (directorState.completedVisibilityLogged === false) {
+        logDirectorDebug('completed_hidden_for_director', {
+          filter: formatTaskFiltersForLog(normalizedFilters),
+          removed: visible.length - withoutCompleted.length,
+        });
+        directorState.completedVisibilityLogged = true;
+      }
+
+      visible = withoutCompleted;
+    }
+  }
+
   state.visibleTasks = applyCompactFilters(visible);
 }
-
 
 function truncateText(value, limit = 140) {
   if (value === null || value === undefined) {
@@ -8035,14 +8043,7 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     return;
   }
 
-  const rawStatusText = normalizeValue(statusText);
-  const statusLooksUnselected = normalizeName(rawStatusText).includes('не выбран');
-  const resolvedStatusText = isTaskCompleted(task) && statusLooksUnselected
-    ? 'Выполнено'
-    : rawStatusText;
-  const resolvedNormalizedStatus = normalizeName(resolvedStatusText);
-
-  if (!resolvedStatusText) {
+  if (!normalizeValue(statusText)) {
     const fallbackStatusLabel = 'Статус не указан';
     statusElement.hidden = true;
     statusElement.textContent = '';
@@ -8065,14 +8066,14 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     return;
   }
 
-  const statusLabel = `${resolvedStatusText}`;
+  const statusLabel = `${statusText}`;
   statusElement.hidden = true;
   statusElement.textContent = '';
   statusElement.removeAttribute('title');
   if (statusBadgeElement) {
     statusBadgeElement.hidden = false;
     statusBadgeElement.textContent = statusLabel;
-    statusBadgeElement.title = `Статус задачи: ${resolvedStatusText}`;
+    statusBadgeElement.title = `Статус задачи: ${statusText}`;
   }
   let statusTone = 'accent';
 
@@ -8080,20 +8081,20 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     statusTone = 'done';
   } else if (isOverdue(task)) {
     statusTone = 'danger';
-  } else if (resolvedNormalizedStatus.includes('контрол')) {
+  } else if (normalizedStatus.includes('контрол')) {
     statusTone = 'warn';
-  } else if (resolvedNormalizedStatus.includes('распредел')) {
+  } else if (normalizedStatus.includes('распредел')) {
     statusTone = 'info';
   }
 
   if (card && card.dataset) {
     delete card.dataset.statusIcon;
-    card.dataset.statusLabel = String(resolvedStatusText).trim();
+    card.dataset.statusLabel = String(statusText).trim();
     card.dataset.statusTone = statusTone;
   }
   if (taskMainElement && taskMainElement.dataset) {
     delete taskMainElement.dataset.statusIcon;
-    taskMainElement.dataset.statusLabel = String(resolvedStatusText).trim();
+    taskMainElement.dataset.statusLabel = String(statusText).trim();
     taskMainElement.dataset.statusTone = statusTone;
   }
 }
@@ -16755,11 +16756,7 @@ function isTaskCompleted(task) {
   if (!statusText) {
     return isDirectorCompletionMarked(task);
   }
-  if (statusText.includes('выполн')
-    || statusText.includes('заверш')
-    || statusText.includes('исполн')
-    || statusText.includes('complete')
-    || statusText.includes('готов')) {
+  if (statusText.includes('выполн') || statusText.includes('complete') || statusText.includes('готов')) {
     return true;
   }
 
@@ -17000,7 +16997,6 @@ function handleSummaryBadgeClick(filter) {
   state.taskFilter = nextFilters;
   state.selectedCardAnchor = '';
   updateVisibleTasks();
-  updateStats();
   const reason = nextFilters.length === 0 ? 'task_filter_reset' : 'task_filter_change';
   safeRender(reason);
 }
