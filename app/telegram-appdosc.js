@@ -2635,6 +2635,7 @@ const STATUS_CLASSES = {
   error: 'appdosc__status-message--error',
   info: 'appdosc__status-message--info',
 };
+let toastTimerId = null;
 
 const TASK_FILTERS = ['all', 'overdue', ...STATUS_FILTERS];
 const DEFAULT_TASK_FILTER = 'all';
@@ -5647,15 +5648,19 @@ function openFolderEditModal(folder = null) {
   openBottomSheet((close) => {
     const wrap = document.createElement('div');
     const title = folder ? 'Редактировать папку' : 'Создать папку';
-    wrap.innerHTML = `<h3>${title}</h3>`;
+    wrap.innerHTML = `<h3 class="folder-modal-title">${title}</h3><p class="folder-modal-subtitle">Короткое и понятное название поможет быстрее находить задачи.</p>`;
     const input = document.createElement('input');
     input.placeholder = 'Название папки';
     input.value = folder ? folder.name : '';
     input.className = 'appdosc__input';
+    input.maxLength = 60;
+    input.autocomplete = 'off';
+    input.setAttribute('enterkeyhint', 'done');
     const row = document.createElement('div');
+    row.className = 'folder-modal-actions';
     const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
     const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action';
-    save.onclick = () => {
+    const submit = () => {
       const name = input.value.trim();
       if (!name) {
         setStatus('error', 'Введите название папки.');
@@ -5675,7 +5680,15 @@ function openFolderEditModal(folder = null) {
       refreshFolderUi();
       persistFoldersListToRegistry();
       close();
+      setStatus('success', folder ? 'Папка обновлена.' : 'Папка создана.');
     };
+    save.onclick = submit;
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submit();
+      }
+    });
     row.append(cancel,save); wrap.append(input,row); return wrap;
   });
 }
@@ -5685,7 +5698,7 @@ function openFolderActionsModal(folder) {
 }
 
 function confirmDeleteFolder(folder) {
-  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3>Удалить папку «${folder.name}»?</h3><p>Задачи из этой папки не удалятся. Они будут перенесены в «Без папки».</p>`; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); persistFoldersListToRegistry(); close();}; wrap.append(c,d); return wrap;});
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3 class="folder-modal-title">Удалить папку «${folder.name}»?</h3><p class="folder-modal-subtitle">Задачи не удалятся. Мы просто перенесём их в «Без папки».</p>`; const actions=document.createElement('div'); actions.className='folder-modal-actions'; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); persistFoldersListToRegistry(); close(); setStatus('success', 'Папка удалена.');}; actions.append(c,d); wrap.append(actions); return wrap;});
 }
 
 function setupTaskFolderControl(card, task) {
@@ -17402,19 +17415,27 @@ function updateFooter() {
 }
 
 function setStatus(type, message) {
-  if (!elements.status) {
+  if (!message) {
+    clearStatus();
     return;
   }
-  const statusContainer = elements.status.closest('.appdosc__status');
+  if (!elements.status || !elements.status.parentElement) {
+    return;
+  }
+  if (toastTimerId) {
+    window.clearTimeout(toastTimerId);
+    toastTimerId = null;
+  }
+  const host = elements.status.parentElement;
+  host.classList.add('appdosc-toast-layer');
   elements.status.textContent = message;
-  elements.status.hidden = !message;
-  if (statusContainer) {
-    statusContainer.hidden = !message;
-  }
-  elements.status.className = 'appdosc__status-message';
+  elements.status.hidden = false;
+  elements.status.className = 'appdosc__status-message appdosc-toast';
   if (type && STATUS_CLASSES[type]) {
-    elements.status.classList.add(STATUS_CLASSES[type]);
+    elements.status.classList.add(`appdosc-toast--${type}`);
   }
+  requestAnimationFrame(() => elements.status && elements.status.classList.add('is-visible'));
+  toastTimerId = window.setTimeout(() => clearStatus(), 2600);
 }
 
 function setStatusAction(type, message, actionLabel, actionHandler) {
@@ -17453,13 +17474,17 @@ function clearStatus() {
   if (!elements.status) {
     return;
   }
-  const statusContainer = elements.status.closest('.appdosc__status');
-  elements.status.hidden = true;
-  if (statusContainer) {
-    statusContainer.hidden = true;
+  if (toastTimerId) {
+    window.clearTimeout(toastTimerId);
+    toastTimerId = null;
   }
-  elements.status.textContent = '';
-  elements.status.className = 'appdosc__status-message';
+  elements.status.classList.remove('is-visible');
+  window.setTimeout(() => {
+    if (!elements.status) return;
+    elements.status.hidden = true;
+    elements.status.textContent = '';
+    elements.status.className = 'appdosc__status-message';
+  }, 220);
 }
 
 function handleSummaryBadgeClick(filter) {
