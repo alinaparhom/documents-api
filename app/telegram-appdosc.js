@@ -2637,23 +2637,29 @@ function isDirectorCompletionMarked(task) {
   return completionMarkers.some((value) => normalizeValue(value));
 }
 
-function getTaskStatusKeyForUser(task) {
+function resolveTaskStateKey(task) {
   const baseKey = getStatusSummaryKey(getTaskStatusValue(task));
   if (baseKey) {
     return baseKey;
   }
 
-  // Синхронизация с веб-логикой: если задача считается выполненной,
-  // она должна попадать и в статус "Выполнено", и в фильтр по этому статусу.
   if (isTaskCompleted(task)) {
     return 'done';
   }
 
-  if (isDirectorCompletionMarked(task)) {
-    return 'done';
+  if (isTaskOverdueByCompactRule(task)) {
+    return 'overdue';
   }
 
-  return '';
+  return 'no_status';
+}
+
+function getTaskStatusKeyForUser(task) {
+  const resolved = resolveTaskStateKey(task);
+  if (resolved === 'overdue' || resolved === 'no_status') {
+    return '';
+  }
+  return resolved;
 }
 
 const CARD_ANCHOR_PREFIX = 'appdosc-card-';
@@ -17332,14 +17338,15 @@ function computeStatsFromTasks(tasks, options = {}) {
     if (statusKey && Object.prototype.hasOwnProperty.call(statusCounters, statusKey)) {
       statusCounters[statusKey] += 1;
     }
-    if (statusKey === 'done' || isTaskCompleted(task)) {
+    const resolvedState = resolveTaskStateKey(task);
+    if (resolvedState === 'done') {
       completed += 1;
       return;
     }
-    if (statusKey === 'cancelled') {
+    if (resolvedState === 'cancelled') {
       return;
     }
-    if (isTaskOverdueByCompactRule(task)) {
+    if (resolvedState === 'overdue') {
       overdue += 1;
       return;
     }
