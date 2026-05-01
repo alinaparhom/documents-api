@@ -9924,14 +9924,7 @@ async function handleViewerDeleteResponseClick() {
     if (!nextFiles.length) {
       renderViewerTabs([], task);
       viewerTabsState.activeFile = null;
-      if (elements.foldersManage) {
-    elements.foldersManage.addEventListener('click', () => {
-      folderManageMode = !folderManageMode;
-      elements.foldersManage.textContent = folderManageMode ? 'Готово' : 'Управление';
-      renderFolders();
-    });
-  }
-  updateViewerDownloadState(null);
+      updateViewerDownloadState(null);
       updateViewerDeleteState(null);
       updateViewerFileOwnerState(null);
       setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
