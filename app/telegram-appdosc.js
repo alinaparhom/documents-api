@@ -1981,6 +1981,55 @@ function hydrateTelegramFromInitData(initData) {
   }
 }
 
+
+let folders = [
+  { id: 'all', name: 'Все задачи', system: true },
+  { id: 'no-folder', name: 'Без папки', system: true },
+];
+
+let activeFolderId = 'all';
+let selectedTaskIds = new Set();
+let folderManageMode = false;
+
+function loadFoldersFromStorage() {
+  try {
+    const raw = window.localStorage ? window.localStorage.getItem('appdoscFolders') : '';
+    const parsed = raw ? JSON.parse(raw) : [];
+    const customFolders = Array.isArray(parsed)
+      ? parsed.filter((folder) => isPlainObject(folder) && !folder.system && normalizeValue(folder.id) && normalizeValue(folder.name))
+        .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }))
+      : [];
+    folders = [
+      { id: 'all', name: 'Все задачи', system: true },
+      { id: 'no-folder', name: 'Без папки', system: true },
+      ...customFolders,
+    ];
+  } catch (error) {
+    folders = [
+      { id: 'all', name: 'Все задачи', system: true },
+      { id: 'no-folder', name: 'Без папки', system: true },
+    ];
+  }
+}
+
+function saveFoldersToStorage() {
+  try {
+    if (!window.localStorage) return;
+    const customFolders = folders.filter((folder) => !folder.system);
+    window.localStorage.setItem('appdoscFolders', JSON.stringify(customFolders));
+  } catch (error) {}
+}
+
+
+function saveState() {
+  saveFoldersToStorage();
+}
+
+function getFolderName(folderId) {
+  if (!folderId) return 'Без папки';
+  const folder = folders.find((item) => item.id === folderId);
+  return folder ? folder.name : 'Без папки';
+}
 const state = {
   themeMode: 'dark',
   persistedThemeMode: '',
@@ -2349,6 +2398,7 @@ function sanitizeTaskItem(task) {
 
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
+  sanitized.folderId = normalizeValue(sanitized.folderId) || null;
 
   return sanitized;
 }
@@ -2764,6 +2814,10 @@ function initElements() {
   elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
+  elements.foldersSection = document.querySelector('[data-folders-section]');
+  elements.foldersCount = document.querySelector('[data-folders-count]');
+  elements.foldersManage = document.querySelector('[data-folders-manage]');
+  elements.foldersList = document.querySelector('[data-folders-list]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
   elements.summaryToggleIcon = document.querySelector('[data-summary-toggle-icon]');
   elements.summaryList = document.querySelector('[data-summary-list]');
@@ -2834,6 +2888,13 @@ function initElements() {
     templateFound: Boolean(elements.cardTemplate),
     placeholderFound: Boolean(elements.placeholder),
   });
+  if (elements.foldersManage) {
+    elements.foldersManage.addEventListener('click', () => {
+      folderManageMode = !folderManageMode;
+      elements.foldersManage.textContent = folderManageMode ? 'Готово' : 'Управление';
+      renderFolders();
+    });
+  }
   updateViewerDownloadState(null);
   updateViewerBriefState(null);
   updateViewerDeleteState(null);
@@ -3809,8 +3870,10 @@ function render() {
   updateStats();
   updateDirectorSummary();
   updateSummaryFilterState();
+  renderFolders();
   syncCompactFilterPanelState();
   renderCards();
+  renderBulkFolderPanel();
   updateFooter();
 }
 
@@ -5411,7 +5474,112 @@ function createCard(task, index, anchorRegistry) {
 
   initializeCardExpansion(card);
 
+  setupTaskFolderControl(card, task);
+  setupTaskSelectionControl(card, task);
+
   return card;
+}
+
+
+function openBottomSheet(contentBuilder) {
+  closeBottomSheet();
+  const overlay = document.createElement('div');
+  overlay.className = 'bottom-sheet-overlay';
+  overlay.addEventListener('click', closeBottomSheet);
+  const sheet = document.createElement('div');
+  sheet.className = 'bottom-sheet';
+  const content = contentBuilder(closeBottomSheet);
+  sheet.appendChild(content);
+  document.body.appendChild(overlay);
+  document.body.appendChild(sheet);
+}
+
+function closeBottomSheet() {
+  document.querySelectorAll('.bottom-sheet-overlay, .bottom-sheet').forEach((el) => el.remove());
+}
+
+function openFolderPicker(onSelect) {
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = '<h3>Переместить в папку</h3>';
+    const base = [{id:'no-folder',name:'Без папки'}, ...folders.filter((f)=>!f.system)];
+    base.forEach((folder)=>{ const b=document.createElement('button'); b.className='folder-chip'; b.textContent=folder.name; b.addEventListener('click',()=>{ onSelect(folder.id==='no-folder'?null:folder.id); close();}); wrap.appendChild(b);});
+    return wrap;
+  });
+}
+
+function openFolderEditModal(folder = null) {
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    const title = folder ? 'Редактировать папку' : 'Создать папку';
+    wrap.innerHTML = `<h3>${title}</h3>`;
+    const input = document.createElement('input');
+    input.placeholder = 'Название папки';
+    input.value = folder ? folder.name : '';
+    input.className = 'appdosc__input';
+    const row = document.createElement('div');
+    const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
+    const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action';
+    save.onclick=()=>{ const name=input.value.trim(); if(!name) return; const exists=folders.some((f)=>f.name.toLowerCase()===name.toLowerCase() && (!folder || f.id!==folder.id)); if(exists) return; if(folder){folder.name=name;} else {folders.push({id:'folder_'+Date.now(),name,system:false});} saveState(); renderFolders(); renderCards(); close(); };
+    row.append(cancel,save); wrap.append(input,row); return wrap;
+  });
+}
+
+function openFolderActionsModal(folder) {
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML='<h3>Управление папкой</h3>'; const ren=document.createElement('button'); ren.className='appdosc-card__action'; ren.textContent='Переименовать'; ren.onclick=()=>{close(); openFolderEditModal(folder);}; const del=document.createElement('button'); del.className='appdosc-card__action danger-btn'; del.textContent='Удалить'; del.onclick=()=>{close(); confirmDeleteFolder(folder);}; wrap.append(ren,del); return wrap;});
+}
+
+function confirmDeleteFolder(folder) {
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3>Удалить папку «${folder.name}»?</h3><p>Задачи из этой папки не удалятся. Они будут перенесены в «Без папки».</p>`; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); renderFolders(); renderCards(); close();}; wrap.append(c,d); return wrap;});
+}
+
+function setupTaskFolderControl(card, task) {
+  let btn = card.querySelector('.task-folder-select');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'task-folder-select';
+    const footer = card.querySelector('.appdosc-card__actions') || card;
+    footer.prepend(btn);
+  }
+  btn.dataset.taskId = String(task.id || '');
+  btn.textContent = `${getFolderName(task.folderId)} ▾`;
+  btn.onclick = () => {
+    openFolderPicker((selectedFolderId) => { task.folderId = selectedFolderId; saveState(); renderFolders(); renderCards(); });
+  };
+}
+
+function setupTaskSelectionControl(card, task) {
+  let box = card.querySelector('.task-folder-checkbox');
+  if (!box) {
+    box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'task-folder-checkbox';
+    const header = card.querySelector('.appdosc-card__header') || card;
+    header.prepend(box);
+  }
+  const taskId = String(task.id || '');
+  box.checked = selectedTaskIds.has(taskId);
+  box.onchange = () => {
+    if (box.checked) selectedTaskIds.add(taskId); else selectedTaskIds.delete(taskId);
+    renderBulkFolderPanel();
+  };
+}
+
+function renderBulkFolderPanel() {
+  let panel = document.querySelector('.bulk-folder-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.className = 'bulk-folder-panel';
+    document.body.appendChild(panel);
+  }
+  if (selectedTaskIds.size === 0) { panel.style.display='none'; return; }
+  panel.style.display='flex';
+  panel.innerHTML = `<span>Выбрано: ${selectedTaskIds.size}</span>`;
+  const toFolder = document.createElement('button'); toFolder.className='appdosc-card__action'; toFolder.textContent='В папку';
+  toFolder.onclick = ()=>openFolderPicker((selectedFolderId)=>{ selectedTaskIds.forEach((id)=>{ const task=state.tasks.find((t)=>String(t.id)===String(id)); if(task) task.folderId=selectedFolderId;}); selectedTaskIds.clear(); saveState(); renderFolders(); renderCards(); renderBulkFolderPanel();});
+  const cancel = document.createElement('button'); cancel.className='appdosc-card__action'; cancel.textContent='Отмена'; cancel.onclick=()=>{selectedTaskIds.clear(); renderCards(); renderBulkFolderPanel();};
+  panel.append(toFolder,cancel);
 }
 
 function togglePlaceholder(shouldShow) {
@@ -5726,6 +5894,67 @@ function isTaskOverdueByCompactRule(task) {
     || statusLabel.includes('просроч');
 }
 
+
+function getFolderCount(folderId) {
+  if (folderId === 'all') {
+    return state.tasks.length;
+  }
+  if (folderId === 'no-folder') {
+    return state.tasks.filter((task) => !task.folderId).length;
+  }
+  return state.tasks.filter((task) => task.folderId === folderId).length;
+}
+
+function selectFolder(folderId) {
+  activeFolderId = folderId;
+  renderFolders();
+  renderCards();
+}
+
+function renderFolders() {
+  if (!elements.foldersList) return;
+  const systemFolders = folders.filter((folder) => folder.system);
+  const customFolders = folders.filter((folder) => !folder.system);
+  const sortedFolders = [...systemFolders, ...customFolders];
+  elements.foldersList.innerHTML = '';
+  sortedFolders.forEach((folder) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'folder-chip';
+    if (folder.id === activeFolderId) {
+      button.classList.add('active');
+    }
+    const name = document.createElement('span');
+    name.className = 'folder-name';
+    name.textContent = folder.name;
+    const count = document.createElement('span');
+    count.className = 'folder-count';
+    count.textContent = String(getFolderCount(folder.id));
+    button.append(name, count);
+    if (folderManageMode && !folder.system) {
+      const manageBtn = document.createElement('button');
+      manageBtn.type = 'button';
+      manageBtn.className = 'folder-menu-btn';
+      manageBtn.textContent = '⋯';
+      manageBtn.addEventListener('click', (event) => { event.stopPropagation(); openFolderActionsModal(folder); });
+      button.appendChild(manageBtn);
+    }
+    button.addEventListener('click', () => selectFolder(folder.id));
+    elements.foldersList.appendChild(button);
+  });
+
+  const addButton = document.createElement('button');
+  addButton.type = 'button';
+  addButton.className = 'folder-chip';
+  addButton.textContent = '+ Папка';
+  addButton.addEventListener('click', () => openFolderEditModal());
+  elements.foldersList.appendChild(addButton);
+
+  if (elements.foldersCount) {
+    elements.foldersCount.textContent = String(state.tasks.length);
+  }
+}
+
 function updateVisibleTasks() {
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
@@ -5743,7 +5972,14 @@ function updateVisibleTasks() {
     return;
   }
 
-  const filtered = applyTaskFilter(normalizedFilters, state.tasks);
+  let folderScopedTasks = state.tasks;
+  if (activeFolderId === 'no-folder') {
+    folderScopedTasks = state.tasks.filter((task) => !task.folderId);
+  } else if (activeFolderId !== 'all') {
+    folderScopedTasks = state.tasks.filter((task) => task.folderId === activeFolderId);
+  }
+
+  const filtered = applyTaskFilter(normalizedFilters, folderScopedTasks);
   let visible = filtered;
 
   const hasAssigneeFilter = hasAssigneeFilters(normalizedFilters);
@@ -9688,7 +9924,14 @@ async function handleViewerDeleteResponseClick() {
     if (!nextFiles.length) {
       renderViewerTabs([], task);
       viewerTabsState.activeFile = null;
-      updateViewerDownloadState(null);
+      if (elements.foldersManage) {
+    elements.foldersManage.addEventListener('click', () => {
+      folderManageMode = !folderManageMode;
+      elements.foldersManage.textContent = folderManageMode ? 'Готово' : 'Управление';
+      renderFolders();
+    });
+  }
+  updateViewerDownloadState(null);
       updateViewerDeleteState(null);
       updateViewerFileOwnerState(null);
       setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
@@ -17409,6 +17652,8 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
+  loadFoldersFromStorage();
+  saveFoldersToStorage();
   initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
