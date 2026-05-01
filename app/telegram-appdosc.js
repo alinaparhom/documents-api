@@ -6093,18 +6093,34 @@ function isTaskOverdueByCompactRule(task) {
 }
 
 
+function normalizeTaskFolderId(folderId) {
+  const normalized = normalizeValue(folderId);
+  return normalized || null;
+}
+
+function resolveFolderScope(tasks, folderId) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  const normalizedActiveFolderId = normalizeValue(folderId) || 'all';
+
+  // Инварианты фильтра по папке:
+  // - all: все задачи независимо от task.folderId (включая null/undefined/'').
+  // - no-folder: только задачи без папки (task.folderId после нормализации === null).
+  // - custom folder: только задачи с точным совпадением task.folderId === activeFolderId.
+  if (normalizedActiveFolderId === 'all') {
+    return source;
+  }
+  if (normalizedActiveFolderId === 'no-folder') {
+    return source.filter((task) => normalizeTaskFolderId(task && task.folderId) === null);
+  }
+  return source.filter((task) => normalizeTaskFolderId(task && task.folderId) === normalizedActiveFolderId);
+}
+
 function getFolderCount(folderId) {
-  if (folderId === 'all') {
-    return state.tasks.length;
-  }
-  if (folderId === 'no-folder') {
-    return state.tasks.filter((task) => !task.folderId).length;
-  }
-  return state.tasks.filter((task) => task.folderId === folderId).length;
+  return resolveFolderScope(state.tasks, folderId).length;
 }
 
 function selectFolder(folderId) {
-  activeFolderId = folderId;
+  activeFolderId = normalizeValue(folderId) || 'all';
   updateVisibleTasks();
   renderFolders();
   renderCards();
@@ -6171,12 +6187,8 @@ function updateVisibleTasks() {
     return;
   }
 
-  let folderScopedTasks = state.tasks;
-  if (activeFolderId === 'no-folder') {
-    folderScopedTasks = state.tasks.filter((task) => !task.folderId);
-  } else if (activeFolderId !== 'all') {
-    folderScopedTasks = state.tasks.filter((task) => task.folderId === activeFolderId);
-  }
+  activeFolderId = normalizeValue(activeFolderId) || 'all';
+  const folderScopedTasks = resolveFolderScope(state.tasks, activeFolderId);
 
   const filtered = applyTaskFilter(normalizedFilters, folderScopedTasks);
   let visible = filtered;
@@ -6224,6 +6236,15 @@ function updateVisibleTasks() {
   }
 
   state.visibleTasks = applyCompactFilters(visible);
+
+  if (typeof console !== 'undefined' && console && typeof console.debug === 'function') {
+    console.debug('[folders] visible tasks recalculated', {
+      activeFolderId,
+      totalTasks: Array.isArray(state.tasks) ? state.tasks.length : 0,
+      folderScopedCount: folderScopedTasks.length,
+      visibleCountAfterFilters: Array.isArray(state.visibleTasks) ? state.visibleTasks.length : 0,
+    });
+  }
 }
 
 function truncateText(value, limit = 140) {
