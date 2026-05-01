@@ -945,6 +945,60 @@ function docs_prepare_task_folders_for_response(array $folders): array
     return array_values($prepared);
 }
 
+
+function docs_get_user_task_folders(array $settings, string $telegramUserId): array
+{
+    $userId = normalize_identifier_value($telegramUserId);
+    if ($userId === '') {
+        return [];
+    }
+
+    if (isset($settings['taskFoldersByUser'][$userId]) && is_array($settings['taskFoldersByUser'][$userId])) {
+        return docs_prepare_task_folders_for_response($settings['taskFoldersByUser'][$userId]);
+    }
+
+    return [];
+}
+
+function docs_set_user_task_folders(array &$settings, string $telegramUserId, array $folders): void
+{
+    $userId = normalize_identifier_value($telegramUserId);
+    if ($userId === '') {
+        return;
+    }
+    if (!isset($settings['taskFoldersByUser']) || !is_array($settings['taskFoldersByUser'])) {
+        $settings['taskFoldersByUser'] = [];
+    }
+    $settings['taskFoldersByUser'][$userId] = docs_prepare_task_folders_for_response($folders);
+}
+
+function docs_get_record_folder_id_for_user(array $record, string $telegramUserId): string
+{
+    $userId = normalize_identifier_value($telegramUserId);
+    if ($userId !== '' && isset($record['folderBindings']) && is_array($record['folderBindings'])) {
+        return docs_normalize_task_folder_id($record['folderBindings'][$userId] ?? '');
+    }
+    return docs_normalize_task_folder_id($record['folderId'] ?? '');
+}
+
+function docs_set_record_folder_id_for_user(array &$record, string $telegramUserId, string $folderId): void
+{
+    $userId = normalize_identifier_value($telegramUserId);
+    if ($userId === '') {
+        $record['folderId'] = docs_normalize_task_folder_id($folderId);
+        return;
+    }
+    if (!isset($record['folderBindings']) || !is_array($record['folderBindings'])) {
+        $record['folderBindings'] = [];
+    }
+    $normalized = docs_normalize_task_folder_id($folderId);
+    if ($normalized === '') {
+        unset($record['folderBindings'][$userId]);
+    } else {
+        $record['folderBindings'][$userId] = $normalized;
+    }
+}
+
 function docs_build_task_start_param(array $record): string
 {
     $taskId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
@@ -12284,6 +12338,7 @@ switch ($action) {
 
         $tasks = [];
         $taskFoldersMap = [];
+        $folderOwnerId = normalize_identifier_value($requestContext['primaryId'] ?? '');
         $organizationSummaries = [];
         $totalOrganizations = count($organizations);
         $resolveTimestamp = static function ($value): ?int {
@@ -12314,9 +12369,7 @@ switch ($action) {
             $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles'])
                 ? $settings['responsibles']
                 : [];
-            $rawTaskFolders = isset($settings['taskFolders']) && is_array($settings['taskFolders'])
-                ? docs_prepare_task_folders_for_response($settings['taskFolders'])
-                : [];
+            $rawTaskFolders = docs_get_user_task_folders($settings, $folderOwnerId);
             foreach ($rawTaskFolders as $taskFolder) {
                 $taskFolderId = docs_normalize_task_folder_id($taskFolder['id'] ?? '');
                 if ($taskFolderId === '') {
@@ -12459,7 +12512,7 @@ switch ($action) {
                     $record['organization'] = $organization;
                 }
 
-                $recordFolderId = docs_normalize_task_folder_id($record['folderId'] ?? '');
+                $recordFolderId = docs_get_record_folder_id_for_user($record, $folderOwnerId);
                 if ($recordFolderId !== '' && !isset($taskFoldersMap[$recordFolderId])) {
                     $recordFolderId = '';
                 }
@@ -12811,7 +12864,12 @@ switch ($action) {
         }
         $folder = sanitize_folder_name($organizationCandidate);
         $settings = load_admin_settings($folder);
-        $folders = isset($settings['taskFolders']) && is_array($settings['taskFolders']) ? docs_prepare_task_folders_for_response($settings['taskFolders']) : [];
+        $requestContext = docs_build_request_user_context();
+        $folderOwnerId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+        if ($folderOwnerId === '') {
+            respond_error('Не удалось определить пользователя.', 400);
+        }
+        $folders = docs_get_user_task_folders($settings, $folderOwnerId);
         $newFolder = [
             'id' => 'fld_' . substr(md5($folderName . microtime(true)), 0, 12),
             'name' => $folderName,
@@ -12819,7 +12877,7 @@ switch ($action) {
             'order' => count($folders) + 1,
         ];
         $folders[] = $newFolder;
-        $settings['taskFolders'] = $folders;
+        docs_set_user_task_folders($settings, $folderOwnerId, $folders);
         save_admin_settings($folder, $settings);
         respond_success(['folder' => $newFolder, 'folders' => $folders]);
         break;
@@ -12839,22 +12897,63 @@ switch ($action) {
         }
         $folder = sanitize_folder_name($organizationCandidate);
         $settings = load_admin_settings($folder);
-        $folders = isset($settings['taskFolders']) && is_array($settings['taskFolders']) ? docs_prepare_task_folders_for_response($settings['taskFolders']) : [];
-        $settings['taskFolders'] = array_values(array_filter($folders, static fn($item) => (string)($item['id'] ?? '') !== $folderId));
+        $requestContext = docs_build_request_user_context();
+        $folderOwnerId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+        if ($folderOwnerId === '') {
+            respond_error('Не удалось определить пользователя.', 400);
+        }
+        $folders = docs_get_user_task_folders($settings, $folderOwnerId);
+        $nextFolders = array_values(array_filter($folders, static fn($item) => (string)($item['id'] ?? '') !== $folderId));
+        docs_set_user_task_folders($settings, $folderOwnerId, $nextFolders);
 
         $records = load_registry($folder);
         foreach ($records as &$record) {
             if (!is_array($record)) { continue; }
-            $currentFolderId = docs_normalize_task_folder_id($record['folderId'] ?? '');
+            $currentFolderId = docs_get_record_folder_id_for_user($record, $folderOwnerId);
             if ($currentFolderId === $folderId) {
-                $record['folderId'] = '';
+                docs_set_record_folder_id_for_user($record, $folderOwnerId, '');
                 $record['updatedAt'] = date('c');
             }
         }
         unset($record);
         save_registry($folder, $records);
         save_admin_settings($folder, $settings);
-        respond_success(['folders' => array_values($settings['taskFolders'])]);
+        respond_success(['folders' => docs_get_user_task_folders($settings, $folderOwnerId)]);
+        break;
+
+
+
+    case 'mini_app_folder_rename':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        $organizationCandidate = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $folderId = docs_normalize_task_folder_id($payload['folderId'] ?? '');
+        $folderName = sanitize_text_field((string) ($payload['name'] ?? ''), 120);
+        if ($organizationCandidate === '' || $folderId === '' || $folderName === '') {
+            respond_error('Не указаны данные папки.', 400);
+        }
+        $requestContext = docs_build_request_user_context();
+        $folderOwnerId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+        if ($folderOwnerId === '') {
+            respond_error('Не удалось определить пользователя.', 400);
+        }
+        $folder = sanitize_folder_name($organizationCandidate);
+        $settings = load_admin_settings($folder);
+        $folders = docs_get_user_task_folders($settings, $folderOwnerId);
+        foreach ($folders as &$entry) {
+            if ((string) ($entry['id'] ?? '') === $folderId) {
+                $entry['name'] = $folderName;
+            }
+        }
+        unset($entry);
+        docs_set_user_task_folders($settings, $folderOwnerId, $folders);
+        save_admin_settings($folder, $settings);
+        respond_success(['folders' => docs_get_user_task_folders($settings, $folderOwnerId)]);
         break;
 
 
@@ -14267,9 +14366,8 @@ switch ($action) {
 
         } elseif ($updateType === 'folder') {
             $nextFolderId = docs_normalize_task_folder_id($payload['folderId'] ?? '');
-            $availableFolders = isset($settings['taskFolders']) && is_array($settings['taskFolders'])
-                ? docs_prepare_task_folders_for_response($settings['taskFolders'])
-                : [];
+            $folderOwnerId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+            $availableFolders = docs_get_user_task_folders($settings, $folderOwnerId);
             if ($nextFolderId !== '') {
                 $exists = false;
                 foreach ($availableFolders as $folderEntry) {
@@ -14282,7 +14380,7 @@ switch ($action) {
                     respond_error('Папка не найдена.', 404);
                 }
             }
-            $records[$recordIndex]['folderId'] = $nextFolderId;
+            docs_set_record_folder_id_for_user($records[$recordIndex], $folderOwnerId, $nextFolderId);
             $message = $nextFolderId === '' ? 'Папка снята.' : 'Задача перемещена в папку.';
         } elseif ($updateType === 'instruction') {
             if (!docs_user_is_block2_member($block2, $requestContext)) {
