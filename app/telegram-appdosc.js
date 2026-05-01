@@ -6115,12 +6115,18 @@ function resolveFolderScope(tasks, folderId) {
   return source.filter((task) => normalizeTaskFolderId(task && task.folderId) === normalizedActiveFolderId);
 }
 
+function ensureActiveFolderId(value) {
+  const normalized = normalizeValue(value) || 'all';
+  const exists = folders.some((folder) => folder && folder.id === normalized);
+  return exists ? normalized : 'all';
+}
+
 function getFolderCount(folderId) {
   return resolveFolderScope(state.tasks, folderId).length;
 }
 
 function selectFolder(folderId) {
-  activeFolderId = normalizeValue(folderId) || 'all';
+  activeFolderId = ensureActiveFolderId(folderId);
   updateVisibleTasks();
   renderFolders();
   renderCards();
@@ -6187,7 +6193,7 @@ function updateVisibleTasks() {
     return;
   }
 
-  activeFolderId = normalizeValue(activeFolderId) || 'all';
+  activeFolderId = ensureActiveFolderId(activeFolderId);
   const folderScopedTasks = resolveFolderScope(state.tasks, activeFolderId);
 
   const filtered = applyTaskFilter(normalizedFilters, folderScopedTasks);
