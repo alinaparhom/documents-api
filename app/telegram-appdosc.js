@@ -2051,6 +2051,13 @@ function saveState() {
   saveTaskFoldersToStorage();
 }
 
+function refreshFolderUi() {
+  updateVisibleTasks();
+  renderFolders();
+  renderCards();
+  renderBulkFolderPanel();
+}
+
 function getFolderName(folderId) {
   if (!folderId) return 'Без папки';
   const folder = folders.find((item) => item.id === folderId);
@@ -5534,7 +5541,19 @@ function openFolderPicker(onSelect) {
     const wrap = document.createElement('div');
     wrap.innerHTML = '<h3>Переместить в папку</h3>';
     const base = [{id:'no-folder',name:'Без папки'}, ...folders.filter((f)=>!f.system)];
-    base.forEach((folder)=>{ const b=document.createElement('button'); b.className='folder-chip'; b.textContent=folder.name; b.addEventListener('click',()=>{ onSelect(folder.id==='no-folder'?null:folder.id); close();}); wrap.appendChild(b);});
+    const list = document.createElement('div');
+    list.className = 'folders-scroll';
+    base.forEach((folder) => {
+      const b = document.createElement('button');
+      b.className = 'folder-chip';
+      b.textContent = folder.name;
+      b.addEventListener('click', () => {
+        onSelect(folder.id === 'no-folder' ? null : folder.id);
+        close();
+      });
+      list.appendChild(b);
+    });
+    wrap.appendChild(list);
     return wrap;
   });
 }
@@ -5568,8 +5587,7 @@ function openFolderEditModal(folder = null) {
         folders.push({ id: `folder_${Date.now()}`, name, system: false });
       }
       saveState();
-      renderFolders();
-      renderCards();
+      refreshFolderUi();
       close();
     };
     row.append(cancel,save); wrap.append(input,row); return wrap;
@@ -5581,7 +5599,7 @@ function openFolderActionsModal(folder) {
 }
 
 function confirmDeleteFolder(folder) {
-  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3>Удалить папку «${folder.name}»?</h3><p>Задачи из этой папки не удалятся. Они будут перенесены в «Без папки».</p>`; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); renderFolders(); renderCards(); close();}; wrap.append(c,d); return wrap;});
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3>Удалить папку «${folder.name}»?</h3><p>Задачи из этой папки не удалятся. Они будут перенесены в «Без папки».</p>`; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); close();}; wrap.append(c,d); return wrap;});
 }
 
 function setupTaskFolderControl(card, task) {
@@ -5596,7 +5614,11 @@ function setupTaskFolderControl(card, task) {
   btn.dataset.taskId = String(task.id || '');
   btn.textContent = `${getFolderName(task.folderId)} ▾`;
   btn.onclick = () => {
-    openFolderPicker((selectedFolderId) => { task.folderId = selectedFolderId; saveState(); renderFolders(); renderCards(); });
+    openFolderPicker((selectedFolderId) => {
+      task.folderId = selectedFolderId;
+      saveState();
+      refreshFolderUi();
+    });
   };
 }
 
@@ -5629,7 +5651,7 @@ function renderBulkFolderPanel() {
   panel.style.display='flex';
   panel.innerHTML = `<span>Выбрано: ${selectedTaskIds.size}</span>`;
   const toFolder = document.createElement('button'); toFolder.className='appdosc-card__action'; toFolder.textContent='В папку';
-  toFolder.onclick = ()=>openFolderPicker((selectedFolderId)=>{ selectedTaskIds.forEach((id)=>{ const task=state.tasks.find((t)=>String(t.id)===String(id)); if(task) task.folderId=selectedFolderId;}); selectedTaskIds.clear(); saveState(); renderFolders(); renderCards(); renderBulkFolderPanel();});
+  toFolder.onclick = ()=>openFolderPicker((selectedFolderId)=>{ selectedTaskIds.forEach((id)=>{ const task=state.tasks.find((t)=>String(t.id)===String(id)); if(task) task.folderId=selectedFolderId;}); selectedTaskIds.clear(); saveState(); refreshFolderUi();});
   const cancel = document.createElement('button'); cancel.className='appdosc-card__action'; cancel.textContent='Отмена'; cancel.onclick=()=>{selectedTaskIds.clear(); renderCards(); renderBulkFolderPanel();};
   panel.append(toFolder,cancel);
 }
