@@ -21156,6 +21156,27 @@ function setupSubordinateControls(card, task) {
     saveState(); closeDeleteConfirm(); renderFolders(); renderTasks();
   }
 
+
+
+  function openFolderActions(folderId) {
+    const panel = document.querySelector('[data-move-list]');
+    if (!panel) return;
+    panel.innerHTML = '';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'appdosc-sheet__item';
+    editBtn.type = 'button';
+    editBtn.textContent = 'Переименовать';
+    editBtn.onclick = () => { document.querySelector('[data-move-sheet]').hidden = true; openFolderModal('edit', folderId); };
+    const delBtn = document.createElement('button');
+    delBtn.className = 'appdosc-sheet__item appdosc-sheet__btn--danger';
+    delBtn.type = 'button';
+    delBtn.textContent = 'Удалить';
+    delBtn.onclick = () => { document.querySelector('[data-move-sheet]').hidden = true; openDeleteConfirm(folderId); };
+    panel.appendChild(editBtn);
+    panel.appendChild(delBtn);
+    document.querySelector('[data-move-sheet]').hidden = false;
+  }
+
   function renderFolders() {
     const total = document.querySelector('[data-folders-total]'); if (total) total.textContent = String(tasks.length);
     const list = document.querySelector('[data-folders-list']); if (!list) return;
@@ -21169,7 +21190,7 @@ function setupSubordinateControls(card, task) {
       if (manageMode && !folder.system) {
         const m = document.createElement('button');
         m.type = 'button'; m.className = 'appdosc-folder-btn__menu'; m.textContent = '⋯';
-        m.addEventListener('click', (e) => { e.stopPropagation(); const action = window.prompt('1 - Переименовать, 2 - Удалить', '1'); if (action === '1') openFolderModal('edit', folder.id); if (action === '2') openDeleteConfirm(folder.id); });
+        m.addEventListener('click', (e) => { e.stopPropagation(); openFolderActions(folder.id); });
         btn.appendChild(m);
       }
       list.appendChild(btn);
@@ -21261,7 +21282,20 @@ function setupSubordinateControls(card, task) {
     renderTasks();
   }
 
-  document.addEventListener('DOMContentLoaded', init);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+  const observer = new MutationObserver(() => {
+    const hasBlock = document.querySelector('[data-folders-block]');
+    const hasHost = document.querySelector('.tasks-header');
+    if (hasHost && !hasBlock) {
+      init();
+    }
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 
   window.taskFoldersFeature = {
     loadState, saveState, normalizeTasks,
