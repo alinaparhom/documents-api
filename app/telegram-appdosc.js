@@ -2078,6 +2078,25 @@ function setTaskFolder(task, folderId) {
   if (!task || typeof task !== 'object') return;
   task.folderId = normalizeValue(folderId) || null;
 }
+
+async function persistTaskFolderToRegistry(task) {
+  const organization = normalizeValue(task && task.organization);
+  const documentId = normalizeValue(task && (task.id || task.entryNumber || task.registryNumber));
+  if (!organization || !documentId) {
+    return;
+  }
+  try {
+    await sendTaskMutation({
+      updateType: 'folder',
+      organization,
+      documentId,
+      folderId: normalizeValue(task.folderId) || '',
+      folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
+    });
+  } catch (error) {
+    setStatus('error', 'Не удалось сохранить папку в registry.json');
+  }
+}
 const state = {
   themeMode: 'dark',
   persistedThemeMode: '',
@@ -2446,8 +2465,15 @@ function sanitizeTaskItem(task) {
 
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
+  const currentUserId = normalizeValue(state?.telegram?.id);
+  const folderByUser = isPlainObject(sanitized.folderByUser) ? sanitized.folderByUser : null;
+  const userFolderFromTask = currentUserId && folderByUser
+    ? normalizeValue(folderByUser[currentUserId]) || null
+    : null;
   const taskId = normalizeValue(sanitized.id);
-  if (taskId && Object.prototype.hasOwnProperty.call(taskFolderMap, taskId)) {
+  if (userFolderFromTask !== null) {
+    sanitized.folderId = userFolderFromTask;
+  } else if (taskId && Object.prototype.hasOwnProperty.call(taskFolderMap, taskId)) {
     sanitized.folderId = normalizeValue(taskFolderMap[taskId]) || null;
   } else {
     sanitized.folderId = normalizeValue(sanitized.folderId) || null;
@@ -5633,6 +5659,7 @@ function setupTaskFolderControl(card, task) {
       setTaskFolder(task, selectedFolderId);
       saveState();
       refreshFolderUi();
+      persistTaskFolderToRegistry(task);
     });
   };
 }
@@ -5666,7 +5693,22 @@ function renderBulkFolderPanel() {
   panel.style.display='flex';
   panel.innerHTML = `<span>Выбрано: ${selectedTaskIds.size}</span>`;
   const toFolder = document.createElement('button'); toFolder.className='appdosc-card__action'; toFolder.textContent='В папку';
-  toFolder.onclick = ()=>openFolderPicker((selectedFolderId)=>{ selectedTaskIds.forEach((id)=>{ const task=state.tasks.find((t)=>String(t.id)===String(id)); if(task) setTaskFolder(task, selectedFolderId);}); selectedTaskIds.clear(); saveState(); refreshFolderUi();});
+  toFolder.onclick = ()=> {
+    panel.style.display = 'none';
+    openFolderPicker((selectedFolderId) => {
+      selectedTaskIds.forEach((id) => {
+        const task = state.tasks.find((t) => String(t.id) === String(id));
+        if (task) {
+          setTaskFolder(task, selectedFolderId);
+          persistTaskFolderToRegistry(task);
+        }
+      });
+      selectedTaskIds.clear();
+      saveState();
+      refreshFolderUi();
+      closeBottomSheet();
+    });
+  };
   const cancel = document.createElement('button'); cancel.className='appdosc-card__action'; cancel.textContent='Отмена'; cancel.onclick=()=>{selectedTaskIds.clear(); renderCards(); renderBulkFolderPanel();};
   panel.append(toFolder,cancel);
 }
@@ -12610,6 +12652,8 @@ async function sendTaskMutation(update) {
     status,
     dueDate,
     instruction,
+    folderId,
+    folderUserId,
   } = update || {};
   if (!updateType || !organization || !documentId) {
     throw new Error('Недостаточно данных для обновления задачи.');
@@ -12777,6 +12821,14 @@ async function sendTaskMutation(update) {
 
   if (Object.prototype.hasOwnProperty.call(update || {}, 'instruction')) {
     payload.instruction = typeof instruction === 'string' ? instruction : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderId')) {
+    payload.folderId = typeof folderId === 'string' ? folderId : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderUserId')) {
+    payload.folderUserId = typeof folderUserId === 'string' ? folderUserId : '';
   }
 
   logClientEvent('task_update_request', {

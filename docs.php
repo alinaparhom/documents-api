@@ -14153,6 +14153,29 @@ switch ($action) {
             } else {
                 $message = 'Поручение обновлено.';
             }
+        } elseif ($updateType === 'folder') {
+            $rawFolderId = isset($payload['folderId']) ? (string) $payload['folderId'] : '';
+            $normalizedFolderId = sanitize_text_field($rawFolderId, 120);
+            $folderUserIdRaw = isset($payload['folderUserId']) ? (string) $payload['folderUserId'] : '';
+            $folderUserId = sanitize_text_field($folderUserIdRaw, 200);
+
+            if ($folderUserId === '' && isset($requestContext['primaryId'])) {
+                $folderUserId = sanitize_text_field((string) $requestContext['primaryId'], 200);
+            }
+            if ($folderUserId === '') {
+                respond_error('Не удалось определить пользователя для папки.', 400);
+            }
+
+            if (!isset($records[$recordIndex]['folderByUser']) || !is_array($records[$recordIndex]['folderByUser'])) {
+                $records[$recordIndex]['folderByUser'] = [];
+            }
+
+            if ($normalizedFolderId === '') {
+                unset($records[$recordIndex]['folderByUser'][$folderUserId]);
+            } else {
+                $records[$recordIndex]['folderByUser'][$folderUserId] = $normalizedFolderId;
+            }
+            $message = 'Папка задачи обновлена.';
         } else {
             respond_error('Неизвестный тип обновления.', 400, [
                 'updateType' => $updateType,
