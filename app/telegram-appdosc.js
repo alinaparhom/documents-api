@@ -17417,12 +17417,16 @@ function setStatus(type, message) {
   if (!elements.status || !elements.status.parentElement) {
     return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
   if (toastTimerId) {
     window.clearTimeout(toastTimerId);
     toastTimerId = null;
   }
   const host = elements.status.parentElement;
   host.classList.add('appdosc-toast-layer');
+  if (statusContainer) {
+    statusContainer.hidden = false;
+  }
   elements.status.textContent = message;
   elements.status.hidden = false;
   elements.status.className = 'appdosc__status-message appdosc-toast';
