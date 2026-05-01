@@ -10,6 +10,7 @@ preloadPdfjs();
 
 const API_URL = '/docs.php?action=mini_app_tasks';
 const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
+const FOLDERS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_folders';
 const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
@@ -3614,6 +3615,7 @@ function updateStateFromPayload(payload) {
 
   const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
   state.tasks = sanitizedTasks;
+  restoreFoldersFromPayload(payload);
   if (rangeCalendarInstance && typeof rangeCalendarInstance.setTaskCounts === 'function') {
     const payloadTaskCounts = normalizeTaskCounts(payload?.taskDateStats?.items);
     const fallbackTaskCounts = normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks));
@@ -5904,27 +5906,23 @@ function scrollToCard(anchorId) {
   highlightCard(card);
 }
 
-function getFolderStorageKey() {
-  const userPart = normalizeValue(state.telegram && state.telegram.id) || 'guest';
-  return `appdosc_task_folders_${userPart}`;
-}
-
-function persistFolders() {
+async function persistFolders() {
+  const organization = normalizeValue(getTaskOrganizationFromState()) || normalizeValue(getTaskOrganization(state.tasks[0] || {}));
+  if (!organization) return;
   try {
-    localStorage.setItem(getFolderStorageKey(), JSON.stringify({ folders: state.folders, assignments: state.folderAssignments }));
+    await fetch(FOLDERS_SAVE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(state.telegram.initData ? { 'X-Telegram-Init-Data': state.telegram.initData } : {}) },
+      credentials: 'include',
+      body: JSON.stringify({ organization, folders: state.folders, assignments: state.folderAssignments }),
+    });
   } catch (error) {}
 }
 
-function restoreFolders() {
-  try {
-    const raw = localStorage.getItem(getFolderStorageKey());
-    const parsed = raw ? JSON.parse(raw) : null;
-    state.folders = Array.isArray(parsed && parsed.folders) ? parsed.folders : [];
-    state.folderAssignments = parsed && typeof parsed.assignments === 'object' ? parsed.assignments : {};
-  } catch (error) {
-    state.folders = [];
-    state.folderAssignments = {};
-  }
+function restoreFoldersFromPayload(payload) {
+  const folderState = payload && typeof payload.folderState === 'object' ? payload.folderState : {};
+  state.folders = Array.isArray(folderState.folders) ? folderState.folders : [];
+  state.folderAssignments = folderState && typeof folderState.assignments === 'object' ? folderState.assignments : {};
 }
 
 function getTaskFolderTaskKey(task) {
@@ -17446,7 +17444,6 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
-  restoreFolders();
   initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {

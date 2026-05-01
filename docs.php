@@ -5858,6 +5858,36 @@ function docs_save_theme_mode_for_telegram_user(array &$settings, string $telegr
     return $updated;
 }
 
+function docs_get_folder_state_for_telegram_user(array $settings, string $telegramUserId): array
+{
+    $normalizedUserId = normalize_identifier_value($telegramUserId);
+    if ($normalizedUserId === '') {
+        return ['folders' => [], 'assignments' => []];
+    }
+    $store = isset($settings['miniAppFolders']) && is_array($settings['miniAppFolders']) ? $settings['miniAppFolders'] : [];
+    $entry = isset($store[$normalizedUserId]) && is_array($store[$normalizedUserId]) ? $store[$normalizedUserId] : [];
+    $folders = isset($entry['folders']) && is_array($entry['folders']) ? array_values($entry['folders']) : [];
+    $assignments = isset($entry['assignments']) && is_array($entry['assignments']) ? $entry['assignments'] : [];
+    return ['folders' => $folders, 'assignments' => $assignments];
+}
+
+function docs_save_folder_state_for_telegram_user(array &$settings, string $telegramUserId, array $folders, array $assignments): bool
+{
+    $normalizedUserId = normalize_identifier_value($telegramUserId);
+    if ($normalizedUserId === '') {
+        return false;
+    }
+    if (!isset($settings['miniAppFolders']) || !is_array($settings['miniAppFolders'])) {
+        $settings['miniAppFolders'] = [];
+    }
+    $settings['miniAppFolders'][$normalizedUserId] = [
+        'folders' => array_values($folders),
+        'assignments' => $assignments,
+        'updatedAt' => date('c'),
+    ];
+    return true;
+}
+
 function docs_normalize_identifier_candidate_value($value): string
 {
     $normalized = normalize_identifier_value($value);
@@ -12729,6 +12759,7 @@ switch ($action) {
                 'canDeleteDocuments' => false,
             ],
             'directorMode' => $directorModeSummary,
+            'folderState' => docs_get_folder_state_for_telegram_user($settings, $telegramUserId),
         ]);
         break;
 
@@ -12786,6 +12817,38 @@ switch ($action) {
             'telegramUserId' => $telegramUserId,
             'themeMode' => $themeMode,
             'updated' => $updated,
+        ]);
+        break;
+
+    case 'mini_app_save_folders':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+        $requestContext = docs_build_request_user_context();
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        $organizationCandidate = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        if ($organizationCandidate === '') {
+            respond_error('Не указана организация.');
+        }
+        $telegramUserId = normalize_identifier_value($requestContext['primaryId'] ?? '');
+        if ($telegramUserId === '') {
+            respond_error('Не удалось определить Telegram ID.', 400);
+        }
+        $accessContext = docs_resolve_access_context($organizationCandidate, true);
+        $organization = $accessContext['active'] ?? $organizationCandidate;
+        $folder = sanitize_folder_name($organization);
+        $settings = load_admin_settings($folder);
+        $folders = isset($payload['folders']) && is_array($payload['folders']) ? $payload['folders'] : [];
+        $assignments = isset($payload['assignments']) && is_array($payload['assignments']) ? $payload['assignments'] : [];
+        docs_save_folder_state_for_telegram_user($settings, $telegramUserId, $folders, $assignments);
+        save_admin_settings($folder, $settings);
+        respond_success([
+            'organization' => $organization,
+            'telegramUserId' => $telegramUserId,
+            'folderState' => docs_get_folder_state_for_telegram_user($settings, $telegramUserId),
         ]);
         break;
 
