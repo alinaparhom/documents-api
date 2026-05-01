@@ -2061,6 +2061,29 @@ function saveState() {
   saveTaskFoldersToStorage();
 }
 
+function extractFoldersFromTasks(tasks) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  const currentUserId = normalizeValue(state?.telegram?.id);
+  if (!currentUserId) return;
+  for (let i = 0; i < source.length; i += 1) {
+    const task = source[i];
+    const settings = isPlainObject(task?.folderSettingsByUser) ? task.folderSettingsByUser : null;
+    const userFolders = settings && Array.isArray(settings[currentUserId]) ? settings[currentUserId] : null;
+    if (userFolders) {
+      const customFolders = userFolders
+        .filter((folder) => isPlainObject(folder) && normalizeValue(folder.id) && normalizeValue(folder.name))
+        .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }));
+      folders = [
+        { id: 'all', name: 'Все задачи', system: true },
+        { id: 'no-folder', name: 'Без папки', system: true },
+        ...customFolders,
+      ];
+      saveFoldersToStorage();
+      break;
+    }
+  }
+}
+
 function refreshFolderUi() {
   updateVisibleTasks();
   renderFolders();
@@ -2095,6 +2118,22 @@ async function persistTaskFolderToRegistry(task) {
     });
   } catch (error) {
     setStatus('error', 'Не удалось сохранить папку в registry.json');
+  }
+}
+
+async function persistFoldersListToRegistry() {
+  const task = Array.isArray(state.tasks) ? state.tasks.find((item) => item && item.organization && item.id) : null;
+  if (!task) return;
+  try {
+    await sendTaskMutation({
+      updateType: 'folder_state',
+      organization: normalizeValue(task.organization),
+      documentId: normalizeValue(task.id),
+      folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
+      folderState: folders.filter((item) => !item.system).map((item) => ({ id: item.id, name: item.name })),
+    });
+  } catch (error) {
+    setStatus('error', 'Не удалось сохранить список папок в registry.json');
   }
 }
 const state = {
@@ -3751,6 +3790,7 @@ function updateStateFromPayload(payload) {
 
   const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
   state.tasks = sanitizedTasks;
+  extractFoldersFromTasks(sanitizedTasks);
   if (rangeCalendarInstance && typeof rangeCalendarInstance.setTaskCounts === 'function') {
     const payloadTaskCounts = normalizeTaskCounts(payload?.taskDateStats?.items);
     const fallbackTaskCounts = normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks));
@@ -5629,6 +5669,7 @@ function openFolderEditModal(folder = null) {
       }
       saveState();
       refreshFolderUi();
+      persistFoldersListToRegistry();
       close();
     };
     row.append(cancel,save); wrap.append(input,row); return wrap;
@@ -5640,7 +5681,7 @@ function openFolderActionsModal(folder) {
 }
 
 function confirmDeleteFolder(folder) {
-  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3>Удалить папку «${folder.name}»?</h3><p>Задачи из этой папки не удалятся. Они будут перенесены в «Без папки».</p>`; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); close();}; wrap.append(c,d); return wrap;});
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3>Удалить папку «${folder.name}»?</h3><p>Задачи из этой папки не удалятся. Они будут перенесены в «Без папки».</p>`; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); persistFoldersListToRegistry(); close();}; wrap.append(c,d); return wrap;});
 }
 
 function setupTaskFolderControl(card, task) {
@@ -12654,6 +12695,7 @@ async function sendTaskMutation(update) {
     instruction,
     folderId,
     folderUserId,
+    folderState,
   } = update || {};
   if (!updateType || !organization || !documentId) {
     throw new Error('Недостаточно данных для обновления задачи.');
@@ -12829,6 +12871,18 @@ async function sendTaskMutation(update) {
 
   if (Object.prototype.hasOwnProperty.call(update || {}, 'folderUserId')) {
     payload.folderUserId = typeof folderUserId === 'string' ? folderUserId : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderState') && Array.isArray(folderState)) {
+    payload.folderState = folderState
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const id = normalizeValue(item.id);
+        const name = normalizeValue(item.name);
+        if (!id || !name) return null;
+        return { id, name };
+      })
+      .filter(Boolean);
   }
 
   logClientEvent('task_update_request', {
