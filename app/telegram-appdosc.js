@@ -2822,10 +2822,8 @@ function initElements() {
   elements.versionValue = document.querySelector('[data-version-value]');
   elements.versionUpdated = document.querySelector('[data-version-updated]');
   elements.folderManager = document.querySelector('[data-folder-manager]');
-  elements.folderFilter = document.querySelector('[data-folder-filter]');
+  elements.folderChips = document.querySelector('[data-folder-chips]');
   elements.folderCreateButton = document.querySelector('[data-folder-create]');
-  elements.folderRenameButton = document.querySelector('[data-folder-rename]');
-  elements.folderDeleteButton = document.querySelector('[data-folder-delete]');
   elements.taskCountInline = document.querySelector('[data-task-count-inline]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
@@ -3401,9 +3399,7 @@ function setLoading(isLoading) {
     elements.refreshButton.disabled = isLoading;
     setClass(elements.refreshButton, 'is-loading', isLoading);
   }
-  if (elements.folderFilter) {
-    elements.folderFilter.disabled = isLoading;
-  }
+
   setClass(document.body, 'appdosc--loading', isLoading);
 
   logIosStage('loading_state_changed', { isLoading });
@@ -5937,50 +5933,60 @@ function getTaskFolderTaskKey(task) {
 }
 
 function updateTaskSelector() {
-  if (!elements.folderFilter || !elements.folderManager) return;
-  const selector = elements.folderFilter;
-  selector.innerHTML = '';
-  const options = [{ id: '', name: 'Все папки' }, ...state.folders, { id: '__none__', name: 'Без папки' }];
-  options.forEach((folder) => {
-    const option = document.createElement('option');
-    option.value = folder.id;
-    option.textContent = folder.name;
-    if (state.selectedFolderId === folder.id) option.selected = true;
-    selector.appendChild(option);
+  if (!(elements.folderChips instanceof HTMLElement)) return;
+  const chips = [
+    { id: '', name: 'Все' },
+    ...state.folders,
+    { id: '__none__', name: 'Без папки' },
+  ];
+  elements.folderChips.innerHTML = '';
+  chips.forEach((folder) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'appdosc__folder-chip';
+    if (state.selectedFolderId === folder.id) button.classList.add('is-active');
+    button.textContent = folder.name;
+    button.dataset.folderId = folder.id;
+    button.addEventListener('click', () => handleFolderChipClick(folder.id));
+    elements.folderChips.appendChild(button);
   });
   const visibleItems = getVisibleTaskItems();
   if (elements.taskCountInline) elements.taskCountInline.textContent = visibleItems.length ? ` • Задач: ${visibleItems.length}` : '';
 }
 
-function handleTaskSelectorChange(event) {
-  state.selectedFolderId = normalizeValue(event?.target?.value);
-  updateVisibleTasks();
-  safeRender('folder_filter_change');
-}
-
-function openFolderPrompt(mode) {
-  if (mode === 'create') {
-    const name = normalizeValue(window.prompt('Название новой папки'));
-    if (!name) return;
-    state.folders.push({ id: `folder_${Date.now().toString(36)}`, name });
-  }
-  if (mode === 'rename') {
-    if (!state.selectedFolderId) return;
-    const folder = state.folders.find((item) => item.id === state.selectedFolderId);
-    if (!folder) return;
-    const name = normalizeValue(window.prompt('Новое название папки', folder.name));
-    if (!name) return;
-    folder.name = name;
-  }
-  if (mode === 'delete') {
-    if (!state.selectedFolderId) return;
-    state.folders = state.folders.filter((item) => item.id !== state.selectedFolderId);
-    Object.keys(state.folderAssignments).forEach((key) => { if (state.folderAssignments[key] === state.selectedFolderId) delete state.folderAssignments[key]; });
-    state.selectedFolderId = '';
+function handleFolderChipClick(folderId) {
+  const normalizedId = normalizeValue(folderId);
+  if (state.selectedFolderId === normalizedId && normalizedId && normalizedId !== '__none__') {
+    const action = window.prompt('1 — Переименовать
+2 — Удалить
+0 — Отмена', '0');
+    if (action === '1') {
+      const folder = state.folders.find((item) => item.id === normalizedId);
+      if (!folder) return;
+      const name = normalizeValue(window.prompt('Новое имя папки', folder.name));
+      if (name) folder.name = name;
+    } else if (action === '2') {
+      state.folders = state.folders.filter((item) => item.id !== normalizedId);
+      Object.keys(state.folderAssignments).forEach((key) => { if (state.folderAssignments[key] === normalizedId) delete state.folderAssignments[key]; });
+      state.selectedFolderId = '';
+    }
+  } else {
+    state.selectedFolderId = normalizedId;
   }
   persistFolders();
   updateVisibleTasks();
-  safeRender('folder_update');
+  safeRender('folder_chip_change');
+}
+
+function openFolderPrompt(mode) {
+  if (mode !== 'create') return;
+  const name = normalizeValue(window.prompt('Название новой папки'));
+  if (!name) return;
+  state.folders.push({ id: `folder_${Date.now().toString(36)}`, name });
+  state.selectedFolderId = state.folders[state.folders.length - 1].id;
+  persistFolders();
+  updateVisibleTasks();
+  safeRender('folder_create');
 }
 
 function setCardField(card, selector, value, options = {}) {
@@ -17053,17 +17059,8 @@ function attachEvents() {
   if (elements.refreshButton) {
     elements.refreshButton.addEventListener('click', () => loadTasks(true));
   }
-  if (elements.folderFilter) {
-    elements.folderFilter.addEventListener('change', handleTaskSelectorChange);
-  }
   if (elements.folderCreateButton) {
     elements.folderCreateButton.addEventListener('click', () => openFolderPrompt('create'));
-  }
-  if (elements.folderRenameButton) {
-    elements.folderRenameButton.addEventListener('click', () => openFolderPrompt('rename'));
-  }
-  if (elements.folderDeleteButton) {
-    elements.folderDeleteButton.addEventListener('click', () => openFolderPrompt('delete'));
   }
   if (elements.summaryToggle) {
     elements.summaryToggle.addEventListener('click', handleSummaryToggleClick);

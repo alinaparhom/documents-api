@@ -1874,6 +1874,31 @@
         gap: 8px;
       }
 
+      .appdosc__folder-chips {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 4px;
+        scrollbar-width: none;
+      }
+      .appdosc__folder-chips::-webkit-scrollbar { display: none; }
+
+      .appdosc__folder-chip {
+        border: 1px solid var(--appdosc-task-pill-border);
+        background: var(--appdosc-task-pill-bg);
+        color: var(--appdosc-task-pill-color);
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .appdosc__folder-chip.is-active {
+        border-color: var(--appdosc-task-date-border);
+        background: var(--appdosc-task-date-bg);
+        color: var(--appdosc-task-date-color);
+      }
+
       .appdosc__folder-toolbar .appdosc__filter-toggle {
         min-height: 40px;
         border-radius: 12px;
@@ -3064,10 +3089,8 @@
               <span class="appdosc__task-nav-count" data-task-count-inline></span>
             </label>
             <div class="appdosc__folder-toolbar">
-              <select class="appdosc__task-nav-select" id="appdosc-folder-filter" data-folder-filter aria-label="Фильтр по папке"></select>
-              <button type="button" class="appdosc__filter-toggle" data-folder-create>+ Папка</button>
-              <button type="button" class="appdosc__filter-toggle" data-folder-rename>Переименовать</button>
-              <button type="button" class="appdosc__filter-toggle" data-folder-delete>Удалить</button>
+              <div class="appdosc__folder-chips" data-folder-chips aria-label="Папки задач"></div>
+              <button type="button" class="appdosc__filter-toggle appdosc__folder-add" data-folder-create>+ Новая папка</button>
             </div>
           </div>
         </div>
