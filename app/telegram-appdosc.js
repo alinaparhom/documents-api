@@ -1981,6 +1981,161 @@ function hydrateTelegramFromInitData(initData) {
   }
 }
 
+
+let folders = [
+  { id: 'all', name: 'Все задачи', system: true },
+  { id: 'no-folder', name: 'Без папки', system: true },
+];
+
+let activeFolderId = 'all';
+let selectedTaskIds = new Set();
+let folderManageMode = false;
+let taskFolderMap = {};
+let foldersStateJson = '{"folders":[],"taskFolders":{}}';
+
+function loadFoldersFromStorage() {
+  try {
+    const raw = normalizeValue((typeof window !== 'undefined' && window.__APPDOSC_FOLDERS_JSON__) || foldersStateJson) || '{"folders":[],"taskFolders":{}}';
+    const parsedRoot = JSON.parse(raw);
+    const parsed = Array.isArray(parsedRoot.folders) ? parsedRoot.folders : [];
+    const customFolders = parsed
+      .filter((folder) => isPlainObject(folder) && !folder.system && normalizeValue(folder.id) && normalizeValue(folder.name))
+      .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }));
+    folders = [
+      { id: 'all', name: 'Все задачи', system: true },
+      { id: 'no-folder', name: 'Без папки', system: true },
+      ...customFolders,
+    ];
+  } catch (error) {
+    folders = [
+      { id: 'all', name: 'Все задачи', system: true },
+      { id: 'no-folder', name: 'Без папки', system: true },
+    ];
+  }
+}
+
+function saveFoldersToStorage() {
+  try {
+    const customFolders = folders.filter((folder) => !folder.system);
+    const root = JSON.parse(foldersStateJson || '{"folders":[],"taskFolders":{}}');
+    root.folders = customFolders;
+    foldersStateJson = JSON.stringify(root);
+    if (typeof window !== 'undefined') {
+      window.__APPDOSC_FOLDERS_JSON__ = foldersStateJson;
+    }
+  } catch (error) {}
+}
+
+function loadTaskFoldersFromStorage() {
+  try {
+    const raw = normalizeValue((typeof window !== 'undefined' && window.__APPDOSC_FOLDERS_JSON__) || foldersStateJson) || '{"folders":[],"taskFolders":{}}';
+    const parsedRoot = JSON.parse(raw);
+    const parsed = parsedRoot && isPlainObject(parsedRoot.taskFolders) ? parsedRoot.taskFolders : {};
+    taskFolderMap = isPlainObject(parsed) ? parsed : {};
+  } catch (error) {
+    taskFolderMap = {};
+  }
+}
+
+function saveTaskFoldersToStorage() {
+  try {
+    const map = {};
+    state.tasks.forEach((task) => {
+      const key = normalizeValue(task && task.id);
+      if (!key) return;
+      map[key] = normalizeValue(task.folderId) || null;
+    });
+    taskFolderMap = map;
+    const root = JSON.parse(foldersStateJson || '{"folders":[],"taskFolders":{}}');
+    root.taskFolders = map;
+    foldersStateJson = JSON.stringify(root);
+    if (typeof window !== 'undefined') {
+      window.__APPDOSC_FOLDERS_JSON__ = foldersStateJson;
+    }
+  } catch (error) {}
+}
+
+
+function saveState() {
+  saveFoldersToStorage();
+  saveTaskFoldersToStorage();
+}
+
+function extractFoldersFromTasks(tasks) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  const currentUserId = normalizeValue(state?.telegram?.id);
+  if (!currentUserId) return;
+  for (let i = 0; i < source.length; i += 1) {
+    const task = source[i];
+    const settings = isPlainObject(task?.folderSettingsByUser) ? task.folderSettingsByUser : null;
+    const userFolders = settings && Array.isArray(settings[currentUserId]) ? settings[currentUserId] : null;
+    if (userFolders) {
+      const customFolders = userFolders
+        .filter((folder) => isPlainObject(folder) && normalizeValue(folder.id) && normalizeValue(folder.name))
+        .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }));
+      folders = [
+        { id: 'all', name: 'Все задачи', system: true },
+        { id: 'no-folder', name: 'Без папки', system: true },
+        ...customFolders,
+      ];
+      saveFoldersToStorage();
+      break;
+    }
+  }
+}
+
+function refreshFolderUi() {
+  updateVisibleTasks();
+  renderFolders();
+  renderCards();
+  renderBulkFolderPanel();
+}
+
+function getFolderName(folderId) {
+  if (!folderId) return 'Без папки';
+  const folder = folders.find((item) => item.id === folderId);
+  return folder ? folder.name : 'Без папки';
+}
+
+function setTaskFolder(task, folderId) {
+  if (!task || typeof task !== 'object') return;
+  task.folderId = normalizeValue(folderId) || null;
+}
+
+async function persistTaskFolderToRegistry(task) {
+  const organization = normalizeValue(task && task.organization);
+  const documentId = normalizeValue(task && (task.id || task.entryNumber || task.registryNumber));
+  if (!organization || !documentId) {
+    return;
+  }
+  try {
+    await sendTaskMutation({
+      updateType: 'folder',
+      organization,
+      documentId,
+      folderId: normalizeValue(task.folderId) || '',
+      folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
+    });
+  } catch (error) {
+    setStatus('error', 'Не удалось сохранить папку в registry.json');
+  }
+}
+
+async function persistFoldersListToRegistry() {
+  const task = Array.isArray(state.tasks) ? state.tasks.find((item) => item && item.organization && item.id) : null;
+  if (!task) return;
+  try {
+    await sendTaskMutation({
+      updateType: 'folder_state',
+      organization: normalizeValue(task.organization),
+      documentId: normalizeValue(task.id),
+      folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
+      folderState: folders.filter((item) => !item.system).map((item) => ({ id: item.id, name: item.name })),
+    });
+  } catch (error) {
+    setStatus('error', 'Не удалось сохранить список папок в registry.json');
+  }
+}
 const state = {
   themeMode: 'dark',
   persistedThemeMode: '',
@@ -2349,6 +2504,19 @@ function sanitizeTaskItem(task) {
 
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
+  const currentUserId = normalizeValue(state?.telegram?.id);
+  const folderByUser = isPlainObject(sanitized.folderByUser) ? sanitized.folderByUser : null;
+  const userFolderFromTask = currentUserId && folderByUser
+    ? normalizeValue(folderByUser[currentUserId]) || null
+    : null;
+  const taskId = normalizeValue(sanitized.id);
+  if (userFolderFromTask !== null) {
+    sanitized.folderId = userFolderFromTask;
+  } else if (taskId && Object.prototype.hasOwnProperty.call(taskFolderMap, taskId)) {
+    sanitized.folderId = normalizeValue(taskFolderMap[taskId]) || null;
+  } else {
+    sanitized.folderId = normalizeValue(sanitized.folderId) || null;
+  }
 
   return sanitized;
 }
@@ -2764,6 +2932,10 @@ function initElements() {
   elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
+  elements.foldersSection = document.querySelector('[data-folders-section]');
+  elements.foldersCount = document.querySelector('[data-folders-count]');
+  elements.foldersManage = document.querySelector('[data-folders-manage]');
+  elements.foldersList = document.querySelector('[data-folders-list]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
   elements.summaryToggleIcon = document.querySelector('[data-summary-toggle-icon]');
   elements.summaryList = document.querySelector('[data-summary-list]');
@@ -2834,6 +3006,13 @@ function initElements() {
     templateFound: Boolean(elements.cardTemplate),
     placeholderFound: Boolean(elements.placeholder),
   });
+  if (elements.foldersManage) {
+    elements.foldersManage.addEventListener('click', () => {
+      folderManageMode = !folderManageMode;
+      elements.foldersManage.textContent = folderManageMode ? 'Готово' : 'Управление';
+      renderFolders();
+    });
+  }
   updateViewerDownloadState(null);
   updateViewerBriefState(null);
   updateViewerDeleteState(null);
@@ -3611,6 +3790,7 @@ function updateStateFromPayload(payload) {
 
   const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
   state.tasks = sanitizedTasks;
+  extractFoldersFromTasks(sanitizedTasks);
   if (rangeCalendarInstance && typeof rangeCalendarInstance.setTaskCounts === 'function') {
     const payloadTaskCounts = normalizeTaskCounts(payload?.taskDateStats?.items);
     const fallbackTaskCounts = normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks));
@@ -3809,8 +3989,10 @@ function render() {
   updateStats();
   updateDirectorSummary();
   updateSummaryFilterState();
+  renderFolders();
   syncCompactFilterPanelState();
   renderCards();
+  renderBulkFolderPanel();
   updateFooter();
 }
 
@@ -5411,7 +5593,165 @@ function createCard(task, index, anchorRegistry) {
 
   initializeCardExpansion(card);
 
+  setupTaskFolderControl(card, task);
+  setupTaskSelectionControl(card, task);
+
   return card;
+}
+
+
+function openBottomSheet(contentBuilder) {
+  closeBottomSheet();
+  const overlay = document.createElement('div');
+  overlay.className = 'bottom-sheet-overlay';
+  overlay.addEventListener('click', closeBottomSheet);
+  const sheet = document.createElement('div');
+  sheet.className = 'bottom-sheet';
+  const content = contentBuilder(closeBottomSheet);
+  sheet.appendChild(content);
+  document.body.appendChild(overlay);
+  document.body.appendChild(sheet);
+}
+
+function closeBottomSheet() {
+  document.querySelectorAll('.bottom-sheet-overlay, .bottom-sheet').forEach((el) => el.remove());
+}
+
+function openFolderPicker(onSelect) {
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = '<h3>Переместить в папку</h3>';
+    const base = [{id:'no-folder',name:'Без папки'}, ...folders.filter((f)=>!f.system)];
+    const list = document.createElement('div');
+    list.className = 'folders-scroll';
+    base.forEach((folder) => {
+      const b = document.createElement('button');
+      b.className = 'folder-chip';
+      b.textContent = folder.name;
+      b.addEventListener('click', () => {
+        onSelect(folder.id === 'no-folder' ? null : folder.id);
+        close();
+      });
+      list.appendChild(b);
+    });
+    wrap.appendChild(list);
+    return wrap;
+  });
+}
+
+function openFolderEditModal(folder = null) {
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    const title = folder ? 'Редактировать папку' : 'Создать папку';
+    wrap.innerHTML = `<h3>${title}</h3>`;
+    const input = document.createElement('input');
+    input.placeholder = 'Название папки';
+    input.value = folder ? folder.name : '';
+    input.className = 'appdosc__input';
+    const row = document.createElement('div');
+    const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
+    const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action';
+    save.onclick = () => {
+      const name = input.value.trim();
+      if (!name) {
+        setStatus('error', 'Введите название папки.');
+        return;
+      }
+      const exists = folders.some((item) => item.name.toLowerCase() === name.toLowerCase() && (!folder || item.id !== folder.id));
+      if (exists) {
+        setStatus('error', 'Папка с таким названием уже есть.');
+        return;
+      }
+      if (folder) {
+        folder.name = name;
+      } else {
+        folders.push({ id: `folder_${Date.now()}`, name, system: false });
+      }
+      saveState();
+      refreshFolderUi();
+      persistFoldersListToRegistry();
+      close();
+    };
+    row.append(cancel,save); wrap.append(input,row); return wrap;
+  });
+}
+
+function openFolderActionsModal(folder) {
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML='<h3>Управление папкой</h3>'; const ren=document.createElement('button'); ren.className='appdosc-card__action'; ren.textContent='Переименовать'; ren.onclick=()=>{close(); openFolderEditModal(folder);}; const del=document.createElement('button'); del.className='appdosc-card__action danger-btn'; del.textContent='Удалить'; del.onclick=()=>{close(); confirmDeleteFolder(folder);}; wrap.append(ren,del); return wrap;});
+}
+
+function confirmDeleteFolder(folder) {
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3>Удалить папку «${folder.name}»?</h3><p>Задачи из этой папки не удалятся. Они будут перенесены в «Без папки».</p>`; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); persistFoldersListToRegistry(); close();}; wrap.append(c,d); return wrap;});
+}
+
+function setupTaskFolderControl(card, task) {
+  let btn = card.querySelector('.task-folder-select');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'task-folder-select';
+    const footer = card.querySelector('.appdosc-card__actions') || card;
+    footer.prepend(btn);
+  }
+  btn.dataset.taskId = String(task.id || '');
+  btn.textContent = `${getFolderName(task.folderId)} ▾`;
+  btn.onclick = () => {
+    openFolderPicker((selectedFolderId) => {
+      setTaskFolder(task, selectedFolderId);
+      saveState();
+      refreshFolderUi();
+      persistTaskFolderToRegistry(task);
+    });
+  };
+}
+
+function setupTaskSelectionControl(card, task) {
+  let box = card.querySelector('.task-folder-checkbox');
+  if (!box) {
+    box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'task-folder-checkbox';
+    box.setAttribute('aria-label', 'Выбрать задачу для массового переноса');
+    const header = card.querySelector('.appdosc-card__header') || card;
+    header.prepend(box);
+  }
+  const taskId = String(task.id || '');
+  box.checked = selectedTaskIds.has(taskId);
+  box.onchange = () => {
+    if (box.checked) selectedTaskIds.add(taskId); else selectedTaskIds.delete(taskId);
+    renderBulkFolderPanel();
+  };
+}
+
+function renderBulkFolderPanel() {
+  let panel = document.querySelector('.bulk-folder-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.className = 'bulk-folder-panel';
+    document.body.appendChild(panel);
+  }
+  if (selectedTaskIds.size === 0) { panel.style.display='none'; return; }
+  panel.style.display='flex';
+  panel.innerHTML = `<span>Выбрано: ${selectedTaskIds.size}</span>`;
+  const toFolder = document.createElement('button'); toFolder.className='appdosc-card__action'; toFolder.textContent='В папку';
+  toFolder.onclick = ()=> {
+    panel.style.display = 'none';
+    openFolderPicker((selectedFolderId) => {
+      selectedTaskIds.forEach((id) => {
+        const task = state.tasks.find((t) => String(t.id) === String(id));
+        if (task) {
+          setTaskFolder(task, selectedFolderId);
+          persistTaskFolderToRegistry(task);
+        }
+      });
+      selectedTaskIds.clear();
+      saveState();
+      refreshFolderUi();
+      closeBottomSheet();
+    });
+  };
+  const cancel = document.createElement('button'); cancel.className='appdosc-card__action'; cancel.textContent='Отмена'; cancel.onclick=()=>{selectedTaskIds.clear(); renderCards(); renderBulkFolderPanel();};
+  panel.append(toFolder,cancel);
 }
 
 function togglePlaceholder(shouldShow) {
@@ -5726,6 +6066,67 @@ function isTaskOverdueByCompactRule(task) {
     || statusLabel.includes('просроч');
 }
 
+
+function getFolderCount(folderId) {
+  if (folderId === 'all') {
+    return state.tasks.length;
+  }
+  if (folderId === 'no-folder') {
+    return state.tasks.filter((task) => !task.folderId).length;
+  }
+  return state.tasks.filter((task) => task.folderId === folderId).length;
+}
+
+function selectFolder(folderId) {
+  activeFolderId = folderId;
+  renderFolders();
+  renderCards();
+}
+
+function renderFolders() {
+  if (!elements.foldersList) return;
+  const systemFolders = folders.filter((folder) => folder.system);
+  const customFolders = folders.filter((folder) => !folder.system);
+  const sortedFolders = [...systemFolders, ...customFolders];
+  elements.foldersList.innerHTML = '';
+  sortedFolders.forEach((folder) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'folder-chip';
+    if (folder.id === activeFolderId) {
+      button.classList.add('active');
+    }
+    const name = document.createElement('span');
+    name.className = 'folder-name';
+    name.textContent = folder.name;
+    const count = document.createElement('span');
+    count.className = 'folder-count';
+    count.textContent = String(getFolderCount(folder.id));
+    button.append(name, count);
+    if (folderManageMode && !folder.system) {
+      const manageBtn = document.createElement('button');
+      manageBtn.type = 'button';
+      manageBtn.className = 'folder-menu-btn';
+      manageBtn.textContent = '⋯';
+      manageBtn.addEventListener('click', (event) => { event.stopPropagation(); openFolderActionsModal(folder); });
+      button.appendChild(manageBtn);
+    }
+    button.addEventListener('click', () => selectFolder(folder.id));
+    elements.foldersList.appendChild(button);
+  });
+
+  const addButton = document.createElement('button');
+  addButton.type = 'button';
+  addButton.className = 'folder-chip';
+  addButton.textContent = '+ Папка';
+  addButton.addEventListener('click', () => openFolderEditModal());
+  elements.foldersList.appendChild(addButton);
+
+  if (elements.foldersCount) {
+    elements.foldersCount.textContent = String(state.tasks.length);
+  }
+}
+
 function updateVisibleTasks() {
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
@@ -5743,7 +6144,14 @@ function updateVisibleTasks() {
     return;
   }
 
-  const filtered = applyTaskFilter(normalizedFilters, state.tasks);
+  let folderScopedTasks = state.tasks;
+  if (activeFolderId === 'no-folder') {
+    folderScopedTasks = state.tasks.filter((task) => !task.folderId);
+  } else if (activeFolderId !== 'all') {
+    folderScopedTasks = state.tasks.filter((task) => task.folderId === activeFolderId);
+  }
+
+  const filtered = applyTaskFilter(normalizedFilters, folderScopedTasks);
   let visible = filtered;
 
   const hasAssigneeFilter = hasAssigneeFilters(normalizedFilters);
@@ -12285,6 +12693,9 @@ async function sendTaskMutation(update) {
     status,
     dueDate,
     instruction,
+    folderId,
+    folderUserId,
+    folderState,
   } = update || {};
   if (!updateType || !organization || !documentId) {
     throw new Error('Недостаточно данных для обновления задачи.');
@@ -12452,6 +12863,26 @@ async function sendTaskMutation(update) {
 
   if (Object.prototype.hasOwnProperty.call(update || {}, 'instruction')) {
     payload.instruction = typeof instruction === 'string' ? instruction : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderId')) {
+    payload.folderId = typeof folderId === 'string' ? folderId : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderUserId')) {
+    payload.folderUserId = typeof folderUserId === 'string' ? folderUserId : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderState') && Array.isArray(folderState)) {
+    payload.folderState = folderState
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const id = normalizeValue(item.id);
+        const name = normalizeValue(item.name);
+        if (!id || !name) return null;
+        return { id, name };
+      })
+      .filter(Boolean);
   }
 
   logClientEvent('task_update_request', {
@@ -17409,6 +17840,9 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
+  loadFoldersFromStorage();
+  loadTaskFoldersFromStorage();
+  saveFoldersToStorage();
   initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
