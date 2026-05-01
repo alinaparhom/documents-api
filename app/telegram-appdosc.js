@@ -5717,14 +5717,6 @@ function isTaskExcludedByEntryStatus(task, directorState) {
   return isOverdue(task);
 }
 
-function isTaskStatusUnspecified(task) {
-  const status = normalizeName(getTaskStatusValue(task));
-  if (!status) {
-    return true;
-  }
-  return status.includes('не указан') || status.includes('не выбра');
-}
-
 function isTaskOverdueByCompactRule(task) {
   const statusLabel = normalizeName(getTaskStatusValue(task));
   return isOverdue(task)
@@ -5751,12 +5743,7 @@ function updateVisibleTasks() {
 
   const filtered = applyTaskFilter(normalizedFilters, state.tasks);
   let visible = filtered;
-  const { statusFilters, overdue } = splitTaskFilters(normalizedFilters);
   const hasAssigneeFilter = hasAssigneeFilters(normalizedFilters);
-  const shouldShowOnlyUnspecifiedOnStart = !statusFilters.length && !overdue && !hasAssigneeFilter;
-  if (shouldShowOnlyUnspecifiedOnStart) {
-    visible = visible.filter(({ task }) => isTaskStatusUnspecified(task));
-  }
 
   if (directorState.isActive && !hasAssigneeFilter) {
     const directorFiltered = filtered.filter(({ task }) => isTaskAssignedToCurrentDirector(task));
