@@ -1899,6 +1899,12 @@
         color: var(--appdosc-task-date-color);
       }
 
+      .appdosc__folder-create { display: grid; grid-template-columns: 1fr 120px 90px; gap: 8px; }
+      .appdosc__folder-create-input {
+        min-height: 40px; border-radius: 12px; border: 1px solid var(--appdosc-task-pill-border);
+        background: var(--appdosc-task-card-bg); color: var(--appdosc-task-text-color); padding: 0 12px;
+      }
+
       .appdosc__folder-toolbar .appdosc__filter-toggle {
         min-height: 40px;
         border-radius: 12px;
@@ -3091,6 +3097,11 @@
             <div class="appdosc__folder-toolbar">
               <div class="appdosc__folder-chips" data-folder-chips aria-label="Папки задач"></div>
               <button type="button" class="appdosc__filter-toggle appdosc__folder-add" data-folder-create>+ Новая папка</button>
+              <div class="appdosc__folder-create" data-folder-create-panel hidden>
+                <input type="text" class="appdosc__folder-create-input" data-folder-create-input placeholder="Название папки" maxlength="40" />
+                <button type="button" class="appdosc__filter-toggle" data-folder-create-save>Сохранить</button>
+                <button type="button" class="appdosc__filter-toggle" data-folder-create-cancel>Отмена</button>
+              </div>
             </div>
           </div>
         </div>

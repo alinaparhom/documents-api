@@ -2825,6 +2825,10 @@ function initElements() {
   elements.folderManager = document.querySelector('[data-folder-manager]');
   elements.folderChips = document.querySelector('[data-folder-chips]');
   elements.folderCreateButton = document.querySelector('[data-folder-create]');
+  elements.folderCreatePanel = document.querySelector('[data-folder-create-panel]');
+  elements.folderCreateInput = document.querySelector('[data-folder-create-input]');
+  elements.folderCreateSaveButton = document.querySelector('[data-folder-create-save]');
+  elements.folderCreateCancelButton = document.querySelector('[data-folder-create-cancel]');
   elements.taskCountInline = document.querySelector('[data-task-count-inline]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
@@ -5978,13 +5982,30 @@ function handleFolderChipClick(folderId) {
 
 function openFolderPrompt(mode) {
   if (mode !== 'create') return;
-  const name = normalizeValue(window.prompt('Название новой папки'));
+  if (!(elements.folderCreatePanel instanceof HTMLElement)) return;
+  elements.folderCreatePanel.hidden = false;
+  if (elements.folderCreateInput instanceof HTMLInputElement) {
+    elements.folderCreateInput.value = '';
+    elements.folderCreateInput.focus();
+  }
+}
+
+function submitFolderCreate() {
+  const input = elements.folderCreateInput instanceof HTMLInputElement ? elements.folderCreateInput : null;
+  const name = normalizeValue(input ? input.value : '');
   if (!name) return;
+  const exists = state.folders.some((item) => normalizeName(item && item.name) === normalizeName(name));
+  if (exists) return;
   state.folders.push({ id: `folder_${Date.now().toString(36)}`, name });
   state.selectedFolderId = state.folders[state.folders.length - 1].id;
+  if (elements.folderCreatePanel instanceof HTMLElement) elements.folderCreatePanel.hidden = true;
   persistFolders();
   updateVisibleTasks();
   safeRender('folder_create');
+}
+
+function cancelFolderCreate() {
+  if (elements.folderCreatePanel instanceof HTMLElement) elements.folderCreatePanel.hidden = true;
 }
 
 function setCardField(card, selector, value, options = {}) {
@@ -17059,6 +17080,12 @@ function attachEvents() {
   }
   if (elements.folderCreateButton) {
     elements.folderCreateButton.addEventListener('click', () => openFolderPrompt('create'));
+  }
+  if (elements.folderCreateSaveButton) {
+    elements.folderCreateSaveButton.addEventListener('click', submitFolderCreate);
+  }
+  if (elements.folderCreateCancelButton) {
+    elements.folderCreateCancelButton.addEventListener('click', cancelFolderCreate);
   }
   if (elements.summaryToggle) {
     elements.summaryToggle.addEventListener('click', handleSummaryToggleClick);
