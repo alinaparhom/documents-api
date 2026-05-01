@@ -24,6 +24,12 @@ let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
 const TASK_LIST_MODE_OPTIONS = ['default', 'insight'];
 const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
+const TASK_FOLDERS_STORAGE_KEY = 'appdosc_task_folders';
+const TASKS_STORAGE_KEY = 'appdosc_tasks';
+const DEFAULT_FOLDERS = [
+  { id: 'all', name: 'Все задачи', system: true },
+  { id: 'no-folder', name: 'Без папки', system: true },
+];
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -2014,6 +2020,10 @@ const state = {
   organizations: [],
   organizationsChecked: 0,
   tasks: [],
+  folders: DEFAULT_FOLDERS.slice(),
+  selectedFolderId: 'all',
+  selectedTasks: new Set(),
+  folderManageMode: false,
   visibleTasks: [],
   taskFilter: [],
   compactFilters: {
@@ -2073,6 +2083,8 @@ sharedState = state;
 const elements = {};
 let pdfViewerInstance = null;
 let rangeCalendarInstance = null;
+let folderDeleteTargetId = '';
+let moveTaskTargetId = '';
 
 function ensureDirectorState() {
   if (!state.director || typeof state.director !== 'object') {
@@ -2349,8 +2361,38 @@ function sanitizeTaskItem(task) {
 
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
+  if (!Object.prototype.hasOwnProperty.call(sanitized, 'folderId')) {
+    sanitized.folderId = null;
+  }
+  if (sanitized.folderId !== null) {
+    sanitized.folderId = normalizeValue(sanitized.folderId) || null;
+  }
 
   return sanitized;
+}
+
+function loadFoldersFromStorage() {
+  try {
+    const raw = window.localStorage.getItem(TASK_FOLDERS_STORAGE_KEY);
+    const parsed = JSON.parse(raw || '[]');
+    const custom = Array.isArray(parsed) ? parsed : [];
+    state.folders = DEFAULT_FOLDERS.concat(custom
+      .filter((item) => item && !item.system && normalizeValue(item.id) && normalizeValue(item.name))
+      .map((item) => ({ id: normalizeValue(item.id), name: normalizeValue(item.name), system: false })));
+  } catch (_) {
+    state.folders = DEFAULT_FOLDERS.slice();
+  }
+}
+
+function saveFoldersToStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  const custom = (Array.isArray(state.folders) ? state.folders : []).filter((item) => item && !item.system);
+  window.localStorage.setItem(TASK_FOLDERS_STORAGE_KEY, JSON.stringify(custom));
+}
+
+function saveTasksToStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  window.localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(Array.isArray(state.tasks) ? state.tasks : []));
 }
 
 function toSafeInteger(value) {
@@ -2737,6 +2779,12 @@ const FALLBACK_CARD_TEMPLATE = `
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
+    <div class="appdosc-card__actions" style="margin-top:6px;">
+      <input type="checkbox" data-task-select-toggle style="margin-right:6px;" />
+      <label style="font-size:11px;color:#6b7f9f;">Папка
+        <button type="button" data-card-folder-open class="appdosc__sheet-btn" style="min-height:30px;padding:0 8px;font-size:11px;">Без папки ▾</button>
+      </label>
+    </div>
   </footer>
   <div class="appdosc-card__assign" data-card-assign hidden>
     <div class="appdosc-card__assign-label">Назначить ответственных</div>
@@ -2820,6 +2868,23 @@ function initElements() {
   elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
   elements.taskSelector = document.querySelector('[data-task-select]');
   elements.taskCountInline = document.querySelector('[data-task-count-inline]');
+  elements.foldersTotal = document.querySelector('[data-folders-total]');
+  elements.foldersList = document.querySelector('[data-folders-list]');
+  elements.folderSheet = document.querySelector('[data-folder-sheet]');
+  elements.folderNameInput = document.querySelector('[data-folder-name-input]');
+  elements.folderCreateButton = document.querySelector('[data-folder-create]');
+  elements.folderSheetCloseButtons = Array.from(document.querySelectorAll('[data-folder-sheet-close]'));
+  elements.folderManageToggle = document.querySelector('[data-folder-manage-toggle]');
+  elements.folderDeleteSheet = document.querySelector('[data-folder-delete-sheet]');
+  elements.folderDeleteCloseButtons = Array.from(document.querySelectorAll('[data-folder-delete-close]'));
+  elements.folderDeleteConfirm = document.querySelector('[data-folder-delete-confirm]');
+  elements.taskMoveSheet = document.querySelector('[data-task-move-sheet]');
+  elements.taskMoveCloseButtons = Array.from(document.querySelectorAll('[data-task-move-close]'));
+  elements.taskMoveList = document.querySelector('[data-task-move-list]');
+  elements.bulkPanel = document.querySelector('[data-bulk-panel]');
+  elements.bulkSelectedCount = document.querySelector('[data-bulk-selected-count]');
+  elements.bulkMove = document.querySelector('[data-bulk-move]');
+  elements.bulkCancel = document.querySelector('[data-bulk-cancel]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
@@ -3611,6 +3676,7 @@ function updateStateFromPayload(payload) {
 
   const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
   state.tasks = sanitizedTasks;
+  saveTasksToStorage();
   if (rangeCalendarInstance && typeof rangeCalendarInstance.setTaskCounts === 'function') {
     const payloadTaskCounts = normalizeTaskCounts(payload?.taskDateStats?.items);
     const fallbackTaskCounts = normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks));
@@ -3810,6 +3876,7 @@ function render() {
   updateDirectorSummary();
   updateSummaryFilterState();
   syncCompactFilterPanelState();
+  renderFolders();
   renderCards();
   updateFooter();
 }
@@ -3819,12 +3886,78 @@ function renderEmpty() {
   updateStats();
   updateDirectorSummary();
   syncCompactFilterPanelState();
+  renderFolders();
   clearCards();
   updateFooter();
   logIosStage('render_empty', {
     hasTasks: Array.isArray(state.tasks) ? state.tasks.length : 0,
     filter: formatTaskFiltersForLog(state.taskFilter),
   });
+}
+
+function renderFolders() {
+  if (!(elements.foldersList instanceof HTMLElement)) return;
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  const counts = new Map([['all', tasks.length], ['no-folder', tasks.filter((task) => !normalizeValue(task.folderId)).length]]);
+  tasks.forEach((task) => {
+    const folderId = normalizeValue(task.folderId);
+    if (!folderId) return;
+    counts.set(folderId, (counts.get(folderId) || 0) + 1);
+  });
+  if (elements.foldersTotal instanceof HTMLElement) {
+    elements.foldersTotal.textContent = `• Задач: ${tasks.length}`;
+  }
+  const chips = (Array.isArray(state.folders) ? state.folders : []).map((folder) => {
+    const activeClass = state.selectedFolderId === folder.id ? 'is-active' : '';
+    const menu = state.folderManageMode && !folder.system ? ` <button type="button" data-folder-menu="${escapeHtml(folder.id)}" style="border:0;background:transparent;">⋯</button>` : '';
+    return `<button type="button" class="appdosc__folder-chip ${activeClass}" data-folder-id="${escapeHtml(folder.id)}">${escapeHtml(folder.name)} <span class="appdosc__folder-badge">${counts.get(folder.id) || 0}</span>${menu}</button>`;
+  }).join('');
+  elements.foldersList.innerHTML = `${chips}<button type="button" class="appdosc__folder-chip appdosc__folder-chip--add" data-folder-add>+ Папка</button>`;
+}
+
+function getFolderCount(folderId) {
+  return (Array.isArray(state.tasks) ? state.tasks : []).filter((task) => matchTaskByFolder(task, folderId)).length;
+}
+function selectFolder(folderId) { state.selectedFolderId = folderId || 'all'; updateVisibleTasks(); safeRender('folder_select'); }
+function loadState() { loadFoldersFromStorage(); }
+function saveState() { saveFoldersToStorage(); saveTasksToStorage(); }
+function normalizeTasks(tasks) { return (Array.isArray(tasks) ? tasks : []).map((task) => sanitizeTaskItem(task)); }
+function renderTasks() { renderCards(); }
+function openFolderModal(mode = 'create', folderId = '') { toggleFolderSheet(true); elements.folderSheet.dataset.mode = mode; elements.folderSheet.dataset.folderId = folderId; }
+function closeFolderModal() { toggleFolderSheet(false); }
+function renameFolder() {
+  const folderId = normalizeValue(elements.folderSheet?.dataset.folderId);
+  const name = normalizeValue(elements.folderNameInput instanceof HTMLInputElement ? elements.folderNameInput.value : '');
+  if (!folderId || !name) return;
+  const folder = state.folders.find((item) => item.id === folderId && !item.system);
+  if (!folder) return;
+  folder.name = name;
+  saveState(); closeFolderModal(); safeRender('folder_renamed');
+}
+function deleteFolder() { if (folderDeleteTargetId) deleteFolderWithConfirm(folderDeleteTargetId); }
+function openDeleteConfirm(folderId) { folderDeleteTargetId = folderId; if (elements.folderDeleteSheet) elements.folderDeleteSheet.hidden = false; }
+function closeDeleteConfirm() { folderDeleteTargetId = ''; if (elements.folderDeleteSheet) elements.folderDeleteSheet.hidden = true; }
+function openMoveTaskModal(taskId) { moveTaskTargetId = String(taskId || ''); if (elements.taskMoveSheet) elements.taskMoveSheet.hidden = false; renderMoveFolderList(); }
+function moveTaskToFolder(taskId, folderId) {
+  const task = state.tasks.find((item) => String(item.id || '') === String(taskId || ''));
+  if (!task) return;
+  task.folderId = folderId === 'no-folder' ? null : folderId;
+  saveState(); updateVisibleTasks(); safeRender('task_move_folder');
+}
+function toggleTaskSelect(taskId) { if (state.selectedTasks.has(taskId)) state.selectedTasks.delete(taskId); else state.selectedTasks.add(taskId); updateBulkPanel(); }
+function openBulkMoveModal() { if (elements.taskMoveSheet) elements.taskMoveSheet.hidden = false; renderMoveFolderList(true); }
+function moveSelectedTasksToFolder(folderId) { state.selectedTasks.forEach((taskId) => moveTaskToFolder(taskId, folderId)); state.selectedTasks.clear(); updateBulkPanel(); }
+
+function updateBulkPanel() { if (!elements.bulkPanel) return; const count = state.selectedTasks.size; elements.bulkPanel.hidden = count === 0; if (elements.bulkSelectedCount) elements.bulkSelectedCount.textContent = `Выбрано: ${count}`; }
+function renderMoveFolderList(isBulk = false) {
+  if (!(elements.taskMoveList instanceof HTMLElement)) return;
+  const list = (state.folders || []).filter((folder) => folder.id !== 'all');
+  elements.taskMoveList.innerHTML = list.map((folder) => `<button type="button" class="appdosc__sheet-btn" data-move-folder="${escapeHtml(folder.id)}">${escapeHtml(folder.name)}</button>`).join('');
+  elements.taskMoveList.querySelectorAll('[data-move-folder]').forEach((btn) => btn.addEventListener('click', () => {
+    const folderId = normalizeValue(btn.dataset.moveFolder);
+    if (isBulk) moveSelectedTasksToFolder(folderId); else moveTaskToFolder(moveTaskTargetId, folderId);
+    if (elements.taskMoveSheet) elements.taskMoveSheet.hidden = true;
+  }));
 }
 
 function updateUserPanel() {
@@ -5408,10 +5541,26 @@ function createCard(task, index, anchorRegistry) {
   setupDueDateEditor(card, task);
   setupAssignmentControls(card, task);
   setupSubordinateControls(card, task);
+  populateCardFolderControl(card, task);
 
   initializeCardExpansion(card);
 
   return card;
+}
+
+function populateCardFolderControl(card, task) {
+  const currentFolderId = normalizeValue(task.folderId) || 'no-folder';
+  const openButton = card.querySelector('[data-card-folder-open]');
+  if (openButton instanceof HTMLButtonElement) {
+    const folder = (state.folders || []).find((item) => item.id === currentFolderId);
+    openButton.textContent = `${folder ? folder.name : 'Без папки'} ▾`;
+    openButton.addEventListener('click', () => openMoveTaskModal(task.id));
+  }
+  const checkbox = card.querySelector('[data-task-select-toggle]');
+  if (checkbox instanceof HTMLInputElement) {
+    checkbox.checked = state.selectedTasks.has(String(task.id || ''));
+    checkbox.addEventListener('change', () => toggleTaskSelect(String(task.id || '')));
+  }
 }
 
 function togglePlaceholder(shouldShow) {
@@ -5726,6 +5875,12 @@ function isTaskOverdueByCompactRule(task) {
     || statusLabel.includes('просроч');
 }
 
+function matchTaskByFolder(task, folderId) {
+  if (folderId === 'all') return true;
+  if (folderId === 'no-folder') return !normalizeValue(task && task.folderId);
+  return normalizeValue(task && task.folderId) === folderId;
+}
+
 function updateVisibleTasks() {
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
@@ -5744,7 +5899,7 @@ function updateVisibleTasks() {
   }
 
   const filtered = applyTaskFilter(normalizedFilters, state.tasks);
-  let visible = filtered;
+  let visible = filtered.filter(({ task }) => matchTaskByFolder(task, state.selectedFolderId));
 
   const hasAssigneeFilter = hasAssigneeFilters(normalizedFilters);
   if (directorState.isActive && !hasAssigneeFilter) {
@@ -17142,6 +17297,65 @@ function attachEvents() {
       safeRender('compact_filter_reset');
     });
   }
+  if (elements.foldersList instanceof HTMLElement) {
+    elements.foldersList.addEventListener('click', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest('button') : null;
+      if (!(target instanceof HTMLButtonElement)) return;
+      if (target.hasAttribute('data-folder-add')) {
+        toggleFolderSheet(true);
+        return;
+      }
+      const folderId = normalizeValue(target.dataset.folderId);
+      if (!folderId) return;
+      state.selectedFolderId = folderId;
+      updateVisibleTasks();
+      safeRender('folder_filter_change');
+    });
+    elements.foldersList.addEventListener('dblclick', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest('button[data-folder-id]') : null;
+      if (!(target instanceof HTMLButtonElement)) return;
+      const folderId = normalizeValue(target.dataset.folderId);
+      if (!folderId || folderId === 'all' || folderId === 'no-folder') return;
+      deleteFolderWithConfirm(folderId);
+    });
+  }
+  if (elements.folderCreateButton instanceof HTMLElement) {
+    elements.folderCreateButton.addEventListener('click', () => {
+      if (elements.folderSheet?.dataset.mode === 'edit') renameFolder();
+      else createFolder();
+    });
+  }
+  if (Array.isArray(elements.folderSheetCloseButtons)) {
+    elements.folderSheetCloseButtons.forEach((button) => {
+      button.addEventListener('click', () => toggleFolderSheet(false));
+    });
+  }
+  if (elements.folderManageToggle instanceof HTMLElement) {
+    elements.folderManageToggle.addEventListener('click', () => {
+      state.folderManageMode = !state.folderManageMode;
+      safeRender('folder_manage_toggle');
+    });
+  }
+  if (elements.foldersList instanceof HTMLElement) {
+    elements.foldersList.addEventListener('click', (event) => {
+      const action = event.target instanceof HTMLElement ? event.target.closest('[data-folder-menu]') : null;
+      if (!(action instanceof HTMLElement)) return;
+      const folderId = normalizeValue(action.dataset.folderMenu);
+      if (!folderId) return;
+      const mode = window.prompt('Введите действие: rename или delete', 'rename');
+      if (mode === 'delete') openDeleteConfirm(folderId);
+      if (mode === 'rename') {
+        const folder = state.folders.find((item) => item.id === folderId);
+        if (elements.folderNameInput instanceof HTMLInputElement) elements.folderNameInput.value = folder?.name || '';
+        openFolderModal('edit', folderId);
+      }
+    });
+  }
+  if (Array.isArray(elements.folderDeleteCloseButtons)) elements.folderDeleteCloseButtons.forEach((btn) => btn.addEventListener('click', closeDeleteConfirm));
+  if (elements.folderDeleteConfirm instanceof HTMLElement) elements.folderDeleteConfirm.addEventListener('click', () => { deleteFolder(); closeDeleteConfirm(); });
+  if (Array.isArray(elements.taskMoveCloseButtons)) elements.taskMoveCloseButtons.forEach((btn) => btn.addEventListener('click', () => { if (elements.taskMoveSheet) elements.taskMoveSheet.hidden = true; }));
+  if (elements.bulkMove instanceof HTMLElement) elements.bulkMove.addEventListener('click', openBulkMoveModal);
+  if (elements.bulkCancel instanceof HTMLElement) elements.bulkCancel.addEventListener('click', () => { state.selectedTasks.clear(); updateBulkPanel(); safeRender('bulk_cancel'); });
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
   }
@@ -17200,6 +17414,49 @@ function attachEvents() {
       closeSettingsSheet();
     }
   });
+}
+
+function toggleFolderSheet(open) {
+  if (!(elements.folderSheet instanceof HTMLElement)) return;
+  elements.folderSheet.hidden = !open;
+}
+
+function createFolder() {
+  const name = normalizeValue(elements.folderNameInput instanceof HTMLInputElement ? elements.folderNameInput.value : '');
+  if (!name) {
+    showStatus('Введите название папки', 'error');
+    return;
+  }
+  const exists = (state.folders || []).some((folder) => normalizeName(folder.name) === normalizeName(name));
+  if (exists) {
+    showStatus('Папка с таким названием уже существует', 'error');
+    return;
+  }
+  state.folders.push({ id: `folder-${Date.now()}`, name, system: false });
+  saveFoldersToStorage();
+  toggleFolderSheet(false);
+  updateVisibleTasks();
+  safeRender('folder_created');
+}
+
+function deleteFolderWithConfirm(folderId) {
+  const folder = (state.folders || []).find((item) => item.id === folderId && !item.system);
+  if (!folder) return;
+  const ok = window.confirm(`Удалить папку «${folder.name}»? Задачи будут перенесены в «Без папки».`);
+  if (!ok) return;
+  state.folders = state.folders.filter((item) => item.id !== folderId);
+  state.tasks.forEach((task) => {
+    if (normalizeValue(task.folderId) === folderId) {
+      task.folderId = null;
+    }
+  });
+  if (state.selectedFolderId === folderId) {
+    state.selectedFolderId = 'all';
+  }
+  saveFoldersToStorage();
+  saveTasksToStorage();
+  updateVisibleTasks();
+  safeRender('folder_deleted');
 }
 
 function formatDate(value) {
@@ -17410,6 +17667,18 @@ function bootstrap() {
   attachGlobalErrorHandlers();
   initElements();
   initThemeMode();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    loadFoldersFromStorage();
+    try {
+      const storedTasks = JSON.parse(window.localStorage.getItem(TASKS_STORAGE_KEY) || '[]');
+      if (Array.isArray(storedTasks) && storedTasks.length) {
+        state.tasks = storedTasks.map((item) => sanitizeTaskItem(item));
+        updateVisibleTasks();
+      }
+    } catch (_) {
+      // ignore invalid stored tasks
+    }
+  }
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
     pdfViewerInstance.preload();

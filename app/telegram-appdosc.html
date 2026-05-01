@@ -2523,6 +2523,26 @@
         color: var(--appdosc-text-muted);
       }
 
+      .appdosc__folders { margin-top: 10px; }
+      .appdosc__folders-head { display:flex; align-items:center; gap:6px; font-size:12px; color:#5f7394; margin-bottom:8px; }
+      .appdosc__folders-title { font-weight:700; color:#1a355d; }
+      .appdosc__folders-list { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; -webkit-overflow-scrolling:touch; }
+      .appdosc__folder-chip { border:1px solid rgba(93,131,191,.3); background:rgba(255,255,255,.72); backdrop-filter: blur(10px); border-radius:999px; padding:6px 10px; font-size:12px; color:#23436d; white-space:nowrap; display:inline-flex; gap:6px; align-items:center; }
+      .appdosc__folder-chip.is-active { background:rgba(45,127,243,.16); border-color:rgba(45,127,243,.45); color:#114178; }
+      .appdosc__folder-chip--add { font-weight:700; }
+      .appdosc__folder-badge { min-width:18px; padding:1px 6px; border-radius:999px; background:rgba(255,255,255,.85); border:1px solid rgba(93,131,191,.3); text-align:center; font-size:11px; }
+      .appdosc__sheet[hidden] { display:none; }
+      .appdosc__sheet { position:fixed; inset:0; z-index:130000; }
+      .appdosc__sheet-backdrop { position:absolute; inset:0; background:rgba(13,26,44,.38); }
+      .appdosc__sheet-panel { position:absolute; left:0; right:0; bottom:0; border-radius:18px 18px 0 0; background:rgba(255,255,255,.96); padding:10px 14px calc(14px + env(safe-area-inset-bottom)); box-shadow:0 -10px 30px rgba(0,0,0,.16); }
+      .appdosc__sheet-handle { width:42px; height:5px; border-radius:99px; margin:0 auto 10px; background:#d8e0ec; }
+      .appdosc__sheet-title { margin:0 0 10px; font-size:16px; color:#1a355d; }
+      .appdosc__sheet-field { display:grid; gap:6px; font-size:12px; color:#5f7394; }
+      .appdosc__sheet-field input { min-height:42px; border-radius:12px; border:1px solid rgba(93,131,191,.35); padding:0 12px; font-size:14px; }
+      .appdosc__sheet-actions { margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+      .appdosc__sheet-btn { min-height:40px; border-radius:12px; border:1px solid rgba(93,131,191,.35); background:#fff; color:#1a355d; font-weight:600; }
+      .appdosc__sheet-btn--primary { background:#2d7ff3; border-color:#2d7ff3; color:#fff; }
+
       .appdosc__task-filter-overdue-toggle input {
         width: 16px;
         height: 16px;
@@ -3137,6 +3157,14 @@
               </div>
             </div>
             <div class="appdosc__table-meta tasks-updated" hidden>Обновление не выполнялось</div>
+            <section class="appdosc__folders" data-folders-section>
+              <div class="appdosc__folders-head">
+                <span class="appdosc__folders-title">Папки задач</span>
+                <span class="appdosc__folders-count" data-folders-total>• Задач: 0</span>
+                <button type="button" class="appdosc__sheet-btn" style="min-height:28px;padding:0 10px;font-size:11px;" data-folder-manage-toggle>Управление</button>
+              </div>
+              <div class="appdosc__folders-list" data-folders-list aria-label="Папки задач"></div>
+            </section>
           </div>
           <div class="range-calendar" data-range-calendar hidden>
             <div class="range-calendar__backdrop" data-range-calendar-backdrop></div>
@@ -3173,6 +3201,49 @@
           </div>
         </div>
       </main>
+
+      <div class="appdosc__sheet" data-folder-sheet hidden>
+        <div class="appdosc__sheet-backdrop" data-folder-sheet-close></div>
+        <div class="appdosc__sheet-panel" role="dialog" aria-modal="true" aria-labelledby="folder-sheet-title">
+          <div class="appdosc__sheet-handle"></div>
+          <h3 class="appdosc__sheet-title" id="folder-sheet-title">Новая папка</h3>
+          <label class="appdosc__sheet-field">
+            <span>Название папки</span>
+            <input type="text" maxlength="40" data-folder-name-input placeholder="Например: Работа" />
+          </label>
+          <div class="appdosc__sheet-actions">
+            <button type="button" class="appdosc__sheet-btn" data-folder-sheet-close>Отмена</button>
+            <button type="button" class="appdosc__sheet-btn appdosc__sheet-btn--primary" data-folder-create>Создать</button>
+          </div>
+        </div>
+      </div>
+      <div class="appdosc__sheet" data-folder-delete-sheet hidden>
+        <div class="appdosc__sheet-backdrop" data-folder-delete-close></div>
+        <div class="appdosc__sheet-panel" role="dialog" aria-modal="true">
+          <h3 class="appdosc__sheet-title" data-folder-delete-title>Удалить папку?</h3>
+          <p style="font-size:13px;color:#5f7394;margin:0 0 10px;">Задачи из этой папки не удалятся. Они будут перенесены в «Без папки».</p>
+          <div class="appdosc__sheet-actions">
+            <button type="button" class="appdosc__sheet-btn" data-folder-delete-close>Отмена</button>
+            <button type="button" class="appdosc__sheet-btn" style="background:#ef4444;color:#fff;border-color:#ef4444;" data-folder-delete-confirm>Удалить</button>
+          </div>
+        </div>
+      </div>
+      <div class="appdosc__sheet" data-task-move-sheet hidden>
+        <div class="appdosc__sheet-backdrop" data-task-move-close></div>
+        <div class="appdosc__sheet-panel">
+          <h3 class="appdosc__sheet-title">Выберите папку</h3>
+          <div data-task-move-list style="display:grid;gap:8px;"></div>
+        </div>
+      </div>
+      <div class="appdosc__sheet" data-bulk-panel hidden>
+        <div class="appdosc__sheet-panel" style="border-radius:14px 14px 0 0;">
+          <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
+            <span data-bulk-selected-count>Выбрано: 0</span>
+            <button type="button" class="appdosc__sheet-btn appdosc__sheet-btn--primary" data-bulk-move>В папку</button>
+            <button type="button" class="appdosc__sheet-btn" data-bulk-cancel>Отмена</button>
+          </div>
+        </div>
+      </div>
 
       <footer class="appdosc__footer">
         <div class="appdosc__footer-meta tasks-stats" data-organizations>Организаций обработано: 0</div>
