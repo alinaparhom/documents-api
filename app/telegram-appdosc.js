@@ -2015,6 +2015,8 @@ const state = {
   organizationsChecked: 0,
   tasks: [],
   visibleTasks: [],
+  folders: [],
+  activeFolderId: 'all',
   taskFilter: [],
   compactFilters: {
     expanded: false,
@@ -3648,6 +3650,10 @@ function updateStateFromPayload(payload) {
     ? computedStats
     : mergeStats(payloadStats, computedStats);
   state.organizations = Array.isArray(payload.organizations) ? payload.organizations : [];
+  state.folders = Array.isArray(payload.folders) ? payload.folders : [];
+  if (!state.folders.some((folder) => normalizeValue(folder && folder.id) === state.activeFolderId)) {
+    state.activeFolderId = 'all';
+  }
   updateOrganizationAccessMaps();
   updateDirectorTracking(previousDirectorKeys);
   directorState.visibilityRuleLogged = false;
@@ -5019,6 +5025,7 @@ function renderCards() {
     return;
   }
 
+  renderFoldersBar();
   const visibleItems = getVisibleTaskItems();
   const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
 
@@ -5393,6 +5400,27 @@ function createCard(task, index, anchorRegistry) {
   const organization = getTaskOrganization(task);
   const directorView = organization && userIsDirectorForOrganization(organization);
 
+
+  const actionsContainer = card.querySelector('.appdosc-card__actions');
+  if (actionsContainer) {
+    const folderButton = document.createElement('button');
+    folderButton.type = 'button';
+    folderButton.className = 'appdosc-card__action';
+    folderButton.textContent = 'В папку';
+    folderButton.addEventListener('click', async () => {
+      const folders = Array.isArray(state.folders) ? state.folders : [];
+      const options = ['Без папки', ...folders.map((f) => normalizeValue(f.name) || 'Папка')];
+      const raw = window.prompt('Куда переместить?\n' + options.map((v, i) => `${i}: ${v}`).join('\n'), '0');
+      if (raw === null) return;
+      const idx = Number(raw);
+      if (!Number.isInteger(idx) || idx < 0 || idx > folders.length) return;
+      const folderId = idx === 0 ? '' : normalizeValue(folders[idx - 1].id);
+      await updateTask(task, { updateType: 'folder', folderId });
+      await loadTasks({ silent: true });
+    });
+    actionsContainer.appendChild(folderButton);
+  }
+
   const viewButton = card.querySelector('[data-card-view]');
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
@@ -5726,6 +5754,86 @@ function isTaskOverdueByCompactRule(task) {
     || statusLabel.includes('просроч');
 }
 
+
+function getTaskFolderId(task) {
+  return normalizeValue(task && task.folderId);
+}
+
+function matchesActiveFolder(task) {
+  const active = normalizeValue(state.activeFolderId) || 'all';
+  if (active === 'all') {
+    return true;
+  }
+  const folderId = getTaskFolderId(task);
+  if (active === 'no_folder') {
+    return !folderId;
+  }
+  return folderId === active;
+}
+
+
+function ensureFolderStyles() {
+  if (document.getElementById('appdosc-folder-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'appdosc-folder-styles';
+  style.textContent = `.appdosc-folders-bar{display:flex;gap:8px;overflow:auto;padding:8px 2px 10px;position:sticky;top:0;z-index:30;background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(255,255,255,.58));backdrop-filter:blur(10px)}.appdosc-folder-chip{border:1px solid rgba(120,160,220,.35);background:rgba(255,255,255,.7);border-radius:999px;padding:10px 14px;font-size:13px;white-space:nowrap;min-height:42px}.appdosc-folder-chip.is-active{background:#eaf3ff;color:#1a5fd1;border-color:rgba(56,124,255,.45)}.appdosc-folder-chip--add{font-weight:600}`;
+  document.head.appendChild(style);
+}
+
+function ensureFoldersBar() {
+  if (!elements.cardsContainer || !(elements.cardsContainer.parentElement instanceof HTMLElement)) {
+    return null;
+  }
+  ensureFolderStyles();
+  let bar = document.querySelector('[data-folder-bar]');
+  if (bar) return bar;
+  bar = document.createElement('div');
+  bar.className = 'appdosc-folders-bar';
+  bar.setAttribute('data-folder-bar', '');
+  elements.cardsContainer.parentElement.insertBefore(bar, elements.cardsContainer);
+  return bar;
+}
+
+async function createFolderPrompt() {
+  const name = window.prompt('Название папки');
+  if (!name || !name.trim()) return;
+  const body = { ...buildRequestBody({ includeInitData: true, includeNameTokens: true }), name: name.trim(), organization: state.organizations[0] && state.organizations[0].name ? state.organizations[0].name : '' };
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) { headers['X-Telegram-Init-Data'] = state.telegram.initData; }
+  const response = await fetch('/docs.php?action=mini_app_folder_create', { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || data.success !== true) { throw new Error((data && data.error) || `Ошибка ${response.status}`); }
+  await loadTasks(true);
+}
+
+function renderFoldersBar() {
+  const bar = ensureFoldersBar();
+  if (!bar) return;
+  const folders = Array.isArray(state.folders) ? state.folders : [];
+  bar.innerHTML = '';
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'appdosc-folder-chip appdosc-folder-chip--add';
+  addBtn.textContent = '+ Папка';
+  addBtn.addEventListener('click', createFolderPrompt);
+  bar.appendChild(addBtn);
+  const chips = [{ id: 'all', name: 'Все' }, { id: 'no_folder', name: 'Без папки' }, ...folders.map((f) => ({ id: normalizeValue(f.id), name: normalizeValue(f.name) || 'Папка' }))];
+  chips.forEach((folder) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'appdosc-folder-chip';
+    if (state.activeFolderId === folder.id) chip.classList.add('is-active');
+    chip.textContent = folder.name;
+    chip.addEventListener('click', () => {
+      state.activeFolderId = folder.id;
+      updateVisibleTasks();
+      renderCards();
+      renderFoldersBar();
+    });
+    bar.appendChild(chip);
+  });
+}
+
 function updateVisibleTasks() {
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
@@ -5744,7 +5852,7 @@ function updateVisibleTasks() {
   }
 
   const filtered = applyTaskFilter(normalizedFilters, state.tasks);
-  let visible = filtered;
+  let visible = filtered.filter(({ task }) => matchesActiveFolder(task));
 
   const hasAssigneeFilter = hasAssigneeFilters(normalizedFilters);
   if (directorState.isActive && !hasAssigneeFilter) {
@@ -12285,6 +12393,7 @@ async function sendTaskMutation(update) {
     status,
     dueDate,
     instruction,
+    folderId,
   } = update || {};
   if (!updateType || !organization || !documentId) {
     throw new Error('Недостаточно данных для обновления задачи.');
@@ -12452,6 +12561,10 @@ async function sendTaskMutation(update) {
 
   if (Object.prototype.hasOwnProperty.call(update || {}, 'instruction')) {
     payload.instruction = typeof instruction === 'string' ? instruction : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderId')) {
+    payload.folderId = typeof folderId === 'string' ? folderId : '';
   }
 
   logClientEvent('task_update_request', {

@@ -903,6 +903,48 @@ function docs_stream_telegram_avatar(string $telegramUserId): bool
     return true;
 }
 
+
+function docs_normalize_task_folder_id($value): string
+{
+    $normalized = sanitize_text_field((string) $value, 120);
+    if ($normalized === '' || $normalized === 'null' || $normalized === 'none') {
+        return '';
+    }
+
+    return preg_replace('/[^a-zA-Z0-9_\-]/', '', $normalized) ?: '';
+}
+
+function docs_prepare_task_folders_for_response(array $folders): array
+{
+    $prepared = [];
+    foreach ($folders as $folder) {
+        if (!is_array($folder)) {
+            continue;
+        }
+        $id = docs_normalize_task_folder_id($folder['id'] ?? '');
+        $name = sanitize_text_field((string) ($folder['name'] ?? ''), 120);
+        if ($id === '' || $name === '') {
+            continue;
+        }
+        $prepared[] = [
+            'id' => $id,
+            'name' => $name,
+            'createdAt' => sanitize_text_field((string) ($folder['createdAt'] ?? ''), 80),
+            'order' => isset($folder['order']) ? (int) $folder['order'] : 0,
+        ];
+    }
+
+    usort($prepared, static function (array $a, array $b): int {
+        $orderDiff = ((int) ($a['order'] ?? 0)) <=> ((int) ($b['order'] ?? 0));
+        if ($orderDiff !== 0) {
+            return $orderDiff;
+        }
+        return strcmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+    });
+
+    return array_values($prepared);
+}
+
 function docs_build_task_start_param(array $record): string
 {
     $taskId = sanitize_text_field((string) ($record['id'] ?? ''), 200);
@@ -12241,6 +12283,7 @@ switch ($action) {
         })));
 
         $tasks = [];
+        $taskFoldersMap = [];
         $organizationSummaries = [];
         $totalOrganizations = count($organizations);
         $resolveTimestamp = static function ($value): ?int {
@@ -12271,6 +12314,16 @@ switch ($action) {
             $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles'])
                 ? $settings['responsibles']
                 : [];
+            $rawTaskFolders = isset($settings['taskFolders']) && is_array($settings['taskFolders'])
+                ? docs_prepare_task_folders_for_response($settings['taskFolders'])
+                : [];
+            foreach ($rawTaskFolders as $taskFolder) {
+                $taskFolderId = docs_normalize_task_folder_id($taskFolder['id'] ?? '');
+                if ($taskFolderId === '') {
+                    continue;
+                }
+                $taskFoldersMap[$taskFolderId] = $taskFolder;
+            }
             $subordinatesRaw = isset($settings['block3']) && is_array($settings['block3'])
                 ? array_values($settings['block3'])
                 : [];
@@ -12405,6 +12458,12 @@ switch ($action) {
                 if (!isset($record['organization']) || $record['organization'] === '') {
                     $record['organization'] = $organization;
                 }
+
+                $recordFolderId = docs_normalize_task_folder_id($record['folderId'] ?? '');
+                if ($recordFolderId !== '' && !isset($taskFoldersMap[$recordFolderId])) {
+                    $recordFolderId = '';
+                }
+                $record['folderId'] = $recordFolderId;
 
                 $tasks[] = $record;
             }
@@ -12729,8 +12788,75 @@ switch ($action) {
                 'canDeleteDocuments' => false,
             ],
             'directorMode' => $directorModeSummary,
+            'folders' => array_values($taskFoldersMap),
         ]);
         break;
+
+
+    case 'mini_app_folder_create':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        $organizationCandidate = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        if ($organizationCandidate === '') {
+            respond_error('Не указана организация.');
+        }
+        $folderName = sanitize_text_field((string) ($payload['name'] ?? ''), 120);
+        if ($folderName === '') {
+            respond_error('Укажите название папки.');
+        }
+        $folder = sanitize_folder_name($organizationCandidate);
+        $settings = load_admin_settings($folder);
+        $folders = isset($settings['taskFolders']) && is_array($settings['taskFolders']) ? docs_prepare_task_folders_for_response($settings['taskFolders']) : [];
+        $newFolder = [
+            'id' => 'fld_' . substr(md5($folderName . microtime(true)), 0, 12),
+            'name' => $folderName,
+            'createdAt' => date('c'),
+            'order' => count($folders) + 1,
+        ];
+        $folders[] = $newFolder;
+        $settings['taskFolders'] = $folders;
+        save_admin_settings($folder, $settings);
+        respond_success(['folder' => $newFolder, 'folders' => $folders]);
+        break;
+
+    case 'mini_app_folder_delete':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        $organizationCandidate = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $folderId = docs_normalize_task_folder_id($payload['folderId'] ?? '');
+        if ($organizationCandidate === '' || $folderId === '') {
+            respond_error('Не указаны данные папки.', 400);
+        }
+        $folder = sanitize_folder_name($organizationCandidate);
+        $settings = load_admin_settings($folder);
+        $folders = isset($settings['taskFolders']) && is_array($settings['taskFolders']) ? docs_prepare_task_folders_for_response($settings['taskFolders']) : [];
+        $settings['taskFolders'] = array_values(array_filter($folders, static fn($item) => (string)($item['id'] ?? '') !== $folderId));
+
+        $records = load_registry($folder);
+        foreach ($records as &$record) {
+            if (!is_array($record)) { continue; }
+            $currentFolderId = docs_normalize_task_folder_id($record['folderId'] ?? '');
+            if ($currentFolderId === $folderId) {
+                $record['folderId'] = '';
+                $record['updatedAt'] = date('c');
+            }
+        }
+        unset($record);
+        save_registry($folder, $records);
+        save_admin_settings($folder, $settings);
+        respond_success(['folders' => array_values($settings['taskFolders'])]);
+        break;
+
 
     case 'mini_app_save_theme':
         if ($method !== 'POST') {
@@ -14138,6 +14264,26 @@ switch ($action) {
             } else {
                 $message = 'Срок обновлён.';
             }
+
+        } elseif ($updateType === 'folder') {
+            $nextFolderId = docs_normalize_task_folder_id($payload['folderId'] ?? '');
+            $availableFolders = isset($settings['taskFolders']) && is_array($settings['taskFolders'])
+                ? docs_prepare_task_folders_for_response($settings['taskFolders'])
+                : [];
+            if ($nextFolderId !== '') {
+                $exists = false;
+                foreach ($availableFolders as $folderEntry) {
+                    if ((string) ($folderEntry['id'] ?? '') === $nextFolderId) {
+                        $exists = true;
+                        break;
+                    }
+                }
+                if (!$exists) {
+                    respond_error('Папка не найдена.', 404);
+                }
+            }
+            $records[$recordIndex]['folderId'] = $nextFolderId;
+            $message = $nextFolderId === '' ? 'Папка снята.' : 'Задача перемещена в папку.';
         } elseif ($updateType === 'instruction') {
             if (!docs_user_is_block2_member($block2, $requestContext)) {
                 respond_error('Недостаточно прав для изменения поручения.', 403, [
