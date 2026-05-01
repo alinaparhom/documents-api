@@ -2036,6 +2036,9 @@ const state = {
   loading: false,
   error: '',
   selectedCardAnchor: '',
+  folders: [],
+  folderAssignments: {},
+  selectedFolderId: '',
   expandedCards: new Set(),
   entryTaskId: '',
   entryTaskLog: {
@@ -2735,6 +2738,7 @@ const FALLBACK_CARD_TEMPLATE = `
     </div>
     <div class="appdosc-card__actions">
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
+      <button type="button" class="appdosc-card__action" data-card-folder>В папку</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
   </footer>
@@ -2817,8 +2821,11 @@ function initElements() {
   elements.versionPanel = document.querySelector('[data-version-panel]');
   elements.versionValue = document.querySelector('[data-version-value]');
   elements.versionUpdated = document.querySelector('[data-version-updated]');
-  elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
-  elements.taskSelector = document.querySelector('[data-task-select]');
+  elements.folderManager = document.querySelector('[data-folder-manager]');
+  elements.folderFilter = document.querySelector('[data-folder-filter]');
+  elements.folderCreateButton = document.querySelector('[data-folder-create]');
+  elements.folderRenameButton = document.querySelector('[data-folder-rename]');
+  elements.folderDeleteButton = document.querySelector('[data-folder-delete]');
   elements.taskCountInline = document.querySelector('[data-task-count-inline]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
@@ -3394,8 +3401,8 @@ function setLoading(isLoading) {
     elements.refreshButton.disabled = isLoading;
     setClass(elements.refreshButton, 'is-loading', isLoading);
   }
-  if (elements.taskSelector) {
-    elements.taskSelector.disabled = isLoading;
+  if (elements.folderFilter) {
+    elements.folderFilter.disabled = isLoading;
   }
   setClass(document.body, 'appdosc--loading', isLoading);
 
@@ -5397,6 +5404,33 @@ function createCard(task, index, anchorRegistry) {
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
   }
+  const folderButton = card.querySelector('[data-card-folder]');
+  if (folderButton) {
+    folderButton.addEventListener('click', () => {
+      const taskKey = getTaskFolderTaskKey(task);
+      if (!taskKey) {
+        return;
+      }
+      const options = state.folders.map((folder, idx) => `${idx + 1}. ${folder.name}`).join('\n');
+      const raw = window.prompt(`Выберите папку:\n0. Без папки${options ? `\n${options}` : ''}`, '0');
+      const selected = Number(raw);
+      if (!Number.isFinite(selected)) {
+        return;
+      }
+      if (selected <= 0) {
+        delete state.folderAssignments[taskKey];
+      } else {
+        const folder = state.folders[selected - 1];
+        if (!folder) {
+          return;
+        }
+        state.folderAssignments[taskKey] = folder.id;
+      }
+      persistFolders();
+      updateVisibleTasks();
+      safeRender('folder_assign_change');
+    });
+  }
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -5788,7 +5822,15 @@ function updateVisibleTasks() {
     }
   }
 
-  state.visibleTasks = applyCompactFilters(visible);
+  const filteredByFolder = visible.filter(({ task }) => {
+    const key = getTaskFolderTaskKey(task);
+    const folderId = key ? normalizeValue(state.folderAssignments[key]) : '';
+    if (!state.selectedFolderId) return true;
+    if (state.selectedFolderId === "__none__") return !folderId;
+    return folderId === state.selectedFolderId;
+  });
+
+  state.visibleTasks = applyCompactFilters(filteredByFolder);
 }
 
 function truncateText(value, limit = 140) {
@@ -5866,90 +5908,79 @@ function scrollToCard(anchorId) {
   highlightCard(card);
 }
 
-function updateTaskSelector() {
-  if (!elements.taskSelector || !elements.taskSelectorContainer) {
-    return;
-  }
+function getFolderStorageKey() {
+  const userPart = normalizeValue(state.telegram && state.telegram.id) || 'guest';
+  return `appdosc_task_folders_${userPart}`;
+}
 
-  const selector = elements.taskSelector;
-  const container = elements.taskSelectorContainer;
-  selector.innerHTML = '';
+function persistFolders() {
+  try {
+    localStorage.setItem(getFolderStorageKey(), JSON.stringify({ folders: state.folders, assignments: state.folderAssignments }));
+  } catch (error) {}
+}
 
-  const placeholderOption = document.createElement('option');
-  placeholderOption.value = '';
-  const visibleItems = getVisibleTaskItems();
-  const hasCards = visibleItems.length > 0;
-  const taskCountLabel = hasCards
-    ? ` • Всего задач: ${visibleItems.length}`
-    : '';
-  if (elements.taskCountInline) {
-    elements.taskCountInline.textContent = taskCountLabel;
-  }
-  if (elements.taskSelector) {
-    elements.taskSelector.setAttribute(
-      'aria-label',
-      hasCards ? `Перейти к задаче • ${visibleItems.length}` : 'Перейти к задаче',
-    );
-  }
-  const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
-  placeholderOption.textContent = hasCards
-    ? 'Выберите задачу из списка'
-    : hasTasks
-      ? 'Нет задач для выбранной категории'
-      : 'Задачи отсутствуют';
-  selector.appendChild(placeholderOption);
-
-  const cards = elements.cardsContainer
-    ? Array.from(elements.cardsContainer.querySelectorAll('[data-card]'))
-    : [];
-
-  let selectionExists = false;
-
-  cards.forEach((card, index) => {
-    const anchorId = card.id || card.dataset.anchorId;
-    if (!anchorId) {
-      return;
-    }
-    const visibleIndexRaw = Number(card.dataset.visibleIndex);
-    const hasVisibleIndex = Number.isInteger(visibleIndexRaw) && visibleIndexRaw >= 0;
-    const visibleIndex = hasVisibleIndex ? visibleIndexRaw : index;
-    const item = visibleItems[visibleIndex] || visibleItems[index] || null;
-    const task = item && isPlainObject(item.task) ? item.task : {};
-    const label = buildTaskOptionLabel(task, visibleIndex);
-    const option = document.createElement('option');
-    option.value = anchorId;
-    option.textContent = label;
-    if (state.selectedCardAnchor && anchorId === state.selectedCardAnchor) {
-      option.selected = true;
-      selectionExists = true;
-    }
-    selector.appendChild(option);
-  });
-
-  if (!selectionExists) {
-    state.selectedCardAnchor = '';
-  }
-  placeholderOption.disabled = hasCards;
-  placeholderOption.selected = !selectionExists;
-
-  selector.value = state.selectedCardAnchor || '';
-  container.hidden = false;
-  selector.disabled = state.loading || !hasCards;
-  if (selector.disabled) {
-    selector.setAttribute('aria-disabled', 'true');
-  } else {
-    selector.removeAttribute('aria-disabled');
+function restoreFolders() {
+  try {
+    const raw = localStorage.getItem(getFolderStorageKey());
+    const parsed = raw ? JSON.parse(raw) : null;
+    state.folders = Array.isArray(parsed && parsed.folders) ? parsed.folders : [];
+    state.folderAssignments = parsed && typeof parsed.assignments === 'object' ? parsed.assignments : {};
+  } catch (error) {
+    state.folders = [];
+    state.folderAssignments = {};
   }
 }
 
+function getTaskFolderTaskKey(task) {
+  if (!task || typeof task !== 'object') return '';
+  return normalizeValue(task.id) || `entry:${normalizeValue(task.entryNumber) || ''}|doc:${normalizeValue(task.document) || ''}`;
+}
+
+function updateTaskSelector() {
+  if (!elements.folderFilter || !elements.folderManager) return;
+  const selector = elements.folderFilter;
+  selector.innerHTML = '';
+  const options = [{ id: '', name: 'Все папки' }, ...state.folders, { id: '__none__', name: 'Без папки' }];
+  options.forEach((folder) => {
+    const option = document.createElement('option');
+    option.value = folder.id;
+    option.textContent = folder.name;
+    if (state.selectedFolderId === folder.id) option.selected = true;
+    selector.appendChild(option);
+  });
+  const visibleItems = getVisibleTaskItems();
+  if (elements.taskCountInline) elements.taskCountInline.textContent = visibleItems.length ? ` • Задач: ${visibleItems.length}` : '';
+}
+
 function handleTaskSelectorChange(event) {
-  const value = event?.target?.value || '';
-  if (!value) {
-    state.selectedCardAnchor = '';
-    return;
+  state.selectedFolderId = normalizeValue(event?.target?.value);
+  updateVisibleTasks();
+  safeRender('folder_filter_change');
+}
+
+function openFolderPrompt(mode) {
+  if (mode === 'create') {
+    const name = normalizeValue(window.prompt('Название новой папки'));
+    if (!name) return;
+    state.folders.push({ id: `folder_${Date.now().toString(36)}`, name });
   }
-  state.selectedCardAnchor = value;
-  scrollToCard(value);
+  if (mode === 'rename') {
+    if (!state.selectedFolderId) return;
+    const folder = state.folders.find((item) => item.id === state.selectedFolderId);
+    if (!folder) return;
+    const name = normalizeValue(window.prompt('Новое название папки', folder.name));
+    if (!name) return;
+    folder.name = name;
+  }
+  if (mode === 'delete') {
+    if (!state.selectedFolderId) return;
+    state.folders = state.folders.filter((item) => item.id !== state.selectedFolderId);
+    Object.keys(state.folderAssignments).forEach((key) => { if (state.folderAssignments[key] === state.selectedFolderId) delete state.folderAssignments[key]; });
+    state.selectedFolderId = '';
+  }
+  persistFolders();
+  updateVisibleTasks();
+  safeRender('folder_update');
 }
 
 function setCardField(card, selector, value, options = {}) {
@@ -17022,8 +17053,17 @@ function attachEvents() {
   if (elements.refreshButton) {
     elements.refreshButton.addEventListener('click', () => loadTasks(true));
   }
-  if (elements.taskSelector) {
-    elements.taskSelector.addEventListener('change', handleTaskSelectorChange);
+  if (elements.folderFilter) {
+    elements.folderFilter.addEventListener('change', handleTaskSelectorChange);
+  }
+  if (elements.folderCreateButton) {
+    elements.folderCreateButton.addEventListener('click', () => openFolderPrompt('create'));
+  }
+  if (elements.folderRenameButton) {
+    elements.folderRenameButton.addEventListener('click', () => openFolderPrompt('rename'));
+  }
+  if (elements.folderDeleteButton) {
+    elements.folderDeleteButton.addEventListener('click', () => openFolderPrompt('delete'));
   }
   if (elements.summaryToggle) {
     elements.summaryToggle.addEventListener('click', handleSummaryToggleClick);
@@ -17409,6 +17449,7 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
+  restoreFolders();
   initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {

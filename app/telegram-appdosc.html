@@ -1868,6 +1868,17 @@
         background-repeat: no-repeat;
       }
 
+      .appdosc__folder-toolbar {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .appdosc__folder-toolbar .appdosc__filter-toggle {
+        min-height: 40px;
+        border-radius: 12px;
+      }
+
       @media (max-width: 680px) {
         .appdosc {
           padding-inline: 6px !important;
@@ -3047,20 +3058,17 @@
           </div>
         </div>
         <div class="appdosc__user-controls">
-          <div class="appdosc__task-nav" data-task-selector>
-            <label class="appdosc__task-nav-label" for="appdosc-task-select">
-              <span>Перейти к задаче</span>
+          <div class="appdosc__task-nav" data-folder-manager>
+            <label class="appdosc__task-nav-label" for="appdosc-folder-filter">
+              <span>Папки задач</span>
               <span class="appdosc__task-nav-count" data-task-count-inline></span>
             </label>
-            <select
-              class="appdosc__task-nav-select"
-              id="appdosc-task-select"
-              data-task-select
-              aria-label="Перейти к задаче"
-              disabled
-            >
-              <option value="" selected disabled>Выберите задачу из списка</option>
-            </select>
+            <div class="appdosc__folder-toolbar">
+              <select class="appdosc__task-nav-select" id="appdosc-folder-filter" data-folder-filter aria-label="Фильтр по папке"></select>
+              <button type="button" class="appdosc__filter-toggle" data-folder-create>+ Папка</button>
+              <button type="button" class="appdosc__filter-toggle" data-folder-rename>Переименовать</button>
+              <button type="button" class="appdosc__filter-toggle" data-folder-delete>Удалить</button>
+            </div>
           </div>
         </div>
       </section>
