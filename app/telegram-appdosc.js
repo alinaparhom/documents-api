@@ -1990,6 +1990,7 @@ let folders = [
 let activeFolderId = 'all';
 let selectedTaskIds = new Set();
 let folderManageMode = false;
+let taskFolderMap = {};
 
 function loadFoldersFromStorage() {
   try {
@@ -2020,9 +2021,34 @@ function saveFoldersToStorage() {
   } catch (error) {}
 }
 
+function loadTaskFoldersFromStorage() {
+  try {
+    const raw = window.localStorage ? window.localStorage.getItem('appdoscTaskFolders') : '';
+    const parsed = raw ? JSON.parse(raw) : {};
+    taskFolderMap = isPlainObject(parsed) ? parsed : {};
+  } catch (error) {
+    taskFolderMap = {};
+  }
+}
+
+function saveTaskFoldersToStorage() {
+  try {
+    if (!window.localStorage) return;
+    const map = {};
+    state.tasks.forEach((task) => {
+      const key = normalizeValue(task && task.id);
+      if (!key) return;
+      map[key] = normalizeValue(task.folderId) || null;
+    });
+    taskFolderMap = map;
+    window.localStorage.setItem('appdoscTaskFolders', JSON.stringify(map));
+  } catch (error) {}
+}
+
 
 function saveState() {
   saveFoldersToStorage();
+  saveTaskFoldersToStorage();
 }
 
 function getFolderName(folderId) {
@@ -2398,7 +2424,12 @@ function sanitizeTaskItem(task) {
 
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
-  sanitized.folderId = normalizeValue(sanitized.folderId) || null;
+  const taskId = normalizeValue(sanitized.id);
+  if (taskId && Object.prototype.hasOwnProperty.call(taskFolderMap, taskId)) {
+    sanitized.folderId = normalizeValue(taskFolderMap[taskId]) || null;
+  } else {
+    sanitized.folderId = normalizeValue(sanitized.folderId) || null;
+  }
 
   return sanitized;
 }
@@ -5520,7 +5551,27 @@ function openFolderEditModal(folder = null) {
     const row = document.createElement('div');
     const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
     const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action';
-    save.onclick=()=>{ const name=input.value.trim(); if(!name) return; const exists=folders.some((f)=>f.name.toLowerCase()===name.toLowerCase() && (!folder || f.id!==folder.id)); if(exists) return; if(folder){folder.name=name;} else {folders.push({id:'folder_'+Date.now(),name,system:false});} saveState(); renderFolders(); renderCards(); close(); };
+    save.onclick = () => {
+      const name = input.value.trim();
+      if (!name) {
+        setStatus('error', 'Введите название папки.');
+        return;
+      }
+      const exists = folders.some((item) => item.name.toLowerCase() === name.toLowerCase() && (!folder || item.id !== folder.id));
+      if (exists) {
+        setStatus('error', 'Папка с таким названием уже есть.');
+        return;
+      }
+      if (folder) {
+        folder.name = name;
+      } else {
+        folders.push({ id: `folder_${Date.now()}`, name, system: false });
+      }
+      saveState();
+      renderFolders();
+      renderCards();
+      close();
+    };
     row.append(cancel,save); wrap.append(input,row); return wrap;
   });
 }
@@ -5555,6 +5606,7 @@ function setupTaskSelectionControl(card, task) {
     box = document.createElement('input');
     box.type = 'checkbox';
     box.className = 'task-folder-checkbox';
+    box.setAttribute('aria-label', 'Выбрать задачу для массового переноса');
     const header = card.querySelector('.appdosc-card__header') || card;
     header.prepend(box);
   }
@@ -17646,6 +17698,7 @@ function bootstrap() {
   attachGlobalErrorHandlers();
   initElements();
   loadFoldersFromStorage();
+  loadTaskFoldersFromStorage();
   saveFoldersToStorage();
   initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
