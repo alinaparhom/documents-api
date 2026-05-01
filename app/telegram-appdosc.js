@@ -6079,6 +6079,7 @@ function getFolderCount(folderId) {
 
 function selectFolder(folderId) {
   activeFolderId = folderId;
+  updateVisibleTasks();
   renderFolders();
   renderCards();
 }
