@@ -3578,6 +3578,10 @@ function setLoading(isLoading) {
   }
   setClass(document.body, 'appdosc--loading', isLoading);
 
+  if (isLoading && elements.cardsContainer && (!Array.isArray(state.tasks) || !state.tasks.length)) {
+    renderLoadingSkeleton();
+  }
+
   logIosStage('loading_state_changed', { isLoading });
 }
 
@@ -5754,6 +5758,19 @@ function renderBulkFolderPanel() {
   panel.append(toFolder,cancel);
 }
 
+
+function renderLoadingSkeleton() {
+  if (!elements.cardsContainer) {
+    return;
+  }
+  elements.cardsContainer.innerHTML = '<div class="appdosc-skeleton-list" aria-hidden="true">'
+    + '<div class="appdosc-skeleton-card"></div>'
+    + '<div class="appdosc-skeleton-card"></div>'
+    + '<div class="appdosc-skeleton-card"></div>'
+    + '</div>';
+  togglePlaceholder(false);
+}
+
 function togglePlaceholder(shouldShow) {
   if (!elements.placeholder) {
     return;
@@ -5777,7 +5794,16 @@ function setPlaceholderMessage(message) {
   const text = typeof message === 'string' && message.trim()
     ? message.trim()
     : DEFAULT_PLACEHOLDER_MESSAGE;
-  elements.placeholder.textContent = text;
+  const isNoTasksAtAll = text === DEFAULT_PLACEHOLDER_MESSAGE;
+  const isNoTasksInFolder = text === FILTER_PLACEHOLDER_MESSAGE;
+  if (isNoTasksAtAll) {
+    elements.placeholder.dataset.emptyKind = 'global';
+  } else if (isNoTasksInFolder) {
+    elements.placeholder.dataset.emptyKind = 'folder';
+  } else {
+    elements.placeholder.dataset.emptyKind = 'custom';
+  }
+  elements.placeholder.innerHTML = `<strong>${isNoTasksAtAll ? 'Пока нет задач' : (isNoTasksInFolder ? 'В этой папке пусто' : 'Нет данных')}</strong><span>${text}</span>`;
 }
 
 function getVisibleTaskItems() {
