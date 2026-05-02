@@ -4124,11 +4124,12 @@ function updateStats() {
   const directorState = ensureDirectorState();
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
+  const folderScopedTasks = resolveFolderScope(state.tasks, state.activeFilters.folderId || activeFolderId);
   const filterLabel = formatTaskFiltersForLog(normalizedFilters);
   const directorActive = directorState.isActive === true;
   const usingResponsibleFilter = directorActive
     && normalizedFilters.some((filter) => isResponsibleFilter(filter));
-  const overallStats = computeStatsFromTasks(state.tasks, { useDirectorDeadlines: directorActive });
+  const overallStats = computeStatsFromTasks(folderScopedTasks, { useDirectorDeadlines: directorActive });
 
   let statsSource = 'global';
   let displayStats = state.stats;
@@ -6152,6 +6153,8 @@ function selectFolder(folderId) {
   activeFolderId = normalizedFolderId;
   state.activeFilters.folderId = normalizedFolderId;
   updateVisibleTasks();
+  updateStats();
+  updateSummaryFilterState();
   renderFolders();
   renderCards();
 }
