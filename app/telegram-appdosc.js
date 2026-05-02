@@ -5637,21 +5637,41 @@ function closeBottomSheet() {
 function openFolderPicker(onSelect) {
   openBottomSheet((close) => {
     const wrap = document.createElement('div');
-    wrap.innerHTML = '<h3>Переместить в папку</h3>';
+    wrap.className = 'folder-picker-modal';
+    wrap.innerHTML = '<h3 class="folder-modal-title">Переместить в папку</h3><p class="folder-modal-subtitle">Выберите папку или найдите её по названию.</p>';
     const base = [{id:'no-folder',name:'Без папки'}, ...folders.filter((f)=>!f.system)];
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.placeholder = 'Поиск папки';
+    search.className = 'appdosc__input folder-modal-input';
+    search.setAttribute('enterkeyhint', 'search');
+    search.autocomplete = 'off';
+    const meta = document.createElement('div');
+    meta.className = 'folder-modal-hint';
     const list = document.createElement('div');
-    list.className = 'folders-scroll';
-    base.forEach((folder) => {
-      const b = document.createElement('button');
-      b.className = 'folder-chip';
-      b.textContent = folder.name;
-      b.addEventListener('click', () => {
-        onSelect(folder.id === 'no-folder' ? null : folder.id);
-        close();
+    list.className = 'folder-picker-list';
+    const render = (query = '') => {
+      const needle = normalizeValue(query).trim().toLowerCase();
+      const filtered = !needle
+        ? base
+        : base.filter((folder) => folder.name.toLowerCase().includes(needle));
+      list.innerHTML = '';
+      meta.textContent = filtered.length ? `Найдено папок: ${filtered.length}` : 'Папки не найдены';
+      filtered.forEach((folder) => {
+        const b = document.createElement('button');
+        b.className = 'folder-picker-item';
+        b.innerHTML = `<span class="folder-picker-item__name">${escapeHtml(folder.name)}</span><span class="folder-picker-item__arrow">›</span>`;
+        b.addEventListener('click', () => {
+          onSelect(folder.id === 'no-folder' ? null : folder.id);
+          close();
+        });
+        list.appendChild(b);
       });
-      list.appendChild(b);
-    });
-    wrap.appendChild(list);
+    };
+    search.addEventListener('input', () => render(search.value));
+    render('');
+    wrap.append(search, meta, list);
+    window.setTimeout(() => search.focus({ preventScroll: true }), 70);
     return wrap;
   });
 }
@@ -5660,27 +5680,51 @@ function openFolderEditModal(folder = null) {
   openBottomSheet((close) => {
     const wrap = document.createElement('div');
     const title = folder ? 'Редактировать папку' : 'Создать папку';
-    wrap.innerHTML = `<h3 class="folder-modal-title">${title}</h3><p class="folder-modal-subtitle">Короткое и понятное название поможет быстрее находить задачи.</p>`;
+    wrap.innerHTML = `<h3 class="folder-modal-title">${title}</h3><p class="folder-modal-subtitle">Введите короткое название папки для быстрого поиска задач.</p>`;
     const input = document.createElement('input');
     input.placeholder = 'Название папки';
     input.value = folder ? folder.name : '';
-    input.className = 'appdosc__input';
-    input.maxLength = 60;
+    input.className = 'appdosc__input folder-modal-input';
+    input.maxLength = 42;
     input.autocomplete = 'off';
     input.setAttribute('enterkeyhint', 'done');
+    const hint = document.createElement('div');
+    hint.className = 'folder-modal-hint';
+    hint.textContent = 'Максимум 42 символа';
+    const inlineNotice = document.createElement('div');
+    inlineNotice.className = 'folder-modal-notice';
+    inlineNotice.hidden = true;
+    let inlineNoticeTimer = null;
+    const showInlineNotice = (message) => {
+      if (!message) return;
+      if (inlineNoticeTimer) {
+        window.clearTimeout(inlineNoticeTimer);
+        inlineNoticeTimer = null;
+      }
+      inlineNotice.textContent = message;
+      inlineNotice.hidden = false;
+      inlineNotice.classList.add('is-visible');
+      inlineNoticeTimer = window.setTimeout(() => {
+        inlineNotice.classList.remove('is-visible');
+        inlineNotice.hidden = true;
+      }, 2100);
+    };
     const row = document.createElement('div');
     row.className = 'folder-modal-actions';
     const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
-    const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action';
+    const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action appdosc-card__action--assign';
+    const updateSubmitState = () => { save.disabled = !input.value.trim(); };
     const submit = () => {
       const name = input.value.trim();
       if (!name) {
-        setStatus('error', 'Введите название папки.');
+        showInlineNotice('Введите название папки.');
         return;
       }
       const exists = folders.some((item) => item.name.toLowerCase() === name.toLowerCase() && (!folder || item.id !== folder.id));
       if (exists) {
-        setStatus('error', 'Папка с таким названием уже есть.');
+        input.classList.add('folder-modal-input--error');
+        window.setTimeout(() => input.classList.remove('folder-modal-input--error'), 380);
+        showInlineNotice('Папка с таким названием уже есть.');
         return;
       }
       if (folder) {
@@ -5695,13 +5739,18 @@ function openFolderEditModal(folder = null) {
       setStatus('success', folder ? 'Папка обновлена.' : 'Папка создана.');
     };
     save.onclick = submit;
+    input.addEventListener('input', updateSubmitState);
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
         submit();
       }
     });
-    row.append(cancel,save); wrap.append(input,row); return wrap;
+    row.append(cancel,save);
+    wrap.append(input,hint,inlineNotice,row);
+    updateSubmitState();
+    window.setTimeout(() => input.focus({ preventScroll: true }), 70);
+    return wrap;
   });
 }
 
@@ -5715,15 +5764,36 @@ function confirmDeleteFolder(folder) {
 
 function setupTaskFolderControl(card, task) {
   let btn = card.querySelector('.task-folder-select');
+  let row = card.querySelector('.task-folder-row');
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'task-folder-row';
+    const headerText = card.querySelector('.appdosc-card__header-text');
+    if (headerText) {
+      headerText.appendChild(row);
+    } else {
+      const header = card.querySelector('.appdosc-card__header');
+      if (header) header.appendChild(row); else card.prepend(row);
+    }
+  }
   if (!btn) {
     btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'task-folder-select';
-    const footer = card.querySelector('.appdosc-card__actions') || card;
-    footer.prepend(btn);
+    row.appendChild(btn);
+  } else if (btn.parentNode !== row) {
+    row.appendChild(btn);
   }
+  const currentFolderName = getFolderName(task.folderId);
   btn.dataset.taskId = String(task.id || '');
-  btn.textContent = `${getFolderName(task.folderId)} ▾`;
+  btn.setAttribute('aria-label', `Папка задачи: ${currentFolderName}. Нажмите, чтобы изменить.`);
+  btn.innerHTML = `
+    <span class="task-folder-select__content">
+      <span class="task-folder-select__caption">Папка</span>
+      <span class="task-folder-select__value">${escapeHtml(currentFolderName)}</span>
+    </span>
+    <span class="task-folder-select__chevron" aria-hidden="true">⌄</span>
+  `;
   btn.onclick = () => {
     openFolderPicker((selectedFolderId) => {
       setTaskFolder(task, selectedFolderId);
@@ -5741,8 +5811,14 @@ function setupTaskSelectionControl(card, task) {
     box.type = 'checkbox';
     box.className = 'task-folder-checkbox';
     box.setAttribute('aria-label', 'Выбрать задачу для массового переноса');
-    const header = card.querySelector('.appdosc-card__header') || card;
-    header.prepend(box);
+    const meta = card.querySelector('.task-meta, .appdosc-card__meta');
+    if (meta && meta.firstChild) {
+      meta.insertBefore(box, meta.firstChild);
+    } else if (meta) {
+      meta.appendChild(box);
+    } else {
+      card.prepend(box);
+    }
   }
   const taskId = String(task.id || '');
   box.checked = selectedTaskIds.has(taskId);
