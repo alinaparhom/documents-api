@@ -5719,12 +5719,9 @@ function setupTaskFolderControl(card, task) {
   if (!row) {
     row = document.createElement('div');
     row.className = 'task-folder-row';
-    const summary = card.querySelector('.appdosc-card__summary');
-    const details = card.querySelector('.appdosc-card__details');
-    if (summary && summary.parentNode) {
-      summary.insertAdjacentElement('afterend', row);
-    } else if (details && details.parentNode) {
-      details.insertAdjacentElement('beforebegin', row);
+    const header = card.querySelector('.appdosc-card__header');
+    if (header && header.parentNode) {
+      header.insertAdjacentElement('afterend', row);
     } else {
       card.prepend(row);
     }
