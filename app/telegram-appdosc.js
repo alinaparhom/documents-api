@@ -5637,21 +5637,41 @@ function closeBottomSheet() {
 function openFolderPicker(onSelect) {
   openBottomSheet((close) => {
     const wrap = document.createElement('div');
-    wrap.innerHTML = '<h3>Переместить в папку</h3>';
+    wrap.className = 'folder-picker-modal';
+    wrap.innerHTML = '<h3 class="folder-modal-title">Переместить в папку</h3><p class="folder-modal-subtitle">Выберите папку или найдите её по названию.</p>';
     const base = [{id:'no-folder',name:'Без папки'}, ...folders.filter((f)=>!f.system)];
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.placeholder = 'Поиск папки';
+    search.className = 'appdosc__input folder-modal-input';
+    search.setAttribute('enterkeyhint', 'search');
+    search.autocomplete = 'off';
+    const meta = document.createElement('div');
+    meta.className = 'folder-modal-hint';
     const list = document.createElement('div');
-    list.className = 'folders-scroll';
-    base.forEach((folder) => {
-      const b = document.createElement('button');
-      b.className = 'folder-chip';
-      b.textContent = folder.name;
-      b.addEventListener('click', () => {
-        onSelect(folder.id === 'no-folder' ? null : folder.id);
-        close();
+    list.className = 'folder-picker-list';
+    const render = (query = '') => {
+      const needle = normalizeValue(query).trim().toLowerCase();
+      const filtered = !needle
+        ? base
+        : base.filter((folder) => folder.name.toLowerCase().includes(needle));
+      list.innerHTML = '';
+      meta.textContent = filtered.length ? `Найдено папок: ${filtered.length}` : 'Папки не найдены';
+      filtered.forEach((folder) => {
+        const b = document.createElement('button');
+        b.className = 'folder-picker-item';
+        b.innerHTML = `<span class="folder-picker-item__name">${escapeHtml(folder.name)}</span><span class="folder-picker-item__arrow">›</span>`;
+        b.addEventListener('click', () => {
+          onSelect(folder.id === 'no-folder' ? null : folder.id);
+          close();
+        });
+        list.appendChild(b);
       });
-      list.appendChild(b);
-    });
-    wrap.appendChild(list);
+    };
+    search.addEventListener('input', () => render(search.value));
+    render('');
+    wrap.append(search, meta, list);
+    window.setTimeout(() => search.focus({ preventScroll: true }), 70);
     return wrap;
   });
 }
