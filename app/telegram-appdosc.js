@@ -5719,11 +5719,12 @@ function setupTaskFolderControl(card, task) {
   if (!row) {
     row = document.createElement('div');
     row.className = 'task-folder-row';
-    const header = card.querySelector('.appdosc-card__header');
-    if (header && header.parentNode) {
-      header.insertAdjacentElement('afterend', row);
+    const headerMeta = card.querySelector('.appdosc-card__meta');
+    if (headerMeta) {
+      headerMeta.appendChild(row);
     } else {
-      card.prepend(row);
+      const header = card.querySelector('.appdosc-card__header');
+      if (header) header.appendChild(row); else card.prepend(row);
     }
   }
   if (!btn) {
