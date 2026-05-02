@@ -2945,6 +2945,7 @@ function initElements() {
   elements.foldersSection = document.querySelector('[data-folders-section]');
   elements.foldersCount = document.querySelector('[data-folders-count]');
   elements.foldersManage = document.querySelector('[data-folders-manage]');
+  elements.foldersToggle = document.querySelector('[data-folders-toggle]');
   elements.foldersList = document.querySelector('[data-folders-list]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
   elements.summaryToggleIcon = document.querySelector('[data-summary-toggle-icon]');
@@ -3019,9 +3020,25 @@ function initElements() {
   if (elements.foldersManage) {
     elements.foldersManage.addEventListener('click', () => {
       folderManageMode = !folderManageMode;
-      elements.foldersManage.textContent = folderManageMode ? 'Готово' : 'Управление';
+      elements.foldersManage.textContent = folderManageMode ? '✅' : '⚙️';
       renderFolders();
     });
+    elements.foldersManage.textContent = '⚙️';
+  }
+  if (elements.foldersToggle && elements.foldersSection) {
+    elements.foldersToggle.addEventListener('click', () => {
+      const collapsed = elements.foldersSection.dataset.foldersCollapsed !== 'false';
+      const nextCollapsed = !collapsed;
+      elements.foldersSection.dataset.foldersCollapsed = nextCollapsed ? 'true' : 'false';
+      elements.foldersSection.classList.toggle('is-collapsed', nextCollapsed);
+      elements.foldersToggle.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true');
+      if (elements.foldersList) {
+        elements.foldersList.hidden = nextCollapsed;
+      }
+    });
+  }
+  if (elements.taskSelectorContainer) {
+    elements.taskSelectorContainer.hidden = true;
   }
   updateViewerDownloadState(null);
   updateViewerBriefState(null);
@@ -5725,6 +5742,7 @@ function openFolderEditModal(folder = null) {
         input.classList.add('folder-modal-input--error');
         window.setTimeout(() => input.classList.remove('folder-modal-input--error'), 380);
         showInlineNotice('Папка с таким названием уже есть.');
+        clearStatus();
         return;
       }
       if (folder) {
@@ -6259,7 +6277,7 @@ function renderFolders() {
       const manageBtn = document.createElement('button');
       manageBtn.type = 'button';
       manageBtn.className = 'folder-menu-btn';
-      manageBtn.textContent = '⋯';
+      manageBtn.textContent = '✏️';
       manageBtn.addEventListener('click', (event) => { event.stopPropagation(); openFolderActionsModal(folder); });
       button.appendChild(manageBtn);
     }
