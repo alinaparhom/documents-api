@@ -5715,12 +5715,27 @@ function confirmDeleteFolder(folder) {
 
 function setupTaskFolderControl(card, task) {
   let btn = card.querySelector('.task-folder-select');
+  let row = card.querySelector('.task-folder-row');
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'task-folder-row';
+    const summary = card.querySelector('.appdosc-card__summary');
+    const details = card.querySelector('.appdosc-card__details');
+    if (summary && summary.parentNode) {
+      summary.insertAdjacentElement('afterend', row);
+    } else if (details && details.parentNode) {
+      details.insertAdjacentElement('beforebegin', row);
+    } else {
+      card.prepend(row);
+    }
+  }
   if (!btn) {
     btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'task-folder-select';
-    const footer = card.querySelector('.appdosc-card__actions') || card;
-    footer.prepend(btn);
+    row.appendChild(btn);
+  } else if (btn.parentNode !== row) {
+    row.appendChild(btn);
   }
   const currentFolderName = getFolderName(task.folderId);
   btn.dataset.taskId = String(task.id || '');
