@@ -469,12 +469,15 @@
 
   function refreshUserAssignmentKeys() {
     state.effectiveUserRole = resolveEffectiveUserRole(state.access);
+    var normalizedRole = normalizeRoleValue(state.effectiveUserRole || (state.access ? state.access.role : ''));
     var map = collectUserAssignmentKeyMap(
       state.access && state.access.user ? state.access.user : null,
       state.telegramUserId,
       state.effectiveUserRole || (state.access ? state.access.role : '')
     );
-    extendAssignmentKeysWithSubordinate(map, state.access && state.access.user ? state.access.user : null, state.telegramUserId);
+    if (isSubordinateRole(normalizedRole)) {
+      extendAssignmentKeysWithSubordinate(map, state.access && state.access.user ? state.access.user : null, state.telegramUserId);
+    }
     var hasKeys = false;
     for (var key in map) {
       if (!Object.prototype.hasOwnProperty.call(map, key)) {
