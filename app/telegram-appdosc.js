@@ -5719,9 +5719,9 @@ function setupTaskFolderControl(card, task) {
   if (!row) {
     row = document.createElement('div');
     row.className = 'task-folder-row';
-    const headerMeta = card.querySelector('.appdosc-card__meta');
-    if (headerMeta) {
-      headerMeta.appendChild(row);
+    const headerText = card.querySelector('.appdosc-card__header-text');
+    if (headerText) {
+      headerText.appendChild(row);
     } else {
       const header = card.querySelector('.appdosc-card__header');
       if (header) header.appendChild(row); else card.prepend(row);
@@ -5762,7 +5762,7 @@ function setupTaskSelectionControl(card, task) {
     box.type = 'checkbox';
     box.className = 'task-folder-checkbox';
     box.setAttribute('aria-label', 'Выбрать задачу для массового переноса');
-    const meta = card.querySelector('.appdosc-card__meta');
+    const meta = card.querySelector('.task-meta, .appdosc-card__meta');
     if (meta && meta.firstChild) {
       meta.insertBefore(box, meta.firstChild);
     } else if (meta) {
