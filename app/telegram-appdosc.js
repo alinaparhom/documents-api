@@ -5660,18 +5660,22 @@ function openFolderEditModal(folder = null) {
   openBottomSheet((close) => {
     const wrap = document.createElement('div');
     const title = folder ? 'Редактировать папку' : 'Создать папку';
-    wrap.innerHTML = `<h3 class="folder-modal-title">${title}</h3><p class="folder-modal-subtitle">Короткое и понятное название поможет быстрее находить задачи.</p>`;
+    wrap.innerHTML = `<h3 class="folder-modal-title">${title}</h3><p class="folder-modal-subtitle">Введите короткое название папки для быстрого поиска задач.</p>`;
     const input = document.createElement('input');
     input.placeholder = 'Название папки';
     input.value = folder ? folder.name : '';
-    input.className = 'appdosc__input';
-    input.maxLength = 60;
+    input.className = 'appdosc__input folder-modal-input';
+    input.maxLength = 42;
     input.autocomplete = 'off';
     input.setAttribute('enterkeyhint', 'done');
+    const hint = document.createElement('div');
+    hint.className = 'folder-modal-hint';
+    hint.textContent = 'Максимум 42 символа';
     const row = document.createElement('div');
     row.className = 'folder-modal-actions';
     const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
-    const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action';
+    const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action appdosc-card__action--assign';
+    const updateSubmitState = () => { save.disabled = !input.value.trim(); };
     const submit = () => {
       const name = input.value.trim();
       if (!name) {
@@ -5680,6 +5684,8 @@ function openFolderEditModal(folder = null) {
       }
       const exists = folders.some((item) => item.name.toLowerCase() === name.toLowerCase() && (!folder || item.id !== folder.id));
       if (exists) {
+        input.classList.add('folder-modal-input--error');
+        window.setTimeout(() => input.classList.remove('folder-modal-input--error'), 380);
         setStatus('error', 'Папка с таким названием уже есть.');
         return;
       }
@@ -5695,13 +5701,18 @@ function openFolderEditModal(folder = null) {
       setStatus('success', folder ? 'Папка обновлена.' : 'Папка создана.');
     };
     save.onclick = submit;
+    input.addEventListener('input', updateSubmitState);
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
         submit();
       }
     });
-    row.append(cancel,save); wrap.append(input,row); return wrap;
+    row.append(cancel,save);
+    wrap.append(input,hint,row);
+    updateSubmitState();
+    window.setTimeout(() => input.focus({ preventScroll: true }), 70);
+    return wrap;
   });
 }
 
