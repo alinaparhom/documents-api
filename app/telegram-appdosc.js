@@ -17311,7 +17311,7 @@ function formatEntityDisplay(value, label) {
     return '';
   }
 
-  return `${label}: ${normalized}`;
+  return normalized;
 }
 
 function dedupeExecutorNames(candidates) {
