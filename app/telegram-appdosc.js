@@ -5713,14 +5713,27 @@ function confirmDeleteFolder(folder) {
   openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3 class="folder-modal-title">Удалить папку «${folder.name}»?</h3><p class="folder-modal-subtitle">Задачи не удалятся. Мы просто перенесём их в «Без папки».</p>`; const actions=document.createElement('div'); actions.className='folder-modal-actions'; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); persistFoldersListToRegistry(); close(); setStatus('success', 'Папка удалена.');}; actions.append(c,d); wrap.append(actions); return wrap;});
 }
 
+function ensureTaskFolderControlsContainer(card) {
+  const actions = card.querySelector('.appdosc-card__actions') || card;
+  let container = actions.querySelector('.task-folder-controls');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'task-folder-controls';
+    container.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:nowrap;min-width:0;';
+    actions.prepend(container);
+  }
+  return container;
+}
+
 function setupTaskFolderControl(card, task) {
-  let btn = card.querySelector('.task-folder-select');
+  const controls = ensureTaskFolderControlsContainer(card);
+  let btn = controls.querySelector('.task-folder-select');
   if (!btn) {
     btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'task-folder-select';
-    const footer = card.querySelector('.appdosc-card__actions') || card;
-    footer.prepend(btn);
+    btn.style.cssText = 'display:inline-flex;align-items:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    controls.appendChild(btn);
   }
   btn.dataset.taskId = String(task.id || '');
   btn.textContent = `${getFolderName(task.folderId)} ▾`;
@@ -5735,14 +5748,15 @@ function setupTaskFolderControl(card, task) {
 }
 
 function setupTaskSelectionControl(card, task) {
-  let box = card.querySelector('.task-folder-checkbox');
+  const controls = ensureTaskFolderControlsContainer(card);
+  let box = controls.querySelector('.task-folder-checkbox');
   if (!box) {
     box = document.createElement('input');
     box.type = 'checkbox';
     box.className = 'task-folder-checkbox';
     box.setAttribute('aria-label', 'Выбрать задачу для массового переноса');
-    const header = card.querySelector('.appdosc-card__header') || card;
-    header.prepend(box);
+    box.style.cssText = 'width:18px;height:18px;flex:0 0 auto;margin:0;accent-color:#1677ff;';
+    controls.prepend(box);
   }
   const taskId = String(task.id || '');
   box.checked = selectedTaskIds.has(taskId);
