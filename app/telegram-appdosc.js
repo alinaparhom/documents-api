@@ -5671,6 +5671,24 @@ function openFolderEditModal(folder = null) {
     const hint = document.createElement('div');
     hint.className = 'folder-modal-hint';
     hint.textContent = 'Максимум 42 символа';
+    const inlineNotice = document.createElement('div');
+    inlineNotice.className = 'folder-modal-notice';
+    inlineNotice.hidden = true;
+    let inlineNoticeTimer = null;
+    const showInlineNotice = (message) => {
+      if (!message) return;
+      if (inlineNoticeTimer) {
+        window.clearTimeout(inlineNoticeTimer);
+        inlineNoticeTimer = null;
+      }
+      inlineNotice.textContent = message;
+      inlineNotice.hidden = false;
+      inlineNotice.classList.add('is-visible');
+      inlineNoticeTimer = window.setTimeout(() => {
+        inlineNotice.classList.remove('is-visible');
+        inlineNotice.hidden = true;
+      }, 2100);
+    };
     const row = document.createElement('div');
     row.className = 'folder-modal-actions';
     const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
@@ -5679,14 +5697,14 @@ function openFolderEditModal(folder = null) {
     const submit = () => {
       const name = input.value.trim();
       if (!name) {
-        setStatus('error', 'Введите название папки.');
+        showInlineNotice('Введите название папки.');
         return;
       }
       const exists = folders.some((item) => item.name.toLowerCase() === name.toLowerCase() && (!folder || item.id !== folder.id));
       if (exists) {
         input.classList.add('folder-modal-input--error');
         window.setTimeout(() => input.classList.remove('folder-modal-input--error'), 380);
-        setStatus('error', 'Папка с таким названием уже есть.');
+        showInlineNotice('Папка с таким названием уже есть.');
         return;
       }
       if (folder) {
@@ -5709,7 +5727,7 @@ function openFolderEditModal(folder = null) {
       }
     });
     row.append(cancel,save);
-    wrap.append(input,hint,row);
+    wrap.append(input,hint,inlineNotice,row);
     updateSubmitState();
     window.setTimeout(() => input.focus({ preventScroll: true }), 70);
     return wrap;
