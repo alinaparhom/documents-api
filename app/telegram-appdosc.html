@@ -2971,14 +2971,15 @@
       .folders-scroll::-webkit-scrollbar{display:none}
       .folder-menu-btn{border:1px solid rgba(151,177,225,.52);background:rgba(255,255,255,.88);color:#2c4267}
       .appdosc-card__meta{position:relative}
-      .task-folder-row{position:absolute;right:0;top:calc(100% + 4px);display:flex;justify-content:flex-end;align-items:center;max-width:52%;z-index:2}
+      .task-folder-row{position:absolute;right:0;top:calc(100% + 2px);display:flex;justify-content:flex-end;align-items:center;max-width:52%;z-index:2}
       .appdosc-card[data-expanded='false'] .task-folder-row{display:none}
       .task-folder-select{display:inline-flex;align-items:center;justify-content:space-between;gap:6px;min-height:28px;min-width:88px;max-width:150px;border:1px solid rgba(80,130,220,.2);background:linear-gradient(140deg,rgba(255,255,255,.88),rgba(236,244,255,.72));border-radius:10px;padding:3px 6px 3px 8px;color:#173867;font-size:11px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 1px 5px rgba(45,95,180,.08)}
       .task-folder-select__content{display:flex;flex-direction:column;align-items:flex-start;line-height:1.15}
       .task-folder-select__caption{font-size:9px;color:#4c6392}
       .task-folder-select__value{font-size:11px;font-weight:600;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .task-folder-select__chevron{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:999px;background:rgba(72,122,211,.12);color:#2f5eaa;font-size:11px;flex:0 0 auto}
-      .task-folder-checkbox{width:20px;height:20px;accent-color:#4d91ff;margin-right:6px}
+      .appdosc-card.task-card{position:relative}
+      .task-folder-checkbox{position:absolute;left:10px;top:10px;width:20px;height:20px;accent-color:#4d91ff;margin:0;z-index:3;border-radius:7px;background:rgba(255,255,255,.92);box-shadow:0 1px 4px rgba(15,23,42,.22)}
       .bottom-sheet-overlay{position:fixed;inset:0;background:rgba(15,23,42,.35);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);z-index:1000}
       .bottom-sheet{position:fixed;left:0;right:0;bottom:0;background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(248,250,252,.9));border-radius:24px 24px 0 0;padding:20px;border-top:1px solid rgba(148,163,184,.4);box-shadow:0 -12px 36px rgba(15,23,42,.2);z-index:1001;color:#0f172a;animation:sheetSlideUp .2s ease-out}
       .danger-btn{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.45);color:#b91c1c}

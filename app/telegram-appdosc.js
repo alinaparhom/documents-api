@@ -5762,8 +5762,7 @@ function setupTaskSelectionControl(card, task) {
     box.type = 'checkbox';
     box.className = 'task-folder-checkbox';
     box.setAttribute('aria-label', 'Выбрать задачу для массового переноса');
-    const header = card.querySelector('.appdosc-card__header') || card;
-    header.prepend(box);
+    card.appendChild(box);
   }
   const taskId = String(task.id || '');
   box.checked = selectedTaskIds.has(taskId);
