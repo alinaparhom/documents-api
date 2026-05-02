@@ -5722,8 +5722,16 @@ function setupTaskFolderControl(card, task) {
     const footer = card.querySelector('.appdosc-card__actions') || card;
     footer.prepend(btn);
   }
+  const currentFolderName = getFolderName(task.folderId);
   btn.dataset.taskId = String(task.id || '');
-  btn.textContent = `${getFolderName(task.folderId)} ▾`;
+  btn.setAttribute('aria-label', `Папка задачи: ${currentFolderName}. Нажмите, чтобы изменить.`);
+  btn.innerHTML = `
+    <span class="task-folder-select__content">
+      <span class="task-folder-select__caption">Папка</span>
+      <span class="task-folder-select__value">${escapeHtml(currentFolderName)}</span>
+    </span>
+    <span class="task-folder-select__chevron" aria-hidden="true">⌄</span>
+  `;
   btn.onclick = () => {
     openFolderPicker((selectedFolderId) => {
       setTaskFolder(task, selectedFolderId);
