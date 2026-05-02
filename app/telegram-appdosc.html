@@ -432,6 +432,27 @@
         --appdosc-assign-remove-bg: rgba(232, 241, 255, 0.85);
         --appdosc-assign-remove-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.22);
         --appdosc-assign-remove-text: #12325f;
+        --appdosc-folders-section-bg: rgba(255, 255, 255, 0.74);
+        --appdosc-folders-section-bg-solid: #f6faff;
+        --appdosc-folders-section-border: rgba(168, 189, 226, 0.42);
+        --appdosc-folders-manage-bg: rgba(255, 255, 255, 0.88);
+        --appdosc-folders-manage-border: rgba(151, 177, 225, 0.52);
+        --appdosc-folders-manage-text: #28426c;
+        --appdosc-folder-chip-bg: rgba(255, 255, 255, 0.86);
+        --appdosc-folder-chip-bg-solid: #ffffff;
+        --appdosc-folder-chip-border: rgba(164, 185, 224, 0.62);
+        --appdosc-folder-chip-text: #12223d;
+        --appdosc-folder-chip-active-bg: linear-gradient(160deg, rgba(255, 255, 255, 0.95), rgba(230, 240, 255, 0.92));
+        --appdosc-folder-chip-active-border: rgba(61, 124, 255, 0.66);
+        --appdosc-folder-chip-active-shadow: 0 8px 22px rgba(61, 124, 255, 0.24);
+        --appdosc-folder-count-bg: rgba(61, 124, 255, 0.16);
+        --appdosc-folder-count-text: #1f5ed6;
+        --appdosc-task-card-plain-bg: rgba(255, 255, 255, 0.94);
+        --appdosc-task-card-title: #12223d;
+        --appdosc-task-card-subtitle: #5d6f90;
+        --appdosc-task-status-badge-bg: rgba(255, 255, 255, 0.9);
+        --appdosc-task-status-badge-border: rgba(133, 163, 214, 0.44);
+        --appdosc-task-status-badge-text: #274b86;
       }
 
       :root[data-theme='dark'] {
@@ -488,6 +509,27 @@
         --appdosc-assign-remove-bg: rgba(8, 22, 58, 0.45);
         --appdosc-assign-remove-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
         --appdosc-assign-remove-text: #eff6ff;
+        --appdosc-folders-section-bg: rgba(15, 23, 42, 0.76);
+        --appdosc-folders-section-bg-solid: #121c2e;
+        --appdosc-folders-section-border: rgba(71, 85, 105, 0.6);
+        --appdosc-folders-manage-bg: rgba(30, 41, 59, 0.82);
+        --appdosc-folders-manage-border: rgba(100, 116, 139, 0.62);
+        --appdosc-folders-manage-text: #e2e8f0;
+        --appdosc-folder-chip-bg: rgba(15, 23, 42, 0.78);
+        --appdosc-folder-chip-bg-solid: #111b2d;
+        --appdosc-folder-chip-border: rgba(71, 85, 105, 0.65);
+        --appdosc-folder-chip-text: #f1f5f9;
+        --appdosc-folder-chip-active-bg: linear-gradient(150deg, rgba(30, 64, 175, 0.34), rgba(15, 23, 42, 0.86));
+        --appdosc-folder-chip-active-border: rgba(96, 165, 250, 0.72);
+        --appdosc-folder-chip-active-shadow: 0 8px 20px rgba(30, 64, 175, 0.24);
+        --appdosc-folder-count-bg: rgba(59, 130, 246, 0.28);
+        --appdosc-folder-count-text: #dbeafe;
+        --appdosc-task-card-plain-bg: rgba(15, 23, 42, 0.9);
+        --appdosc-task-card-title: #f8fafc;
+        --appdosc-task-card-subtitle: #a5b4ca;
+        --appdosc-task-status-badge-bg: rgba(15, 23, 42, 0.9);
+        --appdosc-task-status-badge-border: rgba(96, 165, 250, 0.4);
+        --appdosc-task-status-badge-text: #dbeafe;
       }
 
 
@@ -2911,14 +2953,15 @@
       .folders-section{
         position:sticky;top:calc(env(safe-area-inset-top) + 4px);z-index:8;
         margin-top:10px;padding:10px;border-radius:16px;
-        background:rgba(255,255,255,.74);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-        border:1px solid rgba(168,189,226,.42)
+        background:var(--appdosc-folders-section-bg-solid);
+        background:var(--appdosc-folders-section-bg);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+        border:1px solid var(--appdosc-folders-section-border)
       }
       .folders-header{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:13px;color:#d7e6ff}
-      .folders-manage{min-height:44px;border:1px solid rgba(151,177,225,.52);background:rgba(255,255,255,.88);padding:8px 12px;border-radius:12px;font-size:13px;color:#28426c}
-      .folder-chip{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 14px;border-radius:14px;background:rgba(255,255,255,.86);border:1px solid rgba(164,185,224,.62);color:#12223d;font-size:14px;flex:0 0 auto;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
-      .folder-chip.active{background:linear-gradient(160deg,rgba(255,255,255,.95),rgba(230,240,255,.92));border-color:rgba(61,124,255,.66);box-shadow:0 8px 22px rgba(61,124,255,.24)}
-      .folder-count{min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:rgba(61,124,255,.16);color:#3d7cff;display:inline-flex;align-items:center;justify-content:center;font-size:12px}
+      .folders-manage{min-height:44px;border:1px solid var(--appdosc-folders-manage-border);background:var(--appdosc-folders-manage-bg);padding:8px 12px;border-radius:12px;font-size:13px;color:var(--appdosc-folders-manage-text)}
+      .folder-chip{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 14px;border-radius:14px;background:var(--appdosc-folder-chip-bg-solid);background:var(--appdosc-folder-chip-bg);border:1px solid var(--appdosc-folder-chip-border);color:var(--appdosc-folder-chip-text);font-size:14px;flex:0 0 auto;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+      .folder-chip.active{background:var(--appdosc-folder-chip-active-bg);border-color:var(--appdosc-folder-chip-active-border);box-shadow:var(--appdosc-folder-chip-active-shadow)}
+      .folder-count{min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:var(--appdosc-folder-count-bg);color:var(--appdosc-folder-count-text);display:inline-flex;align-items:center;justify-content:center;font-size:12px}
       .folders-scroll{display:flex;gap:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:2px 2px 6px}
       .folders-scroll::-webkit-scrollbar{display:none}
       .folder-menu-btn{min-height:44px;border:1px solid rgba(151,177,225,.52);background:rgba(255,255,255,.88);color:#2c4267;border-radius:12px;padding:8px 10px}
@@ -2939,9 +2982,9 @@
       .appdosc-toast--info{border-color:rgba(125,211,252,.6);background:rgba(239,246,255,.85);color:#1e3a8a}
       @keyframes sheetSlideUp{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}
       .bulk-folder-panel{position:fixed;left:12px;right:12px;bottom:10px;z-index:1002;display:none;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:14px;background:rgba(11,22,40,.92);border:1px solid rgba(120,160,230,.35)}
-      .appdosc-card.task-card{border-radius:16px!important;padding:14px!important;background:rgba(255,255,255,.94)!important;border:1px solid rgba(174,193,228,.44)!important;box-shadow:0 8px 18px rgba(33,69,130,.10)!important}
-      .appdosc-card__title{font-size:16px!important;line-height:1.35!important;color:#12223d!important}
-      .appdosc-card__subtitle,.appdosc-card__meta,.appdosc-card__details,.appdosc-card__block-text{color:#5d6f90!important;line-height:1.4!important}
+      .appdosc-card.task-card{border-radius:16px;padding:14px;background:var(--appdosc-task-card-plain-bg);border:1px solid var(--appdosc-task-card-border);box-shadow:var(--appdosc-task-card-shadow)}
+      .appdosc-card__title{font-size:16px;line-height:1.35;color:var(--appdosc-task-card-title)}
+      .appdosc-card__subtitle,.appdosc-card__meta,.appdosc-card__details,.appdosc-card__block-text{color:var(--appdosc-task-card-subtitle);line-height:1.4}
       .appdosc-card__actions{position:sticky;bottom:calc(env(safe-area-inset-bottom) + 8px);background:rgba(255,255,255,.9);border:1px solid rgba(190,208,238,.65);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:14px;padding:8px}
       .appdosc-card__action{min-height:44px}
       .appdosc__cards-placeholder{border-radius:18px;border:1px dashed rgba(144,170,214,.66);background:rgba(255,255,255,.78);color:#2e476f;min-height:160px;padding:18px 14px;text-align:center;display:grid;place-content:center;gap:8px}
@@ -2962,16 +3005,11 @@
       :root[data-theme='dark'] .appdosc-toast--info{background:rgba(30,58,138,.82);color:#dbeafe}
       :root[data-theme='dark'] .appdosc-skeleton-loader{background:rgba(15,23,42,.78);border-color:rgba(100,116,139,.55);color:#cbd5e1}
       :root[data-theme='dark'] .folders-header{color:#cbd5e1}
-      :root[data-theme='dark'] .folders-manage{background:rgba(30,41,59,.78);border-color:rgba(100,116,139,.58);color:#e2e8f0}
-      :root[data-theme='dark'] .folder-chip{background:rgba(15,23,42,.76);border-color:rgba(71,85,105,.65);color:#e2e8f0}
-      :root[data-theme='dark'] .folder-chip.active{background:linear-gradient(150deg,rgba(30,64,175,.28),rgba(15,23,42,.84));border-color:rgba(96,165,250,.7);box-shadow:0 8px 20px rgba(30,64,175,.24)}
-      :root[data-theme='dark'] .folder-count{background:rgba(59,130,246,.22);color:#bfdbfe}
       :root[data-theme='dark'] .folder-menu-btn{background:rgba(30,41,59,.82);border-color:rgba(100,116,139,.58);color:#e2e8f0}
       :root[data-theme='dark'] .task-folder-select{background:rgba(59,130,246,.16);border-color:rgba(96,165,250,.46);color:#dbeafe}
       :root[data-theme='dark'] .bulk-folder-panel{background:rgba(2,6,23,.9);border-color:rgba(71,85,105,.65)}
-      :root[data-theme='dark'] .appdosc-card.task-card{background:rgba(15,23,42,.9)!important;border-color:rgba(71,85,105,.6)!important;box-shadow:0 8px 22px rgba(2,6,23,.5)!important}
-      :root[data-theme='dark'] .appdosc-card__title{color:#f8fafc!important}
-      :root[data-theme='dark'] .appdosc-card__subtitle,:root[data-theme='dark'] .appdosc-card__meta,:root[data-theme='dark'] .appdosc-card__details,:root[data-theme='dark'] .appdosc-card__block-text{color:#94a3b8!important}
+      .task-status-badge{background:var(--appdosc-task-status-badge-bg);border:1px solid var(--appdosc-task-status-badge-border);color:var(--appdosc-task-status-badge-text)}
+      @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){.folders-section,.folder-chip,.appdosc-card__actions{backdrop-filter:none;-webkit-backdrop-filter:none}}
       :root[data-theme='dark'] .appdosc-card__actions{background:rgba(15,23,42,.84);border-color:rgba(71,85,105,.58)}
       :root[data-theme='dark'] .appdosc__cards-placeholder{background:rgba(15,23,42,.74);border-color:rgba(100,116,139,.58);color:#dbeafe}
       @media (max-width:430px){.appdosc__main,.appdosc__table-card.tasks-panel{overflow-x:hidden}.appdosc-card.task-card{padding:12px!important}}
