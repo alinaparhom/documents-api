@@ -6153,6 +6153,8 @@ function selectFolder(folderId) {
   activeFolderId = normalizedFolderId;
   state.activeFilters.folderId = normalizedFolderId;
   updateVisibleTasks();
+  updateStats();
+  updateSummaryFilterState();
   renderFolders();
   renderCards();
 }
