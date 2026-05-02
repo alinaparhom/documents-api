@@ -2171,6 +2171,15 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
+  activeFilters: {
+    folderId: 'all',
+    statusFilters: [],
+    quickPreset: '',
+    groupFilters: [{ type: '', value: '' }],
+    dateFrom: '',
+    dateTo: '',
+    overdue: false,
+  },
   compactFilters: {
     expanded: false,
     dateFrom: '',
@@ -4557,16 +4566,16 @@ function syncCompactFilterGroupOptions() {
 
 function applyCompactFilters(visibleItems) {
   const source = Array.isArray(visibleItems) ? visibleItems : [];
-  const useOverdueOnly = state.compactFilters.showOverdueOnly === true;
+  const useOverdueOnly = state.activeFilters.overdue === true;
   const overdueSource = useOverdueOnly
     ? buildVisibleTaskItemsByMatch(state.tasks, () => true)
     : source;
   if (!overdueSource.length) {
     return [];
   }
-  const dateFrom = normalizeDateInputValue(state.compactFilters.dateFrom);
-  const dateTo = normalizeDateInputValue(state.compactFilters.dateTo);
-  const groupFilters = (Array.isArray(state.compactFilters.groupFilters) ? state.compactFilters.groupFilters : [])
+  const dateFrom = normalizeDateInputValue(state.activeFilters.dateFrom);
+  const dateTo = normalizeDateInputValue(state.activeFilters.dateTo);
+  const groupFilters = (Array.isArray(state.activeFilters.groupFilters) ? state.activeFilters.groupFilters : [])
     .map((entry) => ({
       type: normalizeValue(entry && entry.type),
       value: normalizeValue(entry && entry.value),
@@ -4588,10 +4597,10 @@ function applyCompactFilters(visibleItems) {
   return overdueSource.filter((item) => {
     const task = item && item.task ? item.task : null;
     const matchesOverdueFilter = isTaskOverdueByCompactRule(task);
-    if (state.compactFilters.showOverdueOnly && !matchesOverdueFilter) {
+    if (state.activeFilters.overdue && !matchesOverdueFilter) {
       return false;
     }
-    if (state.compactFilters.showOverdueOnly) {
+    if (state.activeFilters.overdue) {
       return true;
     }
     if (parsedFrom || parsedTo) {
@@ -4637,21 +4646,26 @@ function applyCompactQuickPreset(preset) {
   } else if (normalizedPreset === 'quarter') {
     from.setDate(today.getDate() - 90);
   } else {
-    state.compactFilters.quickPreset = '';
+    state.activeFilters.quickPreset = '';
     return;
   }
 
-  state.compactFilters.quickPreset = normalizedPreset;
-  state.compactFilters.dateFrom = formatDateInputValue(from);
-  state.compactFilters.dateTo = formatDateInputValue(to);
+  state.activeFilters.quickPreset = normalizedPreset;
+  state.activeFilters.dateFrom = formatDateInputValue(from);
+  state.activeFilters.dateTo = formatDateInputValue(to);
 }
 
-function resetCompactFilters() {
-  state.compactFilters.dateFrom = '';
-  state.compactFilters.dateTo = '';
-  state.compactFilters.quickPreset = '';
-  state.compactFilters.groupFilters = [{ type: '', value: '' }];
-  state.compactFilters.showOverdueOnly = false;
+function resetCompactFilters(mode = 'all') {
+  if (mode === 'statuses') {
+    state.activeFilters.statusFilters = [];
+    return;
+  }
+  state.activeFilters.dateFrom = '';
+  state.activeFilters.dateTo = '';
+  state.activeFilters.quickPreset = '';
+  state.activeFilters.groupFilters = [{ type: '', value: '' }];
+  state.activeFilters.overdue = false;
+  state.activeFilters.statusFilters = [];
   state.compactFilters.prevFiltersBeforeOverdue = null;
 }
 
@@ -6134,7 +6148,9 @@ function getFolderCount(folderId) {
 }
 
 function selectFolder(folderId) {
-  activeFolderId = ensureActiveFolderId(folderId);
+  const normalizedFolderId = ensureActiveFolderId(folderId);
+  activeFolderId = normalizedFolderId;
+  state.activeFilters.folderId = normalizedFolderId;
   updateVisibleTasks();
   renderFolders();
   renderCards();
@@ -6185,8 +6201,23 @@ function renderFolders() {
 }
 
 function updateVisibleTasks() {
-  const normalizedFilters = normalizeTaskFilters(state.taskFilter);
-  state.taskFilter = normalizedFilters;
+  state.activeFilters.folderId = ensureActiveFolderId(state.activeFilters.folderId || activeFolderId);
+  activeFolderId = state.activeFilters.folderId;
+  state.activeFilters.statusFilters = normalizeTaskFilters(state.activeFilters.statusFilters);
+  state.taskFilter = state.activeFilters.statusFilters;
+  const normalizedFilters = state.activeFilters.statusFilters;
+  state.activeFilters.quickPreset = normalizeValue(state.activeFilters.quickPreset);
+  state.activeFilters.dateFrom = normalizeDateInputValue(state.activeFilters.dateFrom);
+  state.activeFilters.dateTo = normalizeDateInputValue(state.activeFilters.dateTo);
+  state.activeFilters.overdue = state.activeFilters.overdue === true;
+  state.activeFilters.groupFilters = Array.isArray(state.activeFilters.groupFilters)
+    ? state.activeFilters.groupFilters
+    : [{ type: '', value: '' }];
+  state.compactFilters.quickPreset = state.activeFilters.quickPreset;
+  state.compactFilters.dateFrom = state.activeFilters.dateFrom;
+  state.compactFilters.dateTo = state.activeFilters.dateTo;
+  state.compactFilters.showOverdueOnly = state.activeFilters.overdue;
+  state.compactFilters.groupFilters = state.activeFilters.groupFilters;
   const directorState = ensureDirectorState();
   const entryTaskId = normalizeValue(state.entryTaskId);
 
@@ -6195,14 +6226,13 @@ function updateVisibleTasks() {
     const matchedTask = matched.length ? matched[0].task : null;
     const isTelegramDeepLink = Boolean(state.telegram.startParam);
     if (isTelegramDeepLink && isTaskOverdueByCompactRule(matchedTask)) {
-      state.compactFilters.showOverdueOnly = true;
+      state.activeFilters.overdue = true;
     }
     state.visibleTasks = applyCompactFilters(matched);
     return;
   }
 
-  activeFolderId = ensureActiveFolderId(activeFolderId);
-  const folderScopedTasks = resolveFolderScope(state.tasks, activeFolderId);
+  const folderScopedTasks = resolveFolderScope(state.tasks, state.activeFilters.folderId);
 
   const filtered = applyTaskFilter(normalizedFilters, folderScopedTasks);
   let visible = filtered;
@@ -17488,7 +17518,7 @@ function clearStatus() {
 
 function handleSummaryBadgeClick(filter) {
   const normalizedTarget = normalizeTaskFilter(filter);
-  const previousFilters = normalizeTaskFilters(state.taskFilter);
+  const previousFilters = normalizeTaskFilters(state.activeFilters.statusFilters);
   const directorState = ensureDirectorState();
   if (directorState.isActive && hasAssigneeFilters(previousFilters)) {
     logDirectorDebug('status_click_blocked', {
@@ -17520,7 +17550,7 @@ function handleSummaryBadgeClick(filter) {
     });
   }
 
-  state.taskFilter = nextFilters;
+  state.activeFilters.statusFilters = nextFilters;
   state.selectedCardAnchor = '';
   updateVisibleTasks();
   const reason = nextFilters.length === 0 ? 'task_filter_reset' : 'task_filter_change';
@@ -17566,10 +17596,10 @@ function attachEvents() {
       }
       button.addEventListener('click', () => {
         const preset = normalizeValue(button.dataset.filterQuickBtn);
-        if (preset && state.compactFilters.quickPreset === preset) {
-          state.compactFilters.quickPreset = '';
-          state.compactFilters.dateFrom = '';
-          state.compactFilters.dateTo = '';
+        if (preset && state.activeFilters.quickPreset === preset) {
+          state.activeFilters.quickPreset = '';
+          state.activeFilters.dateFrom = '';
+          state.activeFilters.dateTo = '';
         } else {
           applyCompactQuickPreset(preset);
         }
@@ -17590,10 +17620,10 @@ function attachEvents() {
       if (!Number.isInteger(index) || index < 0) {
         return;
       }
-      if (!Array.isArray(state.compactFilters.groupFilters)) {
-        state.compactFilters.groupFilters = [{ type: '', value: '' }];
+      if (!Array.isArray(state.activeFilters.groupFilters)) {
+        state.activeFilters.groupFilters = [{ type: '', value: '' }];
       }
-      const current = state.compactFilters.groupFilters[index];
+      const current = state.activeFilters.groupFilters[index];
       if (!current) {
         return;
       }
@@ -17617,12 +17647,12 @@ function attachEvents() {
       if (!Number.isInteger(index) || index < 0) {
         return;
       }
-      if (!Array.isArray(state.compactFilters.groupFilters) || state.compactFilters.groupFilters.length <= 1) {
+      if (!Array.isArray(state.activeFilters.groupFilters) || state.activeFilters.groupFilters.length <= 1) {
         return;
       }
-      state.compactFilters.groupFilters.splice(index, 1);
-      if (!state.compactFilters.groupFilters.length) {
-        state.compactFilters.groupFilters = [{ type: '', value: '' }];
+      state.activeFilters.groupFilters.splice(index, 1);
+      if (!state.activeFilters.groupFilters.length) {
+        state.activeFilters.groupFilters = [{ type: '', value: '' }];
       }
       syncCompactFilterGroupOptions();
       updateVisibleTasks();
@@ -17632,21 +17662,22 @@ function attachEvents() {
   if (elements.filterGroupAddButton) {
     elements.filterGroupAddButton.addEventListener('click', () => {
       const max = getCompactFilterTypeOptions().length;
-      if (!Array.isArray(state.compactFilters.groupFilters)) {
-        state.compactFilters.groupFilters = [{ type: '', value: '' }];
+      if (!Array.isArray(state.activeFilters.groupFilters)) {
+        state.activeFilters.groupFilters = [{ type: '', value: '' }];
       }
-      if (state.compactFilters.groupFilters.length >= max) {
+      if (state.activeFilters.groupFilters.length >= max) {
         return;
       }
-      state.compactFilters.groupFilters.push({ type: '', value: '' });
+      state.activeFilters.groupFilters.push({ type: '', value: '' });
       syncCompactFilterGroupOptions();
       updateVisibleTasks();
       safeRender('compact_filter_groups_add');
     });
   }
   if (elements.filterResetButton) {
-    elements.filterResetButton.addEventListener('click', () => {
-      resetCompactFilters();
+    elements.filterResetButton.addEventListener('click', (event) => {
+      const resetMode = event && event.shiftKey ? 'all' : 'statuses';
+      resetCompactFilters(resetMode);
       updateVisibleTasks();
       safeRender('compact_filter_reset');
     });
