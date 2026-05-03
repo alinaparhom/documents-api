@@ -12576,6 +12576,28 @@ function setupStatusControls(card, task) {
   const normalizedCurrent = normalizeName(currentStatus);
   optionsContainer.innerHTML = '';
 
+  const isUnderReview = getStatusSummaryKey(currentStatus) === 'review';
+  if (isUnderReview) {
+    const reviewActions = document.createElement('div');
+    reviewActions.className = 'appdosc-card__review-actions';
+
+    const acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button';
+    acceptBtn.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
+    acceptBtn.textContent = '✅ Принять';
+    acceptBtn.addEventListener('click', () => handleReviewDecision(acceptBtn, task, 'Выполнено', 'Задача принята.'));
+    reviewActions.appendChild(acceptBtn);
+
+    const reworkBtn = document.createElement('button');
+    reworkBtn.type = 'button';
+    reworkBtn.className = 'appdosc-card__action appdosc-card__action--compact';
+    reworkBtn.textContent = '↩ На доработку';
+    reworkBtn.addEventListener('click', () => handleReviewDecision(reworkBtn, task, 'В работе', 'Задача отправлена на доработку.'));
+    reviewActions.appendChild(reworkBtn);
+
+    optionsContainer.appendChild(reviewActions);
+  }
+
   STATUS_OPTIONS.forEach((option) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -12601,6 +12623,35 @@ function setupStatusControls(card, task) {
   }
 
   container.hidden = false;
+}
+
+async function handleReviewDecision(button, task, statusValue, successMessage) {
+  if (!button || !task || !task.id) {
+    return;
+  }
+  const organization = getTaskOrganization(task);
+  if (!organization) {
+    setStatus('error', 'Не удалось определить организацию задачи.');
+    return;
+  }
+  if (button.dataset.loading === 'true') {
+    return;
+  }
+  setActionButtonLoading(button, true);
+  try {
+    await sendTaskMutation({
+      updateType: 'status',
+      organization,
+      documentId: task.id,
+      status: statusValue,
+    });
+    await loadTasks(true);
+    setStatus('success', successMessage);
+  } catch (error) {
+    setStatus('error', error instanceof Error ? error.message : String(error));
+  } finally {
+    setActionButtonLoading(button, false);
+  }
 }
 
 function setupInstructionControl(card, task) {
