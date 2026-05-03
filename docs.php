@@ -15757,7 +15757,7 @@ switch ($action) {
                 }
                 if ($scope === 'responsible_subordinates') {
                     $recipientRole = docs_normalize_assignment_role((string) ($recipient['role'] ?? ''));
-                    if ($recipientRole !== 'subordinate') {
+                    if ($recipientRole === 'director') {
                         continue;
                     }
                 }
