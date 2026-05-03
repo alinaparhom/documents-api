@@ -6811,23 +6811,22 @@ function docs_entry_assigned_by_user(array $entry, array $requestContext): bool
     }
 
     $assignedByRaw = sanitize_text_field((string) ($entry['assignedBy'] ?? ''), 200);
-    if ($assignedByRaw === '') {
-        return false;
-    }
 
     $userCandidates = docs_collect_request_identity_candidates($requestContext);
     if (empty($userCandidates['ids']) && empty($userCandidates['names'])) {
         return false;
     }
 
-    $assignedByName = docs_normalize_name_candidate_value($assignedByRaw);
-    if ($assignedByName !== '' && in_array($assignedByName, $userCandidates['names'], true)) {
-        return true;
-    }
+    if ($assignedByRaw !== '') {
+        $assignedByName = docs_normalize_name_candidate_value($assignedByRaw);
+        if ($assignedByName !== '' && in_array($assignedByName, $userCandidates['names'], true)) {
+            return true;
+        }
 
-    $assignedById = docs_normalize_identifier_candidate_value($assignedByRaw);
-    if ($assignedById !== '' && in_array($assignedById, $userCandidates['ids'], true)) {
-        return true;
+        $assignedById = docs_normalize_identifier_candidate_value($assignedByRaw);
+        if ($assignedById !== '' && in_array($assignedById, $userCandidates['ids'], true)) {
+            return true;
+        }
     }
 
     $assignedByTelegram = docs_normalize_identifier_candidate_value((string) ($entry['assignedByTelegram'] ?? ''));
