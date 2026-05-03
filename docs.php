@@ -2318,6 +2318,41 @@ function docs_send_task_assignment_notifications(array $assignees, array $record
     }
 }
 
+function docs_send_task_status_review_notification(array $record, string $organization, array $recipient, string $message): void
+{
+    $message = trim($message);
+    if ($message === '' || empty($recipient)) {
+        return;
+    }
+
+    $botToken = docs_resolve_telegram_bot_token();
+    if ($botToken === null || $botToken === '') {
+        return;
+    }
+
+    $chatId = docs_resolve_telegram_chat_id_from_assignee($recipient);
+    if ($chatId === null || $chatId === '') {
+        return;
+    }
+
+    $baseUrl = docs_resolve_application_base_url();
+    $appPath = '/js/documents/app/telegram-appdosc.html';
+    $startParam = docs_build_task_start_param($record);
+    $link = docs_build_mini_app_link($baseUrl, $appPath, $chatId, $startParam);
+
+    $replyMarkup = null;
+    if ($link !== '') {
+        $replyMarkup = [
+            'inline_keyboard' => [[[
+                'text' => 'Открыть задачу',
+                'web_app' => ['url' => $link],
+            ]]],
+        ];
+    }
+
+    docs_send_telegram_message($chatId, $message, $botToken, $replyMarkup);
+}
+
 function docs_parse_telegram_init_data_string(string $initData): ?array
 {
     $initData = trim($initData);
@@ -14303,10 +14338,75 @@ switch ($action) {
             'task' => $updatedRecord,
         ];
 
+        $statusReviewNotification = null;
+        if ($updateType === 'status' && !$isDirector) {
+            $statusTextForNotification = isset($updatedRecord['status']) ? mb_strtolower((string) $updatedRecord['status'], 'UTF-8') : '';
+            $assigneesIndex = docs_index_assignees($updatedAssignees);
+            $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
+            $statusAssigneeKey = docs_match_status_change_assignee_key(
+                $updatedRecord,
+                $requestContext,
+                $sessionAuthArray,
+                $statusAuthor
+            );
+            $actor = ($statusAssigneeKey !== null && $statusAssigneeKey !== '' && isset($assigneesIndex[$statusAssigneeKey]))
+                ? $assigneesIndex[$statusAssigneeKey]
+                : null;
+
+            if (is_array($actor)) {
+                $actorRole = docs_normalize_assignment_role((string) ($actor['role'] ?? ''));
+                if ($actorRole === 'subordinate' && mb_stripos($statusTextForNotification, 'провер') !== false) {
+                    $recipient = null;
+                    foreach ($updatedAssignees as $entry) {
+                        if (!is_array($entry)) {
+                            continue;
+                        }
+                        if (docs_normalize_assignment_role((string) ($entry['role'] ?? '')) === 'responsible') {
+                            $recipient = $entry;
+                            break;
+                        }
+                    }
+                    if (is_array($recipient)) {
+                        $taskTitle = sanitize_text_field((string) ($updatedRecord['title'] ?? ($updatedRecord['name'] ?? 'Задача')), 200);
+                        $actorName = sanitize_text_field((string) ($actor['name'] ?? ($actor['responsible'] ?? 'Подчинённый')), 120);
+                        $statusReviewNotification = ['recipient' => $recipient, 'message' => "🔔 {$actorName} выполнил задачу «{$taskTitle}». Проверьте и подтвердите выполнение."];
+                    }
+                } elseif ($actorRole === 'responsible') {
+                    $recipient = null;
+                    foreach ($updatedAssignees as $entry) {
+                        if (!is_array($entry)) {
+                            continue;
+                        }
+                        if (docs_normalize_assignment_role((string) ($entry['role'] ?? '')) === 'subordinate') {
+                            $recipient = $entry;
+                            break;
+                        }
+                    }
+                    if (is_array($recipient)) {
+                        $taskTitle = sanitize_text_field((string) ($updatedRecord['title'] ?? ($updatedRecord['name'] ?? 'Задача')), 200);
+                        $actorName = sanitize_text_field((string) ($actor['name'] ?? ($actor['responsible'] ?? 'Ответственный')), 120);
+                        if (mb_stripos($statusTextForNotification, 'доработ') !== false) {
+                            $statusReviewNotification = ['recipient' => $recipient, 'message' => "🔁 {$actorName} вернул задачу «{$taskTitle}» на доработку.\n\n🛠 Проверьте комментарий и внесите исправления."];
+                        } elseif (mb_stripos($statusTextForNotification, 'выполн') !== false) {
+                            $statusReviewNotification = ['recipient' => $recipient, 'message' => "✅ {$actorName} принял задачу «{$taskTitle}».\n\n👏 Отличная работа! Задача подтверждена как выполненная."];
+                        }
+                    }
+                }
+            }
+        }
+
         if (in_array($updateType, ['assign', 'assign_add', 'subordinates', 'subordinates_add'], true)
             && !empty($assignedAssignees)) {
             respond_success_with_background_task($responsePayload, static function () use ($assignedAssignees, $updatedRecord, $organizationCandidate): void {
                 docs_send_task_assignment_notifications($assignedAssignees, $updatedRecord, $organizationCandidate);
+            });
+        }
+
+        if ($statusReviewNotification !== null) {
+            $recipient = $statusReviewNotification['recipient'];
+            $messageText = (string) ($statusReviewNotification['message'] ?? '');
+            respond_success_with_background_task($responsePayload, static function () use ($updatedRecord, $organizationCandidate, $recipient, $messageText): void {
+                docs_send_task_status_review_notification($updatedRecord, $organizationCandidate, $recipient, $messageText);
             });
         }
 

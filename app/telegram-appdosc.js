@@ -733,7 +733,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'На доработку', 'Выполнено', 'Отменено'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';

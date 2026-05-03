@@ -1047,7 +1047,7 @@
     return column.key;
   });
   var COLUMN_ORDER_STORAGE_PREFIX = 'documents:column-order:';
-  var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
+  var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'На доработку', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
   var INSTRUCTION_OPTIONS = ['В работу', 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
   var TABLE_COLUMN_MAP = (function() {
