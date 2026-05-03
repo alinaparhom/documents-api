@@ -2353,6 +2353,30 @@ function docs_send_task_status_review_notification(array $record, string $organi
     docs_send_telegram_message($chatId, $message, $botToken, $replyMarkup);
 }
 
+function docs_is_completed_status_value(string $status): bool
+{
+    $normalized = mb_strtolower(trim($status), 'UTF-8');
+    return $normalized !== '' && mb_stripos($normalized, 'выполн') !== false;
+}
+
+function docs_build_overdue_task_message(array $record, array $recipient, int $overdueDays): string
+{
+    $name = sanitize_text_field((string) ($recipient['name'] ?? ($recipient['responsible'] ?? '')), 200);
+    $taskNumber = sanitize_text_field((string) ($record['id'] ?? ''), 120);
+    $summary = sanitize_text_field((string) ($record['summary'] ?? ($record['correspondent'] ?? '')), 500);
+    $dueDateRaw = sanitize_date_field((string) ($record['dueDate'] ?? ''));
+    $dueDate = docs_format_human_date($dueDateRaw);
+
+    $lines = [];
+    $lines[] = $name !== '' ? ('⏰ ' . $name . ', просрочена задача') : '⏰ Просрочена задача';
+    $lines[] = 'Номер задачи: ' . ($taskNumber !== '' ? $taskNumber : 'не указан');
+    $lines[] = 'Кратко: ' . ($summary !== '' ? docs_truncate_notification_text($summary, 180) : 'не указано');
+    $lines[] = 'Крайний срок: ' . ($dueDate !== '' ? $dueDate : 'не указан');
+    $lines[] = 'Просрочка: ' . max(1, $overdueDays) . ' дн.';
+
+    return trim(implode("\n", $lines));
+}
+
 function docs_parse_telegram_init_data_string(string $initData): ?array
 {
     $initData = trim($initData);
@@ -15633,6 +15657,82 @@ switch ($action) {
         }
 
         respond_success(['message' => $responseMessage]);
+        break;
+
+    case 'send_overdue_notifications':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        docs_require_admin_session($accessContext);
+
+        $organization = $accessContext['active'];
+        if ($organization === null || $organization === '') {
+            respond_error('Организация не выбрана.');
+        }
+
+        $folder = sanitize_folder_name($organization);
+        $records = load_registry($folder);
+        $today = strtotime(date('Y-m-d'));
+        $sentCount = 0;
+        $taskCount = 0;
+
+        foreach ($records as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $dueRaw = sanitize_date_field((string) ($record['dueDate'] ?? ''));
+            if ($dueRaw === '') {
+                continue;
+            }
+            $dueTs = strtotime($dueRaw . ' 00:00:00');
+            if ($dueTs === false || $dueTs >= $today) {
+                continue;
+            }
+            if (docs_is_completed_status_value((string) ($record['status'] ?? ''))) {
+                continue;
+            }
+
+            $overdueDays = (int) floor(($today - $dueTs) / 86400);
+            if ($overdueDays < 1) {
+                $overdueDays = 1;
+            }
+
+            $assignees = docs_extract_assignees($record);
+            if (empty($assignees)) {
+                continue;
+            }
+
+            $taskCount++;
+            foreach ($assignees as $recipient) {
+                if (!is_array($recipient)) {
+                    continue;
+                }
+                $message = docs_build_overdue_task_message($record, $recipient, $overdueDays);
+                if ($message === '') {
+                    continue;
+                }
+                docs_send_task_status_review_notification($record, $organization, $recipient, $message);
+                $sentCount++;
+            }
+        }
+
+        respond_success([
+            'message' => 'Рассылка по просроченным задачам выполнена.',
+            'organization' => $organization,
+            'overdueTasks' => $taskCount,
+            'notificationsSent' => $sentCount,
+        ]);
         break;
 
     case 'register_view':
