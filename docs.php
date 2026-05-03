@@ -15674,15 +15674,36 @@ switch ($action) {
 
         $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
         $accessContext = docs_resolve_access_context($requestedOrganization);
-        docs_require_admin_session($accessContext);
+        $sessionAuth = docs_get_session_auth();
+        $sessionRole = is_array($sessionAuth) ? strtolower((string) ($sessionAuth['role'] ?? '')) : '';
+        $isAdminSession = $sessionRole === 'admin';
+        $isUserSession = $sessionRole === 'user';
+        if ($isAdminSession) {
+            $sessionAuth = docs_require_admin_session($accessContext);
+        } elseif (!$isUserSession) {
+            respond_error('Доступ запрещён. Требуются права администратора или ответственного.', 403, [
+                'requiresAdmin' => true,
+                'requiresResponsible' => true,
+            ]);
+        }
 
         $organization = $accessContext['active'];
         if ($organization === null || $organization === '') {
             respond_error('Организация не выбрана.');
         }
+        $scope = sanitize_text_field((string) ($payload['scope'] ?? 'all'), 40);
+        if ($scope !== 'all' && $scope !== 'responsible_subordinates') {
+            $scope = 'all';
+        }
+        if (!$isAdminSession && $scope !== 'responsible_subordinates') {
+            respond_error('Ответственный может запускать только рассылку по своим подчинённым.', 403);
+        }
 
         $folder = sanitize_folder_name($organization);
         $records = load_registry($folder);
+        $settings = load_admin_settings($folder);
+        $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles']) ? $settings['responsibles'] : [];
+        $userFilter = $isUserSession ? docs_build_session_user_filter_from_auth(is_array($sessionAuth) ? $sessionAuth : []) : null;
         $today = strtotime(date('Y-m-d'));
         $sentCount = 0;
         $taskCount = 0;
@@ -15690,6 +15711,11 @@ switch ($action) {
         foreach ($records as $record) {
             if (!is_array($record)) {
                 continue;
+            }
+            if ($scope === 'responsible_subordinates') {
+                if ($userFilter === null || !document_matches_assignee_filter($record, $userFilter, $responsibles)) {
+                    continue;
+                }
             }
             $dueRaw = sanitize_date_field((string) ($record['dueDate'] ?? ''));
             if ($dueRaw === '') {
@@ -15717,6 +15743,12 @@ switch ($action) {
             foreach ($assignees as $recipient) {
                 if (!is_array($recipient)) {
                     continue;
+                }
+                if ($scope === 'responsible_subordinates') {
+                    $recipientRole = docs_normalize_assignment_role((string) ($recipient['role'] ?? ''));
+                    if ($recipientRole !== 'subordinate') {
+                        continue;
+                    }
                 }
                 $message = docs_build_overdue_task_message($record, $recipient, $overdueDays);
                 if ($message === '') {

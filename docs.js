@@ -5921,10 +5921,16 @@
     dialog.appendChild(body);
 
     var footer = createElement('div', 'documents-admin__footer');
+    var digestAllButton = createElement('button', 'documents-admin__close', 'Дайджест: все просрочки');
+    digestAllButton.type = 'button';
+    var digestSubordinatesButton = createElement('button', 'documents-admin__close', 'Дайджест: мои подчинённые');
+    digestSubordinatesButton.type = 'button';
     var closeButton = createElement('button', 'documents-admin__close', 'Закрыть без сохранения');
     closeButton.type = 'button';
     var saveButton = createElement('button', 'documents-admin__save', 'Сохранить и закрыть');
     saveButton.type = 'button';
+    footer.appendChild(digestAllButton);
+    footer.appendChild(digestSubordinatesButton);
     footer.appendChild(closeButton);
     footer.appendChild(saveButton);
     dialog.appendChild(footer);
@@ -5996,6 +6002,8 @@
     adminElements.templateUploadButton = templateUploadButton;
     adminElements.templateUploadInput = templateUploadInput;
     adminElements.templateCloseButton = templateCloseButton;
+    adminElements.digestAllButton = digestAllButton;
+    adminElements.digestSubordinatesButton = digestSubordinatesButton;
 
     closeButton.addEventListener('click', function() {
       closeAdminModal();
@@ -6057,6 +6065,12 @@
 
     saveButton.addEventListener('click', function() {
       handleAdminSave();
+    });
+    digestAllButton.addEventListener('click', function() {
+      triggerOverdueDigest('all');
+    });
+    digestSubordinatesButton.addEventListener('click', function() {
+      triggerOverdueDigest('responsible_subordinates');
     });
 
     backdrop.addEventListener('click', function() {
@@ -7416,6 +7430,39 @@
       })
       .finally(function() {
         setAdminSaving(false);
+      });
+  }
+
+  function triggerOverdueDigest(scope) {
+    var normalizedScope = scope === 'responsible_subordinates' ? 'responsible_subordinates' : 'all';
+    var isAdmin = isCurrentUserAdmin();
+    if (!isAdmin && normalizedScope !== 'responsible_subordinates') {
+      updateAdminMessage('Только администратор может запускать общий дайджест.', true);
+      return;
+    }
+
+    var payload = {
+      action: 'send_overdue_notifications',
+      organization: state.organization,
+      scope: normalizedScope
+    };
+    mergeTelegramUserId(payload);
+
+    updateAdminMessage('Запускаем рассылку просроченных задач…', false);
+    fetch(buildApiUrl('send_overdue_notifications', { organization: state.organization }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        var sent = data && typeof data.notificationsSent === 'number' ? data.notificationsSent : 0;
+        var tasks = data && typeof data.overdueTasks === 'number' ? data.overdueTasks : 0;
+        updateAdminMessage('Готово: задач ' + tasks + ', уведомлений ' + sent + '.', false);
+      })
+      .catch(function(error) {
+        updateAdminMessage('Не удалось отправить дайджест: ' + error.message, true);
       });
   }
 
