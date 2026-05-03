@@ -14179,6 +14179,16 @@ switch ($action) {
                 $sessionAuthArray,
                 $statusAuthor
             );
+            $statusAssigneeEntry = ($statusAssigneeKey !== null && $statusAssigneeKey !== '')
+                ? docs_find_assignee_entry_by_key($records[$recordIndex], $statusAssigneeKey)
+                : null;
+            $statusAssigneeRole = is_array($statusAssigneeEntry) && isset($statusAssigneeEntry['role'])
+                ? mb_strtolower(trim((string) $statusAssigneeEntry['role']), 'UTF-8')
+                : '';
+            if (!$isDirector && $requestedStatus === 'выполнено' && $statusAssigneeRole !== 'subordinate') {
+                $nextStatus = 'Выполнено';
+                $shouldNotifyReviewer = false;
+            }
             $shouldUpdateSharedStatus = $isDirector || $statusAssigneeKey === null || $statusAssigneeKey === '';
             if ($shouldUpdateSharedStatus) {
                 $records[$recordIndex]['status'] = $nextStatus;
@@ -14209,7 +14219,9 @@ switch ($action) {
             }
 
             if ($shouldNotifyReviewer && $statusAssigneeKey !== null && $statusAssigneeKey !== '') {
-                $assigneeEntry = docs_find_assignee_entry_by_key($records[$recordIndex], $statusAssigneeKey);
+                $assigneeEntry = is_array($statusAssigneeEntry)
+                    ? $statusAssigneeEntry
+                    : docs_find_assignee_entry_by_key($records[$recordIndex], $statusAssigneeKey);
                 if (is_array($assigneeEntry)) {
                     $authorEntry = docs_find_assignment_author_entry($records[$recordIndex], $folder, $assigneeEntry);
                     $chatId = is_array($authorEntry) ? docs_resolve_telegram_chat_id_from_assignee($authorEntry) : null;

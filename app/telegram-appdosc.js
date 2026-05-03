@@ -12495,17 +12495,17 @@ function setupDirectorCompactCompletion(card, task) {
   }
 
   const isReviewStatus = isTaskUnderReview(task);
-  const acceptButton = document.createElement('button');
-  acceptButton.type = 'button';
-  acceptButton.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
-  acceptButton.textContent = isReviewStatus ? 'Принять' : 'Завершить назначение';
-  setActionButtonLoading(acceptButton, false);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
+  button.textContent = isReviewStatus ? 'Проверено' : 'Завершить назначение';
+  setActionButtonLoading(button, false);
 
-  acceptButton.addEventListener('click', async (event) => {
+  button.addEventListener('click', async (event) => {
     event.preventDefault();
     event.stopPropagation();
 
-    if (acceptButton.dataset.loading === 'true') {
+    if (button.dataset.loading === 'true') {
       return;
     }
 
@@ -12517,52 +12517,11 @@ function setupDirectorCompactCompletion(card, task) {
       return;
     }
 
-    await handleCardComplete(acceptButton, task);
+    await handleCardComplete(button, task);
   });
 
-  container.appendChild(acceptButton);
-
-  if (isReviewStatus) {
-    const reworkButton = document.createElement('button');
-    reworkButton.type = 'button';
-    reworkButton.className = 'appdosc-card__action appdosc-card__action--compact';
-    reworkButton.textContent = 'На доработку';
-    setActionButtonLoading(reworkButton, false);
-    reworkButton.addEventListener('click', async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (reworkButton.dataset.loading === 'true') return;
-      const confirmed = window.confirm('Вернуть задачу на доработку? Статус изменится на «В работе».');
-      if (!confirmed) return;
-      await handleDirectorRework(reworkButton, task);
-    });
-    container.appendChild(reworkButton);
-  }
+  container.appendChild(button);
   container.hidden = false;
-}
-
-async function handleDirectorRework(button, task) {
-  if (!button || !task || !task.id) return;
-  const organization = getTaskOrganization(task);
-  if (!organization) {
-    setStatus('error', 'Не удалось определить организацию задачи.');
-    return;
-  }
-  setActionButtonLoading(button, true);
-  try {
-    await sendTaskMutation({
-      updateType: 'status',
-      organization,
-      documentId: task.id,
-      status: 'В работе',
-    });
-    await loadTasks(true);
-    setStatus('success', 'Задача возвращена на доработку.');
-  } catch (error) {
-    setStatus('error', error instanceof Error ? error.message : String(error));
-  } finally {
-    setActionButtonLoading(button, false);
-  }
 }
 
 function setupCompleteButton(button, task) {
@@ -12617,26 +12576,15 @@ function setupStatusControls(card, task) {
   const normalizedCurrent = normalizeName(currentStatus);
   optionsContainer.innerHTML = '';
 
-  const statusOptions = STATUS_OPTIONS
-    .filter((option) => normalizeName(option) !== normalizeName('Выполнено'))
-    .map((option) => ({
-      label: option,
-      value: option,
-    }));
-  statusOptions.push({
-    label: 'Готово к проверке',
-    value: 'На проверке',
-  });
-
-  statusOptions.forEach((statusOption) => {
+  STATUS_OPTIONS.forEach((option) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-card__status-button';
-    button.textContent = statusOption.label;
-    button.dataset.statusValue = statusOption.value;
-    const isActive = normalizedCurrent !== '' && normalizeName(statusOption.value) === normalizedCurrent;
+    button.textContent = option;
+    button.dataset.statusValue = option;
+    const isActive = normalizedCurrent !== '' && normalizeName(option) === normalizedCurrent;
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    button.addEventListener('click', () => handleStatusButtonClick(optionsContainer, button, task, statusOption.value));
+    button.addEventListener('click', () => handleStatusButtonClick(optionsContainer, button, task, option));
     optionsContainer.appendChild(button);
   });
 
