@@ -12495,17 +12495,17 @@ function setupDirectorCompactCompletion(card, task) {
   }
 
   const isReviewStatus = isTaskUnderReview(task);
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
-  button.textContent = isReviewStatus ? 'Проверено' : 'Завершить назначение';
-  setActionButtonLoading(button, false);
+  const acceptButton = document.createElement('button');
+  acceptButton.type = 'button';
+  acceptButton.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
+  acceptButton.textContent = isReviewStatus ? 'Принять' : 'Завершить назначение';
+  setActionButtonLoading(acceptButton, false);
 
-  button.addEventListener('click', async (event) => {
+  acceptButton.addEventListener('click', async (event) => {
     event.preventDefault();
     event.stopPropagation();
 
-    if (button.dataset.loading === 'true') {
+    if (acceptButton.dataset.loading === 'true') {
       return;
     }
 
@@ -12517,11 +12517,52 @@ function setupDirectorCompactCompletion(card, task) {
       return;
     }
 
-    await handleCardComplete(button, task);
+    await handleCardComplete(acceptButton, task);
   });
 
-  container.appendChild(button);
+  container.appendChild(acceptButton);
+
+  if (isReviewStatus) {
+    const reworkButton = document.createElement('button');
+    reworkButton.type = 'button';
+    reworkButton.className = 'appdosc-card__action appdosc-card__action--compact';
+    reworkButton.textContent = 'На доработку';
+    setActionButtonLoading(reworkButton, false);
+    reworkButton.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (reworkButton.dataset.loading === 'true') return;
+      const confirmed = window.confirm('Вернуть задачу на доработку? Статус изменится на «В работе».');
+      if (!confirmed) return;
+      await handleDirectorRework(reworkButton, task);
+    });
+    container.appendChild(reworkButton);
+  }
   container.hidden = false;
+}
+
+async function handleDirectorRework(button, task) {
+  if (!button || !task || !task.id) return;
+  const organization = getTaskOrganization(task);
+  if (!organization) {
+    setStatus('error', 'Не удалось определить организацию задачи.');
+    return;
+  }
+  setActionButtonLoading(button, true);
+  try {
+    await sendTaskMutation({
+      updateType: 'status',
+      organization,
+      documentId: task.id,
+      status: 'В работе',
+    });
+    await loadTasks(true);
+    setStatus('success', 'Задача возвращена на доработку.');
+  } catch (error) {
+    setStatus('error', error instanceof Error ? error.message : String(error));
+  } finally {
+    setActionButtonLoading(button, false);
+  }
 }
 
 function setupCompleteButton(button, task) {
