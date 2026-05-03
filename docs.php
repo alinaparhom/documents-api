@@ -13996,11 +13996,6 @@ switch ($action) {
                         }
                     }
                 }
-                if ($shouldRemove && !$isDirector && !docs_entry_assigned_by_user($entry, $requestContext)) {
-                    $blockedEntries[] = $entry;
-                    $remainingSubordinates[] = $entry;
-                    continue;
-                }
                 if ($shouldRemove) {
                     $removedEntries[] = $entry;
                 } else {
@@ -14009,11 +14004,6 @@ switch ($action) {
             }
 
             if (empty($removedEntries)) {
-                if (!empty($blockedEntries)) {
-                    respond_error('Можно удалить только подчинённых, которых назначили вы.', 403, [
-                        'requiresAuthor' => true,
-                    ]);
-                }
                 respond_error('Подчинённый не найден среди назначенных.', 404);
             }
 
@@ -15713,7 +15703,7 @@ switch ($action) {
         $settings = load_admin_settings($folder);
         $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles']) ? $settings['responsibles'] : [];
         $block2 = isset($settings['block2']) && is_array($settings['block2']) ? $settings['block2'] : [];
-        $userFilter = $isUserSession ? docs_build_session_user_filter_from_auth(is_array($sessionAuth) ? $sessionAuth : []) : null;
+        $userFilter = null;
         $today = strtotime(date('Y-m-d'));
         $sentCount = 0;
         $taskCount = 0;
