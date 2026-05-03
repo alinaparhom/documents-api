@@ -733,7 +733,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'На доработку', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'На доработку', 'Выполнено', 'Отменено'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -17859,13 +17859,15 @@ function attachEvents() {
 }
 
 async function triggerTelegramOverdueDigest(scope = 'all', triggerButton = null) {
-  if (!state.organization) {
-    setStatus('error', 'Организация не определена.');
+  const organization = normalizeValue(state.organization)
+    || resolveOrganizationForThemePreference()
+    || (Array.isArray(state.tasks) && state.tasks.length ? getTaskOrganization(state.tasks[0]) : '');
+  if (!organization) {
     return;
   }
   const payload = {
     action: 'send_overdue_notifications',
-    organization: state.organization,
+    organization,
     scope: scope === 'responsible_subordinates' ? 'responsible_subordinates' : 'all',
   };
   if (state.telegram && state.telegram.initData) {
@@ -17880,7 +17882,6 @@ async function triggerTelegramOverdueDigest(scope = 'all', triggerButton = null)
   if (triggerButton instanceof HTMLButtonElement) {
     triggerButton.disabled = true;
   }
-  setStatus('info', 'Запускаю рассылку просроченных задач…');
   try {
     const response = await fetch('/docs.php?action=send_overdue_notifications', {
       method: 'POST',
@@ -17892,11 +17893,9 @@ async function triggerTelegramOverdueDigest(scope = 'all', triggerButton = null)
     if (!response.ok || !result || result.success !== true) {
       throw new Error(result && result.error ? result.error : `Ошибка ${response.status}`);
     }
-    const tasks = Number(result.overdueTasks || 0);
-    const sent = Number(result.notificationsSent || 0);
-    setStatus('success', `Рассылка готова: задач ${tasks}, уведомлений ${sent}.`);
+    // intentionally silent: без всплывающего облака уведомлений на главной.
   } catch (error) {
-    setStatus('error', `Рассылка не выполнена: ${error && error.message ? error.message : 'ошибка'}`);
+    // intentionally silent: ошибки не выводим плавающим уведомлением.
   } finally {
     if (triggerButton instanceof HTMLButtonElement) {
       triggerButton.disabled = false;
