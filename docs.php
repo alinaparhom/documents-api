@@ -15695,14 +15695,19 @@ switch ($action) {
         if ($scope !== 'all' && $scope !== 'responsible_subordinates') {
             $scope = 'all';
         }
-        if (!$isAdminSession && $scope !== 'responsible_subordinates') {
-            respond_error('Ответственный может запускать только рассылку по своим подчинённым.', 403);
-        }
-
         $folder = sanitize_folder_name($organization);
         $records = load_registry($folder);
         $settings = load_admin_settings($folder);
         $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles']) ? $settings['responsibles'] : [];
+        $block2 = isset($settings['block2']) && is_array($settings['block2']) ? $settings['block2'] : [];
+        $requestContext = docs_build_request_user_context();
+        $isDirectorScopeUser = $isUserSession && docs_user_is_block2_member($block2, $requestContext);
+        if (!$isAdminSession && !$isDirectorScopeUser && $scope !== 'responsible_subordinates') {
+            respond_error('Рассылка "все просрочки" доступна только админу или директору.', 403, [
+                'requiresAdmin' => true,
+                'requiresDirector' => true,
+            ]);
+        }
         $userFilter = $isUserSession ? docs_build_session_user_filter_from_auth(is_array($sessionAuth) ? $sessionAuth : []) : null;
         $today = strtotime(date('Y-m-d'));
         $sentCount = 0;
