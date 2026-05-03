@@ -3020,8 +3020,8 @@ function initElements() {
   const syncFoldersManageVisibility = () => {
     if (!elements.foldersManage || !elements.foldersSection) return;
     const isCollapsed = elements.foldersSection.dataset.foldersCollapsed === 'true';
-    elements.foldersManage.hidden = isCollapsed;
-    elements.foldersManage.setAttribute('aria-hidden', isCollapsed ? 'true' : 'false');
+    elements.foldersManage.classList.toggle('is-collapsed', isCollapsed);
+    elements.foldersManage.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
   };
   if (elements.foldersManage) {
     elements.foldersManage.addEventListener('click', () => {
