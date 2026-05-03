@@ -6830,6 +6830,25 @@ function docs_entry_assigned_by_user(array $entry, array $requestContext): bool
         return true;
     }
 
+    $assignedByTelegram = docs_normalize_identifier_candidate_value((string) ($entry['assignedByTelegram'] ?? ''));
+    if ($assignedByTelegram !== '' && in_array($assignedByTelegram, $userCandidates['ids'], true)) {
+        return true;
+    }
+
+    $assignedByIdField = docs_normalize_identifier_candidate_value((string) ($entry['assignedById'] ?? ''));
+    if ($assignedByIdField !== '' && in_array($assignedByIdField, $userCandidates['ids'], true)) {
+        return true;
+    }
+
+    $assignedByLogin = normalize_username_value((string) ($entry['assignedByLogin'] ?? ''));
+    if ($assignedByLogin !== '') {
+        foreach ($userCandidates['ids'] as $candidateId) {
+            if (normalize_username_value($candidateId) === $assignedByLogin) {
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 
@@ -13980,7 +13999,6 @@ switch ($action) {
 
             $remainingSubordinates = [];
             $removedEntries = [];
-            $blockedEntries = [];
             foreach ($subordinateEntries as $entry) {
                 if (!is_array($entry)) {
                     continue;
@@ -13995,6 +14013,10 @@ switch ($action) {
                             break 2;
                         }
                     }
+                }
+                if ($shouldRemove && !$isDirector && !docs_entry_assigned_by_user($entry, $requestContext)) {
+                    $remainingSubordinates[] = $entry;
+                    continue;
                 }
                 if ($shouldRemove) {
                     $removedEntries[] = $entry;
