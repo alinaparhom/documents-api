@@ -14313,6 +14313,84 @@ switch ($action) {
         respond_success($responsePayload);
         break;
 
+    case 'mini_app_unassign_task':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        $organizationCandidate = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $documentId = sanitize_text_field((string) ($payload['documentId'] ?? ''), 200);
+        $executorId = sanitize_text_field((string) ($payload['executor_id'] ?? ($payload['assigneeId'] ?? '')), 200);
+        $reason = sanitize_text_field((string) ($payload['reason'] ?? ''), 800);
+        $notifyExecutor = !empty($payload['notify_executor']);
+        $actorId = sanitize_text_field((string) ($payload['actor_id'] ?? ''), 120);
+        if ($organizationCandidate === '' || $documentId === '' || $executorId === '') {
+            respond_error('Не хватает данных для снятия исполнителя.', 400);
+        }
+        if (mb_strlen(trim($reason), 'UTF-8') < 10) {
+            respond_error('Причина должна быть не менее 10 символов.', 400);
+        }
+
+        $requestContext = docs_build_request_user_context();
+        $folder = sanitize_folder_name($organizationCandidate);
+        [$registryHandle, $records] = docs_lock_registry($folder);
+        if ($registryHandle === null) {
+            $records = load_registry($folder);
+        }
+        $recordIndex = null;
+        foreach ($records as $index => $record) {
+            if (is_array($record) && isset($record['id']) && (string) $record['id'] === $documentId) {
+                $recordIndex = $index; break;
+            }
+        }
+        if ($recordIndex === null) {
+            respond_error('Документ не найден.', 404);
+        }
+        $settings = load_admin_settings($folder);
+        $directors = isset($settings['block2']) && is_array($settings['block2']) ? $settings['block2'] : [];
+        $isDirector = docs_user_is_block2_member($directors, $requestContext);
+        $isTaskSubordinate = docs_request_matches_record_subordinate($records[$recordIndex], $requestContext);
+        $isAuthor = docs_request_matches_record_assignee($records[$recordIndex], $requestContext);
+        if (!$isDirector && !$isTaskSubordinate && !$isAuthor) {
+            respond_error('Недостаточно прав для снятия исполнителя.', 403);
+        }
+        $assignees = docs_extract_assignees($records[$recordIndex]);
+        $filtered = [];
+        foreach ($assignees as $entry) {
+            $entryId = sanitize_text_field((string) ($entry['id'] ?? ($entry['telegram'] ?? '')), 200);
+            if ($entryId !== '' && $entryId === $executorId) {
+                continue;
+            }
+            $filtered[] = $entry;
+        }
+        $tmpAssignments = [];
+        docs_apply_assignees_to_record($records[$recordIndex], $filtered, $tmpAssignments);
+        if (!isset($records[$recordIndex]['audit']) || !is_array($records[$recordIndex]['audit'])) {
+            $records[$recordIndex]['audit'] = [];
+        }
+        $records[$recordIndex]['audit'][] = [
+            'type' => 'task_unassigned',
+            'executor_id' => $executorId,
+            'reason' => $reason,
+            'notify_executor' => $notifyExecutor,
+            'actor_id' => $actorId,
+            'timestamp' => gmdate('c'),
+        ];
+        if ($registryHandle) {
+            docs_save_registry_locked($registryHandle, $records);
+            docs_unlock_registry($registryHandle);
+        } else {
+            save_registry($folder, $records);
+        }
+        respond_success([
+            'message' => 'Исполнитель снят.',
+            'task' => $records[$recordIndex],
+        ]);
+        break;
+
     case 'get_organization_template':
         if ($method !== 'GET') {
             respond_error('Некорректный метод запроса.', 405);

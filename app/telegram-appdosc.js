@@ -18,6 +18,7 @@ const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
+const TASK_UNASSIGN_ENDPOINT = '/docs.php?action=mini_app_unassign_task';
 let aiDialogLoader = null;
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
@@ -5631,6 +5632,22 @@ function createCard(task, index, anchorRegistry) {
   setupInstructionControl(card, task);
   setupDueDateEditor(card, task);
   setupAssignmentControls(card, task);
+  if (canUnassignExecutor(task)) {
+    const executorValue = card.querySelector('[data-field="executor"]');
+    if (executorValue && executorValue.parentElement) {
+      const unassignButton = document.createElement('button');
+      unassignButton.type = 'button';
+      unassignButton.className = 'appdosc-card__action';
+      unassignButton.style.cssText = 'margin-top:8px;width:100%;';
+      unassignButton.textContent = 'Снять с исполнителя';
+      unassignButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openUnassignExecutorSheet(task);
+      });
+      executorValue.parentElement.appendChild(unassignButton);
+    }
+  }
   setupSubordinateControls(card, task);
 
   initializeCardExpansion(card);
@@ -5657,6 +5674,63 @@ function openBottomSheet(contentBuilder) {
 
 function closeBottomSheet() {
   document.querySelectorAll('.bottom-sheet-overlay, .bottom-sheet').forEach((el) => el.remove());
+}
+
+function openUnassignExecutorSheet(task) {
+  const assignees = Array.isArray(task?.assignees) ? task.assignees : [];
+  const executorId = normalizeValue(assignees[0]?.id || assignees[0]?.assigneeId || assignees[0]?.telegram);
+  if (!executorId) {
+    setStatus('error', 'Не найден назначенный исполнитель.');
+    return;
+  }
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'folder-picker-modal';
+    wrap.innerHTML = '<h3 class="folder-modal-title">Снять с исполнителя</h3>';
+    const reasonInput = document.createElement('textarea');
+    reasonInput.className = 'appdosc__input';
+    reasonInput.placeholder = 'Причина (минимум 10 символов)';
+    reasonInput.rows = 3;
+    const notifyLabel = document.createElement('label');
+    notifyLabel.style.cssText = 'display:flex;gap:8px;align-items:center;margin:8px 0 12px;';
+    const notifyInput = document.createElement('input');
+    notifyInput.type = 'checkbox';
+    notifyInput.checked = true;
+    notifyLabel.append(notifyInput, document.createTextNode('Уведомить исполнителя'));
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;';
+    const submit = document.createElement('button');
+    submit.type = 'button';
+    submit.className = 'appdosc-card__action appdosc-card__action--assign';
+    submit.textContent = 'Подтвердить';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'appdosc-card__action';
+    cancel.textContent = 'Отмена';
+    cancel.addEventListener('click', close);
+    submit.addEventListener('click', async () => {
+      const reason = (reasonInput.value || '').trim();
+      if (reason.length < 10) {
+        setStatus('error', 'Укажите причину минимум 10 символов.');
+        return;
+      }
+      await sendTaskMutation({
+        updateType: 'unassign',
+        organization: getTaskOrganization(task),
+        documentId: task.id,
+        assigneeId: executorId,
+        reason,
+        notifyExecutor: notifyInput.checked,
+        actorId: normalizeValue(state?.user?.id || state?.telegram?.id),
+      });
+      await loadTasks(true);
+      setStatus('success', 'Исполнитель снят');
+      close();
+    });
+    actions.append(submit, cancel);
+    wrap.append(reasonInput, notifyLabel, actions);
+    return wrap;
+  });
 }
 
 function openFolderPicker(onSelect) {
@@ -12539,6 +12613,21 @@ function setupCompleteButton(button, task) {
   button.addEventListener('click', () => handleCardComplete(button, task));
 }
 
+function canUnassignExecutor(task) {
+  if (!task || typeof task !== 'object') return false;
+  const organization = getTaskOrganization(task);
+  if (organization && userIsDirectorForOrganization(organization)) return true;
+  if (userHasSubordinateAccess()) return true;
+  const { ids, names } = getUserIdentifierCandidates();
+  const authorValues = [task.author, task.createdBy, task.creator, task.correspondent];
+  return authorValues.some((value) => {
+    const raw = value && typeof value === 'object' ? (value.id || value.telegram || value.userId || value.name || value.fio) : value;
+    const id = normalizeIdentifier(raw);
+    const name = normalizeName(raw);
+    return (id && ids.includes(id)) || (name && names.includes(name));
+  });
+}
+
 function setupStatusControls(card, task) {
   if (!card || !task) {
     return;
@@ -12893,6 +12982,9 @@ async function sendTaskMutation(update) {
     folderId,
     folderUserId,
     folderState,
+    reason,
+    notifyExecutor,
+    actorId,
   } = update || {};
   if (!updateType || !organization || !documentId) {
     throw new Error('Недостаточно данных для обновления задачи.');
@@ -13081,6 +13173,9 @@ async function sendTaskMutation(update) {
       })
       .filter(Boolean);
   }
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'reason')) payload.reason = typeof reason === 'string' ? reason : '';
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'notifyExecutor')) payload.notify_executor = Boolean(notifyExecutor);
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'actorId')) payload.actor_id = typeof actorId === 'string' ? actorId : '';
 
   logClientEvent('task_update_request', {
     requestId,
@@ -13124,7 +13219,8 @@ async function sendTaskMutation(update) {
     subordinateAssignmentsMeta: buildTaskUpdateAssignmentMeta(subordinateAssignments),
   });
 
-  const response = await fetch('/docs.php?action=mini_app_update_task', {
+  const endpoint = updateType === 'unassign' ? TASK_UNASSIGN_ENDPOINT : '/docs.php?action=mini_app_update_task';
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers,
     credentials: 'include',
