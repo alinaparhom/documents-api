@@ -833,32 +833,6 @@ function docs_request_telegram_api(string $method, array $params = [], ?string $
     return ['ok' => true, 'result' => $decoded['result'] ?? null];
 }
 
-function docs_overdue_notification_store_path(): string
-{
-    return LOG_DIRECTORY . '/mini_app_due_notifications.json';
-}
-
-function docs_load_due_notification_state(): array
-{
-    $path = docs_overdue_notification_store_path();
-    if (!is_file($path)) {
-        return [];
-    }
-    $raw = @file_get_contents($path);
-    if (!is_string($raw) || trim($raw) === '') {
-        return [];
-    }
-    $decoded = json_decode($raw, true);
-    return is_array($decoded) ? $decoded : [];
-}
-
-function docs_save_due_notification_state(array $state): void
-{
-    if (!is_dir(LOG_DIRECTORY)) {
-        @mkdir(LOG_DIRECTORY, 0775, true);
-    }
-    @file_put_contents(docs_overdue_notification_store_path(), json_encode($state, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-}
 
 function docs_stream_telegram_avatar(string $telegramUserId): bool
 {
@@ -12734,9 +12708,8 @@ switch ($action) {
         if ($telegramUserId !== '' && $botTokenForDue !== null && $botTokenForDue !== '') {
             $todayDate = date('Y-m-d');
             $tomorrowDate = date('Y-m-d', strtotime('+1 day'));
+            $yesterdayDate = date('Y-m-d', strtotime('-1 day'));
             $todayTs = strtotime($todayDate) ?: time();
-            $notifyState = docs_load_due_notification_state();
-            $stateChanged = false;
 
             foreach ($tasks as $taskRecord) {
                 if (!is_array($taskRecord)) {
@@ -12759,7 +12732,7 @@ switch ($action) {
                 $daysOverdue = 0;
                 if ($taskDue === $tomorrowDate) {
                     $notifyType = 'day_before';
-                } elseif ($dueTs < $todayTs) {
+                } elseif ($taskDue === $yesterdayDate || ($dueTs < $todayTs && $taskDue === $yesterdayDate)) {
                     $notifyType = 'overdue';
                     $daysOverdue = max(1, (int) floor(($todayTs - $dueTs) / 86400));
                 }
@@ -12769,10 +12742,6 @@ switch ($action) {
 
                 $taskId = sanitize_text_field((string) ($taskRecord['id'] ?? ''), 80);
                 if ($taskId === '') {
-                    continue;
-                }
-                $stateKey = $telegramUserId . '|' . $taskId . '|' . $notifyType . '|' . $todayDate;
-                if (!empty($notifyState[$stateKey])) {
                     continue;
                 }
 
@@ -12789,15 +12758,7 @@ switch ($action) {
                         . "\nКрайний срок: " . docs_format_human_date($taskDue)
                         . "\nПросрочено на: " . $daysOverdue . " дн.";
 
-                $result = docs_send_telegram_message($telegramUserId, $message, $botTokenForDue);
-                if (!empty($result['success'])) {
-                    $notifyState[$stateKey] = date('c');
-                    $stateChanged = true;
-                }
-            }
-
-            if ($stateChanged) {
-                docs_save_due_notification_state($notifyState);
+                docs_send_telegram_message($telegramUserId, $message, $botTokenForDue);
             }
         }
 
