@@ -17616,6 +17616,13 @@ function clearStatus() {
   elements.status.classList.remove('is-visible');
   window.setTimeout(() => {
     if (!elements.status) return;
+    const statusContainer = elements.status.closest('.appdosc__status');
+    if (statusContainer) {
+      statusContainer.hidden = true;
+    }
+    if (elements.status.parentElement) {
+      elements.status.parentElement.classList.remove('appdosc-toast-layer');
+    }
     elements.status.hidden = true;
     elements.status.textContent = '';
     elements.status.className = 'appdosc__status-message';
@@ -17865,10 +17872,11 @@ async function triggerTelegramOverdueDigest(scope = 'all', triggerButton = null)
   if (!organization) {
     return;
   }
+  const normalizedScope = scope === 'responsible_subordinates' ? 'responsible_subordinates' : 'all';
   const payload = {
     action: 'send_overdue_notifications',
     organization,
-    scope: scope === 'responsible_subordinates' ? 'responsible_subordinates' : 'all',
+    scope: normalizedScope,
   };
   if (state.telegram && state.telegram.initData) {
     payload.telegramInitData = state.telegram.initData;
@@ -17883,6 +17891,30 @@ async function triggerTelegramOverdueDigest(scope = 'all', triggerButton = null)
     triggerButton.disabled = true;
   }
   try {
+    if (normalizedScope === 'responsible_subordinates') {
+      const previewResponse = await fetch('/docs.php?action=send_overdue_notifications', {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ ...payload, previewOnly: true }),
+      });
+      const previewResult = await previewResponse.json().catch(() => ({}));
+      if (!previewResponse.ok || !previewResult || previewResult.success !== true) {
+        throw new Error(previewResult && previewResult.error ? previewResult.error : `Ошибка ${previewResponse.status}`);
+      }
+      const previewList = Array.isArray(previewResult.recipientSummary) ? previewResult.recipientSummary : [];
+      if (!previewList.length) {
+        setStatus('info', 'Нет просроченных задач у ваших подчинённых.');
+        return;
+      }
+      const lines = previewList.slice(0, 12).map((item) => `• ${normalizeValue(item && item.name) || 'Исполнитель'}: ${Number(item && item.overdueCount ? item.overdueCount : 0)}`);
+      const rest = previewList.length > 12 ? `\n…и ещё ${previewList.length - 12}` : '';
+      const confirmed = window.confirm(`Будут уведомлены:\n${lines.join('\n')}${rest}\n\nОтправить уведомления?`);
+      if (!confirmed) {
+        setStatus('info', 'Рассылка отменена.');
+        return;
+      }
+    }
     const response = await fetch('/docs.php?action=send_overdue_notifications', {
       method: 'POST',
       credentials: 'include',

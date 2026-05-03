@@ -15709,6 +15709,7 @@ switch ($action) {
             respond_error('Организация не выбрана.');
         }
         $scope = sanitize_text_field((string) ($payload['scope'] ?? 'all'), 40);
+        $previewOnly = !empty($payload['previewOnly']);
         if ($scope !== 'all' && $scope !== 'responsible_subordinates') {
             $scope = 'all';
         }
@@ -15730,6 +15731,7 @@ switch ($action) {
         $sentCount = 0;
         $taskCount = 0;
         $recipientStats = [];
+        $recipientBuckets = [];
 
         foreach ($records as $record) {
             if (!is_array($record)) {
@@ -15762,7 +15764,6 @@ switch ($action) {
                 continue;
             }
 
-            $taskCount++;
             foreach ($assignees as $recipient) {
                 if (!is_array($recipient)) {
                     continue;
@@ -15773,17 +15774,55 @@ switch ($action) {
                         continue;
                     }
                 }
-                $message = docs_build_overdue_task_message($record, $recipient, $overdueDays);
-                if ($message === '') {
+                $chatId = docs_resolve_telegram_chat_id_from_assignee($recipient);
+                if ($chatId === null || $chatId === '') {
                     continue;
                 }
-                docs_send_task_status_review_notification($record, $organization, $recipient, $message);
-                $sentCount++;
-                $recipientName = sanitize_text_field((string) ($recipient['name'] ?? ($recipient['responsible'] ?? $recipient['id'] ?? 'Исполнитель')), 200);
-                if (!isset($recipientStats[$recipientName])) {
-                    $recipientStats[$recipientName] = 0;
+                $recipientKey = (string) $chatId;
+                if (!isset($recipientBuckets[$recipientKey])) {
+                    $recipientBuckets[$recipientKey] = [
+                        'recipient' => $recipient,
+                        'tasks' => [],
+                    ];
                 }
-                $recipientStats[$recipientName]++;
+                $recipientBuckets[$recipientKey]['tasks'][] = [
+                    'record' => $record,
+                    'overdueDays' => $overdueDays,
+                    'dueDate' => $dueRaw,
+                ];
+                $taskCount++;
+            }
+        }
+
+        $botToken = docs_resolve_telegram_bot_token();
+        foreach ($recipientBuckets as $bucket) {
+            $recipient = isset($bucket['recipient']) && is_array($bucket['recipient']) ? $bucket['recipient'] : [];
+            $tasks = isset($bucket['tasks']) && is_array($bucket['tasks']) ? $bucket['tasks'] : [];
+            if (empty($tasks)) {
+                continue;
+            }
+            $recipientName = sanitize_text_field((string) ($recipient['name'] ?? ($recipient['responsible'] ?? $recipient['id'] ?? 'Исполнитель')), 200);
+            $recipientStats[$recipientName] = count($tasks);
+
+            if ($previewOnly) {
+                continue;
+            }
+            if ($botToken === null || $botToken === '') {
+                continue;
+            }
+            $lines = ['⏰ Просроченные задачи: ' . count($tasks)];
+            foreach (array_slice($tasks, 0, 25) as $index => $taskItem) {
+                $record = isset($taskItem['record']) && is_array($taskItem['record']) ? $taskItem['record'] : [];
+                $title = sanitize_text_field((string) ($record['content'] ?? $record['task'] ?? ('Задача #' . ($record['id'] ?? ($index + 1)))), 220);
+                $dueLabel = sanitize_date_field((string) ($taskItem['dueDate'] ?? ''));
+                $days = (int) ($taskItem['overdueDays'] ?? 1);
+                $lines[] = ($index + 1) . '. ' . ($title !== '' ? $title : 'Задача') . ' — ' . max(1, $days) . ' дн.' . ($dueLabel !== '' ? (' (до ' . $dueLabel . ')') : '');
+            }
+            $message = implode("\n", $lines);
+            $chatId = docs_resolve_telegram_chat_id_from_assignee($recipient);
+            if ($chatId !== null && $chatId !== '') {
+                docs_send_telegram_message((string) $chatId, $message, $botToken);
+                $sentCount++;
             }
         }
 
