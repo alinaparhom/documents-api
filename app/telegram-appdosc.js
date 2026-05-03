@@ -12576,15 +12576,26 @@ function setupStatusControls(card, task) {
   const normalizedCurrent = normalizeName(currentStatus);
   optionsContainer.innerHTML = '';
 
-  STATUS_OPTIONS.forEach((option) => {
+  const statusOptions = STATUS_OPTIONS
+    .filter((option) => normalizeName(option) !== normalizeName('Выполнено'))
+    .map((option) => ({
+      label: option,
+      value: option,
+    }));
+  statusOptions.push({
+    label: 'Готово к проверке',
+    value: 'На проверке',
+  });
+
+  statusOptions.forEach((statusOption) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-card__status-button';
-    button.textContent = option;
-    button.dataset.statusValue = option;
-    const isActive = normalizedCurrent !== '' && normalizeName(option) === normalizedCurrent;
+    button.textContent = statusOption.label;
+    button.dataset.statusValue = statusOption.value;
+    const isActive = normalizedCurrent !== '' && normalizeName(statusOption.value) === normalizedCurrent;
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    button.addEventListener('click', () => handleStatusButtonClick(optionsContainer, button, task, option));
+    button.addEventListener('click', () => handleStatusButtonClick(optionsContainer, button, task, statusOption.value));
     optionsContainer.appendChild(button);
   });
 

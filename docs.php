@@ -7934,6 +7934,27 @@ function docs_match_status_change_assignee_key(array $record, array $requestCont
     return null;
 }
 
+function docs_find_assignee_entry_by_key(array $record, string $assigneeKey): ?array
+{
+    $normalizedKey = mb_strtolower(trim($assigneeKey), 'UTF-8');
+    if ($normalizedKey === '') {
+        return null;
+    }
+    $assignees = docs_extract_assignees($record);
+    foreach ($assignees as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $keys = docs_collect_assignee_match_keys($entry);
+        foreach ($keys as $key) {
+            if ($key === $normalizedKey) {
+                return $entry;
+            }
+        }
+    }
+    return null;
+}
+
 function docs_append_status_history(array &$record, string $status, string $changedBy = '', ?string $timestamp = null, ?string $assigneeKey = null): void
 {
     $normalizedStatus = sanitize_status($status, false);
@@ -14086,6 +14107,12 @@ switch ($action) {
 
             $rawStatus = isset($payload['status']) ? (string) $payload['status'] : '';
             $nextStatus = sanitize_status($rawStatus);
+            $requestedStatus = mb_strtolower(trim($nextStatus), 'UTF-8');
+            $shouldNotifyReviewer = false;
+            if (!$isDirector && $requestedStatus === 'выполнено') {
+                $nextStatus = 'На проверке';
+                $shouldNotifyReviewer = true;
+            }
             $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
             $statusAssigneeKey = docs_match_status_change_assignee_key(
                 $records[$recordIndex],
@@ -14120,6 +14147,28 @@ switch ($action) {
                 $records[$recordIndex]['completedAt'] = $existingCompleted !== '' ? $existingCompleted : date('Y-m-d');
             } elseif (isset($records[$recordIndex]['completedAt'])) {
                 unset($records[$recordIndex]['completedAt']);
+            }
+
+            if ($shouldNotifyReviewer && $statusAssigneeKey !== null && $statusAssigneeKey !== '') {
+                $assigneeEntry = docs_find_assignee_entry_by_key($records[$recordIndex], $statusAssigneeKey);
+                if (is_array($assigneeEntry)) {
+                    $authorEntry = docs_find_assignment_author_entry($records[$recordIndex], $folder, $assigneeEntry);
+                    $chatId = is_array($authorEntry) ? docs_resolve_telegram_chat_id_from_assignee($authorEntry) : null;
+                    $botToken = docs_resolve_telegram_bot_token();
+                    if ($chatId !== null && $botToken !== null && $botToken !== '') {
+                        $summary = sanitize_text_field((string) ($records[$recordIndex]['summary'] ?? ''), 220);
+                        $dueDate = sanitize_date_field((string) ($records[$recordIndex]['dueDate'] ?? ''));
+                        $dueLabel = docs_format_human_date($dueDate);
+                        $messageLines = [
+                            '✅ Исполнитель завершил задачу и отправил на проверку.',
+                            '№ задачи: ' . sanitize_text_field((string) ($records[$recordIndex]['id'] ?? ''), 80),
+                            'Кратко: ' . ($summary !== '' ? $summary : 'не указано'),
+                            'Срок: ' . ($dueLabel !== '' ? $dueLabel : 'не указан'),
+                            'Статус: На проверке',
+                        ];
+                        docs_send_telegram_message((string) $chatId, implode("\n", $messageLines), $botToken);
+                    }
+                }
             }
 
             $message = 'Статус обновлён.';
