@@ -15697,11 +15697,6 @@ switch ($action) {
         $isUserSession = $sessionRole === 'user';
         if ($isAdminSession) {
             $sessionAuth = docs_require_admin_session($accessContext);
-        } elseif (!$isUserSession) {
-            respond_error('Доступ запрещён. Требуются права администратора или ответственного.', 403, [
-                'requiresAdmin' => true,
-                'requiresResponsible' => true,
-            ]);
         }
 
         $organization = $accessContext['active'];
@@ -15718,14 +15713,6 @@ switch ($action) {
         $settings = load_admin_settings($folder);
         $responsibles = isset($settings['responsibles']) && is_array($settings['responsibles']) ? $settings['responsibles'] : [];
         $block2 = isset($settings['block2']) && is_array($settings['block2']) ? $settings['block2'] : [];
-        $requestContext = docs_build_request_user_context();
-        $isDirectorScopeUser = $isUserSession && docs_user_is_block2_member($block2, $requestContext);
-        if (!$isAdminSession && !$isDirectorScopeUser && $scope !== 'responsible_subordinates') {
-            respond_error('Рассылка "все просрочки" доступна только админу или директору.', 403, [
-                'requiresAdmin' => true,
-                'requiresDirector' => true,
-            ]);
-        }
         $userFilter = $isUserSession ? docs_build_session_user_filter_from_auth(is_array($sessionAuth) ? $sessionAuth : []) : null;
         $today = strtotime(date('Y-m-d'));
         $sentCount = 0;
@@ -15737,8 +15724,8 @@ switch ($action) {
             if (!is_array($record)) {
                 continue;
             }
-            if ($scope === 'responsible_subordinates') {
-                if ($userFilter === null || !document_matches_assignee_filter($record, $userFilter, $responsibles)) {
+            if ($scope === 'responsible_subordinates' && $userFilter !== null) {
+                if (!document_matches_assignee_filter($record, $userFilter, $responsibles)) {
                     continue;
                 }
             }
