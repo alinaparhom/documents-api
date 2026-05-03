@@ -733,7 +733,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['В работе', 'Готово к проверке', 'Возврат на доработку'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -791,7 +791,8 @@ const STATUS_SUMMARY_CONFIG = {
 const STATUS_KEY_SYNONYMS = {
   distributed: ['распределено', 'распределен', 'распределена', 'распределены'],
   accepted: ['принято в работу', 'в работе', 'принято вработу', 'принято в работ'],
-  review: ['на проверке', 'на контроле', 'на проверку'],
+  review: ['на проверке', 'на контроле', 'на проверку', 'готово к проверке', 'ready for review'],
+  rework: ['возврат на доработку', 'доработка', 'rework required'],
   done: ['выполнено', 'завершено'],
   cancelled: ['отменено'],
 };
@@ -12529,7 +12530,7 @@ function setupCompleteButton(button, task) {
     return;
   }
   const completed = isTaskCompleted(task);
-  if (!task || !task.id || completed) {
+  if (!task || !task.id || completed || !canCurrentUserReviewTask(task)) {
     button.hidden = true;
     return;
   }
@@ -12735,12 +12736,32 @@ async function handleStatusButtonClick(container, button, task, status) {
   });
 
   try {
-    await sendTaskMutation({
-      updateType: 'status',
-      organization,
-      documentId: task.id,
-      status: targetStatus,
-    });
+    const normalizedTarget = normalizeName(targetStatus);
+    if (normalizedTarget === 'готово к проверке') {
+      await sendTaskMutation({
+        updateType: 'mark_ready_for_review',
+        organization,
+        documentId: task.id,
+      });
+    } else if (normalizedTarget === 'возврат на доработку') {
+      const comment = window.prompt('Опишите доработку (минимум 10 символов):', 'Что не принято:\nЧто исправить:\nСрок исправления:');
+      if (!comment) {
+        throw new Error('Нужен комментарий для возврата на доработку.');
+      }
+      await sendTaskMutation({
+        updateType: 'request_rework',
+        organization,
+        documentId: task.id,
+        comment,
+      });
+    } else {
+      await sendTaskMutation({
+        updateType: 'status',
+        organization,
+        documentId: task.id,
+        status: targetStatus,
+      });
+    }
     logClientEvent('task_status_success', {
       taskId: task.id || null,
       organization,
@@ -12839,7 +12860,7 @@ async function handleCardComplete(button, task) {
   }
 
   setActionButtonLoading(button, true);
-  setStatus('info', 'Отмечаем задачу выполненной...');
+  setStatus('info', 'Принимаем задачу и закрываем...');
   const startedAt = Date.now();
   logClientEvent('task_complete_request', {
     taskId: task.id || null,
@@ -12848,7 +12869,7 @@ async function handleCardComplete(button, task) {
 
   try {
     await sendTaskMutation({
-      updateType: 'complete',
+      updateType: 'approve_completion',
       organization,
       documentId: task.id,
     });
@@ -12858,7 +12879,7 @@ async function handleCardComplete(button, task) {
       durationMs: Date.now() - startedAt,
     });
     await loadTasks(true);
-    setStatus('success', 'Задача отмечена выполненной.');
+    setStatus('success', 'Задача принята и закрыта.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logClientEvent('task_complete_error', {
@@ -12893,6 +12914,7 @@ async function sendTaskMutation(update) {
     folderId,
     folderUserId,
     folderState,
+    comment,
   } = update || {};
   if (!updateType || !organization || !documentId) {
     throw new Error('Недостаточно данных для обновления задачи.');
@@ -13080,6 +13102,9 @@ async function sendTaskMutation(update) {
         return { id, name };
       })
       .filter(Boolean);
+  }
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'comment')) {
+    payload.comment = typeof comment === 'string' ? comment : '';
   }
 
   logClientEvent('task_update_request', {
@@ -17416,7 +17441,18 @@ function isTaskUnderReview(task) {
   if (!statusText) {
     return false;
   }
-  return statusText.includes('на проверк');
+  return statusText.includes('на проверк') || statusText.includes('готово к проверке') || statusText.includes('ready for review');
+}
+
+function isTaskReworkRequired(task) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+  const statusText = normalizeName(getTaskStatusValue(task));
+  if (!statusText) {
+    return false;
+  }
+  return statusText.includes('доработ') || statusText.includes('rework required');
 }
 
 function isAssignmentAuthoredByUser(entry, ids, names) {
@@ -17452,6 +17488,24 @@ function isAssignmentAuthoredByUser(entry, ids, names) {
   }
 
   return false;
+}
+
+function canCurrentUserReviewTask(task) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+  const organization = getTaskOrganization(task);
+  if (organization && userIsDirectorForOrganization(organization)) {
+    return true;
+  }
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+  const entries = []
+    .concat(collectTaskAssignments(task, 'responsible'))
+    .concat(collectTaskAssignments(task, 'subordinate'));
+  return entries.some((entry) => isAssignmentAuthoredByUser(entry, ids, names));
 }
 
 function isDirectorAssignmentOverdue(task) {

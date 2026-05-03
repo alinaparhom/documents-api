@@ -6774,6 +6774,17 @@ function docs_entry_assigned_by_user(array $entry, array $requestContext): bool
     return false;
 }
 
+function docs_request_matches_record_assigned_by(array $record, array $requestContext): bool
+{
+    $assignees = docs_extract_assignees($record);
+    foreach ($assignees as $entry) {
+        if (is_array($entry) && docs_entry_assigned_by_user($entry, $requestContext)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function docs_find_responsible_by_candidate(array $responsibles, string $candidate): ?array
 {
     if ($candidate === '') {
@@ -7990,6 +8001,41 @@ function docs_append_status_history(array &$record, string $status, string $chan
     if ($assigneeKey !== null && $assigneeKey !== '') {
         docs_append_assignee_status_history($record, $assigneeKey, $entry);
     }
+}
+
+function docs_append_task_timeline_event(array &$record, array $event): void
+{
+    $taskId = sanitize_text_field((string) ($event['taskId'] ?? ($record['id'] ?? '')), 200);
+    $actorId = sanitize_text_field((string) ($event['actorId'] ?? ''), 120);
+    $actorRole = sanitize_text_field((string) ($event['actorRole'] ?? ''), 80);
+    $action = sanitize_text_field((string) ($event['action'] ?? ''), 80);
+    $fromStatus = sanitize_status((string) ($event['fromStatus'] ?? ''), false);
+    $toStatus = sanitize_status((string) ($event['toStatus'] ?? ''), false);
+    $comment = sanitize_text_field((string) ($event['comment'] ?? ''), 1000);
+    $source = sanitize_text_field((string) ($event['source'] ?? 'web'), 30);
+    $timestamp = docs_normalize_datetime_iso((string) ($event['timestamp'] ?? ''));
+    if ($timestamp === null) {
+        $timestamp = date('c');
+    }
+    if ($action === '') {
+        return;
+    }
+
+    $entry = [
+        'taskId' => $taskId,
+        'actorId' => $actorId,
+        'actorRole' => $actorRole,
+        'action' => $action,
+        'fromStatus' => $fromStatus,
+        'toStatus' => $toStatus,
+        'comment' => $comment,
+        'timestamp' => $timestamp,
+        'source' => $source,
+    ];
+    if (!isset($record['timeline']) || !is_array($record['timeline'])) {
+        $record['timeline'] = [];
+    }
+    $record['timeline'][] = $entry;
 }
 
 function docs_parse_datetime(string $value): ?DateTimeImmutable
@@ -14044,6 +14090,77 @@ switch ($action) {
             }
 
             $message = 'Кратко ИИ сохранено.';
+        } elseif ($updateType === 'mark_ready_for_review') {
+            if (!$isTaskAssignee && !$isTaskSubordinate) {
+                respond_error('Только текущий исполнитель может отправить на проверку.', 403, [
+                    'requiresAssignee' => true,
+                ]);
+            }
+            $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
+            $prevStatus = sanitize_status((string) ($records[$recordIndex]['status'] ?? ''), false);
+            $records[$recordIndex]['status'] = 'Ready For Review';
+            $records[$recordIndex]['assignmentStatus'] = 'ready_for_review';
+            $records[$recordIndex]['reviewRequestedAt'] = date('c');
+            $records[$recordIndex]['reviewRequestedBy'] = $statusAuthor;
+            docs_append_task_timeline_event($records[$recordIndex], [
+                'action' => 'mark_ready_for_review',
+                'actorId' => (string) ($requestContext['primaryId'] ?? ''),
+                'actorRole' => $assignmentAuthorRole,
+                'fromStatus' => $prevStatus,
+                'toStatus' => 'Ready For Review',
+                'comment' => sanitize_text_field((string) ($payload['comment'] ?? ''), 600),
+                'source' => 'telegram',
+            ]);
+            $message = 'Задача отправлена автору на проверку.';
+        } elseif ($updateType === 'approve_completion') {
+            $canReviewDecision = $isDirector || docs_request_matches_record_assigned_by($records[$recordIndex], $requestContext);
+            if (!$canReviewDecision) {
+                respond_error('Только автор задачи (или админ) может принять задачу.', 403);
+            }
+            $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
+            $prevStatus = sanitize_status((string) ($records[$recordIndex]['status'] ?? ''), false);
+            $records[$recordIndex]['status'] = 'Done';
+            $records[$recordIndex]['assignmentStatus'] = 'done';
+            $records[$recordIndex]['reviewDecisionAt'] = date('c');
+            $records[$recordIndex]['reviewDecisionBy'] = $statusAuthor;
+            $records[$recordIndex]['reviewComment'] = sanitize_text_field((string) ($payload['comment'] ?? ''), 1000);
+            $records[$recordIndex]['completedAt'] = date('Y-m-d');
+            docs_append_task_timeline_event($records[$recordIndex], [
+                'action' => 'approve_completion',
+                'actorId' => (string) ($requestContext['primaryId'] ?? ''),
+                'actorRole' => $assignmentAuthorRole,
+                'fromStatus' => $prevStatus,
+                'toStatus' => 'Done',
+                'comment' => $records[$recordIndex]['reviewComment'],
+                'source' => 'telegram',
+            ]);
+            $message = 'Задача принята и окончательно закрыта.';
+        } elseif ($updateType === 'request_rework') {
+            $canReviewDecision = $isDirector || docs_request_matches_record_assigned_by($records[$recordIndex], $requestContext);
+            if (!$canReviewDecision) {
+                respond_error('Только автор задачи (или админ) может вернуть задачу на доработку.', 403);
+            }
+            $reviewComment = sanitize_text_field((string) ($payload['comment'] ?? ''), 1000);
+            if (mb_strlen($reviewComment, 'UTF-8') < 10) {
+                respond_error('Для возврата на доработку нужен комментарий не менее 10 символов.', 400);
+            }
+            $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
+            $prevStatus = sanitize_status((string) ($records[$recordIndex]['status'] ?? ''), false);
+            $records[$recordIndex]['status'] = 'Rework Required';
+            $records[$recordIndex]['assignmentStatus'] = 'rework_required';
+            $records[$recordIndex]['reviewDecisionAt'] = date('c');
+            $records[$recordIndex]['reviewDecisionBy'] = $statusAuthor;
+            $records[$recordIndex]['reviewComment'] = $reviewComment;
+            docs_append_task_timeline_event($records[$recordIndex], [
+                'action' => 'request_rework',
+                'actorId' => (string) ($requestContext['primaryId'] ?? ''),
+                'actorRole' => $assignmentAuthorRole,
+                'fromStatus' => $prevStatus,
+                'toStatus' => 'Rework Required',
+                'comment' => $reviewComment,
+                'source' => 'telegram',
+            ]);
+            $message = 'Задача возвращена на доработку.';
         } elseif ($updateType === 'complete') {
             if (!$isDirector) {
                 respond_error('Недостаточно прав для завершения задачи.', 403, [
