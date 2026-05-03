@@ -3104,24 +3104,27 @@ function sanitize_status(?string $value, bool $useDefault = false): string
 {
     $value = sanitize_text_field($value, 80);
     if ($value === '') {
-        return $useDefault ? 'Принято в работу' : '';
+        return $useDefault ? 'Новая' : '';
     }
 
     $normalized = mb_strtolower($value);
     $map = [
-        'в работе'        => 'Принято в работу',
-        'принято в работу'=> 'Принято в работу',
-        'принято вработу' => 'Принято в работу',
-        'принято в работ' => 'Принято в работу',
-        'распределено'    => 'Распределено',
+        'новая'           => 'Новая',
+        'в работе'        => 'В работе',
+        'принято в работу'=> 'В работе',
+        'принято вработу' => 'В работе',
+        'принято в работ' => 'В работе',
+        'распределено'    => 'Новая',
         'распределен'     => 'Распределено',
-        'распределена'    => 'Распределено',
-        'распределены'    => 'Распределено',
+        'распределена'    => 'Новая',
+        'распределены'    => 'Новая',
         'на контроле'     => 'На проверке',
         'на проверке'     => 'На проверке',
         'на проверку'     => 'На проверке',
-        'завершено'       => 'Выполнено',
-        'выполнено'       => 'Выполнено',
+        'доработка'       => 'Доработка',
+        'завершено'       => 'Снята',
+        'выполнено'       => 'Снята',
+        'снята'           => 'Снята',
         'отменено'        => 'Отменено',
     ];
 
@@ -3130,6 +3133,40 @@ function sanitize_status(?string $value, bool $useDefault = false): string
     }
 
     return mb_convert_case($normalized, MB_CASE_TITLE, 'UTF-8');
+}
+
+function can_transition_task_status(array $params): array
+{
+    $role = (string) ($params['role'] ?? '');
+    $current = sanitize_status((string) ($params['currentStatus'] ?? ''), false);
+    $next = sanitize_status((string) ($params['nextStatus'] ?? ''), false);
+    $comment = sanitize_text_field((string) ($params['comment'] ?? ''), 1000);
+
+    if ($next === '') {
+        return [false, 'Недопустимый переход статуса'];
+    }
+    if ($role === 'subordinate') {
+        $allowed = (
+            ($current === 'Новая' && $next === 'В работе')
+            || ($current === 'В работе' && $next === 'На проверке')
+            || ($current === 'Доработка' && $next === 'На проверке')
+        );
+        return [$allowed, $allowed ? '' : 'Недопустимый переход статуса'];
+    }
+    if ($role === 'responsible') {
+        if ($current === 'На проверке' && $next === 'Снята') {
+            return [true, ''];
+        }
+        if ($current === 'На проверке' && $next === 'Доработка') {
+            if ($comment === '') {
+                return [false, 'Укажите причину доработки'];
+            }
+            return [true, ''];
+        }
+        return [false, 'Недопустимый переход статуса'];
+    }
+
+    return [false, 'У вас нет прав на это действие'];
 }
 
 function docs_init_status_counters(): array
@@ -14086,6 +14123,23 @@ switch ($action) {
 
             $rawStatus = isset($payload['status']) ? (string) $payload['status'] : '';
             $nextStatus = sanitize_status($rawStatus);
+            $currentStatus = sanitize_status((string) ($records[$recordIndex]['status'] ?? ''), true);
+            $comment = sanitize_text_field((string) ($payload['comment'] ?? ''), 1000);
+            $result = sanitize_text_field((string) ($payload['result'] ?? ''), 2000);
+
+            if (!$isDirector) {
+                $roleForTransition = $isTaskSubordinate ? 'subordinate' : ($isTaskAssignee ? 'responsible' : '');
+                [$canTransition, $transitionError] = can_transition_task_status([
+                    'role' => $roleForTransition,
+                    'currentStatus' => $currentStatus,
+                    'nextStatus' => $nextStatus,
+                    'comment' => $comment,
+                ]);
+                if (!$canTransition) {
+                    respond_error($transitionError !== '' ? $transitionError : 'Недопустимый переход статуса', 403);
+                }
+            }
+
             $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
             $statusAssigneeKey = docs_match_status_change_assignee_key(
                 $records[$recordIndex],
@@ -14097,6 +14151,12 @@ switch ($action) {
             if ($shouldUpdateSharedStatus) {
                 $records[$recordIndex]['status'] = $nextStatus;
                 $records[$recordIndex]['statusUpdatedAt'] = $nextStatus === '' ? null : date('c');
+                if ($comment !== '') {
+                    $records[$recordIndex]['lastStatusComment'] = $comment;
+                }
+                if ($result !== '') {
+                    $records[$recordIndex]['result'] = $result;
+                }
                 docs_append_status_history(
                     $records[$recordIndex],
                     $nextStatus,
@@ -14112,7 +14172,7 @@ switch ($action) {
                 ]);
             }
 
-            $isCompletedStatus = mb_stripos($nextStatus, 'выполн') !== false;
+            $isCompletedStatus = $nextStatus === 'Снята' || mb_stripos($nextStatus, 'выполн') !== false;
             $existingCompleted = isset($records[$recordIndex]['completedAt'])
                 ? sanitize_date_field((string) $records[$recordIndex]['completedAt'])
                 : '';
@@ -14937,7 +14997,7 @@ switch ($action) {
         $documentId = generate_document_id();
         $entryNumber = generate_entry_number($records);
 
-        $sanitizedStatus = sanitize_status($_POST['status'] ?? '');
+        $sanitizedStatus = sanitize_status($_POST['status'] ?? '', true);
         $statusTimestamp = $sanitizedStatus === '' ? null : date('c');
 
         $record = [

@@ -733,7 +733,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['Новая', 'В работе', 'На проверке', 'Доработка', 'Снята'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -12560,8 +12560,11 @@ function setupStatusControls(card, task) {
     return;
   }
 
-  const canManageByAssignment = userIsResponsibleForTask(task);
-  if (!canManageByAssignment) {
+  const isResponsible = userIsResponsibleForTask(task);
+  const userIds = getUserIdentifierCandidates().ids;
+  const subordinateIds = getTaskSubordinateIdentifiers(task);
+  const isSubordinate = subordinateIds.some((id) => userIds.includes(id));
+  if (!isResponsible && !isSubordinate) {
     container.remove();
     return;
   }
@@ -12576,7 +12579,15 @@ function setupStatusControls(card, task) {
   const normalizedCurrent = normalizeName(currentStatus);
   optionsContainer.innerHTML = '';
 
-  STATUS_OPTIONS.forEach((option) => {
+  const transitionOptions = [];
+  if (isSubordinate) {
+    if (normalizedCurrent === normalizeName('Новая')) transitionOptions.push('В работе');
+    if (normalizedCurrent === normalizeName('В работе') || normalizedCurrent === normalizeName('Доработка')) transitionOptions.push('На проверке');
+  } else if (isResponsible) {
+    if (normalizedCurrent === normalizeName('На проверке')) transitionOptions.push('Снята', 'Доработка');
+  }
+
+  transitionOptions.forEach((option) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-card__status-button';
@@ -12588,16 +12599,9 @@ function setupStatusControls(card, task) {
     optionsContainer.appendChild(button);
   });
 
-  if (!optionsContainer.querySelector('[aria-pressed="true"]') && currentStatus) {
-    const fallback = document.createElement('button');
-    fallback.type = 'button';
-    fallback.className = 'appdosc-card__status-button';
-    fallback.textContent = currentStatus;
-    fallback.dataset.statusValue = currentStatus;
-    fallback.dataset.customStatus = 'true';
-    fallback.setAttribute('aria-pressed', 'true');
-    fallback.disabled = true;
-    optionsContainer.appendChild(fallback);
+  if (!transitionOptions.length) {
+    container.hidden = true;
+    return;
   }
 
   container.hidden = false;
@@ -12725,6 +12729,19 @@ async function handleStatusButtonClick(container, button, task, status) {
     return;
   }
 
+  let comment = '';
+  let result = '';
+  if (targetStatus === 'Доработка') {
+    comment = window.prompt('Укажите причину доработки') || '';
+    if (!comment.trim()) {
+      setStatus('error', 'Укажите причину доработки');
+      return;
+    }
+  }
+  if (targetStatus === 'На проверке') {
+    result = window.prompt('Добавьте результат выполнения (необязательно)') || '';
+  }
+
   setStatusButtonsLoading(container, true, button);
   setStatus('info', 'Обновляем статус...');
   const startedAt = Date.now();
@@ -12740,6 +12757,8 @@ async function handleStatusButtonClick(container, button, task, status) {
       organization,
       documentId: task.id,
       status: targetStatus,
+      comment,
+      result,
     });
     logClientEvent('task_status_success', {
       taskId: task.id || null,
