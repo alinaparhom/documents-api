@@ -14145,6 +14145,7 @@ switch ($action) {
 
             $rawStatus = isset($payload['status']) ? (string) $payload['status'] : '';
             $nextStatus = sanitize_status($rawStatus);
+            $reworkComment = sanitize_assignment_comment((string) ($payload['reworkComment'] ?? ($payload['comment'] ?? '')));
             $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
             $statusAssigneeKey = docs_match_status_change_assignee_key(
                 $records[$recordIndex],
@@ -14153,6 +14154,15 @@ switch ($action) {
                 $statusAuthor
             );
             $shouldUpdateSharedStatus = $isDirector || $statusAssigneeKey === null || $statusAssigneeKey === '';
+            $assigneesForStatus = docs_extract_assignees($records[$recordIndex]);
+            $assigneesForStatusIndex = docs_index_assignees($assigneesForStatus);
+            $statusActor = ($statusAssigneeKey !== null && $statusAssigneeKey !== '' && isset($assigneesForStatusIndex[$statusAssigneeKey]))
+                ? $assigneesForStatusIndex[$statusAssigneeKey]
+                : null;
+            $statusActorRole = is_array($statusActor) ? docs_normalize_assignment_role((string) ($statusActor['role'] ?? '')) : '';
+            if ($statusActorRole === 'responsible' && mb_stripos($nextStatus, 'доработ') !== false && $reworkComment === '') {
+                respond_error('Для статуса "На доработку" нужно указать комментарий, что исправить.', 400);
+            }
             if ($shouldUpdateSharedStatus) {
                 $records[$recordIndex]['status'] = $nextStatus;
                 $records[$recordIndex]['statusUpdatedAt'] = $nextStatus === '' ? null : date('c');
@@ -14179,6 +14189,11 @@ switch ($action) {
                 $records[$recordIndex]['completedAt'] = $existingCompleted !== '' ? $existingCompleted : date('Y-m-d');
             } elseif (isset($records[$recordIndex]['completedAt'])) {
                 unset($records[$recordIndex]['completedAt']);
+            }
+            if (mb_stripos($nextStatus, 'доработ') !== false && $reworkComment !== '') {
+                $records[$recordIndex]['reworkComment'] = $reworkComment;
+                $records[$recordIndex]['reworkCommentUpdatedAt'] = date('c');
+                $records[$recordIndex]['reworkCommentAuthor'] = $statusAuthor;
             }
 
             $message = 'Статус обновлён.';
@@ -14410,7 +14425,9 @@ switch ($action) {
                         $taskTitle = sanitize_text_field((string) ($updatedRecord['title'] ?? ($updatedRecord['name'] ?? 'Задача')), 200);
                         $actorName = sanitize_text_field((string) ($actor['name'] ?? ($actor['responsible'] ?? 'Ответственный')), 120);
                         if (mb_stripos($statusTextForNotification, 'доработ') !== false) {
-                            $statusReviewNotification = ['recipient' => $recipient, 'message' => "🔁 {$actorName} вернул задачу «{$taskTitle}» на доработку.\n\n🛠 Проверьте комментарий и внесите исправления."];
+                            $reworkComment = sanitize_assignment_comment((string) ($updatedRecord['reworkComment'] ?? ''));
+                            $commentBlock = $reworkComment !== '' ? ("\n\n💬 Комментарий: " . docs_truncate_notification_text($reworkComment, 280)) : '';
+                            $statusReviewNotification = ['recipient' => $recipient, 'message' => "🔁 {$actorName} вернул задачу «{$taskTitle}» на доработку.\n\n🛠 Проверьте комментарий и внесите исправления.{$commentBlock}"];
                         } elseif (mb_stripos($statusTextForNotification, 'выполн') !== false) {
                             $statusReviewNotification = ['recipient' => $recipient, 'message' => "✅ {$actorName} принял задачу «{$taskTitle}».\n\n👏 Отличная работа! Задача подтверждена как выполненная."];
                         }
