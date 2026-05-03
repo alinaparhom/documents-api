@@ -15729,6 +15729,7 @@ switch ($action) {
         $today = strtotime(date('Y-m-d'));
         $sentCount = 0;
         $taskCount = 0;
+        $recipientStats = [];
 
         foreach ($records as $record) {
             if (!is_array($record)) {
@@ -15778,14 +15779,31 @@ switch ($action) {
                 }
                 docs_send_task_status_review_notification($record, $organization, $recipient, $message);
                 $sentCount++;
+                $recipientName = sanitize_text_field((string) ($recipient['name'] ?? ($recipient['responsible'] ?? $recipient['id'] ?? 'Исполнитель')), 200);
+                if (!isset($recipientStats[$recipientName])) {
+                    $recipientStats[$recipientName] = 0;
+                }
+                $recipientStats[$recipientName]++;
             }
         }
+
+        $recipientSummary = [];
+        foreach ($recipientStats as $name => $count) {
+            $recipientSummary[] = [
+                'name' => $name,
+                'overdueCount' => (int) $count,
+            ];
+        }
+        usort($recipientSummary, static function (array $a, array $b): int {
+            return (int) ($b['overdueCount'] ?? 0) <=> (int) ($a['overdueCount'] ?? 0);
+        });
 
         respond_success([
             'message' => 'Рассылка по просроченным задачам выполнена.',
             'organization' => $organization,
             'overdueTasks' => $taskCount,
             'notificationsSent' => $sentCount,
+            'recipientSummary' => $recipientSummary,
         ]);
         break;
 

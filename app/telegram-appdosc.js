@@ -17893,9 +17893,21 @@ async function triggerTelegramOverdueDigest(scope = 'all', triggerButton = null)
     if (!response.ok || !result || result.success !== true) {
       throw new Error(result && result.error ? result.error : `Ошибка ${response.status}`);
     }
-    // intentionally silent: без всплывающего облака уведомлений на главной.
+    const sent = Number(result.notificationsSent || 0);
+    const tasks = Number(result.overdueTasks || 0);
+    let message = `✅ Рассылка отправлена. Задач: ${tasks}, уведомлений: ${sent}.`;
+    if (scope === 'responsible_subordinates' && Array.isArray(result.recipientSummary) && result.recipientSummary.length) {
+      const top = result.recipientSummary.slice(0, 8).map((item) => {
+        const name = normalizeValue(item && item.name) || 'Исполнитель';
+        const count = Number(item && item.overdueCount ? item.overdueCount : 0);
+        return `${name}: ${count}`;
+      });
+      message += ` Подчинённые: ${top.join(' • ')}.`;
+    }
+    setStatus('success', message);
+    closeSettingsSheet();
   } catch (error) {
-    // intentionally silent: ошибки не выводим плавающим уведомлением.
+    setStatus('error', `❌ Рассылка не выполнена: ${error && error.message ? error.message : 'ошибка'}`);
   } finally {
     if (triggerButton instanceof HTMLButtonElement) {
       triggerButton.disabled = false;
