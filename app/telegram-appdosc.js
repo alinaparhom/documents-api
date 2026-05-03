@@ -2938,6 +2938,7 @@ function initElements() {
   elements.settingsUserRole = document.querySelector('[data-settings-user-role]');
   elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
   elements.listModeOptionButtons = Array.from(document.querySelectorAll('[data-list-mode-option]'));
+  elements.overdueDigestButtons = Array.from(document.querySelectorAll('[data-overdue-digest]'));
   elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
   elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
@@ -17828,6 +17829,16 @@ function attachEvents() {
       });
     });
   }
+  if (Array.isArray(elements.overdueDigestButtons) && elements.overdueDigestButtons.length) {
+    elements.overdueDigestButtons.forEach((button) => {
+      button.addEventListener('click', async () => {
+        const scope = normalizeValue(button.dataset.overdueDigest) === 'responsible_subordinates'
+          ? 'responsible_subordinates'
+          : 'all';
+        await triggerTelegramOverdueDigest(scope, button);
+      });
+    });
+  }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -17845,6 +17856,52 @@ function attachEvents() {
       closeSettingsSheet();
     }
   });
+}
+
+async function triggerTelegramOverdueDigest(scope = 'all', triggerButton = null) {
+  if (!state.organization) {
+    setStatus('error', 'Организация не определена.');
+    return;
+  }
+  const payload = {
+    action: 'send_overdue_notifications',
+    organization: state.organization,
+    scope: scope === 'responsible_subordinates' ? 'responsible_subordinates' : 'all',
+  };
+  if (state.telegram && state.telegram.initData) {
+    payload.telegramInitData = state.telegram.initData;
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram && state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  if (triggerButton instanceof HTMLButtonElement) {
+    triggerButton.disabled = true;
+  }
+  setStatus('info', 'Запускаю рассылку просроченных задач…');
+  try {
+    const response = await fetch('/docs.php?action=send_overdue_notifications', {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result || result.success !== true) {
+      throw new Error(result && result.error ? result.error : `Ошибка ${response.status}`);
+    }
+    const tasks = Number(result.overdueTasks || 0);
+    const sent = Number(result.notificationsSent || 0);
+    setStatus('success', `Рассылка готова: задач ${tasks}, уведомлений ${sent}.`);
+  } catch (error) {
+    setStatus('error', `Рассылка не выполнена: ${error && error.message ? error.message : 'ошибка'}`);
+  } finally {
+    if (triggerButton instanceof HTMLButtonElement) {
+      triggerButton.disabled = false;
+    }
+  }
 }
 
 function formatDate(value) {
