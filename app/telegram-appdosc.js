@@ -3017,6 +3017,12 @@ function initElements() {
     templateFound: Boolean(elements.cardTemplate),
     placeholderFound: Boolean(elements.placeholder),
   });
+  const syncFoldersManageVisibility = () => {
+    if (!elements.foldersManage || !elements.foldersSection) return;
+    const isCollapsed = elements.foldersSection.dataset.foldersCollapsed === 'true';
+    elements.foldersManage.hidden = isCollapsed;
+    elements.foldersManage.setAttribute('aria-hidden', isCollapsed ? 'true' : 'false');
+  };
   if (elements.foldersManage) {
     elements.foldersManage.addEventListener('click', () => {
       folderManageMode = !folderManageMode;
@@ -3035,8 +3041,10 @@ function initElements() {
       if (elements.foldersList) {
         elements.foldersList.hidden = nextCollapsed;
       }
+      syncFoldersManageVisibility();
     });
   }
+  syncFoldersManageVisibility();
   if (elements.taskSelectorContainer) {
     elements.taskSelectorContainer.hidden = true;
   }
