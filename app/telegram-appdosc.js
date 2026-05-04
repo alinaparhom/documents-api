@@ -18931,6 +18931,8 @@ function resolveAssignmentValueFromEntry(entry) {
 
   const candidates = [
     entry.id,
+    entry.subordinateId,
+    entry.subordinate,
     entry.telegram,
     entry.chatId,
     entry.email,
