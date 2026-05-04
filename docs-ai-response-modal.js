@@ -3432,7 +3432,7 @@
         messages.scrollTop = messages.scrollHeight;
         return;
       }
-      var effectivePrompt = value || 'Дай готовый текст ответа по содержимому файла для вставки в документ: только суть, без приветствия и реквизитов.';
+      var effectivePrompt = value || 'Подготовь деловой ответ на входящее письмо/обращение по этому документу';
 
       state.model = modelSelect.value;
       var selectedModel = state.models.find(function (entry) { return entry.value === state.model; });
