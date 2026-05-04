@@ -6751,24 +6751,41 @@ function docs_entry_assigned_by_user(array $entry, array $requestContext): bool
         return false;
     }
 
-    $assignedByRaw = sanitize_text_field((string) ($entry['assignedBy'] ?? ''), 200);
-    if ($assignedByRaw === '') {
-        return false;
-    }
-
     $userCandidates = docs_collect_request_identity_candidates($requestContext);
     if (empty($userCandidates['ids']) && empty($userCandidates['names'])) {
         return false;
     }
 
-    $assignedByName = docs_normalize_name_candidate_value($assignedByRaw);
-    if ($assignedByName !== '' && in_array($assignedByName, $userCandidates['names'], true)) {
-        return true;
+    $assignedByCandidates = [];
+    $pushCandidate = static function ($candidate) use (&$assignedByCandidates): void {
+        if (!is_scalar($candidate)) {
+            return;
+        }
+        $value = sanitize_text_field((string) $candidate, 200);
+        if ($value !== '') {
+            $assignedByCandidates[] = $value;
+        }
+    };
+
+    $pushCandidate($entry['assignedBy'] ?? '');
+    $pushCandidate($entry['assignedByTelegram'] ?? '');
+    $pushCandidate($entry['assignedById'] ?? '');
+    $pushCandidate($entry['assignedByLogin'] ?? '');
+
+    if (empty($assignedByCandidates)) {
+        return false;
     }
 
-    $assignedById = docs_normalize_identifier_candidate_value($assignedByRaw);
-    if ($assignedById !== '' && in_array($assignedById, $userCandidates['ids'], true)) {
-        return true;
+    foreach ($assignedByCandidates as $candidate) {
+        $assignedByName = docs_normalize_name_candidate_value($candidate);
+        if ($assignedByName !== '' && in_array($assignedByName, $userCandidates['names'], true)) {
+            return true;
+        }
+
+        $assignedById = docs_normalize_identifier_candidate_value($candidate);
+        if ($assignedById !== '' && in_array($assignedById, $userCandidates['ids'], true)) {
+            return true;
+        }
     }
 
     return false;
@@ -13370,7 +13387,7 @@ switch ($action) {
                         }
                     }
                 }
-                if ($shouldRemove && !$isDirector && !docs_entry_assigned_by_user($entry, $requestContext)) {
+                if ($shouldRemove && !$isDirector && !$canManageSubordinates && !docs_entry_assigned_by_user($entry, $requestContext)) {
                     $blockedEntries[] = $entry;
                     $remainingResponsibles[] = $entry;
                     continue;
@@ -13937,7 +13954,7 @@ switch ($action) {
                         }
                     }
                 }
-                if ($shouldRemove && !$isDirector && !docs_entry_assigned_by_user($entry, $requestContext)) {
+                if ($shouldRemove && !$isDirector && !$canManageSubordinates && !docs_entry_assigned_by_user($entry, $requestContext)) {
                     $blockedEntries[] = $entry;
                     $remainingSubordinates[] = $entry;
                     continue;
