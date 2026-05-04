@@ -9,13 +9,21 @@ const { createTelegramBriefAi } = await import('./ai-short_repsonse.js' + _vSuff
 preloadPdfjs();
 
 const API_URL = '/docs.php?action=mini_app_tasks';
+const THEME_SETTINGS_SAVE_ENDPOINT = '/docs.php?action=mini_app_save_theme';
+const TASK_SNAPSHOT_API_URL = '/docs.php?action=mini_app_task_snapshot';
 const CLIENT_LOG_ENDPOINT = '/docs.php?action=mini_app_log';
 const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
+const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
+let systemThemeMediaQuery = null;
+let isSystemThemeListenerBound = false;
+const THEME_MODE_OPTIONS = ['dark', 'light'];
+const TASK_LIST_MODE_OPTIONS = ['default', 'insight'];
+const TASK_LIST_MODE_STORAGE_KEY = 'appdosc_task_list_mode';
 const taskAttachmentPreviewCache = new Map();
 const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -23,6 +31,8 @@ const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
 const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
 const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 3 * 1000;
 const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 1500;
+const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 1200;
+const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
 const ENABLE_TASK_PDF_WARMUP = true;
 const pdfFetchTimeoutUrls = new Set();
 
@@ -495,6 +505,29 @@ function cloneTaskAttachmentPreviewCacheEntry(entry) {
 }
 
 function ensureAiDialogScriptLoaded() {
+  if (!window.DOCS_AI_PROMPTS || typeof window.DOCS_AI_PROMPTS !== 'object') {
+    window.DOCS_AI_PROMPTS = Object.freeze({
+      version: 'prompt-catalog-v1',
+      RESPONSE_OUTPUT_DIRECTIVE: { v1: '' },
+      VISION_QUALITY_DIRECTIVE: { v1: '' },
+      SYSTEM_TONE_PROMPTS: {
+        neutral: { value: 'neutral', label: 'Нейтральный', prompt: 'СТИЛЬ ОТВЕТА: Нейтральный деловой.\nПиши ровно, без эмоций и оценок.' },
+        aggressive: { value: 'aggressive', label: 'Агрессивный', prompt: 'СТИЛЬ ОТВЕТА: Жёсткий деловой.\nПиши прямолинейно, коротко и требовательно, без грубости и нарушений деловой этики.' },
+        calm: { value: 'calm', label: 'Спокойный', prompt: 'СТИЛЬ ОТВЕТА: Спокойный деловой.\nПиши мягко и понятно, но строго по делу.' },
+        neutral_enhanced: { value: 'neutral_enhanced', label: 'Нейтральный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Нейтральный деловой (усиленный).\nМаксимальная точность формулировок, структурный и строгий тон.' },
+        aggressive_enhanced: { value: 'aggressive_enhanced', label: 'Агрессивный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Жёсткий деловой (усиленный).\nМаксимально короткие и твёрдые формулировки, без эмоциональных вставок.' },
+        calm_enhanced: { value: 'calm_enhanced', label: 'Спокойный (усиленный)', prompt: 'СТИЛЬ ОТВЕТА: Спокойный деловой (усиленный).\nПиши вежливо и понятно, сохраняя официальную точность.' }
+      },
+      DEFAULT_RESPONSE_FORMAT_LIMITS: {
+        response: { temperature: 0.2, max_tokens: 1800 },
+        response_extended: { temperature: 0.2, max_tokens: 2000 },
+        summary: { temperature: 0.3, max_tokens: 800, top_p: 0.85 },
+        vision_extract: { temperature: 0, max_tokens: 2000 }
+      },
+      DEFAULT_KEYS: { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'neutral_enhanced' }
+    });
+  }
+
   if (window && typeof window.openAiResponseDialog === 'function') {
     return Promise.resolve(window.openAiResponseDialog);
   }
@@ -502,7 +535,7 @@ function ensureAiDialogScriptLoaded() {
   if (!aiDialogLoader) {
     aiDialogLoader = (async () => {
       try {
-        await import('./telegram-ai-response-dialog.js');
+        await import('./telegram-ai-response-dialog.js' + _vSuffix);
         if (typeof window.openAiResponseDialog === 'function') {
           return window.openAiResponseDialog;
         }
@@ -673,6 +706,7 @@ const ALLOWED_LOG_EVENTS = new Set([
   'task_view_click',
   'task_view_error',
   'task_view_open',
+  'ai_dialog_blocked_no_fresh_files',
   'tasks_load_error',
   'tasks_load_start',
   'tasks_loaded',
@@ -699,7 +733,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Распределено', 'Принято в работу', 'На проверке', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -733,8 +767,8 @@ const STATUS_SUMMARY_CONFIG = {
     filter: `${STATUS_FILTER_PREFIX}distributed`,
   },
   accepted: {
-    label: 'Принято в работу',
-    display: 'принято в работу',
+    label: 'В работе',
+    display: 'в работе',
     filter: `${STATUS_FILTER_PREFIX}accepted`,
   },
   review: {
@@ -1805,6 +1839,20 @@ function applyEntryTaskId(entryTaskId, source, startParam) {
   if (!normalized) {
     return;
   }
+  const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
+  const comboPalette = isLightTheme
+    ? {
+      optionBg: 'rgba(84, 126, 212, 0.07)',
+      optionBorder: 'rgba(94, 136, 219, 0.22)',
+      optionColor: '#1d2d4c',
+      optionHover: 'rgba(84, 126, 212, 0.16)',
+    }
+    : {
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    };
 
   if (!state.entryTaskId) {
     state.entryTaskId = normalized;
@@ -1896,6 +1944,9 @@ function hydrateTelegramFromInitData(initData) {
         if (!state.telegram.languageCode && typeof user.language_code === 'string') {
           state.telegram.languageCode = user.language_code;
         }
+        if (!state.telegram.photoUrl && typeof user.photo_url === 'string') {
+          state.telegram.photoUrl = user.photo_url;
+        }
       }
     } catch (error) {
       // ignore JSON parse issues
@@ -1930,13 +1981,175 @@ function hydrateTelegramFromInitData(initData) {
   }
 }
 
+
+let folders = [
+  { id: 'all', name: 'Все задачи', system: true },
+  { id: 'no-folder', name: 'Без папки', system: true },
+];
+
+let activeFolderId = 'all';
+let selectedTaskIds = new Set();
+let folderManageMode = false;
+let taskFolderMap = {};
+let foldersStateJson = '{"folders":[],"taskFolders":{}}';
+
+function loadFoldersFromStorage() {
+  try {
+    const raw = normalizeValue((typeof window !== 'undefined' && window.__APPDOSC_FOLDERS_JSON__) || foldersStateJson) || '{"folders":[],"taskFolders":{}}';
+    const parsedRoot = JSON.parse(raw);
+    const parsed = Array.isArray(parsedRoot.folders) ? parsedRoot.folders : [];
+    const customFolders = parsed
+      .filter((folder) => isPlainObject(folder) && !folder.system && normalizeValue(folder.id) && normalizeValue(folder.name))
+      .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }));
+    folders = [
+      { id: 'all', name: 'Все задачи', system: true },
+      { id: 'no-folder', name: 'Без папки', system: true },
+      ...customFolders,
+    ];
+  } catch (error) {
+    folders = [
+      { id: 'all', name: 'Все задачи', system: true },
+      { id: 'no-folder', name: 'Без папки', system: true },
+    ];
+  }
+}
+
+function saveFoldersToStorage() {
+  try {
+    const customFolders = folders.filter((folder) => !folder.system);
+    const root = JSON.parse(foldersStateJson || '{"folders":[],"taskFolders":{}}');
+    root.folders = customFolders;
+    foldersStateJson = JSON.stringify(root);
+    if (typeof window !== 'undefined') {
+      window.__APPDOSC_FOLDERS_JSON__ = foldersStateJson;
+    }
+  } catch (error) {}
+}
+
+function loadTaskFoldersFromStorage() {
+  try {
+    const raw = normalizeValue((typeof window !== 'undefined' && window.__APPDOSC_FOLDERS_JSON__) || foldersStateJson) || '{"folders":[],"taskFolders":{}}';
+    const parsedRoot = JSON.parse(raw);
+    const parsed = parsedRoot && isPlainObject(parsedRoot.taskFolders) ? parsedRoot.taskFolders : {};
+    taskFolderMap = isPlainObject(parsed) ? parsed : {};
+  } catch (error) {
+    taskFolderMap = {};
+  }
+}
+
+function saveTaskFoldersToStorage() {
+  try {
+    const map = {};
+    state.tasks.forEach((task) => {
+      const key = normalizeValue(task && task.id);
+      if (!key) return;
+      map[key] = normalizeValue(task.folderId) || null;
+    });
+    taskFolderMap = map;
+    const root = JSON.parse(foldersStateJson || '{"folders":[],"taskFolders":{}}');
+    root.taskFolders = map;
+    foldersStateJson = JSON.stringify(root);
+    if (typeof window !== 'undefined') {
+      window.__APPDOSC_FOLDERS_JSON__ = foldersStateJson;
+    }
+  } catch (error) {}
+}
+
+
+function saveState() {
+  saveFoldersToStorage();
+  saveTaskFoldersToStorage();
+}
+
+function extractFoldersFromTasks(tasks) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  const currentUserId = normalizeValue(state?.telegram?.id);
+  if (!currentUserId) return;
+  for (let i = 0; i < source.length; i += 1) {
+    const task = source[i];
+    const settings = isPlainObject(task?.folderSettingsByUser) ? task.folderSettingsByUser : null;
+    const userFolders = settings && Array.isArray(settings[currentUserId]) ? settings[currentUserId] : null;
+    if (userFolders) {
+      const customFolders = userFolders
+        .filter((folder) => isPlainObject(folder) && normalizeValue(folder.id) && normalizeValue(folder.name))
+        .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }));
+      folders = [
+        { id: 'all', name: 'Все задачи', system: true },
+        { id: 'no-folder', name: 'Без папки', system: true },
+        ...customFolders,
+      ];
+      saveFoldersToStorage();
+      break;
+    }
+  }
+}
+
+function refreshFolderUi() {
+  updateVisibleTasks();
+  renderFolders();
+  renderCards();
+  renderBulkFolderPanel();
+}
+
+function getFolderName(folderId) {
+  if (!folderId) return 'Без папки';
+  const folder = folders.find((item) => item.id === folderId);
+  return folder ? folder.name : 'Без папки';
+}
+
+function setTaskFolder(task, folderId) {
+  if (!task || typeof task !== 'object') return;
+  task.folderId = normalizeValue(folderId) || null;
+}
+
+async function persistTaskFolderToRegistry(task) {
+  const organization = normalizeValue(task && task.organization);
+  const documentId = normalizeValue(task && (task.id || task.entryNumber || task.registryNumber));
+  if (!organization || !documentId) {
+    return;
+  }
+  try {
+    await sendTaskMutation({
+      updateType: 'folder',
+      organization,
+      documentId,
+      folderId: normalizeValue(task.folderId) || '',
+      folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
+    });
+  } catch (error) {
+    setStatus('error', 'Не удалось сохранить папку в registry.json');
+  }
+}
+
+async function persistFoldersListToRegistry() {
+  const task = Array.isArray(state.tasks) ? state.tasks.find((item) => item && item.organization && item.id) : null;
+  if (!task) return;
+  try {
+    await sendTaskMutation({
+      updateType: 'folder_state',
+      organization: normalizeValue(task.organization),
+      documentId: normalizeValue(task.id),
+      folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
+      folderState: folders.filter((item) => !item.system).map((item) => ({ id: item.id, name: item.name })),
+    });
+  } catch (error) {
+    setStatus('error', 'Не удалось сохранить список папок в registry.json');
+  }
+}
 const state = {
+  themeMode: 'dark',
+  persistedThemeMode: '',
+  taskListMode: 'default',
+  persistedTaskListMode: '',
+  isThemeSaving: false,
   telegram: {
     id: '',
     username: '',
     firstName: '',
     lastName: '',
     fullName: '',
+    photoUrl: '',
+    role: '',
     chatId: '',
     chatType: '',
     languageCode: '',
@@ -1958,6 +2171,24 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
+  activeFilters: {
+    folderId: 'all',
+    statusFilters: [],
+    quickPreset: '',
+    groupFilters: [{ type: '', value: '' }],
+    dateFrom: '',
+    dateTo: '',
+    overdue: false,
+  },
+  compactFilters: {
+    expanded: false,
+    dateFrom: '',
+    dateTo: '',
+    quickPreset: '',
+    groupFilters: [{ type: '', value: '' }],
+    showOverdueOnly: false,
+    prevFiltersBeforeOverdue: null,
+  },
   access: {
     responsibles: {},
     subordinates: {},
@@ -1998,12 +2229,14 @@ const state = {
     visibilityRuleLogged: false,
     completedVisibilityLogged: false,
   },
+  userDirectoryEntries: [],
 };
 
 sharedState = state;
 
 const elements = {};
 let pdfViewerInstance = null;
+let rangeCalendarInstance = null;
 
 function ensureDirectorState() {
   if (!state.director || typeof state.director !== 'object') {
@@ -2280,6 +2513,19 @@ function sanitizeTaskItem(task) {
 
   const sanitized = { ...task };
   sanitized.files = sanitizeTaskFiles(sanitized.files);
+  const currentUserId = normalizeValue(state?.telegram?.id);
+  const folderByUser = isPlainObject(sanitized.folderByUser) ? sanitized.folderByUser : null;
+  const userFolderFromTask = currentUserId && folderByUser
+    ? normalizeValue(folderByUser[currentUserId]) || null
+    : null;
+  const taskId = normalizeValue(sanitized.id);
+  if (userFolderFromTask !== null) {
+    sanitized.folderId = userFolderFromTask;
+  } else if (taskId && Object.prototype.hasOwnProperty.call(taskFolderMap, taskId)) {
+    sanitized.folderId = normalizeValue(taskFolderMap[taskId]) || null;
+  } else {
+    sanitized.folderId = normalizeValue(sanitized.folderId) || null;
+  }
 
   return sanitized;
 }
@@ -2398,6 +2644,7 @@ const STATUS_CLASSES = {
   error: 'appdosc__status-message--error',
   info: 'appdosc__status-message--info',
 };
+let toastTimerId = null;
 
 const TASK_FILTERS = ['all', 'overdue', ...STATUS_FILTERS];
 const DEFAULT_TASK_FILTER = 'all';
@@ -2461,10 +2708,29 @@ function toggleStatusFilterSelection(currentFilters, filter) {
     return normalizeTaskFilters(currentFilters);
   }
   const current = normalizeTaskFilters(currentFilters);
-  if (current.includes(normalizedTarget)) {
-    return current.filter((value) => value !== normalizedTarget);
+  const isTargetOverdue = normalizedTarget === 'overdue';
+  const isTargetStatus = isStatusFilter(normalizedTarget);
+
+  if (isTargetOverdue) {
+    if (current.includes(normalizedTarget)) {
+      return current.filter((value) => value !== normalizedTarget);
+    }
+    return [...current, normalizedTarget];
   }
-  return [...current, normalizedTarget];
+
+  if (!isTargetStatus) {
+    if (current.includes(normalizedTarget)) {
+      return current.filter((value) => value !== normalizedTarget);
+    }
+    return [...current, normalizedTarget];
+  }
+
+  const withoutStatuses = current.filter((value) => !isStatusFilter(value));
+  const wasSelected = current.includes(normalizedTarget);
+  if (wasSelected) {
+    return withoutStatuses;
+  }
+  return [...withoutStatuses, normalizedTarget];
 }
 
 function setAssigneeFilterSelection(currentFilters, targetFilter) {
@@ -2555,6 +2821,12 @@ function getTaskStatusKeyForUser(task) {
     return baseKey;
   }
 
+  // Синхронизация с веб-логикой: если задача считается выполненной,
+  // она должна попадать и в статус "Выполнено", и в фильтр по этому статусу.
+  if (isTaskCompleted(task)) {
+    return 'done';
+  }
+
   if (isDirectorCompletionMarked(task)) {
     return 'done';
   }
@@ -2567,13 +2839,28 @@ const CARD_HIGHLIGHT_TIMEOUT = 1800;
 
 const FALLBACK_CARD_TEMPLATE = `
   <header class="appdosc-card__header" data-card-toggle>
-    <span class="appdosc-card__badge" data-field="entryNumber"></span>
-    <div class="appdosc-card__header-text">
-      <div class="appdosc-card__title" data-field="document">Документ</div>
+    <span class="task-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M9 4.5h6a1.5 1.5 0 0 1 1.5 1.5V7H19a2 2 0 0 1 2 2v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2.5V6A1.5 1.5 0 0 1 9 4.5Z" stroke="#5e9cff" stroke-width="1.7"/>
+        <path d="M9 6.25h6" stroke="#5e9cff" stroke-width="1.7" stroke-linecap="round"/>
+        <path d="m8.8 14.1 2.1 2.2 4.4-4.6" stroke="#5e9cff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+    <div class="appdosc-card__header-text task-main">
+      <div class="task-meta">
+        <span class="appdosc-card__meta task-date" data-field="registrationDateHeader"></span>
+        <span class="appdosc-card__badge task-number" data-field="entryNumber"></span>
+        <span class="task-status-badge" data-field="statusBadge" hidden></span>
+      </div>
+      <div class="appdosc-card__title task-name" data-field="document">Содержимое</div>
       <div class="appdosc-card__subtitle" data-field="organization"></div>
     </div>
-    <span class="appdosc-card__meta" data-field="registrationDateHeader"></span>
-    <span class="appdosc-card__status" data-field="status"></span>
+    <div class="appdosc-card__side">
+      <span class="appdosc-card__status task-status" data-field="status"></span>
+    </div>
+    <div class="appdosc-card__summary" data-field="summary">
+      <div class="appdosc-card__block-text" data-field="contentCompact"></div>
+    </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
   <dl class="appdosc-card__details">
@@ -2606,22 +2893,25 @@ const FALLBACK_CARD_TEMPLATE = `
       <dd data-field="responseSummary"></dd>
     </div>
   </dl>
-  <div class="appdosc-card__summary" data-field="summary">
-    <div class="appdosc-card__block-title">Кратко</div>
-    <div class="appdosc-card__block-text" data-field="summaryText"></div>
-  </div>
   <div class="appdosc-card__resolution" data-field="resolution">
     <div class="appdosc-card__block-title">Резолюция</div>
     <div class="appdosc-card__block-text" data-field="resolutionText"></div>
   </div>
+  <div class="appdosc-card__resolution" data-field="aiBrief">
+    <div class="appdosc-card__block-title">Кратко от ИИ</div>
+    <div class="appdosc-card__block-text" data-field="aiBriefText"></div>
+  </div>
   <div class="appdosc-card__files" data-files></div>
   <footer class="appdosc-card__footer">
-    <div class="appdosc-card__deadline">
+    <div class="appdosc-card__deadline appdosc-card__deadline--compact">
+      <span class="appdosc-card__deadline-label">От:</span>
+      <span class="appdosc-card__deadline-value" data-field="senderCompact"></span>
+    </div>
+    <div class="appdosc-card__deadline appdosc-card__deadline--full">
       <span class="appdosc-card__deadline-label">Срок</span>
       <span class="appdosc-card__deadline-value" data-field="dueDate"></span>
     </div>
     <div class="appdosc-card__actions">
-      <button type="button" class="appdosc-card__action appdosc-card__action--brief" data-card-brief>Кратко ИИ</button>
       <button type="button" class="appdosc-card__action" data-card-view>Просмотреть</button>
       <div class="appdosc-card__view-info" data-card-view-info hidden>Просмотрено: —</div>
     </div>
@@ -2639,9 +2929,24 @@ function initElements() {
   elements.app = document.querySelector('[data-app]');
   elements.refreshButton = document.querySelector('[data-refresh]');
   elements.userName = document.querySelector('[data-user-name]');
-  elements.userId = document.querySelector('[data-user-id]');
+  elements.userRole = document.querySelector('[data-user-role]');
+  elements.userAvatar = document.querySelector('[data-user-avatar]');
+  elements.settingsSheet = document.querySelector('[data-settings-sheet]');
+  elements.settingsCloseTargets = Array.from(document.querySelectorAll('[data-settings-close]'));
+  elements.settingsUserAvatar = document.querySelector('[data-settings-user-avatar]');
+  elements.settingsUserName = document.querySelector('[data-settings-user-name]');
+  elements.settingsUserRole = document.querySelector('[data-settings-user-role]');
+  elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
+  elements.listModeOptionButtons = Array.from(document.querySelectorAll('[data-list-mode-option]'));
+  elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
+  elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
   elements.summaryStatus = document.querySelector('[data-summary-status]');
+  elements.foldersSection = document.querySelector('[data-folders-section]');
+  elements.foldersCount = document.querySelector('[data-folders-count]');
+  elements.foldersManage = document.querySelector('[data-folders-manage]');
+  elements.foldersToggle = document.querySelector('[data-folders-toggle]');
+  elements.foldersList = document.querySelector('[data-folders-list]');
   elements.summaryToggle = document.querySelector('[data-summary-toggle]');
   elements.summaryToggleIcon = document.querySelector('[data-summary-toggle-icon]');
   elements.summaryList = document.querySelector('[data-summary-list]');
@@ -2667,6 +2972,25 @@ function initElements() {
     }
   });
   elements.overdue = document.querySelector('[data-overdue]');
+  elements.taskFilterToggle = document.querySelector('[data-task-filter-toggle]');
+  elements.taskFilterPanel = document.querySelector('[data-task-filter-panel]');
+  elements.periodButton = document.querySelector('[data-period-button]');
+  elements.periodButtonValue = document.querySelector('[data-period-button-value]');
+  elements.rangeCalendarRoot = document.querySelector('[data-range-calendar]');
+  elements.rangeCalendarBackdrop = document.querySelector('[data-range-calendar-backdrop]');
+  elements.rangeCalendarYear = document.querySelector('[data-calendar-year]');
+  elements.rangeCalendarMonths = document.querySelector('[data-calendar-months]');
+  elements.rangeCalendarStartLabel = document.querySelector('[data-start-label]');
+  elements.rangeCalendarEndLabel = document.querySelector('[data-end-label]');
+  elements.rangeCalendarClose = document.querySelector('[data-range-calendar-close]');
+  elements.rangeCalendarClearStart = document.querySelector('[data-clear-start]');
+  elements.rangeCalendarClearEnd = document.querySelector('[data-clear-end]');
+  elements.rangeCalendarSubmit = document.querySelector('[data-calendar-submit]');
+  elements.rangeCalendarTotal = document.querySelector('[data-calendar-total]');
+  elements.filterQuickButtons = Array.from(document.querySelectorAll('[data-filter-quick-btn]'));
+  elements.filterResetButton = document.querySelector('[data-filter-reset]');
+  elements.filterGroupList = document.querySelector('[data-filter-group-list]');
+  elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
   elements.status = document.querySelector('[data-status]');
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
@@ -2678,21 +3002,62 @@ function initElements() {
   elements.versionUpdated = document.querySelector('[data-version-updated]');
   elements.taskSelectorContainer = document.querySelector('[data-task-selector]');
   elements.taskSelector = document.querySelector('[data-task-select]');
+  elements.taskCountInline = document.querySelector('[data-task-count-inline]');
   elements.viewerTabs = document.querySelector('[data-viewer-tabs]');
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
+  elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
+  elements.viewerBrief = document.querySelector('[data-viewer-brief]');
+  elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
+  setTaskFilterPanelExpanded(false);
+  initCompactRangeCalendar();
 
   logIosStage('elements_initialized', {
     cardsContainer: Boolean(elements.cardsContainer),
     templateFound: Boolean(elements.cardTemplate),
     placeholderFound: Boolean(elements.placeholder),
   });
+  const syncFoldersManageVisibility = () => {
+    if (!elements.foldersManage || !elements.foldersSection) return;
+    const isCollapsed = elements.foldersSection.dataset.foldersCollapsed === 'true';
+    elements.foldersManage.classList.toggle('is-collapsed', isCollapsed);
+    elements.foldersManage.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+  };
+  if (elements.foldersManage) {
+    elements.foldersManage.addEventListener('click', () => {
+      folderManageMode = !folderManageMode;
+      elements.foldersManage.textContent = folderManageMode ? '✅' : '⚙️';
+      renderFolders();
+    });
+    elements.foldersManage.textContent = '⚙️';
+  }
+  if (elements.foldersToggle && elements.foldersSection) {
+    elements.foldersToggle.addEventListener('click', () => {
+      const collapsed = elements.foldersSection.dataset.foldersCollapsed !== 'false';
+      const nextCollapsed = !collapsed;
+      elements.foldersSection.dataset.foldersCollapsed = nextCollapsed ? 'true' : 'false';
+      elements.foldersSection.classList.toggle('is-collapsed', nextCollapsed);
+      elements.foldersToggle.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true');
+      if (elements.foldersList) {
+        elements.foldersList.hidden = nextCollapsed;
+      }
+      syncFoldersManageVisibility();
+    });
+  }
+  syncFoldersManageVisibility();
+  if (elements.taskSelectorContainer) {
+    elements.taskSelectorContainer.hidden = true;
+  }
   updateViewerDownloadState(null);
+  updateViewerBriefState(null);
+  updateViewerDeleteState(null);
+  updateViewerFileOwnerState(null);
 }
 
 function initTelegram() {
   const { Telegram } = window;
   if (!Telegram || !Telegram.WebApp) {
+    syncThemeWithSystem();
     readQueryContext();
     logClientEvent('init_no_webapp', {
       telegramAvailable: false,
@@ -2722,7 +3087,10 @@ function initTelegram() {
     // ignore expansion issues
   }
 
-  state.telegram.colorScheme = webApp.colorScheme || 'light';
+  state.telegram.colorScheme = webApp.colorScheme || getSystemColorScheme();
+  if (state.themeMode !== 'dark' && state.themeMode !== 'light') {
+    state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+  }
   state.telegram.initData = webApp.initData || '';
   state.telegram.platform = typeof webApp.platform === 'string' ? webApp.platform : state.telegram.platform;
   updateEnvironmentFromPlatform(state.telegram.platform);
@@ -2737,6 +3105,7 @@ function initTelegram() {
       state.telegram.firstName = user.first_name ? String(user.first_name) : state.telegram.firstName;
       state.telegram.lastName = user.last_name ? String(user.last_name) : state.telegram.lastName;
       state.telegram.languageCode = user.language_code ? String(user.language_code) : state.telegram.languageCode;
+      state.telegram.photoUrl = user.photo_url ? String(user.photo_url) : state.telegram.photoUrl;
       const nameParts = [state.telegram.firstName, state.telegram.lastName].filter(Boolean);
       state.telegram.fullName = nameParts.join(' ').trim() || state.telegram.fullName;
     }
@@ -2771,7 +3140,7 @@ function initTelegram() {
 
   if (typeof webApp.onEvent === 'function') {
     webApp.onEvent('themeChanged', () => {
-      state.telegram.colorScheme = webApp.colorScheme || 'light';
+      state.telegram.colorScheme = webApp.colorScheme || getSystemColorScheme();
       applyTheme();
     });
   }
@@ -2790,6 +3159,231 @@ function initTelegram() {
     hasInitData: Boolean(state.telegram.initData),
     colorScheme: state.telegram.colorScheme || 'light',
   });
+}
+
+function getSystemColorScheme() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return 'light';
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function syncThemeWithSystem() {
+  state.telegram.colorScheme = getSystemColorScheme();
+  state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+  applyTheme();
+}
+
+function bindSystemThemeListener() {
+  if (isSystemThemeListenerBound || typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return;
+  }
+  systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  const handleSystemThemeChange = (event) => {
+    const hasTelegramWebApp = Boolean(window.Telegram && window.Telegram.WebApp);
+    if (hasTelegramWebApp) {
+      return;
+    }
+    state.telegram.colorScheme = event && event.matches ? 'dark' : 'light';
+    state.themeMode = state.telegram.colorScheme === 'dark' ? 'dark' : 'light';
+    renderThemeToggle();
+    applyTheme();
+  };
+  if (typeof systemThemeMediaQuery.addEventListener === 'function') {
+    systemThemeMediaQuery.addEventListener('change', handleSystemThemeChange);
+  } else if (typeof systemThemeMediaQuery.addListener === 'function') {
+    systemThemeMediaQuery.addListener(handleSystemThemeChange);
+  }
+  isSystemThemeListenerBound = true;
+}
+
+function normalizeThemeMode(value) {
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return THEME_MODE_OPTIONS.includes(mode) ? mode : 'dark';
+}
+
+function initThemeMode() {
+  const webApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  const preferred = webApp && webApp.colorScheme ? webApp.colorScheme : getSystemColorScheme();
+  state.themeMode = preferred === 'dark' ? 'dark' : 'light';
+  state.taskListMode = readTaskListModePreference();
+  bindSystemThemeListener();
+  renderThemeToggle();
+  renderTaskListModeToggle();
+  applyTaskListMode();
+  applyTheme();
+}
+
+function resolveOrganizationForThemePreference() {
+  if (Array.isArray(state.visibleTasks) && state.visibleTasks.length) {
+    const visibleTaskOrganization = normalizeValue(getTaskOrganization(state.visibleTasks[0]));
+    if (visibleTaskOrganization) {
+      return visibleTaskOrganization;
+    }
+  }
+  if (Array.isArray(state.tasks) && state.tasks.length) {
+    const taskOrganization = normalizeValue(getTaskOrganization(state.tasks[0]));
+    if (taskOrganization) {
+      return taskOrganization;
+    }
+  }
+  if (Array.isArray(state.organizations) && state.organizations.length) {
+    for (let index = 0; index < state.organizations.length; index += 1) {
+      const item = state.organizations[index];
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const organization = normalizeValue(item.name || item.organization);
+      if (organization) {
+        return organization;
+      }
+    }
+  }
+  return '';
+}
+
+async function persistThemeModePreference(mode) {
+  const normalizedMode = normalizeThemeMode(mode);
+  if (state.isThemeSaving) {
+    return;
+  }
+  if (state.persistedThemeMode === normalizedMode) {
+    return;
+  }
+  const organization = resolveOrganizationForThemePreference();
+  if (!organization || typeof fetch !== 'function') {
+    return;
+  }
+  state.isThemeSaving = true;
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+    if (state.telegram.initData) {
+      headers['X-Telegram-Init-Data'] = state.telegram.initData;
+    }
+    const response = await fetch(THEME_SETTINGS_SAVE_ENDPOINT, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers,
+      body: JSON.stringify({
+        organization,
+        themeMode: normalizedMode,
+        taskListMode: normalizeTaskListMode(state.taskListMode),
+      }),
+    });
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    if (payload && payload.success) {
+      state.persistedThemeMode = normalizedMode;
+    }
+  } catch (_) {
+    // ignore theme preference save issues
+  } finally {
+    state.isThemeSaving = false;
+  }
+}
+
+function setThemeMode(mode, options = {}) {
+  const nextMode = normalizeThemeMode(mode);
+  const shouldPersist = options && options.persist !== false;
+  state.themeMode = nextMode;
+  renderThemeToggle();
+  applyTheme();
+  if (shouldPersist) {
+    persistThemeModePreference(nextMode);
+  }
+}
+
+function normalizeTaskListMode(value) {
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return TASK_LIST_MODE_OPTIONS.includes(mode) ? mode : 'default';
+}
+
+function readTaskListModePreference() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return 'default';
+  }
+  try {
+    const stored = window.localStorage.getItem(TASK_LIST_MODE_STORAGE_KEY);
+    return normalizeTaskListMode(stored);
+  } catch (_) {
+    return 'default';
+  }
+}
+
+function writeTaskListModePreference(mode) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(TASK_LIST_MODE_STORAGE_KEY, normalizeTaskListMode(mode));
+  } catch (_) {
+    // ignore storage errors
+  }
+}
+
+function applyTaskListMode() {
+  const mode = normalizeTaskListMode(state.taskListMode);
+  setClass(document.body, 'appdosc--list-mode-insight', mode === 'insight');
+  document.documentElement.setAttribute('data-task-list-mode', mode);
+}
+
+function renderTaskListModeToggle() {
+  if (!Array.isArray(elements.listModeOptionButtons) || !elements.listModeOptionButtons.length) {
+    return;
+  }
+  const mode = normalizeTaskListMode(state.taskListMode);
+  elements.listModeOptionButtons.forEach((button) => {
+    const buttonMode = normalizeTaskListMode(button.dataset.listModeOption);
+    const isActive = buttonMode === mode;
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function setTaskListMode(mode, options = {}) {
+  const nextMode = normalizeTaskListMode(mode);
+  const shouldPersist = options && options.persist !== false;
+  if (state.taskListMode === nextMode && options && options.forceRender !== true) {
+    renderTaskListModeToggle();
+    applyTaskListMode();
+    return;
+  }
+  state.taskListMode = nextMode;
+  renderTaskListModeToggle();
+  applyTaskListMode();
+  writeTaskListModePreference(nextMode);
+  if (shouldPersist) {
+    persistThemeModePreference(state.themeMode);
+  }
+  safeRender('task_list_mode');
+}
+
+function renderThemeToggle() {
+  if (!Array.isArray(elements.themeOptionButtons) || !elements.themeOptionButtons.length) {
+    return;
+  }
+  const mode = normalizeThemeMode(state.themeMode);
+  elements.themeOptionButtons.forEach((button) => {
+    const buttonMode = normalizeThemeMode(button.dataset.themeOption);
+    const isActive = buttonMode === mode;
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function openSettingsSheet() {
+  if (elements.settingsSheet instanceof HTMLElement) {
+    elements.settingsSheet.hidden = false;
+  }
+}
+
+function closeSettingsSheet() {
+  if (elements.settingsSheet instanceof HTMLElement) {
+    elements.settingsSheet.hidden = true;
+  }
 }
 
 function parseTaskIdFromStartParam(value) {
@@ -2943,6 +3537,11 @@ function readQueryContext() {
     state.telegram.fullName = String(fullName).trim();
   }
 
+  const photoUrl = params.get('telegram_photo_url') || params.get('photo_url');
+  if (!state.telegram.photoUrl && photoUrl) {
+    state.telegram.photoUrl = String(photoUrl).trim();
+  }
+
   const platformParam = params.get('telegram_platform')
     || params.get('platform')
     || hashParams.get('tgWebAppPlatform')
@@ -2978,8 +3577,11 @@ function readQueryContext() {
 }
 
 function applyTheme() {
-  const theme = state.telegram.colorScheme || 'light';
+  const forcedMode = normalizeThemeMode(state.themeMode);
+  const theme = forcedMode;
+  state.telegram.colorScheme = theme;
   document.documentElement.setAttribute('data-theme', theme);
+  document.documentElement.setAttribute('data-theme-mode', forcedMode);
   setClass(document.body, 'appdosc--dark', theme === 'dark');
 
   const themeParams = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp.themeParams : null;
@@ -3010,6 +3612,10 @@ function setLoading(isLoading) {
     elements.taskSelector.disabled = isLoading;
   }
   setClass(document.body, 'appdosc--loading', isLoading);
+
+  if (isLoading && elements.cardsContainer && (!Array.isArray(state.tasks) || !state.tasks.length)) {
+    renderLoadingSkeleton();
+  }
 
   logIosStage('loading_state_changed', { isLoading });
 }
@@ -3143,7 +3749,6 @@ async function loadTasks(force = false) {
       const message = state.error || 'Отрисовка карточек завершилась ошибкой';
       throw new Error(message);
     }
-    setStatus('success', `Найдено задач: ${state.stats.total}`);
     logClientEvent('tasks_loaded', {
       total: state.stats.total,
       active: state.stats.active,
@@ -3224,6 +3829,12 @@ function updateStateFromPayload(payload) {
 
   const previousPreviewEntries = collectTaskAttachmentPreviewCache(state.tasks);
   state.tasks = sanitizedTasks;
+  extractFoldersFromTasks(sanitizedTasks);
+  if (rangeCalendarInstance && typeof rangeCalendarInstance.setTaskCounts === 'function') {
+    const payloadTaskCounts = normalizeTaskCounts(payload?.taskDateStats?.items);
+    const fallbackTaskCounts = normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks));
+    rangeCalendarInstance.setTaskCounts(Object.keys(payloadTaskCounts).length ? payloadTaskCounts : fallbackTaskCounts);
+  }
   const activePreviewKeys = applyTaskAttachmentPreviewCache(state.tasks, previousPreviewEntries);
   cleanupTaskAttachmentPreviewCache(activePreviewKeys);
   updateVisibleTasks();
@@ -3317,9 +3928,34 @@ function updateStateFromPayload(payload) {
     ? payload.organizationsChecked
     : state.organizationsChecked;
   state.lastUpdated = payload.generatedAt || new Date().toISOString();
+  state.userDirectoryEntries = collectUserDirectoryEntries(payload);
 
   if (payload.telegramUserId && !state.telegram.id) {
     state.telegram.id = String(payload.telegramUserId);
+  }
+
+  const payloadThemeCandidate = normalizeValue(payload && payload.themeMode);
+  const payloadThemeMode = payloadThemeCandidate ? normalizeThemeMode(payloadThemeCandidate) : '';
+  if (payloadThemeMode && payloadThemeMode !== normalizeThemeMode(state.themeMode)) {
+    setThemeMode(payloadThemeMode, { persist: false });
+  }
+  if (payloadThemeMode) {
+    state.persistedThemeMode = payloadThemeMode;
+  }
+
+  const payloadListModeCandidate = normalizeValue(payload && (payload.taskListMode || payload.listMode || payload.tasksListMode));
+  const payloadTaskListMode = payloadListModeCandidate ? normalizeTaskListMode(payloadListModeCandidate) : '';
+  if (payloadTaskListMode) {
+    setTaskListMode(payloadTaskListMode, { persist: false, forceRender: true });
+    state.persistedTaskListMode = payloadTaskListMode;
+  }
+
+  if (!state.telegram.role) {
+    const payloadPosition = normalizeValue(payload.userPosition)
+      || normalizeValue(payload.position);
+    if (payloadPosition) {
+      state.telegram.role = String(payloadPosition);
+    }
   }
 
   if (payload.user && typeof payload.user === 'object') {
@@ -3339,6 +3975,10 @@ function updateStateFromPayload(payload) {
     if (user.firstName || user.lastName) {
       state.telegram.firstName = user.firstName ? String(user.firstName) : state.telegram.firstName;
       state.telegram.lastName = user.lastName ? String(user.lastName) : state.telegram.lastName;
+    }
+    const userPosition = normalizeValue(user.position);
+    if (userPosition) {
+      state.telegram.role = String(userPosition);
     }
   }
 
@@ -3388,7 +4028,10 @@ function render() {
   updateStats();
   updateDirectorSummary();
   updateSummaryFilterState();
+  renderFolders();
+  syncCompactFilterPanelState();
   renderCards();
+  renderBulkFolderPanel();
   updateFooter();
 }
 
@@ -3396,6 +4039,7 @@ function renderEmpty() {
   updateUserPanel();
   updateStats();
   updateDirectorSummary();
+  syncCompactFilterPanelState();
   clearCards();
   updateFooter();
   logIosStage('render_empty', {
@@ -3405,15 +4049,59 @@ function renderEmpty() {
 }
 
 function updateUserPanel() {
+  const displayName = state.telegram.fullName
+    || state.telegram.firstName
+    || state.telegram.username
+    || 'Неизвестный пользователь';
+
   if (elements.userName) {
-    elements.userName.textContent = state.telegram.fullName
-      || state.telegram.firstName
-      || state.telegram.username
-      || 'Неизвестный пользователь';
+    elements.userName.textContent = displayName;
+  }
+  if (elements.settingsUserName) {
+    elements.settingsUserName.textContent = displayName;
   }
 
-  if (elements.userId) {
-    elements.userId.textContent = state.telegram.id ? `ID: ${state.telegram.id}` : 'ID не определён';
+  if (elements.userRole) {
+    const role = normalizeValue(state.telegram.role)
+      || getCurrentUserPositionFromAccess()
+      || getCurrentUserPositionFromTasks();
+    if (!state.telegram.role && role) {
+      state.telegram.role = role;
+    }
+    elements.userRole.textContent = role ? `Должность: ${role}` : 'Должность: не указана';
+    if (elements.settingsUserRole) {
+      elements.settingsUserRole.textContent = role || 'Должность не указана';
+    }
+  }
+
+  if (elements.userAvatarImage) {
+    const photoUrl = normalizeAvatarUrl(state.telegram.photoUrl)
+      || (normalizeTelegramUserId(state.telegram.id)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(normalizeTelegramUserId(state.telegram.id))}`
+        : '');
+    if (elements.settingsUserAvatar) {
+      elements.settingsUserAvatar.src = photoUrl || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2284%22 height=%2284%22%3E%3Crect width=%2284%22 height=%2284%22 rx=%2218%22 fill=%22%23cbd5e1%22/%3E%3Ctext x=%2242%22 y=%2250%22 text-anchor=%22middle%22 font-size=%2230%22%3E%F0%9F%91%A4%3C/text%3E%3C/svg%3E';
+    }
+    if (photoUrl) {
+      elements.userAvatarImage.src = photoUrl;
+      elements.userAvatarImage.hidden = false;
+      if (elements.userAvatarFallback) {
+        elements.userAvatarFallback.hidden = true;
+      }
+      elements.userAvatarImage.onerror = () => {
+        elements.userAvatarImage.hidden = true;
+        elements.userAvatarImage.removeAttribute('src');
+        if (elements.userAvatarFallback) {
+          elements.userAvatarFallback.hidden = false;
+        }
+      };
+    } else {
+      elements.userAvatarImage.removeAttribute('src');
+      elements.userAvatarImage.hidden = true;
+      if (elements.userAvatarFallback) {
+        elements.userAvatarFallback.hidden = false;
+      }
+    }
   }
 
   updateVersionPanel();
@@ -3441,15 +4129,32 @@ function updateVersionPanel() {
   }
 }
 
+function formatTaskCountLabel(value) {
+  const count = Number.isFinite(Number(value)) ? Math.abs(Math.trunc(Number(value))) : 0;
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 19) {
+    return 'задач';
+  }
+  if (mod10 === 1) {
+    return 'задача';
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return 'задачи';
+  }
+  return 'задач';
+}
+
 function updateStats() {
   const directorState = ensureDirectorState();
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
+  const folderScopedTasks = resolveFolderScope(state.tasks, state.activeFilters.folderId || activeFolderId);
   const filterLabel = formatTaskFiltersForLog(normalizedFilters);
   const directorActive = directorState.isActive === true;
   const usingResponsibleFilter = directorActive
     && normalizedFilters.some((filter) => isResponsibleFilter(filter));
-  const overallStats = computeStatsFromTasks(state.tasks, { useDirectorDeadlines: directorActive });
+  const overallStats = computeStatsFromTasks(folderScopedTasks, { useDirectorDeadlines: directorActive });
 
   let statsSource = 'global';
   let displayStats = state.stats;
@@ -3475,7 +4180,7 @@ function updateStats() {
 
   if (elements.total) {
     const total = Number(displayStats.total) || 0;
-    elements.total.textContent = `${total} задач`;
+    elements.total.textContent = `${total} ${formatTaskCountLabel(total)}`;
     if (directorActive) {
       elements.total.dataset.source = statsSource;
     } else if (elements.total.dataset.source) {
@@ -3483,17 +4188,20 @@ function updateStats() {
     }
   }
 
-  const statusCounts = isPlainObject(displayStats.statuses)
-    ? displayStats.statuses
+  const hasRangeFilter = Boolean(
+    normalizeDateInputValue(state.compactFilters?.dateFrom)
+    || normalizeDateInputValue(state.compactFilters?.dateTo),
+  );
+  const rangeStats = hasRangeFilter
+    ? computeStatsFromTasks(getVisibleTasksForStats(), { useDirectorDeadlines: directorActive })
+    : null;
+  const statusStatsSource = isPlainObject(rangeStats?.statuses)
+    ? rangeStats
+    : overallStats;
+
+  const resolvedStatusCounts = isPlainObject(statusStatsSource.statuses)
+    ? statusStatsSource.statuses
     : createEmptyStatusCounters();
-  const hasStatusCounts = Object.keys(STATUS_SUMMARY_CONFIG).some((key) => {
-    const rawValue = statusCounts[key];
-    const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
-    return Number.isFinite(numeric) && numeric > 0;
-  });
-  const resolvedStatusCounts = !hasStatusCounts && overallStats.total > 0
-    ? overallStats.statuses
-    : statusCounts;
 
   if (elements.statusBadges) {
     Object.entries(STATUS_SUMMARY_CONFIG).forEach(([key, config]) => {
@@ -3504,21 +4212,18 @@ function updateStats() {
       const rawValue = resolvedStatusCounts[key];
       const numeric = typeof rawValue === 'number' ? rawValue : Number(rawValue);
       const count = Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : 0;
-      badge.textContent = `${count} ${config.display}`;
+      setStatusBadgeText(badge, `${count} ${config.display}`);
     });
   }
 
   if (elements.overdue) {
-    const overdue = Number(displayStats.overdue) || 0;
-    const resolvedOverdue = !hasStatusCounts && overdue === 0 && overallStats.total > 0
-      ? Number(overallStats.overdue) || 0
-      : overdue;
-    elements.overdue.textContent = `${resolvedOverdue} просрочено`;
+    const resolvedOverdue = Number(statusStatsSource.overdue) || 0;
+    setStatusBadgeText(elements.overdue, `${resolvedOverdue} просрочено`);
   }
 
   if (elements.updated) {
     elements.updated.textContent = state.lastUpdated
-      ? `Обновлено: ${formatDateTime(state.lastUpdated)}`
+      ? `Обновлено: ${formatDateTimeCompact(state.lastUpdated)}`
       : 'Обновление не выполнялось';
   }
 
@@ -3530,6 +4235,18 @@ function updateStats() {
       overdue: Number(displayStats.overdue) || 0,
       selectedResponsible: directorState.selectedResponsibleToken || null,
     });
+  }
+}
+
+function setStatusBadgeText(badge, text) {
+  if (!(badge instanceof HTMLElement)) {
+    return;
+  }
+  const label = badge.querySelector('.appdosc__badge-label');
+  if (label instanceof HTMLElement) {
+    label.textContent = text;
+  } else {
+    badge.textContent = text;
   }
 }
 
@@ -3570,6 +4287,867 @@ function updateSummaryFilterState() {
     const isSelected = currentFilters.includes(filter);
     element.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     setClass(element, 'appdosc__badge--selected', isSelected);
+  });
+}
+
+function setTaskFilterPanelExpanded(expanded) {
+  const isExpanded = Boolean(expanded);
+  state.compactFilters.expanded = isExpanded;
+  if (elements.taskFilterPanel instanceof HTMLElement) {
+    elements.taskFilterPanel.hidden = !isExpanded;
+  }
+  if (elements.taskFilterToggle instanceof HTMLElement) {
+    elements.taskFilterToggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+  }
+}
+
+function getTaskDateForCompactFilter(task) {
+  if (!task || typeof task !== 'object') {
+    return null;
+  }
+  const candidates = [task.dueDate, task.registrationDate, task.createdAt, task.date];
+  for (const value of candidates) {
+    const parsed = parseDate(value);
+    if (parsed) {
+      parsed.setHours(0, 0, 0, 0);
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function resolveCompactCorrespondent(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+  if (task.correspondent && typeof task.correspondent === 'object') {
+    return normalizeValue(
+      task.correspondent.name
+      || task.correspondent.responsible
+      || task.correspondent.fio
+      || task.correspondent.label
+      || task.correspondent.displayName,
+    );
+  }
+  return normalizeValue(task.correspondent || task.sender || task.author);
+}
+
+function getCompactGroupEntries(task, groupType) {
+  if (!task || typeof task !== 'object' || !groupType) {
+    return [];
+  }
+  if (groupType === 'correspondent') {
+    const label = resolveCompactCorrespondent(task);
+    return label ? [{ value: normalizeName(label), label }] : [];
+  }
+  if (groupType === 'responsible') {
+    return getTaskResponsibleProfiles(task).map((profile) => ({
+      value: profile.token,
+      label: profile.label || profile.sourceLabel || 'Ответственный',
+    }));
+  }
+  if (groupType === 'subordinate') {
+    return getTaskSubordinateProfiles(task).map((profile) => ({
+      value: profile.token,
+      label: profile.label || profile.sourceLabel || 'Подчинённый',
+    }));
+  }
+  return [];
+}
+
+function getCompactFilterTypeOptions() {
+  return [
+    { value: 'correspondent', label: 'Корреспондент' },
+    { value: 'responsible', label: 'Ответственный' },
+    { value: 'subordinate', label: 'Подчинённый' },
+  ];
+}
+
+function normalizeTaskCounts(items) {
+  const result = {};
+  if (!Array.isArray(items)) {
+    return result;
+  }
+  items.forEach((item) => {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+    const date = normalizeDateInputValue(item.date);
+    const count = Number(item.count);
+    if (!date || !Number.isFinite(count) || count <= 0) {
+      return;
+    }
+    result[date] = Math.round(count);
+  });
+  return result;
+}
+
+function buildTaskCountItemsFromTasks(tasks) {
+  if (!Array.isArray(tasks) || !tasks.length) {
+    return [];
+  }
+  const counts = new Map();
+  tasks.forEach((task) => {
+    const date = task && typeof task === 'object'
+      ? normalizeDateInputValue(formatDateInputValue(getTaskDateForCompactFilter(task)))
+      : '';
+    if (!date) {
+      return;
+    }
+    counts.set(date, (counts.get(date) || 0) + 1);
+  });
+  return Array.from(counts.entries()).map(([date, count]) => ({ date, count }));
+}
+
+function formatRangeCalendarButtonValue(startDate, endDate) {
+  if (!startDate) {
+    return 'Даты не указаны';
+  }
+  if (!endDate || startDate === endDate) {
+    return formatRangeCalendarLongDate(startDate);
+  }
+  return formatRangeCalendarRange(startDate, endDate);
+}
+
+function formatRangeCalendarShortDate(dateKey) {
+  const date = parseDate(dateKey);
+  if (!date) {
+    return 'Не выбрана';
+  }
+  return `${date.getDate()} ${getRangeCalendarMonthNameGenitive(date)}`;
+}
+
+function formatRangeCalendarLongDate(dateKey) {
+  return formatRangeCalendarShortDate(dateKey);
+}
+
+function formatRangeCalendarRange(start, end) {
+  const startObj = parseDate(start);
+  const endObj = parseDate(end);
+  if (!startObj || !endObj) {
+    return 'Даты не указаны';
+  }
+  const startDay = startObj.getDate();
+  const endDay = endObj.getDate();
+  const sameMonth = startObj.getMonth() === endObj.getMonth()
+    && startObj.getFullYear() === endObj.getFullYear();
+
+  if (sameMonth) {
+    return `${startDay}–${endDay} ${getRangeCalendarMonthNameGenitive(endObj)}`;
+  }
+
+  return `${startDay} ${getRangeCalendarMonthNameGenitive(startObj)} — ${endDay} ${getRangeCalendarMonthNameGenitive(endObj)}`;
+}
+
+function getRangeCalendarMonthName(date) {
+  const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+  return months[date.getMonth()];
+}
+
+function getRangeCalendarMonthNameGenitive(date) {
+  const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+  return months[date.getMonth()];
+}
+
+const BELARUS_FIXED_HOLIDAYS = new Set([
+  '01-01', '01-02', '01-07', '03-08', '05-01', '05-09', '07-03', '11-07', '12-25',
+]);
+const belarusRadunitsaCache = new Map();
+
+function getOrthodoxEasterDate(year) {
+  const a = year % 4;
+  const b = year % 7;
+  const c = year % 19;
+  const d = (19 * c + 15) % 30;
+  const e = (2 * a + 4 * b - d + 34) % 7;
+  const month = Math.floor((d + e + 114) / 31) - 1;
+  const day = ((d + e + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month, day + 13));
+}
+
+function getBelarusRadunitsaDateKey(year) {
+  if (belarusRadunitsaCache.has(year)) {
+    return belarusRadunitsaCache.get(year) || '';
+  }
+  const easter = getOrthodoxEasterDate(year);
+  if (!(easter instanceof Date) || Number.isNaN(easter.getTime())) {
+    belarusRadunitsaCache.set(year, '');
+    return '';
+  }
+  easter.setUTCDate(easter.getUTCDate() + 9);
+  const key = `${easter.getUTCFullYear()}-${String(easter.getUTCMonth() + 1).padStart(2, '0')}-${String(easter.getUTCDate()).padStart(2, '0')}`;
+  belarusRadunitsaCache.set(year, key);
+  return key;
+}
+
+function isBelarusHoliday(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return false;
+  }
+  const monthDay = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  if (BELARUS_FIXED_HOLIDAYS.has(monthDay)) {
+    return true;
+  }
+  return formatDateInputValue(date) === getBelarusRadunitsaDateKey(date.getFullYear());
+}
+
+function syncCompactFilterGroupOptions() {
+  if (!(elements.filterGroupList instanceof HTMLElement)) {
+    return;
+  }
+  const typeOptions = getCompactFilterTypeOptions();
+  const maxGroupFilters = typeOptions.length;
+  const rawFilters = Array.isArray(state.compactFilters.groupFilters) ? state.compactFilters.groupFilters : [];
+  const normalizedFilters = rawFilters
+    .map((entry) => ({
+      type: normalizeValue(entry && entry.type),
+      value: normalizeValue(entry && entry.value),
+    }))
+    .slice(0, maxGroupFilters);
+  if (!normalizedFilters.length) {
+    normalizedFilters.push({ type: '', value: '' });
+  }
+  state.compactFilters.groupFilters = normalizedFilters;
+
+  elements.filterGroupList.innerHTML = '';
+
+  normalizedFilters.forEach((filter, index) => {
+    const row = document.createElement('div');
+    row.className = 'appdosc__task-filter-group-row';
+    row.dataset.groupIndex = String(index);
+
+    const selectedByOtherRows = new Set(
+      normalizedFilters
+        .map((item, itemIndex) => (itemIndex === index ? '' : normalizeValue(item.type)))
+        .filter(Boolean),
+    );
+
+    const typeLabel = document.createElement('label');
+    typeLabel.className = 'appdosc__task-filter-field';
+    const typeTitle = document.createElement('span');
+    typeTitle.textContent = index === 0 ? 'Группировка' : `Группировка ${index + 1}`;
+    const typeSelect = document.createElement('select');
+    typeSelect.dataset.filterGroupTypeIndex = String(index);
+    typeSelect.appendChild(new Option('Без группировки', ''));
+    typeOptions.forEach((option) => {
+      if (selectedByOtherRows.has(option.value) && option.value !== filter.type) {
+        return;
+      }
+      typeSelect.appendChild(new Option(option.label, option.value));
+    });
+    typeSelect.value = filter.type;
+    typeLabel.appendChild(typeTitle);
+    typeLabel.appendChild(typeSelect);
+
+    const valueLabel = document.createElement('label');
+    valueLabel.className = 'appdosc__task-filter-field';
+    const valueTitle = document.createElement('span');
+    valueTitle.textContent = index === 0 ? 'Значение' : `Значение ${index + 1}`;
+    const valueSelect = document.createElement('select');
+    valueSelect.dataset.filterGroupValueIndex = String(index);
+    if (!filter.type) {
+      valueSelect.disabled = true;
+      valueSelect.appendChild(new Option('Сначала выберите группировку', ''));
+      normalizedFilters[index].value = '';
+    } else {
+      const values = new Map();
+      state.tasks.forEach((task) => {
+        getCompactGroupEntries(task, filter.type).forEach((entry) => {
+          if (entry && entry.value && !values.has(entry.value)) {
+            values.set(entry.value, entry.label || entry.value);
+          }
+        });
+      });
+      const options = Array.from(values.entries())
+        .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'ru'));
+      valueSelect.disabled = options.length === 0;
+      valueSelect.appendChild(new Option(options.length ? 'Все' : 'Нет данных', ''));
+      options.forEach(([optionValue, label]) => valueSelect.appendChild(new Option(label, optionValue)));
+      normalizedFilters[index].value = values.has(filter.value) ? filter.value : '';
+    }
+    valueSelect.value = normalizedFilters[index].value;
+    valueLabel.appendChild(valueTitle);
+    valueLabel.appendChild(valueSelect);
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'appdosc__task-filter-group-remove';
+    removeButton.dataset.filterGroupRemoveIndex = String(index);
+    removeButton.textContent = '−';
+    removeButton.title = 'Удалить группировку';
+    removeButton.disabled = normalizedFilters.length <= 1;
+
+    row.appendChild(typeLabel);
+    row.appendChild(valueLabel);
+    row.appendChild(removeButton);
+    elements.filterGroupList.appendChild(row);
+  });
+
+  if (elements.filterGroupAddButton instanceof HTMLButtonElement) {
+    const canAdd = normalizedFilters.length < maxGroupFilters;
+    elements.filterGroupAddButton.disabled = !canAdd;
+    elements.filterGroupAddButton.hidden = !canAdd;
+  }
+}
+
+function applyCompactFilters(visibleItems) {
+  const source = Array.isArray(visibleItems) ? visibleItems : [];
+  const useOverdueOnly = state.activeFilters.overdue === true;
+  const overdueSource = useOverdueOnly
+    ? buildVisibleTaskItemsByMatch(state.tasks, () => true)
+    : source;
+  if (!overdueSource.length) {
+    return [];
+  }
+  const dateFrom = normalizeDateInputValue(state.activeFilters.dateFrom);
+  const dateTo = normalizeDateInputValue(state.activeFilters.dateTo);
+  const groupFilters = (Array.isArray(state.activeFilters.groupFilters) ? state.activeFilters.groupFilters : [])
+    .map((entry) => ({
+      type: normalizeValue(entry && entry.type),
+      value: normalizeValue(entry && entry.value),
+    }))
+    .filter((entry) => entry.type && entry.value);
+  const parsedFrom = dateFrom ? parseDate(dateFrom) : null;
+  const parsedTo = dateTo ? parseDate(dateTo) : null;
+  if (parsedFrom) {
+    parsedFrom.setHours(0, 0, 0, 0);
+  }
+  if (parsedTo) {
+    parsedTo.setHours(23, 59, 59, 999);
+  }
+  if (parsedFrom && parsedTo && parsedFrom.getTime() > parsedTo.getTime()) {
+    const temp = parsedFrom.getTime();
+    parsedFrom.setTime(parsedTo.getTime());
+    parsedTo.setTime(temp);
+  }
+  return overdueSource.filter((item) => {
+    const task = item && item.task ? item.task : null;
+    const matchesOverdueFilter = isTaskOverdueByCompactRule(task);
+    if (state.activeFilters.overdue && !matchesOverdueFilter) {
+      return false;
+    }
+    if (state.activeFilters.overdue) {
+      return true;
+    }
+    if (parsedFrom || parsedTo) {
+      const taskDate = getTaskDateForCompactFilter(task);
+      if (!taskDate) {
+        return false;
+      }
+      const stamp = taskDate.getTime();
+      if (parsedFrom && stamp < parsedFrom.getTime()) {
+        return false;
+      }
+      if (parsedTo && stamp > parsedTo.getTime()) {
+        return false;
+      }
+    }
+    for (let i = 0; i < groupFilters.length; i += 1) {
+      const currentFilter = groupFilters[i];
+      if (!currentFilter.type || !currentFilter.value) {
+        continue;
+      }
+      const values = getCompactGroupEntries(task, currentFilter.type).map((entry) => entry.value);
+      if (!values.includes(currentFilter.value)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function applyCompactQuickPreset(preset) {
+  const normalizedPreset = normalizeValue(preset);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const from = new Date(today);
+  const to = new Date(today);
+
+  if (normalizedPreset === 'today') {
+    // same day
+  } else if (normalizedPreset === 'week') {
+    from.setDate(today.getDate() - 6);
+  } else if (normalizedPreset === 'month') {
+    from.setDate(today.getDate() - 30);
+  } else if (normalizedPreset === 'quarter') {
+    from.setDate(today.getDate() - 90);
+  } else {
+    state.activeFilters.quickPreset = '';
+    return;
+  }
+
+  state.activeFilters.quickPreset = normalizedPreset;
+  state.activeFilters.dateFrom = formatDateInputValue(from);
+  state.activeFilters.dateTo = formatDateInputValue(to);
+}
+
+function resetCompactFilters(mode = 'all') {
+  if (mode === 'statuses') {
+    state.activeFilters.statusFilters = [];
+    return;
+  }
+  state.activeFilters.dateFrom = '';
+  state.activeFilters.dateTo = '';
+  state.activeFilters.quickPreset = '';
+  state.activeFilters.groupFilters = [{ type: '', value: '' }];
+  state.activeFilters.overdue = false;
+  state.activeFilters.statusFilters = [];
+  state.compactFilters.prevFiltersBeforeOverdue = null;
+}
+
+function initRangeCalendar(options = {}) {
+  const root = elements.rangeCalendarRoot;
+  const openButton = elements.periodButton;
+  const openButtonValue = elements.periodButtonValue;
+  const backdrop = elements.rangeCalendarBackdrop;
+  const yearSelect = elements.rangeCalendarYear;
+  const monthsContainer = elements.rangeCalendarMonths;
+  const startLabel = elements.rangeCalendarStartLabel;
+  const endLabel = elements.rangeCalendarEndLabel;
+  const clearStartButton = elements.rangeCalendarClearStart;
+  const clearEndButton = elements.rangeCalendarClearEnd;
+  const closeButton = elements.rangeCalendarClose;
+  const submitButton = elements.rangeCalendarSubmit;
+  const totalLabel = elements.rangeCalendarTotal;
+
+  if (!(root instanceof HTMLElement)
+    || !(openButton instanceof HTMLElement)
+    || !(monthsContainer instanceof HTMLElement)
+    || !(startLabel instanceof HTMLElement)
+    || !(endLabel instanceof HTMLElement)
+    || !(submitButton instanceof HTMLButtonElement)) {
+    return null;
+  }
+
+  if (root.parentElement !== document.body) {
+    document.body.appendChild(root);
+  }
+
+  let taskCounts = options.taskCounts && typeof options.taskCounts === 'object' ? { ...options.taskCounts } : {};
+  const onChange = typeof options.onChange === 'function' ? options.onChange : () => {};
+  const monthsToRender = Number.isFinite(Number(options.monthsToRender))
+    ? Math.max(1, Math.round(Number(options.monthsToRender)))
+    : 4;
+  let startDate = normalizeDateInputValue(options.startDate);
+  let endDate = normalizeDateInputValue(options.endDate);
+  const initialDate = parseDate(startDate) || parseDate(options.baseDate) || new Date();
+  let selectedYear = initialDate.getFullYear();
+
+  function open() {
+    root.hidden = false;
+    document.body.classList.add('range-calendar-open');
+    document.documentElement.classList.add('range-calendar-open');
+    syncYearWithSelection();
+    ensureYearOptions();
+    renderMonths();
+    updateSelection();
+    scrollToRelevantMonth();
+  }
+
+  function close() {
+    root.hidden = true;
+    document.body.classList.remove('range-calendar-open');
+    document.documentElement.classList.remove('range-calendar-open');
+  }
+
+  function submit() {
+    if (startDate && !endDate) {
+      endDate = startDate;
+    }
+    if (openButtonValue instanceof HTMLElement) {
+      openButtonValue.textContent = formatRangeCalendarButtonValue(startDate, endDate);
+    }
+    close();
+    onChange({ startDate: startDate || '', endDate: endDate || '' });
+  }
+
+  function renderMonths() {
+    monthsContainer.innerHTML = '';
+    const firstMonth = new Date(selectedYear, 0, 1);
+    for (let i = 0; i < monthsToRender; i += 1) {
+      const monthDate = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + i, 1);
+      monthsContainer.appendChild(renderMonth(monthDate));
+    }
+  }
+
+  function collectAvailableYears() {
+    const years = new Set();
+    years.add(selectedYear);
+    years.add(new Date().getFullYear());
+    Object.keys(taskCounts).forEach((dateKey) => {
+      const match = /^(\d{4})-\d{2}-\d{2}$/.exec(dateKey);
+      if (match) {
+        years.add(Number(match[1]));
+      }
+    });
+    const list = Array.from(years).filter((value) => Number.isFinite(value));
+    if (list.length === 0) {
+      list.push(new Date().getFullYear());
+    }
+    const minYear = Math.min(...list) - 1;
+    const maxYear = Math.max(...list) + 2;
+    const expanded = [];
+    for (let year = minYear; year <= maxYear; year += 1) {
+      expanded.push(year);
+    }
+    return expanded;
+  }
+
+  function ensureYearOptions() {
+    if (!(yearSelect instanceof HTMLSelectElement)) {
+      return;
+    }
+    const years = collectAvailableYears();
+    yearSelect.innerHTML = '';
+    years.forEach((year) => {
+      const option = document.createElement('option');
+      option.value = String(year);
+      option.textContent = String(year);
+      yearSelect.appendChild(option);
+    });
+    yearSelect.value = String(selectedYear);
+  }
+
+  function syncYearWithSelection() {
+    const parsedStart = parseDate(startDate);
+    if (parsedStart instanceof Date) {
+      selectedYear = parsedStart.getFullYear();
+      return;
+    }
+    if (Number.isFinite(selectedYear)) {
+      return;
+    }
+    selectedYear = new Date().getFullYear();
+  }
+
+  function renderMonth(monthDate) {
+    const month = document.createElement('section');
+    month.className = 'range-calendar__month';
+    month.dataset.monthKey = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
+
+    const title = document.createElement('h3');
+    title.className = 'range-calendar__month-title';
+    title.textContent = `${getRangeCalendarMonthName(monthDate)} ${monthDate.getFullYear()}`;
+
+    const grid = document.createElement('div');
+    grid.className = 'range-calendar__grid';
+
+    const year = monthDate.getFullYear();
+    const monthIndex = monthDate.getMonth();
+    const firstDay = new Date(year, monthIndex, 1);
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const offset = getMondayOffset(firstDay);
+
+    const cellsInGrid = Math.ceil((offset + daysInMonth) / 7) * 7;
+    const prevMonthDays = new Date(year, monthIndex, 0).getDate();
+    for (let i = 0; i < cellsInGrid; i += 1) {
+      const day = i - offset + 1;
+      const isOutsideMonth = day < 1 || day > daysInMonth;
+      const date = isOutsideMonth
+        ? (day < 1 ? new Date(year, monthIndex - 1, prevMonthDays + day) : new Date(year, monthIndex + 1, day - daysInMonth))
+        : new Date(year, monthIndex, day);
+      const dateKey = formatDateInputValue(date);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'range-calendar__day';
+      button.dataset.date = dateKey;
+      if (isOutsideMonth) {
+        button.classList.add('is-outside');
+      }
+
+      const inner = document.createElement('span');
+      inner.className = 'range-calendar__day-inner';
+      const number = document.createElement('span');
+      number.className = 'range-calendar__day-number';
+      number.textContent = String(date.getDate());
+      inner.appendChild(number);
+
+      const dayOfWeek = date.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        button.classList.add('is-weekend');
+      }
+      if (isBelarusHoliday(date)) {
+        button.classList.add('is-holiday');
+      }
+
+      const count = Number(taskCounts[dateKey] || 0);
+      if (count > 0) {
+        const countEl = document.createElement('span');
+        countEl.className = 'range-calendar__day-count';
+        countEl.textContent = count > 99 ? '99+' : String(count);
+        if (count <= 5) {
+          countEl.classList.add('is-good');
+        }
+        inner.appendChild(countEl);
+      }
+      button.appendChild(inner);
+      button.addEventListener('click', () => handleDateClick(dateKey, { isOutsideMonth }));
+      grid.appendChild(button);
+    }
+
+    month.appendChild(title);
+    month.appendChild(grid);
+    return month;
+  }
+
+  function handleDateClick(dateKey, options = {}) {
+    const isOutsideMonth = Boolean(options && options.isOutsideMonth);
+    if (!startDate || (startDate && endDate)) {
+      startDate = dateKey;
+      endDate = '';
+    } else {
+      endDate = dateKey;
+      if (compareDateKeys(endDate, startDate) < 0) {
+        const tmp = startDate;
+        startDate = endDate;
+        endDate = tmp;
+      }
+    }
+
+    if (isOutsideMonth) {
+      const parsed = parseDate(dateKey);
+      if (parsed instanceof Date) {
+        const nextYear = parsed.getFullYear();
+        if (Number.isFinite(nextYear) && nextYear !== selectedYear) {
+          selectedYear = nextYear;
+          ensureYearOptions();
+          renderMonths();
+        }
+      }
+    }
+
+    updateSelection();
+    if (isOutsideMonth) {
+      scrollToRelevantMonth();
+    }
+  }
+
+  function getSubmitText() {
+    if (!startDate) {
+      return 'Сохранить без дат';
+    }
+    if (!endDate || startDate === endDate) {
+      return `Выбрать ${formatRangeCalendarLongDate(startDate)}`;
+    }
+    return `Выбрать ${formatRangeCalendarRange(startDate, endDate)}`;
+  }
+
+  function getOverdueForSelectedRange() {
+    if (!startDate) {
+      return 0;
+    }
+    const effectiveEnd = endDate || startDate;
+    const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+    return tasks.reduce((total, task) => {
+      const taskDate = normalizeDateInputValue(formatDateInputValue(getTaskDateForCompactFilter(task)));
+      if (!taskDate) {
+        return total;
+      }
+      if (compareDateKeys(taskDate, startDate) < 0 || compareDateKeys(taskDate, effectiveEnd) > 0) {
+        return total;
+      }
+      return total + (isTaskOverdueByCompactRule(task) ? 1 : 0);
+    }, 0);
+  }
+
+  function getTotalForSelectedRange() {
+    if (!startDate) {
+      return 0;
+    }
+    const effectiveEnd = endDate || startDate;
+    let total = 0;
+    Object.keys(taskCounts).forEach((dateKey) => {
+      if (compareDateKeys(dateKey, startDate) < 0 || compareDateKeys(dateKey, effectiveEnd) > 0) {
+        return;
+      }
+      const count = Number(taskCounts[dateKey] || 0);
+      if (Number.isFinite(count) && count > 0) {
+        total += Math.round(count);
+      }
+    });
+    return total;
+  }
+
+  function scrollToRelevantMonth() {
+    const today = new Date();
+    const fallbackDate = selectedYear === today.getFullYear()
+      ? formatDateInputValue(today)
+      : `${selectedYear}-01-01`;
+    const focusDate = startDate || fallbackDate;
+    const parsed = parseDate(focusDate);
+    if (!parsed) {
+      monthsContainer.scrollTop = 0;
+      return;
+    }
+    const monthKey = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+    const target = monthsContainer.querySelector(`[data-month-key="${monthKey}"]`);
+    if (!(target instanceof HTMLElement)) {
+      monthsContainer.scrollTop = 0;
+      return;
+    }
+    monthsContainer.scrollTop = Math.max(0, target.offsetTop - 10);
+  }
+
+  function updateSelection() {
+    startLabel.textContent = startDate ? formatRangeCalendarShortDate(startDate) : 'Не выбрана';
+    endLabel.textContent = endDate ? formatRangeCalendarShortDate(endDate) : 'Не выбрана';
+    submitButton.disabled = false;
+    submitButton.textContent = getSubmitText();
+    if (totalLabel instanceof HTMLElement) {
+      if (!startDate) {
+        totalLabel.hidden = true;
+      } else {
+        const total = getTotalForSelectedRange();
+        totalLabel.hidden = false;
+        const overdueTotal = getOverdueForSelectedRange();
+        totalLabel.textContent = `Найдено задач за период: ${total} · Просроченных: ${overdueTotal}`;
+      }
+    }
+    const dayButtons = root.querySelectorAll('.range-calendar__day');
+    dayButtons.forEach((button) => {
+      const dateKey = button.dataset.date || '';
+      button.classList.remove('is-in-range', 'is-range-start', 'is-range-end', 'is-single');
+      if (!startDate) {
+        return;
+      }
+      const effectiveEnd = endDate || startDate;
+      if (dateKey === startDate && dateKey === effectiveEnd) {
+        button.classList.add('is-range-start', 'is-range-end', 'is-single');
+        return;
+      }
+      if (dateKey === startDate) {
+        button.classList.add('is-range-start');
+      }
+      if (dateKey === effectiveEnd) {
+        button.classList.add('is-range-end');
+      }
+      if (compareDateKeys(dateKey, startDate) > 0 && compareDateKeys(dateKey, effectiveEnd) < 0) {
+        button.classList.add('is-in-range');
+      }
+    });
+  }
+
+  openButton.addEventListener('click', open);
+  if (backdrop instanceof HTMLElement) {
+    backdrop.addEventListener('click', close);
+  }
+  if (closeButton instanceof HTMLElement) {
+    closeButton.addEventListener('click', close);
+  }
+  if (yearSelect instanceof HTMLSelectElement) {
+    yearSelect.addEventListener('change', () => {
+      const nextYear = Number(yearSelect.value);
+      if (!Number.isFinite(nextYear)) {
+        return;
+      }
+      selectedYear = Math.round(nextYear);
+      renderMonths();
+      updateSelection();
+      scrollToRelevantMonth();
+    });
+  }
+  submitButton.addEventListener('click', submit);
+  if (clearStartButton instanceof HTMLElement) {
+    clearStartButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      startDate = '';
+      endDate = '';
+      updateSelection();
+    });
+  }
+  if (clearEndButton instanceof HTMLElement) {
+    clearEndButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      endDate = '';
+      updateSelection();
+    });
+  }
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !root.hidden) {
+      close();
+    }
+  });
+
+  ensureYearOptions();
+  renderMonths();
+  updateSelection();
+
+  return {
+    open,
+    close,
+    getValue() {
+      return { startDate: startDate || '', endDate: endDate || '' };
+    },
+    setValue(nextStartDate, nextEndDate) {
+      startDate = normalizeDateInputValue(nextStartDate);
+      endDate = normalizeDateInputValue(nextEndDate || nextStartDate);
+      syncYearWithSelection();
+      ensureYearOptions();
+      renderMonths();
+      if (openButtonValue instanceof HTMLElement) {
+        openButtonValue.textContent = formatRangeCalendarButtonValue(startDate, endDate);
+      }
+      updateSelection();
+    },
+    clear() {
+      startDate = '';
+      endDate = '';
+      updateSelection();
+      if (openButtonValue instanceof HTMLElement) {
+        openButtonValue.textContent = 'Даты не указаны';
+      }
+    },
+    setTaskCounts(nextTaskCounts) {
+      taskCounts = nextTaskCounts && typeof nextTaskCounts === 'object' ? { ...nextTaskCounts } : {};
+      ensureYearOptions();
+      renderMonths();
+      updateSelection();
+    },
+  };
+}
+
+function syncCompactFilterPanelState() {
+  setTaskFilterPanelExpanded(state.compactFilters.expanded);
+  if (rangeCalendarInstance && typeof rangeCalendarInstance.setValue === 'function') {
+    const startDate = normalizeDateInputValue(state.compactFilters.dateFrom);
+    const endDate = normalizeDateInputValue(state.compactFilters.dateTo);
+    rangeCalendarInstance.setValue(startDate, endDate);
+  } else if (elements.periodButtonValue instanceof HTMLElement) {
+    elements.periodButtonValue.textContent = formatRangeCalendarButtonValue(
+      normalizeDateInputValue(state.compactFilters.dateFrom),
+      normalizeDateInputValue(state.compactFilters.dateTo),
+    );
+  }
+  syncCompactFilterGroupOptions();
+  if (Array.isArray(elements.filterQuickButtons)) {
+    elements.filterQuickButtons.forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      const preset = normalizeValue(button.dataset.filterQuickBtn);
+      const isActive = preset && preset === state.compactFilters.quickPreset;
+      setClass(button, 'is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
+}
+
+function initCompactRangeCalendar() {
+  const now = new Date();
+  const yearBase = `${now.getFullYear()}-01-01`;
+  rangeCalendarInstance = initRangeCalendar({
+    baseDate: yearBase,
+    monthsToRender: 12,
+    startDate: state.compactFilters.dateFrom,
+    endDate: state.compactFilters.dateTo,
+    taskCounts: normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks)),
+    onChange({ startDate, endDate }) {
+      state.compactFilters.dateFrom = normalizeDateInputValue(startDate);
+      state.compactFilters.dateTo = normalizeDateInputValue(endDate);
+      state.compactFilters.quickPreset = '';
+      updateVisibleTasks();
+      safeRender('compact_filter_period');
+    },
   });
 }
 
@@ -3670,17 +5248,14 @@ function renderCards() {
 
   const visibleItems = getVisibleTaskItems();
   const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
+  const hasSkeletonLoader = Boolean(elements.cardsContainer.querySelector('.appdosc-skeleton-list'));
 
   const newSignature = buildTasksSignature(visibleItems);
-  if (newSignature && newSignature === lastRenderedTasksSignature) {
+  if (!hasSkeletonLoader && newSignature && newSignature === lastRenderedTasksSignature) {
     return;
   }
   lastRenderedTasksSignature = newSignature;
-
-  const cards = Array.from(elements.cardsContainer.querySelectorAll('[data-card]'));
-  for (const card of cards) {
-    card.remove();
-  }
+  elements.cardsContainer.innerHTML = '';
 
   if (!visibleItems.length) {
     setPlaceholderMessage(hasTasks ? FILTER_PLACEHOLDER_MESSAGE : DEFAULT_PLACEHOLDER_MESSAGE);
@@ -3814,7 +5389,7 @@ function createCard(task, index, anchorRegistry) {
 
   if (!card) {
     card = document.createElement('article');
-    card.className = 'appdosc-card';
+    card.className = 'appdosc-card task-card';
     card.setAttribute('data-card', '');
     card.innerHTML = FALLBACK_CARD_TEMPLATE;
   }
@@ -3822,6 +5397,7 @@ function createCard(task, index, anchorRegistry) {
   if (!card.hasAttribute('data-card')) {
     card.setAttribute('data-card', '');
   }
+  card.__task = task;
 
   if (anchorRegistry) {
     const anchorId = buildCardAnchorId(task, index, anchorRegistry);
@@ -3834,15 +5410,20 @@ function createCard(task, index, anchorRegistry) {
   const completed = isTaskCompleted(task);
 
   card.classList.remove('appdosc-card--done', 'appdosc-card--control', 'appdosc-card--overdue');
+  card.classList.remove('appdosc-card--tone-done', 'appdosc-card--tone-control', 'appdosc-card--tone-overdue');
 
   if (completed) {
     card.classList.add('appdosc-card--done');
+    card.classList.add('appdosc-card--tone-done');
   } else if (normalizedStatus.includes('контрол')) {
     card.classList.add('appdosc-card--control');
+    card.classList.add('appdosc-card--tone-control');
   }
 
   if (isOverdue(task)) {
     card.classList.add('appdosc-card--overdue');
+    card.classList.remove('appdosc-card--tone-control');
+    card.classList.add('appdosc-card--tone-overdue');
   }
 
   const hasEntry = setCardField(card, '[data-field="entryNumber"]', task.entryNumber ?? index + 1, {
@@ -3857,29 +5438,83 @@ function createCard(task, index, anchorRegistry) {
     }
   }
 
-  setCardField(card, '[data-field="document"]', formatDocumentCell(task), {
-    fallback: 'Документ',
-  });
-  setCardField(card, '[data-field="organization"]', task.organization, {
-    fallback: 'Организация не указана',
-  });
+  const resolveCompactText = (value) => {
+    if (value && typeof value === 'object') {
+      const nested = normalizeValue(
+        value.summary
+          || value.content
+          || value.description
+          || value.text
+          || value.title
+      );
+      return nested;
+    }
+    return normalizeValue(value);
+  };
+
+  const compactContent = resolveCompactText(task.summary)
+    || resolveCompactText(task.content)
+    || resolveCompactText(task.description)
+    || 'Не указано';
   const registrationDate = formatDate(task.registrationDate);
+  const resolveSenderText = (value) => {
+    if (value && typeof value === 'object') {
+      return normalizeValue(
+        value.name
+          || value.fullName
+          || value.fio
+          || value.title
+          || value.email
+      );
+    }
+    return normalizeValue(value);
+  };
+  const senderCompact = resolveSenderText(task.correspondent)
+    || resolveSenderText(task.sender)
+    || resolveSenderText(task.from)
+    || resolveSenderText(resolveExecutor(task))
+    || 'не указан';
+
+  const headerFromText = `От: ${senderCompact}`;
+  const headerSubjectText = `Тема: ${compactContent}`;
+
+  const taskListMode = normalizeTaskListMode(state.taskListMode);
+  if (taskListMode === 'insight') {
+    setCardField(card, '[data-field="document"]', headerFromText, {
+      fallback: 'От: не указан',
+      setTitle: false,
+    });
+    setCardField(card, '[data-field="organization"]', headerSubjectText, {
+      fallback: 'Тема: не указана',
+      setTitle: false,
+    });
+  } else {
+    setCardField(card, '[data-field="document"]', headerFromText, {
+      fallback: 'От: не указан',
+      setTitle: false,
+    });
+    setCardField(card, '[data-field="organization"]', headerSubjectText, {
+      fallback: 'Тема: не указана',
+      setTitle: false,
+    });
+  }
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
   applyRegistrationDateHeader(card, registrationDate);
   setCardField(card, '[data-field="direction"]', task.direction);
-  setCardField(card, '[data-field="correspondent"]', task.correspondent);
-  setCardField(card, '[data-field="executor"]', resolveExecutor(task));
+  setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
+  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
   setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
   setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
     setTitle: false,
   });
 
-  const hasSummary = setCardField(card, '[data-field="summaryText"]', task.summary, {
-    hideIfEmpty: true,
+  setCardField(card, '[data-field="contentCompact"]', compactContent, {
+    hideIfEmpty: false,
     setTitle: false,
+    fallback: 'Не указано',
   });
-  toggleSection(card, '[data-field="summary"]', hasSummary);
+  toggleSection(card, '[data-field="summary"]', true);
 
   const hasResolution = setCardField(card, '[data-field="resolutionText"]', task.resolution, {
     hideIfEmpty: true,
@@ -3887,9 +5522,94 @@ function createCard(task, index, anchorRegistry) {
   });
   toggleSection(card, '[data-field="resolution"]', hasResolution);
 
+  const aiBriefContainer = card.querySelector('[data-field="aiBriefText"]');
+  const aiBriefFiles = Array.isArray(task.files) ? task.files : [];
+  if (aiBriefContainer) {
+    aiBriefContainer.textContent = '';
+    if (aiBriefFiles.length) {
+      aiBriefFiles.forEach((file, index) => {
+        const fileName = normalizeValue(file && (file.originalName || file.storedName)) || `Файл ${index + 1}`;
+        const aiBriefText = normalizeBriefText(file && file.aiBrief);
+        const row = document.createElement('div');
+        row.className = 'appdosc-ai-brief-row';
+        const label = document.createElement('span');
+        label.className = 'appdosc-ai-brief-row__label';
+        label.textContent = fileName;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'appdosc-card__action';
+        btn.style.cssText = 'padding:6px 10px;font-size:12px;min-width:86px;';
+        btn.textContent = '🤖 Кратко';
+        btn.disabled = !aiBriefText;
+        if (!aiBriefText) {
+          btn.title = 'Кратко ИИ пока отсутствует';
+        }
+        btn.addEventListener('click', () => openTelegramFileAiBriefModal(fileName, aiBriefText || '—'));
+        row.appendChild(label);
+        row.appendChild(btn);
+        aiBriefContainer.appendChild(row);
+      });
+    } else {
+      aiBriefContainer.textContent = '—';
+    }
+  }
+  toggleSection(card, '[data-field="aiBrief"]', true);
+
   setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
     fallback: 'Не указан',
   });
+  setCardField(card, '[data-field="senderCompact"]', senderCompact, {
+    fallback: '—',
+    setTitle: false,
+  });
+
+  const dueDate = parseDate(task.dueDate);
+  const dueDateLabel = formatDate(task.dueDate);
+  const dueState = completed
+    ? 'Выполнено'
+    : (isOverdue(task)
+      ? `Просрочено · ${dueDateLabel}`
+      : (dueDate ? `До ${dueDateLabel}` : 'Срок не указан'));
+  const executorInsight = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
+  const senderInsight = senderCompact === 'не указан' ? 'Не указан' : senderCompact;
+  const responseSummaryText = buildTaskResponseSummary(task);
+  const responseRows = normalizeValue(responseSummaryText)
+    ? responseSummaryText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    : [];
+  const responseCount = responseRows.filter((row) => /Ответ:/i.test(row)).length;
+  const filesCount = Array.isArray(task.files) ? task.files.length : 0;
+  const responseLabel = responseCount === 1 ? '1 ответ' : (responseCount > 1 && responseCount < 5 ? `${responseCount} ответа` : `${responseCount} ответов`);
+  const filesLabel = filesCount === 1 ? '1 файл' : (filesCount > 1 && filesCount < 5 ? `${filesCount} файла` : `${filesCount} файлов`);
+
+  setCardField(card, '[data-field="insightSender"]', senderInsight, {
+    fallback: 'Не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightDate"]', registrationDate, {
+    fallback: '—',
+    setTitle: false,
+  });
+
+  setCardField(card, '[data-field="insightDueState"]', dueState, {
+    fallback: 'Срок не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightExecutor"]', executorInsight, {
+    fallback: 'Не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightResponses"]', responseCount > 0 ? responseLabel : 'Нет ответов', {
+    fallback: 'Нет ответов',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="insightFiles"]', filesCount > 0 ? filesLabel : '0 файлов', {
+    fallback: '0 файлов',
+    setTitle: false,
+  });
+  toggleSection(card, '[data-field="insight"]', taskListMode === 'insight');
 
   applyStatusBadge(card, statusText, normalizedStatus, task);
   populateCardFiles(card, task.files);
@@ -3901,11 +5621,6 @@ function createCard(task, index, anchorRegistry) {
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
   }
-  const briefButton = card.querySelector('[data-card-brief]');
-  if (briefButton) {
-    briefButton.addEventListener('click', () => openTelegramBriefModal(task, setStatus));
-  }
-
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -3920,7 +5635,265 @@ function createCard(task, index, anchorRegistry) {
 
   initializeCardExpansion(card);
 
+  setupTaskFolderControl(card, task);
+  setupTaskSelectionControl(card, task);
+
   return card;
+}
+
+
+function openBottomSheet(contentBuilder) {
+  closeBottomSheet();
+  const overlay = document.createElement('div');
+  overlay.className = 'bottom-sheet-overlay';
+  overlay.addEventListener('click', closeBottomSheet);
+  const sheet = document.createElement('div');
+  sheet.className = 'bottom-sheet';
+  const content = contentBuilder(closeBottomSheet);
+  sheet.appendChild(content);
+  document.body.appendChild(overlay);
+  document.body.appendChild(sheet);
+}
+
+function closeBottomSheet() {
+  document.querySelectorAll('.bottom-sheet-overlay, .bottom-sheet').forEach((el) => el.remove());
+}
+
+function openFolderPicker(onSelect) {
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'folder-picker-modal';
+    wrap.innerHTML = '<h3 class="folder-modal-title">Переместить в папку</h3><p class="folder-modal-subtitle">Выберите папку или найдите её по названию.</p>';
+    const base = [{id:'no-folder',name:'Без папки'}, ...folders.filter((f)=>!f.system)];
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.placeholder = 'Поиск папки';
+    search.className = 'appdosc__input folder-modal-input';
+    search.setAttribute('enterkeyhint', 'search');
+    search.autocomplete = 'off';
+    const meta = document.createElement('div');
+    meta.className = 'folder-modal-hint';
+    const list = document.createElement('div');
+    list.className = 'folder-picker-list';
+    const render = (query = '') => {
+      const needle = normalizeValue(query).trim().toLowerCase();
+      const filtered = !needle
+        ? base
+        : base.filter((folder) => folder.name.toLowerCase().includes(needle));
+      list.innerHTML = '';
+      meta.textContent = filtered.length ? `Найдено папок: ${filtered.length}` : 'Папки не найдены';
+      filtered.forEach((folder) => {
+        const b = document.createElement('button');
+        b.className = 'folder-picker-item';
+        b.innerHTML = `<span class="folder-picker-item__name">${escapeHtml(folder.name)}</span><span class="folder-picker-item__arrow">›</span>`;
+        b.addEventListener('click', () => {
+          onSelect(folder.id === 'no-folder' ? null : folder.id);
+          close();
+        });
+        list.appendChild(b);
+      });
+    };
+    search.addEventListener('input', () => render(search.value));
+    render('');
+    wrap.append(search, meta, list);
+    window.setTimeout(() => search.focus({ preventScroll: true }), 70);
+    return wrap;
+  });
+}
+
+function openFolderEditModal(folder = null) {
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    const title = folder ? 'Редактировать папку' : 'Создать папку';
+    wrap.innerHTML = `<h3 class="folder-modal-title">${title}</h3><p class="folder-modal-subtitle">Введите короткое название папки для быстрого поиска задач.</p>`;
+    const input = document.createElement('input');
+    input.placeholder = 'Название папки';
+    input.value = folder ? folder.name : '';
+    input.className = 'appdosc__input folder-modal-input';
+    input.maxLength = 42;
+    input.autocomplete = 'off';
+    input.setAttribute('enterkeyhint', 'done');
+    const hint = document.createElement('div');
+    hint.className = 'folder-modal-hint';
+    hint.textContent = 'Максимум 42 символа';
+    const inlineNotice = document.createElement('div');
+    inlineNotice.className = 'folder-modal-notice';
+    inlineNotice.hidden = true;
+    let inlineNoticeTimer = null;
+    const showInlineNotice = (message) => {
+      if (!message) return;
+      if (inlineNoticeTimer) {
+        window.clearTimeout(inlineNoticeTimer);
+        inlineNoticeTimer = null;
+      }
+      inlineNotice.textContent = message;
+      inlineNotice.hidden = false;
+      inlineNotice.classList.add('is-visible');
+      inlineNoticeTimer = window.setTimeout(() => {
+        inlineNotice.classList.remove('is-visible');
+        inlineNotice.hidden = true;
+      }, 2100);
+    };
+    const row = document.createElement('div');
+    row.className = 'folder-modal-actions';
+    const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
+    const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action appdosc-card__action--assign';
+    const updateSubmitState = () => { save.disabled = !input.value.trim(); };
+    const submit = () => {
+      const name = input.value.trim();
+      if (!name) {
+        showInlineNotice('Введите название папки.');
+        return;
+      }
+      const exists = folders.some((item) => item.name.toLowerCase() === name.toLowerCase() && (!folder || item.id !== folder.id));
+      if (exists) {
+        input.classList.add('folder-modal-input--error');
+        window.setTimeout(() => input.classList.remove('folder-modal-input--error'), 380);
+        showInlineNotice('Папка с таким названием уже есть.');
+        clearStatus();
+        return;
+      }
+      if (folder) {
+        folder.name = name;
+      } else {
+        folders.push({ id: `folder_${Date.now()}`, name, system: false });
+      }
+      saveState();
+      refreshFolderUi();
+      persistFoldersListToRegistry();
+      close();
+      setStatus('success', folder ? 'Папка обновлена.' : 'Папка создана.');
+    };
+    save.onclick = submit;
+    input.addEventListener('input', updateSubmitState);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submit();
+      }
+    });
+    row.append(cancel,save);
+    wrap.append(input,hint,inlineNotice,row);
+    updateSubmitState();
+    window.setTimeout(() => input.focus({ preventScroll: true }), 70);
+    return wrap;
+  });
+}
+
+function openFolderActionsModal(folder) {
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML='<h3>Управление папкой</h3>'; const ren=document.createElement('button'); ren.className='appdosc-card__action'; ren.textContent='Переименовать'; ren.onclick=()=>{close(); openFolderEditModal(folder);}; const del=document.createElement('button'); del.className='appdosc-card__action danger-btn'; del.textContent='Удалить'; del.onclick=()=>{close(); confirmDeleteFolder(folder);}; wrap.append(ren,del); return wrap;});
+}
+
+function confirmDeleteFolder(folder) {
+  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3 class="folder-modal-title">Удалить папку «${folder.name}»?</h3><p class="folder-modal-subtitle">Задачи не удалятся. Мы просто перенесём их в «Без папки».</p>`; const actions=document.createElement('div'); actions.className='folder-modal-actions'; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); persistFoldersListToRegistry(); close(); setStatus('success', 'Папка удалена.');}; actions.append(c,d); wrap.append(actions); return wrap;});
+}
+
+function setupTaskFolderControl(card, task) {
+  let btn = card.querySelector('.task-folder-select');
+  let row = card.querySelector('.task-folder-row');
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'task-folder-row';
+    const headerText = card.querySelector('.appdosc-card__header-text');
+    if (headerText) {
+      headerText.appendChild(row);
+    } else {
+      const header = card.querySelector('.appdosc-card__header');
+      if (header) header.appendChild(row); else card.prepend(row);
+    }
+  }
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'task-folder-select';
+    row.appendChild(btn);
+  } else if (btn.parentNode !== row) {
+    row.appendChild(btn);
+  }
+  const currentFolderName = getFolderName(task.folderId);
+  btn.dataset.taskId = String(task.id || '');
+  btn.setAttribute('aria-label', `Папка задачи: ${currentFolderName}. Нажмите, чтобы изменить.`);
+  btn.innerHTML = `
+    <span class="task-folder-select__content">
+      <span class="task-folder-select__caption">Папка</span>
+      <span class="task-folder-select__value">${escapeHtml(currentFolderName)}</span>
+    </span>
+    <span class="task-folder-select__chevron" aria-hidden="true">⌄</span>
+  `;
+  btn.onclick = () => {
+    openFolderPicker((selectedFolderId) => {
+      setTaskFolder(task, selectedFolderId);
+      saveState();
+      refreshFolderUi();
+      persistTaskFolderToRegistry(task);
+    });
+  };
+}
+
+function setupTaskSelectionControl(card, task) {
+  let box = card.querySelector('.task-folder-checkbox');
+  if (!box) {
+    box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'task-folder-checkbox';
+    box.setAttribute('aria-label', 'Выбрать задачу для массового переноса');
+    const meta = card.querySelector('.task-meta, .appdosc-card__meta');
+    if (meta && meta.firstChild) {
+      meta.insertBefore(box, meta.firstChild);
+    } else if (meta) {
+      meta.appendChild(box);
+    } else {
+      card.prepend(box);
+    }
+  }
+  const taskId = String(task.id || '');
+  box.checked = selectedTaskIds.has(taskId);
+  box.onchange = () => {
+    if (box.checked) selectedTaskIds.add(taskId); else selectedTaskIds.delete(taskId);
+    renderBulkFolderPanel();
+  };
+}
+
+function renderBulkFolderPanel() {
+  let panel = document.querySelector('.bulk-folder-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.className = 'bulk-folder-panel';
+    document.body.appendChild(panel);
+  }
+  if (selectedTaskIds.size === 0) { panel.style.display='none'; return; }
+  panel.style.display='flex';
+  panel.innerHTML = `<span>Выбрано: ${selectedTaskIds.size}</span>`;
+  const toFolder = document.createElement('button'); toFolder.className='appdosc-card__action'; toFolder.textContent='В папку';
+  toFolder.onclick = ()=> {
+    panel.style.display = 'none';
+    openFolderPicker((selectedFolderId) => {
+      selectedTaskIds.forEach((id) => {
+        const task = state.tasks.find((t) => String(t.id) === String(id));
+        if (task) {
+          setTaskFolder(task, selectedFolderId);
+          persistTaskFolderToRegistry(task);
+        }
+      });
+      selectedTaskIds.clear();
+      saveState();
+      refreshFolderUi();
+      closeBottomSheet();
+    });
+  };
+  const cancel = document.createElement('button'); cancel.className='appdosc-card__action'; cancel.textContent='Отмена'; cancel.onclick=()=>{selectedTaskIds.clear(); renderCards(); renderBulkFolderPanel();};
+  panel.append(toFolder,cancel);
+}
+
+
+function renderLoadingSkeleton() {
+  if (!elements.cardsContainer) {
+    return;
+  }
+  elements.cardsContainer.innerHTML = '<div class="appdosc-skeleton-list" aria-hidden="true">'
+    + '<div class="appdosc-skeleton-loader"><span class="appdosc-skeleton-loader__dot"></span>Загружаем задачи…</div>'
+    + '</div>';
+  togglePlaceholder(false);
 }
 
 function togglePlaceholder(shouldShow) {
@@ -3946,7 +5919,16 @@ function setPlaceholderMessage(message) {
   const text = typeof message === 'string' && message.trim()
     ? message.trim()
     : DEFAULT_PLACEHOLDER_MESSAGE;
-  elements.placeholder.textContent = text;
+  const isNoTasksAtAll = text === DEFAULT_PLACEHOLDER_MESSAGE;
+  const isNoTasksInFolder = text === FILTER_PLACEHOLDER_MESSAGE;
+  if (isNoTasksAtAll) {
+    elements.placeholder.dataset.emptyKind = 'global';
+  } else if (isNoTasksInFolder) {
+    elements.placeholder.dataset.emptyKind = 'folder';
+  } else {
+    elements.placeholder.dataset.emptyKind = 'custom';
+  }
+  elements.placeholder.innerHTML = `<strong>${isNoTasksAtAll ? 'Пока нет задач' : (isNoTasksInFolder ? 'В этой папке пусто' : 'Нет данных')}</strong><span>${text}</span>`;
 }
 
 function getVisibleTaskItems() {
@@ -4122,8 +6104,7 @@ function applyTaskFilter(filters, tasks) {
     return [];
   }
 
-  const directorState = ensureDirectorState();
-  const useDirectorOverdue = directorState.isActive === true;
+  ensureDirectorState();
 
   return source.reduce((result, item, index) => {
     const task = isPlainObject(item) ? item : {};
@@ -4146,7 +6127,7 @@ function applyTaskFilter(filters, tasks) {
     if (statusFilters.length || overdue) {
       matchesStatus = false;
       if (overdue) {
-        matchesStatus = useDirectorOverdue ? isDirectorAssignmentOverdue(task) : isOverdue(task);
+        matchesStatus = isTaskOverdueByCompactRule(task);
       }
       if (!matchesStatus && statusFilters.length) {
         matchesStatus = statusFilters.some((filter) => {
@@ -4229,18 +6210,136 @@ function isTaskExcludedByEntryStatus(task, directorState) {
   return isOverdue(task);
 }
 
+function isTaskOverdueByCompactRule(task) {
+  const statusLabel = normalizeName(getTaskStatusValue(task));
+  return isOverdue(task)
+    || isDirectorAssignmentOverdue(task)
+    || statusLabel.includes('просроч');
+}
+
+
+function normalizeTaskFolderId(folderId) {
+  const normalized = normalizeValue(folderId);
+  return normalized || null;
+}
+
+function resolveFolderScope(tasks, folderId) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  const normalizedActiveFolderId = normalizeValue(folderId) || 'all';
+
+  // Инварианты фильтра по папке:
+  // - all: все задачи независимо от task.folderId (включая null/undefined/'').
+  // - no-folder: только задачи без папки (task.folderId после нормализации === null).
+  // - custom folder: только задачи с точным совпадением task.folderId === activeFolderId.
+  if (normalizedActiveFolderId === 'all') {
+    return source;
+  }
+  if (normalizedActiveFolderId === 'no-folder') {
+    return source.filter((task) => normalizeTaskFolderId(task && task.folderId) === null);
+  }
+  return source.filter((task) => normalizeTaskFolderId(task && task.folderId) === normalizedActiveFolderId);
+}
+
+function ensureActiveFolderId(value) {
+  const normalized = normalizeValue(value) || 'all';
+  const exists = folders.some((folder) => folder && folder.id === normalized);
+  return exists ? normalized : 'all';
+}
+
+function getFolderCount(folderId) {
+  return resolveFolderScope(state.tasks, folderId).length;
+}
+
+function selectFolder(folderId) {
+  const normalizedFolderId = ensureActiveFolderId(folderId);
+  activeFolderId = normalizedFolderId;
+  state.activeFilters.folderId = normalizedFolderId;
+  updateVisibleTasks();
+  updateStats();
+  updateSummaryFilterState();
+  renderFolders();
+  renderCards();
+}
+
+function renderFolders() {
+  if (!elements.foldersList) return;
+  const systemFolders = folders.filter((folder) => folder.system);
+  const customFolders = folders.filter((folder) => !folder.system);
+  const sortedFolders = [...systemFolders, ...customFolders];
+  elements.foldersList.innerHTML = '';
+  sortedFolders.forEach((folder) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'folder-chip';
+    if (folder.id === activeFolderId) {
+      button.classList.add('active');
+    }
+    const name = document.createElement('span');
+    name.className = 'folder-name';
+    name.textContent = folder.name;
+    const count = document.createElement('span');
+    count.className = 'folder-count';
+    count.textContent = String(getFolderCount(folder.id));
+    button.append(name, count);
+    if (folderManageMode && !folder.system) {
+      const manageBtn = document.createElement('button');
+      manageBtn.type = 'button';
+      manageBtn.className = 'folder-menu-btn';
+      manageBtn.textContent = '✏️';
+      manageBtn.addEventListener('click', (event) => { event.stopPropagation(); openFolderActionsModal(folder); });
+      button.appendChild(manageBtn);
+    }
+    button.addEventListener('click', () => selectFolder(folder.id));
+    elements.foldersList.appendChild(button);
+  });
+
+  const addButton = document.createElement('button');
+  addButton.type = 'button';
+  addButton.className = 'folder-chip';
+  addButton.textContent = '+ Папка';
+  addButton.addEventListener('click', () => openFolderEditModal());
+  elements.foldersList.appendChild(addButton);
+
+  if (elements.foldersCount) {
+    elements.foldersCount.textContent = String(state.tasks.length);
+  }
+}
+
 function updateVisibleTasks() {
-  const normalizedFilters = normalizeTaskFilters(state.taskFilter);
-  state.taskFilter = normalizedFilters;
+  state.activeFilters.folderId = ensureActiveFolderId(state.activeFilters.folderId || activeFolderId);
+  activeFolderId = state.activeFilters.folderId;
+  state.activeFilters.statusFilters = normalizeTaskFilters(state.activeFilters.statusFilters);
+  state.taskFilter = state.activeFilters.statusFilters;
+  const normalizedFilters = state.activeFilters.statusFilters;
+  state.activeFilters.quickPreset = normalizeValue(state.activeFilters.quickPreset);
+  state.activeFilters.dateFrom = normalizeDateInputValue(state.activeFilters.dateFrom);
+  state.activeFilters.dateTo = normalizeDateInputValue(state.activeFilters.dateTo);
+  state.activeFilters.overdue = state.activeFilters.overdue === true;
+  state.activeFilters.groupFilters = Array.isArray(state.activeFilters.groupFilters)
+    ? state.activeFilters.groupFilters
+    : [{ type: '', value: '' }];
+  state.compactFilters.quickPreset = state.activeFilters.quickPreset;
+  state.compactFilters.dateFrom = state.activeFilters.dateFrom;
+  state.compactFilters.dateTo = state.activeFilters.dateTo;
+  state.compactFilters.showOverdueOnly = state.activeFilters.overdue;
+  state.compactFilters.groupFilters = state.activeFilters.groupFilters;
   const directorState = ensureDirectorState();
   const entryTaskId = normalizeValue(state.entryTaskId);
 
   if (entryTaskId) {
-    state.visibleTasks = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    const matched = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    const matchedTask = matched.length ? matched[0].task : null;
+    const isTelegramDeepLink = Boolean(state.telegram.startParam);
+    if (isTelegramDeepLink && isTaskOverdueByCompactRule(matchedTask)) {
+      state.activeFilters.overdue = true;
+    }
+    state.visibleTasks = applyCompactFilters(matched);
     return;
   }
 
-  const filtered = applyTaskFilter(normalizedFilters, state.tasks);
+  const folderScopedTasks = resolveFolderScope(state.tasks, state.activeFilters.folderId);
+
+  const filtered = applyTaskFilter(normalizedFilters, folderScopedTasks);
   let visible = filtered;
 
   const hasAssigneeFilter = hasAssigneeFilters(normalizedFilters);
@@ -4285,7 +6384,16 @@ function updateVisibleTasks() {
     }
   }
 
-  state.visibleTasks = visible;
+  state.visibleTasks = applyCompactFilters(visible);
+
+  if (typeof console !== 'undefined' && console && typeof console.debug === 'function') {
+    console.debug('[folders] visible tasks recalculated', {
+      activeFolderId,
+      totalTasks: Array.isArray(state.tasks) ? state.tasks.length : 0,
+      folderScopedCount: folderScopedTasks.length,
+      visibleCountAfterFilters: Array.isArray(state.visibleTasks) ? state.visibleTasks.length : 0,
+    });
+  }
 }
 
 function truncateText(value, limit = 140) {
@@ -4376,6 +6484,18 @@ function updateTaskSelector() {
   placeholderOption.value = '';
   const visibleItems = getVisibleTaskItems();
   const hasCards = visibleItems.length > 0;
+  const taskCountLabel = hasCards
+    ? ` • Всего задач: ${visibleItems.length}`
+    : '';
+  if (elements.taskCountInline) {
+    elements.taskCountInline.textContent = taskCountLabel;
+  }
+  if (elements.taskSelector) {
+    elements.taskSelector.setAttribute(
+      'aria-label',
+      hasCards ? `Перейти к задаче • ${visibleItems.length}` : 'Перейти к задаче',
+    );
+  }
   const hasTasks = Array.isArray(state.tasks) && state.tasks.length > 0;
   placeholderOption.textContent = hasCards
     ? 'Выберите задачу из списка'
@@ -4489,6 +6609,34 @@ function toggleSection(card, selector, shouldShow) {
   section.hidden = !shouldShow;
 }
 
+function openTelegramFileAiBriefModal(fileName, briefText) {
+  const overlay = document.createElement('div');
+  overlay.className = 'appdosc-ai-brief-modal__overlay';
+  const panel = document.createElement('div');
+  panel.className = 'appdosc-ai-brief-modal__panel';
+  const title = document.createElement('div');
+  title.className = 'appdosc-ai-brief-modal__title';
+  title.textContent = fileName || 'Файл';
+  const text = document.createElement('pre');
+  text.className = 'appdosc-ai-brief-modal__text';
+  text.textContent = briefText || '—';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = 'Закрыть';
+  closeButton.className = 'appdosc-ai-brief-modal__button';
+  closeButton.addEventListener('click', () => overlay.remove());
+  panel.appendChild(title);
+  panel.appendChild(text);
+  panel.appendChild(closeButton);
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      overlay.remove();
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
 function applyRegistrationDateHeader(card, registrationDate) {
   if (!(card instanceof HTMLElement)) {
     return;
@@ -4540,12 +6688,14 @@ function populateCardFiles(card, files) {
 
   const maxToShow = 3;
   safeFiles.slice(0, maxToShow).forEach((file) => {
-    const element = document.createElement('span');
+    const element = document.createElement('div');
     element.className = 'appdosc-card__file';
     const displayName = normalizeValue(file.originalName)
       || normalizeValue(file.storedName)
       || 'Файл';
-    element.textContent = displayName;
+    const title = document.createElement('span');
+    title.textContent = displayName;
+    element.appendChild(title);
     if (displayName) {
       element.title = displayName;
     } else {
@@ -4573,6 +6723,9 @@ function setCardExpandedState(card, expanded) {
   card.dataset.expanded = isExpanded ? 'true' : 'false';
   setClass(card, 'appdosc-card--collapsed', !isExpanded);
   rememberCardExpansion(card, isExpanded);
+  if (isExpanded && card.__task) {
+    markTaskViewedOnExpand(card.__task, card, 'mini_app_expand_card');
+  }
 
   const toggles = card.querySelectorAll('[data-card-toggle]');
   toggles.forEach((toggle) => {
@@ -5020,7 +7173,6 @@ function resolvePersonSummary(person) {
   const name = person.name
     || person.responsible
     || person.email
-    || person.telegram
     || person.id
     || '';
   const parts = [];
@@ -5032,9 +7184,6 @@ function resolvePersonSummary(person) {
   }
   if (person.email) {
     parts.push(String(person.email));
-  }
-  if (person.telegram) {
-    parts.push(`TG: ${person.telegram}`);
   }
   return parts.length ? parts.join('\n') : '—';
 }
@@ -5048,35 +7197,54 @@ function buildAssigneeLines(list, fallbackRole, emptyText) {
     if (!assignee) {
       return;
     }
-    const nameLine = assignee.name
-      ? assignee.name
-      : (assignee.id ? `${fallbackRole} #${assignee.id}` : fallbackRole);
+
+    const normalizedResponsible = normalizeValueString(assignee.responsible);
+    const normalizedName = normalizeValueString(assignee.name);
+    const fallbackName = assignee.id ? `${fallbackRole} #${assignee.id}` : fallbackRole;
+    const nameLine = normalizedResponsible || normalizedName || fallbackName;
     lines.push(nameLine);
+
+    const nameKey = normalizeValueString(nameLine).toLowerCase();
     const meta = [];
-    if (assignee.department) {
-      meta.push(assignee.department);
+    const seenMetaKeys = new Set();
+    const pushUniqueMeta = (value) => {
+      const text = normalizeValueString(value);
+      if (!text) {
+        return;
+      }
+      const key = text.toLowerCase();
+      if (key === nameKey || seenMetaKeys.has(key)) {
+        return;
+      }
+      seenMetaKeys.add(key);
+      meta.push(text);
+    };
+
+    pushUniqueMeta(assignee.position);
+    pushUniqueMeta(assignee.department);
+    pushUniqueMeta(assignee.email);
+
+    const statusValue = normalizeValueString(assignee.status);
+    if (statusValue) {
+      pushUniqueMeta(`Статус: ${statusValue}`);
     }
-    if (assignee.telegram) {
-      meta.push(`TG: ${assignee.telegram}`);
-    }
-    if (assignee.email) {
-      meta.push(assignee.email);
-    }
-    if (assignee.status) {
-      meta.push(`Статус: ${assignee.status}`);
-    }
+
     if (meta.length) {
       lines.push(meta.join(' • '));
     }
-    if (assignee.assignmentComment) {
-      lines.push(`Комментарий: ${assignee.assignmentComment}`);
+
+    const assignmentComment = normalizeValueString(assignee.assignmentComment);
+    if (assignmentComment) {
+      lines.push(`Комментарий: ${assignmentComment}`);
     }
+
     if (assignee.assignedAt) {
       const assignedAt = formatPdfDateTime(assignee.assignedAt);
       if (assignedAt) {
         lines.push(`Назначено: ${assignedAt}`);
       }
     }
+
     if (index < list.length - 1) {
       lines.push('');
     }
@@ -5144,6 +7312,7 @@ function buildTaskSummaryRows(task, attachments) {
         description += ` (${metaParts.join(' • ')})`;
       }
       lines.push(description);
+      lines.push('   Кратко ИИ: кнопка в карточке');
     });
     attachmentsText = lines.join('\n');
   }
@@ -6371,7 +8540,7 @@ function buildTasksSignature(visibleTasks) {
       (task.dueDate || '')
     );
   }
-  return parts.join('|');
+  return `${normalizeTaskListMode(state.taskListMode)}|${parts.join('|')}`;
 }
 
 function resolveFilePreviewSource(file) {
@@ -6460,6 +8629,10 @@ function resolveTaskViewerFiles(task) {
       previewUrl,
       name: displayName,
       kind,
+      storedName: normalizeValue(file.storedName),
+      originalName: normalizeValue(file.originalName),
+      sourceUrl: normalizeValue(file.url),
+      aiBrief: normalizeBriefText(file.aiBrief),
     });
   });
 
@@ -6486,35 +8659,65 @@ function resolveTaskViewerFiles(task) {
 
 function applyStatusBadge(card, statusText, normalizedStatus, task) {
   const statusElement = card.querySelector('[data-field="status"]');
+  const taskMainElement = card.querySelector('.task-main');
+  const statusBadgeElement = card.querySelector('[data-field="statusBadge"]');
   if (!statusElement) {
     return;
   }
 
-  statusElement.className = 'appdosc-card__status';
-
   if (!normalizeValue(statusText)) {
+    const fallbackStatusLabel = 'Статус не указан';
     statusElement.hidden = true;
     statusElement.textContent = '';
     statusElement.removeAttribute('title');
+    if (card && card.dataset) {
+      delete card.dataset.statusIcon;
+      card.dataset.statusLabel = fallbackStatusLabel;
+      card.dataset.statusTone = 'accent';
+    }
+    if (taskMainElement && taskMainElement.dataset) {
+      delete taskMainElement.dataset.statusIcon;
+      taskMainElement.dataset.statusLabel = fallbackStatusLabel;
+      taskMainElement.dataset.statusTone = 'accent';
+    }
+    if (statusBadgeElement) {
+      statusBadgeElement.hidden = false;
+      statusBadgeElement.textContent = fallbackStatusLabel;
+      statusBadgeElement.title = fallbackStatusLabel;
+    }
     return;
   }
 
-  statusElement.hidden = false;
-  statusElement.textContent = statusText;
-  statusElement.title = statusText;
+  const statusLabel = `${statusText}`;
+  statusElement.hidden = true;
+  statusElement.textContent = '';
+  statusElement.removeAttribute('title');
+  if (statusBadgeElement) {
+    statusBadgeElement.hidden = false;
+    statusBadgeElement.textContent = statusLabel;
+    statusBadgeElement.title = `Статус задачи: ${statusText}`;
+  }
+  let statusTone = 'accent';
 
   if (isTaskCompleted(task)) {
-    statusElement.classList.add('appdosc-card__status--done');
+    statusTone = 'done';
   } else if (isOverdue(task)) {
-    statusElement.classList.add('appdosc-card__status--danger');
+    statusTone = 'danger';
   } else if (normalizedStatus.includes('контрол')) {
-    statusElement.classList.add('appdosc-card__status--warn');
+    statusTone = 'warn';
   } else if (normalizedStatus.includes('распредел')) {
-    statusElement.classList.add('appdosc-card__status--info');
-  } else if (normalizedStatus.includes('работ') || normalizedStatus.includes('нов')) {
-    statusElement.classList.add('appdosc-card__status--accent');
-  } else {
-    statusElement.classList.add('appdosc-card__status--accent');
+    statusTone = 'info';
+  }
+
+  if (card && card.dataset) {
+    delete card.dataset.statusIcon;
+    card.dataset.statusLabel = String(statusText).trim();
+    card.dataset.statusTone = statusTone;
+  }
+  if (taskMainElement && taskMainElement.dataset) {
+    delete taskMainElement.dataset.statusIcon;
+    taskMainElement.dataset.statusLabel = String(statusText).trim();
+    taskMainElement.dataset.statusTone = statusTone;
   }
 }
 
@@ -6686,7 +8889,7 @@ function syncTaskViewEntry(task, response, fallbackTimestamp) {
   }
 }
 
-async function registerTaskView(task, timestamp, card) {
+async function registerTaskView(task, timestamp, card, trigger = 'mini_app_view') {
   if (!task || !task.id) {
     return;
   }
@@ -6702,7 +8905,7 @@ async function registerTaskView(task, timestamp, card) {
     organization,
     documentId: task.id,
     viewedAt: timestamp,
-    trigger: 'mini_app_view',
+    trigger: normalizeValue(trigger) || 'mini_app_view',
   };
 
   const headers = { 'Content-Type': 'application/json' };
@@ -6731,6 +8934,44 @@ async function registerTaskView(task, timestamp, card) {
   if (card) {
     updateCardViewInfo(card, task);
   }
+}
+
+function markTaskViewedOnExpand(task, card, trigger = 'mini_app_expand') {
+  if (!task || typeof task !== 'object') {
+    return;
+  }
+
+  const currentEntry = getTaskViewEntryForCurrentUser(task);
+  if (currentEntry && currentEntry.viewedAt) {
+    if (card) {
+      updateCardViewInfo(card, task);
+    }
+    return;
+  }
+
+  if (task.__registerViewPending) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  task.__registerViewPending = true;
+  applyLocalTaskViewUpdate(task, timestamp);
+  if (card) {
+    updateCardViewInfo(card, task);
+  }
+
+  registerTaskView(task, timestamp, card, trigger)
+    .catch((error) => {
+      logViewerDebug('task_view_register_failed', {
+        message: error instanceof Error ? error.message : String(error),
+        taskId: task.id || '',
+        organization: getTaskOrganization(task),
+        trigger: normalizeValue(trigger) || 'mini_app_expand',
+      });
+    })
+    .finally(() => {
+      task.__registerViewPending = false;
+    });
 }
 
 function buildTaskViewLogDetails(task, extra) {
@@ -7825,6 +10066,411 @@ function updateViewerDownloadState(file) {
   const hasFile = Boolean(file && (file.isSummary || file.resolvedUrl || file.url || file.previewUrl));
   elements.viewerDownload.disabled = !hasFile;
   elements.viewerDownload.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  updateViewerBriefState(file);
+}
+
+function updateViewerBriefState(file) {
+  if (!elements.viewerBrief) {
+    return;
+  }
+  const hasFile = Boolean(file && !file.isSummary);
+  elements.viewerBrief.disabled = !hasFile;
+  elements.viewerBrief.hidden = !hasFile;
+  elements.viewerBrief.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  if (hasFile && !normalizeBriefText(file && file.aiBrief)) {
+    elements.viewerBrief.title = 'ИИ-кратко отсутствует — рассчитаем после нажатия';
+  } else {
+    elements.viewerBrief.removeAttribute('title');
+  }
+}
+
+function canDeleteResponseFromViewer(file) {
+  if (!file || typeof file !== 'object' || !file.isResponse) {
+    return false;
+  }
+  if (!normalizeValue(file.storedName)) {
+    return false;
+  }
+  return isResponseOwnedByCurrentUser(file);
+}
+
+function updateViewerDeleteState(file) {
+  if (!elements.viewerDeleteResponse) {
+    return;
+  }
+  const canDelete = canDeleteResponseFromViewer(file);
+  elements.viewerDeleteResponse.hidden = !canDelete;
+  elements.viewerDeleteResponse.disabled = !canDelete;
+  elements.viewerDeleteResponse.setAttribute('aria-disabled', canDelete ? 'false' : 'true');
+}
+
+function findResponsibleNameInAccessByFile(file) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = new Set();
+  const nameCandidates = new Set();
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.add(normalized);
+    }
+  };
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      nameCandidates.add(normalized);
+    }
+  };
+
+  pushId(file.uploadedById);
+  pushId(file.uploadedByTelegram);
+  pushId(file.uploadedByLogin);
+  pushId(file.uploadedBy);
+  pushName(file.uploadedByName);
+  pushName(file.uploadedBy);
+
+  const uploadedByKey = normalizeValue(file.uploadedByKey);
+  if (uploadedByKey) {
+    if (uploadedByKey.startsWith('id:')) {
+      pushId(uploadedByKey.slice(3));
+    } else if (uploadedByKey.startsWith('name:')) {
+      pushName(uploadedByKey.slice(5));
+    } else {
+      pushId(uploadedByKey);
+      pushName(uploadedByKey);
+    }
+  }
+
+  const ids = Array.from(idCandidates);
+  const names = Array.from(nameCandidates);
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
+function resolveViewerFileOwnerLabel(file) {
+  if (!file || typeof file !== 'object' || !file.isResponse) {
+    return '';
+  }
+
+  const mappedResponsible = findResponsibleNameInAccessByFile(file);
+  if (mappedResponsible) {
+    return mappedResponsible;
+  }
+
+  const byName = normalizeValue(file.uploadedBy);
+  if (byName) {
+    return byName;
+  }
+
+  const byKey = normalizeValue(file.uploadedByKey);
+  if (!byKey) {
+    return '';
+  }
+
+  if (byKey.startsWith('name:')) {
+    return normalizeValue(byKey.slice(5));
+  }
+  if (byKey.startsWith('id:')) {
+    return `ID ${normalizeValue(byKey.slice(3))}`;
+  }
+  return byKey;
+}
+
+function updateViewerFileOwnerState(file) {
+  if (!elements.viewerFileOwner) {
+    return;
+  }
+  const owner = resolveViewerFileOwnerLabel(file);
+  if (!owner) {
+    elements.viewerFileOwner.textContent = '';
+    elements.viewerFileOwner.hidden = true;
+    return;
+  }
+  elements.viewerFileOwner.textContent = `👤 ${owner}`;
+  elements.viewerFileOwner.hidden = false;
+}
+
+async function deleteTaskResponseFile(task, file) {
+  if (!task || typeof task !== 'object') {
+    throw new Error('Не удалось определить задачу.');
+  }
+
+  const documentId = normalizeValue(task.id);
+  const organization = getTaskOrganization(task);
+  const storedName = normalizeValue(file && file.storedName);
+  if (!documentId || !organization || !storedName) {
+    throw new Error('Не удалось определить ответ для удаления.');
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const response = await fetch(`/docs.php?action=response_delete&organization=${encodeURIComponent(organization)}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify({
+      action: 'response_delete',
+      organization,
+      documentId,
+      storedName,
+    }),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_) {
+    data = null;
+  }
+  if (!response.ok || !data || data.success !== true) {
+    throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
+  }
+
+  await loadTasks(true);
+  return data;
+}
+
+async function handleViewerDeleteResponseClick() {
+  const file = getViewerFileToDownload();
+  const task = viewerTabsState.task;
+  if (!canDeleteResponseFromViewer(file) || !task) {
+    return;
+  }
+  if (!window.confirm('Удалить этот ответ?')) {
+    return;
+  }
+
+  if (elements.viewerDeleteResponse) {
+    elements.viewerDeleteResponse.disabled = true;
+  }
+
+  try {
+    const result = await deleteTaskResponseFile(task, file);
+    const currentFiles = Array.isArray(viewerTabsState.files) ? viewerTabsState.files : [];
+    const nextFiles = currentFiles.filter((item) => normalizeValue(item && item.storedName) !== normalizeValue(file.storedName));
+
+    if (!nextFiles.length) {
+      renderViewerTabs([], task);
+      viewerTabsState.activeFile = null;
+      updateViewerDownloadState(null);
+      updateViewerDeleteState(null);
+      updateViewerFileOwnerState(null);
+      setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
+      return;
+    }
+
+    const nextIndex = Math.min(viewerTabsState.activeIndex, nextFiles.length - 1);
+    renderViewerTabs(nextFiles, task);
+    await handleViewerTabClick(nextIndex, task);
+    setStatus('success', result && result.message ? result.message : 'Ответ удалён.');
+  } catch (error) {
+    setStatus('error', `Не удалось удалить ответ: ${error && error.message ? error.message : 'неизвестная ошибка'}`);
+  } finally {
+    updateViewerFileOwnerState(getViewerFileToDownload());
+    updateViewerDeleteState(getViewerFileToDownload());
+  }
+}
+
+function handleViewerBriefClick() {
+  const file = getViewerFileToDownload();
+  if (!file || file.isSummary) {
+    return;
+  }
+  const fileName = getAttachmentName(file) || 'Файл';
+  const briefText = normalizeBriefText(file.aiBrief);
+  if (briefText) {
+    openTelegramFileAiBriefModal(fileName, briefText);
+    return;
+  }
+  void generateViewerFileAiBrief(file, fileName);
+}
+
+function findTaskFileByViewerFile(task, file) {
+  if (!task || !Array.isArray(task.files) || !file) {
+    return null;
+  }
+  const storedName = normalizeValue(file.storedName);
+  const originalName = normalizeValue(file.originalName);
+  const url = normalizeValue(file.url);
+  return task.files.find((candidate) => {
+    if (!candidate || typeof candidate !== 'object') {
+      return false;
+    }
+    const sameStored = storedName && normalizeValue(candidate.storedName) === storedName;
+    const sameOriginal = originalName && normalizeValue(candidate.originalName) === originalName;
+    const sameUrl = url && normalizeValue(candidate.url) === url;
+    return Boolean(sameStored || sameOriginal || sameUrl);
+  }) || null;
+}
+
+async function persistViewerFileAiBrief(task, file, briefText) {
+  const documentId = normalizeValue(task && task.id);
+  const organization = getTaskOrganization(task);
+  if (!documentId || !organization) {
+    return false;
+  }
+
+  const payload = {
+    ...buildRequestBody({ includeInitData: false, includeNameTokens: false }),
+    action: 'mini_app_update_task',
+    updateType: 'file_brief',
+    organization,
+    documentId,
+    aiBrief: briefText,
+    fileStoredName: normalizeValue(file && file.storedName),
+    fileOriginalName: normalizeValue(file && file.originalName),
+    fileUrl: normalizeValue(file && (file.sourceUrl || file.url)),
+  };
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const response = await fetch('/docs.php?action=mini_app_update_task', {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || data.success !== true) {
+    throw new Error((data && (data.error || data.message)) || `Ошибка ${response.status}`);
+  }
+  return true;
+}
+
+async function generateViewerFileAiBrief(file, fileName) {
+  if (!elements.viewerBrief || elements.viewerBrief.dataset.loading === 'true') {
+    return;
+  }
+  const task = viewerTabsState.task;
+  if (!task) {
+    setStatus('warning', 'Не удалось определить задачу для краткого ИИ.');
+    return;
+  }
+  if (!telegramBriefModalFactory || typeof telegramBriefModalFactory.requestBriefForSource !== 'function') {
+    setStatus('error', 'Модуль Кратко ИИ не загружен.');
+    return;
+  }
+
+  setActionButtonLoading(elements.viewerBrief, true);
+  const stopViewerBriefLoading = startViewerBriefLoadingAnimation();
+  const source = {
+    label: fileName || getAttachmentName(file) || 'Файл',
+    url: resolveFileFetchUrl(file),
+    fileObject: file && file.fileObject instanceof File ? file.fileObject : null,
+  };
+
+  try {
+    setStatus('info', 'Кратко ИИ: подготавливаю файл...');
+    const result = await telegramBriefModalFactory.requestBriefForSource(source, (message, tone) => {
+      setStatus(tone === 'error' ? 'error' : 'info', `Кратко ИИ: ${message}`);
+    });
+    const nextBrief = normalizeBriefText(result && result.summary);
+    if (!nextBrief) {
+      throw new Error('ИИ вернул пустой краткий ответ.');
+    }
+
+    file.aiBrief = nextBrief;
+    const taskFile = findTaskFileByViewerFile(task, file);
+    if (taskFile) {
+      taskFile.aiBrief = nextBrief;
+    }
+
+    try {
+      await persistViewerFileAiBrief(task, file, nextBrief);
+    } catch (error) {
+      setStatus('warning', `Кратко ИИ сохранено локально: ${error instanceof Error ? error.message : 'ошибка сохранения'}`);
+    }
+
+    updateViewerBriefState(file);
+    openTelegramFileAiBriefModal(fileName, nextBrief);
+    setStatus('success', 'Кратко ИИ готово.');
+  } catch (error) {
+    setStatus('error', `Кратко ИИ: ${error instanceof Error ? error.message : 'неизвестная ошибка'}`);
+  } finally {
+    setActionButtonLoading(elements.viewerBrief, false);
+    stopViewerBriefLoading();
+  }
+}
+
+function startViewerBriefLoadingAnimation() {
+  if (!elements.viewerBrief) {
+    return () => {};
+  }
+  const button = elements.viewerBrief;
+  const initialText = button.textContent || '🤖 AI';
+  const initialTitle = button.getAttribute('title') || '';
+  const initialBackground = button.style.background;
+  const initialBorderColor = button.style.borderColor;
+  const initialColor = button.style.color;
+  let frame = 0;
+
+  button.setAttribute('aria-busy', 'true');
+  button.style.background = 'linear-gradient(135deg, rgba(239,246,255,.96), rgba(224,242,254,.95))';
+  button.style.borderColor = 'rgba(59,130,246,.55)';
+  button.style.color = '#1d4ed8';
+
+  const timerId = window.setInterval(() => {
+    frame = (frame + 1) % 4;
+    const dots = '.'.repeat(frame);
+    button.textContent = `🤖 AI${dots}`;
+  }, 260);
+
+  return () => {
+    window.clearInterval(timerId);
+    button.textContent = initialText;
+    button.style.background = initialBackground;
+    button.style.borderColor = initialBorderColor;
+    button.style.color = initialColor;
+    if (initialTitle) {
+      button.setAttribute('title', initialTitle);
+    } else {
+      button.removeAttribute('title');
+    }
+    button.setAttribute('aria-busy', 'false');
+  };
 }
 
 async function handleViewerDownloadClick() {
@@ -8896,10 +11542,8 @@ async function openViewerFile(file, task, options = {}) {
           htmlOpenMs,
           totalMs,
         });
-        if (notify) {
-          setStatus('info', hasMultiple
-            ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
-            : 'Сводка открыта.');
+        if (notify && !hasMultiple) {
+          setStatus('info', 'Сводка открыта.');
         }
         void ensureTaskSummaryPreview(task, file).catch(function (err) {
           logTaskViewStage(task, 'summary_pdf_background_error', {
@@ -9065,6 +11709,8 @@ async function openViewerFile(file, task, options = {}) {
     });
     viewerTabsState.activeFile = file;
     updateViewerDownloadState(file);
+    updateViewerDeleteState(file);
+    updateViewerFileOwnerState(file);
     if (isPdf && mode === 'inline') {
       try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
       // Счётчик страниц может быть 0, если PDF ещё загружается — обновим после загрузки
@@ -9106,10 +11752,9 @@ async function openViewerFile(file, task, options = {}) {
 
     if (notify) {
       if (mode === 'inline') {
-        const message = hasMultiple
-          ? 'Документы открыты во встроенном просмотрщике. Переключайтесь между вкладками.'
-          : 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.';
-        setStatus('info', message);
+        if (!hasMultiple) {
+          setStatus('info', 'Файл открыт во встроенном просмотрщике. Используйте жесты для масштабирования.');
+        }
       } else if (mode === 'external_prompt') {
         // статус уже показан в openDocumentLink
       } else if (mode === 'telegram') {
@@ -9177,6 +11822,31 @@ async function openViewerFile(file, task, options = {}) {
     openTotalMs: Math.round(performance.now() - openStartedAt),
   });
   throw new Error('viewer_open_failed');
+}
+
+async function openFilesViaStandardViewer(files, task = {}, options = {}) {
+  const list = Array.isArray(files) ? files.filter(Boolean) : [];
+  if (!list.length) {
+    throw new Error('Нет файлов для просмотра.');
+  }
+  const firstFile = list[0];
+  const displayName = firstFile.name || 'Документ';
+  showViewerLoader(displayName);
+  docLoadStart(displayName, firstFile.kind || '');
+  docLoadStep('подготовка файлов');
+  renderViewerTabs(list, task || {});
+  docLoadStep('открытие файла');
+  await openViewerFile(firstFile, task || {}, { notify: true, hasMultiple: list.length > 1, ...options });
+  return true;
+}
+
+if (typeof window !== 'undefined') {
+  window.__APPDOSC_OPEN_VIEWER_FILE__ = async function openViewerFromExternalContext(file, task, options = {}) {
+    return openViewerFile(file, task, options);
+  };
+  window.__APPDOSC_OPEN_FILES_VIEWER__ = async function openFilesViewerFromExternalContext(files, task, options = {}) {
+    return openFilesViaStandardViewer(files, task, options);
+  };
 }
 
 function warmupTaskPdfFiles(task, files, skipFile) {
@@ -9400,6 +12070,8 @@ async function handleViewerTabClick(index, task) {
       setViewerTabActive(index);
       viewerTabsState.activeFile = file;
       updateViewerDownloadState(file);
+      updateViewerDeleteState(file);
+      updateViewerFileOwnerState(file);
       try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
       const restoreMs = Math.round(performance.now() - restoreStart);
       logViewWatchEvent('task_view_watch_tab_cache_hit', task, {
@@ -9464,6 +12136,8 @@ async function handleViewerTabClick(index, task) {
     }
     viewerTabsState.activeFile = file;
     updateViewerDownloadState(file);
+    updateViewerDeleteState(file);
+    updateViewerFileOwnerState(file);
     // Обновить кол-во страниц после загрузки PDF
     try {
       updatePdfTabPageCount();
@@ -9528,6 +12202,8 @@ function renderViewerTabs(files, task) {
   if (!elements.viewerTabs || !elements.viewerTabsList) {
     viewerTabsState.activeFile = files && files.length ? files[0] : null;
     updateViewerDownloadState(viewerTabsState.activeFile);
+    updateViewerDeleteState(viewerTabsState.activeFile);
+    updateViewerFileOwnerState(viewerTabsState.activeFile);
     return;
   }
 
@@ -9550,6 +12226,8 @@ function renderViewerTabs(files, task) {
     viewerTabsState.task = task || null;
     viewerTabsState.activeFile = files && files.length ? files[0] : null;
     updateViewerDownloadState(viewerTabsState.activeFile);
+    updateViewerDeleteState(viewerTabsState.activeFile);
+    updateViewerFileOwnerState(viewerTabsState.activeFile);
     return;
   }
 
@@ -9561,6 +12239,8 @@ function renderViewerTabs(files, task) {
   viewerTabsState.task = task || null;
   viewerTabsState.activeFile = files && files.length ? files[0] : null;
   updateViewerDownloadState(viewerTabsState.activeFile);
+  updateViewerDeleteState(viewerTabsState.activeFile);
+  updateViewerFileOwnerState(viewerTabsState.activeFile);
 
   files.forEach((file, index) => {
     const button = document.createElement('button');
@@ -9645,21 +12325,11 @@ async function handleCardView(button, task) {
   }
 
   const card = button.closest('[data-card]');
-  const timestamp = new Date().toISOString();
   const flowStartedAt = performance.now();
 
+  const timestamp = new Date().toISOString();
   logTaskViewClick(task, timestamp);
-  applyLocalTaskViewUpdate(task, timestamp);
-  if (card) {
-    updateCardViewInfo(card, task);
-  }
-  registerTaskView(task, timestamp, card).catch((error) => {
-    logViewerDebug('task_view_register_failed', {
-      message: error instanceof Error ? error.message : String(error),
-      taskId: task.id || '',
-      organization: getTaskOrganization(task),
-    });
-  });
+  markTaskViewedOnExpand(task, card, 'mini_app_view');
 
   const files = resolveTaskViewerFiles(task);
   logViewWatchEvent('task_view_watch_open_click', task, {
@@ -9827,7 +12497,7 @@ function setupDirectorCompactCompletion(card, task) {
   const isReviewStatus = isTaskUnderReview(task);
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'appdosc-card__action appdosc-card__action--compact';
+  button.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
   button.textContent = isReviewStatus ? 'Проверено' : 'Завершить назначение';
   setActionButtonLoading(button, false);
 
@@ -10220,6 +12890,9 @@ async function sendTaskMutation(update) {
     status,
     dueDate,
     instruction,
+    folderId,
+    folderUserId,
+    folderState,
   } = update || {};
   if (!updateType || !organization || !documentId) {
     throw new Error('Недостаточно данных для обновления задачи.');
@@ -10389,6 +13062,26 @@ async function sendTaskMutation(update) {
     payload.instruction = typeof instruction === 'string' ? instruction : '';
   }
 
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderId')) {
+    payload.folderId = typeof folderId === 'string' ? folderId : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderUserId')) {
+    payload.folderUserId = typeof folderUserId === 'string' ? folderUserId : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'folderState') && Array.isArray(folderState)) {
+    payload.folderState = folderState
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const id = normalizeValue(item.id);
+        const name = normalizeValue(item.name);
+        if (!id || !name) return null;
+        return { id, name };
+      })
+      .filter(Boolean);
+  }
+
   logClientEvent('task_update_request', {
     requestId,
     updateType,
@@ -10525,6 +13218,137 @@ function normalizeValue(value) {
 
   const string = String(value).trim();
   return string && string !== '—' ? string : '';
+}
+
+function normalizeAvatarUrl(value) {
+  const raw = normalizeValue(value);
+  if (!raw) {
+    return '';
+  }
+
+  if (raw.startsWith('//')) {
+    return `https:${raw}`;
+  }
+
+  if (/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw) || /^blob:/i.test(raw)) {
+    return raw;
+  }
+
+  return '';
+}
+
+function normalizeTelegramUserId(value) {
+  const raw = normalizeValue(value);
+  if (!raw) {
+    return '';
+  }
+  const normalized = raw.replace(/[^\d-]/g, '');
+  return /^-?\d{4,20}$/.test(normalized) ? normalized : '';
+}
+
+function resolveTelegramUserIdFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const directCandidates = [
+    entry.telegram,
+    entry.telegramId,
+    entry.telegram_id,
+    entry.userId,
+    entry.user_id,
+    entry.id,
+  ];
+
+  for (let index = 0; index < directCandidates.length; index += 1) {
+    const id = normalizeTelegramUserId(directCandidates[index]);
+    if (id) {
+      return id;
+    }
+  }
+
+  const nestedCandidates = [entry.user, entry.telegramUser, entry.profile, entry.contact];
+  for (let index = 0; index < nestedCandidates.length; index += 1) {
+    const nested = nestedCandidates[index];
+    if (!nested || typeof nested !== 'object') {
+      continue;
+    }
+    const id = normalizeTelegramUserId(
+      nested.telegram
+      || nested.telegramId
+      || nested.telegram_id
+      || nested.userId
+      || nested.user_id
+      || nested.id
+    );
+    if (id) {
+      return id;
+    }
+  }
+
+  return '';
+}
+
+function resolveAvatarUrlFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const directFields = [
+    'photo_url',
+    'photoUrl',
+    'avatar_url',
+    'avatarUrl',
+    'avatar',
+    'image',
+    'imageUrl',
+    'profilePhoto',
+    'profile_photo',
+    'telegram_photo_url',
+    'telegramPhotoUrl',
+  ];
+
+  for (let index = 0; index < directFields.length; index += 1) {
+    const key = directFields[index];
+    const resolved = normalizeAvatarUrl(entry[key]);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const nestedObjects = [entry.user, entry.telegramUser, entry.profile, entry.contact];
+  for (let index = 0; index < nestedObjects.length; index += 1) {
+    const nested = nestedObjects[index];
+    if (!nested || typeof nested !== 'object') {
+      continue;
+    }
+    for (let fieldIndex = 0; fieldIndex < directFields.length; fieldIndex += 1) {
+      const key = directFields[fieldIndex];
+      const resolved = normalizeAvatarUrl(nested[key]);
+      if (resolved) {
+        return resolved;
+      }
+    }
+  }
+
+  return '';
+}
+
+function normalizeBriefText(value) {
+  const source = value === null || value === undefined ? '' : String(value);
+  const normalized = source.replace(/\r\n/g, '\n').replace(/\u0000/g, '');
+  const trimmed = normalized.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const compact = trimmed.toLowerCase().replace(/\s+/g, ' ').replace(/^0+\s*/, '');
+  const hasSenderUnknown = /кто прислал[^:]*:\s*не указано/.test(compact);
+  const hasRecipientUnknown = /кому прислал[^:]*:\s*не указано/.test(compact) || /кому прислали[^:]*:\s*не указано/.test(compact);
+  const hasSummaryUnknown = /краткое содержание[^:]*:\s*не указано/.test(compact);
+  if (hasSenderUnknown && hasRecipientUnknown && hasSummaryUnknown) {
+    return '';
+  }
+  return trimmed;
 }
 
 function normalizeAssignmentComment(value) {
@@ -10979,6 +13803,331 @@ function getDirectorsForOrganization(organization) {
   return Array.isArray(list) ? list : [];
 }
 
+const settingsDocsResponsibleCache = new Map();
+
+function normalizeSettingsDocsEntries(payload) {
+  if (!payload) {
+    return [];
+  }
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload.responsibles)) {
+    return payload.responsibles;
+  }
+  if (payload.settings && Array.isArray(payload.settings.responsibles)) {
+    return payload.settings.responsibles;
+  }
+  if (Array.isArray(payload.block1)) {
+    return payload.block1;
+  }
+  if (Array.isArray(payload.block2)) {
+    return payload.block2;
+  }
+  if (Array.isArray(payload.block3)) {
+    return payload.block3;
+  }
+  return [];
+}
+
+function collectUserDirectoryEntries(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const buckets = [];
+  const appendArray = (value) => {
+    if (Array.isArray(value) && value.length) {
+      buckets.push(...value);
+    }
+  };
+
+  appendArray(payload.responsibles);
+  appendArray(payload.subordinates);
+  appendArray(payload.directors);
+  appendArray(payload.block1);
+  appendArray(payload.block2);
+  appendArray(payload.block3);
+
+  if (payload.settings && typeof payload.settings === 'object') {
+    appendArray(payload.settings.responsibles);
+    appendArray(payload.settings.subordinates);
+    appendArray(payload.settings.directors);
+    appendArray(payload.settings.block1);
+    appendArray(payload.settings.block2);
+    appendArray(payload.settings.block3);
+  }
+
+  return buckets.filter((entry) => entry && typeof entry === 'object');
+}
+
+async function getResponsibleFromSettingsDocs(organization, telegramId) {
+  const orgKey = getOrganizationKey(organization);
+  const tgKey = normalizeIdentifier(telegramId);
+  if (!orgKey || !tgKey || typeof fetch !== 'function') {
+    return '';
+  }
+
+  const cacheKey = `${orgKey}::${tgKey}`;
+  if (settingsDocsResponsibleCache.has(cacheKey)) {
+    return settingsDocsResponsibleCache.get(cacheKey) || '';
+  }
+
+  const orgVariants = Array.from(new Set([
+    String(organization || '').trim(),
+    orgKey,
+    encodeURIComponent(String(organization || '').trim()),
+    encodeURIComponent(orgKey),
+  ].filter(Boolean)));
+
+  const urlCandidates = [];
+  orgVariants.forEach((value) => {
+    urlCandidates.push(`/documents/${value}/settingsdocs.json`);
+    urlCandidates.push(`/documents/${value}/settings.json`);
+  });
+
+  for (const url of urlCandidates) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const response = await fetch(url, { credentials: 'include', cache: 'no-store' });
+      if (!response.ok) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const payload = await response.json();
+      const entries = normalizeSettingsDocsEntries(payload);
+      if (!entries.length) {
+        continue;
+      }
+      const match = entries.find((entry) => normalizeIdentifier(entry && entry.telegram) === tgKey);
+      const responsible = normalizeValue(match && match.responsible);
+      if (responsible) {
+        settingsDocsResponsibleCache.set(cacheKey, responsible);
+        return responsible;
+      }
+    } catch (_) {
+      // ignore and try next url
+    }
+  }
+
+  settingsDocsResponsibleCache.set(cacheKey, '');
+  return '';
+}
+
+function getCurrentUserResponsibleFromTask(task) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return '';
+  }
+
+  const pools = [];
+  if (Array.isArray(task.responsibles)) {
+    pools.push(...task.responsibles);
+  }
+  if (Array.isArray(task.subordinates)) {
+    pools.push(...task.subordinates);
+  }
+  if (Array.isArray(task.directors)) {
+    pools.push(...task.directors);
+  }
+
+  for (const entry of pools) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserResponsibleFromAccess() {
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  if (!access) {
+    return '';
+  }
+
+  const groups = [access.responsibles, access.subordinates, access.directors];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = [];
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.push(normalized);
+    }
+  };
+
+  pushId(state.telegram.id);
+  pushId(state.telegram.chatId);
+
+  const ids = Array.from(new Set(idCandidates));
+  const names = [];
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const responsible = normalizeValue(entry.responsible)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.fullName)
+      || normalizeValue(entry.displayName);
+    if (responsible) {
+      return responsible;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserPositionFromAccess() {
+  const access = state && state.access && typeof state.access === 'object' ? state.access : null;
+  const directoryEntries = Array.isArray(state?.userDirectoryEntries) ? state.userDirectoryEntries : [];
+  if (!access && !directoryEntries.length) {
+    return '';
+  }
+
+  const groups = access ? [access.responsibles, access.subordinates, access.directors] : [];
+  const entries = [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== 'object') {
+      return;
+    }
+    Object.values(group).forEach((list) => {
+      if (Array.isArray(list) && list.length) {
+        entries.push(...list);
+      }
+    });
+  });
+  if (directoryEntries.length) {
+    entries.push(...directoryEntries);
+  }
+
+  if (!entries.length) {
+    return '';
+  }
+
+  const idCandidates = [];
+  const pushId = (value) => {
+    const normalized = normalizeIdentifier(value);
+    if (normalized) {
+      idCandidates.push(normalized);
+    }
+  };
+
+  pushId(state.telegram.id);
+  pushId(state.telegram.chatId);
+  pushId(state.telegram.username);
+
+  const ids = Array.from(new Set(idCandidates));
+  const names = [];
+  const pushName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      names.push(normalized);
+    }
+  };
+  pushName(state.telegram.fullName);
+  pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+  pushName(state.telegram.username);
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      continue;
+    }
+    const position = normalizeValue(entry.position);
+    if (position) {
+      return position;
+    }
+  }
+
+  return '';
+}
+
+function getCurrentUserPositionFromTasks() {
+  const tasks = Array.isArray(state?.tasks) ? state.tasks : [];
+  if (!tasks.length) {
+    return '';
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return '';
+  }
+
+  for (const task of tasks) {
+    if (!task || typeof task !== 'object') {
+      continue;
+    }
+
+    const pools = [];
+    if (Array.isArray(task.assignees)) {
+      pools.push(...task.assignees);
+    }
+    if (task.assignee && typeof task.assignee === 'object') {
+      pools.push(task.assignee);
+    }
+    if (Array.isArray(task.responsibles)) {
+      pools.push(...task.responsibles);
+    }
+    if (Array.isArray(task.subordinates)) {
+      pools.push(...task.subordinates);
+    }
+    if (Array.isArray(task.directors)) {
+      pools.push(...task.directors);
+    }
+
+    for (const entry of pools) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      if (!entryMatchesUser(entry, ids, names)) {
+        continue;
+      }
+
+      const position = normalizeValue(entry.position);
+      if (position) {
+        return position;
+      }
+    }
+  }
+
+  return '';
+}
+
 function getUserIdentifierCandidates() {
   const idCandidates = [];
   const nameCandidates = [];
@@ -11003,6 +14152,11 @@ function getUserIdentifierCandidates() {
 
   pushName(state.telegram.fullName);
   pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
+
+  const responsibleName = getCurrentUserResponsibleFromAccess();
+  if (responsibleName) {
+    pushName(responsibleName);
+  }
 
   return {
     ids: Array.from(new Set(idCandidates)),
@@ -11942,7 +15096,6 @@ function buildResponsibleProfile(entry) {
   const label = pickDisplayValue(
     primaryName,
     entry.department,
-    entry.telegram,
     entry.login,
     entry.email,
     entry.number,
@@ -11950,11 +15103,11 @@ function buildResponsibleProfile(entry) {
 
   const identifier = normalizeIdentifier(
     entry.id
-      || entry.telegram
-      || entry.chatId
       || entry.email
       || entry.number
-      || entry.login,
+      || entry.login
+      || entry.chatId
+      || entry.telegram,
   );
 
   const normalizedName = normalizeName(primaryName)
@@ -11975,8 +15128,6 @@ function buildResponsibleProfile(entry) {
     resolvedLabel,
     primaryName,
     entry.department,
-    entry.telegram,
-    entry.chatId,
     entry.email,
     entry.login,
     entry.number,
@@ -14111,12 +17262,6 @@ function buildResponsibleOptionLabel(entry) {
   if (normalizeValue(entry.department)) {
     meta.push(entry.department);
   }
-  if (normalizeValue(entry.telegram)) {
-    meta.push(`TG ${normalizeValue(entry.telegram)}`);
-  }
-  if (normalizeValue(entry.chatId) && normalizeValue(entry.chatId) !== normalizeValue(entry.telegram)) {
-    meta.push(`Chat ${normalizeValue(entry.chatId)}`);
-  }
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
   }
@@ -14139,9 +17284,6 @@ function buildSubordinateOptionLabel(entry) {
   if (normalizeValue(entry.department)) {
     meta.push(entry.department);
   }
-  if (normalizeValue(entry.chatId) && normalizeValue(entry.chatId) !== normalizeValue(entry.telegram)) {
-    meta.push(`Chat ${normalizeValue(entry.chatId)}`);
-  }
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
   }
@@ -14151,16 +17293,33 @@ function buildSubordinateOptionLabel(entry) {
   return meta.length ? `${titleWithTag} • ${meta.join(' • ')}` : titleWithTag;
 }
 
+function buildAssigneeOptionSubtitle(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return 'не указана';
+  }
+  return normalizeValue(entry.position) || 'не указана';
+}
+
 function formatDocumentCell(task) {
   const parts = [];
-  if (task.documentNumber) {
-    parts.push(`№ ${task.documentNumber}`);
+  const title = normalizeValue(task?.document);
+  if (title) {
+    parts.push(title);
   }
   const formattedDate = formatDate(task.documentDate);
   if (formattedDate !== '—') {
     parts.push(`от ${formattedDate}`);
   }
   return parts.length ? parts.join(' ') : '—';
+}
+
+function formatEntityDisplay(value, label) {
+  const normalized = normalizeValue(value);
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized;
 }
 
 function dedupeExecutorNames(candidates) {
@@ -14386,23 +17545,43 @@ function updateFooter() {
 }
 
 function setStatus(type, message) {
-  if (!elements.status) {
+  if (!message) {
+    clearStatus();
     return;
   }
-  elements.status.textContent = message;
-  elements.status.hidden = !message;
-  elements.status.className = 'appdosc__status-message';
-  if (type && STATUS_CLASSES[type]) {
-    elements.status.classList.add(STATUS_CLASSES[type]);
+  if (!elements.status || !elements.status.parentElement) {
+    return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
+  if (toastTimerId) {
+    window.clearTimeout(toastTimerId);
+    toastTimerId = null;
+  }
+  const host = elements.status.parentElement;
+  host.classList.add('appdosc-toast-layer');
+  if (statusContainer) {
+    statusContainer.hidden = false;
+  }
+  elements.status.textContent = message;
+  elements.status.hidden = false;
+  elements.status.className = 'appdosc__status-message appdosc-toast';
+  if (type && STATUS_CLASSES[type]) {
+    elements.status.classList.add(`appdosc-toast--${type}`);
+  }
+  requestAnimationFrame(() => elements.status && elements.status.classList.add('is-visible'));
+  toastTimerId = window.setTimeout(() => clearStatus(), 2600);
 }
 
 function setStatusAction(type, message, actionLabel, actionHandler) {
   if (!elements.status) {
     return;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
 
   elements.status.hidden = !message;
+  if (statusContainer) {
+    statusContainer.hidden = !message;
+  }
   elements.status.className = 'appdosc__status-message';
   if (type && STATUS_CLASSES[type]) {
     elements.status.classList.add(STATUS_CLASSES[type]);
@@ -14429,14 +17608,22 @@ function clearStatus() {
   if (!elements.status) {
     return;
   }
-  elements.status.hidden = true;
-  elements.status.textContent = '';
-  elements.status.className = 'appdosc__status-message';
+  if (toastTimerId) {
+    window.clearTimeout(toastTimerId);
+    toastTimerId = null;
+  }
+  elements.status.classList.remove('is-visible');
+  window.setTimeout(() => {
+    if (!elements.status) return;
+    elements.status.hidden = true;
+    elements.status.textContent = '';
+    elements.status.className = 'appdosc__status-message';
+  }, 220);
 }
 
 function handleSummaryBadgeClick(filter) {
   const normalizedTarget = normalizeTaskFilter(filter);
-  const previousFilters = normalizeTaskFilters(state.taskFilter);
+  const previousFilters = normalizeTaskFilters(state.activeFilters.statusFilters);
   const directorState = ensureDirectorState();
   if (directorState.isActive && hasAssigneeFilters(previousFilters)) {
     logDirectorDebug('status_click_blocked', {
@@ -14453,7 +17640,22 @@ function handleSummaryBadgeClick(filter) {
     return;
   }
 
-  state.taskFilter = nextFilters;
+  if (state.entryTaskId) {
+    state.entryTaskId = '';
+    if (!state.entryTaskLog || typeof state.entryTaskLog !== 'object') {
+      state.entryTaskLog = { resolved: false, matched: false, expanded: false };
+    }
+    state.entryTaskLog.resolved = false;
+    state.entryTaskLog.expanded = false;
+    logEntryTaskEvent('entry_task_focus_cleared', {
+      source: 'status_filter_click',
+      targetFilter: normalizedTarget || DEFAULT_TASK_FILTER,
+      previousFilter: formatTaskFiltersForLog(previousFilters),
+      nextFilter: formatTaskFiltersForLog(nextFilters),
+    });
+  }
+
+  state.activeFilters.statusFilters = nextFilters;
   state.selectedCardAnchor = '';
   updateVisibleTasks();
   const reason = nextFilters.length === 0 ? 'task_filter_reset' : 'task_filter_change';
@@ -14487,8 +17689,144 @@ function attachEvents() {
   if (elements.overdue) {
     elements.overdue.addEventListener('click', () => handleSummaryBadgeClick('overdue'));
   }
+  if (elements.taskFilterToggle) {
+    elements.taskFilterToggle.addEventListener('click', () => {
+      setTaskFilterPanelExpanded(!state.compactFilters.expanded);
+    });
+  }
+  if (Array.isArray(elements.filterQuickButtons)) {
+    elements.filterQuickButtons.forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      button.addEventListener('click', () => {
+        const preset = normalizeValue(button.dataset.filterQuickBtn);
+        if (preset && state.activeFilters.quickPreset === preset) {
+          state.activeFilters.quickPreset = '';
+          state.activeFilters.dateFrom = '';
+          state.activeFilters.dateTo = '';
+        } else {
+          applyCompactQuickPreset(preset);
+        }
+        updateVisibleTasks();
+        safeRender('compact_filter_quick');
+      });
+    });
+  }
+  if (elements.filterGroupList) {
+    elements.filterGroupList.addEventListener('change', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!(target instanceof HTMLSelectElement)) {
+        return;
+      }
+      const typeIndexRaw = target.dataset.filterGroupTypeIndex;
+      const valueIndexRaw = target.dataset.filterGroupValueIndex;
+      const index = Number(typeIndexRaw || valueIndexRaw);
+      if (!Number.isInteger(index) || index < 0) {
+        return;
+      }
+      if (!Array.isArray(state.activeFilters.groupFilters)) {
+        state.activeFilters.groupFilters = [{ type: '', value: '' }];
+      }
+      const current = state.activeFilters.groupFilters[index];
+      if (!current) {
+        return;
+      }
+      if (typeIndexRaw !== undefined) {
+        current.type = normalizeValue(target.value);
+        current.value = '';
+      } else if (valueIndexRaw !== undefined) {
+        current.value = normalizeValue(target.value);
+      }
+      syncCompactFilterGroupOptions();
+      updateVisibleTasks();
+      safeRender('compact_filter_groups_change');
+    });
+
+    elements.filterGroupList.addEventListener('click', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!(target instanceof HTMLButtonElement)) {
+        return;
+      }
+      const index = Number(target.dataset.filterGroupRemoveIndex);
+      if (!Number.isInteger(index) || index < 0) {
+        return;
+      }
+      if (!Array.isArray(state.activeFilters.groupFilters) || state.activeFilters.groupFilters.length <= 1) {
+        return;
+      }
+      state.activeFilters.groupFilters.splice(index, 1);
+      if (!state.activeFilters.groupFilters.length) {
+        state.activeFilters.groupFilters = [{ type: '', value: '' }];
+      }
+      syncCompactFilterGroupOptions();
+      updateVisibleTasks();
+      safeRender('compact_filter_groups_remove');
+    });
+  }
+  if (elements.filterGroupAddButton) {
+    elements.filterGroupAddButton.addEventListener('click', () => {
+      const max = getCompactFilterTypeOptions().length;
+      if (!Array.isArray(state.activeFilters.groupFilters)) {
+        state.activeFilters.groupFilters = [{ type: '', value: '' }];
+      }
+      if (state.activeFilters.groupFilters.length >= max) {
+        return;
+      }
+      state.activeFilters.groupFilters.push({ type: '', value: '' });
+      syncCompactFilterGroupOptions();
+      updateVisibleTasks();
+      safeRender('compact_filter_groups_add');
+    });
+  }
+  if (elements.filterResetButton) {
+    elements.filterResetButton.addEventListener('click', (event) => {
+      const resetMode = event && event.shiftKey ? 'all' : 'statuses';
+      resetCompactFilters(resetMode);
+      updateVisibleTasks();
+      safeRender('compact_filter_reset');
+    });
+  }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
+  }
+  if (elements.viewerBrief) {
+    elements.viewerBrief.addEventListener('click', handleViewerBriefClick);
+  }
+  if (elements.viewerDeleteResponse) {
+    elements.viewerDeleteResponse.addEventListener('click', handleViewerDeleteResponseClick);
+  }
+  if (elements.userAvatar) {
+    elements.userAvatar.addEventListener('click', openSettingsSheet);
+    elements.userAvatar.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openSettingsSheet();
+      }
+    });
+  }
+  if (Array.isArray(elements.settingsCloseTargets) && elements.settingsCloseTargets.length) {
+    elements.settingsCloseTargets.forEach((target) => {
+      target.addEventListener('click', closeSettingsSheet);
+    });
+  }
+  if (Array.isArray(elements.themeOptionButtons) && elements.themeOptionButtons.length) {
+    elements.themeOptionButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const nextMode = normalizeThemeMode(button.dataset.themeOption);
+        setThemeMode(nextMode);
+        closeSettingsSheet();
+      });
+    });
+  }
+  if (Array.isArray(elements.listModeOptionButtons) && elements.listModeOptionButtons.length) {
+    elements.listModeOptionButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const nextMode = normalizeTaskListMode(button.dataset.listModeOption);
+        setTaskListMode(nextMode);
+        closeSettingsSheet();
+      });
+    });
   }
 
   document.addEventListener('visibilitychange', () => {
@@ -14500,6 +17838,11 @@ function attachEvents() {
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
       loadTasks(false);
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeSettingsSheet();
     }
   });
 }
@@ -14518,6 +17861,21 @@ function formatDateTime(value) {
     return '—';
   }
   return date.toLocaleString('ru-RU', { hour12: false });
+}
+
+function formatDateTimeCompact(value) {
+  const date = parseDate(value);
+  if (!date) {
+    return '—';
+  }
+  return date.toLocaleString('ru-RU', {
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function formatDateInputValue(value) {
@@ -14553,6 +17911,25 @@ function normalizeDateInputValue(value) {
   }
 
   return formatDateInputValue(trimmed);
+}
+
+function compareDateKeys(a, b) {
+  const dateA = parseDate(a);
+  const dateB = parseDate(b);
+  if (!dateA || !dateB) {
+    return 0;
+  }
+  dateA.setHours(0, 0, 0, 0);
+  dateB.setHours(0, 0, 0, 0);
+  return dateA.getTime() - dateB.getTime();
+}
+
+function getMondayOffset(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return 0;
+  }
+  const day = date.getDay();
+  return day === 0 ? 6 : day - 1;
 }
 
 function parseDate(value) {
@@ -14594,8 +17971,6 @@ function computeStatsFromTasks(tasks, options = {}) {
   let completed = 0;
   let overdue = 0;
   let active = 0;
-  const useDirectorDeadlines = options.useDirectorDeadlines === true;
-
   tasks.forEach((item) => {
     const task = isPlainObject(item) ? item : {};
     const statusKey = getTaskStatusKeyForUser(task);
@@ -14609,8 +17984,7 @@ function computeStatsFromTasks(tasks, options = {}) {
     if (statusKey === 'cancelled') {
       return;
     }
-    const overdueForDirector = useDirectorDeadlines && isDirectorAssignmentOverdue(task);
-    if (overdueForDirector || (!useDirectorDeadlines && isOverdue(task))) {
+    if (isTaskOverdueByCompactRule(task)) {
       overdue += 1;
       return;
     }
@@ -14680,6 +18054,10 @@ function bootstrap() {
   attachConsoleCapture();
   attachGlobalErrorHandlers();
   initElements();
+  loadFoldersFromStorage();
+  loadTaskFoldersFromStorage();
+  saveFoldersToStorage();
+  initThemeMode();
   pdfViewerInstance = createPdfViewer(document);
   if (pdfViewerInstance && typeof pdfViewerInstance.preload === 'function') {
     pdfViewerInstance.preload();
@@ -14846,6 +18224,52 @@ function collectTaskAssignments(task, role) {
   return result;
 }
 
+function buildMutationSnapshotEntries(task, role) {
+  const normalizedRole = role === 'subordinate' ? 'subordinate' : 'responsible';
+  const entries = collectTaskAssignments(task, normalizedRole);
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return [];
+  }
+
+  return entries
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const id = normalizeValue(
+        entry.id
+          || entry.subordinateId
+          || entry.subordinate
+          || entry.telegram
+          || entry.chatId
+          || entry.email
+          || entry.number
+          || entry.login
+      );
+      if (!id) {
+        return null;
+      }
+
+      const snapshot = { id };
+      const comment = normalizeAssignmentComment(entry.assignmentComment || entry.comment);
+      if (comment) {
+        snapshot.assignmentComment = comment;
+      }
+      const dueDate = normalizeAssignmentDueDate(entry.assignmentDueDate || entry.dueDate);
+      if (dueDate) {
+        snapshot.assignmentDueDate = dueDate;
+      }
+      if (normalizedRole === 'responsible') {
+        const instruction = normalizeAssignmentInstruction(entry.assignmentInstruction || entry.instruction);
+        if (instruction) {
+          snapshot.assignmentInstruction = instruction;
+        }
+      }
+      return snapshot;
+    })
+    .filter((entry) => entry);
+}
+
 
 
 function sendResponseViewerLog(stage, payload = {}) {
@@ -15002,6 +18426,9 @@ function resolveResponseViewerFilesForEntry(task, entry, fallbackValue = '') {
       name: displayName,
       kind,
       isResponse: true,
+      storedName: normalizeValue(file.storedName),
+      uploadedByKey: normalizeValue(file.uploadedByKey),
+      uploadedBy: findResponsibleNameInAccessByFile(file) || normalizeValue(file.uploadedBy),
     });
   });
 
@@ -15027,20 +18454,8 @@ function isResponseOwnedByCurrentUser(file) {
   if (!file || typeof file !== 'object') {
     return false;
   }
-  const userKeys = new Set();
-  const { ids, names } = getUserIdentifierCandidates();
-  ids.forEach((value) => {
-    const key = buildAssignmentDirectoryKey(value);
-    if (key) {
-      userKeys.add(key);
-    }
-  });
-  names.forEach((value) => {
-    const key = buildAssignmentDirectoryKey(value);
-    if (key) {
-      userKeys.add(key);
-    }
-  });
+
+  const userKeys = collectCurrentUserOwnershipKeys();
   if (!userKeys.size) {
     return false;
   }
@@ -15051,6 +18466,82 @@ function isResponseOwnedByCurrentUser(file) {
     }
   }
   return false;
+}
+
+function collectCurrentUserOwnershipKeys() {
+  const userKeys = new Set();
+  const pushKey = (value) => {
+    const raw = normalizeValue(value).toLowerCase();
+    if (raw) {
+      userKeys.add(raw);
+    }
+    const key = buildAssignmentDirectoryKey(value);
+    if (key) {
+      userKeys.add(key);
+    }
+    if (raw.startsWith('id:')) {
+      const idValue = buildAssignmentDirectoryKey(raw.slice(3));
+      if (idValue) {
+        userKeys.add(idValue);
+      }
+    }
+    if (raw.startsWith('name:')) {
+      const nameValue = buildAssignmentDirectoryKey(raw.slice(5));
+      if (nameValue) {
+        userKeys.add(nameValue);
+      }
+    }
+  };
+
+  const responsibleName = normalizeValue(getCurrentUserResponsibleFromAccess());
+  if (responsibleName) {
+    pushKey(responsibleName);
+    pushKey(`name:${responsibleName.toLowerCase()}`);
+  }
+
+  const accessPools = [];
+  if (state.access && typeof state.access === 'object') {
+    const groups = [
+      state.access.responsibles,
+      state.access.subordinates,
+      state.access.directors,
+    ];
+    groups.forEach((group) => {
+      if (!group || typeof group !== 'object') {
+        return;
+      }
+      Object.values(group).forEach((entries) => {
+        if (Array.isArray(entries)) {
+          accessPools.push(...entries);
+        }
+      });
+    });
+  }
+
+  const normalizedResponsible = normalizeName(responsibleName);
+  accessPools.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    const entryName = normalizeName(entry.responsible || entry.name || entry.fullName || entry.displayName);
+    if (!normalizedResponsible || !entryName || entryName !== normalizedResponsible) {
+      return;
+    }
+    [
+      entry.id,
+      entry.telegram,
+      entry.chatId,
+      entry.email,
+      entry.number,
+      entry.login,
+      entry.responsible,
+      entry.name,
+      entry.fullName,
+      entry.displayName,
+    ].forEach(pushKey);
+  });
+
+  return userKeys;
 }
 
 function buildResponseViewButtonLabel(count) {
@@ -15070,7 +18561,7 @@ function renderResponseFilesCounter(counterElement, count, isFresh = false, butt
   }
 }
 
-async function fetchLatestTaskSnapshot(task) {
+async function fetchLatestTaskSnapshotFallbackFromList(task) {
   if (!task || typeof task !== 'object' || typeof fetch !== 'function') {
     return null;
   }
@@ -15125,13 +18616,167 @@ async function fetchLatestTaskSnapshot(task) {
   return null;
 }
 
+async function fetchLatestTaskSnapshot(task, options = {}) {
+  if (!task || typeof task !== 'object' || typeof fetch !== 'function') {
+    return { snapshot: null, status: 'invalid' };
+  }
+
+  const timeoutMsRaw = Number(options && options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : TASK_SNAPSHOT_FETCH_TIMEOUT_MS;
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.telegram.initData) {
+    headers['X-Telegram-Init-Data'] = state.telegram.initData;
+  }
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  try {
+    const response = await fetch(TASK_SNAPSHOT_API_URL, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      cache: 'no-store',
+      signal: controller ? controller.signal : undefined,
+      body: JSON.stringify({
+        ...buildRequestBody(),
+        taskId: normalizeValue(task.id),
+        organization: getTaskOrganization(task),
+      }),
+    });
+
+    if (response.ok) {
+      const payload = await response.json();
+      if (payload && payload.success === true) {
+        const data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
+        return {
+          snapshot: {
+            files: Array.isArray(data.files) ? data.files : [],
+            responses: Array.isArray(data.responses) ? data.responses : [],
+            updatedAt: normalizeValue(data.updatedAt) || normalizeValue(task.updatedAt) || '',
+          },
+          status: 'ok',
+        };
+      }
+    }
+
+    let canUseLegacyFallback = response.status === 404 || response.status === 405;
+    if (!canUseLegacyFallback && response.status === 400) {
+      try {
+        const payload = await response.clone().json();
+        const message = normalizeValue(payload && (payload.message || payload.error || payload.reason || ''));
+        const normalizedMessage = message.toLowerCase();
+        if (normalizedMessage.includes('неизвест') && normalizedMessage.includes('действ')) {
+          canUseLegacyFallback = true;
+        }
+        if (normalizedMessage.includes('unknown') && normalizedMessage.includes('action')) {
+          canUseLegacyFallback = true;
+        }
+      } catch (_) {
+        canUseLegacyFallback = false;
+      }
+    }
+
+    if (canUseLegacyFallback) {
+      const legacy = await fetchLatestTaskSnapshotFallbackFromList(task);
+      return { snapshot: legacy, status: legacy ? 'legacy' : 'legacy_failed' };
+    }
+
+    return { snapshot: null, status: 'unavailable' };
+  } catch (error) {
+    const isTimeout = Boolean(error && (error.name === 'AbortError' || error.code === 'abort'));
+    return { snapshot: null, status: isTimeout ? 'timeout' : 'error' };
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
+
+async function resolveTaskForAiDialog(task, options = {}) {
+  if (!task || typeof task !== 'object') {
+    return task;
+  }
+
+  const localFiles = Array.isArray(task.files) ? task.files : [];
+  if (localFiles.length) {
+    return {
+      ...task,
+      files: localFiles,
+      responses: Array.isArray(task.responses) ? task.responses : [],
+      __aiSnapshotStatus: 'local_fast',
+    };
+  }
+
+  const startedAt = Date.now();
+  const timeoutMsRaw = Number(options && options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+    ? timeoutMsRaw
+    : AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS;
+  const hardDeadlineAt = startedAt + timeoutMs;
+  const isIosClient = Boolean(runtimeEnvironment && runtimeEnvironment.isIos);
+  const maxAttempts = isIosClient ? 3 : 1;
+  let latestTask = null;
+  let snapshotStatus = 'local';
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (Date.now() >= hardDeadlineAt) {
+      snapshotStatus = 'timeout';
+      break;
+    }
+    const remainingMs = Math.max(200, hardDeadlineAt - Date.now());
+    const snapshotResult = await fetchLatestTaskSnapshot(task, { timeoutMs: remainingMs });
+    latestTask = snapshotResult && snapshotResult.snapshot ? snapshotResult.snapshot : null;
+    snapshotStatus = snapshotResult && snapshotResult.status ? snapshotResult.status : 'error';
+    const files = Array.isArray(latestTask && latestTask.files) ? latestTask.files : [];
+    if (latestTask && files.length > 0) {
+      break;
+    }
+    if (attempt < maxAttempts - 1) {
+      // На iOS файлы иногда появляются с задержкой после смены статуса/фильтра.
+      // Делаем backoff в рамках общего лимита, чтобы не открывать диалог на устаревших данных.
+      const plannedWaitMs = 320 * (attempt + 1);
+      const remainingMs = hardDeadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        break;
+      }
+      const waitMs = Math.max(0, Math.min(plannedWaitMs, remainingMs));
+      if (!waitMs) {
+        break;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+
+  if (!latestTask || typeof latestTask !== 'object') {
+    return {
+      ...task,
+      files: Array.isArray(task.files) ? task.files : [],
+      responses: Array.isArray(task.responses) ? task.responses : [],
+      __aiSnapshotStatus: snapshotStatus,
+    };
+  }
+
+  return {
+    ...task,
+    ...latestTask,
+    files: Array.isArray(latestTask.files) ? latestTask.files : (Array.isArray(task.files) ? task.files : []),
+    responses: Array.isArray(latestTask.responses) ? latestTask.responses : (Array.isArray(task.responses) ? task.responses : []),
+    __aiSnapshotStatus: snapshotStatus,
+  };
+}
+
 async function refreshResponseCounterForEntry(counterElement, task, entry, fallbackValue = '', buttonElement = null) {
   if (!task) {
     return;
   }
 
-  const freshTask = await fetchLatestTaskSnapshot(task);
-  if (freshTask && typeof freshTask === 'object') {
+  const snapshotResult = await fetchLatestTaskSnapshot(task);
+  const freshTask = snapshotResult && snapshotResult.snapshot && typeof snapshotResult.snapshot === 'object'
+    ? snapshotResult.snapshot
+    : null;
+  if (freshTask) {
     task.responses = Array.isArray(freshTask.responses) ? freshTask.responses : [];
   }
 
@@ -15316,7 +18961,6 @@ function buildAssignmentFallbackLabel(entry, role) {
     || normalizeValue(entry.name)
     || normalizeValue(entry.department)
     || normalizeValue(entry.email)
-    || normalizeValue(entry.telegram)
     || normalizeValue(entry.number)
     || defaultLabel;
 
@@ -15326,9 +18970,6 @@ function buildAssignmentFallbackLabel(entry, role) {
   }
   if (normalizeValue(entry.email)) {
     meta.push(normalizeValue(entry.email));
-  }
-  if (normalizeValue(entry.telegram)) {
-    meta.push(`TG ${normalizeValue(entry.telegram)}`);
   }
   if (normalizeValue(entry.login)) {
     meta.push(`Логин ${normalizeValue(entry.login)}`);
@@ -15560,7 +19201,7 @@ function taskUserCanUploadResponse(task, entry) {
   return entryMatchesUser(entry, ids, names);
 }
 
-async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '') {
+async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRaw = '', ownerEntry = null) {
   if (!task || typeof task !== 'object') {
     sendResponseViewerLog('response_upload_failed', {
       reason: 'task_missing',
@@ -15676,7 +19317,8 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
 
   await loadTasks(true);
   if (typeof setStatus === 'function') {
-    setStatus('success', data.message || 'Ответ загружен.');
+    const baseMessage = data.message || 'Ответ загружен.';
+    setStatus('success', baseMessage);
   }
 
   sendResponseViewerLog('response_upload_success', {
@@ -15690,6 +19332,7 @@ async function uploadTaskResponseFiles(task, files, setStatus, responseMessageRa
     })),
     hasResponseMessage: Boolean(responseMessage),
     responseMessageLength: responseMessage.length,
+    uploadedBy: '',
   });
 
   return data;
@@ -15776,10 +19419,19 @@ function createResponseUploadControls(task, entry, setStatus) {
 
   const textInput = document.createElement('textarea');
   textInput.className = 'appdosc-card__assign-response-text';
-  textInput.placeholder = 'Текстовый ответ к задаче (сохранится как .txt)';
+  textInput.placeholder = 'Ввести текст ответа';
   textInput.maxLength = 12000;
   textInput.rows = 3;
   let editingTextResponse = null;
+
+  const applyAutoHeight = (textarea) => {
+    if (!textarea) {
+      return;
+    }
+    textarea.style.overflow = 'hidden';
+    textarea.style.height = '0px';
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 48)}px`;
+  };
 
   const responseFiles = Array.isArray(task && task.responses) ? task.responses : [];
   const editableTxtCandidates = responseFiles.filter((file) => isTextResponseFile(file) && isResponseOwnedByCurrentUser(file));
@@ -15828,17 +19480,46 @@ function createResponseUploadControls(task, entry, setStatus) {
     input.click();
   });
 
-  aiButton.addEventListener('click', () => {
-    openAiDialogSafely({
-      task,
-      entry,
-      onStatus: setStatus,
-    });
+  aiButton.addEventListener('click', async () => {
+    if (aiButton.disabled) {
+      return;
+    }
+    aiButton.disabled = true;
+    try {
+      if (typeof setStatus === 'function' && runtimeEnvironment.isIos) {
+        setStatus('info', 'Подготавливаем файлы для ИИ...');
+      }
+      const taskForDialog = await resolveTaskForAiDialog(task, {
+        timeoutMs: AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS,
+      });
+      const files = Array.isArray(taskForDialog && taskForDialog.files) ? taskForDialog.files : [];
+      if (!files.length) {
+        if (typeof setStatus === 'function') {
+          setStatus('warning', 'Файлы ещё обновляются, попробуйте через 1–2 секунды.');
+        }
+        logClientEvent('ai_dialog_blocked_no_fresh_files', {
+          taskId: normalizeValue(task && task.id),
+          taskEntryNumber: normalizeValue(task && task.entryNumber),
+          filesCount: 0,
+          timeoutMs: AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS,
+          isIos: runtimeEnvironment && runtimeEnvironment.isIos ? '1' : '0',
+        });
+        return;
+      }
+      openAiDialogSafely({
+        task: taskForDialog,
+        entry,
+        onStatus: setStatus,
+      });
+    } finally {
+      aiButton.disabled = false;
+    }
   });
 
   textInput.addEventListener('input', () => {
     const length = String(textInput.value || '').length;
     textCounter.textContent = `${length} / 12000`;
+    applyAutoHeight(textInput);
   });
   textInput.dispatchEvent(new Event('input'));
 
@@ -15856,10 +19537,11 @@ function createResponseUploadControls(task, entry, setStatus) {
     meta.textContent = `Файлов выбрано: ${files.length}`;
 
     try {
-      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '');
+      await uploadTaskResponseFiles(task, files, setStatus, textInput.value || '', entry);
       meta.textContent = files.length > 1 ? 'Ответы загружены' : 'Ответ загружен';
       textInput.value = '';
       textCounter.textContent = '0 / 12000';
+      applyAutoHeight(textInput);
     } catch (error) {
       sendResponseViewerLog('response_upload_failed', {
         reason: 'client_exception',
@@ -15907,12 +19589,13 @@ function createResponseUploadControls(task, entry, setStatus) {
         await updateTaskResponseText(task, normalizeValue(editingTextResponse.storedName), messageValue, setStatus);
         meta.textContent = 'Текстовый ответ обновлён';
       } else {
-        await uploadTaskResponseFiles(task, [], setStatus, messageValue);
+        await uploadTaskResponseFiles(task, [], setStatus, messageValue, entry);
         meta.textContent = 'Текстовый ответ сохранён';
       }
       textInput.value = '';
       editingTextResponse = null;
       textCounter.textContent = '0 / 12000';
+      applyAutoHeight(textInput);
     } catch (error) {
       meta.textContent = 'Сохранение не удалось';
       if (typeof setStatus === 'function') {
@@ -15963,17 +19646,47 @@ function setupAssignmentControls(card, task) {
     return;
   }
 
-  const searchInput = container.querySelector('[data-card-assignee-search]');
+  const comboButton = container.querySelector('[data-card-assignee-combo]');
+  const comboButtonText = container.querySelector('[data-card-assignee-button-text]');
+  const comboSheet = container.querySelector('[data-card-assignee-sheet]');
+  const comboBackdrop = container.querySelector('[data-assignee-backdrop]');
+  const comboClose = container.querySelector('[data-assignee-close]');
+  const comboInput = container.querySelector('[data-card-assignee-search]');
+  const optionsList = container.querySelector('[data-card-assignee-options]');
   const searchMeta = container.querySelector('[data-card-assignee-search-meta]');
-  const select = container.querySelector('[data-card-assignee-select]');
   const entriesContainer = container.querySelector('[data-card-assignee-entries]');
   const bulkButton = container.querySelector('[data-card-assign-submit]');
   const bulkCount = container.querySelector('[data-card-assign-count]');
-  if (!searchInput || !searchMeta || !select || !entriesContainer || !bulkButton || !bulkCount) {
+  if (
+    !comboButton
+    || !comboButtonText
+    || !comboSheet
+    || !comboBackdrop
+    || !comboClose
+    || !comboInput
+    || !optionsList
+    || !searchMeta
+    || !entriesContainer
+    || !bulkButton
+    || !bulkCount
+  ) {
     container.remove();
     return;
   }
-
+  const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
+  const comboPalette = isLightTheme
+    ? {
+      optionBg: 'rgba(84, 126, 212, 0.07)',
+      optionBorder: 'rgba(94, 136, 219, 0.22)',
+      optionColor: '#1d2d4c',
+      optionHover: 'rgba(84, 126, 212, 0.16)',
+    }
+    : {
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    };
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
   const currentIdentifiers = getTaskResponsibleIdentifiers(task).filter((id) => !directorIdentifiers.has(id));
@@ -16063,27 +19776,72 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!query) {
-      searchMeta.textContent = `Показаны все: ${visibleCount}`;
+      searchMeta.textContent = `Все ответственные: ${visibleCount}`;
       return;
     }
 
     searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
-  const populateSelectOptions = () => {
-    select.innerHTML = '';
+  let visibleAssigneeOptions = [];
+  const createPickerOptionAvatar = (entry, label) => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar appdosc-assignee-picker__option-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
 
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Выберите ответственного';
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = label ? `Аватар: ${label}` : 'Аватар пользователя';
+    image.hidden = true;
 
-    const query = normalizeValue(searchInput.value).toLowerCase();
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+  const setComboExpanded = (expanded) => {
+    comboButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    comboButton.dataset.expanded = expanded ? 'true' : 'false';
+  };
+  const isComboExpanded = () => comboButton.dataset.expanded === 'true';
+  const hideOptionsList = () => {
+    optionsList.innerHTML = '';
+    setComboExpanded(false);
+  };
+  const showOptionsList = () => {
+    populateComboOptions();
+    const hasOptions = visibleAssigneeOptions.length > 0;
+    optionsList.hidden = !hasOptions;
+    setComboExpanded(hasOptions);
+    return hasOptions;
+  };
+
+  const populateComboOptions = () => {
+    optionsList.innerHTML = '';
+    visibleAssigneeOptions = [];
+
+    const query = normalizeValue(comboInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
     let visibleCount = 0;
+
     assignmentCandidates.forEach((entry) => {
       const value = resolveResponsibleOptionValue(entry);
       const label = buildResponsibleOptionLabel(entry);
@@ -16101,13 +19859,61 @@ function setupAssignmentControls(card, task) {
       }
 
       visibleCount += 1;
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      select.appendChild(option);
+      const canSelect = Boolean(resolveEntryTelegramId(entry));
+      visibleAssigneeOptions.push({ value, label, entry, selectable: canSelect });
+
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'appdosc-card__assign-option appdosc-assignee-picker__option';
+      option.dataset.assigneeValue = value;
+      option.style.background = comboPalette.optionBg;
+      option.style.border = `1px solid ${comboPalette.optionBorder}`;
+      option.style.color = comboPalette.optionColor;
+      option.disabled = !canSelect;
+
+      const avatar = createPickerOptionAvatar(entry, label);
+
+      const main = document.createElement('span');
+      main.className = 'appdosc-assignee-picker__option-main';
+
+      const nameNode = document.createElement('span');
+      nameNode.className = 'appdosc-assignee-picker__option-name';
+      nameNode.textContent = normalizeValue(entry && entry.responsible) || label;
+
+      const roleNode = document.createElement('span');
+      roleNode.className = 'appdosc-assignee-picker__option-role';
+      const roleTitle = buildAssigneeOptionSubtitle(entry);
+      const roleIcon = document.createElement('i');
+      roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
+      roleIcon.setAttribute('aria-hidden', 'true');
+      roleNode.append(roleIcon);
+      roleNode.append(document.createTextNode(roleTitle));
+
+      main.append(nameNode, roleNode);
+      option.append(avatar, main);
+      if (!canSelect) {
+        const lockBadge = document.createElement('span');
+        lockBadge.className = 'appdosc-assignee-picker__option-badge';
+        lockBadge.textContent = 'Нет Telegram ID';
+        option.append(lockBadge);
+      }
+
+      if (canSelect) {
+        option.addEventListener('click', () => {
+          handleAssigneeSelection(value);
+        });
+      }
+      option.addEventListener('mouseenter', () => {
+        option.style.background = comboPalette.optionHover;
+      });
+      option.addEventListener('mouseleave', () => {
+        option.style.background = comboPalette.optionBg;
+      });
+      optionsList.appendChild(option);
     });
 
-    select.disabled = visibleCount === 0;
+    optionsList.hidden = visibleCount === 0;
+    setComboExpanded(visibleCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -16206,6 +20012,39 @@ function setupAssignmentControls(card, task) {
     selectElement.value = normalized || '';
   };
 
+  const createAssigneeAvatar = (entry, fallbackLabel = '') => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = fallbackLabel ? `Аватар: ${fallbackLabel}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
   const createResponsibleRow = ({ value, label, normalized, assigned, comment, dueDate, instruction, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
@@ -16230,10 +20069,17 @@ function setupAssignmentControls(card, task) {
     roleLabel.textContent = 'Ответственный';
     info.appendChild(roleLabel);
 
+    const nameLine = document.createElement('div');
+    nameLine.className = 'appdosc-card__assign-line';
+
+    const avatar = createAssigneeAvatar(referenceEntry, label);
+    nameLine.appendChild(avatar);
+
     const name = document.createElement('div');
     name.className = 'appdosc-card__assign-name';
     name.textContent = label || buildAssignmentFallbackLabel(null, 'responsible');
-    info.appendChild(name);
+    nameLine.appendChild(name);
+    info.appendChild(nameLine);
 
     const note = document.createElement('div');
     note.className = 'appdosc-card__assign-note';
@@ -16245,9 +20091,19 @@ function setupAssignmentControls(card, task) {
     commentInput.placeholder = 'Комментарий для ответственного';
     commentInput.rows = 2;
     commentInput.maxLength = 500;
+    commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    commentInput.style.fontSize = '14px';
+    commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
     }
+    const resizeCommentInput = () => {
+      commentInput.style.overflow = 'hidden';
+      commentInput.style.height = '0px';
+      commentInput.style.height = `${Math.max(commentInput.scrollHeight, 48)}px`;
+    };
+    commentInput.addEventListener('input', resizeCommentInput);
+    requestAnimationFrame(() => requestAnimationFrame(resizeCommentInput));
     info.appendChild(commentInput);
 
     const instructionBlock = document.createElement('div');
@@ -16276,6 +20132,13 @@ function setupAssignmentControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
+    deadlineInput.style.width = '100%';
+    deadlineInput.style.minWidth = '0';
+    deadlineInput.style.minHeight = '50px';
+    deadlineInput.style.boxSizing = 'border-box';
+    deadlineInput.style.padding = '12px 14px';
+    deadlineInput.style.borderRadius = '16px';
+    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -16295,8 +20158,6 @@ function setupAssignmentControls(card, task) {
       false,
       responseViewButton
     );
-    refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton).catch(() => {});
-
     responseViewButton.addEventListener('click', async () => {
       if (responseViewButton.dataset.loading === 'true') {
         return;
@@ -16325,12 +20186,21 @@ function setupAssignmentControls(card, task) {
     removeButton.type = 'button';
     removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
     removeButton.dataset.assignmentAction = 'remove';
-    removeButton.textContent = 'Убрать';
+    removeButton.textContent = 'Отозвать';
     removeButton.disabled = false;
+    removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
+    removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
+    removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
+    removeButton.style.color = 'var(--appdosc-assign-remove-text)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
+    actions.style.width = '100%';
+    actions.style.display = 'flex';
+    actions.style.justifyContent = 'stretch';
+    actions.style.marginTop = '10px';
+    removeButton.style.width = '100%';
     actions.appendChild(removeButton);
-    row.appendChild(actions);
+    info.appendChild(actions);
 
     entriesContainer.appendChild(row);
 
@@ -16419,6 +20289,7 @@ function setupAssignmentControls(card, task) {
           organization,
           documentId: task.id,
           removeAssigneeId: targetValue,
+          subordinates: buildMutationSnapshotEntries(task, 'subordinate'),
         });
 
         logClientEvent('task_assign_remove_success', {
@@ -16556,6 +20427,7 @@ function setupAssignmentControls(card, task) {
         organization,
         documentId: task.id,
         assignees: payloadAssignments,
+        subordinates: buildMutationSnapshotEntries(task, 'subordinate'),
       });
 
       logClientEvent('task_assign_success', {
@@ -16608,7 +20480,8 @@ function setupAssignmentControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
-  populateSelectOptions();
+  populateComboOptions();
+  hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {
     if (renderedAssignedKeys.has(identifier)) {
@@ -16652,18 +20525,23 @@ function setupAssignmentControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('input', () => {
-    populateSelectOptions();
-  });
+  const handleAssigneeSelection = (preferredValue = '') => {
+    const inputValue = normalizeValue(preferredValue || comboInput.value);
+    const selectedOption = visibleAssigneeOptions.find((option) => (
+      option.selectable !== false
+      && (
+      normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
+      || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
+      )
+    )) || visibleAssigneeOptions.find((option) => option.selectable !== false) || null;
 
-  select.addEventListener('change', () => {
-    const selectedValue = normalizeValue(select.value);
+    const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
       return;
     }
 
     const normalizedValue = normalizeIdentifier(selectedValue);
-    logAssignmentEvent('select_change', {
+    logAssignmentEvent('combo_select', {
       taskId: task.id || null,
       organization,
       selectedValue,
@@ -16686,7 +20564,7 @@ function setupAssignmentControls(card, task) {
     const alreadyAssigned = knownKeys.some((candidate) => existingKeys.has(candidate) || assignedKeyRegistry.has(candidate));
 
     if (existingRow || alreadyAssigned) {
-      logAssignmentEvent('select_duplicate', {
+      logAssignmentEvent('combo_duplicate', {
         taskId: task.id || null,
         organization,
         selectedValue,
@@ -16698,19 +20576,21 @@ function setupAssignmentControls(card, task) {
         existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
       setStatus('info', 'Ответственный уже назначен.');
-      select.selectedIndex = 0;
+      comboInput.value = '';
+      populateComboOptions();
       return;
     }
 
-    let label = '';
-    let referenceEntry = null;
-    if (normalizedValue && directory.has(normalizedValue)) {
+    let label = selectedOption ? selectedOption.label : '';
+    let referenceEntry = selectedOption ? selectedOption.entry : null;
+    if (!referenceEntry && normalizedValue && directory.has(normalizedValue)) {
       const directorySnapshot = directory.get(normalizedValue);
-      label = directorySnapshot.label;
+      label = label || directorySnapshot.label;
       referenceEntry = directorySnapshot.entry || null;
-    } else {
+    }
+    if (!referenceEntry) {
       referenceEntry = findAssignmentEntryByIdentifier(assignmentCandidates, normalizedValue || selectedValue.toLowerCase());
-      if (referenceEntry && typeof referenceEntry === 'object') {
+      if (!label && referenceEntry && typeof referenceEntry === 'object') {
         label = buildResponsibleOptionLabel(referenceEntry);
       }
     }
@@ -16719,7 +20599,7 @@ function setupAssignmentControls(card, task) {
     }
 
     if (!resolveEntryTelegramId(referenceEntry)) {
-      logAssignmentEvent('select_missing_telegram', {
+      logAssignmentEvent('combo_missing_telegram', {
         taskId: task.id || null,
         organization,
         selectedValue,
@@ -16729,7 +20609,8 @@ function setupAssignmentControls(card, task) {
           : [],
       });
       setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      select.selectedIndex = 0;
+      comboInput.value = '';
+      populateComboOptions();
       return;
     }
 
@@ -16747,7 +20628,7 @@ function setupAssignmentControls(card, task) {
       instruction,
       referenceEntry,
     });
-    logAssignmentEvent('select_row_created', {
+    logAssignmentEvent('combo_row_created', {
       taskId: task.id || null,
       organization,
       selectedValue,
@@ -16757,7 +20638,53 @@ function setupAssignmentControls(card, task) {
       dueDate: due || null,
       instruction: instruction || null,
     });
-    select.selectedIndex = 0;
+    comboInput.value = '';
+    populateComboOptions();
+    comboButtonText.textContent = label;
+    comboButton.classList.add('is-selected');
+    closeSheet();
+  };
+
+  const openSheet = () => {
+    if (comboSheet.parentElement !== document.body) {
+      document.body.appendChild(comboSheet);
+    }
+    comboSheet.hidden = false;
+    comboInput.value = '';
+    populateComboOptions();
+    setComboExpanded(true);
+  };
+
+  const closeSheet = () => {
+    comboInput.blur();
+    comboSheet.hidden = true;
+    hideOptionsList();
+  };
+
+  comboButton.addEventListener('click', openSheet);
+  comboBackdrop.addEventListener('click', closeSheet);
+  comboClose.addEventListener('click', closeSheet);
+
+  comboInput.addEventListener('input', () => {
+    populateComboOptions();
+  });
+
+  comboInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !comboSheet.hidden) {
+      closeSheet();
+      return;
+    }
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    handleAssigneeSelection(comboInput.value);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !comboSheet.hidden) {
+      closeSheet();
+    }
   });
 
   container.hidden = false;
@@ -16780,8 +20707,7 @@ function setupSubordinateControls(card, task) {
   }
 
   const subordinates = getSubordinatesForOrganization(organization);
-  const responsibles = getResponsiblesForOrganization(organization);
-  const assignmentCandidates = buildAssignmentCandidateList(responsibles, subordinates);
+  const assignmentCandidates = buildAssignmentCandidateList([], subordinates);
   const canManageSubordinates = userIsDirectorForOrganization(organization)
     || userIsResponsibleForTask(task)
     || assignmentCandidates.length > 0;
@@ -16797,21 +20723,50 @@ function setupSubordinateControls(card, task) {
     return;
   }
 
+  const pickerButton = container.querySelector('[data-card-subordinate-button]');
+  const pickerButtonText = container.querySelector('[data-card-subordinate-button-text]');
+  const pickerSheet = container.querySelector('[data-card-subordinate-sheet]');
+  const pickerBackdrop = container.querySelector('[data-assignee-backdrop]');
+  const pickerClose = container.querySelector('[data-assignee-close]');
   const searchInput = container.querySelector('[data-card-subordinate-search]');
+  const optionsList = container.querySelector('[data-card-subordinate-options]');
   const searchMeta = container.querySelector('[data-card-subordinate-search-meta]');
-  const select = container.querySelector('[data-card-subordinate-select]');
   const entriesContainer = container.querySelector('[data-card-subordinate-entries]');
   const bulkButton = container.querySelector('[data-card-subordinate-submit]');
   const bulkCount = container.querySelector('[data-card-subordinate-count]');
-  if (!searchInput || !searchMeta || !select || !entriesContainer || !bulkButton || !bulkCount) {
+  if (
+    !pickerButton
+    || !pickerButtonText
+    || !pickerSheet
+    || !pickerBackdrop
+    || !pickerClose
+    || !searchInput
+    || !optionsList
+    || !searchMeta
+    || !entriesContainer
+    || !bulkButton
+    || !bulkCount
+  ) {
     container.remove();
     return;
   }
-
+  const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
+  const comboPalette = isLightTheme
+    ? {
+      optionBg: 'rgba(84, 126, 212, 0.07)',
+      optionBorder: 'rgba(94, 136, 219, 0.22)',
+      optionColor: '#1d2d4c',
+      optionHover: 'rgba(84, 126, 212, 0.16)',
+    }
+    : {
+      optionBg: 'rgba(255, 255, 255, 0.04)',
+      optionBorder: 'rgba(141, 181, 255, 0.18)',
+      optionColor: '#eff5ff',
+      optionHover: 'rgba(123, 173, 255, 0.24)',
+    };
   if (!assignmentCandidates.length) {
-    select.disabled = true;
-    select.title = 'Нет доступных подчинённых для назначения';
     searchInput.disabled = true;
+    pickerButton.disabled = true;
     searchMeta.textContent = 'Подчинённые для назначения отсутствуют.';
   }
 
@@ -16909,16 +20864,59 @@ function setupSubordinateControls(card, task) {
     searchMeta.textContent = `Найдено: ${visibleCount} из ${totalCount}`;
   };
 
-  const populateSelectOptions = () => {
-    select.innerHTML = '';
+  let visibleSubordinateOptions = [];
+  const createPickerOptionAvatar = (entry, label) => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar appdosc-assignee-picker__option-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
 
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Выберите подчинённого';
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = label ? `Аватар: ${label}` : 'Аватар пользователя';
+    image.hidden = true;
 
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+  const setComboExpanded = (expanded) => {
+    pickerButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    pickerButton.dataset.expanded = expanded ? 'true' : 'false';
+  };
+  const isComboExpanded = () => pickerButton.dataset.expanded === 'true';
+  const hideOptionsList = () => {
+    optionsList.innerHTML = '';
+    setComboExpanded(false);
+  };
+  const showOptionsList = () => {
+    populateComboOptions();
+    const hasOptions = visibleSubordinateOptions.length > 0;
+    optionsList.hidden = !hasOptions;
+    setComboExpanded(hasOptions);
+    return hasOptions;
+  };
+
+  const populateComboOptions = () => {
+    optionsList.innerHTML = '';
+    visibleSubordinateOptions = [];
     const query = normalizeValue(searchInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
@@ -16940,13 +20938,60 @@ function setupSubordinateControls(card, task) {
       }
 
       visibleCount += 1;
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      select.appendChild(option);
+      const canSelect = Boolean(resolveEntryTelegramId(entry));
+      visibleSubordinateOptions.push({ value, label, entry, selectable: canSelect });
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'appdosc-card__assign-option appdosc-assignee-picker__option';
+      option.dataset.subordinateValue = value;
+      option.style.background = comboPalette.optionBg;
+      option.style.border = `1px solid ${comboPalette.optionBorder}`;
+      option.style.color = comboPalette.optionColor;
+      option.disabled = !canSelect;
+
+      const avatar = createPickerOptionAvatar(entry, label);
+
+      const main = document.createElement('span');
+      main.className = 'appdosc-assignee-picker__option-main';
+
+      const nameNode = document.createElement('span');
+      nameNode.className = 'appdosc-assignee-picker__option-name';
+      nameNode.textContent = normalizeValue(entry && entry.responsible) || label;
+
+      const roleNode = document.createElement('span');
+      roleNode.className = 'appdosc-assignee-picker__option-role';
+      const roleTitle = buildAssigneeOptionSubtitle(entry);
+      const roleIcon = document.createElement('i');
+      roleIcon.className = 'fab fa-telegram-plane appdosc-assignee-picker__option-role-icon';
+      roleIcon.setAttribute('aria-hidden', 'true');
+      roleNode.append(roleIcon);
+      roleNode.append(document.createTextNode(roleTitle));
+
+      main.append(nameNode, roleNode);
+      option.append(avatar, main);
+      if (!canSelect) {
+        const lockBadge = document.createElement('span');
+        lockBadge.className = 'appdosc-assignee-picker__option-badge';
+        lockBadge.textContent = 'Нет Telegram ID';
+        option.append(lockBadge);
+      }
+
+      if (canSelect) {
+        option.addEventListener('click', () => {
+          handleSubordinateSelection(value);
+        });
+      }
+      option.addEventListener('mouseenter', () => {
+        option.style.background = comboPalette.optionHover;
+      });
+      option.addEventListener('mouseleave', () => {
+        option.style.background = comboPalette.optionBg;
+      });
+      optionsList.appendChild(option);
     });
 
-    select.disabled = visibleCount === 0;
+    optionsList.hidden = visibleCount === 0;
+    setComboExpanded(visibleCount > 0);
     updateSearchMeta(query, visibleCount, totalCount);
   };
 
@@ -16984,6 +21029,39 @@ function setupSubordinateControls(card, task) {
     return '';
   };
 
+  const createAssigneeAvatar = (entry, fallbackLabel = '') => {
+    const avatar = document.createElement('div');
+    avatar.className = 'appdosc-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.className = 'appdosc-avatar__img';
+    image.alt = fallbackLabel ? `Аватар: ${fallbackLabel}` : 'Аватар пользователя';
+    image.hidden = true;
+
+    const placeholder = document.createElement('span');
+    placeholder.className = 'appdosc-avatar__placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+
+    const avatarUrl = resolveAvatarUrlFromEntry(entry)
+      || (resolveTelegramUserIdFromEntry(entry)
+        ? `${TELEGRAM_AVATAR_ENDPOINT}&user_id=${encodeURIComponent(resolveTelegramUserIdFromEntry(entry))}`
+        : '');
+    if (avatarUrl) {
+      image.src = avatarUrl;
+      image.hidden = false;
+      placeholder.hidden = true;
+      image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        placeholder.hidden = false;
+      };
+    }
+
+    avatar.append(image, placeholder);
+    return avatar;
+  };
+
   const createSubordinateRow = ({ value, label, normalized, assigned, comment, dueDate, referenceEntry = null }) => {
     const key = buildAssignmentRowKey(value, normalized);
     if (!key || findAssignmentRow(entriesContainer, key)) {
@@ -17008,19 +21086,36 @@ function setupSubordinateControls(card, task) {
     roleLabel.textContent = 'Подчинённый';
     info.appendChild(roleLabel);
 
+    const nameLine = document.createElement('div');
+    nameLine.className = 'appdosc-card__assign-line';
+
+    const avatar = createAssigneeAvatar(referenceEntry, label);
+    nameLine.appendChild(avatar);
+
     const name = document.createElement('div');
     name.className = 'appdosc-card__assign-name';
     name.textContent = label || buildAssignmentFallbackLabel(null, 'subordinate');
-    info.appendChild(name);
+    nameLine.appendChild(name);
+    info.appendChild(nameLine);
 
     const commentInput = document.createElement('textarea');
     commentInput.className = 'appdosc-card__assign-comment-input';
     commentInput.placeholder = 'Комментарий для подчинённого';
     commentInput.rows = 2;
     commentInput.maxLength = 500;
+    commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    commentInput.style.fontSize = '14px';
+    commentInput.style.lineHeight = '1.35';
     if (comment) {
       commentInput.value = comment;
     }
+    const resizeCommentInput = () => {
+      commentInput.style.overflow = 'hidden';
+      commentInput.style.height = '0px';
+      commentInput.style.height = `${Math.max(commentInput.scrollHeight, 48)}px`;
+    };
+    commentInput.addEventListener('input', resizeCommentInput);
+    requestAnimationFrame(() => requestAnimationFrame(resizeCommentInput));
     info.appendChild(commentInput);
 
     const deadline = document.createElement('div');
@@ -17034,6 +21129,13 @@ function setupSubordinateControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
+    deadlineInput.style.width = '100%';
+    deadlineInput.style.minWidth = '0';
+    deadlineInput.style.minHeight = '50px';
+    deadlineInput.style.boxSizing = 'border-box';
+    deadlineInput.style.padding = '12px 14px';
+    deadlineInput.style.borderRadius = '16px';
+    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -17053,8 +21155,6 @@ function setupSubordinateControls(card, task) {
       false,
       responseViewButton
     );
-    refreshResponseCounterForEntry(null, task, entryData, value, responseViewButton).catch(() => {});
-
     responseViewButton.addEventListener('click', async () => {
       if (responseViewButton.dataset.loading === 'true') {
         return;
@@ -17083,12 +21183,21 @@ function setupSubordinateControls(card, task) {
     removeButton.type = 'button';
     removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
     removeButton.dataset.assignmentAction = 'remove';
-    removeButton.textContent = 'Убрать';
+    removeButton.textContent = 'Отозвать';
     removeButton.disabled = false;
+    removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
+    removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
+    removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
+    removeButton.style.color = 'var(--appdosc-assign-remove-text)';
     const actions = document.createElement('div');
     actions.className = 'appdosc-card__assign-actions';
+    actions.style.width = '100%';
+    actions.style.display = 'flex';
+    actions.style.justifyContent = 'stretch';
+    actions.style.marginTop = '10px';
+    removeButton.style.width = '100%';
     actions.appendChild(removeButton);
-    row.appendChild(actions);
+    info.appendChild(actions);
 
     entriesContainer.appendChild(row);
 
@@ -17156,6 +21265,7 @@ function setupSubordinateControls(card, task) {
           organization,
           documentId: task.id,
           removeSubordinateId: targetValue,
+          assignees: buildMutationSnapshotEntries(task, 'responsible'),
         });
 
         logClientEvent('task_subordinate_remove_success', {
@@ -17263,6 +21373,7 @@ function setupSubordinateControls(card, task) {
         organization,
         documentId: task.id,
         subordinates: payloadAssignments,
+        assignees: buildMutationSnapshotEntries(task, 'responsible'),
       });
 
       logClientEvent('task_subordinate_assign_success', {
@@ -17309,7 +21420,8 @@ function setupSubordinateControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
-  populateSelectOptions();
+  populateComboOptions();
+  hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {
     const directoryEntry = directory.get(identifier);
@@ -17381,12 +21493,16 @@ function setupSubordinateControls(card, task) {
     }
   });
 
-  searchInput.addEventListener('input', () => {
-    populateSelectOptions();
-  });
-
-  select.addEventListener('change', () => {
-    const selectedValue = normalizeValue(select.value);
+  const handleSubordinateSelection = (preferredValue = '') => {
+    const inputValue = normalizeValue(preferredValue || searchInput.value);
+    const selectedOption = visibleSubordinateOptions.find((option) => (
+      option.selectable !== false
+      && (
+      normalizeValue(option.label).toLowerCase() === inputValue.toLowerCase()
+      || normalizeValue(option.value).toLowerCase() === inputValue.toLowerCase()
+      )
+    )) || visibleSubordinateOptions.find((option) => option.selectable !== false) || null;
+    const selectedValue = selectedOption ? selectedOption.value : '';
     if (!selectedValue) {
       return;
     }
@@ -17395,15 +21511,21 @@ function setupSubordinateControls(card, task) {
     const existingRow = findAssignmentRow(entriesContainer, buildAssignmentRowKey(selectedValue, normalizedValue));
     if (existingRow) {
       existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      select.selectedIndex = 0;
+      searchInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
 
-    let label = '';
-    if (normalizedValue && directory.has(normalizedValue)) {
+    let label = selectedOption ? selectedOption.label : '';
+    if (!label && normalizedValue && directory.has(normalizedValue)) {
       label = directory.get(normalizedValue).label;
-    } else {
-      const matchedEntry = findAssignmentEntryByIdentifier(assignmentCandidates, normalizedValue || selectedValue.toLowerCase());
+    }
+    if (!label) {
+      const matchedEntry = findAssignmentEntryByIdentifier(
+        assignmentCandidates,
+        normalizedValue || selectedValue.toLowerCase(),
+      );
       if (matchedEntry && typeof matchedEntry === 'object') {
         label = buildSubordinateOptionLabel(matchedEntry);
       }
@@ -17413,7 +21535,9 @@ function setupSubordinateControls(card, task) {
     }
 
     let referenceEntry = null;
-    if (normalizedValue && directory.has(normalizedValue)) {
+    if (selectedOption && selectedOption.entry) {
+      referenceEntry = selectedOption.entry;
+    } else if (normalizedValue && directory.has(normalizedValue)) {
       referenceEntry = directory.get(normalizedValue).entry || null;
     }
     if (!referenceEntry) {
@@ -17421,7 +21545,9 @@ function setupSubordinateControls(card, task) {
     }
     if (!resolveEntryTelegramId(referenceEntry)) {
       setStatus('error', TELEGRAM_MISSING_MESSAGE);
-      select.selectedIndex = 0;
+      searchInput.value = '';
+      populateComboOptions();
+      hideOptionsList();
       return;
     }
     const matchedEntry = findAssignmentEntryByIdentifier(
@@ -17443,8 +21569,52 @@ function setupSubordinateControls(card, task) {
     if (row) {
       registerRenderedEntry(referenceEntry || matchedEntry, selectedValue, normalizedValue);
     }
+    searchInput.value = '';
+    populateComboOptions();
+    pickerButtonText.textContent = label;
+    pickerButton.classList.add('is-selected');
+    closeSheet();
+  };
 
-    select.selectedIndex = 0;
+  const openSheet = () => {
+    if (pickerSheet.parentElement !== document.body) {
+      document.body.appendChild(pickerSheet);
+    }
+    pickerSheet.hidden = false;
+    searchInput.value = '';
+    populateComboOptions();
+    setComboExpanded(true);
+  };
+  const closeSheet = () => {
+    searchInput.blur();
+    pickerSheet.hidden = true;
+    hideOptionsList();
+  };
+
+  pickerButton.addEventListener('click', openSheet);
+  pickerBackdrop.addEventListener('click', closeSheet);
+  pickerClose.addEventListener('click', closeSheet);
+
+  searchInput.addEventListener('input', () => {
+    populateComboOptions();
+  });
+
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !pickerSheet.hidden) {
+      closeSheet();
+      return;
+    }
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    handleSubordinateSelection(searchInput.value);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !pickerSheet.hidden) {
+      closeSheet();
+    }
   });
 
   container.hidden = false;
@@ -17454,4 +21624,4 @@ function setupSubordinateControls(card, task) {
     organization,
     available: assignmentCandidates.length,
   });
-}
+}Error('viewer_open_failed');
