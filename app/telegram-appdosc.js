@@ -17611,12 +17611,20 @@ function clearStatus() {
     window.clearTimeout(toastTimerId);
     toastTimerId = null;
   }
+  const statusContainer = elements.status.closest('.appdosc__status');
+  const host = elements.status.parentElement;
   elements.status.classList.remove('is-visible');
   window.setTimeout(() => {
     if (!elements.status) return;
     elements.status.hidden = true;
     elements.status.textContent = '';
     elements.status.className = 'appdosc__status-message';
+    if (statusContainer) {
+      statusContainer.hidden = true;
+    }
+    if (host) {
+      host.classList.remove('appdosc-toast-layer');
+    }
   }, 220);
 }
 
