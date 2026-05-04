@@ -733,7 +733,7 @@ const DOWNLOAD_LOG_EVENTS = new Set([
   'viewer_download_error',
 ]);
 
-const STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'На доработку', 'Выполнено', 'Отменено'];
+const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -2938,7 +2938,6 @@ function initElements() {
   elements.settingsUserRole = document.querySelector('[data-settings-user-role]');
   elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
   elements.listModeOptionButtons = Array.from(document.querySelectorAll('[data-list-mode-option]'));
-  elements.overdueDigestButtons = Array.from(document.querySelectorAll('[data-overdue-digest]'));
   elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
   elements.userAvatarFallback = document.querySelector('[data-user-avatar-fallback]');
   elements.total = document.querySelector('[data-total]');
@@ -17829,16 +17828,6 @@ function attachEvents() {
       });
     });
   }
-  if (Array.isArray(elements.overdueDigestButtons) && elements.overdueDigestButtons.length) {
-    elements.overdueDigestButtons.forEach((button) => {
-      button.addEventListener('click', async () => {
-        const scope = normalizeValue(button.dataset.overdueDigest) === 'responsible_subordinates'
-          ? 'responsible_subordinates'
-          : 'all';
-        await triggerTelegramOverdueDigest(scope, button);
-      });
-    });
-  }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -17856,63 +17845,6 @@ function attachEvents() {
       closeSettingsSheet();
     }
   });
-}
-
-async function triggerTelegramOverdueDigest(scope = 'all', triggerButton = null) {
-  const organization = normalizeValue(state.organization)
-    || resolveOrganizationForThemePreference()
-    || (Array.isArray(state.tasks) && state.tasks.length ? getTaskOrganization(state.tasks[0]) : '');
-  if (!organization) {
-    return;
-  }
-  const payload = {
-    action: 'send_overdue_notifications',
-    organization,
-    scope: scope === 'responsible_subordinates' ? 'responsible_subordinates' : 'all',
-  };
-  if (state.telegram && state.telegram.initData) {
-    payload.telegramInitData = state.telegram.initData;
-  }
-
-  const headers = { 'Content-Type': 'application/json' };
-  if (state.telegram && state.telegram.initData) {
-    headers['X-Telegram-Init-Data'] = state.telegram.initData;
-  }
-
-  if (triggerButton instanceof HTMLButtonElement) {
-    triggerButton.disabled = true;
-  }
-  try {
-    const response = await fetch('/docs.php?action=send_overdue_notifications', {
-      method: 'POST',
-      credentials: 'include',
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result || result.success !== true) {
-      throw new Error(result && result.error ? result.error : `Ошибка ${response.status}`);
-    }
-    const sent = Number(result.notificationsSent || 0);
-    const tasks = Number(result.overdueTasks || 0);
-    let message = `✅ Рассылка отправлена. Задач: ${tasks}, уведомлений: ${sent}.`;
-    if (scope === 'responsible_subordinates' && Array.isArray(result.recipientSummary) && result.recipientSummary.length) {
-      const top = result.recipientSummary.slice(0, 8).map((item) => {
-        const name = normalizeValue(item && item.name) || 'Исполнитель';
-        const count = Number(item && item.overdueCount ? item.overdueCount : 0);
-        return `${name}: ${count}`;
-      });
-      message += ` Подчинённые: ${top.join(' • ')}.`;
-    }
-    setStatus('success', message);
-    closeSettingsSheet();
-  } catch (error) {
-    setStatus('error', `❌ Рассылка не выполнена: ${error && error.message ? error.message : 'ошибка'}`);
-  } finally {
-    if (triggerButton instanceof HTMLButtonElement) {
-      triggerButton.disabled = false;
-    }
-  }
 }
 
 function formatDate(value) {
