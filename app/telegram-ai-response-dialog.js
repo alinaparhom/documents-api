@@ -33,7 +33,7 @@
   const PROMPTS_CATALOG = globalScope.DOCS_AI_PROMPTS || null;
   const DEFAULT_PROMPT_KEYS = PROMPTS_CATALOG && PROMPTS_CATALOG.DEFAULT_KEYS
     ? PROMPTS_CATALOG.DEFAULT_KEYS
-    : { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'neutral_enhanced' };
+    : { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'positive' };
   const SYSTEM_TONE_PROMPTS = PROMPTS_CATALOG && PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
     ? PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
     : { neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' } };

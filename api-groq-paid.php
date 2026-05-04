@@ -31,20 +31,12 @@ function getServerAiPromptsCatalog(): array
         'version' => 'prompt-catalog-v1',
         'RESPONSE_OUTPUT_DIRECTIVE' => [
             'v1' => implode("\n", [
-                'СИСТЕМНЫЙ РЕЖИМ «ОТВЕТ СОТРУДНИКА ОРГАНИЗАЦИИ».',
-                'Верни только готовый текст ответа для вставки в документ: без приветствия, без подписи, без реквизитов, без фраз типа «С уважением» и без строк вида «[Ваше ФИО]».',
-                'Считай, что ты сотрудник организации, получившей этот файл или набор файлов, и отвечаешь официально в деловом стиле.',
-                'Перед написанием ответа определи тип входящего документа по содержанию: претензия, запрос, поручение или информационное письмо.',
-                'Не считай документ претензией автоматически только из-за формулировки запроса пользователя.',
-                'Обязательно учитывай весь доступный контекст файлов целиком, не придумывай факты и не выходи за рамки данных.',
-                'Ответ должен соответствовать законодательству и общепринятым нормам деловой коммуникации.',
-                'Перед финальным выводом перепроверь формулировки на точность, логичность и отсутствие противоречий.',
-                'Пиши ответ строго от лица организации, которой направили документы.',
-                'Формат ответа должен быть структурным и практичным: абзацы с пустой строкой между смысловыми блоками.',
-                'Не используй Markdown, символы разметки (#, *, -, ```), таблицы и декоративные маркеры.',
-                'Пиши обычными абзацами без автоматической нумерации строк.',
-                'Нумерацию "1.", "2.", "3." используй только если пользователь явно просит перечисление пунктов/этапов.',
-                'Сохраняй полезность: сначала итоговая позиция, затем конкретные действия, затем при необходимости запрос недостающих данных.',
+                'Ты готовишь официальный ответ от лица компании по входящему документу.',
+                'Верни только готовый текст ответа для вставки в документ, без пояснений о своей работе.',
+                'Пиши в деловом, корректном и безопасном тоне: без грубости, обвинений и рискованных формулировок.',
+                'Используй только факты из документов и запроса пользователя. Не придумывай данные.',
+                'Если данных не хватает — прямо укажи, что нужно уточнить.',
+                'Без Markdown и без служебных меток.',
             ]),
         ],
         'VISION_QUALITY_DIRECTIVE' => [
@@ -64,8 +56,7 @@ function getServerAiPromptsCatalog(): array
             ]),
             'response_ai' => implode("\n", [
                 'СЦЕНАРИЙ: «Ответ с помощью ИИ».',
-                'Ты полностью формируешь итоговый ответ с нуля на основе файлов и запроса пользователя.',
-                'Опирайся только на данные из контекста. Не добавляй неподтверждённые факты.',
+                'Сформируй готовый ответ с нуля на основе файлов и запроса пользователя.',
             ]),
             'improve_ai' => implode("\n", [
                 'СЦЕНАРИЙ: «Улучшение ответа ИИ».',
@@ -80,20 +71,19 @@ function getServerAiPromptsCatalog(): array
             'neutral' => ['value' => 'neutral', 'label' => 'Нейтральный', 'prompt' => "СТИЛЬ ОТВЕТА: Нейтральный деловой.\nПиши ровно, без эмоций и оценок."],
             'aggressive' => ['value' => 'aggressive', 'label' => 'Агрессивный', 'prompt' => "СТИЛЬ ОТВЕТА: Жёсткий деловой.\nПиши прямолинейно, коротко и требовательно, без грубости и нарушений деловой этики."],
             'calm' => ['value' => 'calm', 'label' => 'Спокойный', 'prompt' => "СТИЛЬ ОТВЕТА: Спокойный деловой.\nПиши мягко и понятно, но строго по делу."],
-            'neutral_enhanced' => ['value' => 'neutral_enhanced', 'label' => 'Нейтральный (усиленный)', 'prompt' => "СТИЛЬ ОТВЕТА: Нейтральный деловой (усиленный).\nМаксимальная точность формулировок, структурный и строгий тон."],
-            'aggressive_enhanced' => ['value' => 'aggressive_enhanced', 'label' => 'Агрессивный (усиленный)', 'prompt' => "СТИЛЬ ОТВЕТА: Жёсткий деловой (усиленный).\nМаксимально короткие и твёрдые формулировки, без эмоциональных вставок."],
-            'calm_enhanced' => ['value' => 'calm_enhanced', 'label' => 'Спокойный (усиленный)', 'prompt' => "СТИЛЬ ОТВЕТА: Спокойный деловой (усиленный).\nПиши вежливо и понятно, сохраняя официальную точность."],
+            'positive' => ['value' => 'positive', 'label' => 'Положительный', 'prompt' => "СТИЛЬ ОТВЕТА: Положительный деловой.\nПодтверждай возможность выполнения, формулируй конструктивно и доброжелательно."],
+            'negative' => ['value' => 'negative', 'label' => 'Отрицательный', 'prompt' => "СТИЛЬ ОТВЕТА: Отрицательный деловой.\nВежливо отказывай или указывай на невозможность выполнения, с кратким обоснованием."],
         ],
         'DEFAULT_RESPONSE_FORMAT_LIMITS' => [
-            'response' => ['temperature' => 0.2, 'max_tokens' => 1800],
-            'response_extended' => ['temperature' => 0.2, 'max_tokens' => 2000],
-            'summary' => ['temperature' => 0.2, 'max_tokens' => 1800],
-            'vision_extract' => ['temperature' => 0.0, 'max_tokens' => 2000],
+            'response' => ['temperature' => 0.3],
+            'response_extended' => ['temperature' => 0.3],
+            'summary' => ['temperature' => 0.3],
+            'vision_extract' => ['temperature' => 0.0],
         ],
         'DEFAULT_KEYS' => [
             'response_mode' => 'v1',
             'vision_quality_mode' => 'v1',
-            'tone' => 'neutral_enhanced',
+            'tone' => 'positive',
             'assistant_mode' => 'response_ai',
         ],
     ];
@@ -1020,7 +1010,6 @@ function handleAnalyzePaidAction(array $env): void
                 ['role' => 'system', 'content' => 'Ты OCR-движок. Возвращай только текст без анализа.'],
                 ['role' => 'user', 'content' => $visionContent],
             ],
-            'max_tokens' => (int)($visionPayload['max_tokens'] ?? ((int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['vision_extract']['max_tokens'] ?? 2000))),
             'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['vision_extract']['temperature'] ?? 0.0),
         ];
         $visionExtractResult = callGroqChat($visionExtractPayload, $apiKey);
@@ -1045,7 +1034,6 @@ function handleAnalyzePaidAction(array $env): void
                 ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => trim($effectiveUserPrompt . "\n\n" . (string)(getServerAiPromptsCatalog()['VISION_QUALITY_DIRECTIVE'][resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $visionQualityMode, 'v1')] ?? '') . "\n\nТекст документов:\n" . $combinedDocText)],
             ],
-            'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response_extended']['max_tokens'] ?? 2000),
             'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response_extended']['temperature'] ?? 0.2),
         ];
         $analysisResult = callGroqChat($analysisPayload, $apiKey);
@@ -1228,7 +1216,6 @@ function handleAnalyzePaidAction(array $env): void
     $requestPayload = [
         'model' => $model,
         'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response']['temperature'] ?? 0.2),
-        'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response']['max_tokens'] ?? 1800),
         'messages' => [
             ['role' => 'system', 'content' => $systemMessagePaid],
             ['role' => 'user', 'content' => $textPayload],
@@ -1314,7 +1301,6 @@ function handleGenerateSummaryAction(array $env): void
     $requestPayload = [
         'model' => $model,
         'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['temperature'] ?? 0.3),
-        'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['max_tokens'] ?? 800),
         'top_p' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['summary']['top_p'] ?? 0.85),
         'messages' => [
             ['role' => 'system', 'content' => $summarySystemMessage],
@@ -1438,7 +1424,6 @@ function handleGenerateResponseAction(array $env): void
     $requestPayload = [
         'model' => $model,
         'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response_extended']['temperature'] ?? 0.2),
-        'max_tokens' => (int)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['response_extended']['max_tokens'] ?? 2000),
         'messages' => [
             ['role' => 'system', 'content' => $systemMessage],
             ['role' => 'user', 'content' => trim($effectiveUserPrompt . "\n\n" . (string)(getServerAiPromptsCatalog()['VISION_QUALITY_DIRECTIVE'][resolveServerPromptKey('VISION_QUALITY_DIRECTIVE', $visionQualityMode, 'v1')] ?? '') . "\n\nТекст документов:\n\n" . $fullText)],
