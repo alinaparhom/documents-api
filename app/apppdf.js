@@ -1875,7 +1875,6 @@ export function createPdfViewer(root = document) {
           ? 'image'
           : (options && options.kind === 'video' ? 'video' : 'frame'));
     const skipPdfLoad = Boolean(options && options.skipPdfLoad);
-    const { isIos } = detectMobilePlatform();
     const isPdf = wantsPdf && !forceFrame;
 
     lastActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1948,9 +1947,9 @@ export function createPdfViewer(root = document) {
       return true;
     };
 
-    if (isPdf && isIos && elements.frame) {
-      activateFrameFallback(resolvedUrl, 'ios_native_pdf');
-      logPdfEvent('режим:ios_fallback_frame', { url: resolvedUrl, reason: 'ios_native_pdf' });
+    if (isPdf && elements.frame) {
+      activateFrameFallback(resolvedUrl, 'fast_native_pdf');
+      logPdfEvent('режим:fast_fallback_frame', { url: resolvedUrl, reason: 'fast_native_pdf' });
     } else if (kind === 'image' && elements.image) {
       elements.image.setAttribute('src', resolvedUrl);
       elements.image.setAttribute('alt', title ? `Просмотр: ${title}` : 'Просмотр документа');
