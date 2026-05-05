@@ -816,6 +816,10 @@
             profile.prepareTimeoutMs,
             'Превышено время обработки файла.',
           );
+          const isPdfSource = /\.pdf$/i.test(fileLabel) || String(sourceFile.type || '').toLowerCase() === 'application/pdf';
+          if (isPdfSource && (!prepared || prepared.kind !== 'multimodal')) {
+            throw new Error('PDF должен обрабатываться через OCR Vision (первые 5 страниц).');
+          }
           preparedResults[index] = { prepared, sourceFile, fileLabel };
         } catch (error) {
           const failMessage = normalize(error && error.message) || 'Не удалось подготовить файл.';
