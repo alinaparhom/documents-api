@@ -653,6 +653,33 @@
 
 
 
+
+
+      /* Telegram Web modal wrapper overrides: stretch Mini App to full width */
+      .resizeHandle {
+        display: none !important;
+        pointer-events: none !important;
+      }
+
+      .mini-app-modal-dialog,
+      .modal-dialog.mini-app-modal-dialog {
+        left: 0 !important;
+        right: 0 !important;
+        top: 0 !important;
+        width: 100vw !important;
+        max-width: 100vw !important;
+        min-width: 100vw !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+      }
+
+      .modal-container,
+      .modal-content.custom-scroll {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+      }
       .appdosc {
         width: 100% !important;
         max-width: 100% !important;
