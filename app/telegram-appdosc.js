@@ -2003,6 +2003,7 @@ let folders = [
 let activeFolderId = 'all';
 let selectedTaskIds = new Set();
 let folderManageMode = false;
+let viewerDownloadInFlight = false;
 let taskFolderMap = {};
 let foldersStateJson = '{"folders":[],"taskFolders":{}}';
 
@@ -10486,7 +10487,15 @@ function startViewerBriefLoadingAnimation() {
   };
 }
 
-async function handleViewerDownloadClick() {
+async function handleViewerDownloadClick(event) {
+  if (event && typeof event.preventDefault === 'function') {
+    event.preventDefault();
+  }
+  if (viewerDownloadInFlight) {
+    return;
+  }
+  viewerDownloadInFlight = true;
+  try {
   const file = getViewerFileToDownload();
   if (!file) {
     logDownloadConsole('missing_file');
@@ -10758,6 +10767,9 @@ async function handleViewerDownloadClick() {
       reason: error && error.message ? error.message : 'download_failed',
     }));
     setStatus('error', 'Не удалось подготовить файл для скачивания.');
+  }
+  } finally {
+    viewerDownloadInFlight = false;
   }
 }
 
@@ -17809,7 +17821,14 @@ function attachEvents() {
     });
   }
   if (elements.viewerDownload) {
-    elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);
+    const touchSafeDownload = (event) => {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      void handleViewerDownloadClick(event);
+    };
+    elements.viewerDownload.addEventListener('click', touchSafeDownload);
+    elements.viewerDownload.addEventListener('touchend', touchSafeDownload, { passive: false });
   }
   if (elements.viewerBrief) {
     elements.viewerBrief.addEventListener('click', handleViewerBriefClick);
