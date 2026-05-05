@@ -25,18 +25,11 @@ let aiDialogPrewarmStarted = false;
 function prewarmAiDialogScript() {
   if (aiDialogPrewarmStarted) return;
   aiDialogPrewarmStarted = true;
-  const schedule = (cb) => {
-    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-      window.requestIdleCallback(cb, { timeout: 1600 });
-      return;
-    }
-    window.setTimeout(cb, 450);
-  };
-  schedule(() => {
-    ensureAiDialogScriptLoaded().catch(() => {
-      aiDialogPrewarmStarted = false;
+  window.setTimeout(() => {
+    import('./telegram-ai-response-dialog.js' + _vSuffix).catch(() => {
+      // Тихий прогрев: без fallback и без лишней нагрузки на сеть.
     });
-  });
+  }, 350);
 }
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
