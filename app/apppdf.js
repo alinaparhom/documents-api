@@ -1234,6 +1234,31 @@ export function createPdfViewer(root = document) {
     return { isMobile, isIos };
   }
 
+  function getPdfCanvasLimits({ isMobile, isIos }) {
+    const DESKTOP_TOTAL = 48 * 1024 * 1024;
+    const MOBILE_TOTAL = 20 * 1024 * 1024;
+    const IOS_TOTAL = 12 * 1024 * 1024;
+    const IOS_HEAVY_TOTAL = 9 * 1024 * 1024;
+    const IOS_HEAVY_PAGES_THRESHOLD = 24;
+    const IOS_HEAVY_DPR_THRESHOLD = 2;
+    const SINGLE_CANVAS_DEFAULT = 16 * 1024 * 1024;
+    const SINGLE_CANVAS_IOS = 4 * 1024 * 1024;
+    const MIN_PIXEL_RATIO = 0.35;
+
+    const baseTotalBudget = isIos
+      ? IOS_TOTAL
+      : (isMobile ? MOBILE_TOTAL : DESKTOP_TOTAL);
+
+    return {
+      baseTotalBudget,
+      heavyIosBudget: IOS_HEAVY_TOTAL,
+      heavyPagesThreshold: IOS_HEAVY_PAGES_THRESHOLD,
+      heavyDprThreshold: IOS_HEAVY_DPR_THRESHOLD,
+      maxSingleCanvasPixels: isIos ? SINGLE_CANVAS_IOS : SINGLE_CANVAS_DEFAULT,
+      minPixelRatio: MIN_PIXEL_RATIO,
+    };
+  }
+
   async function renderPdfPagesInternal(forcePixelRatio) {
     if (!elements.pdfCanvas || !pdfRenderState.doc) {
       pdfRenderState.renderedPages = 0;
@@ -1261,19 +1286,13 @@ export function createPdfViewer(root = document) {
 
     const { isMobile, isIos } = detectMobilePlatform();
 
-    // На мобильных устройствах браузеры (особенно iOS Safari) имеют жёсткий лимит на общую
-    // память canvas. Снижаем бюджет для надёжного отображения ВСЕХ страниц.
-    const MAX_TOTAL_CANVAS_PIXELS_DESKTOP = 48 * 1024 * 1024;
-    const MAX_TOTAL_CANVAS_PIXELS_IOS = 12 * 1024 * 1024;
-    const MAX_TOTAL_CANVAS_PIXELS_MOBILE = 20 * 1024 * 1024;
-    const MAX_TOTAL_CANVAS_PIXELS = isIos
-      ? MAX_TOTAL_CANVAS_PIXELS_IOS
-      : (isMobile ? MAX_TOTAL_CANVAS_PIXELS_MOBILE : MAX_TOTAL_CANVAS_PIXELS_DESKTOP);
-
-    // Максимальная площадь одного canvas (~16M пикселей — безопасный порог для всех браузеров).
-    const MAX_SINGLE_CANVAS_PIXELS = isIos ? 4 * 1024 * 1024 : 16 * 1024 * 1024;
-    // Минимальный pixelRatio — ниже этого значения не снижаем (страницы будут размытыми, но видимыми).
-    const MIN_PIXEL_RATIO = 0.35;
+    const limits = getPdfCanvasLimits({ isMobile, isIos });
+    let MAX_TOTAL_CANVAS_PIXELS = limits.baseTotalBudget;
+    const MAX_SINGLE_CANVAS_PIXELS = limits.maxSingleCanvasPixels;
+    const MIN_PIXEL_RATIO = limits.minPixelRatio;
+    if (isIos && doc.numPages >= limits.heavyPagesThreshold && basePixelRatio >= limits.heavyDprThreshold) {
+      MAX_TOTAL_CANVAS_PIXELS = Math.min(MAX_TOTAL_CANVAS_PIXELS, limits.heavyIosBudget);
+    }
     let usedCanvasPixels = 0;
 
     // Предварительная оценка: если страниц много, снижаем pixelRatio заранее,

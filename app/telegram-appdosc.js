@@ -10589,47 +10589,12 @@ async function handleViewerDownloadClick() {
   }
 
   if (runtimeEnvironment.isIos && !isWebPlatform) {
-    logDownloadConsole('ios_share_attempt', { fileName, downloadUrl });
-    try {
-      let iosBlob = null;
-      if (isSummary) {
-        const preview = await ensureTaskSummaryPreview(task, file);
-        iosBlob = preview.blob;
-        fileName = preview.fileName || fileName;
-      } else {
-        const preview = await ensureTaskAttachmentPreview(task, file);
-        iosBlob = preview.blob;
-        fileName = preview.fileName || fileName;
-      }
-      if (!iosBlob && downloadUrl) {
-        iosBlob = await fetchFileAsBlob(downloadUrl);
-      }
-      if (iosBlob) {
-        const shared = await shareFileViaNativeShare(iosBlob, fileName);
-        if (shared) {
-          logDownloadConsole('ios_share_success', { fileName, method: 'native_share' });
-          sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-            method: 'ios_native_share',
-            fileName,
-          }));
-          setStatus('info', 'Файл отправлен.');
-          return;
-        }
-        logDownloadConsole('ios_share_not_supported', { fileName });
-        downloadBlob(iosBlob, fileName);
-        logDownloadConsole('ios_blob_download_fallback', { fileName });
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'ios_blob_fallback',
-          fileName,
-        }));
-        setStatus('info', 'Файл подготовлен. Проверьте загрузки.');
-        return;
-      }
-    } catch (error) {
-      logDownloadConsole('ios_share_error', {
-        message: error && error.message ? error.message : 'ios_share_failed',
-        fileName,
-      });
+    const iosResult = await tryHandleIosDownload({ task, file, fileName, isSummary, downloadUrl });
+    if (iosResult && iosResult.handled) {
+      return;
+    }
+    if (iosResult && iosResult.fileName) {
+      fileName = iosResult.fileName;
     }
   }
 
@@ -10758,6 +10723,48 @@ async function handleViewerDownloadClick() {
       reason: error && error.message ? error.message : 'download_failed',
     }));
     setStatus('error', 'Не удалось подготовить файл для скачивания.');
+  }
+}
+
+async function tryHandleIosDownload({ task, file, fileName, isSummary, downloadUrl }) {
+  logDownloadConsole('ios_share_attempt', { fileName, downloadUrl });
+  try {
+    const preview = isSummary
+      ? await ensureTaskSummaryPreview(task, file)
+      : await ensureTaskAttachmentPreview(task, file);
+    let iosBlob = preview && preview.blob ? preview.blob : null;
+    const resolvedFileName = (preview && preview.fileName) || fileName;
+    if (!iosBlob && downloadUrl) {
+      iosBlob = await fetchFileAsBlob(downloadUrl);
+    }
+    if (!iosBlob) {
+      return { handled: false, fileName: resolvedFileName };
+    }
+    const shared = await shareFileViaNativeShare(iosBlob, resolvedFileName);
+    if (shared) {
+      logDownloadConsole('ios_share_success', { fileName: resolvedFileName, method: 'native_share' });
+      sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+        method: 'ios_native_share',
+        fileName: resolvedFileName,
+      }));
+      setStatus('info', 'Файл отправлен.');
+      return { handled: true, fileName: resolvedFileName };
+    }
+    logDownloadConsole('ios_share_not_supported', { fileName: resolvedFileName });
+    downloadBlob(iosBlob, resolvedFileName);
+    logDownloadConsole('ios_blob_download_fallback', { fileName: resolvedFileName });
+    sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+      method: 'ios_blob_fallback',
+      fileName: resolvedFileName,
+    }));
+    setStatus('info', 'Файл подготовлен. Проверьте загрузки.');
+    return { handled: true, fileName: resolvedFileName };
+  } catch (error) {
+    logDownloadConsole('ios_share_error', {
+      message: error && error.message ? error.message : 'ios_share_failed',
+      fileName,
+    });
+    return { handled: false, fileName };
   }
 }
 
