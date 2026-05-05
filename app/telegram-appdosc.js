@@ -20351,6 +20351,10 @@ function setupAssignmentControls(card, task) {
   };
 
   const handleBulkAssign = async () => {
+    if (bulkButton.dataset.loading === 'true') {
+      return;
+    }
+
     if (!task.id) {
       setStatus('error', 'Не удалось определить задачу.');
       return;
@@ -20423,6 +20427,7 @@ function setupAssignmentControls(card, task) {
       return;
     }
 
+    setActionButtonLoading(bulkButton, true);
     setStatus('info', 'Назначаем выбранных...');
     const startedAt = Date.now();
 
@@ -20483,6 +20488,7 @@ function setupAssignmentControls(card, task) {
       setStatus('error', message);
       setBulkAssignFeedback(bulkButton, 'Назначение неуспешно', updateBulkState, 'error');
     } finally {
+      setActionButtonLoading(bulkButton, false);
       busyRows.forEach((row) => {
         const controls = rowControls.get(row) || {};
         setAssignmentRowBusy(
@@ -21327,6 +21333,10 @@ function setupSubordinateControls(card, task) {
   };
 
   const handleBulkAssign = async () => {
+    if (bulkButton.dataset.loading === 'true') {
+      return;
+    }
+
     if (!task.id) {
       setStatus('error', 'Не удалось определить задачу.');
       return;
@@ -21375,6 +21385,7 @@ function setupSubordinateControls(card, task) {
       return;
     }
 
+    setActionButtonLoading(bulkButton, true);
     setStatus('info', 'Назначаем выбранных подчинённых...');
     const startedAt = Date.now();
 
@@ -21431,6 +21442,7 @@ function setupSubordinateControls(card, task) {
       setStatus('error', message);
       setBulkAssignFeedback(bulkButton, 'Назначение неуспешно', updateBulkState, 'error');
     } finally {
+      setActionButtonLoading(bulkButton, false);
       busyRows.forEach((row) => {
         const controls = rowControls.get(row) || {};
         setAssignmentRowBusy(row, false, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput);
