@@ -8233,8 +8233,7 @@ function shareFileViaTelegramLink(url, fileName) {
   if (!normalizedUrl) {
     return false;
   }
-  const shareText = fileName ? `Файл: ${fileName}` : 'Файл';
-  const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(normalizedUrl)}&text=${encodeURIComponent(shareText)}`;
+  const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(normalizedUrl)}`;
   try {
     const webApp = window && window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
     if (webApp && typeof webApp.openTelegramLink === 'function') {
