@@ -8227,6 +8227,30 @@ async function shareFileViaNativeShare(blob, fileName) {
   }
 }
 
+function shareFileToTelegramChats(url, fileName) {
+  const shareUrl = normalizeValue(url);
+  if (!shareUrl) {
+    return false;
+  }
+  const hasWindow = typeof window !== 'undefined';
+  if (!hasWindow) {
+    return false;
+  }
+  const telegramWebApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  const shareText = fileName ? `Документ: ${fileName}` : 'Документ';
+  const shareLink = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`;
+  try {
+    if (telegramWebApp && typeof telegramWebApp.openTelegramLink === 'function') {
+      telegramWebApp.openTelegramLink(shareLink);
+    } else {
+      window.open(shareLink, '_blank', 'noopener');
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function ensureTaskSummaryPreview(task, file) {
   if (!task) {
     throw new Error('Задача не найдена.');
@@ -10487,13 +10511,18 @@ function startViewerBriefLoadingAnimation() {
 }
 
 async function handleViewerDownloadClick() {
+  if (elements.viewerDownload && elements.viewerDownload.disabled) {
+    return;
+  }
+  setActionButtonLoading(elements.viewerDownload, true, '⏳');
   const file = getViewerFileToDownload();
-  if (!file) {
+  try {
+    if (!file) {
     logDownloadConsole('missing_file');
     sendDownloadLog('viewer_download_error', { reason: 'file_missing' });
     setStatus('warning', 'Нет файла для скачивания.');
     return;
-  }
+    }
 
   const task = viewerTabsState.task;
   if (!task) {
@@ -10536,6 +10565,7 @@ async function handleViewerDownloadClick() {
   const hasWebApp = typeof window !== 'undefined'
     && window.Telegram
     && window.Telegram.WebApp;
+  const isTelegramMiniApp = Boolean(hasWebApp && !isWebPlatform);
   const canDirectDownload = isWebPlatform || !hasWebApp;
   const isAndroid = isAndroidPlatform();
   logDownloadConsole('click', {
@@ -10549,6 +10579,22 @@ async function handleViewerDownloadClick() {
     platform: isWebPlatform ? 'web' : 'telegram',
   }));
   setStatus('info', 'Готовим файл для сохранения...');
+
+  if (isTelegramMiniApp) {
+    const shareCandidateUrl = buildPreviewUrl(file.previewUrl || file.resolvedUrl || downloadUrl, fileName);
+    if (shareCandidateUrl) {
+      const shared = shareFileToTelegramChats(shareCandidateUrl, fileName);
+      if (shared) {
+        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+          method: 'telegram_chat_share',
+          downloadUrl: shareCandidateUrl,
+          fileName,
+        }));
+        setStatus('success', 'Открыли Telegram-отправку. Выберите “Избранное” или нужный чат.');
+        return;
+      }
+    }
+  }
 
   if (isAndroid) {
     let androidOpenUrl = downloadUrl;
@@ -10758,6 +10804,8 @@ async function handleViewerDownloadClick() {
       reason: error && error.message ? error.message : 'download_failed',
     }));
     setStatus('error', 'Не удалось подготовить файл для скачивания.');
+  } finally {
+    setActionButtonLoading(elements.viewerDownload, false, '💾');
   }
 }
 

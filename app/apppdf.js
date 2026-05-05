@@ -1014,6 +1014,45 @@ export function createPdfViewer(root = document) {
     }
   }
 
+  function updatePdfRenderProgress(current, total) {
+    if (!elements.pdf || !elements.pdfCanvas || !total) {
+      return;
+    }
+    let progress = elements.pdf.querySelector('[data-pdf-render-progress]');
+    if (!progress) {
+      progress = document.createElement('div');
+      progress.setAttribute('data-pdf-render-progress', 'true');
+      progress.style.position = 'sticky';
+      progress.style.top = '8px';
+      progress.style.zIndex = '3';
+      progress.style.margin = '8px auto';
+      progress.style.width = 'fit-content';
+      progress.style.padding = '6px 12px';
+      progress.style.borderRadius = '999px';
+      progress.style.background = 'rgba(255,255,255,0.78)';
+      progress.style.backdropFilter = 'blur(8px)';
+      progress.style.webkitBackdropFilter = 'blur(8px)';
+      progress.style.border = '1px solid rgba(120,140,180,0.25)';
+      progress.style.color = '#1e3a8a';
+      progress.style.fontSize = '12px';
+      progress.style.fontWeight = '600';
+      elements.pdf.insertBefore(progress, elements.pdf.firstChild || null);
+    }
+    const safeCurrent = Math.max(0, Math.min(total, current));
+    progress.textContent = `Загрузка страниц: ${safeCurrent}/${total}`;
+    progress.hidden = safeCurrent >= total;
+  }
+
+  function clearPdfRenderProgress() {
+    if (!elements.pdf) {
+      return;
+    }
+    const progress = elements.pdf.querySelector('[data-pdf-render-progress]');
+    if (progress && progress.parentNode) {
+      progress.parentNode.removeChild(progress);
+    }
+  }
+
   function destroyPdfDocument() {
     if (pdfRenderState.doc && typeof pdfRenderState.doc.destroy === 'function') {
       try {
@@ -1033,6 +1072,7 @@ export function createPdfViewer(root = document) {
     pdfRenderState.loadPromise = null;
     destroyPdfDocument();
     clearPdfCanvas();
+    clearPdfRenderProgress();
     if (elements.frame) {
       elements.frame.removeAttribute('src');
     }
@@ -1320,6 +1360,7 @@ export function createPdfViewer(root = document) {
 
     const scrollState = capturePdfScrollState();
     clearPdfCanvas();
+    updatePdfRenderProgress(0, doc.numPages);
 
     let failedPages = 0;
     for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
@@ -1372,19 +1413,20 @@ export function createPdfViewer(root = document) {
           scaledW = Math.ceil(viewport.width * effectivePixelRatio);
           scaledH = Math.ceil(viewport.height * effectivePixelRatio);
           canvasPixels = scaledW * scaledH;
-          // Жёсткий лимит: если даже при MIN_PIXEL_RATIO бюджет превышен более чем в 1.5 раза,
-          // пропускаем страницу — браузер может убить все canvas из-за нехватки памяти
+          // Не пропускаем страницы: принудительно опускаем до минимального качества,
+          // чтобы пользователь видел весь документ целиком на iOS/Android/Web.
           if (usedCanvasPixels + canvasPixels > MAX_TOTAL_CANVAS_PIXELS * 1.5) {
-            logPdfEvent('рендер:страница_пропущена', {
+            effectivePixelRatio = MIN_PIXEL_RATIO;
+            scaledW = Math.max(1, Math.ceil(viewport.width * effectivePixelRatio));
+            scaledH = Math.max(1, Math.ceil(viewport.height * effectivePixelRatio));
+            canvasPixels = scaledW * scaledH;
+            logPdfEvent('рендер:форс_мин_качество', {
               page: pageNumber,
               totalPages: doc.numPages,
               usedCanvasPixels,
               canvasPixels,
               budget: MAX_TOTAL_CANVAS_PIXELS,
-              reason: 'hard_budget_limit',
             });
-            failedPages += 1;
-            continue;
           }
           logPdfEvent('рендер:масштаб_снижен', {
             page: pageNumber,
@@ -1424,6 +1466,7 @@ export function createPdfViewer(root = document) {
         await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
         usedCanvasPixels += canvas.width * canvas.height;
         renderedPages += 1;
+        updatePdfRenderProgress(renderedPages, doc.numPages);
         pageWrapper = null;
       } catch (error) {
         logPdfEvent('рендер:ошибка', {
@@ -1488,6 +1531,7 @@ export function createPdfViewer(root = document) {
     }
     await waitForNextFrame();
     restorePdfScrollState(scrollState);
+    clearPdfRenderProgress();
     return isComplete;
   }
 
