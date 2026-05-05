@@ -18,7 +18,7 @@
   const MAX_FILES_PER_REQUEST = 5;
   const MAX_FILES_PER_REQUEST_MOBILE = 2;
   const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
-  const MAX_FILE_SIZE_BYTES_MOBILE = 12 * 1024 * 1024;
+  const MAX_FILE_SIZE_BYTES_MOBILE = 35 * 1024 * 1024;
   const VISION_CONCURRENCY_DEFAULT = 3;
   const VISION_CONCURRENCY_MOBILE = 1;
   const AI_PDF_PAGE_LIMIT = 5;
@@ -656,6 +656,25 @@
     throw lastError || new Error('Не удалось инициализировать PDF worker.');
   }
 
+
+  async function extractPdfTextFallback(pdf, maxPages) {
+    const limit = Math.max(1, Number(maxPages) || AI_PDF_PAGE_LIMIT);
+    const total = Number(pdf && pdf.numPages) || 0;
+    const pages = Math.min(total, limit);
+    const chunks = [];
+    for (let i = 1; i <= pages; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const page = await pdf.getPage(i);
+      // eslint-disable-next-line no-await-in-loop
+      const content = await page.getTextContent();
+      const text = Array.isArray(content && content.items)
+        ? content.items.map((item) => normalize(item && item.str)).filter(Boolean).join(' ')
+        : '';
+      if (text) chunks.push(`# Страница ${i}\n${text}`);
+    }
+    return chunks.join('\n\n').trim();
+  }
+
   async function buildVisionPayloadFromFile(file, onProgress) {
     if (!(file instanceof File)) {
       throw new Error('Файл не выбран.');
@@ -689,25 +708,34 @@
       const pages = Array.from({ length: Math.min(totalPages, AI_PDF_PAGE_LIMIT) }, (_, i) => i + 1);
       const pagesLabel = `${pages.length}/${totalPages}`;
       const images = [];
-      for (let index = 0; index < pages.length; index += 1) {
-        const pageNumber = pages[index];
-        onProgress(`Рендер страницы ${pageNumber} (первые ${pagesLabel})...`, Math.round(((index + 1) / pages.length) * 90));
-        // eslint-disable-next-line no-await-in-loop
-        const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.floor(viewport.width));
-        canvas.height = Math.max(1, Math.floor(viewport.height));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('Не удалось инициализировать canvas для PDF.');
-        // eslint-disable-next-line no-await-in-loop
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        // eslint-disable-next-line no-await-in-loop
-        const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', PDF_JPEG_QUALITY));
-        if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
-        // eslint-disable-next-line no-await-in-loop
-        const dataUrl = await readBlobAsDataUrl(blob);
-        images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
+      try {
+        for (let index = 0; index < pages.length; index += 1) {
+          const pageNumber = pages[index];
+          onProgress(`Рендер страницы ${pageNumber} (первые ${pagesLabel})...`, Math.round(((index + 1) / pages.length) * 90));
+          // eslint-disable-next-line no-await-in-loop
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.floor(viewport.width));
+          canvas.height = Math.max(1, Math.floor(viewport.height));
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Не удалось инициализировать canvas для PDF.');
+          // eslint-disable-next-line no-await-in-loop
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          // eslint-disable-next-line no-await-in-loop
+          const blob = await new Promise((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob), 'image/jpeg', PDF_JPEG_QUALITY));
+          if (!blob) throw new Error('Ошибка конвертации PDF страницы в JPEG.');
+          // eslint-disable-next-line no-await-in-loop
+          const dataUrl = await readBlobAsDataUrl(blob);
+          images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
+        }
+      } catch (renderError) {
+        onProgress('PDF тяжёлый: извлекаю текст без рендера...', 92);
+        const extractedText = await extractPdfTextFallback(pdf, AI_PDF_PAGE_LIMIT);
+        if (extractedText) {
+          return { kind: 'text', extractedText, fileName: file.name || 'document.pdf', warning: 'PDF обработан в текстовом режиме.' };
+        }
+        throw renderError;
       }
       return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images, totalPages, selectedPages: pages };
     }
