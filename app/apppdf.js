@@ -1034,6 +1034,7 @@ export function createPdfViewer(root = document) {
     pdfRenderState.loadPromise = null;
     destroyPdfDocument();
     clearPdfCanvas();
+    clearPdfProgressOverlay();
     if (elements.frame) {
       elements.frame.removeAttribute('src');
     }
@@ -1056,6 +1057,54 @@ export function createPdfViewer(root = document) {
     }
   }
 
+
+  function ensurePdfProgressOverlay() {
+    if (!elements.pdfCanvas) {
+      return null;
+    }
+    let overlay = elements.pdfCanvas.querySelector('[data-pdf-progress-overlay]');
+    if (overlay) {
+      return overlay;
+    }
+    overlay = document.createElement('div');
+    overlay.setAttribute('data-pdf-progress-overlay', 'true');
+    overlay.style.position = 'sticky';
+    overlay.style.top = '8px';
+    overlay.style.zIndex = '3';
+    overlay.style.margin = '8px auto 12px';
+    overlay.style.maxWidth = '320px';
+    overlay.style.padding = '10px 12px';
+    overlay.style.borderRadius = '14px';
+    overlay.style.backdropFilter = 'blur(10px)';
+    overlay.style.background = 'rgba(255,255,255,0.72)';
+    overlay.style.border = '1px solid rgba(255,255,255,0.82)';
+    overlay.style.boxShadow = '0 10px 30px rgba(15,23,42,0.08)';
+    overlay.style.fontSize = '13px';
+    overlay.style.color = '#0f172a';
+    overlay.style.textAlign = 'center';
+    elements.pdfCanvas.prepend(overlay);
+    return overlay;
+  }
+
+  function updatePdfProgressOverlay(rendered, total) {
+    const overlay = ensurePdfProgressOverlay();
+    if (!overlay) {
+      return;
+    }
+    const safeTotal = Math.max(1, total || 0);
+    const percent = Math.round((Math.min(rendered, safeTotal) / safeTotal) * 100);
+    overlay.textContent = `Рендер PDF: ${rendered}/${total} • ${percent}%`;
+  }
+
+  function clearPdfProgressOverlay() {
+    if (!elements.pdfCanvas) {
+      return;
+    }
+    const overlay = elements.pdfCanvas.querySelector('[data-pdf-progress-overlay]');
+    if (overlay && overlay.parentNode) {
+      overlay.parentNode.removeChild(overlay);
+    }
+  }
   function getPdfContainerSize() {
     const canvasWidth = elements.pdfCanvas ? elements.pdfCanvas.clientWidth : 0;
     const canvasHeight = elements.pdfCanvas ? elements.pdfCanvas.clientHeight : 0;
@@ -1321,6 +1370,7 @@ export function createPdfViewer(root = document) {
 
     const scrollState = capturePdfScrollState();
     clearPdfCanvas();
+    updatePdfProgressOverlay(0, doc.numPages);
 
     let failedPages = 0;
     for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
@@ -1425,7 +1475,13 @@ export function createPdfViewer(root = document) {
         await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
         usedCanvasPixels += canvas.width * canvas.height;
         renderedPages += 1;
+        updatePdfProgressOverlay(renderedPages, doc.numPages);
         pageWrapper = null;
+        if (pageNumber === 1 || pageNumber % 2 === 0) {
+          // даём UI отрисоваться на мобильных устройствах
+          // eslint-disable-next-line no-await-in-loop
+          await waitForNextFrame();
+        }
       } catch (error) {
         logPdfEvent('рендер:ошибка', {
           page: pageNumber,
@@ -1464,6 +1520,7 @@ export function createPdfViewer(root = document) {
       pdfRenderState.renderedPages = 0;
       pdfRenderState.totalPages = doc.numPages;
       pdfRenderState.renderStatus = 'empty';
+      clearPdfProgressOverlay();
       return false;
     }
 
@@ -1489,6 +1546,7 @@ export function createPdfViewer(root = document) {
     }
     await waitForNextFrame();
     restorePdfScrollState(scrollState);
+    clearPdfProgressOverlay();
     return isComplete;
   }
 
@@ -1797,6 +1855,7 @@ export function createPdfViewer(root = document) {
     pdfZoomState.useCanvas = false;
     destroyPdfDocument();
     clearPdfCanvas();
+    clearPdfProgressOverlay();
     if (elements.image) {
       elements.image.removeAttribute('src');
       elements.image.removeAttribute('alt');
