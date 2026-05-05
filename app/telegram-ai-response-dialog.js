@@ -1102,10 +1102,10 @@
       .tg-ai-generated-preview__zoom{display:inline-flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(203,213,225,.9);border-radius:10px;background:rgba(255,255,255,.95)}
       .tg-ai-generated-preview__zoom-btn{border:none;background:rgba(241,245,249,.9);color:#0f172a;border-radius:8px;min-width:28px;height:28px;font-weight:800}
       .tg-ai-generated-preview__zoom-value{font-size:12px;min-width:42px;text-align:center;color:#334155;font-weight:700}
-      .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon,.tg-ai-generated-preview__share{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
+      .tg-ai-generated-preview__menu-toggle,.tg-ai-generated-preview__close-icon,.tg-ai-generated-preview__save{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.95);border-radius:10px;padding:6px 10px;min-height:36px;font-weight:700;color:#0f172a}
       .tg-ai-generated-preview__close-icon{width:36px;padding:0;font-size:18px;line-height:1}
-      .tg-ai-generated-preview__share{min-width:38px;padding:0 10px;line-height:1;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(140deg,rgba(255,255,255,.96),rgba(219,234,254,.92));box-shadow:0 8px 18px rgba(59,130,246,.16)}
-      .tg-ai-generated-preview__share-icon{width:18px;height:18px;display:block;color:#1d4ed8}
+      .tg-ai-generated-preview__save{min-width:38px;padding:0 10px;line-height:1;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(140deg,rgba(255,255,255,.96),rgba(219,234,254,.92));box-shadow:0 8px 18px rgba(59,130,246,.16)}
+      .tg-ai-generated-preview__save-icon{width:18px;height:18px;display:block;color:#1d4ed8}
       .tg-ai-generated-preview__menu{position:absolute;right:12px;top:52px;z-index:3;display:grid;gap:6px;min-width:210px;padding:8px;border-radius:14px;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);backdrop-filter:blur(10px);box-shadow:0 14px 28px rgba(15,23,42,.14)}
       .tg-ai-generated-preview__menu[hidden]{display:none}
       .tg-ai-generated-preview__menu .tg-ai-generated-preview__btn{width:100%;justify-content:center}
@@ -1396,8 +1396,8 @@
     const sourceUrl = normalize(previewPayload && previewPayload.previewUrl)
       ? toAbsoluteUrl(previewPayload.previewUrl)
       : '';
-    const shareText = 'Отправляю файл';
-    const shareTitle = 'Документ из предпросмотра';
+    const shareText = '';
+    const shareTitle = '';
     if (typeof navigator === 'undefined') {
       throw new Error('Отправка недоступна на этом устройстве. Нажмите «Скачать».');
     }
@@ -1434,7 +1434,7 @@
 
     const telegramWebApp = globalScope && globalScope.Telegram && globalScope.Telegram.WebApp;
     if (telegramWebApp && typeof telegramWebApp.openTelegramLink === 'function' && sourceUrl) {
-      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(sourceUrl)}&text=${encodeURIComponent(shareText)}`;
+      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(sourceUrl)}`;
       telegramWebApp.openTelegramLink(shareUrl);
       return 'telegram_link_share';
     }
@@ -1562,9 +1562,9 @@
             <div class="tg-ai-generated-preview__hint">Просмотр через Office Viewer</div>
           </div>
           <div class="tg-ai-generated-preview__tools">
-            <button type="button" class="tg-ai-generated-preview__share" data-preview-share title="Поделиться" aria-label="Поделиться">
-              <svg class="tg-ai-generated-preview__share-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path fill="currentColor" d="M3.4 11.5 19.1 4.8c1.5-.6 3 .8 2.5 2.4l-3.1 11.1c-.4 1.5-2.2 2.1-3.4 1.2l-3.1-2.4-2.5 2.4c-.9.8-2.4.2-2.4-1V14l-3.2-1.3c-1.5-.7-1.5-2.8 0-3.5Zm4.8 1.1v3.7l2-1.9c.5-.5 1.2-.5 1.8-.1l2.9 2.3 2.7-9.6-9.4 4 2.1.8c.7.3 1 .9.9 1.6Z"/>
+            <button type="button" class="tg-ai-generated-preview__save" data-preview-save title="Сохранить / Отправить" aria-label="Сохранить / Отправить">
+              <svg class="tg-ai-generated-preview__save-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path fill="currentColor" d="M5 3h11l3 3v15H5V3Zm2 2v5h10V6.8L15.2 5H7Zm1 9h8v5H8v-5Z"/>
               </svg>
             </button>
             <button type="button" class="tg-ai-generated-preview__menu-toggle" data-preview-menu-toggle>Меню</button>
@@ -1598,7 +1598,7 @@
     const attachBtn = overlay.querySelector('[data-preview-attach]');
     const menuNode = overlay.querySelector('[data-preview-menu]');
     const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
-    const previewShareBtn = overlay.querySelector('[data-preview-share]');
+    const previewShareBtn = overlay.querySelector('[data-preview-save]');
     const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const previewUrl = normalize(previewPayload.previewUrl);
@@ -1646,7 +1646,7 @@
         }
       }
     });
-    previewShareBtn?.addEventListener('click', async () => {
+    previewSaveBtn?.addEventListener('click', async () => {
       const prevMarkup = previewShareBtn.innerHTML;
       previewShareBtn.disabled = true;
       previewShareBtn.textContent = '…';
