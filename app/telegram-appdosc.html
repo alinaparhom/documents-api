@@ -653,15 +653,73 @@
 
 
 
+
+
+      /* Telegram Web modal wrapper overrides: stretch Mini App to full width */
+      .resizeHandle {
+        display: none !important;
+        pointer-events: none !important;
+      }
+
+      .mini-app-modal-dialog,
+      .modal-dialog.mini-app-modal-dialog {
+        left: 0 !important;
+        right: 0 !important;
+        top: 0 !important;
+        width: 100vw !important;
+        max-width: 100vw !important;
+        min-width: 100vw !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+      }
+
+      .modal-container,
+      .modal-content.custom-scroll {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+      }
+
+
+      /* Global compact spacing for Telegram Mini App */
+      .appdosc,
+      .appdosc * {
+        box-sizing: border-box;
+      }
+
+      .appdosc__header,
+      .appdosc__user,
+      .appdosc__status,
+      .appdosc__content,
+      .appdosc__footer {
+        margin-top: 0 !important;
+      }
+
+      .appdosc__header,
+      .appdosc__user,
+      .appdosc__status,
+      .appdosc__content {
+        margin-bottom: 4px !important;
+      }
+
+      .appdosc__table-head.tasks-header {
+        margin-bottom: 8px !important;
+      }
+
+      .appdosc__table-card.tasks-panel {
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+      }
+
+      .appdosc-card.task-card + .appdosc-card.task-card {
+        margin-top: 2px !important;
+      }
       .appdosc {
         width: 100% !important;
         max-width: 100% !important;
         margin: 0 !important;
-        padding-inline: clamp(10px, 2.8vw, 20px) !important;
-        padding-left: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-left)) !important;
-        padding-right: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-right)) !important;
-        padding-top: env(safe-area-inset-top);
-        padding-bottom: env(safe-area-inset-bottom);
+        padding: 0 !important;
         box-sizing: border-box;
         min-height: 100dvh;
         color: var(--appdosc-text-primary);
@@ -685,6 +743,11 @@
       .appdosc__user {
         border-radius: 22px !important;
         padding: clamp(14px, 3.8vw, 24px) !important;
+        margin: 0 0 4px !important;
+      }
+
+      .appdosc__status {
+        margin: 0 0 4px !important;
       }
 
       .appdosc__brand-user {
@@ -1292,16 +1355,16 @@
 
       .appdosc__content {
         width: 100%;
-        max-width: 430px;
-        margin: 0 auto;
+        max-width: 100%;
+        margin: 0;
       }
 
       .appdosc__table-card.tasks-panel {
         width: 100% !important;
-        max-width: 430px !important;
-        margin: 0 auto !important;
-        padding: 18px 14px !important;
-        border-radius: 28px !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 10px 8px !important;
+        border-radius: 14px !important;
         overflow: hidden !important;
         border: 1px solid var(--appdosc-task-panel-border) !important;
         background: var(--appdosc-task-panel-bg) !important;
@@ -1366,7 +1429,7 @@
 
       .appdosc__cards.tasks-list {
         display: grid;
-        gap: 8px;
+        gap: 4px;
       }
 
       .appdosc-card.task-card {
@@ -1864,8 +1927,8 @@
 
       .appdosc__footer {
         width: 100%;
-        max-width: 430px;
-        margin: 14px auto 0 !important;
+        max-width: 100%;
+        margin: 2px 0 0 !important;
         padding: 0 0 calc(16px + env(safe-area-inset-bottom)) !important;
         border-radius: 22px;
       }
@@ -2374,7 +2437,7 @@
         z-index: 2;
         width: calc(100% - 4px);
         min-height: 66px;
-        margin: 0 auto;
+        margin: 0;
         border-radius: 10px;
         display: flex;
         flex-direction: column;
