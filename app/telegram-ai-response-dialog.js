@@ -1598,7 +1598,7 @@
     const attachBtn = overlay.querySelector('[data-preview-attach]');
     const menuNode = overlay.querySelector('[data-preview-menu]');
     const menuToggleBtn = overlay.querySelector('[data-preview-menu-toggle]');
-    const previewShareBtn = overlay.querySelector('[data-preview-save]');
+    const previewSaveBtn = overlay.querySelector('[data-preview-save]');
     const closeIconBtn = overlay.querySelector('[data-preview-close-icon]');
     const closeBtn = overlay.querySelector('[data-preview-close]');
     const previewUrl = normalize(previewPayload.previewUrl);
@@ -1647,9 +1647,9 @@
       }
     });
     previewSaveBtn?.addEventListener('click', async () => {
-      const prevMarkup = previewShareBtn.innerHTML;
-      previewShareBtn.disabled = true;
-      previewShareBtn.textContent = '…';
+      const prevMarkup = previewSaveBtn.innerHTML;
+      previewSaveBtn.disabled = true;
+      previewSaveBtn.textContent = '…';
       try {
         const mode = await shareGeneratedPreviewEverywhere(previewPayload);
         if (mode === 'native_share_file') {
@@ -1666,8 +1666,8 @@
       } catch (error) {
         statusNode.textContent = (error && error.message) || 'Не удалось открыть «Поделиться».';
       } finally {
-        previewShareBtn.disabled = false;
-        previewShareBtn.innerHTML = prevMarkup;
+        previewSaveBtn.disabled = false;
+        previewSaveBtn.innerHTML = prevMarkup;
       }
     });
     if (attachBtn) {
