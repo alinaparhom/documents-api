@@ -4,11 +4,11 @@
   const STYLE_ID = 'tg-ai-response-dialog-style-v2';
   const GROQ_RESPONSE_FALLBACK_ENDPOINTS = ['/api-groq-paid.php', '/js/documents/api-groq-paid.php'];
   const REQUEST_TIMEOUT_MS = 45000;
-  const FILE_FETCH_TIMEOUT_MS = 12000;
+  const FILE_FETCH_TIMEOUT_MS = 18000;
   const FILE_FETCH_RETRIES = 1;
-  const FILE_FETCH_RETRIES_MOBILE = 2;
+  const FILE_FETCH_RETRIES_MOBILE = 4;
   const FILE_FETCH_TIMEOUT_STEPS_IOS = [2800, 4200, 6200, 9000];
-  const FILE_FETCH_MAX_CANDIDATES = 8;
+  const FILE_FETCH_MAX_CANDIDATES = 16;
   const FILE_PREPARE_TIMEOUT_MS = 35000;
   const FILE_PREPARE_TIMEOUT_MS_MOBILE = 26000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
@@ -944,6 +944,19 @@
     return finalSummary;
   }
 
+
+  async function resolveDataUrlToFile(dataUrl, fileName) {
+    const raw = String(dataUrl || '');
+    if (!raw.startsWith('data:') || !raw.includes(',')) return null;
+    const commaIndex = raw.indexOf(',');
+    const meta = raw.slice(5, commaIndex);
+    const payload = raw.slice(commaIndex + 1);
+    const mime = (meta.split(';')[0] || 'application/octet-stream').trim() || 'application/octet-stream';
+    const binary = atob(payload);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new File([bytes], fileName || 'attachment', { type: mime });
+  }
+
   async function loadSelectedFileAsBlob(file) {
     const profile = getClientVisionProfile();
     if (file && file.fileObject instanceof File) {
@@ -963,6 +976,18 @@
     const rounds = [baseCandidates, cacheBustedCandidates];
     const iosClient = isIosClient();
     const retries = profile.fetchRetries;
+    const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
+
+    if (file && typeof file.previewUrl === 'string' && file.previewUrl.startsWith('data:')) {
+      try {
+        const dataFile = await resolveDataUrlToFile(file.previewUrl, fileName);
+        if (dataFile) {
+          if (cacheKey) loadedFileCache.set(cacheKey, dataFile);
+          if (file && typeof file === 'object') file.fileObject = dataFile;
+          return dataFile;
+        }
+      } catch (_) {}
+    }
     let lastStatus = 0;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const urls = rounds[Math.min(attempt, rounds.length - 1)];
@@ -972,9 +997,23 @@
       for (let index = 0; index < urls.length; index += 1) {
         const url = urls[index];
         let response = null;
-        try {
-          response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, timeoutMs);
-        } catch (error) {
+        const fetchVariants = [
+          { credentials: 'include', cache: 'no-store' },
+          { credentials: 'same-origin', cache: 'no-store' },
+          { credentials: 'omit', cache: 'no-store', mode: 'cors' },
+          { credentials: 'omit', cache: 'reload', mode: 'no-cors' },
+        ];
+        for (let variantIndex = 0; variantIndex < fetchVariants.length; variantIndex += 1) {
+          try {
+            response = await fetchWithTimeout(url, fetchVariants[variantIndex], timeoutMs);
+          } catch (error) {
+            response = null;
+          }
+          if (response && response.ok) {
+            break;
+          }
+        }
+        if (!response) {
           continue;
         }
         if (!response || !response.ok) {
@@ -982,7 +1021,6 @@
           continue;
         }
         const blob = await response.blob();
-        const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
         if (blob.size > profile.maxFileSizeBytes) {
           throw new Error('Файл слишком большой.');
         }
