@@ -19,6 +19,25 @@ const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
+
+let aiDialogPrewarmStarted = false;
+
+function prewarmAiDialogScript() {
+  if (aiDialogPrewarmStarted) return;
+  aiDialogPrewarmStarted = true;
+  const schedule = (cb) => {
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(cb, { timeout: 1600 });
+      return;
+    }
+    window.setTimeout(cb, 450);
+  };
+  schedule(() => {
+    ensureAiDialogScriptLoaded().catch(() => {
+      aiDialogPrewarmStarted = false;
+    });
+  });
+}
 let systemThemeMediaQuery = null;
 let isSystemThemeListenerBound = false;
 const THEME_MODE_OPTIONS = ['dark', 'light'];
@@ -571,6 +590,8 @@ function ensureAiDialogScriptLoaded() {
 
   return aiDialogLoader;
 }
+
+prewarmAiDialogScript();
 
 async function openAiDialogSafely(context = {}) {
   const reportDependencyLoad = (payload = {}) => {
