@@ -6,11 +6,11 @@
   const REQUEST_TIMEOUT_MS = 45000;
   const FILE_FETCH_TIMEOUT_MS = 12000;
   const FILE_FETCH_RETRIES = 1;
-  const FILE_FETCH_RETRIES_MOBILE = 0;
+  const FILE_FETCH_RETRIES_MOBILE = 2;
   const FILE_FETCH_TIMEOUT_STEPS_IOS = [2800, 4200, 6200, 9000];
   const FILE_FETCH_MAX_CANDIDATES = 8;
   const FILE_PREPARE_TIMEOUT_MS = 35000;
-  const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
+  const FILE_PREPARE_TIMEOUT_MS_MOBILE = 26000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
   const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь деловой ответ на входящее письмо/обращение по этому документу';
@@ -835,10 +835,6 @@
     });
 
     if (!images.length) {
-      if (!extractedTexts.length) {
-        const details = fileErrors.length ? ` Ошибки: ${fileErrors.slice(0, 2).join('; ')}` : '';
-        throw new Error(`Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.${details}`);
-      }
       onStatus('Ответ', 'answer');
       const textOnlyRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
@@ -847,17 +843,25 @@
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
         appendPromptSelection(formData, payload.tone, payload.assistantMode);
-        formData.append('extractedTexts', JSON.stringify(extractedTexts));
+        if (extractedTexts.length) {
+          formData.append('extractedTexts', JSON.stringify(extractedTexts));
+        }
         return formData;
       });
       const textOnlyPayload = textOnlyRequest && textOnlyRequest.payload;
       if (textOnlyRequest && textOnlyRequest.response && textOnlyRequest.response.ok && textOnlyPayload && textOnlyPayload.ok === true) {
-        const textOnlySummary = normalize(textOnlyPayload.response || textOnlyPayload.summary);
+        let textOnlySummary = normalize(textOnlyPayload.response || textOnlyPayload.summary);
         if (textOnlySummary) {
+          if (fileErrors.length) {
+            textOnlySummary += `
+
+⚠️ Часть файлов не загрузилась (${fileErrors.length}), но ответ сформирован.`;
+          }
           return textOnlySummary;
         }
       }
-      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать текстовые файлы через summary pipeline.');
+      const details = fileErrors.length ? ` Ошибки: ${fileErrors.slice(0, 2).join('; ')}` : '';
+      throw new Error((textOnlyPayload && textOnlyPayload.error) || `Не удалось получить ответ ИИ.${details}`);
     }
 
     const batches = chunkItems(images, VISION_BATCH_SIZE);
