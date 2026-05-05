@@ -8227,6 +8227,68 @@ async function shareFileViaNativeShare(blob, fileName) {
   }
 }
 
+
+function shareFileViaTelegramLink(url, fileName) {
+  const normalizedUrl = normalizeValue(url);
+  if (!normalizedUrl) {
+    return false;
+  }
+  const shareText = fileName ? `Файл: ${fileName}` : 'Файл';
+  const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(normalizedUrl)}&text=${encodeURIComponent(shareText)}`;
+  try {
+    const webApp = window && window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (webApp && typeof webApp.openTelegramLink === 'function') {
+      webApp.openTelegramLink(telegramShareUrl);
+      return true;
+    }
+  } catch (error) {
+    // fallback to window.open below
+  }
+  try {
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(telegramShareUrl, '_blank', 'noopener');
+      return true;
+    }
+  } catch (error) {
+    return false;
+  }
+  return false;
+}
+
+
+async function resolveShareUrlForTelegram(task, file, fileName, downloadUrl) {
+  const primaryUrl = normalizeValue(downloadUrl);
+  if (primaryUrl) {
+    return primaryUrl;
+  }
+
+  try {
+    const isSummary = Boolean(file && file.isSummary);
+    const preview = isSummary
+      ? await ensureTaskSummaryPreview(task, file)
+      : await ensureTaskAttachmentPreview(task, file);
+
+    const previewUrl = normalizeValue(preview && (preview.remoteUrl || preview.previewUrl));
+    if (previewUrl && /^https?:\/\//i.test(previewUrl)) {
+      return previewUrl;
+    }
+
+    if (preview && preview.blob) {
+      const uploadedUrl = await uploadPdfPreview(preview.blob, (preview.fileName || fileName || 'document.pdf'));
+      if (uploadedUrl) {
+        return uploadedUrl;
+      }
+    }
+  } catch (error) {
+    logDownloadConsole('resolve_share_url_error', {
+      message: error && error.message ? error.message : 'resolve_share_url_failed',
+      fileName: fileName || '',
+    });
+  }
+
+  return '';
+}
+
 async function ensureTaskSummaryPreview(task, file) {
   if (!task) {
     throw new Error('Задача не найдена.');
@@ -10548,6 +10610,24 @@ async function handleViewerDownloadClick() {
     fileName,
     platform: isWebPlatform ? 'web' : 'telegram',
   }));
+  setStatus('info', 'Готовим отправку в Telegram...');
+
+  const shareUrl = await resolveShareUrlForTelegram(task, file, fileName, downloadUrl);
+  if (shareUrl) {
+    const sharedInTelegram = shareFileViaTelegramLink(shareUrl, fileName);
+    if (sharedInTelegram) {
+      logDownloadConsole('telegram_share_success', { fileName, shareUrl, downloadUrl });
+      sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+        method: 'telegram_share_link',
+        downloadUrl: shareUrl,
+        fileName,
+      }));
+      setStatus('success', 'Открылся выбор чата в Telegram. Выберите получателя.');
+      return;
+    }
+    logDownloadConsole('telegram_share_fallback_download', { fileName, shareUrl, downloadUrl });
+  }
+
   setStatus('info', 'Готовим файл для сохранения...');
 
   if (isAndroid) {
