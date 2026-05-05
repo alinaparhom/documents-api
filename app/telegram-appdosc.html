@@ -657,9 +657,9 @@
         width: 100% !important;
         max-width: 100% !important;
         margin: 0 !important;
-        padding-inline: clamp(10px, 2.8vw, 20px) !important;
-        padding-left: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-left)) !important;
-        padding-right: max(clamp(10px, 2.8vw, 20px), env(safe-area-inset-right)) !important;
+        padding-inline: 0 !important;
+        padding-left: env(safe-area-inset-left) !important;
+        padding-right: env(safe-area-inset-right) !important;
         padding-top: env(safe-area-inset-top);
         padding-bottom: env(safe-area-inset-bottom);
         box-sizing: border-box;
@@ -1292,16 +1292,16 @@
 
       .appdosc__content {
         width: 100%;
-        max-width: 430px;
+        max-width: 100%;
         margin: 0 auto;
       }
 
       .appdosc__table-card.tasks-panel {
         width: 100% !important;
-        max-width: 430px !important;
+        max-width: 100% !important;
         margin: 0 auto !important;
-        padding: 18px 14px !important;
-        border-radius: 28px !important;
+        padding: 10px 8px !important;
+        border-radius: 14px !important;
         overflow: hidden !important;
         border: 1px solid var(--appdosc-task-panel-border) !important;
         background: var(--appdosc-task-panel-bg) !important;
@@ -1366,7 +1366,7 @@
 
       .appdosc__cards.tasks-list {
         display: grid;
-        gap: 8px;
+        gap: 4px;
       }
 
       .appdosc-card.task-card {
@@ -1864,7 +1864,7 @@
 
       .appdosc__footer {
         width: 100%;
-        max-width: 430px;
+        max-width: 100%;
         margin: 14px auto 0 !important;
         padding: 0 0 calc(16px + env(safe-area-inset-bottom)) !important;
         border-radius: 22px;
