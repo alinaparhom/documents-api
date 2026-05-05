@@ -43,6 +43,7 @@ const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
 const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
 const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 3 * 1000;
 const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 1500;
+const TASK_PDF_VIEWER_RENDER_WAIT_TIMEOUT_MS = 15000;
 const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 1200;
 const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
 const ENABLE_TASK_PDF_WARMUP = true;
@@ -60,6 +61,27 @@ function normalizePdfBinaryCacheKey(url) {
     return parsed.toString();
   } catch (error) {
     return normalized.replace(/([?&])v=\d+(&)?/g, (match, prefix, tail) => (tail ? prefix : '')).replace(/[?&]$/, '');
+  }
+}
+
+async function waitForPdfViewerRender(viewer, timeoutMs = TASK_PDF_VIEWER_RENDER_WAIT_TIMEOUT_MS) {
+  if (!viewer || typeof viewer.getPdfLoadPromise !== 'function') {
+    return;
+  }
+  const loadPromise = viewer.getPdfLoadPromise();
+  if (!loadPromise || typeof loadPromise.then !== 'function') {
+    return;
+  }
+  let timeoutId = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutId = window.setTimeout(resolve, Math.max(1000, Number(timeoutMs) || TASK_PDF_VIEWER_RENDER_WAIT_TIMEOUT_MS));
+  });
+  try {
+    await Promise.race([loadPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
   }
 }
 
@@ -11762,32 +11784,28 @@ async function openViewerFile(file, task, options = {}) {
     updateViewerFileOwnerState(file);
     if (isPdf && mode === 'inline') {
       try { updatePdfTabPageCount(); } catch (_e) { /* не критично */ }
-      // Счётчик страниц может быть 0, если PDF ещё загружается — обновим после загрузки
+      // Держим loader до завершения рендера (или timeout), чтобы на iOS пользователь видел готовые страницы.
       try {
         const viewer = pdfViewerInstance;
         if (viewer && typeof viewer.getPdfLoadPromise === 'function') {
-          const loadPromise = viewer.getPdfLoadPromise();
-          if (loadPromise && typeof loadPromise.then === 'function') {
-            loadPromise.then(() => {
-              try { updatePdfTabPageCount(); } catch (_e2) { /* не критично */ }
-              // Логируем результат рендера PDF в Просмотреть.log
-              try {
-                const renderStatus = typeof viewer.getPdfRenderStatus === 'function'
-                  ? viewer.getPdfRenderStatus() : {};
-                const pageCount = typeof viewer.getPageCount === 'function'
-                  ? viewer.getPageCount() : 0;
-                logClientEvent('task_view_pdf_render_result', {
-                  ...buildTaskViewLogDetails(task),
-                  fileName: file.name,
-                  resolvedUrl: file.resolvedUrl || file.url,
-                  renderStatus: renderStatus.status || 'unknown',
-                  renderedPages: renderStatus.renderedPages || 0,
-                  totalPages: renderStatus.totalPages || pageCount,
-                  usingCanvas: renderStatus.usingCanvas || false,
-                });
-              } catch (_e3) { /* не критично */ }
-            }).catch(() => {});
-          }
+          docLoadStep('рендер страниц pdf');
+          await waitForPdfViewerRender(viewer);
+          try { updatePdfTabPageCount(); } catch (_e2) { /* не критично */ }
+          try {
+            const renderStatus = typeof viewer.getPdfRenderStatus === 'function'
+              ? viewer.getPdfRenderStatus() : {};
+            const pageCount = typeof viewer.getPageCount === 'function'
+              ? viewer.getPageCount() : 0;
+            logClientEvent('task_view_pdf_render_result', {
+              ...buildTaskViewLogDetails(task),
+              fileName: file.name,
+              resolvedUrl: file.resolvedUrl || file.url,
+              renderStatus: renderStatus.status || 'unknown',
+              renderedPages: renderStatus.renderedPages || 0,
+              totalPages: renderStatus.totalPages || pageCount,
+              usingCanvas: renderStatus.usingCanvas || false,
+            });
+          } catch (_e3) { /* не критично */ }
         }
       } catch (_e) { /* не критично */ }
     }
