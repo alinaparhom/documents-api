@@ -1372,19 +1372,17 @@ export function createPdfViewer(root = document) {
           scaledW = Math.ceil(viewport.width * effectivePixelRatio);
           scaledH = Math.ceil(viewport.height * effectivePixelRatio);
           canvasPixels = scaledW * scaledH;
-          // Жёсткий лимит: если даже при MIN_PIXEL_RATIO бюджет превышен более чем в 1.5 раза,
-          // пропускаем страницу — браузер может убить все canvas из-за нехватки памяти
+          // На iOS критично не терять страницы: даже при выходе за бюджет пробуем рендерить
+          // с минимальным качеством, чтобы пользователь видел весь документ целиком.
           if (usedCanvasPixels + canvasPixels > MAX_TOTAL_CANVAS_PIXELS * 1.5) {
-            logPdfEvent('рендер:страница_пропущена', {
+            logPdfEvent('рендер:бюджет_превышен_но_продолжаем', {
               page: pageNumber,
               totalPages: doc.numPages,
               usedCanvasPixels,
               canvasPixels,
               budget: MAX_TOTAL_CANVAS_PIXELS,
-              reason: 'hard_budget_limit',
+              reason: 'force_render_all_pages',
             });
-            failedPages += 1;
-            continue;
           }
           logPdfEvent('рендер:масштаб_снижен', {
             page: pageNumber,

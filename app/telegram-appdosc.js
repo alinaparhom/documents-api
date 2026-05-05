@@ -8227,6 +8227,25 @@ async function shareFileViaNativeShare(blob, fileName) {
   }
 }
 
+function shareFileUrlToTelegramChats(fileUrl, fileName) {
+  const normalizedUrl = normalizeValue(fileUrl);
+  if (!normalizedUrl) {
+    return false;
+  }
+  const text = fileName ? `Файл: ${fileName}` : 'Файл из Documents Mini App';
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(normalizedUrl)}&text=${encodeURIComponent(text)}`;
+  try {
+    if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.openTelegramLink === 'function') {
+      window.Telegram.WebApp.openTelegramLink(shareUrl);
+      return true;
+    }
+    window.open(shareUrl, '_blank', 'noopener');
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
 async function ensureTaskSummaryPreview(task, file) {
   if (!task) {
     throw new Error('Задача не найдена.');
@@ -10487,6 +10506,11 @@ function startViewerBriefLoadingAnimation() {
 }
 
 async function handleViewerDownloadClick() {
+  if (elements.viewerDownload && elements.viewerDownload.dataset.loading === 'true') {
+    return;
+  }
+  setActionButtonLoading(elements.viewerDownload, true);
+  try {
   const file = getViewerFileToDownload();
   if (!file) {
     logDownloadConsole('missing_file');
@@ -10613,6 +10637,16 @@ async function handleViewerDownloadClick() {
             fileName,
           }));
           setStatus('info', 'Файл отправлен.');
+          return;
+        }
+        const uploadedUrl = await uploadPdfPreview(iosBlob, fileName);
+        if (uploadedUrl && shareFileUrlToTelegramChats(uploadedUrl, fileName)) {
+          sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+            method: 'ios_telegram_share_url',
+            fileName,
+            downloadUrl: uploadedUrl,
+          }));
+          setStatus('success', 'Файл отправлен в Telegram. Выберите чат (можно «Избранное»).');
           return;
         }
         logDownloadConsole('ios_share_not_supported', { fileName });
@@ -10758,6 +10792,8 @@ async function handleViewerDownloadClick() {
       reason: error && error.message ? error.message : 'download_failed',
     }));
     setStatus('error', 'Не удалось подготовить файл для скачивания.');
+  } finally {
+    setActionButtonLoading(elements.viewerDownload, false);
   }
 }
 
@@ -12208,6 +12244,9 @@ async function handleViewerTabClick(index, task) {
     if (pendingIdx !== null && pendingIdx !== viewerTabsState.activeIndex) {
       handleViewerTabClick(pendingIdx, task);
     }
+  }
+  } finally {
+    setActionButtonLoading(elements.viewerDownload, false);
   }
 }
 
