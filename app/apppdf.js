@@ -523,6 +523,7 @@ export function createPdfViewer(root = document) {
     totalPages: 0,
     renderStatus: 'idle',
     loadPromise: null,
+    largeFile: false,
   };
   const supportsPointerEvents = typeof window !== 'undefined' && 'PointerEvent' in window;
   if (!supportsPointerEvents && !pointerWarningLogged && typeof console !== 'undefined') {
@@ -1492,7 +1493,8 @@ export function createPdfViewer(root = document) {
   }
 
   async function renderPdfPages() {
-    const result = await renderPdfPagesInternal();
+    const initialPixelRatio = pdfRenderState.largeFile ? 0.55 : undefined;
+    const result = await renderPdfPagesInternal(initialPixelRatio);
     if (result) {
       return true;
     }
@@ -1528,8 +1530,13 @@ export function createPdfViewer(root = document) {
     pdfRenderState.renderStatus = 'pending';
     pdfRenderState.renderedPages = 0;
     pdfRenderState.totalPages = 0;
+    pdfRenderState.largeFile = false;
     setPdfCanvasMessage('Загрузка PDF...', { variant: 'loader' });
-    logPdfEvent('загрузка:старт', { url, hasData: Boolean(data) });
+    const dataBytes = data && typeof data.byteLength === 'number' ? data.byteLength : 0;
+    if (dataBytes > 12 * 1024 * 1024) {
+      pdfRenderState.largeFile = true;
+    }
+    logPdfEvent('загрузка:старт', { url, hasData: Boolean(data), dataBytes, largeFile: pdfRenderState.largeFile });
 
     try {
       const pdfjsLib = await ensurePdfjs();
@@ -1875,6 +1882,7 @@ export function createPdfViewer(root = document) {
           ? 'image'
           : (options && options.kind === 'video' ? 'video' : 'frame'));
     const skipPdfLoad = Boolean(options && options.skipPdfLoad);
+    const { isIos } = detectMobilePlatform();
     const isPdf = wantsPdf && !forceFrame;
 
     lastActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1947,9 +1955,9 @@ export function createPdfViewer(root = document) {
       return true;
     };
 
-    if (isPdf && elements.frame) {
-      activateFrameFallback(resolvedUrl, 'fast_native_pdf');
-      logPdfEvent('режим:fast_fallback_frame', { url: resolvedUrl, reason: 'fast_native_pdf' });
+    if (isPdf && isIos && elements.frame) {
+      activateFrameFallback(resolvedUrl, 'ios_native_pdf');
+      logPdfEvent('режим:ios_fallback_frame', { url: resolvedUrl, reason: 'ios_native_pdf' });
     } else if (kind === 'image' && elements.image) {
       elements.image.setAttribute('src', resolvedUrl);
       elements.image.setAttribute('alt', title ? `Просмотр: ${title}` : 'Просмотр документа');
