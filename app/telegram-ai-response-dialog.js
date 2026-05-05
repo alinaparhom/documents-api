@@ -34,10 +34,19 @@
   const DEFAULT_PROMPT_KEYS = PROMPTS_CATALOG && PROMPTS_CATALOG.DEFAULT_KEYS
     ? PROMPTS_CATALOG.DEFAULT_KEYS
     : { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'positive' };
-  const SYSTEM_TONE_PROMPTS = PROMPTS_CATALOG && PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
-    ? PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
-    : { neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' } };
-  const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS);
+  const SYSTEM_TONE_PROMPTS = (() => {
+    const fallback = {
+      neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' },
+      positive: { value: 'positive', label: 'Положительный', prompt: '' },
+      negative: { value: 'negative', label: 'Отрицательный', prompt: '' },
+    };
+    const source = PROMPTS_CATALOG && PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS && typeof PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS === 'object'
+      ? PROMPTS_CATALOG.SYSTEM_TONE_PROMPTS
+      : {};
+    const merged = { ...fallback, ...source };
+    return merged;
+  })();
+  const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS).filter((item) => item && item.value);
   const RESPONSE_GENERATION_MODES = {
     improve_ai: {
       value: 'improve_ai',
@@ -191,7 +200,7 @@
   }
 
   function getResponseStyleMeta(styleValue) {
-    return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.neutral;
+    return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.positive || SYSTEM_TONE_PROMPTS.neutral || { value: 'neutral', label: 'Нейтральный', prompt: '' };
   }
 
   function appendPromptSelection(formData, toneValue, assistantModeValue) {
