@@ -1716,6 +1716,12 @@
         background: var(--appdosc-task-status-info-bg);
       }
 
+      .task-main[data-status-tone='distributed'] .task-status-badge {
+        color: #334155;
+        border-color: rgba(100, 116, 139, 0.28);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.68));
+      }
+
 
       :root[data-theme='light'] .task-main[data-status-tone='done'] .task-status-badge {
         color: #14532d;
@@ -1739,6 +1745,18 @@
         color: #0f4c5c;
         border-color: rgba(56, 189, 248, 0.22);
         background: linear-gradient(180deg, rgba(249, 254, 255, 0.98), rgba(224, 242, 254, 0.62));
+      }
+
+      :root[data-theme='light'] .task-main[data-status-tone='distributed'] .task-status-badge {
+        color: #334155;
+        border-color: rgba(100, 116, 139, 0.28);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.68));
+      }
+
+      :root[data-theme='dark'] .task-main[data-status-tone='distributed'] .task-status-badge {
+        color: #d7e2f2;
+        border-color: rgba(148, 163, 184, 0.36);
+        background: linear-gradient(180deg, rgba(51, 65, 85, 0.9), rgba(30, 41, 59, 0.78));
       }
 
 

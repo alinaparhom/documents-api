@@ -9096,15 +9096,20 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     statusBadgeElement.title = `Статус задачи: ${statusText}`;
   }
   let statusTone = 'accent';
+  const statusKey = getStatusSummaryKey(statusText);
 
-  if (isTaskCompleted(task)) {
+  if (isTaskCompleted(task) || statusKey === 'done') {
     statusTone = 'done';
-  } else if (isOverdue(task)) {
+  } else if (statusKey === 'cancelled') {
     statusTone = 'danger';
+  } else if (isOverdue(task)) {
+    statusTone = 'warn';
+  } else if (statusKey === 'distributed') {
+    statusTone = 'distributed';
+  } else if (statusKey === 'review') {
+    statusTone = 'info';
   } else if (normalizedStatus.includes('контрол')) {
     statusTone = 'warn';
-  } else if (normalizedStatus.includes('распредел')) {
-    statusTone = 'info';
   }
 
   if (card && card.dataset) {
