@@ -14213,12 +14213,17 @@ switch ($action) {
                 }
                 $folderId = sanitize_text_field((string) ($entry['id'] ?? ''), 120);
                 $folderName = sanitize_text_field((string) ($entry['name'] ?? ''), 120);
+                $folderColor = strtolower(trim((string) ($entry['color'] ?? '#4d91ff')));
+                if (!preg_match('/^#[0-9a-f]{6}$/', $folderColor)) {
+                    $folderColor = '#4d91ff';
+                }
                 if ($folderId === '' || $folderName === '') {
                     continue;
                 }
                 $sanitizedFolderState[] = [
                     'id' => $folderId,
                     'name' => $folderName,
+                    'color' => $folderColor,
                 ];
             }
 

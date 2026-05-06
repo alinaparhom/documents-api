@@ -2027,6 +2027,26 @@ let selectedTaskIds = new Set();
 let folderManageMode = false;
 let taskFolderMap = {};
 let foldersStateJson = '{"folders":[],"taskFolders":{}}';
+const DEFAULT_FOLDER_COLOR = '#4d91ff';
+const FOLDER_COLOR_PRESETS = [
+  '#4d91ff',
+  '#16a34a',
+  '#f59e0b',
+  '#ef4444',
+  '#14b8a6',
+  '#8b5cf6',
+  '#ec4899',
+  '#64748b',
+];
+
+function normalizeFolderColor(value, fallback = '') {
+  const color = normalizeValue(value);
+  if (!color) {
+    return fallback;
+  }
+  const normalized = color.trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : fallback;
+}
 
 function loadFoldersFromStorage() {
   try {
@@ -2035,7 +2055,12 @@ function loadFoldersFromStorage() {
     const parsed = Array.isArray(parsedRoot.folders) ? parsedRoot.folders : [];
     const customFolders = parsed
       .filter((folder) => isPlainObject(folder) && !folder.system && normalizeValue(folder.id) && normalizeValue(folder.name))
-      .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }));
+      .map((folder) => ({
+        id: String(folder.id),
+        name: String(folder.name),
+        color: normalizeFolderColor(folder.color, DEFAULT_FOLDER_COLOR),
+        system: false,
+      }));
     folders = [
       { id: 'all', name: 'Все задачи', system: true },
       { id: 'no-folder', name: 'Без папки', system: true },
@@ -2107,7 +2132,12 @@ function extractFoldersFromTasks(tasks) {
     if (userFolders) {
       const customFolders = userFolders
         .filter((folder) => isPlainObject(folder) && normalizeValue(folder.id) && normalizeValue(folder.name))
-        .map((folder) => ({ id: String(folder.id), name: String(folder.name), system: false }));
+        .map((folder) => ({
+          id: String(folder.id),
+          name: String(folder.name),
+          color: normalizeFolderColor(folder.color, DEFAULT_FOLDER_COLOR),
+          system: false,
+        }));
       folders = [
         { id: 'all', name: 'Все задачи', system: true },
         { id: 'no-folder', name: 'Без папки', system: true },
@@ -2130,6 +2160,70 @@ function getFolderName(folderId) {
   if (!folderId) return 'Без папки';
   const folder = folders.find((item) => item.id === folderId);
   return folder ? folder.name : 'Без папки';
+}
+
+function getFolderById(folderId) {
+  const normalizedFolderId = normalizeValue(folderId);
+  if (!normalizedFolderId) {
+    return null;
+  }
+  return folders.find((item) => item && item.id === normalizedFolderId) || null;
+}
+
+function getFolderColorById(folderId) {
+  const folder = getFolderById(folderId);
+  if (!folder || folder.system) {
+    return '';
+  }
+  return normalizeFolderColor(folder.color, '');
+}
+
+function applyTaskFolderCardAccent(card, task) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+  const folderColor = getFolderColorById(task && task.folderId);
+  if (folderColor) {
+    card.dataset.folderColor = folderColor;
+    card.style.setProperty('--appdosc-folder-task-color', folderColor);
+    card.style.setProperty('--appdosc-folder-task-border', `${folderColor}78`);
+    card.style.setProperty('--appdosc-folder-task-ring', `${folderColor}22`);
+    card.style.boxShadow = '';
+    card.style.background = '';
+    return;
+  }
+
+  delete card.dataset.folderColor;
+  card.style.removeProperty('--appdosc-folder-task-color');
+  card.style.removeProperty('--appdosc-folder-task-border');
+  card.style.removeProperty('--appdosc-folder-task-ring');
+  card.style.borderColor = '';
+  card.style.boxShadow = '';
+  card.style.background = '';
+}
+
+function updateTaskFolderButtonVisual(button, task) {
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+  const currentFolderName = getFolderName(task && task.folderId);
+  const currentFolderColor = getFolderColorById(task && task.folderId);
+  button.dataset.taskId = String((task && task.id) || '');
+  button.setAttribute('aria-label', `Папка задачи: ${currentFolderName}. Нажмите, чтобы изменить.`);
+  button.innerHTML = `
+    <span class="task-folder-select__content">
+      <span class="task-folder-select__caption">Папка</span>
+      <span class="task-folder-select__value">${escapeHtml(currentFolderName)}</span>
+    </span>
+    <span class="task-folder-select__chevron" aria-hidden="true">⌄</span>
+  `;
+  if (currentFolderColor) {
+    button.style.borderColor = `${currentFolderColor}66`;
+    button.style.boxShadow = `0 0 0 1px ${currentFolderColor}33 inset`;
+  } else {
+    button.style.borderColor = '';
+    button.style.boxShadow = '';
+  }
 }
 
 function setTaskFolder(task, folderId) {
@@ -2165,7 +2259,11 @@ async function persistFoldersListToRegistry() {
       organization: normalizeValue(task.organization),
       documentId: normalizeValue(task.id),
       folderUserId: normalizeValue(state.telegram && state.telegram.id) || '',
-      folderState: folders.filter((item) => !item.system).map((item) => ({ id: item.id, name: item.name })),
+      folderState: folders.filter((item) => !item.system).map((item) => ({
+        id: item.id,
+        name: item.name,
+        color: normalizeFolderColor(item.color, DEFAULT_FOLDER_COLOR),
+      })),
     });
   } catch (error) {
     setStatus('error', 'Не удалось сохранить список папок в registry.json');
@@ -5460,6 +5558,7 @@ function createCard(task, index, anchorRegistry) {
     card.classList.remove('appdosc-card--tone-control');
     card.classList.add('appdosc-card--tone-overdue');
   }
+  applyTaskFolderCardAccent(card, task);
 
   const hasEntry = setCardField(card, '[data-field="entryNumber"]', task.entryNumber ?? index + 1, {
     hideIfEmpty: true,
@@ -5694,22 +5793,45 @@ function closeBottomSheet() {
   document.querySelectorAll('.bottom-sheet-overlay, .bottom-sheet').forEach((el) => el.remove());
 }
 
-function openFolderPicker(onSelect) {
+function openFolderPicker(onSelect, options = {}) {
   openBottomSheet((close) => {
     const wrap = document.createElement('div');
     wrap.className = 'folder-picker-modal';
-    wrap.innerHTML = '<h3 class="folder-modal-title">Переместить в папку</h3><p class="folder-modal-subtitle">Выберите папку или найдите её по названию.</p>';
-    const base = [{id:'no-folder',name:'Без папки'}, ...folders.filter((f)=>!f.system)];
+    wrap.innerHTML = `
+      <div class="folder-modal-head">
+        <span class="folder-modal-kicker">Папка задачи</span>
+        <h3 class="folder-modal-title">Переместить в папку</h3>
+        <p class="folder-modal-subtitle">Выберите папку из списка или быстро найдите её по названию.</p>
+      </div>
+    `;
+    const base = [
+      { id: 'no-folder', name: 'Без папки', color: '' },
+      ...folders.filter((item) => !item.system),
+    ];
+    const hasCurrentFolder = Object.prototype.hasOwnProperty.call(options || {}, 'currentFolderId');
+    const currentFolderId = hasCurrentFolder ? normalizeTaskFolderId(options.currentFolderId) : '';
     const search = document.createElement('input');
     search.type = 'search';
-    search.placeholder = 'Поиск папки';
+    search.placeholder = 'Найти папку';
     search.className = 'appdosc__input folder-modal-input';
     search.setAttribute('enterkeyhint', 'search');
     search.autocomplete = 'off';
+    const searchWrap = document.createElement('label');
+    searchWrap.className = 'folder-modal-field';
+    searchWrap.innerHTML = '<span class="folder-modal-field__label">Поиск</span>';
+    searchWrap.appendChild(search);
     const meta = document.createElement('div');
     meta.className = 'folder-modal-hint';
     const list = document.createElement('div');
     list.className = 'folder-picker-list';
+    const createButton = document.createElement('button');
+    createButton.type = 'button';
+    createButton.className = 'folder-picker-create';
+    createButton.textContent = '+ Создать новую папку';
+    createButton.addEventListener('click', () => {
+      close();
+      openFolderEditModal();
+    });
     const render = (query = '') => {
       const needle = normalizeValue(query).trim().toLowerCase();
       const filtered = !needle
@@ -5720,17 +5842,39 @@ function openFolderPicker(onSelect) {
       filtered.forEach((folder) => {
         const b = document.createElement('button');
         b.className = 'folder-picker-item';
-        b.innerHTML = `<span class="folder-picker-item__name">${escapeHtml(folder.name)}</span><span class="folder-picker-item__arrow">›</span>`;
+        b.type = 'button';
+        const folderColor = normalizeFolderColor(folder.color, '');
+        const normalizedFolderId = folder.id === 'no-folder' ? null : normalizeTaskFolderId(folder.id);
+        const isCurrent = hasCurrentFolder && normalizedFolderId === currentFolderId;
+        if (isCurrent) {
+          b.classList.add('is-current');
+        }
+        b.innerHTML = `
+          <span class="folder-picker-item__name-wrap">
+            <span class="folder-picker-item__color" style="background:${folderColor || '#cbd5e1'}"></span>
+            <span class="folder-picker-item__text">
+              <span class="folder-picker-item__name">${escapeHtml(folder.name)}</span>
+              ${isCurrent ? '<span class="folder-picker-item__meta">Текущая папка</span>' : ''}
+            </span>
+          </span>
+          <span class="folder-picker-item__arrow">›</span>
+        `;
         b.addEventListener('click', () => {
           onSelect(folder.id === 'no-folder' ? null : folder.id);
           close();
         });
         list.appendChild(b);
       });
+      if (!filtered.length) {
+        const empty = document.createElement('div');
+        empty.className = 'folder-picker-empty';
+        empty.textContent = 'Такой папки пока нет.';
+        list.appendChild(empty);
+      }
     };
     search.addEventListener('input', () => render(search.value));
     render('');
-    wrap.append(search, meta, list);
+    wrap.append(searchWrap, meta, list, createButton);
     window.setTimeout(() => search.focus({ preventScroll: true }), 70);
     return wrap;
   });
@@ -5739,8 +5883,15 @@ function openFolderPicker(onSelect) {
 function openFolderEditModal(folder = null) {
   openBottomSheet((close) => {
     const wrap = document.createElement('div');
+    wrap.className = 'folder-edit-modal';
     const title = folder ? 'Редактировать папку' : 'Создать папку';
-    wrap.innerHTML = `<h3 class="folder-modal-title">${title}</h3><p class="folder-modal-subtitle">Введите короткое название папки для быстрого поиска задач.</p>`;
+    wrap.innerHTML = `
+      <div class="folder-modal-head">
+        <span class="folder-modal-kicker">${folder ? 'Настройка папки' : 'Новая папка'}</span>
+        <h3 class="folder-modal-title">${title}</h3>
+        <p class="folder-modal-subtitle">Название и цвет будут видны в списке папок и на свёрнутых задачах.</p>
+      </div>
+    `;
     const input = document.createElement('input');
     input.placeholder = 'Название папки';
     input.value = folder ? folder.name : '';
@@ -5748,9 +5899,41 @@ function openFolderEditModal(folder = null) {
     input.maxLength = 42;
     input.autocomplete = 'off';
     input.setAttribute('enterkeyhint', 'done');
+    const nameField = document.createElement('label');
+    nameField.className = 'folder-modal-field';
+    nameField.innerHTML = '<span class="folder-modal-field__label">Название</span>';
+    nameField.appendChild(input);
     const hint = document.createElement('div');
     hint.className = 'folder-modal-hint';
     hint.textContent = 'Максимум 42 символа';
+    const colorField = document.createElement('div');
+    colorField.className = 'folder-modal-field';
+    const colorTitle = document.createElement('span');
+    colorTitle.className = 'folder-modal-field__label';
+    colorTitle.textContent = 'Цвет';
+    const colorPreview = document.createElement('div');
+    colorPreview.className = 'folder-modal-preview';
+    colorPreview.innerHTML = '<span class="folder-modal-preview__dot"></span><span class="folder-modal-preview__name">Предпросмотр папки</span>';
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.className = 'folder-modal-color-input';
+    colorInput.value = normalizeFolderColor(folder && folder.color, DEFAULT_FOLDER_COLOR);
+    const swatches = document.createElement('div');
+    swatches.className = 'folder-color-swatches';
+    FOLDER_COLOR_PRESETS.forEach((color) => {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = 'folder-color-swatch';
+      swatch.dataset.folderColor = color;
+      swatch.style.background = color;
+      swatch.setAttribute('aria-label', `Выбрать цвет ${color}`);
+      swatch.addEventListener('click', () => {
+        colorInput.value = color;
+        updateColorPreview();
+      });
+      swatches.appendChild(swatch);
+    });
+    colorField.append(colorTitle, colorPreview, swatches, colorInput);
     const inlineNotice = document.createElement('div');
     inlineNotice.className = 'folder-modal-notice';
     inlineNotice.hidden = true;
@@ -5771,9 +5954,22 @@ function openFolderEditModal(folder = null) {
     };
     const row = document.createElement('div');
     row.className = 'folder-modal-actions';
-    const cancel = document.createElement('button'); cancel.textContent='Отмена'; cancel.className='appdosc-card__action'; cancel.onclick=close;
-    const save = document.createElement('button'); save.textContent=folder?'Сохранить':'Создать'; save.className='appdosc-card__action appdosc-card__action--assign';
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Отмена';
+    cancel.className = 'appdosc-card__action folder-modal-action--ghost';
+    cancel.onclick = close;
+    const save = document.createElement('button');
+    save.textContent = folder ? 'Сохранить' : 'Создать';
+    save.className = 'appdosc-card__action appdosc-card__action--assign folder-modal-action--primary';
     const updateSubmitState = () => { save.disabled = !input.value.trim(); };
+    const updateColorPreview = () => {
+      const color = normalizeFolderColor(colorInput.value, DEFAULT_FOLDER_COLOR);
+      colorPreview.style.setProperty('--folder-preview-color', color);
+      colorPreview.querySelector('.folder-modal-preview__name').textContent = input.value.trim() || 'Предпросмотр папки';
+      Array.from(swatches.children).forEach((button) => {
+        button.classList.toggle('is-selected', normalizeFolderColor(button.dataset.folderColor, '') === color);
+      });
+    };
     const submit = () => {
       const name = input.value.trim();
       if (!name) {
@@ -5790,8 +5986,14 @@ function openFolderEditModal(folder = null) {
       }
       if (folder) {
         folder.name = name;
+        folder.color = normalizeFolderColor(colorInput.value, DEFAULT_FOLDER_COLOR);
       } else {
-        folders.push({ id: `folder_${Date.now()}`, name, system: false });
+        folders.push({
+          id: `folder_${Date.now()}`,
+          name,
+          color: normalizeFolderColor(colorInput.value, DEFAULT_FOLDER_COLOR),
+          system: false,
+        });
       }
       saveState();
       refreshFolderUi();
@@ -5800,27 +6002,100 @@ function openFolderEditModal(folder = null) {
       setStatus('success', folder ? 'Папка обновлена.' : 'Папка создана.');
     };
     save.onclick = submit;
-    input.addEventListener('input', updateSubmitState);
+    input.addEventListener('input', () => {
+      updateSubmitState();
+      updateColorPreview();
+    });
+    colorInput.addEventListener('input', updateColorPreview);
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
         submit();
       }
     });
-    row.append(cancel,save);
-    wrap.append(input,hint,inlineNotice,row);
+    row.append(cancel, save);
+    wrap.append(nameField, hint, colorField, inlineNotice, row);
     updateSubmitState();
+    updateColorPreview();
     window.setTimeout(() => input.focus({ preventScroll: true }), 70);
     return wrap;
   });
 }
 
 function openFolderActionsModal(folder) {
-  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML='<h3>Управление папкой</h3>'; const ren=document.createElement('button'); ren.className='appdosc-card__action'; ren.textContent='Переименовать'; ren.onclick=()=>{close(); openFolderEditModal(folder);}; const del=document.createElement('button'); del.className='appdosc-card__action danger-btn'; del.textContent='Удалить'; del.onclick=()=>{close(); confirmDeleteFolder(folder);}; wrap.append(ren,del); return wrap;});
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'folder-actions-modal';
+    wrap.innerHTML = `
+      <div class="folder-modal-head">
+        <span class="folder-modal-kicker">Управление</span>
+        <h3 class="folder-modal-title">Управление папкой</h3>
+        <p class="folder-modal-subtitle">Можно изменить название, цвет или удалить папку.</p>
+      </div>
+    `;
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'appdosc-card__action folder-action-item';
+    editButton.textContent = 'Редактировать папку';
+    editButton.onclick = () => {
+      close();
+      openFolderEditModal(folder);
+    };
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'appdosc-card__action danger-btn folder-action-item';
+    deleteButton.textContent = 'Удалить папку';
+    deleteButton.onclick = () => {
+      close();
+      confirmDeleteFolder(folder);
+    };
+    wrap.append(editButton, deleteButton);
+    return wrap;
+  });
 }
 
 function confirmDeleteFolder(folder) {
-  openBottomSheet((close)=>{ const wrap=document.createElement('div'); wrap.innerHTML=`<h3 class="folder-modal-title">Удалить папку «${folder.name}»?</h3><p class="folder-modal-subtitle">Задачи не удалятся. Мы просто перенесём их в «Без папки».</p>`; const actions=document.createElement('div'); actions.className='folder-modal-actions'; const c=document.createElement('button'); c.className='appdosc-card__action'; c.textContent='Отмена'; c.onclick=close; const d=document.createElement('button'); d.className='appdosc-card__action danger-btn'; d.textContent='Удалить'; d.onclick=()=>{ state.tasks.forEach((task)=>{ if(task.folderId===folder.id) task.folderId=null;}); folders=folders.filter((f)=>f.id!==folder.id); if(activeFolderId===folder.id) activeFolderId='all'; saveState(); refreshFolderUi(); persistFoldersListToRegistry(); close(); setStatus('success', 'Папка удалена.');}; actions.append(c,d); wrap.append(actions); return wrap;});
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'folder-delete-modal';
+    wrap.innerHTML = `
+      <div class="folder-modal-head">
+        <span class="folder-modal-kicker">Удаление</span>
+        <h3 class="folder-modal-title">Удалить папку «${escapeHtml(folder.name)}»?</h3>
+        <p class="folder-modal-subtitle">Задачи не удалятся. Они вернутся в «Без папки».</p>
+      </div>
+    `;
+    const actions = document.createElement('div');
+    actions.className = 'folder-modal-actions';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'appdosc-card__action folder-modal-action--ghost';
+    cancelButton.textContent = 'Отмена';
+    cancelButton.onclick = close;
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'appdosc-card__action danger-btn';
+    deleteButton.textContent = 'Удалить';
+    deleteButton.onclick = () => {
+      state.tasks.forEach((task) => {
+        if (task.folderId === folder.id) {
+          task.folderId = null;
+        }
+      });
+      folders = folders.filter((item) => item.id !== folder.id);
+      if (activeFolderId === folder.id) {
+        activeFolderId = 'all';
+      }
+      saveState();
+      refreshFolderUi();
+      persistFoldersListToRegistry();
+      close();
+      setStatus('success', 'Папка удалена.');
+    };
+    actions.append(cancelButton, deleteButton);
+    wrap.append(actions);
+    return wrap;
+  });
 }
 
 function setupTaskFolderControl(card, task) {
@@ -5845,23 +6120,16 @@ function setupTaskFolderControl(card, task) {
   } else if (btn.parentNode !== row) {
     row.appendChild(btn);
   }
-  const currentFolderName = getFolderName(task.folderId);
-  btn.dataset.taskId = String(task.id || '');
-  btn.setAttribute('aria-label', `Папка задачи: ${currentFolderName}. Нажмите, чтобы изменить.`);
-  btn.innerHTML = `
-    <span class="task-folder-select__content">
-      <span class="task-folder-select__caption">Папка</span>
-      <span class="task-folder-select__value">${escapeHtml(currentFolderName)}</span>
-    </span>
-    <span class="task-folder-select__chevron" aria-hidden="true">⌄</span>
-  `;
+  updateTaskFolderButtonVisual(btn, task);
   btn.onclick = () => {
     openFolderPicker((selectedFolderId) => {
       setTaskFolder(task, selectedFolderId);
+      applyTaskFolderCardAccent(card, task);
+      updateTaskFolderButtonVisual(btn, task);
       saveState();
       refreshFolderUi();
       persistTaskFolderToRegistry(task);
-    });
+    }, { currentFolderId: task.folderId });
   };
 }
 
@@ -6287,8 +6555,15 @@ function getFolderCount(folderId) {
 
 function selectFolder(folderId) {
   const normalizedFolderId = ensureActiveFolderId(folderId);
-  activeFolderId = normalizedFolderId;
-  state.activeFilters.folderId = normalizedFolderId;
+  const isClickOnActive = normalizedFolderId === activeFolderId;
+  if (isClickOnActive && normalizedFolderId !== 'all') {
+    activeFolderId = 'all';
+    state.activeFilters.folderId = 'all';
+    resetCompactFilters('all');
+  } else {
+    activeFolderId = normalizedFolderId;
+    state.activeFilters.folderId = normalizedFolderId;
+  }
   updateVisibleTasks();
   updateStats();
   updateSummaryFilterState();
@@ -6308,6 +6583,14 @@ function renderFolders() {
     button.className = 'folder-chip';
     if (folder.id === activeFolderId) {
       button.classList.add('active');
+    }
+    const folderColor = getFolderColorById(folder.id);
+    if (folderColor) {
+      button.style.borderColor = `${folderColor}88`;
+      button.style.boxShadow = `0 0 0 1px ${folderColor}26 inset`;
+      if (folder.id === activeFolderId) {
+        button.style.background = `linear-gradient(150deg, ${folderColor}1f, ${folderColor}12)`;
+      }
     }
     const name = document.createElement('span');
     name.className = 'folder-name';
@@ -8629,12 +8912,16 @@ function buildTasksSignature(visibleTasks) {
   for (let i = 0; i < visibleTasks.length; i += 1) {
     const item = visibleTasks[i];
     const task = item && item.task ? item.task : {};
+    const folderId = normalizeValue(task.folderId);
     parts.push(
       (task.id || '') + ':' +
       (task.entryNumber || '') + ':' +
       (task.status || task.statusLabel || '') + ':' +
       (task.updatedAt || '') + ':' +
-      (task.dueDate || '')
+      (task.dueDate || '') + ':' +
+      folderId + ':' +
+      getFolderName(folderId) + ':' +
+      getFolderColorById(folderId)
     );
   }
   return `${normalizeTaskListMode(state.taskListMode)}|${parts.join('|')}`;
@@ -13228,8 +13515,9 @@ async function sendTaskMutation(update) {
         if (!item || typeof item !== 'object') return null;
         const id = normalizeValue(item.id);
         const name = normalizeValue(item.name);
+        const color = normalizeFolderColor(item.color, DEFAULT_FOLDER_COLOR);
         if (!id || !name) return null;
-        return { id, name };
+        return { id, name, color };
       })
       .filter(Boolean);
   }
