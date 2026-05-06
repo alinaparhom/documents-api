@@ -13387,7 +13387,7 @@ switch ($action) {
                         }
                     }
                 }
-                if ($shouldRemove && !$isDirector && !$canManageSubordinates && !docs_entry_assigned_by_user($entry, $requestContext)) {
+                if ($shouldRemove && !docs_entry_assigned_by_user($entry, $requestContext)) {
                     $blockedEntries[] = $entry;
                     $remainingResponsibles[] = $entry;
                     continue;
@@ -13954,7 +13954,7 @@ switch ($action) {
                         }
                     }
                 }
-                if ($shouldRemove && !$isDirector && !$canManageSubordinates && !docs_entry_assigned_by_user($entry, $requestContext)) {
+                if ($shouldRemove && !docs_entry_assigned_by_user($entry, $requestContext)) {
                     $blockedEntries[] = $entry;
                     $remainingSubordinates[] = $entry;
                     continue;

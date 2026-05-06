@@ -17908,6 +17908,19 @@ function isAssignmentAuthoredByUser(entry, ids, names) {
   return false;
 }
 
+function canCurrentUserRevokeAssignmentEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return false;
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+
+  return isAssignmentAuthoredByUser(entry, ids, names);
+}
+
 function isDirectorAssignmentOverdue(task) {
   if (!task || typeof task !== 'object') {
     return false;
@@ -20637,25 +20650,29 @@ function setupAssignmentControls(card, task) {
 
     row.appendChild(info);
 
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
-    removeButton.dataset.assignmentAction = 'remove';
-    removeButton.textContent = 'Отозвать';
-    removeButton.disabled = false;
-    removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
-    removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
-    removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
-    removeButton.style.color = 'var(--appdosc-assign-remove-text)';
-    const actions = document.createElement('div');
-    actions.className = 'appdosc-card__assign-actions';
-    actions.style.width = '100%';
-    actions.style.display = 'flex';
-    actions.style.justifyContent = 'stretch';
-    actions.style.marginTop = '10px';
-    removeButton.style.width = '100%';
-    actions.appendChild(removeButton);
-    info.appendChild(actions);
+    const canRevokeAssignedEntry = !assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry);
+    let removeButton = null;
+    if (canRevokeAssignedEntry) {
+      removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
+      removeButton.dataset.assignmentAction = 'remove';
+      removeButton.textContent = 'Отозвать';
+      removeButton.disabled = false;
+      removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
+      removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
+      removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
+      removeButton.style.color = 'var(--appdosc-assign-remove-text)';
+      const actions = document.createElement('div');
+      actions.className = 'appdosc-card__assign-actions';
+      actions.style.width = '100%';
+      actions.style.display = 'flex';
+      actions.style.justifyContent = 'stretch';
+      actions.style.marginTop = '10px';
+      removeButton.style.width = '100%';
+      actions.appendChild(removeButton);
+      info.appendChild(actions);
+    }
 
     entriesContainer.appendChild(row);
 
@@ -20710,7 +20727,12 @@ function setupAssignmentControls(card, task) {
         return;
       }
 
-      if (removeButton.dataset.loading === 'true') {
+      if (!canCurrentUserRevokeAssignmentEntry(referenceEntry)) {
+        setStatus('error', 'Отозвать задачу может только тот, кто её назначил.');
+        return;
+      }
+
+      if (!removeButton || removeButton.dataset.loading === 'true') {
         return;
       }
 
@@ -20779,7 +20801,9 @@ function setupAssignmentControls(card, task) {
       }
     };
 
-    removeButton.addEventListener('click', handleRemove);
+    if (removeButton) {
+      removeButton.addEventListener('click', handleRemove);
+    }
 
     return row;
   };
@@ -21633,25 +21657,29 @@ function setupSubordinateControls(card, task) {
 
     row.appendChild(info);
 
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
-    removeButton.dataset.assignmentAction = 'remove';
-    removeButton.textContent = 'Отозвать';
-    removeButton.disabled = false;
-    removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
-    removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
-    removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
-    removeButton.style.color = 'var(--appdosc-assign-remove-text)';
-    const actions = document.createElement('div');
-    actions.className = 'appdosc-card__assign-actions';
-    actions.style.width = '100%';
-    actions.style.display = 'flex';
-    actions.style.justifyContent = 'stretch';
-    actions.style.marginTop = '10px';
-    removeButton.style.width = '100%';
-    actions.appendChild(removeButton);
-    info.appendChild(actions);
+    const canRevokeAssignedEntry = !assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry);
+    let removeButton = null;
+    if (canRevokeAssignedEntry) {
+      removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
+      removeButton.dataset.assignmentAction = 'remove';
+      removeButton.textContent = 'Отозвать';
+      removeButton.disabled = false;
+      removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
+      removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
+      removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
+      removeButton.style.color = 'var(--appdosc-assign-remove-text)';
+      const actions = document.createElement('div');
+      actions.className = 'appdosc-card__assign-actions';
+      actions.style.width = '100%';
+      actions.style.display = 'flex';
+      actions.style.justifyContent = 'stretch';
+      actions.style.marginTop = '10px';
+      removeButton.style.width = '100%';
+      actions.appendChild(removeButton);
+      info.appendChild(actions);
+    }
 
     entriesContainer.appendChild(row);
 
@@ -21687,7 +21715,12 @@ function setupSubordinateControls(card, task) {
         return;
       }
 
-      if (removeButton.dataset.loading === 'true') {
+      if (!canCurrentUserRevokeAssignmentEntry(referenceEntry)) {
+        setStatus('error', 'Отозвать задачу может только тот, кто её назначил.');
+        return;
+      }
+
+      if (!removeButton || removeButton.dataset.loading === 'true') {
         return;
       }
 
@@ -21754,7 +21787,9 @@ function setupSubordinateControls(card, task) {
       }
     };
 
-    removeButton.addEventListener('click', handleRemove);
+    if (removeButton) {
+      removeButton.addEventListener('click', handleRemove);
+    }
 
     return row;
   };
