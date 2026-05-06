@@ -2178,6 +2178,18 @@ function getFolderColorById(folderId) {
   return normalizeFolderColor(folder.color, '');
 }
 
+function getFolderColorRgba(color, alpha = 1) {
+  const normalizedColor = normalizeFolderColor(color, '');
+  if (!normalizedColor) {
+    return '';
+  }
+  const safeAlpha = Math.min(1, Math.max(0, Number.isFinite(Number(alpha)) ? Number(alpha) : 1));
+  const red = parseInt(normalizedColor.slice(1, 3), 16);
+  const green = parseInt(normalizedColor.slice(3, 5), 16);
+  const blue = parseInt(normalizedColor.slice(5, 7), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${safeAlpha})`;
+}
+
 function applyTaskFolderCardAccent(card, task) {
   if (!(card instanceof HTMLElement)) {
     return;
@@ -2186,8 +2198,8 @@ function applyTaskFolderCardAccent(card, task) {
   if (folderColor) {
     card.dataset.folderColor = folderColor;
     card.style.setProperty('--appdosc-folder-task-color', folderColor);
-    card.style.setProperty('--appdosc-folder-task-border', `${folderColor}78`);
-    card.style.setProperty('--appdosc-folder-task-ring', `${folderColor}22`);
+    card.style.setProperty('--appdosc-folder-task-border', getFolderColorRgba(folderColor, 0.48));
+    card.style.setProperty('--appdosc-folder-task-ring', getFolderColorRgba(folderColor, 0.14));
     card.style.boxShadow = '';
     card.style.background = '';
     return;
@@ -2218,8 +2230,8 @@ function updateTaskFolderButtonVisual(button, task) {
     <span class="task-folder-select__chevron" aria-hidden="true">⌄</span>
   `;
   if (currentFolderColor) {
-    button.style.borderColor = `${currentFolderColor}66`;
-    button.style.boxShadow = `0 0 0 1px ${currentFolderColor}33 inset`;
+    button.style.borderColor = getFolderColorRgba(currentFolderColor, 0.4);
+    button.style.boxShadow = `0 0 0 1px ${getFolderColorRgba(currentFolderColor, 0.2)} inset`;
   } else {
     button.style.borderColor = '';
     button.style.boxShadow = '';
@@ -6017,7 +6029,9 @@ function openFolderEditModal(folder = null) {
     wrap.append(nameField, hint, colorField, inlineNotice, row);
     updateSubmitState();
     updateColorPreview();
-    window.setTimeout(() => input.focus({ preventScroll: true }), 70);
+    if (!folder) {
+      window.setTimeout(() => input.focus({ preventScroll: true }), 70);
+    }
     return wrap;
   });
 }
@@ -6586,10 +6600,10 @@ function renderFolders() {
     }
     const folderColor = getFolderColorById(folder.id);
     if (folderColor) {
-      button.style.borderColor = `${folderColor}88`;
-      button.style.boxShadow = `0 0 0 1px ${folderColor}26 inset`;
+      button.style.borderColor = getFolderColorRgba(folderColor, 0.54);
+      button.style.boxShadow = `0 0 0 1px ${getFolderColorRgba(folderColor, 0.15)} inset`;
       if (folder.id === activeFolderId) {
-        button.style.background = `linear-gradient(150deg, ${folderColor}1f, ${folderColor}12)`;
+        button.style.background = `linear-gradient(150deg, ${getFolderColorRgba(folderColor, 0.16)}, ${getFolderColorRgba(folderColor, 0.09)})`;
       }
     }
     const name = document.createElement('span');
