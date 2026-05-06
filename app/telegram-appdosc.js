@@ -1354,6 +1354,28 @@ function updateViewerLoaderStep(step, progress, token = docLoadTracker.loaderTok
   if (barEl && typeof progress === 'number') barEl.style.width = `${Math.min(100, Math.max(0, progress))}%`;
 }
 
+function openViewerLoadingShell(previewUrl, fileName, viewerOptions = {}, message = 'Файл загружается...') {
+  const viewer = pdfViewerInstance;
+  if (!viewer || typeof viewer.open !== 'function' || !previewUrl) {
+    return null;
+  }
+
+  const loadingOptions = {
+    ...viewerOptions,
+    isPdf: Boolean(viewerOptions && viewerOptions.isPdf),
+    forceCanvas: Boolean(viewerOptions && viewerOptions.forceCanvas),
+    skipPdfLoad: true,
+    loadingOnly: true,
+    loadingMessage: message,
+  };
+
+  try {
+    return viewer.open(previewUrl, fileName || 'Документ', loadingOptions);
+  } catch (_error) {
+    return null;
+  }
+}
+
 function hideViewerLoader(token = docLoadTracker.loaderToken) {
   if (token && docLoadTracker.loaderToken && token !== docLoadTracker.loaderToken) {
     return;
@@ -10932,6 +10954,21 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
     isPdf: true,
     forceCanvas: true,
   };
+  let loadingShellOpened = false;
+
+  if (isPdf && !forceFrameRequested) {
+    const shellMode = openViewerLoadingShell(
+      absolutePreviewUrl,
+      fileName,
+      pdfViewerOptions,
+      'Файл загружается... PDF откроется автоматически.',
+    );
+    loadingShellOpened = Boolean(shellMode);
+    if (loadingShellOpened) {
+      updateViewerLoaderStep('Файл загружается...', 35);
+      docLoadStep('мгновенный экран загрузки pdf');
+    }
+  }
 
   logClientEvent('task_view_resolve', {
     ...baseDetails,
@@ -11452,6 +11489,28 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
       strategy: 'force_frame',
       reason: 'frame_unavailable',
     }, 'error');
+  }
+
+  if (!isPdf && !shouldForceFrame && (extension && (IMAGE_EXTENSIONS.has(extension) || VIDEO_EXTENSIONS.has(extension)))) {
+    const viewer = pdfViewerInstance;
+    if (viewer && typeof viewer.open === 'function') {
+      updateViewerLoaderStep('Открытие файла...', 70);
+      const directMode = viewer.open(absolutePreviewUrl, fileName || 'Документ', effectiveViewerOptions);
+      if (directMode) {
+        updateViewerLoaderStep('Готово', 100);
+        logViewFlow('open:direct-media', { mode: directMode, url: absolutePreviewUrl });
+        logClientEvent('task_view_inline_mode', { ...baseDetails, mode: directMode, strategy: 'direct_media' });
+        logViewerModeDecision(directMode, 'direct_media', {
+          ...modeDecisionBase,
+          url: absolutePreviewUrl,
+        });
+        return { mode: directMode };
+      }
+    }
+  }
+
+  if (!isPdf && !loadingShellOpened) {
+    updateViewerLoaderStep('Файл загружается...', 35);
   }
 
   logClientEvent('task_view_inline_start', baseDetails);
@@ -20233,13 +20292,6 @@ function setupAssignmentControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
-    deadlineInput.style.width = '100%';
-    deadlineInput.style.minWidth = '0';
-    deadlineInput.style.minHeight = '50px';
-    deadlineInput.style.boxSizing = 'border-box';
-    deadlineInput.style.padding = '12px 14px';
-    deadlineInput.style.borderRadius = '16px';
-    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
@@ -21236,13 +21288,6 @@ function setupSubordinateControls(card, task) {
     const deadlineInput = document.createElement('input');
     deadlineInput.type = 'date';
     deadlineInput.className = 'appdosc-card__assign-deadline-input';
-    deadlineInput.style.width = '100%';
-    deadlineInput.style.minWidth = '0';
-    deadlineInput.style.minHeight = '50px';
-    deadlineInput.style.boxSizing = 'border-box';
-    deadlineInput.style.padding = '12px 14px';
-    deadlineInput.style.borderRadius = '16px';
-    deadlineInput.style.fontSize = '18px';
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
