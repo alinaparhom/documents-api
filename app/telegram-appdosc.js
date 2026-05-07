@@ -3142,6 +3142,7 @@ function initElements() {
   elements.placeholder = document.querySelector('[data-placeholder]');
   elements.cardTemplate = document.querySelector('#appdosc-card-template');
   elements.organizations = document.querySelector('[data-organizations]');
+  elements.backToTop = document.querySelector('[data-back-to-top]');
   elements.versionPanel = document.querySelector('[data-version-panel]');
   elements.versionValue = document.querySelector('[data-version-value]');
   elements.versionUpdated = document.querySelector('[data-version-updated]');
@@ -5287,9 +5288,9 @@ function initCompactRangeCalendar() {
     endDate: state.compactFilters.dateTo,
     taskCounts: normalizeTaskCounts(buildTaskCountItemsFromTasks(state.tasks)),
     onChange({ startDate, endDate }) {
-      state.compactFilters.dateFrom = normalizeDateInputValue(startDate);
-      state.compactFilters.dateTo = normalizeDateInputValue(endDate);
-      state.compactFilters.quickPreset = '';
+      state.activeFilters.dateFrom = normalizeDateInputValue(startDate);
+      state.activeFilters.dateTo = normalizeDateInputValue(endDate);
+      state.activeFilters.quickPreset = '';
       updateVisibleTasks();
       safeRender('compact_filter_period');
     },
@@ -17999,21 +18000,26 @@ function isOverdue(task) {
 }
 
 function updateFooter() {
-  if (!elements.organizations) {
+  if (!(elements.backToTop instanceof HTMLElement)) {
     return;
   }
 
-  const processed = state.organizationsChecked || state.organizations.length;
-  const matched = Array.isArray(state.organizations)
-    ? state.organizations.reduce((total, summary) => {
-      const count = Number(summary && summary.count);
-      return total + (Number.isFinite(count) && count > 0 ? 1 : 0);
-    }, 0)
-    : 0;
+  elements.backToTop.hidden = false;
+}
 
-  const segments = [`Организаций обработано: ${processed}`];
-  segments.push(`Задачи найдены в: ${matched}`);
-  elements.organizations.textContent = segments.join(' • ');
+function scrollAppToTop() {
+  const appRoot = elements.app instanceof HTMLElement
+    ? elements.app
+    : document.querySelector('[data-app]');
+
+  if (appRoot && typeof appRoot.scrollIntoView === 'function') {
+    appRoot.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 }
 
 function setStatus(type, message) {
@@ -18266,6 +18272,9 @@ function attachEvents() {
       updateVisibleTasks();
       safeRender('compact_filter_reset');
     });
+  }
+  if (elements.backToTop) {
+    elements.backToTop.addEventListener('click', scrollAppToTop);
   }
   if (elements.viewerDownload) {
     elements.viewerDownload.addEventListener('click', handleViewerDownloadClick);

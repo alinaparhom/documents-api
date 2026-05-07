@@ -1527,6 +1527,7 @@
         width: 100%;
         max-width: 100%;
         margin: 0;
+        padding-bottom: calc(84px + env(safe-area-inset-bottom));
       }
 
       .appdosc__table-card.tasks-panel {
@@ -2223,31 +2224,61 @@
       .appdosc__footer {
         width: 100%;
         max-width: 100%;
-        margin: 2px 0 0 !important;
-        padding: 0 0 calc(16px + env(safe-area-inset-bottom)) !important;
-        border-radius: 22px;
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 900;
+        margin: 0 !important;
+        padding: 10px 8px calc(10px + env(safe-area-inset-bottom)) !important;
+        border-radius: 0;
+        background: linear-gradient(to top, rgba(238, 243, 251, 0.96) 72%, rgba(238, 243, 251, 0));
+        pointer-events: none;
       }
 
-      .appdosc__footer-meta.tasks-stats {
-        margin-top: 12px !important;
-        padding: 14px !important;
-        border-radius: 18px;
-        border: 1px solid var(--appdosc-task-footer-border);
-        background: var(--appdosc-task-footer-bg) !important;
-        color: var(--appdosc-task-footer-text);
-        font-size: 13px !important;
-        line-height: 1.35 !important;
+      .appdosc__back-to-top {
+        width: 100%;
+        max-width: 680px;
+        min-height: 48px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin: 0 auto;
+        border: 1px solid rgba(96, 165, 250, 0.34);
+        border-radius: 16px;
+        background:
+          linear-gradient(135deg, rgba(37, 99, 235, 0.96), rgba(14, 165, 233, 0.94));
+        color: #ffffff;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0;
+        box-shadow: 0 14px 34px rgba(37, 99, 235, 0.24);
+        cursor: pointer;
+        pointer-events: auto;
+        touch-action: manipulation;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
       }
 
-      .appdosc__footer-hint.tasks-help {
-        margin-top: 12px !important;
-        padding: 14px !important;
-        border-radius: 18px;
-        border: 1px solid var(--appdosc-task-footer-border);
-        background: var(--appdosc-task-footer-bg) !important;
-        color: var(--appdosc-task-footer-text);
-        font-size: 13px !important;
-        line-height: 1.35 !important;
+      :root[data-theme='dark'] .appdosc__footer {
+        background: linear-gradient(to top, rgba(15, 23, 42, 0.96) 72%, rgba(15, 23, 42, 0));
+      }
+
+      .appdosc__back-to-top:active {
+        transform: translateY(1px) scale(0.99);
+        box-shadow: 0 8px 22px rgba(37, 99, 235, 0.2);
+      }
+
+      .appdosc__back-to-top:focus-visible {
+        outline: 3px solid rgba(125, 211, 252, 0.48);
+        outline-offset: 3px;
+      }
+
+      .appdosc__back-to-top-icon {
+        width: 22px;
+        height: 22px;
+        display: block;
+        flex: 0 0 auto;
       }
 
       .appdosc__task-nav {
@@ -3743,8 +3774,12 @@
       </main>
 
       <footer class="appdosc__footer">
-        <div class="appdosc__footer-meta tasks-stats" data-organizations>Организаций обработано: 0</div>
-        <div class="appdosc__footer-hint tasks-help">Если вы не видите задания, откройте мини-приложение из Telegram-чата с ботом.</div>
+        <button type="button" class="appdosc__back-to-top" data-back-to-top>
+          <svg class="appdosc__back-to-top-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 19V5m0 0-6 6m6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>Наверх</span>
+        </button>
       </footer>
     </div>
 
