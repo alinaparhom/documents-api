@@ -13606,10 +13606,22 @@ async function sendTaskMutation(update) {
 
   if (!response.ok) {
     let responseText = '';
+    let responsePayload = null;
+    let responseMessage = '';
     try {
       responseText = await response.text();
     } catch (error) {
       responseText = '';
+    }
+    if (responseText) {
+      try {
+        responsePayload = JSON.parse(responseText);
+        if (responsePayload && typeof responsePayload === 'object') {
+          responseMessage = normalizeValue(responsePayload.error || responsePayload.message);
+        }
+      } catch (error) {
+        responsePayload = null;
+      }
     }
     logClientEvent('task_update_error', {
       requestId,
@@ -13618,13 +13630,17 @@ async function sendTaskMutation(update) {
       documentId,
       status: response.status,
       durationMs: Date.now() - startedAt,
+      message: responseMessage,
       responsePreview: responseText ? responseText.slice(0, 700) : '',
       responseTextLength: responseText ? responseText.length : 0,
     });
-    const requestError = new Error(`Ошибка ${response.status}`);
+    const requestError = new Error(responseMessage || `Ошибка ${response.status}`);
     requestError.status = response.status;
     if (responseText) {
       requestError.responseText = responseText;
+    }
+    if (responsePayload && typeof responsePayload === 'object') {
+      requestError.responsePayload = responsePayload;
     }
     throw requestError;
   }
@@ -17891,6 +17907,8 @@ function isAssignmentAuthoredByUser(entry, ids, names) {
   const candidates = [
     entry.assignedBy,
     entry.assigned_by,
+    entry.assignedByTelegram,
+    entry.assigned_by_telegram,
     entry.assignedById,
     entry.assigned_by_id,
     entry.assignmentAuthor,

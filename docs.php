@@ -6791,6 +6791,217 @@ function docs_entry_assigned_by_user(array $entry, array $requestContext): bool
     return false;
 }
 
+function docs_collect_assignment_identity_candidates(array $entry): array
+{
+    $ids = [];
+    $names = [];
+
+    $pushId = static function ($value) use (&$ids): void {
+        if (!is_scalar($value)) {
+            return;
+        }
+        $normalized = docs_normalize_identifier_candidate_value($value);
+        if ($normalized !== '') {
+            $ids[$normalized] = true;
+        }
+    };
+
+    $pushName = static function ($value) use (&$names): void {
+        if (!is_scalar($value)) {
+            return;
+        }
+        $normalized = docs_normalize_name_candidate_value($value);
+        if ($normalized !== '') {
+            $names[$normalized] = true;
+        }
+    };
+
+    $idFields = [
+        'id',
+        'userId',
+        'telegram',
+        'telegramId',
+        'telegram_id',
+        'chatId',
+        'chat_id',
+        'number',
+        'responsibleNumber',
+        'responsible_number',
+        'email',
+        'login',
+        'username',
+    ];
+    foreach ($idFields as $field) {
+        if (array_key_exists($field, $entry)) {
+            $pushId($entry[$field]);
+        }
+    }
+
+    $nameFields = [
+        'name',
+        'responsible',
+        'fullName',
+        'full_name',
+        'fio',
+        'displayName',
+        'display_name',
+    ];
+    foreach ($nameFields as $field) {
+        if (array_key_exists($field, $entry)) {
+            $pushName($entry[$field]);
+        }
+    }
+
+    $firstName = trim((string) ($entry['firstName'] ?? $entry['first_name'] ?? ''));
+    $lastName = trim((string) ($entry['lastName'] ?? $entry['last_name'] ?? ''));
+    $fullName = trim($firstName . ' ' . $lastName);
+    if ($fullName !== '') {
+        $pushName($fullName);
+    }
+
+    return [
+        'ids' => array_keys($ids),
+        'names' => array_keys($names),
+    ];
+}
+
+function docs_merge_assignment_identity_candidates(array &$target, array $source): bool
+{
+    $changed = false;
+    if (!isset($target['ids']) || !is_array($target['ids'])) {
+        $target['ids'] = [];
+    }
+    if (!isset($target['names']) || !is_array($target['names'])) {
+        $target['names'] = [];
+    }
+
+    foreach (($source['ids'] ?? []) as $candidate) {
+        if (!is_scalar($candidate)) {
+            continue;
+        }
+        $normalized = docs_normalize_identifier_candidate_value($candidate);
+        if ($normalized === '' || in_array($normalized, $target['ids'], true)) {
+            continue;
+        }
+        $target['ids'][] = $normalized;
+        $changed = true;
+    }
+
+    foreach (($source['names'] ?? []) as $candidate) {
+        if (!is_scalar($candidate)) {
+            continue;
+        }
+        $normalized = docs_normalize_name_candidate_value($candidate);
+        if ($normalized === '' || in_array($normalized, $target['names'], true)) {
+            continue;
+        }
+        $target['names'][] = $normalized;
+        $changed = true;
+    }
+
+    return $changed;
+}
+
+function docs_assignment_identity_candidates_intersect(array $left, array $right): bool
+{
+    foreach (($left['ids'] ?? []) as $candidate) {
+        if (in_array($candidate, $right['ids'] ?? [], true)) {
+            return true;
+        }
+    }
+
+    foreach (($left['names'] ?? []) as $candidate) {
+        if (in_array($candidate, $right['names'] ?? [], true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_collect_extended_assignment_author_candidates(array $requestContext, array $directories = [], ?array $sessionAuth = null): array
+{
+    $candidates = docs_collect_request_identity_candidates($requestContext);
+
+    if (is_array($sessionAuth)) {
+        docs_merge_assignment_identity_candidates(
+            $candidates,
+            docs_collect_assignment_identity_candidates($sessionAuth)
+        );
+    }
+
+    foreach ($directories as $directory) {
+        if (!is_array($directory)) {
+            continue;
+        }
+
+        foreach ($directory as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $entryCandidates = docs_collect_assignment_identity_candidates($entry);
+            if (!docs_assignment_identity_candidates_intersect($candidates, $entryCandidates)) {
+                continue;
+            }
+
+            docs_merge_assignment_identity_candidates($candidates, $entryCandidates);
+        }
+    }
+
+    return $candidates;
+}
+
+function docs_entry_assigned_by_current_user(array $entry, array $requestContext, array $directories = [], ?array $sessionAuth = null): bool
+{
+    if (docs_entry_assigned_by_user($entry, $requestContext)) {
+        return true;
+    }
+
+    $userCandidates = docs_collect_extended_assignment_author_candidates($requestContext, $directories, $sessionAuth);
+    if (empty($userCandidates['ids']) && empty($userCandidates['names'])) {
+        return false;
+    }
+
+    $assignedByCandidates = [];
+    $pushCandidate = static function ($candidate) use (&$assignedByCandidates): void {
+        if (!is_scalar($candidate)) {
+            return;
+        }
+        $value = sanitize_text_field((string) $candidate, 200);
+        if ($value !== '') {
+            $assignedByCandidates[] = $value;
+        }
+    };
+
+    foreach ([
+        'assignedBy',
+        'assigned_by',
+        'assignedByTelegram',
+        'assigned_by_telegram',
+        'assignedById',
+        'assigned_by_id',
+        'assignedByLogin',
+        'assigned_by_login',
+    ] as $field) {
+        $pushCandidate($entry[$field] ?? '');
+    }
+
+    foreach ($assignedByCandidates as $candidate) {
+        $assignedByName = docs_normalize_name_candidate_value($candidate);
+        if ($assignedByName !== '' && in_array($assignedByName, $userCandidates['names'], true)) {
+            return true;
+        }
+
+        $assignedById = docs_normalize_identifier_candidate_value($candidate);
+        if ($assignedById !== '' && in_array($assignedById, $userCandidates['ids'], true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function docs_find_responsible_by_candidate(array $responsibles, string $candidate): ?array
 {
     if ($candidate === '') {
@@ -13924,21 +14135,50 @@ switch ($action) {
             $existingAssignees = docs_extract_assignees($records[$recordIndex]);
             $responsibleEntries = [];
             $subordinateEntries = [];
+            $seenSubordinateKeys = [];
+            $registerSubordinateEntry = static function (array $entry) use (&$subordinateEntries, &$seenSubordinateKeys): void {
+                if (empty($entry)) {
+                    return;
+                }
+                $entry['role'] = 'subordinate';
+                $keys = docs_collect_assignee_index_keys($entry);
+                foreach ($keys as $key) {
+                    if ($key !== '' && isset($seenSubordinateKeys[$key])) {
+                        return;
+                    }
+                }
+                foreach ($keys as $key) {
+                    if ($key !== '') {
+                        $seenSubordinateKeys[$key] = true;
+                    }
+                }
+                $subordinateEntries[] = $entry;
+            };
             foreach ($existingAssignees as $existingAssignee) {
                 if (!is_array($existingAssignee)) {
                     continue;
                 }
                 $roleValue = strtolower((string) ($existingAssignee['role'] ?? ''));
                 if ($roleValue === 'subordinate') {
-                    $subordinateEntries[] = $existingAssignee;
+                    $registerSubordinateEntry($existingAssignee);
                 } else {
                     $responsibleEntries[] = $existingAssignee;
                 }
+            }
+            if (isset($records[$recordIndex]['subordinates']) && is_array($records[$recordIndex]['subordinates'])) {
+                foreach ($records[$recordIndex]['subordinates'] as $existingSubordinate) {
+                    if (is_array($existingSubordinate)) {
+                        $registerSubordinateEntry($existingSubordinate);
+                    }
+                }
+            } elseif (isset($records[$recordIndex]['subordinate']) && is_array($records[$recordIndex]['subordinate'])) {
+                $registerSubordinateEntry($records[$recordIndex]['subordinate']);
             }
 
             $remainingSubordinates = [];
             $removedEntries = [];
             $blockedEntries = [];
+            $assignmentAuthorDirectories = [$responsibles, $subordinates, $block2];
             foreach ($subordinateEntries as $entry) {
                 if (!is_array($entry)) {
                     continue;
@@ -13954,7 +14194,16 @@ switch ($action) {
                         }
                     }
                 }
-                if ($shouldRemove && !docs_entry_assigned_by_user($entry, $requestContext)) {
+                if (
+                    $shouldRemove
+                    && !$isDirector
+                    && !docs_entry_assigned_by_current_user(
+                        $entry,
+                        $requestContext,
+                        $assignmentAuthorDirectories,
+                        $sessionAuthArray
+                    )
+                ) {
                     $blockedEntries[] = $entry;
                     $remainingSubordinates[] = $entry;
                     continue;
