@@ -13036,7 +13036,7 @@ function setupStatusControls(card, task) {
     return;
   }
 
-  const canManageByAssignment = userIsResponsibleForTask(task);
+  const canManageByAssignment = userIsResponsibleForTask(task) || userIsSubordinateForTask(task);
   if (!canManageByAssignment) {
     container.remove();
     return;
@@ -14839,71 +14839,7 @@ function canManageInstructionsForTask(task) {
 }
 
 function userIsResponsibleForTask(task) {
-  if (!task || typeof task !== 'object') {
-    return false;
-  }
-
-  const { ids, names } = getUserIdentifierCandidates();
-  if (!ids.length && !names.length) {
-    return false;
-  }
-
-  const assigneeIds = getTaskAssigneeIdentifiers(task);
-  if (assigneeIds.some((identifier) => ids.includes(identifier))) {
-    return true;
-  }
-
-  const normalizedNames = new Set(names);
-  const matchesName = (value) => {
-    const normalized = normalizeName(value);
-    return normalized && normalizedNames.has(normalized);
-  };
-
-  const assignees = Array.isArray(task.assignees) ? task.assignees : [];
-  for (const assignee of assignees) {
-    if (!assignee || typeof assignee !== 'object') {
-      continue;
-    }
-    if (matchesName(assignee.name) || matchesName(assignee.responsible)) {
-      return true;
-    }
-  }
-
-  if (task.assignee && typeof task.assignee === 'object') {
-    if (matchesName(task.assignee.name) || matchesName(task.assignee.responsible)) {
-      return true;
-    }
-  }
-
-  if (Array.isArray(task.assigneeIds)) {
-    for (const candidate of task.assigneeIds) {
-      const normalized = normalizeIdentifier(candidate);
-      if (normalized && ids.includes(normalized)) {
-        return true;
-      }
-    }
-  }
-
-  if (task.assigneeId) {
-    const normalized = normalizeIdentifier(task.assigneeId);
-    if (normalized && ids.includes(normalized)) {
-      return true;
-    }
-  }
-
-  if (matchesName(task.responsible)) {
-    return true;
-  }
-
-  if (Array.isArray(task.responsibles)) {
-    for (const entry of task.responsibles) {
-      if (matchesName(entry)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  return userIsResponsibleAssigneeForTask(task);
 }
 
 function taskHasResponsibleSubordinateReviewFlow(task) {
@@ -15041,13 +14977,30 @@ function userIsResponsibleAssigneeForTask(task) {
   return false;
 }
 
+function userIsSubordinateForTask(task) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+
+  if (userIsResponsibleAssigneeForTask(task)) {
+    return false;
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+
+  const subordinateEntries = collectTaskAssignments(task, 'subordinate');
+  return subordinateEntries.some((entry) => entryMatchesUser(entry, ids, names));
+}
+
 function currentUserCanReviewSubordinates(task) {
   const organization = getTaskOrganization(task);
   return Boolean(
     organization
       && taskHasResponsibleSubordinateReviewFlow(task)
-      && !userIsDirectorForOrganization(organization)
-      && userIsResponsibleAssigneeForTask(task)
+      && (userIsDirectorForOrganization(organization) || userIsResponsibleAssigneeForTask(task))
   );
 }
 
@@ -19669,7 +19622,7 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
   }
 
   const organization = getTaskOrganization(task);
-  if (!organization || userIsDirectorForOrganization(organization)) {
+  if (!organization) {
     return;
   }
   if (!taskHasResponsibleSubordinateReviewFlow(task)) {
@@ -19682,9 +19635,14 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
   const submitted = workflowStatus === 'submitted';
   const accepted = workflowStatus === 'accepted';
   const revision = workflowStatus === 'revision';
-  const isCurrentSubordinate = currentUserMatchesAssignmentEntry(entry);
+  const matchesCurrentUserEntry = currentUserMatchesAssignmentEntry(entry);
+  const isResponsibleForTask = userIsResponsibleAssigneeForTask(task);
+  const isCurrentSubordinate = !userIsDirectorForOrganization(organization)
+    && !isResponsibleForTask
+    && userIsSubordinateForTask(task)
+    && matchesCurrentUserEntry;
   const canReview = currentUserCanReviewSubordinates(task);
-  const canReviewEntry = canReview && !isCurrentSubordinate;
+  const canReviewEntry = canReview && !matchesCurrentUserEntry;
   const currentStatusKey = getStatusSummaryKey(getTaskStatusValue(task));
   const subordinateIsInWork = currentStatusKey === 'accepted' || revision;
   const canSubmit = isCurrentSubordinate && !accepted && subordinateIsInWork && (!submitted || revision);
@@ -20601,15 +20559,13 @@ function setupAssignmentControls(card, task) {
 
   const canManageResponsibles = userIsDirectorForOrganization(organization)
     || userIsResponsibleForTask(task);
-  if (!canManageResponsibles) {
-    container.remove();
-    return;
-  }
+  const canViewResponsibles = canManageResponsibles || userIsSubordinateForTask(task);
 
   const responsibles = getResponsiblesForOrganization(organization);
   const subordinates = getSubordinatesForOrganization(organization);
   const assignmentCandidates = buildAssignmentCandidateList(responsibles, subordinates);
-  if (!assignmentCandidates.length) {
+  const assignedEntries = collectTaskAssignments(task, 'responsible');
+  if (!canViewResponsibles || (assignedEntries.length === 0 && !assignmentCandidates.length)) {
     container.remove();
     return;
   }
@@ -20658,7 +20614,6 @@ function setupAssignmentControls(card, task) {
   const directory = buildAssignmentDirectory(assignmentCandidates, 'responsible');
   const directorIdentifiers = new Set(getTaskDirectorIdentifiers(task));
   const currentIdentifiers = getTaskResponsibleIdentifiers(task).filter((id) => !directorIdentifiers.has(id));
-  const assignedEntries = collectTaskAssignments(task, 'responsible');
   const commentMap = getTaskResponsibleComments(task);
   const dueDateMap = getTaskResponsibleDueDates(task);
   const instructionMap = getTaskResponsibleInstructions(task);
@@ -20804,6 +20759,11 @@ function setupAssignmentControls(card, task) {
   const populateComboOptions = () => {
     optionsList.innerHTML = '';
     visibleAssigneeOptions = [];
+    if (!canManageResponsibles) {
+      optionsList.hidden = true;
+      setComboExpanded(false);
+      return;
+    }
 
     const query = normalizeValue(comboInput.value).toLowerCase();
     const addedValues = new Set();
@@ -21085,6 +21045,7 @@ function setupAssignmentControls(card, task) {
     const instructionSelect = document.createElement('select');
     instructionSelect.className = 'appdosc-card__assign-instruction-select';
     populateInstructionSelect(instructionSelect, instruction || '');
+    instructionSelect.disabled = !canManageResponsibles;
     instructionBlock.appendChild(instructionSelect);
 
     info.appendChild(instructionBlock);
@@ -21103,6 +21064,8 @@ function setupAssignmentControls(card, task) {
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
+    commentInput.readOnly = !canManageResponsibles;
+    deadlineInput.disabled = !canManageResponsibles;
     deadline.appendChild(deadlineInput);
 
     info.appendChild(deadline);
@@ -21136,14 +21099,17 @@ function setupAssignmentControls(card, task) {
     });
     info.appendChild(responseViewButton);
 
-    const responseControls = createResponseUploadControls(task, referenceEntry || { value, label, normalized, role: 'responsible' }, setStatus);
+    const responseControls = canManageResponsibles
+      ? createResponseUploadControls(task, referenceEntry || { value, label, normalized, role: 'responsible' }, setStatus)
+      : null;
     if (responseControls) {
       info.appendChild(responseControls);
     }
 
     row.appendChild(info);
 
-    const canRevokeAssignedEntry = !assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry);
+    const canRevokeAssignedEntry = canManageResponsibles
+      && (!assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry));
     let removeButton = null;
     if (canRevokeAssignedEntry) {
       removeButton = document.createElement('button');
@@ -21302,6 +21268,10 @@ function setupAssignmentControls(card, task) {
   };
 
   const handleBulkAssign = async () => {
+    if (!canManageResponsibles) {
+      return;
+    }
+
     if (bulkButton.dataset.loading === 'true') {
       return;
     }
@@ -21458,6 +21428,21 @@ function setupAssignmentControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
+  if (!canManageResponsibles) {
+    comboButton.hidden = true;
+    comboSheet.hidden = true;
+    bulkButton.hidden = true;
+    bulkCount.hidden = true;
+    comboInput.disabled = true;
+    optionsList.innerHTML = '';
+    optionsList.hidden = true;
+    searchMeta.textContent = '';
+  } else if (!assignmentCandidates.length) {
+    comboButton.disabled = true;
+    comboInput.disabled = true;
+    searchMeta.textContent = 'Ответственные для назначения отсутствуют.';
+  }
+
   populateComboOptions();
   hideOptionsList();
 
@@ -21503,7 +21488,41 @@ function setupAssignmentControls(card, task) {
     }
   });
 
+  assignedEntries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+
+    const value = resolveAssignmentValueFromEntry(entry);
+    if (!value) {
+      return;
+    }
+
+    const normalizedKey = buildAssignmentDirectoryKey(value) || normalizeIdentifier(value);
+    if (renderedAssignedKeys.has(normalizedKey)) {
+      return;
+    }
+
+    const row = createResponsibleRow({
+      value,
+      label: buildAssignmentFallbackLabel(entry, 'responsible'),
+      normalized: normalizedKey,
+      assigned: true,
+      comment: resolveCommentForEntry(value, normalizedKey || '', entry),
+      dueDate: resolveDueForEntry(value, normalizedKey || '', entry),
+      instruction: resolveInstructionForEntry(value, normalizedKey || '', entry),
+      referenceEntry: entry,
+    });
+    if (row) {
+      registerRenderedEntryKeys(entry, value, normalizedKey);
+    }
+  });
+
   const handleAssigneeSelection = (preferredValue = '') => {
+    if (!canManageResponsibles) {
+      return;
+    }
+
     const inputValue = normalizeValue(preferredValue || comboInput.value);
     const selectedOption = visibleAssigneeOptions.find((option) => (
       option.selectable !== false
@@ -21624,6 +21643,10 @@ function setupAssignmentControls(card, task) {
   };
 
   const openSheet = () => {
+    if (!canManageResponsibles) {
+      return;
+    }
+
     if (comboSheet.parentElement !== document.body) {
       document.body.appendChild(comboSheet);
     }
@@ -21687,16 +21710,16 @@ function setupSubordinateControls(card, task) {
   const subordinates = getSubordinatesForOrganization(organization);
   const assignmentCandidates = buildAssignmentCandidateList([], subordinates);
   const canManageSubordinates = userIsDirectorForOrganization(organization)
-    || userIsResponsibleForTask(task)
-    || assignmentCandidates.length > 0;
-  if (!canManageSubordinates) {
+    || userIsResponsibleForTask(task);
+  const canViewSubordinates = canManageSubordinates || userIsSubordinateForTask(task);
+  if (!canViewSubordinates) {
     container.remove();
     return;
   }
 
   const assignedEntries = collectTaskAssignments(task, 'subordinate');
 
-  if (!assignmentCandidates.length && assignedEntries.length === 0) {
+  if (assignedEntries.length === 0 && (!canManageSubordinates || !assignmentCandidates.length)) {
     container.remove();
     return;
   }
@@ -21742,7 +21765,16 @@ function setupSubordinateControls(card, task) {
       optionColor: '#eff5ff',
       optionHover: 'rgba(123, 173, 255, 0.24)',
     };
-  if (!assignmentCandidates.length) {
+  if (!canManageSubordinates) {
+    pickerButton.hidden = true;
+    pickerSheet.hidden = true;
+    bulkButton.hidden = true;
+    bulkCount.hidden = true;
+    searchInput.disabled = true;
+    optionsList.innerHTML = '';
+    optionsList.hidden = true;
+    searchMeta.textContent = '';
+  } else if (!assignmentCandidates.length) {
     searchInput.disabled = true;
     pickerButton.disabled = true;
     searchMeta.textContent = 'Подчинённые для назначения отсутствуют.';
@@ -21895,6 +21927,12 @@ function setupSubordinateControls(card, task) {
   const populateComboOptions = () => {
     optionsList.innerHTML = '';
     visibleSubordinateOptions = [];
+    if (!canManageSubordinates) {
+      optionsList.hidden = true;
+      setComboExpanded(false);
+      return;
+    }
+
     const query = normalizeValue(searchInput.value).toLowerCase();
     const addedValues = new Set();
     let totalCount = 0;
@@ -22110,6 +22148,8 @@ function setupSubordinateControls(card, task) {
     if (dueDate) {
       deadlineInput.value = dueDate;
     }
+    commentInput.readOnly = !canManageSubordinates;
+    deadlineInput.disabled = !canManageSubordinates;
     deadline.appendChild(deadlineInput);
 
     info.appendChild(deadline);
@@ -22143,7 +22183,9 @@ function setupSubordinateControls(card, task) {
     });
     info.appendChild(responseViewButton);
 
-    const responseControls = createResponseUploadControls(task, referenceEntry || { value, label, normalized, role: 'subordinate' }, setStatus);
+    const responseControls = !userIsDirectorForOrganization(organization) && !userIsResponsibleAssigneeForTask(task)
+      ? createResponseUploadControls(task, referenceEntry || { value, label, normalized, role: 'subordinate' }, setStatus)
+      : null;
     if (responseControls) {
       info.appendChild(responseControls);
     }
@@ -22152,7 +22194,8 @@ function setupSubordinateControls(card, task) {
 
     row.appendChild(info);
 
-    const canRevokeAssignedEntry = !assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry);
+    const canRevokeAssignedEntry = canManageSubordinates
+      && (!assigned || canCurrentUserRevokeAssignmentEntry(referenceEntry));
     let removeButton = null;
     if (canRevokeAssignedEntry) {
       removeButton = document.createElement('button');
@@ -22290,6 +22333,10 @@ function setupSubordinateControls(card, task) {
   };
 
   const handleBulkAssign = async () => {
+    if (!canManageSubordinates) {
+      return;
+    }
+
     if (bulkButton.dataset.loading === 'true') {
       return;
     }
@@ -22465,6 +22512,9 @@ function setupSubordinateControls(card, task) {
     const dueDate = resolveDueForEntry(value, normalizedKey || '', matchedEntry);
 
     const referenceEntry = matchedEntry || (directoryEntry && directoryEntry.entry);
+    if (!canManageSubordinates && !currentUserMatchesAssignmentEntry(referenceEntry)) {
+      return;
+    }
     if (hasRenderedEntry(referenceEntry, value, normalizedKey)) {
       return;
     }
@@ -22483,7 +22533,43 @@ function setupSubordinateControls(card, task) {
     }
   });
 
+  assignedEntries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    if (!canManageSubordinates && !currentUserMatchesAssignmentEntry(entry)) {
+      return;
+    }
+
+    const value = resolveAssignmentValueFromEntry(entry);
+    if (!value) {
+      return;
+    }
+
+    const normalizedKey = buildAssignmentDirectoryKey(value) || normalizeIdentifier(value);
+    if (hasRenderedEntry(entry, value, normalizedKey)) {
+      return;
+    }
+
+    const row = createSubordinateRow({
+      value,
+      label: buildAssignmentFallbackLabel(entry, 'subordinate'),
+      normalized: normalizedKey,
+      assigned: true,
+      comment: resolveCommentForEntry(value, normalizedKey || '', entry),
+      dueDate: resolveDueForEntry(value, normalizedKey || '', entry),
+      referenceEntry: entry,
+    });
+    if (row) {
+      registerRenderedEntry(entry, value, normalizedKey);
+    }
+  });
+
   const handleSubordinateSelection = (preferredValue = '') => {
+    if (!canManageSubordinates) {
+      return;
+    }
+
     const inputValue = normalizeValue(preferredValue || searchInput.value);
     const selectedOption = visibleSubordinateOptions.find((option) => (
       option.selectable !== false
@@ -22567,6 +22653,10 @@ function setupSubordinateControls(card, task) {
   };
 
   const openSheet = () => {
+    if (!canManageSubordinates) {
+      return;
+    }
+
     if (pickerSheet.parentElement !== document.body) {
       document.body.appendChild(pickerSheet);
     }

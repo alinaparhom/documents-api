@@ -2067,13 +2067,13 @@ function docs_resolve_assignment_author_role_from_session(?array $sessionAuth): 
     return $sessionRole;
 }
 
-function docs_resolve_assignment_author_role_from_context(bool $isDirector, bool $isTaskAssignee, bool $isTaskSubordinate): string
+function docs_resolve_assignment_author_role_from_context(bool $isDirector, bool $isTaskResponsible, bool $isTaskSubordinate): string
 {
     if ($isDirector) {
         return 'director';
     }
 
-    if ($isTaskAssignee) {
+    if ($isTaskResponsible) {
         return 'responsible';
     }
 
@@ -7299,37 +7299,31 @@ function docs_apply_subordinate_submission_to_entry(array $entry, array $submitt
     });
 }
 
-function docs_resolve_subordinate_status_assignee_key(array $subordinate, string $subordinateCandidate = ''): string
-{
-    $entryKeys = docs_collect_assignee_index_keys($subordinate);
-    if ($subordinateCandidate !== '') {
-        $targetKeys = docs_build_subordinate_review_target_keys($subordinateCandidate);
-        foreach ($entryKeys as $entryKey) {
-            $normalizedEntryKey = mb_strtolower($entryKey, 'UTF-8');
-            foreach ($targetKeys as $targetKey) {
-                if ($normalizedEntryKey === mb_strtolower($targetKey, 'UTF-8')) {
-                    return $entryKey;
-                }
-            }
-        }
-
-        if (!empty($targetKeys)) {
-            return $targetKeys[0];
-        }
-    }
-
-    return $entryKeys[0] ?? '';
-}
-
 function docs_append_subordinate_status_history(
     array &$record,
     array $subordinate,
     string $subordinateCandidate,
     string $status,
-    string $changedBy
+    string $changedBy,
+    array $extraAssigneeKeys = []
 ): void {
-    $assigneeKey = docs_resolve_subordinate_status_assignee_key($subordinate, $subordinateCandidate);
-    if ($assigneeKey === '') {
+    $assigneeKeys = docs_collect_assignee_index_keys($subordinate);
+    if ($subordinateCandidate !== '') {
+        $assigneeKeys = array_merge($assigneeKeys, docs_build_subordinate_review_target_keys($subordinateCandidate));
+    }
+    if (!empty($extraAssigneeKeys)) {
+        $assigneeKeys = array_merge($assigneeKeys, $extraAssigneeKeys);
+    }
+
+    $normalizedAssigneeKeys = [];
+    foreach ($assigneeKeys as $assigneeKey) {
+        $normalizedKey = mb_strtolower(trim((string) $assigneeKey), 'UTF-8');
+        if ($normalizedKey !== '') {
+            $normalizedAssigneeKeys[$normalizedKey] = $normalizedKey;
+        }
+    }
+
+    if (empty($normalizedAssigneeKeys)) {
         return;
     }
 
@@ -7338,11 +7332,15 @@ function docs_append_subordinate_status_history(
         return;
     }
 
-    docs_append_assignee_status_history($record, $assigneeKey, [
+    $entry = [
         'status' => $normalizedStatus,
         'changedAt' => date('c'),
         'changedBy' => sanitize_text_field($changedBy, 200),
-    ]);
+    ];
+
+    foreach ($normalizedAssigneeKeys as $assigneeKey) {
+        docs_append_assignee_status_history($record, $assigneeKey, $entry);
+    }
 }
 
 function docs_subordinate_latest_status_is_in_work(
@@ -14149,12 +14147,13 @@ switch ($action) {
         $submittedSubordinate = null;
 
         $isDirector = docs_user_is_block2_member($block2, $requestContext);
-        $isTaskAssignee = docs_request_matches_record_assignee($records[$recordIndex], $requestContext);
-        $isTaskSubordinate = docs_request_matches_record_subordinate($records[$recordIndex], $requestContext);
         $isTaskResponsible = docs_request_matches_record_responsible_only($records[$recordIndex], $requestContext);
-        $canManageAssignments = $isDirector || $isTaskAssignee || $isTaskSubordinate;
-        $canManageSubordinates = $isDirector || $isTaskAssignee || $isTaskSubordinate;
-        $assignmentAuthorRole = docs_resolve_assignment_author_role_from_context($isDirector, $isTaskAssignee, $isTaskSubordinate);
+        $isTaskSubordinate = docs_request_matches_record_subordinate($records[$recordIndex], $requestContext);
+        $actsAsTaskSubordinate = !$isTaskResponsible && $isTaskSubordinate;
+        $isTaskAssignee = $isTaskResponsible || $isTaskSubordinate;
+        $canManageAssignments = $isDirector || $isTaskResponsible;
+        $canManageSubordinates = $isDirector || $isTaskResponsible;
+        $assignmentAuthorRole = docs_resolve_assignment_author_role_from_context($isDirector, $isTaskResponsible, $actsAsTaskSubordinate);
         $assignmentAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
         $assignmentAuthorMeta = docs_extract_assignment_author_meta($requestContext['user'] ?? null);
         $kruglikTraceEnabled = ((string) ($records[$recordIndex]['id'] ?? '') === 'doc_25c118e109b59dd4')
@@ -14171,6 +14170,7 @@ switch ($action) {
                 'isDirector' => $isDirector,
                 'isTaskAssignee' => $isTaskAssignee,
                 'isTaskSubordinate' => $isTaskSubordinate,
+                'actsAsTaskSubordinate' => $actsAsTaskSubordinate,
                 'isTaskResponsible' => $isTaskResponsible,
                 'canManageAssignments' => $canManageAssignments,
                 'canManageSubordinates' => $canManageSubordinates,
@@ -15218,9 +15218,18 @@ switch ($action) {
                 ]);
             }
 
-            if ($isDirector || !$isTaskSubordinate) {
+            if ($isDirector || !$actsAsTaskSubordinate) {
                 respond_error('Отправить выполнение на проверку может только назначенный подчинённый.', 403, [
                     'requiresSubordinate' => true,
+                ]);
+            }
+
+            $currentSharedStatus = sanitize_status(
+                isset($records[$recordIndex]['status']) ? (string) $records[$recordIndex]['status'] : ''
+            );
+            if (in_array($currentSharedStatus, ['Выполнено', 'Отменено'], true)) {
+                respond_error('Нельзя отправить на проверку закрытую задачу.', 422, [
+                    'closedStatus' => $currentSharedStatus,
                 ]);
             }
 
@@ -15288,13 +15297,32 @@ switch ($action) {
                 ]);
             }
 
+            $submitterStatusKeys = docs_collect_status_change_candidate_keys(
+                $requestContext,
+                $sessionAuthArray,
+                $assignmentAuthor
+            );
             docs_append_subordinate_status_history(
                 $records[$recordIndex],
                 $submittedSubordinate,
                 $subordinateCandidate,
                 'На проверке',
-                $assignmentAuthor
+                $assignmentAuthor,
+                $submitterStatusKeys
             );
+
+            $reviewSharedStatus = 'На проверке';
+            if ($currentSharedStatus !== $reviewSharedStatus) {
+                $statusUpdatedAt = date('c');
+                $records[$recordIndex]['status'] = $reviewSharedStatus;
+                $records[$recordIndex]['statusUpdatedAt'] = $statusUpdatedAt;
+                docs_append_status_history(
+                    $records[$recordIndex],
+                    $reviewSharedStatus,
+                    $assignmentAuthor,
+                    $statusUpdatedAt
+                );
+            }
 
             $message = 'Выполнение отправлено на проверку.';
         } elseif ($updateType === 'subordinate_review') {
@@ -15304,7 +15332,7 @@ switch ($action) {
                 ]);
             }
 
-            if ($isDirector || !$isTaskResponsible) {
+            if (!$isDirector && !$isTaskResponsible) {
                 respond_error('Недостаточно прав для приёмки выполнения подчинённого.', 403, [
                     'requiresResponsible' => true,
                 ]);
@@ -15412,7 +15440,7 @@ switch ($action) {
                 ? 'Выполнение подчинённого принято.'
                 : 'Выполнение подчинённого отправлено на доработку.';
         } elseif ($updateType === 'file_brief') {
-            if (!$isDirector && !$isTaskAssignee && !$isTaskSubordinate) {
+            if (!$isDirector && !$isTaskAssignee) {
                 respond_error('Недостаточно прав для сохранения краткого ИИ.', 403, [
                     'requiresDirector' => true,
                     'requiresAssignee' => true,
@@ -15497,24 +15525,7 @@ switch ($action) {
 
             $message = 'Задача отмечена выполненной для директора.';
         } elseif ($updateType === 'status') {
-            $canManageStatus = docs_user_is_block2_member($block2, $requestContext);
-            if (!$canManageStatus) {
-                $filter = isset($requestContext['filter']) && is_array($requestContext['filter'])
-                    ? $requestContext['filter']
-                    : null;
-                if ($filter !== null) {
-                    $debugTrace = [];
-                    $canManageStatus = document_matches_assignee_filter(
-                        $records[$recordIndex],
-                        $filter,
-                        $responsibles,
-                        $debugTrace
-                    );
-                }
-                if (!$canManageStatus) {
-                    $canManageStatus = docs_request_matches_record_assignee($records[$recordIndex], $requestContext);
-                }
-            }
+            $canManageStatus = $isDirector || $isTaskAssignee;
             if (!$canManageStatus) {
                 respond_error('Недостаточно прав для изменения статуса.', 403, [
                     'requiresDirector' => true,
