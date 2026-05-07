@@ -103,6 +103,7 @@ const DOCS_ORGANIZATION_ADMIN_FILE_SUFFIX = '.admin.json';
 const DOCS_MAINADMIN_SECRET_FILE = DOCS_MAINADMIN_STORAGE_DIR . '/.mainadmin-secret';
 const DOCS_ADMIN_USERS_FILE = __DIR__ . '/lg/user.json';
 const DOCS_SESSION_KEY = 'docs_auth';
+const DOCS_REVIEW_FLOW_RESPONSIBLE_SUBORDINATE = 'responsible_subordinate_v1';
 
 function sanitize_instruction(?string $value): string
 {
@@ -1860,6 +1861,162 @@ function docs_notify_assignment_author_about_response(array $record, string $fol
     log_docs_event(!empty($result['success']) ? 'Response upload notification sent' : 'Response upload notification failed', $logContext);
 }
 
+function docs_build_subordinate_submission_notification_message(
+    array $record,
+    string $organization,
+    array $subordinate,
+    string $appUrl
+): string {
+    $lines = [];
+    $subordinateName = docs_extract_assignee_display_name($subordinate);
+
+    $lines[] = ($subordinateName !== '' ? '🔎 ' . $subordinateName : '🔎 Подчинённый')
+        . ' отправил выполнение на проверку.';
+
+    $organizationName = sanitize_text_field($organization, 160);
+    if ($organizationName !== '') {
+        $lines[] = 'Организация: ' . $organizationName;
+    }
+
+    $registryNumber = sanitize_text_field((string) ($record['registryNumber'] ?? ''), 120);
+    if ($registryNumber !== '') {
+        $lines[] = 'Рег. №: ' . $registryNumber;
+    }
+
+    $content = sanitize_text_field((string) ($record['correspondent'] ?? ''), 250);
+    if ($content === '') {
+        $content = sanitize_text_field((string) ($record['summary'] ?? ''), 250);
+    }
+    $lines[] = 'Содержание: ' . ($content !== '' ? $content : 'не указано');
+
+    $instruction = sanitize_instruction($subordinate['assignmentInstruction'] ?? '');
+    if ($instruction === '') {
+        $instruction = sanitize_instruction($record['instruction'] ?? '');
+    }
+    $lines[] = 'Поручение: ' . ($instruction !== '' ? docs_truncate_notification_text($instruction, 350) : 'не указано');
+
+    $due = sanitize_date_field($subordinate['assignmentDueDate'] ?? '');
+    if ($due === '') {
+        $due = sanitize_date_field($record['dueDate'] ?? '');
+    }
+    $dueLabel = docs_format_human_date($due);
+    $lines[] = 'Срок: ' . ($dueLabel !== '' ? $dueLabel : 'не указан');
+
+    $responseNames = docs_collect_response_file_names_from_record($record);
+    $lines[] = 'Файл Ответ: ' . (!empty($responseNames) ? implode(', ', $responseNames) : 'не указан');
+
+    if ($appUrl !== '') {
+        $lines[] = '';
+        $lines[] = 'Открыть задачу: кнопка ниже.';
+    }
+
+    $message = trim(implode("\n", $lines));
+    if ($message !== '' && mb_strlen($message, 'UTF-8') > 3800) {
+        $message = mb_substr($message, 0, 3799, 'UTF-8');
+    }
+
+    return $message;
+}
+
+function docs_notify_responsible_about_subordinate_submission(
+    array $record,
+    string $folder,
+    string $organization,
+    array $subordinate
+): void {
+    $logContext = [
+        'organization' => $organization,
+        'folder' => $folder,
+        'documentId' => $record['id'] ?? null,
+        'registryNumber' => $record['registryNumber'] ?? null,
+        'subordinate' => [
+            'name' => docs_extract_assignee_display_name($subordinate),
+            'id' => $subordinate['id'] ?? null,
+            'telegram' => $subordinate['telegram'] ?? null,
+            'chatId' => $subordinate['chatId'] ?? null,
+            'assignedBy' => $subordinate['assignedBy'] ?? null,
+            'assignedByTelegram' => $subordinate['assignedByTelegram'] ?? null,
+        ],
+        'dataSources' => docs_collect_response_log_sources($folder),
+    ];
+
+    $recipient = docs_find_assignment_author_entry($record, $folder, $subordinate);
+    if ($recipient === null) {
+        $recipient = docs_find_fallback_response_notification_author($record, $subordinate);
+    }
+    if ($recipient === null) {
+        docs_write_response_log('Не найден ответственный для уведомления об отправке на проверку', $logContext);
+        return;
+    }
+
+    $recipientName = docs_extract_assignee_display_name($recipient);
+    if ($recipientName === '') {
+        $recipientName = sanitize_text_field((string) ($recipient['name'] ?? ($recipient['responsible'] ?? '')), 200);
+    }
+
+    $chatId = docs_resolve_telegram_chat_id_from_assignee($recipient);
+    if ($chatId === null) {
+        docs_write_response_log('У ответственного отсутствует Telegram ID для уведомления об отправке на проверку', $logContext + [
+            'recipient' => [
+                'name' => $recipientName,
+                'id' => $recipient['id'] ?? null,
+                'telegram' => $recipient['telegram'] ?? ($recipient['chatId'] ?? null),
+                'source' => $recipient['source'] ?? 'record_or_settings',
+            ],
+        ]);
+        return;
+    }
+
+    $botToken = docs_resolve_telegram_bot_token();
+    if ($botToken === null || $botToken === '') {
+        docs_write_response_log('Не найден токен Telegram-бота для уведомления ответственного об отправке на проверку', $logContext + [
+            'chatId' => (string) $chatId,
+        ]);
+        return;
+    }
+
+    $baseUrl = docs_resolve_application_base_url();
+    $appPath = '/js/documents/app/telegram-appdosc.html';
+    $startParam = docs_build_task_start_param($record);
+    $link = docs_build_mini_app_link($baseUrl, $appPath, (string) $chatId, $startParam);
+    $message = docs_build_subordinate_submission_notification_message($record, $organization, $subordinate, $link);
+    if ($message === '') {
+        return;
+    }
+
+    $replyMarkup = null;
+    if ($link !== '') {
+        $replyMarkup = [
+            'inline_keyboard' => [
+                [[
+                    'text' => 'Открыть задачу',
+                    'web_app' => ['url' => $link],
+                ]],
+            ],
+        ];
+    }
+
+    docs_write_response_log('Подготовка уведомления ответственному об отправке на проверку', $logContext + [
+        'chatId' => (string) $chatId,
+        'recipient' => [
+            'name' => $recipientName,
+            'id' => $recipient['id'] ?? null,
+            'source' => $recipient['source'] ?? 'record_or_settings',
+        ],
+    ]);
+
+    $result = docs_send_telegram_message((string) $chatId, $message, $botToken, $replyMarkup);
+    docs_write_response_log(
+        !empty($result['success'])
+            ? 'Уведомление ответственному об отправке на проверку отправлено'
+            : 'Ошибка отправки уведомления ответственному об отправке на проверку',
+        $logContext + [
+            'chatId' => (string) $chatId,
+            'result' => $result,
+        ]
+    );
+}
+
 function docs_normalize_assignment_role(?string $role): string
 {
     if ($role === null) {
@@ -2316,6 +2473,127 @@ function docs_send_task_assignment_notifications(array $assignees, array $record
 
         $sentChatIds[$chatId] = true;
     }
+}
+
+function docs_build_subordinate_review_notification_message(
+    array $record,
+    string $organization,
+    array $subordinate,
+    string $appUrl
+): string {
+    $status = docs_normalize_subordinate_review_status($subordinate['reviewStatus'] ?? '');
+    if ($status === '') {
+        return '';
+    }
+
+    $lines = [];
+    $name = docs_extract_assignee_display_name($subordinate);
+    $decisionLabel = docs_subordinate_review_status_label($status);
+
+    $lines[] = $name !== ''
+        ? $name . ', по вашей задаче принято решение.'
+        : 'По вашей задаче принято решение.';
+
+    $organizationName = sanitize_text_field($organization, 160);
+    if ($organizationName !== '') {
+        $lines[] = 'Организация: ' . $organizationName;
+    }
+
+    $registryNumber = sanitize_text_field((string) ($record['registryNumber'] ?? ''), 120);
+    if ($registryNumber !== '') {
+        $lines[] = 'Рег. №: ' . $registryNumber;
+    }
+
+    $content = sanitize_text_field((string) ($record['correspondent'] ?? ''), 250);
+    if ($content === '') {
+        $content = sanitize_text_field((string) ($record['summary'] ?? ''), 250);
+    }
+    $lines[] = 'Содержание: ' . ($content !== '' ? $content : 'не указано');
+    $lines[] = 'Решение: ' . $decisionLabel;
+    $lines[] = 'Статус: ' . ($status === 'accepted' ? 'Выполнено' : 'В работе');
+
+    $comment = sanitize_assignment_comment($subordinate['reviewComment'] ?? '');
+    if ($comment !== '') {
+        $lines[] = 'Комментарий: ' . docs_truncate_notification_text($comment, 700);
+    }
+
+    if ($appUrl !== '') {
+        $lines[] = '';
+        $lines[] = 'Открыть задачу: кнопка ниже.';
+    }
+
+    $message = trim(implode("\n", $lines));
+    if ($message !== '' && mb_strlen($message, 'UTF-8') > 3800) {
+        $message = mb_substr($message, 0, 3799, 'UTF-8');
+    }
+
+    return $message;
+}
+
+function docs_notify_subordinate_about_review(array $record, string $organization, array $subordinate): void
+{
+    $chatId = docs_resolve_telegram_chat_id_from_assignee($subordinate);
+    $logContext = [
+        'organization' => $organization,
+        'documentId' => $record['id'] ?? null,
+        'registryNumber' => $record['registryNumber'] ?? null,
+        'subordinate' => [
+            'name' => docs_extract_assignee_display_name($subordinate),
+            'id' => $subordinate['id'] ?? null,
+            'telegram' => $subordinate['telegram'] ?? null,
+            'chatId' => $subordinate['chatId'] ?? null,
+        ],
+        'reviewStatus' => $subordinate['reviewStatus'] ?? null,
+    ];
+
+    if ($chatId === null) {
+        docs_write_response_log('У подчинённого отсутствует Telegram ID для уведомления о приемке', $logContext);
+        return;
+    }
+
+    $botToken = docs_resolve_telegram_bot_token();
+    if ($botToken === null || $botToken === '') {
+        docs_write_response_log('Не найден токен Telegram-бота для уведомления подчинённого о приемке', $logContext + [
+            'chatId' => (string) $chatId,
+        ]);
+        return;
+    }
+
+    $baseUrl = docs_resolve_application_base_url();
+    $appPath = '/js/documents/app/telegram-appdosc.html';
+    $startParam = docs_build_task_start_param($record);
+    $link = docs_build_mini_app_link($baseUrl, $appPath, (string) $chatId, $startParam);
+    $message = docs_build_subordinate_review_notification_message($record, $organization, $subordinate, $link);
+    if ($message === '') {
+        return;
+    }
+
+    $replyMarkup = null;
+    if ($link !== '') {
+        $replyMarkup = [
+            'inline_keyboard' => [
+                [[
+                    'text' => 'Открыть задачу',
+                    'web_app' => ['url' => $link],
+                ]],
+            ],
+        ];
+    }
+
+    docs_write_response_log('Подготовка уведомления подчинённому о приемке', $logContext + [
+        'chatId' => (string) $chatId,
+    ]);
+
+    $result = docs_send_telegram_message((string) $chatId, $message, $botToken, $replyMarkup);
+    docs_write_response_log(
+        !empty($result['success'])
+            ? 'Уведомление подчинённому о приемке отправлено'
+            : 'Ошибка отправки уведомления подчинённому о приемке',
+        $logContext + [
+            'chatId' => (string) $chatId,
+            'result' => $result,
+        ]
+    );
 }
 
 function docs_parse_telegram_init_data_string(string $initData): ?array
@@ -6649,6 +6927,677 @@ function docs_collect_record_assignee_candidates(array $record): array
     ];
 }
 
+function docs_review_flow_enabled(array $record): bool
+{
+    return (string) ($record['reviewFlow'] ?? '') === DOCS_REVIEW_FLOW_RESPONSIBLE_SUBORDINATE;
+}
+
+function docs_normalize_subordinate_review_status($value): string
+{
+    $normalized = mb_strtolower(trim((string) $value), 'UTF-8');
+    if ($normalized === '') {
+        return '';
+    }
+
+    $map = [
+        'accepted' => 'accepted',
+        'accept' => 'accepted',
+        'принять' => 'accepted',
+        'принято' => 'accepted',
+        'принят' => 'accepted',
+        'revision' => 'revision',
+        'rework' => 'revision',
+        'revise' => 'revision',
+        'на доработку' => 'revision',
+        'на доработке' => 'revision',
+        'доработка' => 'revision',
+        'доработать' => 'revision',
+    ];
+
+    return $map[$normalized] ?? '';
+}
+
+function docs_subordinate_review_status_label(string $status): string
+{
+    return $status === 'accepted' ? 'Принято' : 'На доработку';
+}
+
+function docs_normalize_subordinate_submission_status($value): string
+{
+    $normalized = mb_strtolower(trim((string) $value), 'UTF-8');
+    if ($normalized === '') {
+        return '';
+    }
+
+    $map = [
+        'submitted' => 'submitted',
+        'submit' => 'submitted',
+        'review' => 'submitted',
+        'на проверке' => 'submitted',
+        'на проверку' => 'submitted',
+        'отправлено' => 'submitted',
+        'отправлен' => 'submitted',
+    ];
+
+    return $map[$normalized] ?? '';
+}
+
+function docs_collect_unique_subordinate_review_entries(array $record): array
+{
+    $entries = [];
+    $seen = [];
+
+    $register = static function (array $entry) use (&$entries, &$seen): void {
+        if (empty($entry)) {
+            return;
+        }
+
+        $entry['role'] = 'subordinate';
+        $keys = docs_collect_assignee_index_keys($entry);
+        $primaryKey = '';
+        foreach ($keys as $key) {
+            if ($key !== '') {
+                $primaryKey = mb_strtolower($key, 'UTF-8');
+                break;
+            }
+        }
+        if ($primaryKey === '') {
+            $primaryKey = 'entry::' . count($entries);
+        }
+        if (isset($seen[$primaryKey])) {
+            return;
+        }
+
+        $seen[$primaryKey] = true;
+        $entries[] = $entry;
+    };
+
+    foreach (docs_extract_assignees($record) as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        if (docs_normalize_assignment_role((string) ($entry['role'] ?? '')) === 'subordinate') {
+            $register($entry);
+        }
+    }
+
+    if (isset($record['subordinates']) && is_array($record['subordinates'])) {
+        foreach ($record['subordinates'] as $entry) {
+            if (is_array($entry)) {
+                $register($entry);
+            }
+        }
+    } elseif (isset($record['subordinate']) && is_array($record['subordinate'])) {
+        $register($record['subordinate']);
+    }
+
+    return $entries;
+}
+
+function docs_get_subordinate_review_summary(array $record): array
+{
+    $entries = docs_collect_unique_subordinate_review_entries($record);
+    $accepted = 0;
+
+    foreach ($entries as $entry) {
+        if (docs_normalize_subordinate_review_status($entry['reviewStatus'] ?? '') === 'accepted') {
+            $accepted++;
+        }
+    }
+
+    $total = count($entries);
+
+    return [
+        'accepted' => $accepted,
+        'total' => $total,
+        'allAccepted' => $total === 0 || $accepted >= $total,
+    ];
+}
+
+function docs_collect_record_responsible_only_candidates(array $record): array
+{
+    $ids = [];
+    $names = [];
+
+    $pushId = static function ($value) use (&$ids): void {
+        $normalized = docs_normalize_identifier_candidate_value($value);
+        if ($normalized !== '') {
+            $ids[$normalized] = true;
+        }
+    };
+
+    $pushName = static function ($value) use (&$names): void {
+        $normalized = docs_normalize_name_candidate_value($value);
+        if ($normalized !== '') {
+            $names[$normalized] = true;
+        }
+    };
+
+    foreach (docs_extract_assignees($record) as $assignee) {
+        if (!is_array($assignee)) {
+            continue;
+        }
+
+        if (docs_normalize_assignment_role((string) ($assignee['role'] ?? 'responsible')) === 'subordinate') {
+            continue;
+        }
+
+        foreach (['id', 'telegram', 'chatId', 'number', 'email', 'login'] as $field) {
+            if (!empty($assignee[$field])) {
+                $pushId($assignee[$field]);
+            }
+        }
+        foreach (['name', 'responsible'] as $field) {
+            if (!empty($assignee[$field])) {
+                $pushName($assignee[$field]);
+            }
+        }
+    }
+
+    if (isset($record['responsibles']) && is_array($record['responsibles'])) {
+        foreach ($record['responsibles'] as $responsible) {
+            if (is_array($responsible)) {
+                foreach (['id', 'telegram', 'chatId', 'number', 'email', 'login'] as $field) {
+                    if (!empty($responsible[$field])) {
+                        $pushId($responsible[$field]);
+                    }
+                }
+                foreach (['name', 'responsible'] as $field) {
+                    if (!empty($responsible[$field])) {
+                        $pushName($responsible[$field]);
+                    }
+                }
+            } elseif (is_scalar($responsible)) {
+                $pushName($responsible);
+            }
+        }
+    }
+
+    if (!empty($record['assigneeId'])) {
+        $pushId($record['assigneeId']);
+    }
+    if (!empty($record['responsible'])) {
+        $pushName($record['responsible']);
+    }
+
+    return [
+        'ids' => array_keys($ids),
+        'names' => array_keys($names),
+    ];
+}
+
+function docs_request_matches_record_responsible_only(array $record, array $requestContext): bool
+{
+    $userCandidates = docs_collect_request_identity_candidates($requestContext);
+    if (empty($userCandidates['ids']) && empty($userCandidates['names'])) {
+        return false;
+    }
+
+    $recordCandidates = docs_collect_record_responsible_only_candidates($record);
+
+    foreach ($userCandidates['ids'] as $candidate) {
+        if (in_array($candidate, $recordCandidates['ids'], true)) {
+            return true;
+        }
+    }
+
+    foreach ($userCandidates['names'] as $candidate) {
+        if (in_array($candidate, $recordCandidates['names'], true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_build_subordinate_review_target_keys(string $candidate): array
+{
+    $candidate = sanitize_text_field($candidate, 200);
+    if ($candidate === '') {
+        return [];
+    }
+
+    $keys = [];
+    $normalizedId = docs_normalize_identifier_candidate_value($candidate);
+    if ($normalizedId !== '') {
+        $keys[] = 'id::' . $normalizedId;
+    }
+
+    $normalizedName = docs_normalize_name_candidate_value($candidate);
+    if ($normalizedName !== '') {
+        $keys[] = 'name::' . $normalizedName;
+    }
+
+    return array_values(array_unique($keys));
+}
+
+function docs_subordinate_entry_matches_review_target(array $entry, array $targetKeys): bool
+{
+    if (empty($targetKeys)) {
+        return false;
+    }
+
+    $entryKeys = docs_collect_assignee_index_keys($entry);
+    foreach ($entryKeys as $entryKey) {
+        $normalizedEntryKey = mb_strtolower($entryKey, 'UTF-8');
+        foreach ($targetKeys as $targetKey) {
+            if ($normalizedEntryKey === mb_strtolower($targetKey, 'UTF-8')) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function docs_request_matches_subordinate_entry(array $entry, array $requestContext): bool
+{
+    $userCandidates = docs_collect_request_identity_candidates($requestContext);
+    if (empty($userCandidates['ids']) && empty($userCandidates['names'])) {
+        return false;
+    }
+
+    $entryIds = [];
+    $entryNames = [];
+
+    foreach (['id', 'telegram', 'chatId', 'number', 'email', 'login'] as $field) {
+        if (empty($entry[$field])) {
+            continue;
+        }
+
+        $normalized = docs_normalize_identifier_candidate_value($entry[$field]);
+        if ($normalized !== '') {
+            $entryIds[$normalized] = true;
+        }
+    }
+
+    foreach (['name', 'responsible'] as $field) {
+        if (empty($entry[$field])) {
+            continue;
+        }
+
+        $normalized = docs_normalize_name_candidate_value($entry[$field]);
+        if ($normalized !== '') {
+            $entryNames[$normalized] = true;
+        }
+    }
+
+    foreach ($userCandidates['ids'] as $candidate) {
+        if (isset($entryIds[$candidate])) {
+            return true;
+        }
+    }
+
+    foreach ($userCandidates['names'] as $candidate) {
+        if (isset($entryNames[$candidate])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_apply_subordinate_review_to_entry(
+    array $entry,
+    string $status,
+    string $comment,
+    array $reviewerMeta,
+    string $reviewedAt
+): array {
+    $entry['role'] = 'subordinate';
+    $entry['reviewStatus'] = $status;
+    if ($comment !== '') {
+        $entry['reviewComment'] = $comment;
+    } elseif (isset($entry['reviewComment'])) {
+        unset($entry['reviewComment']);
+    }
+    $entry['reviewedAt'] = $reviewedAt;
+    $entry['reviewedBy'] = sanitize_text_field((string) ($reviewerMeta['label'] ?? ''), 200);
+    $entry['reviewedByTelegram'] = sanitize_text_field((string) ($reviewerMeta['telegram'] ?? ''), 120);
+    $entry['reviewedById'] = sanitize_text_field((string) ($reviewerMeta['id'] ?? ''), 120);
+    $entry['reviewedByLogin'] = sanitize_text_field((string) ($reviewerMeta['login'] ?? ''), 120);
+    if ($status === 'revision') {
+        unset(
+            $entry['submissionStatus'],
+            $entry['submittedAt'],
+            $entry['submittedBy'],
+            $entry['submittedByTelegram'],
+            $entry['submittedById'],
+            $entry['submittedByLogin']
+        );
+    }
+
+    return array_filter($entry, static function ($value) {
+        return $value !== '';
+    });
+}
+
+function docs_apply_subordinate_submission_to_entry(array $entry, array $submitterMeta, string $submittedAt): array
+{
+    $entry['role'] = 'subordinate';
+    $entry['submissionStatus'] = 'submitted';
+    $entry['submittedAt'] = $submittedAt;
+    $entry['submittedBy'] = sanitize_text_field((string) ($submitterMeta['label'] ?? ''), 200);
+    $entry['submittedByTelegram'] = sanitize_text_field((string) ($submitterMeta['telegram'] ?? ''), 120);
+    $entry['submittedById'] = sanitize_text_field((string) ($submitterMeta['id'] ?? ''), 120);
+    $entry['submittedByLogin'] = sanitize_text_field((string) ($submitterMeta['login'] ?? ''), 120);
+
+    if (docs_normalize_subordinate_review_status($entry['reviewStatus'] ?? '') === 'revision') {
+        unset(
+            $entry['reviewStatus'],
+            $entry['reviewComment'],
+            $entry['reviewedAt'],
+            $entry['reviewedBy'],
+            $entry['reviewedByTelegram'],
+            $entry['reviewedById'],
+            $entry['reviewedByLogin']
+        );
+    }
+
+    return array_filter($entry, static function ($value) {
+        return $value !== '';
+    });
+}
+
+function docs_resolve_subordinate_status_assignee_key(array $subordinate, string $subordinateCandidate = ''): string
+{
+    $entryKeys = docs_collect_assignee_index_keys($subordinate);
+    if ($subordinateCandidate !== '') {
+        $targetKeys = docs_build_subordinate_review_target_keys($subordinateCandidate);
+        foreach ($entryKeys as $entryKey) {
+            $normalizedEntryKey = mb_strtolower($entryKey, 'UTF-8');
+            foreach ($targetKeys as $targetKey) {
+                if ($normalizedEntryKey === mb_strtolower($targetKey, 'UTF-8')) {
+                    return $entryKey;
+                }
+            }
+        }
+
+        if (!empty($targetKeys)) {
+            return $targetKeys[0];
+        }
+    }
+
+    return $entryKeys[0] ?? '';
+}
+
+function docs_append_subordinate_status_history(
+    array &$record,
+    array $subordinate,
+    string $subordinateCandidate,
+    string $status,
+    string $changedBy
+): void {
+    $assigneeKey = docs_resolve_subordinate_status_assignee_key($subordinate, $subordinateCandidate);
+    if ($assigneeKey === '') {
+        return;
+    }
+
+    $normalizedStatus = sanitize_status($status);
+    if ($normalizedStatus === '') {
+        return;
+    }
+
+    docs_append_assignee_status_history($record, $assigneeKey, [
+        'status' => $normalizedStatus,
+        'changedAt' => date('c'),
+        'changedBy' => sanitize_text_field($changedBy, 200),
+    ]);
+}
+
+function docs_subordinate_latest_status_is_in_work(
+    array $record,
+    array $subordinate,
+    string $subordinateCandidate = ''
+): bool {
+    if (empty($record['assigneeStatusHistory']) || !is_array($record['assigneeStatusHistory'])) {
+        return false;
+    }
+
+    $candidateKeys = docs_collect_assignee_index_keys($subordinate);
+    if ($subordinateCandidate !== '') {
+        $candidateKeys = array_merge($candidateKeys, docs_build_subordinate_review_target_keys($subordinateCandidate));
+    }
+    $candidateKeys = array_values(array_unique(array_filter(array_map(static function ($key) {
+        return mb_strtolower(trim((string) $key), 'UTF-8');
+    }, $candidateKeys))));
+    if (empty($candidateKeys)) {
+        return false;
+    }
+
+    $history = docs_sanitize_assignee_status_history_collection($record['assigneeStatusHistory']);
+    $latestStatus = '';
+    $latestTimestamp = 0;
+    foreach ($history as $historyRecord) {
+        $assigneeKey = mb_strtolower(trim((string) ($historyRecord['assigneeKey'] ?? '')), 'UTF-8');
+        if ($assigneeKey === '' || !in_array($assigneeKey, $candidateKeys, true)) {
+            continue;
+        }
+
+        $entries = isset($historyRecord['entries']) && is_array($historyRecord['entries'])
+            ? $historyRecord['entries']
+            : [];
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $status = sanitize_status((string) ($entry['status'] ?? ''), false);
+            if ($status === '') {
+                continue;
+            }
+            $timestamp = strtotime((string) ($entry['changedAt'] ?? ''));
+            if ($timestamp === false) {
+                $timestamp = 0;
+            }
+            if ($latestStatus === '' || $timestamp >= $latestTimestamp) {
+                $latestStatus = $status;
+                $latestTimestamp = $timestamp;
+            }
+        }
+    }
+
+    if ($latestStatus === '') {
+        return false;
+    }
+
+    $normalizedStatus = mb_strtolower($latestStatus, 'UTF-8');
+    return mb_stripos($normalizedStatus, 'в работе', 0, 'UTF-8') !== false
+        || mb_stripos($normalizedStatus, 'принято в работу', 0, 'UTF-8') !== false;
+}
+
+function docs_apply_subordinate_review_decision(
+    array &$record,
+    string $subordinateCandidate,
+    string $status,
+    string $comment,
+    array $reviewerMeta
+): ?array {
+    $targetKeys = docs_build_subordinate_review_target_keys($subordinateCandidate);
+    if (empty($targetKeys)) {
+        return null;
+    }
+
+    $existingAssignees = docs_extract_assignees($record);
+    $responsibleEntries = [];
+    $subordinateEntries = [];
+    $seenSubordinateKeys = [];
+
+    $registerSubordinateEntry = static function (array $entry) use (&$subordinateEntries, &$seenSubordinateKeys): void {
+        if (empty($entry)) {
+            return;
+        }
+        $entry['role'] = 'subordinate';
+        $keys = docs_collect_assignee_index_keys($entry);
+        foreach ($keys as $key) {
+            if ($key !== '' && isset($seenSubordinateKeys[$key])) {
+                return;
+            }
+        }
+        foreach ($keys as $key) {
+            if ($key !== '') {
+                $seenSubordinateKeys[$key] = true;
+            }
+        }
+        $subordinateEntries[] = $entry;
+    };
+
+    foreach ($existingAssignees as $existingAssignee) {
+        if (!is_array($existingAssignee)) {
+            continue;
+        }
+
+        if (docs_normalize_assignment_role((string) ($existingAssignee['role'] ?? '')) === 'subordinate') {
+            $registerSubordinateEntry($existingAssignee);
+        } else {
+            $responsibleEntries[] = $existingAssignee;
+        }
+    }
+
+    if (isset($record['subordinates']) && is_array($record['subordinates'])) {
+        foreach ($record['subordinates'] as $existingSubordinate) {
+            if (is_array($existingSubordinate)) {
+                $registerSubordinateEntry($existingSubordinate);
+            }
+        }
+    } elseif (isset($record['subordinate']) && is_array($record['subordinate'])) {
+        $registerSubordinateEntry($record['subordinate']);
+    }
+
+    $reviewedAt = date('c');
+    $reviewedEntry = null;
+    foreach ($subordinateEntries as &$subordinateEntry) {
+        if (!is_array($subordinateEntry)) {
+            continue;
+        }
+
+        if (!docs_subordinate_entry_matches_review_target($subordinateEntry, $targetKeys)) {
+            continue;
+        }
+
+        $subordinateEntry = docs_apply_subordinate_review_to_entry(
+            $subordinateEntry,
+            $status,
+            $comment,
+            $reviewerMeta,
+            $reviewedAt
+        );
+        $reviewedEntry = $subordinateEntry;
+    }
+    unset($subordinateEntry);
+
+    if ($reviewedEntry === null) {
+        return null;
+    }
+
+    $combinedAssignees = array_merge($responsibleEntries, $subordinateEntries);
+    $newAssignments = [];
+    docs_apply_assignees_to_record($record, $combinedAssignees, $newAssignments);
+    $record['subordinates'] = array_values($subordinateEntries);
+    unset($record['subordinate']);
+
+    return $reviewedEntry;
+}
+
+function docs_apply_subordinate_submission(
+    array &$record,
+    string $subordinateCandidate,
+    array $requestContext,
+    array $submitterMeta
+): ?array {
+    $targetKeys = docs_build_subordinate_review_target_keys($subordinateCandidate);
+    if (empty($targetKeys)) {
+        return null;
+    }
+
+    $existingAssignees = docs_extract_assignees($record);
+    $responsibleEntries = [];
+    $subordinateEntries = [];
+    $seenSubordinateKeys = [];
+
+    $registerSubordinateEntry = static function (array $entry) use (&$subordinateEntries, &$seenSubordinateKeys): void {
+        if (empty($entry)) {
+            return;
+        }
+        $entry['role'] = 'subordinate';
+        $keys = docs_collect_assignee_index_keys($entry);
+        foreach ($keys as $key) {
+            if ($key !== '' && isset($seenSubordinateKeys[$key])) {
+                return;
+            }
+        }
+        foreach ($keys as $key) {
+            if ($key !== '') {
+                $seenSubordinateKeys[$key] = true;
+            }
+        }
+        $subordinateEntries[] = $entry;
+    };
+
+    foreach ($existingAssignees as $existingAssignee) {
+        if (!is_array($existingAssignee)) {
+            continue;
+        }
+
+        if (docs_normalize_assignment_role((string) ($existingAssignee['role'] ?? '')) === 'subordinate') {
+            $registerSubordinateEntry($existingAssignee);
+        } else {
+            $responsibleEntries[] = $existingAssignee;
+        }
+    }
+
+    if (isset($record['subordinates']) && is_array($record['subordinates'])) {
+        foreach ($record['subordinates'] as $existingSubordinate) {
+            if (is_array($existingSubordinate)) {
+                $registerSubordinateEntry($existingSubordinate);
+            }
+        }
+    } elseif (isset($record['subordinate']) && is_array($record['subordinate'])) {
+        $registerSubordinateEntry($record['subordinate']);
+    }
+
+    $submittedAt = date('c');
+    $submittedEntry = null;
+    $matchedButForbidden = false;
+    foreach ($subordinateEntries as &$subordinateEntry) {
+        if (!is_array($subordinateEntry)) {
+            continue;
+        }
+
+        if (!docs_subordinate_entry_matches_review_target($subordinateEntry, $targetKeys)) {
+            continue;
+        }
+
+        if (!docs_request_matches_subordinate_entry($subordinateEntry, $requestContext)) {
+            $matchedButForbidden = true;
+            continue;
+        }
+
+        if (docs_normalize_subordinate_review_status($subordinateEntry['reviewStatus'] ?? '') === 'accepted') {
+            return ['__accepted' => true];
+        }
+
+        $subordinateEntry = docs_apply_subordinate_submission_to_entry(
+            $subordinateEntry,
+            $submitterMeta,
+            $submittedAt
+        );
+        $submittedEntry = $subordinateEntry;
+    }
+    unset($subordinateEntry);
+
+    if ($submittedEntry === null) {
+        return $matchedButForbidden ? ['__forbidden' => true] : null;
+    }
+
+    $combinedAssignees = array_merge($responsibleEntries, $subordinateEntries);
+    $newAssignments = [];
+    docs_apply_assignees_to_record($record, $combinedAssignees, $newAssignments);
+    $record['subordinates'] = array_values($subordinateEntries);
+    unset($record['subordinate']);
+
+    return $submittedEntry;
+}
+
 function docs_collect_record_subordinate_candidates(array $record): array
 {
     $ids = [];
@@ -7175,12 +8124,31 @@ function sanitize_assignee_payload($value, bool $refreshTimestamp = false): arra
         'assignmentComment' => sanitize_assignment_comment($value['assignmentComment'] ?? ''),
         'assignmentDueDate' => sanitize_date_field($value['assignmentDueDate'] ?? ''),
         'assignmentInstruction' => sanitize_instruction($value['assignmentInstruction'] ?? ''),
+        'submissionStatus' => docs_normalize_subordinate_submission_status($value['submissionStatus'] ?? ''),
+        'submittedAt' => sanitize_text_field($value['submittedAt'] ?? '', 40),
+        'submittedBy' => sanitize_text_field($value['submittedBy'] ?? '', 200),
+        'submittedByTelegram' => sanitize_text_field($value['submittedByTelegram'] ?? '', 120),
+        'submittedById' => sanitize_text_field($value['submittedById'] ?? '', 120),
+        'submittedByLogin' => sanitize_text_field($value['submittedByLogin'] ?? '', 120),
+        'reviewComment' => sanitize_assignment_comment($value['reviewComment'] ?? ''),
+        'reviewedAt' => sanitize_text_field($value['reviewedAt'] ?? '', 40),
+        'reviewedBy' => sanitize_text_field($value['reviewedBy'] ?? '', 200),
+        'reviewedByTelegram' => sanitize_text_field($value['reviewedByTelegram'] ?? '', 120),
+        'reviewedById' => sanitize_text_field($value['reviewedById'] ?? '', 120),
+        'reviewedByLogin' => sanitize_text_field($value['reviewedByLogin'] ?? '', 120),
     ];
 
     if (isset($value['status'])) {
         $status = sanitize_status((string) $value['status']);
         if ($status !== '') {
             $assignee['status'] = $status;
+        }
+    }
+
+    if (isset($value['reviewStatus'])) {
+        $reviewStatus = docs_normalize_subordinate_review_status($value['reviewStatus']);
+        if ($reviewStatus !== '') {
+            $assignee['reviewStatus'] = $reviewStatus;
         }
     }
 
@@ -13177,10 +14145,13 @@ switch ($action) {
 
         $message = 'Данные обновлены.';
         $assignedAssignees = [];
+        $reviewedSubordinate = null;
+        $submittedSubordinate = null;
 
         $isDirector = docs_user_is_block2_member($block2, $requestContext);
         $isTaskAssignee = docs_request_matches_record_assignee($records[$recordIndex], $requestContext);
         $isTaskSubordinate = docs_request_matches_record_subordinate($records[$recordIndex], $requestContext);
+        $isTaskResponsible = docs_request_matches_record_responsible_only($records[$recordIndex], $requestContext);
         $canManageAssignments = $isDirector || $isTaskAssignee || $isTaskSubordinate;
         $canManageSubordinates = $isDirector || $isTaskAssignee || $isTaskSubordinate;
         $assignmentAuthorRole = docs_resolve_assignment_author_role_from_context($isDirector, $isTaskAssignee, $isTaskSubordinate);
@@ -13200,6 +14171,7 @@ switch ($action) {
                 'isDirector' => $isDirector,
                 'isTaskAssignee' => $isTaskAssignee,
                 'isTaskSubordinate' => $isTaskSubordinate,
+                'isTaskResponsible' => $isTaskResponsible,
                 'canManageAssignments' => $canManageAssignments,
                 'canManageSubordinates' => $canManageSubordinates,
                 'currentAssignees' => docs_extract_assignees($records[$recordIndex]),
@@ -14239,6 +15211,206 @@ switch ($action) {
 
             $removedCount = count($removedEntries);
             $message = $removedCount > 1 ? 'Подчинённые удалены.' : 'Подчинённый удалён.';
+        } elseif ($updateType === 'subordinate_submit') {
+            if (!docs_review_flow_enabled($records[$recordIndex])) {
+                respond_error('Отправка на проверку доступна только для новых задач.', 403, [
+                    'requiresReviewFlow' => DOCS_REVIEW_FLOW_RESPONSIBLE_SUBORDINATE,
+                ]);
+            }
+
+            if ($isDirector || !$isTaskSubordinate) {
+                respond_error('Отправить выполнение на проверку может только назначенный подчинённый.', 403, [
+                    'requiresSubordinate' => true,
+                ]);
+            }
+
+            $subordinateCandidate = '';
+            foreach (['subordinateId', 'subordinate', 'id'] as $field) {
+                if (!isset($payload[$field]) || !is_scalar($payload[$field])) {
+                    continue;
+                }
+
+                $subordinateCandidate = sanitize_text_field((string) $payload[$field], 200);
+                if ($subordinateCandidate !== '') {
+                    break;
+                }
+            }
+
+            if ($subordinateCandidate === '' && isset($payload['subordinateIds']) && is_array($payload['subordinateIds'])) {
+                foreach ($payload['subordinateIds'] as $candidate) {
+                    if (!is_scalar($candidate)) {
+                        continue;
+                    }
+                    $subordinateCandidate = sanitize_text_field((string) $candidate, 200);
+                    if ($subordinateCandidate !== '') {
+                        break;
+                    }
+                }
+            }
+
+            if ($subordinateCandidate === '') {
+                respond_error('Не указан подчинённый для отправки на проверку.', 400);
+            }
+
+            $submitterMeta = [
+                'label' => $assignmentAuthor,
+                'telegram' => (string) ($assignmentAuthorMeta['assignedByTelegram'] ?? ''),
+                'id' => (string) ($assignmentAuthorMeta['assignedById'] ?? ''),
+                'login' => (string) ($assignmentAuthorMeta['assignedByLogin'] ?? ''),
+            ];
+
+            $submittedSubordinate = docs_apply_subordinate_submission(
+                $records[$recordIndex],
+                $subordinateCandidate,
+                $requestContext,
+                $submitterMeta
+            );
+
+            if (is_array($submittedSubordinate) && !empty($submittedSubordinate['__forbidden'])) {
+                respond_error('Можно отправить на проверку только своё выполнение.', 403, [
+                    'requiresSubordinateOwner' => true,
+                ]);
+            }
+
+            if (is_array($submittedSubordinate) && !empty($submittedSubordinate['__accepted'])) {
+                respond_error('Выполнение подчинённого уже принято.', 422, [
+                    'alreadyAccepted' => true,
+                ]);
+            }
+
+            if ($submittedSubordinate === null) {
+                respond_error('Подчинённый не найден среди назначенных.', 404);
+            }
+
+            if (!docs_subordinate_latest_status_is_in_work($records[$recordIndex], $submittedSubordinate, $subordinateCandidate)) {
+                respond_error('Сначала установите статус «В работе».', 422, [
+                    'requiresInWorkStatus' => true,
+                ]);
+            }
+
+            docs_append_subordinate_status_history(
+                $records[$recordIndex],
+                $submittedSubordinate,
+                $subordinateCandidate,
+                'На проверке',
+                $assignmentAuthor
+            );
+
+            $message = 'Выполнение отправлено на проверку.';
+        } elseif ($updateType === 'subordinate_review') {
+            if (!docs_review_flow_enabled($records[$recordIndex])) {
+                respond_error('Приёмка доступна только для новых задач.', 403, [
+                    'requiresReviewFlow' => DOCS_REVIEW_FLOW_RESPONSIBLE_SUBORDINATE,
+                ]);
+            }
+
+            if ($isDirector || !$isTaskResponsible) {
+                respond_error('Недостаточно прав для приёмки выполнения подчинённого.', 403, [
+                    'requiresResponsible' => true,
+                ]);
+            }
+
+            $subordinateCandidate = '';
+            foreach (['subordinateId', 'subordinate', 'id'] as $field) {
+                if (!isset($payload[$field]) || !is_scalar($payload[$field])) {
+                    continue;
+                }
+
+                $subordinateCandidate = sanitize_text_field((string) $payload[$field], 200);
+                if ($subordinateCandidate !== '') {
+                    break;
+                }
+            }
+
+            if ($subordinateCandidate === '' && isset($payload['subordinateIds']) && is_array($payload['subordinateIds'])) {
+                foreach ($payload['subordinateIds'] as $candidate) {
+                    if (!is_scalar($candidate)) {
+                        continue;
+                    }
+                    $subordinateCandidate = sanitize_text_field((string) $candidate, 200);
+                    if ($subordinateCandidate !== '') {
+                        break;
+                    }
+                }
+            }
+
+            if ($subordinateCandidate === '') {
+                respond_error('Не указан подчинённый для приёмки.', 400);
+            }
+
+            $rawReviewStatus = $payload['reviewStatus'] ?? ($payload['decision'] ?? '');
+            $reviewStatus = docs_normalize_subordinate_review_status($rawReviewStatus);
+            if ($reviewStatus === '') {
+                respond_error('Не указано решение по выполнению.', 400);
+            }
+
+            $reviewCommentRaw = '';
+            if (isset($payload['reviewComment']) && is_scalar($payload['reviewComment'])) {
+                $reviewCommentRaw = (string) $payload['reviewComment'];
+            } elseif (isset($payload['comment']) && is_scalar($payload['comment'])) {
+                $reviewCommentRaw = (string) $payload['comment'];
+            }
+            $reviewComment = sanitize_assignment_comment($reviewCommentRaw);
+            if ($reviewStatus === 'revision' && $reviewComment === '') {
+                respond_error('Комментарий обязателен для отправки на доработку.', 422, [
+                    'requiresComment' => true,
+                ]);
+            }
+
+            $submittedTargetFound = false;
+            $targetKeys = docs_build_subordinate_review_target_keys($subordinateCandidate);
+            foreach (docs_collect_unique_subordinate_review_entries($records[$recordIndex]) as $entry) {
+                if (!docs_subordinate_entry_matches_review_target($entry, $targetKeys)) {
+                    continue;
+                }
+                $submittedTargetFound = true;
+                if (docs_request_matches_subordinate_entry($entry, $requestContext)) {
+                    respond_error('Нельзя принять собственное выполнение.', 403, [
+                        'selfReviewForbidden' => true,
+                    ]);
+                }
+                if (docs_normalize_subordinate_submission_status($entry['submissionStatus'] ?? '') !== 'submitted') {
+                    respond_error('Подчинённый ещё не отправил выполнение на проверку.', 422, [
+                        'requiresSubmission' => true,
+                    ]);
+                }
+                break;
+            }
+
+            if (!$submittedTargetFound) {
+                respond_error('Подчинённый не найден среди назначенных.', 404);
+            }
+
+            $reviewerMeta = [
+                'label' => $assignmentAuthor,
+                'telegram' => (string) ($assignmentAuthorMeta['assignedByTelegram'] ?? ''),
+                'id' => (string) ($assignmentAuthorMeta['assignedById'] ?? ''),
+                'login' => (string) ($assignmentAuthorMeta['assignedByLogin'] ?? ''),
+            ];
+
+            $reviewedSubordinate = docs_apply_subordinate_review_decision(
+                $records[$recordIndex],
+                $subordinateCandidate,
+                $reviewStatus,
+                $reviewComment,
+                $reviewerMeta
+            );
+
+            if ($reviewedSubordinate === null) {
+                respond_error('Подчинённый не найден среди назначенных.', 404);
+            }
+
+            docs_append_subordinate_status_history(
+                $records[$recordIndex],
+                $reviewedSubordinate,
+                $subordinateCandidate,
+                $reviewStatus === 'accepted' ? 'Выполнено' : 'В работе',
+                $assignmentAuthor
+            );
+
+            $message = $reviewStatus === 'accepted'
+                ? 'Выполнение подчинённого принято.'
+                : 'Выполнение подчинённого отправлено на доработку.';
         } elseif ($updateType === 'file_brief') {
             if (!$isDirector && !$isTaskAssignee && !$isTaskSubordinate) {
                 respond_error('Недостаточно прав для сохранения краткого ИИ.', 403, [
@@ -14352,6 +15524,22 @@ switch ($action) {
 
             $rawStatus = isset($payload['status']) ? (string) $payload['status'] : '';
             $nextStatus = sanitize_status($rawStatus);
+            $isCompletedStatus = mb_stripos($nextStatus, 'выполн') !== false;
+            if ($isCompletedStatus && docs_review_flow_enabled($records[$recordIndex]) && !$isDirector) {
+                $reviewSummary = docs_get_subordinate_review_summary($records[$recordIndex]);
+                if (!$isTaskResponsible) {
+                    respond_error('Закрыть задачу как выполненную может только ответственный.', 403, [
+                        'requiresResponsible' => true,
+                    ]);
+                }
+                if (empty($reviewSummary['allAccepted'])) {
+                    respond_error('Нельзя закрыть задачу: приняты не все подчинённые.', 422, [
+                        'acceptedSubordinates' => $reviewSummary['accepted'],
+                        'totalSubordinates' => $reviewSummary['total'],
+                    ]);
+                }
+            }
+
             $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
             $statusAssigneeKey = docs_match_status_change_assignee_key(
                 $records[$recordIndex],
@@ -14378,7 +15566,6 @@ switch ($action) {
                 ]);
             }
 
-            $isCompletedStatus = mb_stripos($nextStatus, 'выполн') !== false;
             $existingCompleted = isset($records[$recordIndex]['completedAt'])
                 ? sanitize_date_field((string) $records[$recordIndex]['completedAt'])
                 : '';
@@ -14545,7 +15732,7 @@ switch ($action) {
                     return null;
                 }, $updatedAssignees)))
                 : null,
-            'subordinateIds' => in_array($updateType, ['subordinates', 'subordinates_add'], true)
+            'subordinateIds' => in_array($updateType, ['subordinates', 'subordinates_add', 'subordinate_submit', 'subordinate_review'], true)
                 ? array_values(array_filter(array_map(static function ($entry) {
                     if (!is_array($entry)) {
                         return null;
@@ -14573,6 +15760,38 @@ switch ($action) {
             'organization' => $organizationCandidate,
             'task' => $updatedRecord,
         ];
+
+        if ($updateType === 'subordinate_submit' && is_array($submittedSubordinate) && !empty($submittedSubordinate)) {
+            $submittedSubordinateForNotification = $submittedSubordinate;
+            if (!function_exists('fastcgi_finish_request')) {
+                docs_notify_responsible_about_subordinate_submission(
+                    $updatedRecord,
+                    $folder,
+                    $organizationCandidate,
+                    $submittedSubordinateForNotification
+                );
+                respond_success($responsePayload);
+            }
+            respond_success_with_background_task($responsePayload, static function () use ($submittedSubordinateForNotification, $updatedRecord, $folder, $organizationCandidate): void {
+                docs_notify_responsible_about_subordinate_submission(
+                    $updatedRecord,
+                    $folder,
+                    $organizationCandidate,
+                    $submittedSubordinateForNotification
+                );
+            });
+        }
+
+        if ($updateType === 'subordinate_review' && is_array($reviewedSubordinate) && !empty($reviewedSubordinate)) {
+            $reviewedSubordinateForNotification = $reviewedSubordinate;
+            if (!function_exists('fastcgi_finish_request')) {
+                docs_notify_subordinate_about_review($updatedRecord, $organizationCandidate, $reviewedSubordinateForNotification);
+                respond_success($responsePayload);
+            }
+            respond_success_with_background_task($responsePayload, static function () use ($reviewedSubordinateForNotification, $updatedRecord, $organizationCandidate): void {
+                docs_notify_subordinate_about_review($updatedRecord, $organizationCandidate, $reviewedSubordinateForNotification);
+            });
+        }
 
         if (in_array($updateType, ['assign', 'assign_add', 'subordinates', 'subordinates_add'], true)
             && !empty($assignedAssignees)) {
@@ -15229,6 +16448,7 @@ switch ($action) {
             'statusUpdatedAt' => $statusTimestamp,
             'instruction' => sanitize_instruction($_POST['instruction'] ?? ''),
             'notes' => sanitize_text_field($_POST['notes'] ?? '', 500),
+            'reviewFlow' => DOCS_REVIEW_FLOW_RESPONSIBLE_SUBORDINATE,
             'createdAt' => date('c'),
             'updatedAt' => date('c'),
             'files' => [],

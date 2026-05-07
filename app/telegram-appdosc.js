@@ -710,6 +710,12 @@ const ALLOWED_LOG_EVENTS = new Set([
   'task_subordinate_remove_request',
   'task_subordinate_remove_success',
   'task_subordinate_remove_error',
+  'task_subordinate_review_request',
+  'task_subordinate_review_success',
+  'task_subordinate_review_error',
+  'task_subordinate_submit_request',
+  'task_subordinate_submit_success',
+  'task_subordinate_submit_error',
   'task_status_request',
   'task_status_success',
   'task_status_error',
@@ -747,6 +753,17 @@ const DOWNLOAD_LOG_EVENTS = new Set([
 ]);
 
 const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
+const RESPONSIBLE_SUBORDINATE_REVIEW_FLOW = 'responsible_subordinate_v1';
+const SUBORDINATE_REVIEW_STATUS_LABELS = {
+  accepted: 'Принято',
+  revision: 'На доработку',
+};
+const SUBORDINATE_WORKFLOW_STATUS_LABELS = {
+  pending: 'Ожидаем',
+  submitted: 'На проверке',
+  accepted: 'Выполнено',
+  revision: 'В работе',
+};
 
 const STATUS_FILTER_PREFIX = 'status:';
 const RESPONSIBLE_FILTER_PREFIX = 'responsible:';
@@ -13033,7 +13050,32 @@ function setupStatusControls(card, task) {
 
   const currentStatus = getTaskStatusValue(task);
   const normalizedCurrent = normalizeName(currentStatus);
+  const reviewFlowActive = taskHasResponsibleSubordinateReviewFlow(task);
+  const reviewSummary = getSubordinateReviewSummary(task);
+  const canCloseByReview = currentUserCanReviewSubordinates(task);
+  const statusLabel = container.querySelector('.appdosc-card__status-label');
   optionsContainer.innerHTML = '';
+
+  if (statusLabel) {
+    statusLabel.textContent = 'Статус задачи';
+    if (reviewFlowActive && reviewSummary.total > 0) {
+      const reviewCounter = document.createElement('span');
+      reviewCounter.className = 'appdosc-card__status-review-counter';
+      reviewCounter.title = `Принято подчинённых: ${reviewSummary.label}`;
+      reviewCounter.setAttribute('aria-label', `Принято подчинённых: ${reviewSummary.label}`);
+
+      const icon = document.createElement('i');
+      icon.className = 'fa-solid fa-user-check appdosc-card__status-review-counter-icon';
+      icon.setAttribute('aria-hidden', 'true');
+
+      const value = document.createElement('span');
+      value.className = 'appdosc-card__status-review-counter-value';
+      value.textContent = reviewSummary.label;
+
+      reviewCounter.append(icon, value);
+      statusLabel.appendChild(reviewCounter);
+    }
+  }
 
   STATUS_OPTIONS.forEach((option) => {
     const button = document.createElement('button');
@@ -13042,6 +13084,14 @@ function setupStatusControls(card, task) {
     button.textContent = option;
     button.dataset.statusValue = option;
     const isActive = normalizedCurrent !== '' && normalizeName(option) === normalizedCurrent;
+    const isDoneOption = getStatusSummaryKey(option) === 'done';
+    if (reviewFlowActive && isDoneOption && (!canCloseByReview || !reviewSummary.allAccepted)) {
+      button.disabled = true;
+      button.dataset.statusDisabled = 'true';
+      button.title = !canCloseByReview
+        ? 'Закрыть задачу как выполненную может только ответственный.'
+        : `Сначала примите всех подчинённых: ${reviewSummary.label}.`;
+    }
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     button.addEventListener('click', () => handleStatusButtonClick(optionsContainer, button, task, option));
     optionsContainer.appendChild(button);
@@ -13134,7 +13184,7 @@ function setStatusButtonsLoading(container, isLoading, activeButton) {
       if (btn.dataset.loading === 'true') {
         delete btn.dataset.loading;
       }
-      if (!isCustom) {
+      if (!isCustom && btn.dataset.statusDisabled !== 'true') {
         btn.disabled = false;
       }
     }
@@ -13347,6 +13397,8 @@ async function sendTaskMutation(update) {
     subordinates,
     assignees,
     status,
+    reviewStatus,
+    reviewComment,
     dueDate,
     instruction,
     folderId,
@@ -13511,6 +13563,14 @@ async function sendTaskMutation(update) {
 
   if (Object.prototype.hasOwnProperty.call(update || {}, 'status') && typeof status === 'string') {
     payload.status = status;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'reviewStatus')) {
+    payload.reviewStatus = typeof reviewStatus === 'string' ? reviewStatus : '';
+  }
+
+  if (Object.prototype.hasOwnProperty.call(update || {}, 'reviewComment')) {
+    payload.reviewComment = typeof reviewComment === 'string' ? reviewComment : '';
   }
 
   if (Object.prototype.hasOwnProperty.call(update || {}, 'dueDate')) {
@@ -14844,6 +14904,151 @@ function userIsResponsibleForTask(task) {
   }
 
   return false;
+}
+
+function taskHasResponsibleSubordinateReviewFlow(task) {
+  return normalizeValue(task && task.reviewFlow) === RESPONSIBLE_SUBORDINATE_REVIEW_FLOW;
+}
+
+function normalizeSubordinateReviewStatus(value) {
+  const normalized = normalizeValue(value).toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+  if (['accepted', 'accept', 'принять', 'принято', 'принят'].includes(normalized)) {
+    return 'accepted';
+  }
+  if (['revision', 'rework', 'revise', 'на доработку', 'на доработке', 'доработка', 'доработать'].includes(normalized)) {
+    return 'revision';
+  }
+  return '';
+}
+
+function getSubordinateReviewStatusLabel(status) {
+  const normalized = normalizeSubordinateReviewStatus(status);
+  return normalized ? SUBORDINATE_REVIEW_STATUS_LABELS[normalized] : '';
+}
+
+function normalizeSubordinateSubmissionStatus(value) {
+  const normalized = normalizeValue(value).toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+  if (['submitted', 'submit', 'review', 'на проверке', 'на проверку', 'отправлено', 'отправлен'].includes(normalized)) {
+    return 'submitted';
+  }
+  return '';
+}
+
+function isSubordinateSubmitted(entry) {
+  return normalizeSubordinateSubmissionStatus(entry && entry.submissionStatus) === 'submitted';
+}
+
+function getSubordinateWorkflowStatus(entry) {
+  const reviewStatus = normalizeSubordinateReviewStatus(entry && entry.reviewStatus);
+  if (reviewStatus === 'accepted' || reviewStatus === 'revision') {
+    return reviewStatus;
+  }
+  if (isSubordinateSubmitted(entry)) {
+    return 'submitted';
+  }
+  return 'pending';
+}
+
+function getSubordinateWorkflowStatusLabel(status) {
+  return SUBORDINATE_WORKFLOW_STATUS_LABELS[status] || SUBORDINATE_WORKFLOW_STATUS_LABELS.pending;
+}
+
+function getSubordinateReviewSummary(task) {
+  const entries = collectTaskAssignments(task, 'subordinate');
+  const accepted = entries.reduce((count, entry) => (
+    normalizeSubordinateReviewStatus(entry && entry.reviewStatus) === 'accepted'
+      ? count + 1
+      : count
+  ), 0);
+  const total = entries.length;
+
+  return {
+    accepted,
+    total,
+    allAccepted: total === 0 || accepted >= total,
+    label: `${accepted}/${total}`,
+  };
+}
+
+function currentUserMatchesAssignmentEntry(entry) {
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+
+  return entryMatchesUser(entry, ids, names);
+}
+
+function userIsResponsibleAssigneeForTask(task) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+
+  const responsibleEntries = collectTaskAssignments(task, 'responsible');
+  if (responsibleEntries.some((entry) => entryMatchesUser(entry, ids, names))) {
+    return true;
+  }
+
+  const normalizedNames = new Set(names);
+  const matchesName = (value) => {
+    const normalized = normalizeName(value);
+    return normalized && normalizedNames.has(normalized);
+  };
+
+  if (Array.isArray(task.assigneeIds)) {
+    for (const candidate of task.assigneeIds) {
+      const normalized = normalizeIdentifier(candidate);
+      if (normalized && ids.includes(normalized)) {
+        return true;
+      }
+    }
+  }
+
+  if (task.assigneeId) {
+    const normalized = normalizeIdentifier(task.assigneeId);
+    if (normalized && ids.includes(normalized)) {
+      return true;
+    }
+  }
+
+  if (matchesName(task.responsible)) {
+    return true;
+  }
+
+  if (Array.isArray(task.responsibles)) {
+    for (const entry of task.responsibles) {
+      if (entry && typeof entry === 'object') {
+        if (entryMatchesUser(entry, ids, names)) {
+          return true;
+        }
+      } else if (matchesName(entry)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function currentUserCanReviewSubordinates(task) {
+  const organization = getTaskOrganization(task);
+  return Boolean(
+    organization
+      && taskHasResponsibleSubordinateReviewFlow(task)
+      && !userIsDirectorForOrganization(organization)
+      && userIsResponsibleAssigneeForTask(task)
+  );
 }
 
 function getTaskOrganization(task) {
@@ -19458,6 +19663,262 @@ function resolveAssignmentValueFromEntry(entry) {
   return '';
 }
 
+function appendSubordinateReviewControls(container, task, entry, fallbackValue = '') {
+  if (!container || !task || !entry || typeof entry !== 'object') {
+    return;
+  }
+
+  const organization = getTaskOrganization(task);
+  if (!organization || userIsDirectorForOrganization(organization)) {
+    return;
+  }
+  if (!taskHasResponsibleSubordinateReviewFlow(task)) {
+    return;
+  }
+
+  const reviewStatus = normalizeSubordinateReviewStatus(entry.reviewStatus);
+  const reviewComment = normalizeAssignmentComment(entry.reviewComment);
+  const workflowStatus = getSubordinateWorkflowStatus(entry);
+  const submitted = workflowStatus === 'submitted';
+  const accepted = workflowStatus === 'accepted';
+  const revision = workflowStatus === 'revision';
+  const isCurrentSubordinate = currentUserMatchesAssignmentEntry(entry);
+  const canReview = currentUserCanReviewSubordinates(task);
+  const canReviewEntry = canReview && !isCurrentSubordinate;
+  const currentStatusKey = getStatusSummaryKey(getTaskStatusValue(task));
+  const subordinateIsInWork = currentStatusKey === 'accepted' || revision;
+  const canSubmit = isCurrentSubordinate && !accepted && subordinateIsInWork && (!submitted || revision);
+  if (!canReviewEntry && !canSubmit && !reviewStatus && !reviewComment && workflowStatus === 'pending') {
+    if (!isCurrentSubordinate) {
+      return;
+    }
+  }
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'appdosc-card__subordinate-review';
+
+  const state = document.createElement('div');
+  state.className = 'appdosc-card__subordinate-review-state';
+
+  const badge = document.createElement('span');
+  badge.className = `appdosc-card__subordinate-review-badge appdosc-card__subordinate-review-badge--${workflowStatus}`;
+  badge.textContent = getSubordinateWorkflowStatusLabel(workflowStatus);
+  state.appendChild(badge);
+
+  if (reviewComment) {
+    const comment = document.createElement('span');
+    comment.className = 'appdosc-card__subordinate-review-comment';
+    comment.textContent = reviewComment;
+    state.appendChild(comment);
+  }
+
+  wrapper.appendChild(state);
+
+  const resolveSubordinateId = () => normalizeValue(fallbackValue || resolveAssignmentValueFromEntry(entry));
+
+  if (canSubmit) {
+    const submitButton = document.createElement('button');
+    submitButton.type = 'button';
+    submitButton.className = 'appdosc-card__action appdosc-card__action--response appdosc-card__subordinate-submit';
+    submitButton.textContent = revision ? 'Отправить повторно' : 'Отправить на проверку';
+
+    submitButton.addEventListener('click', async () => {
+      if (!task.id) {
+        setStatus('error', 'Не удалось определить задачу.');
+        return;
+      }
+
+      const subordinateId = resolveSubordinateId();
+      if (!subordinateId) {
+        setStatus('error', 'Не удалось определить подчинённого.');
+        return;
+      }
+
+      if (submitButton.dataset.loading === 'true') {
+        return;
+      }
+
+      setActionButtonLoading(submitButton, true);
+      setStatus('info', 'Отправляем выполнение на проверку...');
+      const startedAt = Date.now();
+
+      logClientEvent('task_subordinate_submit_request', {
+        taskId: task.id || null,
+        organization,
+        subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
+      });
+
+      try {
+        await sendTaskMutation({
+          updateType: 'subordinate_submit',
+          organization,
+          documentId: task.id,
+          subordinateId,
+        });
+
+        logClientEvent('task_subordinate_submit_success', {
+          taskId: task.id || null,
+          organization,
+          subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
+          durationMs: Date.now() - startedAt,
+        });
+
+        setStatus('success', 'Выполнение отправлено на проверку.');
+        await loadTasks(true);
+      } catch (error) {
+        const errorDetails = buildErrorDetails(error);
+        const message = errorDetails.message || 'Не удалось отправить выполнение на проверку.';
+        logClientEvent('task_subordinate_submit_error', {
+          taskId: task.id || null,
+          organization,
+          subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
+          message,
+          errorStatus: errorDetails.status,
+          errorResponse: errorDetails.responseText,
+        });
+        setStatus('error', message);
+      } finally {
+        setActionButtonLoading(submitButton, false);
+      }
+    });
+
+    wrapper.appendChild(submitButton);
+  } else if (isCurrentSubordinate && !accepted && !submitted && !subordinateIsInWork) {
+    const hint = document.createElement('div');
+    hint.className = 'appdosc-card__subordinate-review-hint';
+    hint.textContent = 'Сначала установите статус «В работе».';
+    wrapper.appendChild(hint);
+  } else if (canReview && isCurrentSubordinate && submitted) {
+    const hint = document.createElement('div');
+    hint.className = 'appdosc-card__subordinate-review-hint';
+    hint.textContent = 'Выполнение отправлено на проверку. Ожидайте решения другого ответственного.';
+    wrapper.appendChild(hint);
+  }
+
+  if (canReviewEntry) {
+    if (!submitted) {
+      const hint = document.createElement('div');
+      hint.className = 'appdosc-card__subordinate-review-hint';
+      hint.textContent = accepted
+        ? 'Выполнение уже принято.'
+        : 'Подчинённый ещё не отправил выполнение на проверку.';
+      wrapper.appendChild(hint);
+    } else {
+      const textarea = document.createElement('textarea');
+      textarea.className = 'appdosc-card__subordinate-review-input';
+      textarea.placeholder = 'Комментарий к решению';
+      textarea.rows = 2;
+      textarea.maxLength = 600;
+      textarea.value = reviewComment;
+
+      const actions = document.createElement('div');
+      actions.className = 'appdosc-card__subordinate-review-actions';
+
+      const acceptButton = document.createElement('button');
+      acceptButton.type = 'button';
+      acceptButton.className = 'appdosc-card__action appdosc-card__action--secondary';
+      acceptButton.textContent = 'Принять';
+
+      const revisionButton = document.createElement('button');
+      revisionButton.type = 'button';
+      revisionButton.className = 'appdosc-card__action appdosc-card__action--ghost';
+      revisionButton.textContent = 'На доработку';
+
+      const submitReview = async (decision) => {
+        if (!task.id) {
+          setStatus('error', 'Не удалось определить задачу.');
+          return;
+        }
+
+        const subordinateId = resolveSubordinateId();
+        if (!subordinateId) {
+          setStatus('error', 'Не удалось определить подчинённого.');
+          return;
+        }
+
+        const comment = normalizeAssignmentComment(textarea.value);
+        if (decision === 'revision' && !comment) {
+          setStatus('warning', 'Укажите комментарий для доработки.');
+          textarea.focus();
+          return;
+        }
+
+        if (acceptButton.dataset.loading === 'true' || revisionButton.dataset.loading === 'true') {
+          return;
+        }
+
+        const activeButton = decision === 'accepted' ? acceptButton : revisionButton;
+        setActionButtonLoading(activeButton, true);
+        acceptButton.disabled = true;
+        revisionButton.disabled = true;
+        textarea.disabled = true;
+        setStatus('info', decision === 'accepted' ? 'Сохраняем приёмку...' : 'Отправляем на доработку...');
+        const startedAt = Date.now();
+
+        logClientEvent('task_subordinate_review_request', {
+          taskId: task.id || null,
+          organization,
+          subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
+          reviewStatus: decision,
+          hasComment: Boolean(comment),
+        });
+
+        try {
+          await sendTaskMutation({
+            updateType: 'subordinate_review',
+            organization,
+            documentId: task.id,
+            subordinateId,
+            reviewStatus: decision,
+            reviewComment: comment,
+          });
+
+          logClientEvent('task_subordinate_review_success', {
+            taskId: task.id || null,
+            organization,
+            subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
+            reviewStatus: decision,
+            durationMs: Date.now() - startedAt,
+          });
+
+          setStatus('success', decision === 'accepted' ? 'Выполнение принято.' : 'Отправлено на доработку.');
+          await loadTasks(true);
+        } catch (error) {
+          const errorDetails = buildErrorDetails(error);
+          const message = errorDetails.message || 'Не удалось сохранить решение.';
+          logClientEvent('task_subordinate_review_error', {
+            taskId: task.id || null,
+            organization,
+            subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
+            reviewStatus: decision,
+            message,
+            errorStatus: errorDetails.status,
+            errorResponse: errorDetails.responseText,
+          });
+          setStatus('error', message);
+        } finally {
+          setActionButtonLoading(activeButton, false);
+          acceptButton.disabled = false;
+          revisionButton.disabled = false;
+          textarea.disabled = false;
+        }
+      };
+
+      acceptButton.addEventListener('click', () => {
+        submitReview('accepted');
+      });
+      revisionButton.addEventListener('click', () => {
+        submitReview('revision');
+      });
+
+      actions.append(acceptButton, revisionButton);
+      wrapper.append(textarea, actions);
+    }
+  }
+
+  container.appendChild(wrapper);
+}
+
 function buildAssignmentFallbackLabel(entry, role) {
   const defaultLabel = role === 'subordinate' ? 'Подчинённый' : 'Ответственный';
   if (!entry || typeof entry !== 'object') {
@@ -21686,6 +22147,8 @@ function setupSubordinateControls(card, task) {
     if (responseControls) {
       info.appendChild(responseControls);
     }
+
+    appendSubordinateReviewControls(info, task, entryData, value);
 
     row.appendChild(info);
 
