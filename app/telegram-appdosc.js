@@ -2333,6 +2333,7 @@ const state = {
   tasks: [],
   visibleTasks: [],
   taskFilter: [],
+  overdueNoticeShown: false,
   activeFilters: {
     folderId: 'all',
     statusFilters: [],
@@ -2807,6 +2808,7 @@ const STATUS_CLASSES = {
   info: 'appdosc__status-message--info',
 };
 let toastTimerId = null;
+let statusClearTimerId = null;
 
 const TASK_FILTERS = ['all', 'overdue', ...STATUS_FILTERS];
 const DEFAULT_TASK_FILTER = 'all';
@@ -3923,6 +3925,7 @@ async function loadTasks(force = false) {
       durationMs: Date.now() - startedAt,
     });
     preGenerateTaskSummaries();
+    maybeShowOverdueOpenNotice();
   } catch (error) {
     if (error && error.name === 'AbortError') {
       return;
@@ -6547,9 +6550,16 @@ function isTaskExcludedByEntryStatus(task, directorState) {
 
 function isTaskOverdueByCompactRule(task) {
   const statusLabel = normalizeName(getTaskStatusValue(task));
-  return isOverdue(task)
-    || isDirectorAssignmentOverdue(task)
-    || statusLabel.includes('просроч');
+  if (statusLabel.includes('просроч')) {
+    return true;
+  }
+
+  const personalOverdue = isCurrentUserAssignmentOverdue(task);
+  if (personalOverdue !== null) {
+    return personalOverdue;
+  }
+
+  return isDirectorAssignmentOverdue(task) || isOverdue(task);
 }
 
 
@@ -18103,6 +18113,58 @@ function canCurrentUserRevokeAssignmentEntry(entry) {
   return isAssignmentAuthoredByUser(entry, ids, names);
 }
 
+function isDateValueOverdue(value) {
+  const date = parseDate(value);
+  if (!date) {
+    return false;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  date.setHours(0, 0, 0, 0);
+
+  return date.getTime() < today.getTime();
+}
+
+function collectCurrentUserAssignmentDueDates(task) {
+  if (!task || typeof task !== 'object') {
+    return [];
+  }
+
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return [];
+  }
+
+  const dueDates = [];
+  const pushDueDate = (entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    if (!entryMatchesUser(entry, ids, names)) {
+      return;
+    }
+    const dueDate = normalizeAssignmentDueDate(entry.assignmentDueDate);
+    if (dueDate) {
+      dueDates.push(dueDate);
+    }
+  };
+
+  collectTaskAssignments(task, 'responsible').forEach(pushDueDate);
+  collectTaskAssignments(task, 'subordinate').forEach(pushDueDate);
+
+  return Array.from(new Set(dueDates));
+}
+
+function isCurrentUserAssignmentOverdue(task) {
+  const dueDates = collectCurrentUserAssignmentDueDates(task);
+  if (!dueDates.length) {
+    return null;
+  }
+
+  return dueDates.some((dueDate) => isDateValueOverdue(dueDate));
+}
+
 function isDirectorAssignmentOverdue(task) {
   if (!task || typeof task !== 'object') {
     return false;
@@ -18165,14 +18227,7 @@ function isOverdue(task) {
   if (isTaskCompleted(task)) {
     return false;
   }
-  const due = parseDate(task.dueDate);
-  if (!due) {
-    return false;
-  }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  due.setHours(0, 0, 0, 0);
-  return due.getTime() < today.getTime();
+  return isDateValueOverdue(task.dueDate);
 }
 
 function updateFooter() {
@@ -18211,6 +18266,10 @@ function setStatus(type, message) {
     window.clearTimeout(toastTimerId);
     toastTimerId = null;
   }
+  if (statusClearTimerId) {
+    window.clearTimeout(statusClearTimerId);
+    statusClearTimerId = null;
+  }
   const host = elements.status.parentElement;
   host.classList.add('appdosc-toast-layer');
   if (statusContainer) {
@@ -18226,18 +18285,41 @@ function setStatus(type, message) {
   toastTimerId = window.setTimeout(() => clearStatus(), 2600);
 }
 
-function setStatusAction(type, message, actionLabel, actionHandler) {
+function setStatusAction(type, message, actionLabel, actionHandler, options = {}) {
   if (!elements.status) {
     return;
   }
   const statusContainer = elements.status.closest('.appdosc__status');
+  const host = elements.status.parentElement;
+  const showAsToast = Boolean(options && options.toast);
+
+  if (toastTimerId) {
+    window.clearTimeout(toastTimerId);
+    toastTimerId = null;
+  }
+  if (statusClearTimerId) {
+    window.clearTimeout(statusClearTimerId);
+    statusClearTimerId = null;
+  }
 
   elements.status.hidden = !message;
   if (statusContainer) {
     statusContainer.hidden = !message;
   }
-  elements.status.className = 'appdosc__status-message';
-  if (type && STATUS_CLASSES[type]) {
+  if (host) {
+    if (showAsToast) {
+      host.classList.add('appdosc-toast-layer');
+    } else {
+      host.classList.remove('appdosc-toast-layer');
+    }
+  }
+
+  elements.status.className = showAsToast
+    ? 'appdosc__status-message appdosc-toast'
+    : 'appdosc__status-message';
+  if (showAsToast && type) {
+    elements.status.classList.add(`appdosc-toast--${type}`);
+  } else if (type && STATUS_CLASSES[type]) {
     elements.status.classList.add(STATUS_CLASSES[type]);
   }
 
@@ -18256,6 +18338,42 @@ function setStatusAction(type, message, actionLabel, actionHandler) {
     button.addEventListener('click', actionHandler);
     elements.status.appendChild(button);
   }
+
+  if (showAsToast) {
+    requestAnimationFrame(() => elements.status && elements.status.classList.add('is-visible'));
+    const duration = Number(options.durationMs || options.duration || 0);
+    if (Number.isFinite(duration) && duration > 0) {
+      toastTimerId = window.setTimeout(() => clearStatus(), duration);
+    }
+  }
+}
+
+function showOverdueTasksFromNotice() {
+  state.activeFilters.statusFilters = ['overdue'];
+  state.selectedCardAnchor = '';
+  updateVisibleTasks();
+  safeRender('overdue_notice_filter');
+  clearStatus();
+}
+
+function maybeShowOverdueOpenNotice() {
+  if (state.overdueNoticeShown) {
+    return;
+  }
+
+  const overdueCount = Number(state.stats && state.stats.overdue) || 0;
+  if (overdueCount < 1) {
+    return;
+  }
+
+  state.overdueNoticeShown = true;
+  setStatusAction(
+    'info',
+    `У вас просрочено: ${overdueCount} ${formatTaskCountLabel(overdueCount)}.`,
+    'Показать',
+    showOverdueTasksFromNotice,
+    { toast: true, durationMs: 8000 }
+  );
 }
 
 function clearStatus() {
@@ -18266,10 +18384,15 @@ function clearStatus() {
     window.clearTimeout(toastTimerId);
     toastTimerId = null;
   }
+  if (statusClearTimerId) {
+    window.clearTimeout(statusClearTimerId);
+    statusClearTimerId = null;
+  }
   const statusContainer = elements.status.closest('.appdosc__status');
   const host = elements.status.parentElement;
   elements.status.classList.remove('is-visible');
-  window.setTimeout(() => {
+  statusClearTimerId = window.setTimeout(() => {
+    statusClearTimerId = null;
     if (!elements.status) return;
     elements.status.hidden = true;
     elements.status.textContent = '';

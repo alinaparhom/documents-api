@@ -104,6 +104,9 @@ const DOCS_MAINADMIN_SECRET_FILE = DOCS_MAINADMIN_STORAGE_DIR . '/.mainadmin-sec
 const DOCS_ADMIN_USERS_FILE = __DIR__ . '/lg/user.json';
 const DOCS_SESSION_KEY = 'docs_auth';
 const DOCS_REVIEW_FLOW_RESPONSIBLE_SUBORDINATE = 'responsible_subordinate_v1';
+const OVERDUE_DIGEST_STATE_FILENAME = 'overdue_digest_state.json';
+const DOCS_OVERDUE_DIGEST_TIMEZONE = 'Europe/Minsk';
+const DOCS_OVERDUE_DIGEST_MAX_ITEMS = 10;
 
 function sanitize_instruction(?string $value): string
 {
@@ -2473,6 +2476,686 @@ function docs_send_task_assignment_notifications(array $assignees, array $record
 
         $sentChatIds[$chatId] = true;
     }
+}
+
+function docs_truthy_value($value): bool
+{
+    if (is_bool($value)) {
+        return $value;
+    }
+
+    if (is_int($value) || is_float($value)) {
+        return (int) $value === 1;
+    }
+
+    if (!is_string($value)) {
+        return false;
+    }
+
+    $normalized = mb_strtolower(trim($value), 'UTF-8');
+
+    return in_array($normalized, ['1', 'true', 'yes', 'y', 'on', 'да'], true);
+}
+
+function docs_ru_plural(int $count, string $one, string $few, string $many): string
+{
+    $count = abs($count);
+    $lastTwo = $count % 100;
+    $last = $count % 10;
+
+    if ($lastTwo >= 11 && $lastTwo <= 14) {
+        return $many;
+    }
+
+    if ($last === 1) {
+        return $one;
+    }
+
+    if ($last >= 2 && $last <= 4) {
+        return $few;
+    }
+
+    return $many;
+}
+
+function docs_get_overdue_digest_state_path(string $folder): string
+{
+    return DOCUMENTS_ROOT . '/' . $folder . '/' . OVERDUE_DIGEST_STATE_FILENAME;
+}
+
+function docs_load_overdue_digest_state(string $folder): array
+{
+    $path = docs_get_overdue_digest_state_path($folder);
+    if (!is_file($path)) {
+        return ['sent' => []];
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return ['sent' => []];
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return ['sent' => []];
+    }
+
+    if (!isset($decoded['sent']) || !is_array($decoded['sent'])) {
+        $decoded['sent'] = [];
+    }
+
+    return $decoded;
+}
+
+function docs_cleanup_overdue_digest_state(array &$state): void
+{
+    if (!isset($state['sent']) || !is_array($state['sent'])) {
+        $state['sent'] = [];
+        return;
+    }
+
+    $dates = array_values(array_filter(array_keys($state['sent']), static function ($value): bool {
+        return is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1;
+    }));
+    sort($dates, SORT_STRING);
+
+    $keepLimit = 45;
+    while (count($dates) > $keepLimit) {
+        $date = array_shift($dates);
+        if (is_string($date)) {
+            unset($state['sent'][$date]);
+        }
+    }
+}
+
+function docs_save_overdue_digest_state(string $folder, array $state): void
+{
+    docs_cleanup_overdue_digest_state($state);
+    $directory = ensure_organization_directory($folder);
+    $path = rtrim($directory, '/\\') . '/' . OVERDUE_DIGEST_STATE_FILENAME;
+    $state['updatedAt'] = date('c');
+
+    $encoded = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        return;
+    }
+
+    @file_put_contents($path, $encoded . PHP_EOL, LOCK_EX);
+    @chmod($path, 0644);
+}
+
+function docs_overdue_digest_was_sent(array $state, string $date, string $chatId): bool
+{
+    return isset($state['sent'][$date])
+        && is_array($state['sent'][$date])
+        && isset($state['sent'][$date][$chatId]);
+}
+
+function docs_mark_overdue_digest_sent(array &$state, string $date, string $chatId, int $tasksCount): void
+{
+    if (!isset($state['sent']) || !is_array($state['sent'])) {
+        $state['sent'] = [];
+    }
+    if (!isset($state['sent'][$date]) || !is_array($state['sent'][$date])) {
+        $state['sent'][$date] = [];
+    }
+
+    $state['sent'][$date][$chatId] = [
+        'sentAt' => date('c'),
+        'tasksCount' => max(0, $tasksCount),
+    ];
+}
+
+function docs_collect_overdue_digest_assignees(array $record): array
+{
+    $entries = [];
+
+    $push = static function ($value, string $fallbackRole) use (&$entries): void {
+        if (!is_array($value) || empty($value)) {
+            return;
+        }
+
+        $entry = $value;
+        $role = docs_normalize_assignment_role((string) ($entry['role'] ?? ''));
+        if ($role === '') {
+            $role = $fallbackRole;
+            $entry['role'] = $role;
+        }
+
+        if ($role === 'director' || $role === 'admin') {
+            return;
+        }
+
+        if ($role !== 'responsible' && $role !== 'subordinate') {
+            $role = 'responsible';
+        }
+
+        $entry['role'] = $role;
+
+        $entries[] = $entry;
+    };
+
+    foreach (docs_extract_assignees($record) as $entry) {
+        $push($entry, 'responsible');
+    }
+
+    if (isset($record['responsibles']) && is_array($record['responsibles'])) {
+        foreach ($record['responsibles'] as $entry) {
+            $push($entry, 'responsible');
+        }
+    }
+
+    if (isset($record['responsible']) && is_array($record['responsible'])) {
+        $push($record['responsible'], 'responsible');
+    }
+
+    if (isset($record['subordinates']) && is_array($record['subordinates'])) {
+        foreach ($record['subordinates'] as $entry) {
+            $push($entry, 'subordinate');
+        }
+    }
+
+    if (isset($record['subordinate']) && is_array($record['subordinate'])) {
+        $push($record['subordinate'], 'subordinate');
+    }
+
+    $unique = [];
+    $seen = [];
+
+    foreach ($entries as $entry) {
+        $keys = docs_collect_assignee_index_keys($entry);
+        if (empty($keys)) {
+            $encodedEntry = json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $keys = ['hash::' . md5(is_string($encodedEntry) ? $encodedEntry : '')];
+        }
+
+        $duplicate = false;
+        foreach ($keys as $key) {
+            $normalizedKey = mb_strtolower(trim((string) $key), 'UTF-8');
+            if ($normalizedKey !== '' && isset($seen[$normalizedKey])) {
+                $duplicate = true;
+                break;
+            }
+        }
+
+        if ($duplicate) {
+            continue;
+        }
+
+        foreach ($keys as $key) {
+            $normalizedKey = mb_strtolower(trim((string) $key), 'UTF-8');
+            if ($normalizedKey !== '') {
+                $seen[$normalizedKey] = true;
+            }
+        }
+
+        $unique[] = $entry;
+    }
+
+    return $unique;
+}
+
+function docs_collect_overdue_assignee_lookup_candidates(array $assignee): array
+{
+    $candidates = [];
+
+    foreach (['id', 'telegram', 'chatId', 'number', 'email', 'login'] as $field) {
+        if (!empty($assignee[$field])) {
+            $candidates[] = (string) $assignee[$field];
+        }
+    }
+
+    foreach (['name', 'responsible', 'fio', 'fullName'] as $field) {
+        if (!empty($assignee[$field])) {
+            $candidates[] = (string) $assignee[$field];
+        }
+    }
+
+    if (!empty($assignee['number'])) {
+        $name = $assignee['responsible'] ?? ($assignee['name'] ?? '');
+        if ($name !== '') {
+            $candidates[] = trim((string) $assignee['number'] . ' ' . (string) $name);
+        }
+    }
+
+    return array_values(array_unique(array_filter(array_map(static function ($value) {
+        $trimmed = trim((string) $value);
+
+        return $trimmed !== '' ? $trimmed : null;
+    }, $candidates))));
+}
+
+function docs_enrich_overdue_digest_assignee(array $assignee, array $settings): array
+{
+    if (docs_resolve_telegram_chat_id_from_assignee($assignee) !== null) {
+        return $assignee;
+    }
+
+    $candidates = docs_collect_overdue_assignee_lookup_candidates($assignee);
+    if (empty($candidates)) {
+        return $assignee;
+    }
+
+    $pools = [];
+    foreach (['responsibles', 'block3'] as $groupKey) {
+        if (isset($settings[$groupKey]) && is_array($settings[$groupKey])) {
+            $pools[] = $settings[$groupKey];
+        }
+    }
+
+    foreach ($pools as $pool) {
+        foreach ($pool as $entry) {
+            if (!is_array($entry) || empty($entry)) {
+                continue;
+            }
+
+            $matched = false;
+            foreach ($candidates as $candidate) {
+                if (docs_entry_matches_candidate($entry, $candidate)) {
+                    $matched = true;
+                    break;
+                }
+            }
+            if (!$matched) {
+                continue;
+            }
+
+            foreach (['id', 'telegram', 'chatId', 'email', 'login', 'number', 'position', 'department'] as $field) {
+                if ((empty($assignee[$field]) || !isset($assignee[$field])) && !empty($entry[$field])) {
+                    $assignee[$field] = $entry[$field];
+                }
+            }
+
+            if (empty($assignee['name']) && !empty($entry['responsible'])) {
+                $assignee['name'] = $entry['responsible'];
+            }
+            if (empty($assignee['responsible']) && !empty($entry['responsible'])) {
+                $assignee['responsible'] = $entry['responsible'];
+            }
+
+            return $assignee;
+        }
+    }
+
+    return $assignee;
+}
+
+function docs_overdue_digest_assignee_is_active(array $assignee): bool
+{
+    $statusKey = docs_status_key_from_status($assignee['status'] ?? null);
+    if ($statusKey === 'done' || $statusKey === 'cancelled') {
+        return false;
+    }
+
+    $reviewStatus = docs_normalize_subordinate_review_status($assignee['reviewStatus'] ?? '');
+
+    return $reviewStatus !== 'accepted';
+}
+
+function docs_resolve_overdue_digest_due_date(array $record, array $assignee): string
+{
+    $personalDue = sanitize_date_field($assignee['assignmentDueDate'] ?? '');
+    if ($personalDue !== '') {
+        return $personalDue;
+    }
+
+    return sanitize_date_field($record['dueDate'] ?? '');
+}
+
+function docs_build_overdue_digest_task_key(array $record, string $organization, string $dueDate): string
+{
+    $parts = [$organization];
+    foreach (['id', 'entryNumber', 'registryNumber', 'documentNumber'] as $field) {
+        if (!empty($record[$field])) {
+            $parts[] = $field . ':' . (string) $record[$field];
+            break;
+        }
+    }
+
+    if (count($parts) === 1) {
+        $encodedRecord = json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $parts[] = 'hash:' . md5(is_string($encodedRecord) ? $encodedRecord : '');
+    }
+
+    $parts[] = 'due:' . $dueDate;
+
+    return implode('|', $parts);
+}
+
+function docs_build_overdue_digest_item(
+    array $record,
+    array $assignee,
+    string $organization,
+    string $folder,
+    DateTimeImmutable $today,
+    DateTimeZone $timezone
+): ?array {
+    if (!docs_record_is_active($record) || !docs_overdue_digest_assignee_is_active($assignee)) {
+        return null;
+    }
+
+    $dueDateRaw = docs_resolve_overdue_digest_due_date($record, $assignee);
+    if ($dueDateRaw === '') {
+        return null;
+    }
+
+    $dueDate = DateTimeImmutable::createFromFormat('!Y-m-d', $dueDateRaw, $timezone);
+    if (!$dueDate instanceof DateTimeImmutable || $dueDate->getTimestamp() >= $today->getTimestamp()) {
+        return null;
+    }
+
+    $content = sanitize_text_field((string) ($record['correspondent'] ?? ''), 250);
+    if ($content === '') {
+        $content = sanitize_text_field((string) ($record['summary'] ?? ''), 250);
+    }
+    if ($content === '') {
+        $content = sanitize_text_field((string) ($record['document'] ?? ''), 250);
+    }
+
+    $daysOverdue = (int) $dueDate->diff($today)->days;
+
+    return [
+        'organization' => $organization,
+        'folder' => $folder,
+        'taskKey' => docs_build_overdue_digest_task_key($record, $organization, $dueDateRaw),
+        'documentId' => sanitize_text_field((string) ($record['id'] ?? ''), 200),
+        'entryNumber' => sanitize_text_field((string) ($record['entryNumber'] ?? ''), 80),
+        'registryNumber' => sanitize_text_field((string) ($record['registryNumber'] ?? ''), 120),
+        'documentNumber' => sanitize_text_field((string) ($record['documentNumber'] ?? ''), 120),
+        'content' => $content,
+        'dueDate' => $dueDateRaw,
+        'dueDateLabel' => docs_format_human_date($dueDateRaw),
+        'daysOverdue' => max(1, $daysOverdue),
+        'assigneeName' => docs_extract_assignee_display_name($assignee),
+    ];
+}
+
+function docs_format_overdue_digest_task_line(array $task, int $index): string
+{
+    $identifier = '';
+    if (!empty($task['registryNumber'])) {
+        $identifier = 'рег. № ' . $task['registryNumber'];
+    } elseif (!empty($task['entryNumber'])) {
+        $identifier = 'запись № ' . $task['entryNumber'];
+    } elseif (!empty($task['documentNumber'])) {
+        $identifier = 'док. № ' . $task['documentNumber'];
+    }
+
+    $parts = [];
+    if (!empty($task['organization'])) {
+        $parts[] = (string) $task['organization'];
+    }
+    if ($identifier !== '') {
+        $parts[] = $identifier;
+    }
+
+    $dueLabel = !empty($task['dueDateLabel']) ? (string) $task['dueDateLabel'] : (string) ($task['dueDate'] ?? '');
+    if ($dueLabel !== '') {
+        $parts[] = 'срок ' . $dueLabel;
+    }
+
+    $days = isset($task['daysOverdue']) ? (int) $task['daysOverdue'] : 0;
+    if ($days > 0) {
+        $parts[] = 'просрочено ' . $days . ' ' . docs_ru_plural($days, 'день', 'дня', 'дней');
+    }
+
+    $line = ((int) $index + 1) . '. ' . implode(' — ', $parts);
+    $content = sanitize_text_field((string) ($task['content'] ?? ''), 180);
+    if ($content !== '') {
+        $line .= "\n" . docs_truncate_notification_text($content, 180);
+    }
+
+    return $line;
+}
+
+function docs_build_overdue_digest_message(array $recipient, string $appUrl): string
+{
+    $tasks = isset($recipient['tasks']) && is_array($recipient['tasks']) ? array_values($recipient['tasks']) : [];
+    $total = count($tasks);
+    if ($total < 1) {
+        return '';
+    }
+
+    $name = sanitize_text_field((string) ($recipient['name'] ?? ''), 200);
+    $taskLabel = docs_ru_plural($total, 'просроченная задача', 'просроченные задачи', 'просроченных задач');
+    $lines = [];
+    $lines[] = $name !== ''
+        ? $name . ', у вас ' . $total . ' ' . $taskLabel . '.'
+        : 'У вас ' . $total . ' ' . $taskLabel . '.';
+    $lines[] = 'Пожалуйста, проверьте сроки выполнения.';
+    $lines[] = '';
+
+    $visibleTasks = array_slice($tasks, 0, DOCS_OVERDUE_DIGEST_MAX_ITEMS);
+    foreach ($visibleTasks as $index => $task) {
+        if (!is_array($task)) {
+            continue;
+        }
+        $lines[] = docs_format_overdue_digest_task_line($task, $index);
+    }
+
+    $hiddenCount = $total - count($visibleTasks);
+    if ($hiddenCount > 0) {
+        $lines[] = '';
+        $lines[] = 'Ещё ' . $hiddenCount . ' ' . docs_ru_plural($hiddenCount, 'задача', 'задачи', 'задач') . ' в мини-приложении.';
+    }
+
+    if ($appUrl !== '') {
+        $lines[] = '';
+        $lines[] = 'Открыть задачи: кнопка ниже.';
+    }
+
+    $message = trim(implode("\n", $lines));
+    if ($message !== '' && mb_strlen($message, 'UTF-8') > 3800) {
+        $message = mb_substr($message, 0, 3799, 'UTF-8');
+    }
+
+    return $message;
+}
+
+function docs_send_overdue_digest(bool $dryRun = false): array
+{
+    $timezone = new DateTimeZone(DOCS_OVERDUE_DIGEST_TIMEZONE);
+    $today = new DateTimeImmutable('today', $timezone);
+    $digestDate = $today->format('Y-m-d');
+    $organizations = load_organizations();
+    $states = [];
+    $dirtyFolders = [];
+    $recipients = [];
+    $stats = [
+        'date' => $digestDate,
+        'timezone' => DOCS_OVERDUE_DIGEST_TIMEZONE,
+        'dryRun' => $dryRun,
+        'organizationsChecked' => 0,
+        'recordsChecked' => 0,
+        'overdueTasksQueued' => 0,
+        'recipientsQueued' => 0,
+        'sent' => 0,
+        'failed' => 0,
+        'skippedAlreadySent' => 0,
+        'skippedMissingChatId' => 0,
+        'skippedInactive' => 0,
+    ];
+
+    foreach ($organizations as $organization) {
+        if (!is_string($organization) || trim($organization) === '') {
+            continue;
+        }
+
+        $organization = docs_normalize_organization_candidate($organization);
+        if ($organization === '') {
+            continue;
+        }
+
+        $stats['organizationsChecked']++;
+        $folder = sanitize_folder_name($organization);
+        $records = load_registry($folder);
+        $settings = load_admin_settings($folder);
+        if (!isset($states[$folder])) {
+            $states[$folder] = docs_load_overdue_digest_state($folder);
+        }
+
+        foreach ($records as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+
+            $stats['recordsChecked']++;
+            if (!docs_record_is_active($record)) {
+                $stats['skippedInactive']++;
+                continue;
+            }
+
+            $assignees = docs_collect_overdue_digest_assignees($record);
+            foreach ($assignees as $assignee) {
+                if (!is_array($assignee)) {
+                    continue;
+                }
+
+                $assignee = docs_enrich_overdue_digest_assignee($assignee, $settings);
+                $item = docs_build_overdue_digest_item($record, $assignee, $organization, $folder, $today, $timezone);
+                if ($item === null) {
+                    continue;
+                }
+
+                $chatId = docs_resolve_telegram_chat_id_from_assignee($assignee);
+                if ($chatId === null) {
+                    $stats['skippedMissingChatId']++;
+                    docs_write_response_log('Пропущено уведомление о просрочке: у исполнителя нет Telegram ID', [
+                        'organization' => $organization,
+                        'folder' => $folder,
+                        'documentId' => $record['id'] ?? null,
+                        'assignee' => [
+                            'name' => docs_extract_assignee_display_name($assignee),
+                            'role' => $assignee['role'] ?? null,
+                        ],
+                    ]);
+                    continue;
+                }
+
+                if (docs_overdue_digest_was_sent($states[$folder], $digestDate, (string) $chatId)) {
+                    $stats['skippedAlreadySent']++;
+                    continue;
+                }
+
+                if (!isset($recipients[$chatId])) {
+                    $recipients[$chatId] = [
+                        'chatId' => (string) $chatId,
+                        'name' => docs_extract_assignee_display_name($assignee),
+                        'tasks' => [],
+                        'taskKeys' => [],
+                        'folders' => [],
+                    ];
+                }
+
+                if (empty($recipients[$chatId]['name'])) {
+                    $recipients[$chatId]['name'] = docs_extract_assignee_display_name($assignee);
+                }
+
+                $taskKey = (string) ($item['taskKey'] ?? '');
+                if ($taskKey !== '' && isset($recipients[$chatId]['taskKeys'][$taskKey])) {
+                    continue;
+                }
+
+                if ($taskKey !== '') {
+                    $recipients[$chatId]['taskKeys'][$taskKey] = true;
+                }
+                $recipients[$chatId]['tasks'][] = $item;
+                $recipients[$chatId]['folders'][$folder] = true;
+                $stats['overdueTasksQueued']++;
+            }
+        }
+    }
+
+    $stats['recipientsQueued'] = count($recipients);
+
+    $baseUrl = docs_resolve_application_base_url();
+    $appPath = '/js/documents/app/telegram-appdosc.html';
+    $botToken = $dryRun ? null : docs_resolve_telegram_bot_token();
+    if (!$dryRun && ($botToken === null || $botToken === '')) {
+        $stats['error'] = 'bot_token_missing';
+        docs_write_response_log('Не найден токен Telegram-бота для дайджеста просроченных задач', $stats);
+
+        return $stats;
+    }
+
+    foreach ($recipients as $chatId => $recipient) {
+        $tasks = isset($recipient['tasks']) && is_array($recipient['tasks']) ? $recipient['tasks'] : [];
+        if (empty($tasks)) {
+            continue;
+        }
+
+        usort($tasks, static function (array $a, array $b): int {
+            $dueCompare = strcmp((string) ($a['dueDate'] ?? ''), (string) ($b['dueDate'] ?? ''));
+            if ($dueCompare !== 0) {
+                return $dueCompare;
+            }
+
+            return strcmp((string) ($a['organization'] ?? ''), (string) ($b['organization'] ?? ''));
+        });
+        $recipient['tasks'] = $tasks;
+
+        $link = docs_build_mini_app_link($baseUrl, $appPath, (string) $chatId, '');
+        $message = docs_build_overdue_digest_message($recipient, $link);
+        if ($message === '') {
+            continue;
+        }
+
+        if ($dryRun) {
+            continue;
+        }
+
+        $replyMarkup = [
+            'inline_keyboard' => [
+                [[
+                    'text' => 'Открыть задачи',
+                    'web_app' => ['url' => $link],
+                ]],
+            ],
+        ];
+
+        $result = docs_send_telegram_message((string) $chatId, $message, $botToken, $replyMarkup);
+        if (!empty($result['success'])) {
+            $stats['sent']++;
+            foreach (array_keys($recipient['folders']) as $folder) {
+                if (!isset($states[$folder])) {
+                    $states[$folder] = docs_load_overdue_digest_state($folder);
+                }
+                docs_mark_overdue_digest_sent($states[$folder], $digestDate, (string) $chatId, count($tasks));
+                $dirtyFolders[$folder] = true;
+            }
+        } else {
+            $stats['failed']++;
+        }
+
+        docs_write_response_log(
+            !empty($result['success'])
+                ? 'Дайджест просроченных задач отправлен'
+                : 'Ошибка отправки дайджеста просроченных задач',
+            [
+                'chatId' => (string) $chatId,
+                'tasksCount' => count($tasks),
+                'folders' => array_keys($recipient['folders']),
+                'result' => $result,
+            ]
+        );
+    }
+
+    if (!$dryRun) {
+        foreach (array_keys($dirtyFolders) as $folder) {
+            docs_save_overdue_digest_state($folder, $states[$folder] ?? ['sent' => []]);
+        }
+    }
+
+    $stats['recipientsSample'] = array_slice(array_map(static function (array $recipient): array {
+        return [
+            'chatId' => $recipient['chatId'] ?? '',
+            'name' => $recipient['name'] ?? '',
+            'tasksCount' => isset($recipient['tasks']) && is_array($recipient['tasks']) ? count($recipient['tasks']) : 0,
+            'folders' => isset($recipient['folders']) && is_array($recipient['folders']) ? array_keys($recipient['folders']) : [],
+        ];
+    }, array_values($recipients)), 0, 10);
+
+    return $stats;
 }
 
 function docs_build_subordinate_review_notification_message(
@@ -12944,6 +13627,55 @@ switch ($action) {
             'documentsRoot' => DOCUMENTS_ROOT,
         ]);
         respond_success(['organizations' => $organizations]);
+        break;
+
+    case 'send_overdue_digest':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $expectedToken = getenv('BIMMAX_DOCS_OVERDUE_DIGEST_TOKEN');
+        $expectedToken = is_string($expectedToken) ? trim($expectedToken) : '';
+        if ($expectedToken === '') {
+            respond_error('Токен дайджеста просроченных задач не настроен.', 500, [
+                'requiresConfiguration' => true,
+            ]);
+        }
+
+        $providedToken = '';
+        foreach (['HTTP_X_DOCS_OVERDUE_DIGEST_TOKEN', 'HTTP_X_OVERDUE_DIGEST_TOKEN'] as $headerKey) {
+            if (!empty($_SERVER[$headerKey]) && is_string($_SERVER[$headerKey])) {
+                $providedToken = trim($_SERVER[$headerKey]);
+                break;
+            }
+        }
+        if ($providedToken === '' && isset($payload['token'])) {
+            $providedToken = trim((string) $payload['token']);
+        }
+        if ($providedToken === '' && isset($_GET['token'])) {
+            $providedToken = trim((string) $_GET['token']);
+        }
+
+        if ($providedToken === '' || !hash_equals($expectedToken, $providedToken)) {
+            respond_error('Доступ запрещён.', 403);
+        }
+
+        $dryRun = docs_truthy_value($payload['dryRun'] ?? false)
+            || docs_truthy_value($payload['dry_run'] ?? false)
+            || docs_truthy_value($_GET['dryRun'] ?? false)
+            || docs_truthy_value($_GET['dry_run'] ?? false);
+
+        respond_success([
+            'digest' => docs_send_overdue_digest($dryRun),
+        ]);
         break;
 
     case 'mini_app_upload_pdf':
