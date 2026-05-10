@@ -978,6 +978,9 @@
       .appdosc-settings-sheet__card {
         position: relative;
         width: min(520px, 100%);
+        max-height: min(88dvh, 720px);
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
         border-radius: 22px 22px 0 0;
         padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
         border: 1px solid var(--appdosc-surface-glass-border);
@@ -1119,31 +1122,206 @@
       }
 
       .appdosc-settings-sheet__list-mode-btn {
-        min-height: 68px;
-        border-radius: 14px;
-        border: 1px solid rgba(148, 163, 184, 0.4);
-        background: rgba(255, 255, 255, 0.42);
+        position: relative;
+        min-height: 92px;
+        border-radius: 15px;
+        border: 1px solid rgba(148, 163, 184, 0.38);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(239, 246, 255, 0.54));
         color: var(--appdosc-text-primary);
         display: grid;
-        place-items: center;
-        gap: 4px;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
         padding: 10px;
-        font-size: 14px;
+        text-align: left;
+        font-size: 13px;
         font-weight: 600;
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62), 0 8px 18px rgba(37, 99, 235, 0.08);
+        transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease, background .2s ease;
       }
 
-      .appdosc-settings-sheet__list-mode-btn span:first-child {
-        font-size: 22px;
+      .appdosc-settings-sheet__list-mode-btn::after {
+        content: '';
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.5);
+        background: rgba(255, 255, 255, 0.54);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Font Awesome 6 Free";
+        font-size: 10px;
+        font-weight: 900;
+        color: transparent;
       }
 
       .appdosc-settings-sheet__list-mode-btn[aria-pressed='true'] {
-        border-color: rgba(59, 130, 246, 0.72);
-        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18) inset;
+        border-color: rgba(59, 130, 246, 0.74);
+        background:
+          radial-gradient(circle at top left, rgba(96, 165, 250, 0.22), transparent 42%),
+          linear-gradient(180deg, rgba(239, 246, 255, 0.98), rgba(219, 234, 254, 0.62));
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.16) inset, 0 12px 24px rgba(37, 99, 235, 0.14);
+      }
+
+      .appdosc-settings-sheet__list-mode-btn[aria-pressed='true']::after {
+        content: "\f00c";
+        border-color: rgba(37, 99, 235, 0.9);
+        background: #2563eb;
+        color: #fff;
+        box-shadow: 0 6px 14px rgba(37, 99, 235, 0.26);
+      }
+
+      .appdosc-settings-sheet__list-mode-btn:active {
+        transform: scale(.985);
+      }
+
+      .appdosc-settings-sheet__list-mode-btn:focus-visible {
+        outline: 2px solid rgba(37, 99, 235, 0.48);
+        outline-offset: 3px;
+      }
+
+      .appdosc-settings-sheet__list-mode-head {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+        padding-right: 22px;
+      }
+
+      .appdosc-settings-sheet__list-mode-icon {
+        width: 30px;
+        height: 30px;
+        border-radius: 11px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(59, 130, 246, 0.12);
+        border: 1px solid rgba(59, 130, 246, 0.18);
+        color: #2563eb;
+        font-size: 18px;
+        line-height: 1;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
+        transition: background .2s ease, color .2s ease, border-color .2s ease, transform .2s ease;
+      }
+
+      .appdosc-settings-sheet__list-mode-icon i {
+        font-size: 15px;
+        line-height: 1;
+      }
+
+      .appdosc-settings-sheet__list-mode-btn[aria-pressed='true'] .appdosc-settings-sheet__list-mode-icon {
+        background: #2563eb;
+        border-color: rgba(37, 99, 235, 0.84);
+        color: #fff;
+        transform: translateY(-1px);
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.24);
+      }
+
+      .appdosc-settings-sheet__list-mode-copy {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+      }
+
+      .appdosc-settings-sheet__list-mode-title {
+        font-size: 13px;
+        font-weight: 800;
+        line-height: 1.18;
+        color: var(--appdosc-text-primary);
+      }
+
+      .appdosc-settings-sheet__list-mode-desc {
+        font-size: 10.5px;
+        font-weight: 500;
+        line-height: 1.2;
+        color: var(--appdosc-text-muted);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .appdosc-settings-sheet__list-mode-preview {
+        display: grid;
+        gap: 5px;
+        align-self: end;
+        min-width: 0;
+      }
+
+      .appdosc-settings-sheet__list-mode-line,
+      .appdosc-settings-sheet__list-mode-pill {
+        display: block;
+        border-radius: 999px;
+        background: rgba(100, 116, 139, 0.18);
+      }
+
+      .appdosc-settings-sheet__list-mode-line {
+        height: 5px;
+      }
+
+      .appdosc-settings-sheet__list-mode-line--strong {
+        width: 86%;
+        background: rgba(37, 99, 235, 0.28);
+      }
+
+      .appdosc-settings-sheet__list-mode-line--short {
+        width: 58%;
+      }
+
+      .appdosc-settings-sheet__list-mode-pills {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4px;
+      }
+
+      .appdosc-settings-sheet__list-mode-pill {
+        height: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(255, 255, 255, 0.72);
       }
 
       :root[data-theme='dark'] .appdosc-settings-sheet__list-mode-btn {
-        background: rgba(15, 23, 42, 0.35);
+        background: linear-gradient(180deg, rgba(30, 41, 59, 0.82), rgba(15, 23, 42, 0.62));
         border-color: rgba(148, 163, 184, 0.34);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 22px rgba(2, 6, 23, 0.18);
+      }
+
+      :root[data-theme='dark'] .appdosc-settings-sheet__list-mode-btn::after {
+        background: rgba(15, 23, 42, 0.72);
+        border-color: rgba(148, 163, 184, 0.42);
+      }
+
+      :root[data-theme='dark'] .appdosc-settings-sheet__list-mode-btn[aria-pressed='true'] {
+        background:
+          radial-gradient(circle at top left, rgba(96, 165, 250, 0.22), transparent 42%),
+          linear-gradient(180deg, rgba(30, 64, 175, 0.36), rgba(15, 23, 42, 0.66));
+        border-color: rgba(96, 165, 250, 0.72);
+        box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.16) inset, 0 12px 26px rgba(2, 6, 23, 0.28);
+      }
+
+      :root[data-theme='dark'] .appdosc-settings-sheet__list-mode-icon {
+        background: rgba(96, 165, 250, 0.16);
+        border-color: rgba(96, 165, 250, 0.24);
+        color: #bfdbfe;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      }
+
+      :root[data-theme='dark'] .appdosc-settings-sheet__list-mode-btn[aria-pressed='true'] .appdosc-settings-sheet__list-mode-icon {
+        background: #3b82f6;
+        border-color: rgba(147, 197, 253, 0.78);
+        color: #fff;
+        box-shadow: 0 10px 22px rgba(37, 99, 235, 0.24);
+      }
+
+      :root[data-theme='dark'] .appdosc-settings-sheet__list-mode-pill {
+        background: rgba(15, 23, 42, 0.62);
+        border-color: rgba(148, 163, 184, 0.22);
       }
 
       .appdosc-card__insight {
@@ -1151,12 +1329,12 @@
       }
 
       :root[data-task-list-mode='insight'] .task-card {
-        border-radius: 16px;
+        border-radius: 16px !important;
       }
 
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__header {
-        gap: 8px;
-        padding-bottom: 8px;
+        gap: 7px !important;
+        padding-bottom: 8px !important;
       }
 
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__details,
@@ -1166,15 +1344,21 @@
       }
 
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__summary {
-        margin-top: 6px;
+        margin-top: 4px;
       }
 
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__title,
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__subtitle {
         white-space: normal;
-        overflow: visible;
+        overflow: hidden;
         text-overflow: unset;
-        line-height: 1.3;
+        line-height: 1.28;
+      }
+
+      :root[data-task-list-mode='insight'] .task-card .appdosc-card__title {
+        font-size: 12.5px !important;
+        font-weight: 800 !important;
+        color: var(--appdosc-task-card-title) !important;
       }
 
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__block-text {
@@ -1186,44 +1370,199 @@
       }
 
       :root[data-task-list-mode='insight'] .appdosc-card__insight {
-        margin-top: 8px;
+        grid-area: insight;
+        margin-top: 2px;
         display: grid;
-        gap: 4px;
-        border-top: 1px solid rgba(148, 163, 184, 0.26);
-        padding-top: 8px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px;
+        border-top: 1px solid rgba(148, 163, 184, 0.18);
+        padding-top: 6px;
+        min-width: 0;
       }
 
       .appdosc-card__insight-row {
-        min-height: 24px;
+        --appdosc-insight-accent: #2563eb;
+        min-height: 30px;
         display: grid;
-        grid-template-columns: 88px minmax(0, 1fr);
-        align-items: start;
-        gap: 8px;
+        grid-template-columns: 22px minmax(0, 1fr);
+        grid-template-areas: "icon value";
+        column-gap: 6px;
+        row-gap: 0;
+        align-content: center;
+        align-items: center;
+        padding: 5px 7px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        background: rgba(255, 255, 255, 0.62);
+        min-width: 0;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.54);
+      }
+
+      .appdosc-card__insight-row::before {
+        content: "\f05a";
+        grid-area: icon;
+        width: 22px;
+        height: 22px;
+        border-radius: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        align-self: center;
+        font-family: "Font Awesome 6 Free";
+        font-size: 10px;
+        font-weight: 900;
+        line-height: 1;
+        color: var(--appdosc-insight-accent);
+        background: rgba(37, 99, 235, 0.1);
+        border: 1px solid rgba(37, 99, 235, 0.16);
+      }
+
+      .appdosc-card__insight-row:nth-child(1)::before {
+        content: "\f007";
+      }
+
+      .appdosc-card__insight-row:nth-child(2)::before {
+        content: "\f073";
+      }
+
+      .appdosc-card__insight-row:nth-child(3)::before {
+        content: "\f0b1";
+      }
+
+      .appdosc-card__insight-row:nth-child(4)::before {
+        content: "\f017";
+      }
+
+      .appdosc-card__insight-row:nth-child(5)::before {
+        content: "\f086";
+      }
+
+      .appdosc-card__insight-row:nth-child(6)::before {
+        content: "\f0c6";
       }
 
       .appdosc-card__insight-label {
-        font-size: 11px;
+        grid-area: label;
+        display: none;
+        font-size: 10px;
+        font-weight: 700;
         color: var(--appdosc-text-muted);
-        line-height: 1.3;
+        line-height: 1.2;
+        min-width: 0;
       }
 
       .appdosc-card__insight-value {
-        font-size: 13px;
+        grid-area: value;
+        font-size: 11px;
         color: var(--appdosc-text-primary);
-        font-weight: 600;
-        line-height: 1.3;
-        white-space: normal;
-        overflow-wrap: anywhere;
+        font-weight: 700;
+        line-height: 1.18;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        overflow-wrap: normal;
+        min-width: 0;
       }
 
       .appdosc-card__insight-value--status {
         display: inline-flex;
         align-items: center;
         justify-self: start;
+        max-width: 100%;
         border-radius: 999px;
-        padding: 2px 10px;
-        border: 1px solid rgba(96, 165, 250, 0.35);
-        background: rgba(191, 219, 254, 0.28);
+        padding: 0;
+        border: 0;
+        background: transparent;
+      }
+
+      :root[data-theme='dark'] .appdosc-card__insight-row {
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.46), rgba(15, 23, 42, 0.26));
+        border-color: rgba(148, 163, 184, 0.16);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }
+
+      :root[data-theme='dark'] .appdosc-card__insight-row::before {
+        background: rgba(96, 165, 250, 0.14);
+        border-color: rgba(96, 165, 250, 0.22);
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__header {
+        grid-template-areas: "main actions" "insight insight" "compact compact" !important;
+        grid-template-rows: auto auto auto !important;
+        min-height: 0 !important;
+        padding: 8px 9px !important;
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .task-main {
+        gap: 4px !important;
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__title,
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__subtitle {
+        display: -webkit-box !important;
+        -webkit-box-orient: vertical;
+        white-space: normal !important;
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__title {
+        -webkit-line-clamp: 2 !important;
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__subtitle {
+        -webkit-line-clamp: 1 !important;
+        font-size: 10.5px !important;
+        opacity: .9;
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .task-status-badge {
+        max-width: min(42vw, 152px);
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__insight-row:first-child {
+        display: none;
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__insight-row:nth-child(4) {
+        grid-column: 1 / -1;
+        min-height: 32px;
+        border-color: rgba(96, 165, 250, 0.24);
+        background: linear-gradient(135deg, rgba(219, 234, 254, 0.76), rgba(240, 253, 250, 0.58));
+      }
+
+      :root[data-theme='dark'][data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__insight-row:nth-child(4) {
+        border-color: rgba(96, 165, 250, 0.28);
+        background: linear-gradient(135deg, rgba(30, 64, 175, 0.34), rgba(13, 148, 136, 0.16));
+      }
+
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__insight-row:nth-child(4) .appdosc-card__insight-value {
+        font-size: 11.5px;
+      }
+
+      .task-card.appdosc-card--tone-done .appdosc-card__insight-row:nth-child(4) {
+        --appdosc-insight-accent: #16a34a;
+      }
+
+      .task-card.appdosc-card--tone-done .appdosc-card__insight-row:nth-child(4)::before {
+        background: rgba(22, 163, 74, 0.12);
+        border-color: rgba(22, 163, 74, 0.22);
+      }
+
+      .task-card.appdosc-card--tone-overdue .appdosc-card__insight-row:nth-child(4) {
+        --appdosc-insight-accent: #dc2626;
+      }
+
+      .task-card.appdosc-card--tone-overdue .appdosc-card__insight-row:nth-child(4)::before {
+        background: rgba(220, 38, 38, 0.12);
+        border-color: rgba(220, 38, 38, 0.22);
+      }
+
+      .task-card.appdosc-card--tone-control .appdosc-card__insight-row:nth-child(4) {
+        --appdosc-insight-accent: #d97706;
+      }
+
+      .task-card.appdosc-card--tone-control .appdosc-card__insight-row:nth-child(4)::before {
+        background: rgba(217, 119, 6, 0.12);
+        border-color: rgba(217, 119, 6, 0.22);
       }
 
       .task-card.appdosc-card--tone-done .appdosc-card__insight-value--status {
@@ -1265,6 +1604,12 @@
         background: rgba(180, 83, 9, 0.24);
       }
 
+      :root[data-task-list-mode='insight'] .appdosc-card[data-expanded='false'] .appdosc-card__insight-value--status {
+        padding: 0 !important;
+        border: 0 !important;
+        background: transparent !important;
+      }
+
       :root[data-task-list-mode='insight'] .task-card .appdosc-card__footer {
         margin-top: 8px;
         padding-top: 8px;
@@ -1291,6 +1636,53 @@
         min-height: 36px;
         width: 100%;
         padding: 7px 12px;
+      }
+
+      @media (max-width: 390px) {
+        .appdosc-settings-sheet__list-mode-grid {
+          gap: 8px;
+        }
+
+        .appdosc-settings-sheet__list-mode-btn {
+          min-height: 86px;
+          padding: 9px;
+        }
+
+        .appdosc-settings-sheet__list-mode-head {
+          gap: 7px;
+        }
+
+        .appdosc-settings-sheet__list-mode-icon {
+          width: 28px;
+          height: 28px;
+          border-radius: 10px;
+          font-size: 16px;
+        }
+
+        .appdosc-settings-sheet__list-mode-title {
+          font-size: 12.5px;
+        }
+
+        .appdosc-settings-sheet__list-mode-desc {
+          font-size: 10px;
+        }
+
+        :root[data-task-list-mode='insight'] .appdosc-card__insight {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 4px;
+        }
+
+        :root[data-task-list-mode='insight'] .appdosc-card__insight-row {
+          grid-template-columns: 20px minmax(0, 1fr);
+          min-height: 28px;
+          padding: 4px 6px;
+        }
+
+        :root[data-task-list-mode='insight'] .appdosc-card__insight-row::before {
+          width: 20px;
+          height: 20px;
+          border-radius: 7px;
+        }
       }
 
       .appdosc-avatar {
@@ -4850,12 +5242,34 @@
         <div class="appdosc-settings-sheet__section">Отображение списка задач</div>
         <div class="appdosc-settings-sheet__list-mode-grid" role="group" aria-label="Выбор отображения списка задач">
           <button type="button" class="appdosc-settings-sheet__list-mode-btn" data-list-mode-option="default" aria-pressed="true">
-            <span>📋</span>
-            <span>Стандартный</span>
+            <span class="appdosc-settings-sheet__list-mode-head">
+              <span class="appdosc-settings-sheet__list-mode-icon" aria-hidden="true"><i class="fa-solid fa-list"></i></span>
+              <span class="appdosc-settings-sheet__list-mode-copy">
+                <span class="appdosc-settings-sheet__list-mode-title">Стандартный</span>
+                <span class="appdosc-settings-sheet__list-mode-desc">Компактный список без лишних деталей.</span>
+              </span>
+            </span>
+            <span class="appdosc-settings-sheet__list-mode-preview" aria-hidden="true">
+              <span class="appdosc-settings-sheet__list-mode-line appdosc-settings-sheet__list-mode-line--strong"></span>
+              <span class="appdosc-settings-sheet__list-mode-line appdosc-settings-sheet__list-mode-line--short"></span>
+            </span>
           </button>
           <button type="button" class="appdosc-settings-sheet__list-mode-btn" data-list-mode-option="insight" aria-pressed="false">
-            <span>✨</span>
-            <span>Информативный Glass</span>
+            <span class="appdosc-settings-sheet__list-mode-head">
+              <span class="appdosc-settings-sheet__list-mode-icon" aria-hidden="true"><i class="fa-solid fa-layer-group"></i></span>
+              <span class="appdosc-settings-sheet__list-mode-copy">
+                <span class="appdosc-settings-sheet__list-mode-title">Информативный Glass</span>
+                <span class="appdosc-settings-sheet__list-mode-desc">Сроки, исполнители и ответы сразу в карточке.</span>
+              </span>
+            </span>
+            <span class="appdosc-settings-sheet__list-mode-preview" aria-hidden="true">
+              <span class="appdosc-settings-sheet__list-mode-line appdosc-settings-sheet__list-mode-line--strong"></span>
+              <span class="appdosc-settings-sheet__list-mode-pills">
+                <span class="appdosc-settings-sheet__list-mode-pill"></span>
+                <span class="appdosc-settings-sheet__list-mode-pill"></span>
+                <span class="appdosc-settings-sheet__list-mode-pill"></span>
+              </span>
+            </span>
           </button>
         </div>
       </section>

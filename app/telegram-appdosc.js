@@ -3025,6 +3025,32 @@ const FALLBACK_CARD_TEMPLATE = `
     <div class="appdosc-card__summary" data-field="summary">
       <div class="appdosc-card__block-text" data-field="contentCompact"></div>
     </div>
+    <div class="appdosc-card__insight" data-field="insight">
+      <div class="appdosc-card__insight-row">
+        <span class="appdosc-card__insight-label">От кого</span>
+        <span class="appdosc-card__insight-value" data-field="insightSender">Не указан</span>
+      </div>
+      <div class="appdosc-card__insight-row">
+        <span class="appdosc-card__insight-label">Дата</span>
+        <span class="appdosc-card__insight-value" data-field="insightDate">—</span>
+      </div>
+      <div class="appdosc-card__insight-row">
+        <span class="appdosc-card__insight-label">Исполнитель</span>
+        <span class="appdosc-card__insight-value" data-field="insightExecutor">Не указан</span>
+      </div>
+      <div class="appdosc-card__insight-row">
+        <span class="appdosc-card__insight-label">Срок</span>
+        <span class="appdosc-card__insight-value appdosc-card__insight-value--status" data-field="insightDueState">Не указан</span>
+      </div>
+      <div class="appdosc-card__insight-row">
+        <span class="appdosc-card__insight-label">Ответы</span>
+        <span class="appdosc-card__insight-value" data-field="insightResponses">Нет ответов</span>
+      </div>
+      <div class="appdosc-card__insight-row">
+        <span class="appdosc-card__insight-label">Вложения</span>
+        <span class="appdosc-card__insight-value" data-field="insightFiles">0 файлов</span>
+      </div>
+    </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
   <dl class="appdosc-card__details">
@@ -5646,25 +5672,18 @@ function createCard(task, index, anchorRegistry) {
   const headerSubjectText = `Тема: ${compactContent}`;
 
   const taskListMode = normalizeTaskListMode(state.taskListMode);
-  if (taskListMode === 'insight') {
-    setCardField(card, '[data-field="document"]', headerFromText, {
-      fallback: 'От: не указан',
-      setTitle: false,
-    });
-    setCardField(card, '[data-field="organization"]', headerSubjectText, {
-      fallback: 'Тема: не указана',
-      setTitle: false,
-    });
-  } else {
-    setCardField(card, '[data-field="document"]', headerFromText, {
-      fallback: 'От: не указан',
-      setTitle: false,
-    });
-    setCardField(card, '[data-field="organization"]', headerSubjectText, {
-      fallback: 'Тема: не указана',
-      setTitle: false,
-    });
-  }
+  const insightMode = taskListMode === 'insight';
+  const headerPrimaryText = insightMode ? headerSubjectText : headerFromText;
+  const headerSecondaryText = insightMode ? headerFromText : headerSubjectText;
+
+  setCardField(card, '[data-field="document"]', headerPrimaryText, {
+    fallback: insightMode ? 'Тема: не указана' : 'От: не указан',
+    setTitle: false,
+  });
+  setCardField(card, '[data-field="organization"]', headerSecondaryText, {
+    fallback: insightMode ? 'От: не указан' : 'Тема: не указана',
+    setTitle: false,
+  });
   setCardField(card, '[data-field="registry"]', task.registryNumber);
   setCardField(card, '[data-field="registrationDate"]', registrationDate);
   applyRegistrationDateHeader(card, registrationDate);
