@@ -23,6 +23,7 @@
   const VISION_CONCURRENCY_DEFAULT = 3;
   const VISION_CONCURRENCY_MOBILE = 1;
   const AI_PDF_PAGE_LIMIT = 5;
+  const PDF_TEXT_MIN_CHARS = 80;
   const PDF_RENDER_SCALE = 1.25;
   const PDF_JPEG_QUALITY = 0.82;
   const PDF_WORKER_CANDIDATES = [
@@ -254,7 +255,12 @@
   }
 
   function getResponseStyleMeta(styleValue) {
-    return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.calm || SYSTEM_TONE_PROMPTS.neutral || { value: 'neutral', label: 'Нейтральный', prompt: '' };
+    const normalizedStyle = normalize(styleValue);
+    const directMatch = normalizedStyle ? SYSTEM_TONE_PROMPTS[normalizedStyle] : null;
+    if (directMatch) return directMatch;
+    const valueMatch = Object.values(SYSTEM_TONE_PROMPTS)
+      .find((item) => item && normalize(item.value) === normalizedStyle);
+    return valueMatch || SYSTEM_TONE_PROMPTS.calm || SYSTEM_TONE_PROMPTS.neutral || { value: 'neutral', label: 'Нейтральный', prompt: '' };
   }
 
   function appendPromptSelection(formData, toneValue, assistantModeValue) {
@@ -588,6 +594,12 @@
     return lowerType.includes('wordprocessingml.document') || /\.docx$/i.test(lowerName);
   }
 
+  function isDocLike(name, type) {
+    const lowerName = normalize(name).toLowerCase();
+    const lowerType = normalize(type).toLowerCase();
+    return lowerType === 'application/msword' || /\.doc$/i.test(lowerName);
+  }
+
   function isXlsxLike(name, type) {
     const lowerName = normalize(name).toLowerCase();
     const lowerType = normalize(type).toLowerCase();
@@ -595,7 +607,7 @@
   }
 
   function isSupportedVisionFile(name, type) {
-    return isImageLike(name, type) || isPdfLike(name, type) || isTextLike(name, type) || isDocxLike(name, type) || isXlsxLike(name, type);
+    return isImageLike(name, type) || isPdfLike(name, type) || isTextLike(name, type) || isDocLike(name, type) || isDocxLike(name, type) || isXlsxLike(name, type);
   }
 
   function validateFilesBeforeSend(files, profile) {
@@ -757,6 +769,35 @@
     throw lastError || new Error('Не удалось инициализировать PDF worker.');
   }
 
+  async function extractPdfTextFromDocument(pdf, pages, onProgress) {
+    const textParts = [];
+    const pageNumbers = Array.isArray(pages) ? pages : [];
+    for (let index = 0; index < pageNumbers.length; index += 1) {
+      const pageNumber = pageNumbers[index];
+      if (typeof onProgress === 'function') {
+        onProgress(`Читаю текст PDF ${pageNumber}/${pageNumbers.length}...`, Math.round(((index + 1) / pageNumbers.length) * 35));
+      }
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const page = await pdf.getPage(pageNumber);
+        // eslint-disable-next-line no-await-in-loop
+        const content = await page.getTextContent();
+        const pageText = (content && Array.isArray(content.items) ? content.items : [])
+          .map((item) => normalize(item && item.str))
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (pageText) {
+          textParts.push(`Страница ${pageNumber}:\n${pageText}`);
+        }
+      } catch (_) {
+        // Если текстовый слой конкретной страницы не прочитался, пробуем остальные страницы.
+      }
+    }
+    return textParts.join('\n\n').trim();
+  }
+
   async function buildVisionPayloadFromFile(file, onProgress) {
     if (!(file instanceof File)) {
       throw new Error('Файл не выбран.');
@@ -788,11 +829,22 @@
       const totalPages = Number(pdf.numPages || 0);
       if (!totalPages) throw new Error('PDF повреждён или пустой.');
       const pages = Array.from({ length: Math.min(totalPages, AI_PDF_PAGE_LIMIT) }, (_, i) => i + 1);
+      const pdfText = await extractPdfTextFromDocument(pdf, pages, onProgress);
+      if (normalize(pdfText).length >= PDF_TEXT_MIN_CHARS) {
+        onProgress('Текст PDF готов...', 100);
+        return {
+          kind: 'text',
+          extractedText: pdfText,
+          fileName: file.name || 'document.pdf',
+          totalPages,
+          selectedPages: pages,
+        };
+      }
       const pagesLabel = `${pages.length}/${totalPages}`;
       const images = [];
       for (let index = 0; index < pages.length; index += 1) {
         const pageNumber = pages[index];
-        onProgress(`Рендер страницы ${pageNumber} (первые ${pagesLabel})...`, Math.round(((index + 1) / pages.length) * 90));
+        onProgress(`Готовлю страницу ${pageNumber} (первые ${pagesLabel})...`, Math.round(35 + (((index + 1) / pages.length) * 60)));
         // eslint-disable-next-line no-await-in-loop
         const page = await pdf.getPage(pageNumber);
         const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
@@ -810,7 +862,7 @@
         const dataUrl = await readBlobAsDataUrl(blob);
         images.push({ dataUrl, fileName: `${(file.name || 'scan').replace(/\.pdf$/i, '')}-p${pageNumber}.jpg`, mime: 'image/jpeg' });
       }
-      return { kind: 'multimodal', messageText: 'Проанализируй первые 5 страниц этого PDF', images, totalPages, selectedPages: pages };
+      return { kind: 'multimodal', messageText: 'Прочитай первые страницы этого PDF и подготовь ответ', images, totalPages, selectedPages: pages };
     }
 
     if (isText) {
@@ -840,7 +892,7 @@
         extractedText,
         fileName: file.name || (isDocx ? 'document.docx' : 'document.doc'),
         disableOcr: true,
-        warning: 'Для DOC/DOCX используется только прямое извлечение текста (без OCR).',
+        warning: 'Для DOC/DOCX используется только прямое извлечение текста.',
       };
     }
 
@@ -864,11 +916,43 @@
     const profile = getClientVisionProfile();
     const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
     const onNetworkSample = typeof payload.onNetworkSample === 'function' ? payload.onNetworkSample : null;
+    const emitStatus = typeof onStatus === 'function' ? onStatus : () => {};
     const prompt = normalize(payload.prompt) || 'Проанализируй документы и предложи готовое решение.';
     const systemPrompt = normalize(payload.systemPrompt);
     const images = [];
     const extractedTexts = [];
     const fileErrors = [];
+    const normalizeResponseError = (errorMessage, fallbackMessage) => {
+      const raw = normalize(errorMessage);
+      if (!raw) return fallbackMessage;
+      return raw
+        .replace(/\bVision\s+OCR\b/gi, 'чтение изображения')
+        .replace(/\bOCR\b/gi, 'распознавание текста')
+        .replace(/\bGroq\b/gi, 'сервис ИИ')
+        .replace(/response pipeline/gi, 'обработку ответа')
+        .trim();
+    };
+    const requestTextResponse = async (texts, extraPrompt = '') => {
+      const textRequest = await postGroqResponseWithFallback(() => {
+        const formData = new FormData();
+        formData.append('action', 'generate_response');
+        formData.append('mode', 'paid');
+        formData.append('vision_mode', '1');
+        formData.append('prompt', extraPrompt || prompt);
+        appendPromptSelection(formData, payload.tone, payload.assistantMode);
+        formData.append('extractedTexts', JSON.stringify(texts));
+        return formData;
+      }, { onNetworkSample });
+      const textPayload = textRequest && textRequest.payload;
+      if (textRequest && textRequest.response && textRequest.response.ok && textPayload && textPayload.ok === true) {
+        const textResponse = normalize(textPayload.response || textPayload.summary);
+        if (textResponse) return textResponse;
+      }
+      throw new Error(normalizeResponseError(
+        textPayload && textPayload.error,
+        'Не удалось сформировать ответ по тексту документов.',
+      ));
+    };
     const preparedResults = new Array(selectedFiles.length);
     const queue = selectedFiles.map((currentFile, index) => ({ currentFile, index }));
     const maxConcurrency = profile.maxConcurrency;
@@ -880,21 +964,21 @@
         }
         const { currentFile, index } = item;
         const fileLabel = normalize(currentFile && (currentFile.originalName || currentFile.name || currentFile.storedName)) || `Файл ${index + 1}`;
-        onStatus('Загрузка', 'loading');
+        emitStatus('Загрузка', 'loading');
         let blobFile = null;
         try {
           blobFile = await loadSelectedFileAsBlob(currentFile, onNetworkSample);
         } catch (error) {
           const failMessage = normalize(error && error.message) || 'Не удалось загрузить файл.';
           preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
-          onStatus('Загрузка', 'loading');
+          emitStatus('Загрузка', 'loading');
           continue;
         }
         const sourceFile = blobFile instanceof File ? blobFile : new File([blobFile], fileLabel, { type: blobFile.type || 'application/octet-stream' });
         try {
-          onStatus('Подготовка', 'prepare');
+          emitStatus('Подготовка', 'prepare');
           const prepared = await withTimeout(
-            buildVisionPayloadFromFile(sourceFile, () => onStatus('Подготовка', 'prepare')),
+            buildVisionPayloadFromFile(sourceFile, () => emitStatus('Подготовка', 'prepare')),
             profile.prepareTimeoutMs,
             'Превышено время обработки файла.',
           );
@@ -902,7 +986,7 @@
         } catch (error) {
           const failMessage = normalize(error && error.message) || 'Не удалось подготовить файл.';
           preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
-          onStatus('Подготовка', 'prepare');
+          emitStatus('Подготовка', 'prepare');
         }
       }
     })());
@@ -939,30 +1023,13 @@
     if (!images.length) {
       if (!extractedTexts.length) {
         const details = fileErrors.length ? ` Ошибки: ${fileErrors.slice(0, 2).join('; ')}` : '';
-        throw new Error(`Vision режим поддерживает изображения, PDF и DOCX c извлечённым текстом.${details}`);
+        throw new Error(`Не удалось подготовить выбранные файлы для ответа.${details}`);
       }
-      onStatus('Ответ', 'answer');
-      const textOnlyRequest = await postGroqResponseWithFallback(() => {
-        const formData = new FormData();
-        formData.append('action', 'generate_response');
-        formData.append('mode', 'paid');
-        formData.append('vision_mode', '1');
-        formData.append('prompt', prompt);
-        appendPromptSelection(formData, payload.tone, payload.assistantMode);
-        formData.append('extractedTexts', JSON.stringify(extractedTexts));
-        return formData;
-      }, { onNetworkSample });
-      const textOnlyPayload = textOnlyRequest && textOnlyRequest.payload;
-      if (textOnlyRequest && textOnlyRequest.response && textOnlyRequest.response.ok && textOnlyPayload && textOnlyPayload.ok === true) {
-        const textOnlySummary = normalize(textOnlyPayload.response || textOnlyPayload.summary);
-        if (textOnlySummary) {
-          return {
-            text: textOnlySummary,
-            skippedFilesCount: fileErrors.length,
-          };
-        }
-      }
-      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать текстовые файлы через response pipeline.');
+      emitStatus('Ответ', 'answer');
+      return {
+        text: await requestTextResponse(extractedTexts),
+        skippedFilesCount: fileErrors.length,
+      };
     }
 
     const batches = chunkItems(images, VISION_BATCH_SIZE);
@@ -970,7 +1037,7 @@
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
       const currentBatch = batches[batchIndex];
-      onStatus('Ответ', 'answer');
+      emitStatus('Ответ', 'answer');
       // eslint-disable-next-line no-await-in-loop
       const request = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
@@ -985,7 +1052,7 @@
         formData.append('vision_payload', JSON.stringify({
           model: 'meta-llama/llama-4-scout-17b-16e-instruct',
           max_tokens: 1200,
-          temperature: 0.6,
+          temperature: 0.2,
           messages: [{
             role: 'system',
             content: systemPrompt || '',
@@ -996,48 +1063,34 @@
             ),
           }],
         }));
-        currentBatch.forEach((item, idx) => {
-          const raw = String(item.dataUrl || '');
-          const base64 = raw.includes(',') ? raw.split(',')[1] : '';
-          if (!base64) return;
-          const binary = atob(base64);
-          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-          formData.append('files', new Blob([bytes], { type: item.mime || 'image/jpeg' }), item.fileName || `vision-${batchIndex + 1}-${idx + 1}.jpg`);
-        });
         return formData;
       }, { onNetworkSample });
       const response = request && request.response;
       const result = request && request.payload;
       if (!response || !response.ok || !result || result.ok !== true) {
-        throw new Error((result && result.error) || `Ошибка Vision запроса (блок ${batchIndex + 1}).`);
+        throw new Error(normalizeResponseError(
+          result && result.error,
+          `Не удалось прочитать изображение (блок ${batchIndex + 1}).`,
+        ));
       }
       partialAnswers.push(normalize(result.response || result.summary));
     }
 
     let finalSummary = partialAnswers.join('\n\n').trim();
     if (partialAnswers.length > 1) {
-      onStatus('Ответ', 'answer');
-      const mergeRequest = await postGroqResponseWithFallback(() => {
-        const formData = new FormData();
-        formData.append('action', 'generate_response');
-        formData.append('mode', 'paid');
-        formData.append('vision_mode', '1');
-        formData.append('prompt', [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
-        appendPromptSelection(formData, payload.tone, payload.assistantMode);
-        formData.append('extractedTexts', JSON.stringify([{
+      emitStatus('Ответ', 'answer');
+      try {
+        finalSummary = await requestTextResponse([{
           name: 'vision-batches.txt',
           type: 'text/plain',
           text: partialAnswers.map((item, idx) => `Блок ${idx + 1}/${partialAnswers.length}:\n${item}`).join('\n\n'),
-        }]));
-        return formData;
-      }, { onNetworkSample });
-      const mergePayload = mergeRequest && mergeRequest.payload;
-      if (mergeRequest && mergeRequest.response && mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
-        finalSummary = normalize(mergePayload.response || mergePayload.summary) || finalSummary;
+        }], [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n')) || finalSummary;
+      } catch (_) {
+        finalSummary = partialAnswers.join('\n\n').trim();
       }
     }
     if (!finalSummary) {
-      throw new Error('Vision не вернул итоговый текст.');
+      throw new Error('Не удалось получить итоговый текст ответа.');
     }
     return {
       text: finalSummary,
@@ -1162,18 +1215,19 @@
       .tg-ai-chat__card{width:min(900px,100%);height:min(100dvh - 12px,860px);display:flex;flex-direction:column;overflow:hidden;border-radius:24px;border:1px solid rgba(255,255,255,.95);background:var(--tg-bg-gradient);box-shadow:0 20px 50px rgba(15,23,42,.22);animation:tg-scale-in .2s cubic-bezier(.2,.9,.4,1.1)}
       .tg-ai-chat[data-opening="true"] .tg-ai-chat__card{opacity:0;transform:translateY(20px) scale(.975)}
       .tg-ai-chat[data-opening="false"] .tg-ai-chat__card{opacity:1;transform:translateY(0) scale(1);transition:transform .34s cubic-bezier(.2,.8,.2,1),opacity .3s ease}
-      .tg-ai-chat__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
+      .tg-ai-chat__head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:flex-start;padding:12px;border-bottom:1px solid rgba(203,213,225,.78)}
       .tg-ai-chat__head-main{display:grid;gap:7px;min-width:0}
+      .tg-ai-chat__title-row{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
       .tg-ai-chat__title{font-size:16px;font-weight:800;color:#0f172a}
       .tg-ai-chat__sub{font-size:11px;color:#64748b;margin-top:1px;line-height:1.35}
-      .tg-ai-chat__network{display:inline-flex;align-items:center;justify-content:center;min-height:34px;max-width:168px;border:1px solid rgba(203,213,225,.9);border-radius:11px;padding:0 9px;background:rgba(255,255,255,.88);color:#475569;font-size:11px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .tg-ai-chat__network{display:inline-flex;align-items:center;justify-content:center;min-height:34px;max-width:168px;border:1px solid rgba(203,213,225,.9);border-radius:11px;padding:0 9px;background:rgba(255,255,255,.88);color:#475569;font-size:11px;font-weight:800;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .tg-ai-chat__network[data-network-state="good"]{border-color:rgba(34,197,94,.45);background:rgba(220,252,231,.88);color:#166534}
-      .tg-ai-chat__network[data-network-state="slow"]{border-color:rgba(245,158,11,.5);background:rgba(254,243,199,.9);color:#92400e}
-      .tg-ai-chat__network[data-network-state="bad"]{border-color:rgba(239,68,68,.48);background:rgba(254,226,226,.9);color:#991b1b}
-      .tg-ai-chat__network[data-network-state="unknown"]{border-color:rgba(203,213,225,.9);background:rgba(255,255,255,.88);color:#64748b}
+      .tg-ai-chat__network[data-network-state="slow"]{border-color:rgba(245,158,11,.5);background:rgba(254,243,199,.92);color:#92400e}
+      .tg-ai-chat__network[data-network-state="bad"]{border-color:rgba(239,68,68,.5);background:rgba(254,226,226,.92);color:#991b1b}
+      .tg-ai-chat__network[data-network-state="unknown"]{border-color:rgba(203,213,225,.9);background:rgba(255,255,255,.88);color:#475569}
       .tg-ai-chat__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.9);color:#0f172a;border-radius:11px;padding:6px 11px;min-height:34px;font-weight:700}
-      .tg-ai-chat__head-btn{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);color:#0f172a;border-radius:11px;padding:0 10px;min-height:34px;font-size:12px;font-weight:700}
+      .tg-ai-chat__head-btn{justify-self:start;border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);color:#0f172a;border-radius:11px;padding:0 10px;min-height:34px;font-size:12px;font-weight:700}
       .tg-ai-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
       .tg-ai-chat__bubble{max-width:92%;padding:9px 11px;border-radius:13px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
       .tg-ai-chat__bubble--assistant{align-self:flex-start;background:#fff;border:1px solid rgba(148,163,184,.3);color:#0f172a}
@@ -1292,7 +1346,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch}.tg-ai-chat__network{grid-column:1/-1;width:100%;max-width:none}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%;max-width:none}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar,.tg-ai-chat__toolbar--compact{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__close{width:38px;padding:0}.tg-ai-chat__head-btn{width:max-content;max-width:100%}.tg-ai-chat__network{max-width:min(54vw,180px);font-size:11px;padding:0 10px}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -2124,6 +2178,14 @@
 
     const task = context && context.task ? context.task : {};
     const files = Array.isArray(task && task.files) ? task.files : [];
+    const toneOptions = Object.values(SYSTEM_TONE_PROMPTS)
+      .filter((item) => item && normalize(item.value))
+      .map((item) => {
+        const value = normalize(item.value);
+        const selectedAttr = value === FIXED_RESPONSE_TONE ? ' selected' : '';
+        return `<option value="${escapeHtml(value)}"${selectedAttr}>${escapeHtml(item.label || value)}</option>`;
+      })
+      .join('');
 
     const overlay = document.createElement('div');
     overlay.className = 'tg-ai-chat';
@@ -2132,14 +2194,14 @@
       <div class="tg-ai-chat__card">
         <div class="tg-ai-chat__head">
           <div class="tg-ai-chat__head-main">
-            <div class="tg-ai-chat__title">✨ Ответ ИИ</div>
+            <div class="tg-ai-chat__title-row">
+              <div class="tg-ai-chat__title">✨ Ответ ИИ</div>
+              <span class="tg-ai-chat__network" data-network-badge data-network-state="unknown" title="Данные сети ещё не получены.">Сеть: —</span>
+            </div>
             <div class="tg-ai-chat__sub">Выберите файлы: ИИ подготовит только текст ответа для шаблона</div>
-          </div>
-          <div class="tg-ai-chat__head-actions">
-            <span class="tg-ai-chat__network" data-network-badge data-network-state="unknown" title="Данные сети ещё не получены.">Сеть: —</span>
             <button type="button" class="tg-ai-chat__head-btn" data-template-btn disabled title="Сначала сформируйте текст ответа ИИ.">📄 Шаблон</button>
-            <button type="button" class="tg-ai-chat__close" data-close>✕</button>
           </div>
+          <button type="button" class="tg-ai-chat__close" data-close>✕</button>
         </div>
         <div class="tg-ai-chat__messages" data-messages>
           <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Выберите файлы, затем нажмите «Отправить». ИИ вернёт только основной текст ответа для шаблона.</div>
@@ -2150,8 +2212,11 @@
           <div class="tg-ai-chat__files-list" data-files-list></div>
         </div>
         <div class="tg-ai-chat__composer">
-          <div class="tg-ai-chat__toolbar tg-ai-chat__toolbar--fixed">
+          <div class="tg-ai-chat__toolbar tg-ai-chat__toolbar--compact">
             <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
+            <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
+              ${toneOptions}
+            </select>
           </div>
           <div class="tg-ai-chat__input-row">
             <textarea class="tg-ai-chat__input" data-prompt-input rows="2" placeholder="${escapeHtml(DEFAULT_RESPONSE_AI_PROMPT_TEXT)}">${escapeHtml(DEFAULT_RESPONSE_AI_PROMPT_TEXT)}</textarea>
@@ -2177,6 +2242,7 @@
     const networkBadge = overlay.querySelector('[data-network-badge]');
     const modeButtons = Array.from(overlay.querySelectorAll('[data-response-mode]'));
     const templateButton = overlay.querySelector('[data-template-btn]');
+    const styleSelect = overlay.querySelector('[data-style-select]');
     const promptInput = overlay.querySelector('[data-prompt-input]');
     const sendButton = overlay.querySelector('[data-send-btn]');
     const voiceButton = overlay.querySelector('[data-voice-btn]');
@@ -2187,6 +2253,7 @@
     let speechSupported = false;
     let suppressVoiceEndStatus = false;
     let currentResponseMode = FIXED_RESPONSE_MODE;
+    let currentTone = FIXED_RESPONSE_TONE;
     let improveAiDraftPrompt = '';
     const networkState = {
       lastFileMbps: 0,
@@ -2200,7 +2267,8 @@
 
     const getNetworkConnection = () => {
       const navigatorObject = globalScope && globalScope.navigator ? globalScope.navigator : null;
-      return navigatorObject && navigatorObject.connection ? navigatorObject.connection : null;
+      if (!navigatorObject) return null;
+      return navigatorObject.connection || navigatorObject.mozConnection || navigatorObject.webkitConnection || null;
     };
 
     const readNetworkConnection = () => {
@@ -2235,14 +2303,9 @@
       return `${Math.round(numeric)} Мбит/с`;
     };
 
-    const formatCompactNetworkMbps = (value) => {
-      const label = formatNetworkMbps(value);
-      return label ? label.replace(' Мбит/с', '') : '';
-    };
-
     const getNetworkQuality = (snapshot) => {
       const hasConnectionData = Boolean(snapshot.effectiveType || snapshot.downlink || snapshot.rtt || snapshot.saveData);
-      const hasMeasuredData = Boolean(networkState.lastFileMbps || networkState.lastApiDurationMs);
+      const hasMeasuredData = Boolean(networkState.lastFileMbps);
       const recentFailure = networkState.lastFailureAt && (Date.now() - networkState.lastFailureAt < 18000);
       if (recentFailure
         || snapshot.effectiveType === 'slow-2g'
@@ -2269,26 +2332,31 @@
       }
       const snapshot = readNetworkConnection();
       const quality = getNetworkQuality(snapshot);
-      const typeLabel = snapshot.effectiveType ? snapshot.effectiveType.toUpperCase() : '';
-      const speedValue = networkState.lastFileMbps || snapshot.downlink || 0;
-      const speedLabel = formatCompactNetworkMbps(speedValue);
-      const latencyLabel = snapshot.rtt
-        ? `${Math.round(snapshot.rtt)}мс`
-        : (networkState.lastApiDurationMs ? `${Math.round(networkState.lastApiDurationMs / 1000)}с API` : '');
-      const compactParts = [];
-      compactParts.push(typeLabel || (speedLabel || latencyLabel ? 'замер' : '—'));
-      if (speedLabel) compactParts.push(`${speedLabel}↓`);
-      if (latencyLabel) compactParts.push(latencyLabel);
-
       const qualityLabels = {
         good: 'хорошо',
         slow: 'медленно',
         bad: 'плохо',
         unknown: 'неизвестно',
       };
+      const speedValue = snapshot.downlink || networkState.lastFileMbps || 0;
+      const speedLabel = formatNetworkMbps(speedValue);
+      const isMeasuring = isSending || Array.from(fileWarmupState.values()).includes('loading');
+      const apiDelayLabel = networkState.lastApiDurationMs
+        ? `API ${Math.round(networkState.lastApiDurationMs / 100) / 10} с`
+        : '';
+      const compactSpeedLabel = speedLabel ? speedLabel.replace(' Мбит/с', '') : '';
+      const visibleParts = [snapshot.effectiveType ? snapshot.effectiveType.toUpperCase() : (isMeasuring ? 'замер' : '—')];
+      if (compactSpeedLabel) {
+        visibleParts.push(`${compactSpeedLabel}↓`);
+      } else if (apiDelayLabel) {
+        visibleParts.push(apiDelayLabel);
+      }
+      if (quality === 'slow' || quality === 'bad') {
+        visibleParts.push(qualityLabels[quality]);
+      }
       const titleLines = [`Состояние: ${qualityLabels[quality] || qualityLabels.unknown}`];
       if (snapshot.effectiveType) titleLines.push(`Тип сети: ${snapshot.effectiveType}`);
-      if (snapshot.downlink) titleLines.push(`Оценка браузера: ${formatNetworkMbps(snapshot.downlink)}`);
+      if (snapshot.downlink) titleLines.push(`Текущая оценка браузера: ${formatNetworkMbps(snapshot.downlink)}`);
       if (snapshot.rtt) titleLines.push(`RTT: ${Math.round(snapshot.rtt)} мс`);
       if (snapshot.saveData) titleLines.push('Экономия трафика включена');
       if (networkState.lastFileMbps) {
@@ -2302,7 +2370,7 @@
       }
 
       networkBadge.dataset.networkState = quality;
-      networkBadge.textContent = `Сеть: ${compactParts.join(' · ')}`;
+      networkBadge.textContent = `Сеть: ${visibleParts.join(' · ')}`;
       networkBadge.title = titleLines.join('\n');
       networkBadge.setAttribute('aria-label', networkBadge.title);
     };
@@ -2343,6 +2411,9 @@
     if (networkConnection && typeof networkConnection.addEventListener === 'function') {
       networkConnection.addEventListener('change', handleNetworkConnectionChange);
     }
+    const networkRefreshTimer = typeof globalScope.setInterval === 'function'
+      ? globalScope.setInterval(renderNetworkBadge, 5000)
+      : 0;
     renderNetworkBadge();
 
     renderFiles(filesList, files);
@@ -2358,9 +2429,21 @@
       if (networkConnection && typeof networkConnection.removeEventListener === 'function') {
         networkConnection.removeEventListener('change', handleNetworkConnectionChange);
       }
+      if (networkRefreshTimer && typeof globalScope.clearInterval === 'function') {
+        globalScope.clearInterval(networkRefreshTimer);
+      }
       overlay.remove();
     };
     overlay.querySelector('[data-close]')?.addEventListener('click', close);
+
+    const resetGeneratedAnswer = () => {
+      if (!lastAiAnswer) return;
+      lastAiAnswer = '';
+      if (templateButton) {
+        templateButton.disabled = true;
+        templateButton.title = 'Сначала сформируйте текст ответа ИИ.';
+      }
+    };
 
     const updateFilesToggleLabel = () => {
       if (!filesToggleButton) return;
@@ -2429,6 +2512,8 @@
     const setComposerDisabled = (disabled) => {
       if (promptInput) promptInput.disabled = disabled;
       if (sendButton) sendButton.disabled = disabled;
+      if (styleSelect) styleSelect.disabled = disabled;
+      if (filesToggleButton) filesToggleButton.disabled = disabled;
       if (voiceButton) {
         const voiceBlockedByMode = currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value;
         voiceButton.disabled = disabled || !speechSupported || voiceBlockedByMode;
@@ -2600,11 +2685,22 @@
 
     promptInput?.addEventListener('input', () => {
       if (!promptInput) return;
+      if (!isSending) resetGeneratedAnswer();
       promptInput.style.height = '0px';
       promptInput.style.height = `${Math.min(Math.max(promptInput.scrollHeight, 52), 156)}px`;
     });
     promptInput?.dispatchEvent(new Event('input'));
     applyResponseModeUi(currentResponseMode);
+
+    styleSelect?.addEventListener('change', () => {
+      currentTone = normalize(styleSelect.value) || FIXED_RESPONSE_TONE;
+      const toneMeta = getResponseStyleMeta(currentTone);
+      const hadGeneratedAnswer = Boolean(lastAiAnswer);
+      resetGeneratedAnswer();
+      status.textContent = hadGeneratedAnswer
+        ? `Стиль ответа: ${toneMeta.label || currentTone}. Сформируйте ответ заново.`
+        : `Стиль ответа: ${toneMeta.label || currentTone}.`;
+    });
 
     modeButtons.forEach((button) => {
       button.addEventListener('click', () => {
@@ -2618,7 +2714,7 @@
       if (isSending) return;
       const profile = getClientVisionProfile();
       const userPrompt = normalize(promptInput && promptInput.value) || DEFAULT_RESPONSE_AI_PROMPT_TEXT;
-      const styleMeta = getResponseStyleMeta(FIXED_RESPONSE_TONE);
+      const styleMeta = getResponseStyleMeta(currentTone);
       const effectivePrompt = userPrompt;
       const selectedKeys = Array.from(selected)
         .filter((key) => fileWarmupState.get(key) !== 'error');
@@ -2728,7 +2824,7 @@
           templateButton.disabled = true;
           templateButton.title = 'Сначала сформируйте текст ответа ИИ.';
         }
-        const loadingNode = messages && messages.querySelector ? messages.querySelector('.tg-ai-chat__bubble--loading') : null;
+        const loadingNode = messages && messages.querySelector ? messages.querySelector('.tg-ai-chat__loading') : null;
         if (loadingNode && loadingNode.parentNode) loadingNode.remove();
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
         status.textContent = 'Ошибка передачи.';
@@ -2755,6 +2851,12 @@
       if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
       const key = normalize(target.dataset.fileIndex);
       if (!key) return;
+      if (isSending) {
+        target.checked = selected.has(key);
+        status.textContent = 'Дождитесь завершения ответа ИИ.';
+        return;
+      }
+      resetGeneratedAnswer();
       if (target.checked) {
         selected.add(key);
         warmupFileByKey(key);

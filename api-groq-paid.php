@@ -703,7 +703,7 @@ function callGroqChat(array $requestPayload, string $apiKey): array
     }
 
     if ($httpCode >= 400) {
-        $msg = trim((string)($decoded['error']['message'] ?? 'Ошибка Groq API'));
+        $msg = trim((string)($decoded['error']['message'] ?? 'Ошибка сервиса ИИ'));
         return ['ok' => false, 'status' => $httpCode, 'error' => $msg, 'raw' => $decoded];
     }
 
@@ -1020,7 +1020,7 @@ function handleAnalyzePaidAction(array $env): void
         if (!is_array($decodedExtractedTexts)) {
             $decodedExtractedTexts = [];
         }
-        $ocrText = '';
+        $providedText = '';
         foreach ($decodedExtractedTexts as $entry) {
             if (!is_array($entry)) {
                 continue;
@@ -1030,7 +1030,7 @@ function handleAnalyzePaidAction(array $env): void
                 continue;
             }
             $name = trim((string)($entry['name'] ?? 'Документ'));
-            $ocrText .= ($ocrText !== '' ? "\n\n" : '') . '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $chunk;
+            $providedText .= ($providedText !== '' ? "\n\n" : '') . '[' . ($name !== '' ? $name : 'Документ') . "]\n" . $chunk;
         }
 
         // Читаем system prompt из входящего payload (если клиент его прислал).
@@ -1077,23 +1077,25 @@ function handleAnalyzePaidAction(array $env): void
         $startedAt = microtime(true);
         $visionExtractPayload = [
             'model' => (string)($visionPayload['model'] ?? 'meta-llama/llama-4-scout-17b-16e-instruct'),
+            'max_tokens' => min(2600, max(900, (int)($visionPayload['max_tokens'] ?? 1800))),
             'messages' => [
-                ['role' => 'system', 'content' => 'Ты OCR-движок. Возвращай только текст без анализа.'],
+                ['role' => 'system', 'content' => 'Ты модуль чтения документа. Возвращай только текст без анализа.'],
                 ['role' => 'user', 'content' => $visionContent],
             ],
             'temperature' => (float)(getServerAiPromptsCatalog()['DEFAULT_RESPONSE_FORMAT_LIMITS']['vision_extract']['temperature'] ?? 0.0),
         ];
         $visionExtractResult = callGroqChat($visionExtractPayload, $apiKey);
         if (($visionExtractResult['ok'] ?? false) !== true) {
-            respond((int)($visionExtractResult['status'] ?? 502), ['ok' => false, 'error' => (string)($visionExtractResult['error'] ?? 'Ошибка Vision OCR этапа')]);
+            $visionError = trim(str_ireplace(['Groq', 'Vision OCR', 'OCR'], ['сервис ИИ', 'чтение изображения', 'распознавание текста'], (string)($visionExtractResult['error'] ?? '')));
+            respond((int)($visionExtractResult['status'] ?? 502), ['ok' => false, 'error' => $visionError !== '' ? $visionError : 'Не удалось прочитать изображение документа']);
         }
         $visionDecoded = (array)($visionExtractResult['raw'] ?? []);
         $visionRawText = trim((string)($visionDecoded['choices'][0]['message']['content'] ?? ''));
         if ($visionRawText === '') {
-            respond(502, ['ok' => false, 'error' => 'Vision OCR не вернул текст документа']);
+            respond(502, ['ok' => false, 'error' => 'Не удалось прочитать текст с изображения документа']);
         }
 
-        $combinedDocText = trim($visionRawText . ($ocrText !== '' ? ("\n\n" . $ocrText) : ''));
+        $combinedDocText = trim($visionRawText . ($providedText !== '' ? ("\n\n" . $providedText) : ''));
         if ($combinedDocText === '') {
             respond(422, ['ok' => false, 'error' => 'Не удалось собрать текст документов для анализа.']);
         }
@@ -1109,12 +1111,13 @@ function handleAnalyzePaidAction(array $env): void
         ];
         $analysisResult = callGroqChat($analysisPayload, $apiKey);
         if (($analysisResult['ok'] ?? false) !== true) {
-            respond((int)($analysisResult['status'] ?? 502), ['ok' => false, 'error' => (string)($analysisResult['error'] ?? 'Ошибка текстового анализа')]);
+            $analysisError = trim(str_ireplace(['Groq', 'Vision OCR', 'OCR'], ['сервис ИИ', 'чтение изображения', 'распознавание текста'], (string)($analysisResult['error'] ?? '')));
+            respond((int)($analysisResult['status'] ?? 502), ['ok' => false, 'error' => $analysisError !== '' ? $analysisError : 'Ошибка формирования ответа']);
         }
         $analysisDecoded = (array)($analysisResult['raw'] ?? []);
         $answer = normalizeAiOutputText((string)($analysisDecoded['choices'][0]['message']['content'] ?? ''));
         if ($answer === '') {
-            respond(502, ['ok' => false, 'error' => 'Пустой ответ от текстовой модели после Vision OCR']);
+            respond(502, ['ok' => false, 'error' => 'Сервис ИИ не вернул текст ответа']);
         }
 
         respond(200, [
@@ -1295,13 +1298,18 @@ function handleAnalyzePaidAction(array $env): void
 
     $groqResult = callGroqChat($requestPayload, $apiKey);
     if (($groqResult['ok'] ?? false) !== true) {
-        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+        $errorMessage = str_ireplace(
+            ['Groq API', 'Groq'],
+            ['сервиса ИИ', 'сервис ИИ'],
+            (string)($groqResult['error'] ?? 'Ошибка сервиса ИИ')
+        );
+        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => $errorMessage]);
     }
 
     $decoded = (array)($groqResult['raw'] ?? []);
     $answer = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($answer === '') {
-        respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq']);
+        respond(502, ['ok' => false, 'error' => 'Пустой ответ от сервиса ИИ']);
     }
 
     respond(200, [
@@ -1382,7 +1390,12 @@ function handleGenerateSummaryAction(array $env): void
     $startedAt = microtime(true);
     $groqResult = callGroqChat($requestPayload, $apiKey);
     if (($groqResult['ok'] ?? false) !== true) {
-        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+        $errorMessage = str_ireplace(
+            ['Groq API', 'Groq'],
+            ['сервиса ИИ', 'сервис ИИ'],
+            (string)($groqResult['error'] ?? 'Ошибка сервиса ИИ')
+        );
+        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => $errorMessage]);
     }
 
     $decoded = (array)($groqResult['raw'] ?? []);
@@ -1504,13 +1517,18 @@ function handleGenerateResponseAction(array $env): void
     $startedAt = microtime(true);
     $groqResult = callGroqChat($requestPayload, $apiKey);
     if (($groqResult['ok'] ?? false) !== true) {
-        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => (string)($groqResult['error'] ?? 'Ошибка Groq API')]);
+        $errorMessage = str_ireplace(
+            ['Groq API', 'Groq'],
+            ['сервиса ИИ', 'сервис ИИ'],
+            (string)($groqResult['error'] ?? 'Ошибка сервиса ИИ')
+        );
+        respond((int)($groqResult['status'] ?? 502), ['ok' => false, 'error' => $errorMessage]);
     }
 
     $decoded = (array)($groqResult['raw'] ?? []);
     $responseText = normalizeAiOutputText((string)($decoded['choices'][0]['message']['content'] ?? ''));
     if ($responseText === '') {
-        respond(502, ['ok' => false, 'error' => 'Пустой ответ от Groq']);
+        respond(502, ['ok' => false, 'error' => 'Пустой ответ от сервиса ИИ']);
     }
 
     respond(200, [
