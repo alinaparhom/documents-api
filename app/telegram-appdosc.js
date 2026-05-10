@@ -7172,15 +7172,20 @@ function movePeopleBlockIntoDisclosure(card, task, executorText, responseLabel) 
 
   const summary = document.createElement('summary');
   summary.className = 'appdosc-card__people-summary';
+  summary.setAttribute('aria-label', 'Раскрыть блок исполнителей и ответственных');
 
   const summaryText = document.createElement('span');
+  summaryText.className = 'appdosc-card__people-summary-text';
   const title = document.createElement('span');
   title.className = 'appdosc-card__people-title';
   title.textContent = 'Исполнители и ответственные';
+  const hint = document.createElement('span');
+  hint.className = 'appdosc-card__people-hint';
+  hint.textContent = 'Нажмите, чтобы раскрыть';
   const meta = document.createElement('span');
   meta.className = 'appdosc-card__people-meta';
   meta.textContent = buildPeopleDisclosureMeta(task, executorText, responseLabel);
-  summaryText.append(title, meta);
+  summaryText.append(title, hint, meta);
 
   const chevron = document.createElement('span');
   chevron.className = 'appdosc-card__people-chevron';
