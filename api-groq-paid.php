@@ -31,24 +31,26 @@ function getServerAiPromptsCatalog(): array
         'version' => 'prompt-catalog-v1',
         'RESPONSE_OUTPUT_DIRECTIVE' => [
             'v1' => implode("\n", [
-                'Ты готовишь официальный ответ от лица компании по входящему документу.',
-                'Верни только готовый текст ответа для вставки в документ, без пояснений о своей работе.',
+                'Ты сотрудник-исполнитель, которому прислали входящий файл и поручили подготовить ответ.',
+                'Верни только основной текст ответа для вставки в готовый шаблон документа.',
+                'Не добавляй шапку, тему, адресата, приветствие, подпись, должность, контакты, реквизиты и дату.',
                 'Не начинай ответ с обращения в первой строке (например: "Уважаемый...", "Здравствуйте...").',
                 'Первая строка должна сразу содержать суть ответа по делу.',
-                'Пиши в деловом, корректном и безопасном тоне: без грубости, обвинений и рискованных формулировок.',
-                'Используй только факты из документов и запроса пользователя. Не придумывай данные.',
-                'Если данных не хватает — прямо укажи, что нужно уточнить.',
-                'Без Markdown и без служебных меток.',
+                'Пиши как сотрудник, который отвечает по существу входящего файла: спокойно, делово и конкретно.',
+                'Используй только факты из документов и запроса пользователя. Не придумывай данные, сроки, номера, имена и обязательства.',
+                'Если данных не хватает — кратко укажи в тексте, что именно требуется уточнить.',
+                'Без Markdown, списков с маркерами, служебных меток, пояснений о своей работе и предупреждений об обработке файлов.',
             ]),
         ],
         'VISION_QUALITY_DIRECTIVE' => [
             'v1' => implode("\n", [
-                'Сформируй сильный итоговый ответ по задаче пользователя, а не пересказ документа.',
+                'Сформируй итоговый ответ по задаче пользователя, а не пересказ и не анализ документа.',
                 'Запрещено писать разделы типа: "Анализ", "Разбор", "Краткое содержание", "Итог по блокам".',
-                'Дай готовый практический результат: письмо/решение/инструкцию с конкретными действиями и формулировками.',
-                'Используй факты из файлов как основу, но не копируй их подряд — преврати в полезный финальный ответ.',
-                'Пиши только основной текст: без шапки, без подписи, без блоков "С уважением" и без реквизитов.',
-                'Соблюдай структурный формат: короткие абзацы, переносы строк между блоками, без Markdown и без автонумерации.',
+                'Дай готовый практический текст ответа с конкретными деловыми формулировками.',
+                'Используй факты из файлов как основу, но не копируй их подряд и не описывай процесс анализа.',
+                'Пиши только тело ответа: без шапки, приветствия, подписи, блоков "С уважением", контактов и реквизитов.',
+                'Не включай предупреждения о нераспознанных файлах или технические детали обработки.',
+                'Соблюдай простой формат: короткие абзацы, переносы строк между блоками, без Markdown и без автонумерации.',
             ]),
         ],
         'ASSISTANT_SCENARIO_DIRECTIVE' => [
@@ -58,7 +60,9 @@ function getServerAiPromptsCatalog(): array
             ]),
             'response_ai' => implode("\n", [
                 'СЦЕНАРИЙ: «Ответ с помощью ИИ».',
-                'Сформируй готовый ответ с нуля на основе файлов и запроса пользователя.',
+                'Пользователь выступает как сотрудник, которому пришёл файл; подготовь для него текст ответа по существу входящего документа.',
+                'Сформируй ответ с нуля на основе файлов и запроса пользователя.',
+                'Верни только финальный текст тела ответа, который можно вставить в шаблон.',
             ]),
             'improve_ai' => implode("\n", [
                 'СЦЕНАРИЙ: «Улучшение ответа ИИ».',
@@ -85,7 +89,7 @@ function getServerAiPromptsCatalog(): array
         'DEFAULT_KEYS' => [
             'response_mode' => 'v1',
             'vision_quality_mode' => 'v1',
-            'tone' => 'positive',
+            'tone' => 'calm',
             'assistant_mode' => 'response_ai',
         ],
     ];
@@ -805,7 +809,10 @@ function buildEffectiveUserPrompt(string $userPrompt, string $assistantMode): st
             . "\nНе придумывай новые факты. Верни только финальный текст ответа.";
     }
 
-    return $rawPrompt !== '' ? $rawPrompt : 'Подготовь официальный ответ по документам.';
+    $base = $rawPrompt !== '' ? $rawPrompt : 'Подготовь официальный ответ по документам.';
+    return $base
+        . "\n\nРаботай как сотрудник-исполнитель, которому прислали входящий файл."
+        . "\nВерни только основной текст ответа для вставки в шаблон, без шапки, приветствия, подписи, контактов и markdown.";
 }
 
 function normalizeAiOutputText(string $text): string
@@ -815,29 +822,80 @@ function normalizeAiOutputText(string $text): string
         return '';
     }
 
-    // Удаляем типичные markdown-маркеры и декоративные символы.
-    $normalized = preg_replace('/^\s{0,3}(#{1,6}\s*)/m', '', $normalized) ?? $normalized;
-    $normalized = preg_replace('/^\s{0,3}([>*•]\s+)/m', '', $normalized) ?? $normalized;
-    $normalized = preg_replace('/^\s{0,3}[-*]\s+(?!\d+\.)/m', '', $normalized) ?? $normalized;
-    $normalized = preg_replace('/```[\s\S]*?```/m', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/<think[\s\S]*?<\/think>/iu', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/<\/?think>/iu', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/```[\s\S]*?```/u', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/^\s{0,3}#{1,6}\s*/mu', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/^\s{0,3}[>*•●▪◦·]\s+/mu', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/^\s{0,3}[-*]\s+(?!\d+\.)/mu', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/^\s*(готовый\s+ответ|ответ\s*ии|текст\s+ответа|текст\s+ответа\s*ии)\s*:\s*/imu', '', $normalized) ?? $normalized;
     $normalized = str_replace(['**', '__', '`'], '', $normalized);
-
-    // Нормализуем слишком частые пустые строки и пробелы.
     $normalized = preg_replace("/[ \t]+\n/", "\n", $normalized) ?? $normalized;
     $normalized = preg_replace("/\n{3,}/", "\n\n", $normalized) ?? $normalized;
 
-    // Удаляем обращение в первой строке, если модель всё же его добавила.
     $lines = preg_split('/\n/u', $normalized) ?: [];
-    if ($lines) {
-        $firstLine = trim((string)($lines[0] ?? ''));
-        $isGreetingLine = (bool)preg_match('/^(уважаем(ый|ая|ые)|здравствуйте|добрый\s+(день|вечер|утро)|приветствую)\b/iu', $firstLine);
-        if ($isGreetingLine) {
-            array_shift($lines);
-            $normalized = trim(implode("\n", $lines));
+    $firstContentIndex = null;
+    foreach ($lines as $index => $line) {
+        if (trim((string)$line) !== '') {
+            $firstContentIndex = $index;
+            break;
+        }
+    }
+    if ($firstContentIndex !== null) {
+        $firstLine = trim((string)$lines[$firstContentIndex]);
+        if ((bool)preg_match('/^(уважаем(ый|ая|ые)|здравствуйте|добрый\s+(день|вечер|утро)|приветствую)\b/iu', $firstLine)) {
+            unset($lines[$firstContentIndex]);
+            $lines = array_values($lines);
         }
     }
 
-    return trim($normalized);
+    $serviceHeadingPattern = '/^\s*(готовый\s+ответ|ответ\s*ии|ответ|текст\s+ответа|текст\s+ответа\s*ии|анализ|разбор|краткое\s+содержание|итог(\s+по\s+блокам)?|вывод|рекомендации|действия|служебн(ая|ые)\s+.*)\s*:?\s*$/iu';
+    $signatureLinePattern = '/^\s*((с\s+уважением|с\s+наилучшими\s+пожеланиями|подпись|реквизиты?|контакты?|(\[)?ваше\s+фио(\])?|фио)\b|(руководитель|директор|генеральный\s+директор|исполнитель)\s*:)/iu';
+    $contactLinePattern = '/^\s*((тел(ефон)?\.?|e-?mail|почта|унп|инн|кпп|огрн|бик|р\/с|расч[её]тный\s+сч[её]т|корр\.?\s*сч[её]т)\b|(адрес|сайт)\s*:)/iu';
+    $warningLinePattern = '/^\s*(⚠️|предупреждение\b|не\s+удалось\s+обработать\s+часть\s+файлов|часть\s+файлов\s+не\s+удалось\s+обработать)/iu';
+    $promptEchoPattern = '/^\s*(сформируй|подготовь|верни|напиши)\s+(официальный|деловой|готовый)?\s*ответ\b/iu';
+
+    $cutIndex = count($lines);
+    for ($index = count($lines) - 1; $index >= 0; $index--) {
+        $current = trim((string)$lines[$index]);
+        if ($current === '') {
+            continue;
+        }
+        if ((bool)preg_match($signatureLinePattern, $current) || (bool)preg_match($contactLinePattern, $current)) {
+            $cutIndex = $index;
+        }
+    }
+
+    $cleanedLines = [];
+    for ($index = 0; $index < $cutIndex; $index++) {
+        $line = trim((string)$lines[$index]);
+        if ($line === '') {
+            if ($cleanedLines !== [] && end($cleanedLines) !== '') {
+                $cleanedLines[] = '';
+            }
+            continue;
+        }
+        if (
+            (bool)preg_match($serviceHeadingPattern, $line)
+            || (bool)preg_match($signatureLinePattern, $line)
+            || (bool)preg_match($contactLinePattern, $line)
+            || (bool)preg_match($warningLinePattern, $line)
+            || (bool)preg_match($promptEchoPattern, $line)
+            || (bool)preg_match('/^[\w.+-]+@[\w.-]+\.[a-z]{2,}$/iu', $line)
+            || (bool)preg_match('/^https?:\/\//iu', $line)
+        ) {
+            continue;
+        }
+        $previous = $cleanedLines !== [] ? mb_strtolower(trim((string)end($cleanedLines))) : '';
+        if ($previous !== '' && $previous === mb_strtolower($line)) {
+            continue;
+        }
+        $cleanedLines[] = $line;
+    }
+
+    $result = trim(implode("\n", $cleanedLines));
+    $result = preg_replace("/\n{3,}/", "\n\n", $result) ?? $result;
+    return trim($result);
 }
 
 function getResponseAiStyleInstruction(string $style): string

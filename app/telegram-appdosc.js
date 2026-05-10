@@ -535,7 +535,7 @@ function ensureAiDialogScriptLoaded() {
         summary: { temperature: 0.3, max_tokens: 800, top_p: 0.85 },
         vision_extract: { temperature: 0, max_tokens: 2000 }
       },
-      DEFAULT_KEYS: { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'positive' }
+      DEFAULT_KEYS: { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'calm', assistant_mode: 'response_ai' }
     });
   }
 

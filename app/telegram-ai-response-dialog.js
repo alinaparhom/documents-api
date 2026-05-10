@@ -12,8 +12,9 @@
   const FILE_PREPARE_TIMEOUT_MS = 35000;
   const FILE_PREPARE_TIMEOUT_MS_MOBILE = 16000;
   const DOCS_GENERATE_FALLBACK_ENDPOINTS = ['/js/documents/api-docs.php', '/api-docs.php'];
-  const DEFAULT_TEMPLATE_ANSWER_TEXT = 'Сгенерированный ответ ИИ — здесь может быть любой контент';
   const DEFAULT_RESPONSE_AI_PROMPT_TEXT = 'Подготовь деловой ответ на входящее письмо/обращение по этому документу';
+  const FIXED_RESPONSE_TONE = 'calm';
+  const FIXED_RESPONSE_MODE = 'response_ai';
   const VISION_BATCH_SIZE = 5;
   const MAX_FILES_PER_REQUEST = 5;
   const MAX_FILES_PER_REQUEST_MOBILE = 2;
@@ -33,10 +34,11 @@
   const PROMPTS_CATALOG = globalScope.DOCS_AI_PROMPTS || null;
   const DEFAULT_PROMPT_KEYS = PROMPTS_CATALOG && PROMPTS_CATALOG.DEFAULT_KEYS
     ? PROMPTS_CATALOG.DEFAULT_KEYS
-    : { response_mode: 'v1', vision_quality_mode: 'v1', tone: 'positive' };
+    : { response_mode: 'v1', vision_quality_mode: 'v1', tone: FIXED_RESPONSE_TONE, assistant_mode: FIXED_RESPONSE_MODE };
   const SYSTEM_TONE_PROMPTS = (() => {
     const fallback = {
       neutral: { value: 'neutral', label: 'Нейтральный', prompt: '' },
+      calm: { value: 'calm', label: 'Спокойный', prompt: '' },
       positive: { value: 'positive', label: 'Положительный', prompt: '' },
       negative: { value: 'negative', label: 'Отрицательный', prompt: '' },
     };
@@ -46,7 +48,6 @@
     const merged = { ...fallback, ...source };
     return merged;
   })();
-  const RESPONSE_STYLE_OPTIONS = Object.values(SYSTEM_TONE_PROMPTS).filter((item) => item && item.value);
   const RESPONSE_GENERATION_MODES = {
     improve_ai: {
       value: 'improve_ai',
@@ -59,7 +60,7 @@
       value: 'response_ai',
       label: 'Ответ ИИ',
       icon: '🤖',
-      hint: 'ИИ сам подготовит ответ на основе файлов.',
+      hint: 'Выберите файлы и нажмите «Отправить». ИИ подготовит только текст ответа.',
       placeholder: DEFAULT_RESPONSE_AI_PROMPT_TEXT,
     },
   };
@@ -127,24 +128,77 @@
   }
 
   function sanitizeAssistantFinalText(value) {
-    const normalizedText = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    let normalizedText = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
     if (!normalizedText) return '';
-    const lines = normalizedText.split('\n');
-    const signatureLinePattern = /^\s*(с\s+уважением[,.!:\-\s]*|с\s+наилучшими\s+пожеланиями[,.!:\-\s]*|подпись|реквизиты?|контакты?|тел\.?|e-?mail|(?:\[)?ваше\s+фио(?:\])?|фио|руководитель\b|директор\b|генеральный\s+директор\b|исполнитель\b)/i;
+
+    normalizedText = normalizedText
+      .replace(/<think[\s\S]*?<\/think>/gi, '')
+      .replace(/<\/?think>/gi, '')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+      .replace(/^\s{0,3}[>*•●▪◦·]\s+/gm, '')
+      .replace(/^\s{0,3}[-*]\s+(?!\d+\.)/gm, '')
+      .replace(/^\s*(?:готовый\s+ответ|ответ\s*ии|текст\s+ответа|текст\s+ответа\s*ии)\s*:\s*/gim, '')
+      .replace(/\*\*|__|`/g, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    const serviceHeadingPattern = /^\s*(?:готовый\s+ответ|ответ\s*ии|ответ|текст\s+ответа|текст\s+ответа\s*ии|анализ|разбор|краткое\s+содержание|итог(?:\s+по\s+блокам)?|вывод|рекомендации|действия|служебн(?:ая|ые)\s+.*)\s*:?\s*$/iu;
+    const signatureLinePattern = /^\s*(?:(?:с\s+уважением|с\s+наилучшими\s+пожеланиями|подпись|реквизиты?|контакты?|(?:\[)?ваше\s+фио(?:\])?|фио)\b|(?:руководитель|директор|генеральный\s+директор|исполнитель)\s*:)/iu;
+    const contactLinePattern = /^\s*(?:(?:тел(?:ефон)?\.?|e-?mail|почта|унп|инн|кпп|огрн|бик|р\/с|расч[её]тный\s+сч[её]т|корр\.?\s*сч[её]т)\b|(?:адрес|сайт)\s*:)/iu;
+    const warningLinePattern = /^\s*(?:⚠️|предупреждение\b|не\s+удалось\s+обработать\s+часть\s+файлов|часть\s+файлов\s+не\s+удалось\s+обработать)/iu;
+    const promptEchoPattern = /^\s*(?:сформируй|подготовь|верни|напиши)\s+(?:официальный|деловой|готовый)?\s*ответ\b/iu;
+
+    let lines = normalizedText.split('\n').map((line) => line.trimEnd());
+    const firstContentIndex = lines.findIndex((line) => normalize(line));
+    if (firstContentIndex >= 0) {
+      const firstLine = normalize(lines[firstContentIndex]);
+      if (/^(?:уважаем(?:ый|ая|ые)|здравствуйте|добрый\s+(?:день|вечер|утро)|приветствую)\b/iu.test(firstLine)) {
+        lines.splice(firstContentIndex, 1);
+      }
+    }
+
     let cutIndex = lines.length;
     for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const current = String(lines[index] || '').trim();
+      const current = normalize(lines[index]);
       if (!current) continue;
-      if (signatureLinePattern.test(current)) {
+      if (signatureLinePattern.test(current) || contactLinePattern.test(current)) {
         cutIndex = index;
       }
     }
-    const cleaned = lines
-      .slice(0, cutIndex)
+
+    const cleanedLines = [];
+    for (const rawLine of lines.slice(0, cutIndex)) {
+      const line = normalize(rawLine);
+      if (!line) {
+        if (cleanedLines.length && cleanedLines[cleanedLines.length - 1] !== '') {
+          cleanedLines.push('');
+        }
+        continue;
+      }
+      if (
+        serviceHeadingPattern.test(line)
+        || signatureLinePattern.test(line)
+        || contactLinePattern.test(line)
+        || warningLinePattern.test(line)
+        || promptEchoPattern.test(line)
+        || /^[\w.+-]+@[\w.-]+\.[a-z]{2,}$/i.test(line)
+        || /^https?:\/\//i.test(line)
+      ) {
+        continue;
+      }
+      const previous = cleanedLines.length ? normalize(cleanedLines[cleanedLines.length - 1]).toLowerCase() : '';
+      if (previous && previous === line.toLowerCase()) {
+        continue;
+      }
+      cleanedLines.push(line);
+    }
+
+    return cleanedLines
       .join('\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
-    return cleaned || '';
   }
 
   function resolveAuthorizedUserName(globalObject) {
@@ -200,13 +254,13 @@
   }
 
   function getResponseStyleMeta(styleValue) {
-    return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.positive || SYSTEM_TONE_PROMPTS.neutral || { value: 'neutral', label: 'Нейтральный', prompt: '' };
+    return SYSTEM_TONE_PROMPTS[styleValue] || SYSTEM_TONE_PROMPTS.calm || SYSTEM_TONE_PROMPTS.neutral || { value: 'neutral', label: 'Нейтральный', prompt: '' };
   }
 
   function appendPromptSelection(formData, toneValue, assistantModeValue) {
     if (!(formData instanceof FormData)) return;
-    const resolvedTone = normalize(toneValue) || DEFAULT_PROMPT_KEYS.tone || 'neutral';
-    const resolvedAssistantMode = normalize(assistantModeValue) || RESPONSE_GENERATION_MODES.response_ai.value;
+    const resolvedTone = normalize(toneValue) || DEFAULT_PROMPT_KEYS.tone || FIXED_RESPONSE_TONE;
+    const resolvedAssistantMode = normalize(assistantModeValue) || DEFAULT_PROMPT_KEYS.assistant_mode || FIXED_RESPONSE_MODE;
     formData.append('response_mode', DEFAULT_PROMPT_KEYS.response_mode || 'v1');
     formData.append('vision_quality_mode', DEFAULT_PROMPT_KEYS.vision_quality_mode || 'v1');
     formData.append('tone', resolvedTone);
@@ -217,6 +271,35 @@
     const configured = normalize(globalScope && (globalScope.GROQ_PAID_API_URL || globalScope.TELEGRAM_GROQ_API_URL));
     const endpoints = configured ? [configured, ...GROQ_RESPONSE_FALLBACK_ENDPOINTS] : GROQ_RESPONSE_FALLBACK_ENDPOINTS.slice();
     return Array.from(new Set(endpoints.filter(Boolean)));
+  }
+
+  function getTimingNow() {
+    return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  }
+
+  function calculateNetworkMbps(bytes, durationMs) {
+    const byteCount = Number(bytes);
+    const ms = Number(durationMs);
+    if (!Number.isFinite(byteCount) || byteCount <= 0 || !Number.isFinite(ms) || ms <= 0) {
+      return 0;
+    }
+    return byteCount * 8 / ms / 1000;
+  }
+
+  function emitNetworkSample(onNetworkSample, sample = {}) {
+    if (typeof onNetworkSample !== 'function') {
+      return;
+    }
+    try {
+      onNetworkSample({
+        ...sample,
+        at: Date.now(),
+      });
+    } catch (_) {
+      // Диагностика сети не должна ломать основной сценарий.
+    }
   }
 
   async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -232,13 +315,17 @@
     }
   }
 
-  async function postGroqResponseWithFallback(createFormData) {
+  async function postGroqResponseWithFallback(createFormData, options = {}) {
     const endpoints = getGroqResponseEndpoints();
+    const onNetworkSample = options && typeof options.onNetworkSample === 'function'
+      ? options.onNetworkSample
+      : null;
     let lastResult = null;
     for (let index = 0; index < endpoints.length; index += 1) {
       const endpoint = endpoints[index];
       let response = null;
       let payload = null;
+      const startedAt = getTimingNow();
       try {
         response = await fetchWithTimeout(endpoint, {
           method: 'POST',
@@ -246,7 +333,21 @@
           body: createFormData(),
         });
         payload = await response.json().catch(() => null);
+        emitNetworkSample(onNetworkSample, {
+          type: 'api',
+          ok: Boolean(response && response.ok),
+          status: Number(response && response.status) || 0,
+          durationMs: Math.max(0, Math.round(getTimingNow() - startedAt)),
+          endpoint,
+        });
       } catch (error) {
+        emitNetworkSample(onNetworkSample, {
+          type: 'api',
+          ok: false,
+          timedOut: Boolean(error && error.name === 'AbortError'),
+          durationMs: Math.max(0, Math.round(getTimingNow() - startedAt)),
+          endpoint,
+        });
         if (error && error.name === 'AbortError') {
           lastResult = {
             endpoint,
@@ -762,6 +863,7 @@
   async function requestTelegramVisionResponse(payload = {}, onStatus) {
     const profile = getClientVisionProfile();
     const selectedFiles = Array.isArray(payload.selectedFiles) ? payload.selectedFiles : [];
+    const onNetworkSample = typeof payload.onNetworkSample === 'function' ? payload.onNetworkSample : null;
     const prompt = normalize(payload.prompt) || 'Проанализируй документы и предложи готовое решение.';
     const systemPrompt = normalize(payload.systemPrompt);
     const images = [];
@@ -781,7 +883,7 @@
         onStatus('Загрузка', 'loading');
         let blobFile = null;
         try {
-          blobFile = await loadSelectedFileAsBlob(currentFile);
+          blobFile = await loadSelectedFileAsBlob(currentFile, onNetworkSample);
         } catch (error) {
           const failMessage = normalize(error && error.message) || 'Не удалось загрузить файл.';
           preparedResults[index] = { error: `${fileLabel}: ${failMessage}` };
@@ -842,22 +944,25 @@
       onStatus('Ответ', 'answer');
       const textOnlyRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
-        formData.append('action', 'generate_summary');
+        formData.append('action', 'generate_response');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', prompt);
         appendPromptSelection(formData, payload.tone, payload.assistantMode);
         formData.append('extractedTexts', JSON.stringify(extractedTexts));
         return formData;
-      });
+      }, { onNetworkSample });
       const textOnlyPayload = textOnlyRequest && textOnlyRequest.payload;
       if (textOnlyRequest && textOnlyRequest.response && textOnlyRequest.response.ok && textOnlyPayload && textOnlyPayload.ok === true) {
         const textOnlySummary = normalize(textOnlyPayload.response || textOnlyPayload.summary);
         if (textOnlySummary) {
-          return textOnlySummary;
+          return {
+            text: textOnlySummary,
+            skippedFilesCount: fileErrors.length,
+          };
         }
       }
-      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать текстовые файлы через summary pipeline.');
+      throw new Error((textOnlyPayload && textOnlyPayload.error) || 'Не удалось обработать текстовые файлы через response pipeline.');
     }
 
     const batches = chunkItems(images, VISION_BATCH_SIZE);
@@ -900,7 +1005,7 @@
           formData.append('files', new Blob([bytes], { type: item.mime || 'image/jpeg' }), item.fileName || `vision-${batchIndex + 1}-${idx + 1}.jpg`);
         });
         return formData;
-      });
+      }, { onNetworkSample });
       const response = request && request.response;
       const result = request && request.payload;
       if (!response || !response.ok || !result || result.ok !== true) {
@@ -914,7 +1019,7 @@
       onStatus('Ответ', 'answer');
       const mergeRequest = await postGroqResponseWithFallback(() => {
         const formData = new FormData();
-        formData.append('action', 'generate_summary');
+        formData.append('action', 'generate_response');
         formData.append('mode', 'paid');
         formData.append('vision_mode', '1');
         formData.append('prompt', [prompt, 'Ниже ответы по блокам. Собери один цельный финальный ответ без пересказа блоков.'].filter(Boolean).join('\n\n'));
@@ -925,7 +1030,7 @@
           text: partialAnswers.map((item, idx) => `Блок ${idx + 1}/${partialAnswers.length}:\n${item}`).join('\n\n'),
         }]));
         return formData;
-      });
+      }, { onNetworkSample });
       const mergePayload = mergeRequest && mergeRequest.payload;
       if (mergeRequest && mergeRequest.response && mergeRequest.response.ok && mergePayload && mergePayload.ok === true) {
         finalSummary = normalize(mergePayload.response || mergePayload.summary) || finalSummary;
@@ -934,13 +1039,13 @@
     if (!finalSummary) {
       throw new Error('Vision не вернул итоговый текст.');
     }
-    if (fileErrors.length) {
-      finalSummary += `\n\n⚠️ Не удалось обработать часть файлов (${fileErrors.length}).`;
-    }
-    return finalSummary;
+    return {
+      text: finalSummary,
+      skippedFilesCount: fileErrors.length,
+    };
   }
 
-  async function loadSelectedFileAsBlob(file) {
+  async function loadSelectedFileAsBlob(file, onNetworkSample = null) {
     const profile = getClientVisionProfile();
     if (file && file.fileObject instanceof File) {
       return file.fileObject;
@@ -968,16 +1073,38 @@
       for (let index = 0; index < urls.length; index += 1) {
         const url = urls[index];
         let response = null;
+        const startedAt = getTimingNow();
         try {
           response = await fetchWithTimeout(url, { credentials: 'include', cache: 'no-store' }, timeoutMs);
         } catch (error) {
+          emitNetworkSample(onNetworkSample, {
+            type: 'file',
+            ok: false,
+            timedOut: Boolean(error && error.name === 'AbortError'),
+            durationMs: Math.max(0, Math.round(getTimingNow() - startedAt)),
+          });
           continue;
         }
         if (!response || !response.ok) {
           lastStatus = Number(response && response.status) || lastStatus;
+          emitNetworkSample(onNetworkSample, {
+            type: 'file',
+            ok: false,
+            status: lastStatus,
+            durationMs: Math.max(0, Math.round(getTimingNow() - startedAt)),
+          });
           continue;
         }
         const blob = await response.blob();
+        const durationMs = Math.max(1, Math.round(getTimingNow() - startedAt));
+        emitNetworkSample(onNetworkSample, {
+          type: 'file',
+          ok: true,
+          status: response.status,
+          bytes: blob.size,
+          durationMs,
+          mbps: calculateNetworkMbps(blob.size, durationMs),
+        });
         const fileName = normalize(file && (file.originalName || file.name || file.storedName)) || 'attachment';
         if (blob.size > profile.maxFileSizeBytes) {
           throw new Error('Файл слишком большой.');
@@ -995,10 +1122,10 @@
     throw new Error(`Не удалось загрузить файл${lastStatus ? ` (${lastStatus})` : ''}`);
   }
 
-  async function preloadSelectedFile(file, onStatus) {
+  async function preloadSelectedFile(file, onStatus, onNetworkSample = null) {
     if (!file || typeof file !== 'object') return false;
     try {
-      await loadSelectedFileAsBlob(file);
+      await loadSelectedFileAsBlob(file, onNetworkSample);
       return true;
     } catch (_) {
       if (typeof onStatus === 'function') {
@@ -1040,6 +1167,11 @@
       .tg-ai-chat__head-actions{display:flex;align-items:center;gap:6px}
       .tg-ai-chat__title{font-size:16px;font-weight:800;color:#0f172a}
       .tg-ai-chat__sub{font-size:11px;color:#64748b;margin-top:1px;line-height:1.35}
+      .tg-ai-chat__network{display:inline-flex;align-items:center;justify-content:center;min-height:34px;max-width:168px;border:1px solid rgba(203,213,225,.9);border-radius:11px;padding:0 9px;background:rgba(255,255,255,.88);color:#475569;font-size:11px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .tg-ai-chat__network[data-network-state="good"]{border-color:rgba(34,197,94,.45);background:rgba(220,252,231,.88);color:#166534}
+      .tg-ai-chat__network[data-network-state="slow"]{border-color:rgba(245,158,11,.5);background:rgba(254,243,199,.9);color:#92400e}
+      .tg-ai-chat__network[data-network-state="bad"]{border-color:rgba(239,68,68,.48);background:rgba(254,226,226,.9);color:#991b1b}
+      .tg-ai-chat__network[data-network-state="unknown"]{border-color:rgba(203,213,225,.9);background:rgba(255,255,255,.88);color:#64748b}
       .tg-ai-chat__close{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.9);color:#0f172a;border-radius:11px;padding:6px 11px;min-height:34px;font-weight:700}
       .tg-ai-chat__head-btn{border:1px solid rgba(203,213,225,.9);background:rgba(255,255,255,.92);color:#0f172a;border-radius:11px;padding:0 10px;min-height:34px;font-size:12px;font-weight:700}
       .tg-ai-chat__messages{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,#f8fafc,#eef2ff)}
@@ -1050,13 +1182,14 @@
       .tg-ai-chat__composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;background:rgba(255,255,255,.93)}
       .tg-ai-chat__toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
       .tg-ai-chat__toolbar--compact{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .tg-ai-chat__toolbar--fixed{grid-template-columns:minmax(0,1fr)}
       .tg-ai-chat__mode-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border:1px solid rgba(191,219,254,.85);border-radius:12px;background:rgba(239,246,255,.72);backdrop-filter:blur(6px)}
       .tg-ai-chat__mode-switch--head{width:min(360px,100%)}
       .tg-ai-chat__mode-btn{min-height:34px;border:none;border-radius:9px;background:transparent;color:#334155;font-size:11px;font-weight:700;padding:0 8px;white-space:nowrap}
       .tg-ai-chat__mode-btn[data-active="true"]{background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.28)}
       .tg-ai-chat__toggle{min-height:42px;border:none;padding:0 12px;border-radius:12px;background:rgba(219,234,254,.95);color:#1e3a8a;font-weight:700}
       .tg-ai-chat__select{min-height:42px;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:0 12px;background:rgba(255,255,255,.98);color:#0f172a;font-size:13px}
-      .tg-ai-chat__input-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:end}
+      .tg-ai-chat__input-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
       .tg-ai-chat__input{min-height:52px;max-height:156px;border:1px solid rgba(148,163,184,.35);border-radius:14px;background:rgba(255,255,255,.98);padding:10px 12px;color:#0f172a;font-size:14px;line-height:1.4;resize:none;outline:none}
       .tg-ai-chat__input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.22)}
       .tg-ai-chat__icon-btn,.tg-ai-chat__send{height:44px;min-width:44px;border:none;border-radius:12px;font-weight:700}
@@ -1159,7 +1292,7 @@
       @keyframes tg-ai-spin{to{transform:rotate(360deg)}}
       @keyframes tg-ai-pulse{0%,80%,100%{opacity:.2;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
       @keyframes tg-ai-preview-progress{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{flex-direction:column;align-items:stretch}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
+      @media (max-width:640px){.tg-ai-chat{padding:0}.tg-ai-chat__card{height:100dvh;border-radius:0}.tg-ai-chat__toolbar{grid-template-columns:1fr}.tg-ai-chat__head{padding:10px}.tg-ai-chat__head-main{gap:6px}.tg-ai-chat__sub{font-size:10px}.tg-ai-chat__mode-switch--head{width:100%}.tg-ai-chat__mode-btn{min-height:32px;font-size:10px}.tg-ai-chat__head-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch}.tg-ai-chat__network{grid-column:1/-1;width:100%;max-width:none}.tg-ai-chat__head-btn,.tg-ai-chat__close{width:100%;max-width:none}.tg-ai-chat__input-row{grid-template-columns:minmax(0,1fr) auto}.tg-ai-chat__send{grid-column:1/-1}.tg-ai-template-preview{padding:0}.tg-ai-template-preview__card{height:100dvh;border-radius:0}.tg-ai-generated-preview__head{padding:10px}.tg-ai-generated-preview__menu{left:10px;right:10px;top:56px;min-width:0}.tg-ai-generated-preview__btn{padding:8px 10px}.tg-ai-generated-preview__viewport{padding:8px}.tg-ai-generated-preview__doc{--tg-page-gutter:8px;width:100%;border-radius:12px;padding:8px}.tg-ai-generated-preview__doc .docx-wrapper>section{width:100%!important;min-height:auto;margin-bottom:12px!important}.tg-ai-generated-preview__zoom-value{min-width:38px}.tg-ai-template-editor{padding:0}.tg-ai-template-editor__card{border-radius:0}.tg-ai-template-editor__grid{grid-template-columns:1fr}.tg-ai-template-editor__textarea{min-height:42dvh;font-size:16px}.tg-ai-template-editor__foot{flex-direction:column;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}.tg-ai-template-editor__btn{width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -1715,11 +1848,15 @@
 
   async function openTemplateAnswerEditor(context = {}) {
     if (document.querySelector('.tg-ai-template-editor')) return;
-    const aiText = normalize(context && context.aiAnswer) || DEFAULT_TEMPLATE_ANSWER_TEXT;
     const task = context && context.task ? context.task : {};
+    const onStatus = typeof context.onStatus === 'function' ? context.onStatus : null;
+    const aiText = sanitizeAssistantFinalText(context && context.aiAnswer);
+    if (!aiText) {
+      if (onStatus) onStatus('Сначала сформируйте текст ответа ИИ.');
+      return;
+    }
     const templateConfig = buildOrganizationTemplateConfig(task);
     const templateMarkers = await detectTemplateMarkers(task);
-    const onStatus = typeof context.onStatus === 'function' ? context.onStatus : null;
     const storedTemplateMeta = globalScope && globalScope.DOCUMENTS_TEMPLATE_META && typeof globalScope.DOCUMENTS_TEMPLATE_META === 'object'
       ? globalScope.DOCUMENTS_TEMPLATE_META
       : {};
@@ -1996,36 +2133,28 @@
         <div class="tg-ai-chat__head">
           <div class="tg-ai-chat__head-main">
             <div class="tg-ai-chat__title">✨ Ответ ИИ</div>
-            <div class="tg-ai-chat__sub">Выберите файлы, режим и введите запрос (текстом или голосом)</div>
-            <div class="tg-ai-chat__mode-switch tg-ai-chat__mode-switch--head" role="tablist" aria-label="Режим генерации ответа">
-              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="improve_ai">${RESPONSE_GENERATION_MODES.improve_ai.icon} ${RESPONSE_GENERATION_MODES.improve_ai.label}</button>
-              <button type="button" class="tg-ai-chat__mode-btn" data-response-mode="response_ai" data-active="true">${RESPONSE_GENERATION_MODES.response_ai.icon} ${RESPONSE_GENERATION_MODES.response_ai.label}</button>
-            </div>
+            <div class="tg-ai-chat__sub">Выберите файлы: ИИ подготовит только текст ответа для шаблона</div>
           </div>
           <div class="tg-ai-chat__head-actions">
-            <button type="button" class="tg-ai-chat__head-btn" data-template-btn>📄 Шаблон</button>
+            <span class="tg-ai-chat__network" data-network-badge data-network-state="unknown" title="Данные сети ещё не получены.">Сеть: —</span>
+            <button type="button" class="tg-ai-chat__head-btn" data-template-btn disabled title="Сначала сформируйте текст ответа ИИ.">📄 Шаблон</button>
             <button type="button" class="tg-ai-chat__close" data-close>✕</button>
           </div>
         </div>
         <div class="tg-ai-chat__messages" data-messages>
-          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Выберите файлы, режим ответа и напишите задачу. Можно нажать 🎤 и продиктовать.</div>
+          <div class="tg-ai-chat__bubble tg-ai-chat__bubble--assistant">Выберите файлы, затем нажмите «Отправить». ИИ вернёт только основной текст ответа для шаблона.</div>
         </div>
-        <div class="tg-ai-chat__status" data-status>Выберите режим, добавьте запрос и нажмите «Отправить».</div>
+        <div class="tg-ai-chat__status" data-status>Выберите файлы и нажмите «Отправить».</div>
         <div class="tg-ai-chat__files" data-files hidden>
           <p class="tg-ai-chat__files-title">Файлы из текущей задачи:</p>
           <div class="tg-ai-chat__files-list" data-files-list></div>
         </div>
         <div class="tg-ai-chat__composer">
-          <div class="tg-ai-chat__toolbar tg-ai-chat__toolbar--compact">
+          <div class="tg-ai-chat__toolbar tg-ai-chat__toolbar--fixed">
             <button type="button" class="tg-ai-chat__toggle" data-files-toggle>📎 Файлы</button>
-            <select class="tg-ai-chat__select" data-style-select aria-label="Стиль ответа">
-              <option value="" selected>🎯 Выберите режим</option>
-              ${RESPONSE_STYLE_OPTIONS.map((item) => `<option value="${escapeHtml(item.value)}">🎯 ${escapeHtml(item.label)}</option>`).join('')}
-            </select>
           </div>
           <div class="tg-ai-chat__input-row">
             <textarea class="tg-ai-chat__input" data-prompt-input rows="2" placeholder="${escapeHtml(DEFAULT_RESPONSE_AI_PROMPT_TEXT)}">${escapeHtml(DEFAULT_RESPONSE_AI_PROMPT_TEXT)}</textarea>
-            <button type="button" class="tg-ai-chat__icon-btn" data-voice-btn aria-label="Голосовой ввод">🎤</button>
             <button type="button" class="tg-ai-chat__send" data-send-btn>Отправить</button>
           </div>
         </div>
@@ -2045,21 +2174,176 @@
     const filesPanel = overlay.querySelector('[data-files]');
     const filesList = overlay.querySelector('[data-files-list]');
     const filesToggleButton = overlay.querySelector('[data-files-toggle]');
-    const styleSelect = overlay.querySelector('[data-style-select]');
+    const networkBadge = overlay.querySelector('[data-network-badge]');
     const modeButtons = Array.from(overlay.querySelectorAll('[data-response-mode]'));
     const templateButton = overlay.querySelector('[data-template-btn]');
     const promptInput = overlay.querySelector('[data-prompt-input]');
     const sendButton = overlay.querySelector('[data-send-btn]');
     const voiceButton = overlay.querySelector('[data-voice-btn]');
-    let styleIndex = 0;
     let isSending = false;
     let lastAiAnswer = '';
     let recognition = null;
     let recognitionIsRunning = false;
     let speechSupported = false;
     let suppressVoiceEndStatus = false;
-    let currentResponseMode = RESPONSE_GENERATION_MODES.response_ai.value;
+    let currentResponseMode = FIXED_RESPONSE_MODE;
     let improveAiDraftPrompt = '';
+    const networkState = {
+      lastFileMbps: 0,
+      lastFileBytes: 0,
+      lastFileDurationMs: 0,
+      lastApiDurationMs: 0,
+      lastFailureAt: 0,
+      lastFailureType: '',
+      lastFailureStatus: 0,
+    };
+
+    const getNetworkConnection = () => {
+      const navigatorObject = globalScope && globalScope.navigator ? globalScope.navigator : null;
+      return navigatorObject && navigatorObject.connection ? navigatorObject.connection : null;
+    };
+
+    const readNetworkConnection = () => {
+      const connection = getNetworkConnection();
+      if (!connection || typeof connection !== 'object') {
+        return {
+          effectiveType: '',
+          downlink: 0,
+          rtt: 0,
+          saveData: false,
+        };
+      }
+      return {
+        effectiveType: normalize(connection.effectiveType).toLowerCase(),
+        downlink: Number.isFinite(connection.downlink) ? Number(connection.downlink) : 0,
+        rtt: Number.isFinite(connection.rtt) ? Number(connection.rtt) : 0,
+        saveData: Boolean(connection.saveData),
+      };
+    };
+
+    const formatNetworkMbps = (value) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return '';
+      }
+      if (numeric < 1) {
+        return `${numeric.toFixed(1)} Мбит/с`;
+      }
+      if (numeric < 10) {
+        return `${numeric.toFixed(1)} Мбит/с`;
+      }
+      return `${Math.round(numeric)} Мбит/с`;
+    };
+
+    const formatCompactNetworkMbps = (value) => {
+      const label = formatNetworkMbps(value);
+      return label ? label.replace(' Мбит/с', '') : '';
+    };
+
+    const getNetworkQuality = (snapshot) => {
+      const hasConnectionData = Boolean(snapshot.effectiveType || snapshot.downlink || snapshot.rtt || snapshot.saveData);
+      const hasMeasuredData = Boolean(networkState.lastFileMbps || networkState.lastApiDurationMs);
+      const recentFailure = networkState.lastFailureAt && (Date.now() - networkState.lastFailureAt < 18000);
+      if (recentFailure
+        || snapshot.effectiveType === 'slow-2g'
+        || snapshot.rtt >= 1200
+        || (snapshot.downlink > 0 && snapshot.downlink < 0.4)
+        || (networkState.lastFileMbps > 0 && networkState.lastFileMbps < 0.25)
+        || networkState.lastApiDurationMs >= 30000) {
+        return 'bad';
+      }
+      if (snapshot.saveData
+        || snapshot.effectiveType === '2g'
+        || snapshot.rtt >= 550
+        || (snapshot.downlink > 0 && snapshot.downlink < 1.5)
+        || (networkState.lastFileMbps > 0 && networkState.lastFileMbps < 0.9)
+        || networkState.lastApiDurationMs >= 12000) {
+        return 'slow';
+      }
+      return hasConnectionData || hasMeasuredData ? 'good' : 'unknown';
+    };
+
+    const renderNetworkBadge = () => {
+      if (!(networkBadge instanceof HTMLElement)) {
+        return;
+      }
+      const snapshot = readNetworkConnection();
+      const quality = getNetworkQuality(snapshot);
+      const typeLabel = snapshot.effectiveType ? snapshot.effectiveType.toUpperCase() : '';
+      const speedValue = networkState.lastFileMbps || snapshot.downlink || 0;
+      const speedLabel = formatCompactNetworkMbps(speedValue);
+      const latencyLabel = snapshot.rtt
+        ? `${Math.round(snapshot.rtt)}мс`
+        : (networkState.lastApiDurationMs ? `${Math.round(networkState.lastApiDurationMs / 1000)}с API` : '');
+      const compactParts = [];
+      compactParts.push(typeLabel || (speedLabel || latencyLabel ? 'замер' : '—'));
+      if (speedLabel) compactParts.push(`${speedLabel}↓`);
+      if (latencyLabel) compactParts.push(latencyLabel);
+
+      const qualityLabels = {
+        good: 'хорошо',
+        slow: 'медленно',
+        bad: 'плохо',
+        unknown: 'неизвестно',
+      };
+      const titleLines = [`Состояние: ${qualityLabels[quality] || qualityLabels.unknown}`];
+      if (snapshot.effectiveType) titleLines.push(`Тип сети: ${snapshot.effectiveType}`);
+      if (snapshot.downlink) titleLines.push(`Оценка браузера: ${formatNetworkMbps(snapshot.downlink)}`);
+      if (snapshot.rtt) titleLines.push(`RTT: ${Math.round(snapshot.rtt)} мс`);
+      if (snapshot.saveData) titleLines.push('Экономия трафика включена');
+      if (networkState.lastFileMbps) {
+        titleLines.push(`Последняя загрузка файла: ${formatNetworkMbps(networkState.lastFileMbps)} за ${Math.round(networkState.lastFileDurationMs / 1000)} с`);
+      }
+      if (networkState.lastApiDurationMs) {
+        titleLines.push(`Последний ответ API: ${Math.round(networkState.lastApiDurationMs / 100) / 10} с`);
+      }
+      if (networkState.lastFailureAt) {
+        titleLines.push(`Последняя сетевая ошибка: ${networkState.lastFailureType || 'запрос'}${networkState.lastFailureStatus ? ` (${networkState.lastFailureStatus})` : ''}`);
+      }
+
+      networkBadge.dataset.networkState = quality;
+      networkBadge.textContent = `Сеть: ${compactParts.join(' · ')}`;
+      networkBadge.title = titleLines.join('\n');
+      networkBadge.setAttribute('aria-label', networkBadge.title);
+    };
+
+    const handleNetworkSample = (sample = {}) => {
+      if (!sample || typeof sample !== 'object') {
+        return;
+      }
+      const type = normalize(sample.type) || 'request';
+      const durationMs = Math.max(0, Math.round(Number(sample.durationMs) || 0));
+      const failedStatus = Number(sample.status) || 0;
+      const isNetworkLikeFailure = type === 'file' || Boolean(sample.timedOut) || !failedStatus;
+      if (sample.ok === false && isNetworkLikeFailure) {
+        networkState.lastFailureAt = Date.now();
+        networkState.lastFailureType = type === 'file' ? 'файл' : 'API';
+        networkState.lastFailureStatus = failedStatus;
+      } else if (sample.ok === true && (type === 'file' || type === 'api')) {
+        networkState.lastFailureAt = 0;
+        networkState.lastFailureType = '';
+        networkState.lastFailureStatus = 0;
+      }
+      if (type === 'file' && sample.ok !== false) {
+        const mbps = Number(sample.mbps) || calculateNetworkMbps(sample.bytes, durationMs);
+        if (mbps > 0) {
+          networkState.lastFileMbps = mbps;
+          networkState.lastFileBytes = Number(sample.bytes) || 0;
+          networkState.lastFileDurationMs = durationMs;
+        }
+      }
+      if (type === 'api' && durationMs > 0) {
+        networkState.lastApiDurationMs = durationMs;
+      }
+      renderNetworkBadge();
+    };
+
+    const networkConnection = getNetworkConnection();
+    const handleNetworkConnectionChange = () => renderNetworkBadge();
+    if (networkConnection && typeof networkConnection.addEventListener === 'function') {
+      networkConnection.addEventListener('change', handleNetworkConnectionChange);
+    }
+    renderNetworkBadge();
 
     renderFiles(filesList, files);
     // Прогреваем зависимости заранее, чтобы первый запуск был стабильнее.
@@ -2070,6 +2354,9 @@
     const close = () => {
       if (recognitionIsRunning && recognition) {
         try { recognition.stop(); } catch (_) {}
+      }
+      if (networkConnection && typeof networkConnection.removeEventListener === 'function') {
+        networkConnection.removeEventListener('change', handleNetworkConnectionChange);
       }
       overlay.remove();
     };
@@ -2111,9 +2398,10 @@
       const requestId = (fileWarmupRequestId.get(normalizedKey) || 0) + 1;
       fileWarmupRequestId.set(normalizedKey, requestId);
       setFileState(normalizedKey, 'loading');
+      renderNetworkBadge();
       const promise = preloadSelectedFile(selectedFile, (message) => {
         status.textContent = message;
-      }).then((ok) => {
+      }, handleNetworkSample).then((ok) => {
         if (!selected.has(normalizedKey)) return ok;
         if (fileWarmupRequestId.get(normalizedKey) !== requestId) return ok;
         setFileState(normalizedKey, ok ? 'ready' : 'error');
@@ -2139,7 +2427,6 @@
     });
 
     const setComposerDisabled = (disabled) => {
-      if (styleSelect) styleSelect.disabled = disabled;
       if (promptInput) promptInput.disabled = disabled;
       if (sendButton) sendButton.disabled = disabled;
       if (voiceButton) {
@@ -2330,35 +2617,17 @@
     async function sendByCurrentStyle() {
       if (isSending) return;
       const profile = getClientVisionProfile();
-      const selectedStyleValue = normalize(styleSelect && styleSelect.value);
-      if (!selectedStyleValue) {
-        status.textContent = 'Выберите режим ответа.';
-        return;
-      }
-      const userPrompt = normalize(promptInput && promptInput.value);
-      if (!userPrompt) {
-        status.textContent = currentResponseMode === RESPONSE_GENERATION_MODES.improve_ai.value
-          ? 'В режиме «Ответ» нужен ваш черновик (текстом или голосом).'
-          : 'Введите запрос для ИИ или продиктуйте его голосом.';
-        return;
-      }
-      const styleIndexFromSelect = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
-      if (styleIndexFromSelect >= 0) {
-        styleIndex = styleIndexFromSelect;
-      }
-      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
+      const userPrompt = normalize(promptInput && promptInput.value) || DEFAULT_RESPONSE_AI_PROMPT_TEXT;
+      const styleMeta = getResponseStyleMeta(FIXED_RESPONSE_TONE);
       const effectivePrompt = userPrompt;
       const selectedKeys = Array.from(selected)
         .filter((key) => fileWarmupState.get(key) !== 'error');
       if (!selectedKeys.length) {
-        if (currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value) {
-          const responseAiMessage = 'Для режима «Ответ ИИ» выберите хотя бы один файл.';
-          createBubble(messages, responseAiMessage, 'assistant');
-          status.textContent = responseAiMessage;
-          return;
-        }
-        createBubble(messages, 'Выберите хотя бы один файл без ошибок в меню «📎 Файлы».', 'assistant');
-        status.textContent = 'Нет доступных файлов для отправки.';
+        const responseAiMessage = selected.size
+          ? 'Нет готовых файлов для отправки. Проверьте выбранные файлы.'
+          : 'Выберите хотя бы один файл в меню «📎 Файлы».';
+        createBubble(messages, responseAiMessage, 'assistant');
+        status.textContent = responseAiMessage;
         return;
       }
       if (selectedKeys.length > profile.maxFilesPerRequest) {
@@ -2372,6 +2641,11 @@
 
       isSending = true;
       setComposerDisabled(true);
+      renderNetworkBadge();
+      if (templateButton) {
+        templateButton.disabled = true;
+        templateButton.title = 'Сначала сформируйте текст ответа ИИ.';
+      }
       if (filesPanel) filesPanel.hidden = true;
       try {
         if (pendingWarmups.length) {
@@ -2381,15 +2655,13 @@
 
         const readySelectedKeys = selectedKeys
           .filter((key) => fileWarmupState.get(key) === 'ready');
-        const skippedFilesCount = Math.max(0, selectedKeys.length - readySelectedKeys.length);
+        const skippedFilesCount = Math.max(0, selected.size - readySelectedKeys.length);
         const selectedFiles = readySelectedKeys
           .map((key) => files[Number(key)])
           .filter(Boolean);
 
         if (!selectedFiles.length) {
-          const emptyReadyMessage = currentResponseMode === RESPONSE_GENERATION_MODES.response_ai.value
-            ? 'Нет готовых файлов для «Ответ ИИ».'
-            : 'Нет готовых файлов для отправки.';
+          const emptyReadyMessage = 'Нет готовых файлов для отправки.';
           createBubble(messages, emptyReadyMessage, 'assistant');
           status.textContent = emptyReadyMessage;
           return;
@@ -2402,18 +2674,16 @@
 
         lastAiAnswer = '';
         createBubble(messages, userPrompt, 'user');
-        if (skippedFilesCount > 0) {
-          createBubble(messages, `${skippedFilesCount} файлов пропущено.`, 'assistant');
-        }
         status.textContent = 'Загрузка → Подготовка → Ответ';
         const loadingBubble = createLoadingBubble(messages);
 
-        const answerRaw = await requestTelegramVisionResponse({
+        const answerResult = await requestTelegramVisionResponse({
           prompt: effectivePrompt,
           systemPrompt: '',
           tone: styleMeta.value,
-          assistantMode: currentResponseMode,
+          assistantMode: FIXED_RESPONSE_MODE,
           selectedFiles,
+          onNetworkSample: handleNetworkSample,
         }, (message) => {
           const stage = normalize(message).toLowerCase();
           if (stage === 'загрузка') {
@@ -2430,16 +2700,34 @@
           }
           status.textContent = 'Загрузка → Подготовка → Ответ';
         });
-        const answer = sanitizeAssistantFinalText(answerRaw) || 'Пустой ответ.';
+        const answerRaw = answerResult && typeof answerResult === 'object'
+          ? (answerResult.text || answerResult.response || answerResult.summary)
+          : answerResult;
+        const aiSkippedFilesCount = answerResult && typeof answerResult === 'object'
+          ? Math.max(0, Number(answerResult.skippedFilesCount || answerResult.fileErrorsCount || 0))
+          : 0;
+        const answer = sanitizeAssistantFinalText(answerRaw);
+        if (!answer) {
+          throw new Error('ИИ не вернул текст ответа.');
+        }
         lastAiAnswer = answer;
+        if (templateButton) {
+          templateButton.disabled = false;
+          templateButton.title = 'Открыть шаблон с текстом ответа ИИ.';
+        }
         if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
         createBubble(messages, answer, 'assistant');
 
-        status.textContent = skippedFilesCount > 0
-          ? `Данные переданы. ${skippedFilesCount} файлов пропущено.`
-          : 'Данные переданы.';
+        const totalSkippedFilesCount = skippedFilesCount + aiSkippedFilesCount;
+        status.textContent = totalSkippedFilesCount > 0
+          ? `Ответ готов. ${totalSkippedFilesCount} файлов не удалось использовать.`
+          : 'Ответ готов.';
       } catch (error) {
         lastAiAnswer = '';
+        if (templateButton) {
+          templateButton.disabled = true;
+          templateButton.title = 'Сначала сформируйте текст ответа ИИ.';
+        }
         const loadingNode = messages && messages.querySelector ? messages.querySelector('.tg-ai-chat__bubble--loading') : null;
         if (loadingNode && loadingNode.parentNode) loadingNode.remove();
         createBubble(messages, (error && error.message) || 'Не удалось передать данные.', 'assistant');
@@ -2449,18 +2737,6 @@
         setComposerDisabled(false);
       }
     }
-
-    styleSelect?.addEventListener('change', () => {
-      const selectedStyleValue = normalize(styleSelect.value);
-      if (!selectedStyleValue) {
-        status.textContent = 'Выберите режим ответа.';
-        return;
-      }
-      const nextIndex = RESPONSE_STYLE_OPTIONS.findIndex((item) => item.value === selectedStyleValue);
-      styleIndex = nextIndex >= 0 ? nextIndex : 0;
-      const styleMeta = RESPONSE_STYLE_OPTIONS[styleIndex] || RESPONSE_STYLE_OPTIONS[0];
-      status.textContent = `Стиль ответа: ${styleMeta.label}.`;
-    });
 
     sendButton?.addEventListener('click', () => {
       sendByCurrentStyle();
@@ -2488,6 +2764,7 @@
         fileWarmupRequestId.delete(key);
         setFileState(key, 'idle');
       }
+      renderNetworkBadge();
       if (target.checked) {
         status.textContent = 'Подготавливаю файл...';
       }
@@ -2506,8 +2783,17 @@
         status.textContent = 'Дождитесь завершения ответа ИИ.';
         return;
       }
+      const preparedAnswer = sanitizeAssistantFinalText(lastAiAnswer);
+      if (!preparedAnswer) {
+        status.textContent = 'Сначала сформируйте текст ответа ИИ.';
+        if (templateButton) {
+          templateButton.disabled = true;
+          templateButton.title = 'Сначала сформируйте текст ответа ИИ.';
+        }
+        return;
+      }
       openTemplateAnswerEditor({
-        aiAnswer: lastAiAnswer,
+        aiAnswer: preparedAnswer,
         task,
         onStatus: (message) => {
           status.textContent = normalize(message) || 'Готово.';
