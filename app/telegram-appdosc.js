@@ -5670,9 +5670,11 @@ function createCard(task, index, anchorRegistry) {
   applyRegistrationDateHeader(card, registrationDate);
   setCardField(card, '[data-field="direction"]', task.direction);
   setCardField(card, '[data-field="correspondent"]', formatEntityDisplay(task.correspondent, 'Корреспондент'));
-  setCardField(card, '[data-field="executor"]', formatEntityDisplay(resolveExecutor(task), 'Исполнитель'));
+  const executorDisplay = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
+  const responseSummaryText = buildTaskResponseSummary(task);
+  setCardField(card, '[data-field="executor"]', executorDisplay);
   setCardField(card, '[data-field="instruction"]', resolveInstructionSummary(task));
-  setCardField(card, '[data-field="responseSummary"]', buildTaskResponseSummary(task), {
+  setCardField(card, '[data-field="responseSummary"]', responseSummaryText, {
     setTitle: false,
   });
 
@@ -5722,9 +5724,9 @@ function createCard(task, index, anchorRegistry) {
   }
   toggleSection(card, '[data-field="aiBrief"]', true);
 
-  setCardField(card, '[data-field="dueDate"]', formatDate(task.dueDate), {
-    fallback: 'Не указан',
-  });
+  const compactDueDateInfo = formatCompactDueDate(task, completed);
+  setCompactDueDateText(card.querySelector('[data-field="dueDate"]'), compactDueDateInfo);
+  ensureCompactDueDateRow(card, compactDueDateInfo);
   setCardField(card, '[data-field="senderCompact"]', senderCompact, {
     fallback: '—',
     setTitle: false,
@@ -5739,7 +5741,6 @@ function createCard(task, index, anchorRegistry) {
       : (dueDate ? `До ${dueDateLabel}` : 'Срок не указан'));
   const executorInsight = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
   const senderInsight = senderCompact === 'не указан' ? 'Не указан' : senderCompact;
-  const responseSummaryText = buildTaskResponseSummary(task);
   const responseRows = normalizeValue(responseSummaryText)
     ? responseSummaryText
       .split('\n')
@@ -5799,6 +5800,7 @@ function createCard(task, index, anchorRegistry) {
   setupDueDateEditor(card, task);
   setupAssignmentControls(card, task);
   setupSubordinateControls(card, task);
+  movePeopleBlockIntoDisclosure(card, task, executorDisplay, responseLabel);
 
   initializeCardExpansion(card);
 
@@ -6969,6 +6971,247 @@ function toggleSection(card, selector, shouldShow) {
   section.hidden = !shouldShow;
 }
 
+function formatDayCountLabel(days) {
+  const value = Math.abs(Math.trunc(Number(days) || 0));
+  const mod100 = value % 100;
+  const mod10 = value % 10;
+  if (mod100 >= 11 && mod100 <= 19) {
+    return 'дней';
+  }
+  if (mod10 === 1) {
+    return 'день';
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return 'дня';
+  }
+  return 'дней';
+}
+
+function formatCompactDueDate(task, completed = false) {
+  const dueDate = parseDate(task && task.dueDate);
+  if (!dueDate) {
+    return {
+      label: 'Не указан',
+      extra: '',
+    };
+  }
+
+  const label = formatDate(task.dueDate);
+  if (completed) {
+    return {
+      label,
+      extra: '',
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(dueDate);
+  target.setHours(0, 0, 0, 0);
+  const daysLeft = Math.ceil((target.getTime() - today.getTime()) / 86400000);
+
+  if (daysLeft < 0) {
+    return {
+      label,
+      extra: 'просрочено',
+    };
+  }
+  if (daysLeft === 0) {
+    return {
+      label,
+      extra: 'сегодня',
+    };
+  }
+  return {
+    label,
+    extra: `${daysLeft} ${formatDayCountLabel(daysLeft)}`,
+  };
+}
+
+function setCompactDueDateText(element, dueInfo, options = {}) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+
+  const label = normalizeValue(dueInfo && dueInfo.label) || normalizeValue(options.fallback) || 'Не указан';
+  const extra = normalizeValue(dueInfo && dueInfo.extra);
+  element.textContent = '';
+
+  const labelNode = document.createElement('span');
+  labelNode.textContent = label;
+  element.appendChild(labelNode);
+
+  if (extra) {
+    element.appendChild(document.createTextNode(' '));
+    const extraNode = document.createElement('span');
+    extraNode.className = 'appdosc-card__due-extra';
+    extraNode.textContent = `(${extra})`;
+    element.appendChild(extraNode);
+    element.title = `${label} (${extra})`;
+  } else {
+    element.title = label;
+  }
+}
+
+function ensureCompactDueDateRow(card, dueInfo) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  const details = card.querySelector('.appdosc-card__details');
+  if (!(details instanceof HTMLElement)) {
+    return;
+  }
+
+  let row = details.querySelector('[data-card-due-detail]');
+  if (!(row instanceof HTMLElement)) {
+    row = document.createElement('div');
+    row.className = 'appdosc-card__detail';
+    row.dataset.cardDueDetail = 'true';
+
+    const label = document.createElement('dt');
+    label.textContent = 'Срок исполнения';
+    const value = document.createElement('dd');
+    value.dataset.field = 'dueDateDetail';
+    row.append(label, value);
+
+    const instructionValue = details.querySelector('[data-field="instruction"]');
+    const instructionRow = instructionValue instanceof HTMLElement ? instructionValue.closest('.appdosc-card__detail') : null;
+    if (instructionRow && instructionRow.parentElement === details) {
+      instructionRow.after(row);
+    } else {
+      details.appendChild(row);
+    }
+  }
+
+  setCompactDueDateText(row.querySelector('[data-field="dueDateDetail"]'), dueInfo);
+}
+
+function formatPeopleCount(count, singular, few, many) {
+  const value = Math.max(0, Math.trunc(Number(count) || 0));
+  const mod100 = value % 100;
+  const mod10 = value % 10;
+  if (mod100 >= 11 && mod100 <= 19) {
+    return `${value} ${many}`;
+  }
+  if (mod10 === 1) {
+    return `${value} ${singular}`;
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return `${value} ${few}`;
+  }
+  return `${value} ${many}`;
+}
+
+function getUniqueAssignmentCount(task, type) {
+  const identifiers = type === 'subordinate'
+    ? getTaskSubordinateIdentifiers(task)
+    : getTaskResponsibleIdentifiers(task);
+  const values = Array.isArray(identifiers) ? identifiers.map(normalizeValue).filter(Boolean) : [];
+  if (values.length) {
+    return new Set(values).size;
+  }
+  const entries = collectTaskAssignments(task, type);
+  return Array.isArray(entries) ? entries.length : 0;
+}
+
+function buildPeopleDisclosureMeta(task, executorText, responseLabel) {
+  const parts = [];
+  const executor = normalizeValue(executorText);
+  if (executor && executor !== '—') {
+    parts.push(executor);
+  }
+  const response = normalizeValue(responseLabel);
+  if (response) {
+    parts.push(response);
+  }
+
+  const responsibleCount = getUniqueAssignmentCount(task, 'responsible');
+  const subordinateCount = getUniqueAssignmentCount(task, 'subordinate');
+  if (responsibleCount > 0) {
+    parts.push(formatPeopleCount(responsibleCount, 'ответственный', 'ответственных', 'ответственных'));
+  }
+  if (subordinateCount > 0) {
+    parts.push(formatPeopleCount(subordinateCount, 'подчинённый', 'подчинённых', 'подчинённых'));
+  }
+
+  return parts.length ? parts.join(' · ') : 'Данные не указаны';
+}
+
+function movePeopleBlockIntoDisclosure(card, task, executorText, responseLabel) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  const oldDisclosure = card.querySelector('[data-card-people]');
+  if (oldDisclosure) {
+    oldDisclosure.remove();
+  }
+
+  const details = card.querySelector('.appdosc-card__details');
+  if (!(details instanceof HTMLElement)) {
+    return;
+  }
+
+  const executorValue = details.querySelector('[data-field="executor"]');
+  const responseValue = details.querySelector('[data-field="responseSummary"]');
+  const executorRow = executorValue instanceof HTMLElement ? executorValue.closest('.appdosc-card__detail') : null;
+  const responseRow = responseValue instanceof HTMLElement ? responseValue.closest('.appdosc-card__detail') : null;
+  const assignBlock = card.querySelector('[data-card-assign]');
+  const subordinateBlock = card.querySelector('[data-card-subordinates]');
+  const rows = [executorRow, responseRow].filter((row) => row instanceof HTMLElement);
+  const blocks = [assignBlock, subordinateBlock].filter((block) => block instanceof HTMLElement);
+
+  if (!rows.length && !blocks.length) {
+    return;
+  }
+
+  const disclosure = document.createElement('details');
+  disclosure.className = 'appdosc-card__people';
+  disclosure.dataset.cardPeople = 'true';
+
+  const summary = document.createElement('summary');
+  summary.className = 'appdosc-card__people-summary';
+
+  const summaryText = document.createElement('span');
+  const title = document.createElement('span');
+  title.className = 'appdosc-card__people-title';
+  title.textContent = 'Исполнители и ответственные';
+  const meta = document.createElement('span');
+  meta.className = 'appdosc-card__people-meta';
+  meta.textContent = buildPeopleDisclosureMeta(task, executorText, responseLabel);
+  summaryText.append(title, meta);
+
+  const chevron = document.createElement('span');
+  chevron.className = 'appdosc-card__people-chevron';
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.textContent = '⌄';
+
+  summary.append(summaryText, chevron);
+  disclosure.appendChild(summary);
+
+  const content = document.createElement('div');
+  content.className = 'appdosc-card__people-content';
+  if (rows.length) {
+    const peopleDetails = document.createElement('dl');
+    peopleDetails.className = 'appdosc-card__people-details';
+    rows.forEach((row) => {
+      peopleDetails.appendChild(row);
+    });
+    content.appendChild(peopleDetails);
+  }
+  blocks.forEach((block) => {
+    content.appendChild(block);
+  });
+
+  disclosure.appendChild(content);
+  const statusBlock = card.querySelector('[data-card-status]');
+  const insertionAnchor = statusBlock instanceof HTMLElement && !statusBlock.hidden
+    ? statusBlock
+    : details;
+  insertionAnchor.after(disclosure);
+}
+
 function openTelegramFileAiBriefModal(fileName, briefText) {
   const overlay = document.createElement('div');
   overlay.className = 'appdosc-ai-brief-modal__overlay';
@@ -7023,6 +7266,54 @@ function applyRegistrationDateHeader(card, registrationDate) {
   }
 }
 
+function resolveTaskFileSizeLabel(file) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+
+  const candidates = [
+    file.size,
+    file.fileSize,
+    file.file_size,
+    file.sizeBytes,
+    file.size_bytes,
+    file.bytes,
+  ];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const value = candidates[index];
+    if (typeof value === 'string' && /[кмг]?б|bytes?/iu.test(value)) {
+      return value.trim();
+    }
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return formatPdfSize(numeric);
+    }
+  }
+
+  return '';
+}
+
+function getTaskFileTypeLabel(fileName) {
+  const extension = getFileExtension(fileName);
+  if (!extension) {
+    return 'file';
+  }
+  if (extension === 'pdf') {
+    return 'pdf';
+  }
+  if (['doc', 'docx', 'odt', 'rtf'].includes(extension)) {
+    return 'doc';
+  }
+  if (['xls', 'xlsx', 'ods', 'csv'].includes(extension)) {
+    return 'xls';
+  }
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(extension)) {
+    return 'img';
+  }
+  return extension.slice(0, 4);
+}
+
 function populateCardFiles(card, files) {
   const container = card.querySelector('[data-files]');
   if (!container) {
@@ -7047,15 +7338,31 @@ function populateCardFiles(card, files) {
   container.hidden = false;
 
   const maxToShow = 3;
+  const title = document.createElement('div');
+  title.className = 'appdosc-card__files-title';
+  title.textContent = `Файлы (${safeFiles.length})`;
+  container.appendChild(title);
+
   safeFiles.slice(0, maxToShow).forEach((file) => {
     const element = document.createElement('div');
     element.className = 'appdosc-card__file';
     const displayName = normalizeValue(file.originalName)
       || normalizeValue(file.storedName)
       || 'Файл';
-    const title = document.createElement('span');
-    title.textContent = displayName;
-    element.appendChild(title);
+    const type = document.createElement('span');
+    type.className = `appdosc-card__file-icon appdosc-card__file-icon--${getFileExtension(displayName) || 'file'}`;
+    type.textContent = getTaskFileTypeLabel(displayName);
+    const fileNameElement = document.createElement('span');
+    fileNameElement.className = 'appdosc-card__file-name';
+    fileNameElement.textContent = displayName;
+    const size = document.createElement('span');
+    size.className = 'appdosc-card__file-size';
+    size.textContent = resolveTaskFileSizeLabel(file);
+    element.appendChild(type);
+    element.appendChild(fileNameElement);
+    if (size.textContent) {
+      element.appendChild(size);
+    }
     if (displayName) {
       element.title = displayName;
     } else {
