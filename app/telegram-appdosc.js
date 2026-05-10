@@ -753,6 +753,26 @@ const DOWNLOAD_LOG_EVENTS = new Set([
 ]);
 
 const STATUS_OPTIONS = ['Распределено', 'В работе', 'На проверке', 'Выполнено', 'Отменено'];
+const STATUS_BUTTON_UI_CONFIG = {
+  distributed: {
+    icon: 'fa-file-lines',
+  },
+  accepted: {
+    icon: 'fa-briefcase',
+  },
+  review: {
+    icon: 'fa-magnifying-glass',
+  },
+  done: {
+    icon: 'fa-square-check',
+  },
+  cancelled: {
+    icon: 'fa-circle-xmark',
+  },
+  custom: {
+    icon: 'fa-circle-dot',
+  },
+};
 const RESPONSIBLE_SUBORDINATE_REVIEW_FLOW = 'responsible_subordinate_v1';
 const SUBORDINATE_REVIEW_STATUS_LABELS = {
   accepted: 'Принято',
@@ -13419,11 +13439,27 @@ function setupStatusControls(card, task) {
   }
 
   STATUS_OPTIONS.forEach((option) => {
+    const statusKey = getStatusSummaryKey(option);
+    const statusButtonUi = STATUS_BUTTON_UI_CONFIG[statusKey] || STATUS_BUTTON_UI_CONFIG.custom;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-card__status-button';
-    button.textContent = option;
     button.dataset.statusValue = option;
+    button.dataset.statusKey = statusKey || 'custom';
+
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'appdosc-card__status-button-icon';
+    iconWrap.setAttribute('aria-hidden', 'true');
+
+    const icon = document.createElement('i');
+    icon.className = `fa-solid ${statusButtonUi.icon} appdosc-card__status-button-symbol`;
+    iconWrap.appendChild(icon);
+
+    const text = document.createElement('span');
+    text.className = 'appdosc-card__status-button-text';
+    text.textContent = option;
+
+    button.append(iconWrap, text);
     const isActive = normalizedCurrent !== '' && normalizeName(option) === normalizedCurrent;
     const isDoneOption = getStatusSummaryKey(option) === 'done';
     if (reviewFlowActive && isDoneOption && (!canCloseByReview || !reviewSummary.allAccepted)) {
@@ -13442,9 +13478,23 @@ function setupStatusControls(card, task) {
     const fallback = document.createElement('button');
     fallback.type = 'button';
     fallback.className = 'appdosc-card__status-button';
-    fallback.textContent = currentStatus;
     fallback.dataset.statusValue = currentStatus;
+    fallback.dataset.statusKey = 'custom';
     fallback.dataset.customStatus = 'true';
+
+    const fallbackIconWrap = document.createElement('span');
+    fallbackIconWrap.className = 'appdosc-card__status-button-icon';
+    fallbackIconWrap.setAttribute('aria-hidden', 'true');
+
+    const fallbackIcon = document.createElement('i');
+    fallbackIcon.className = `fa-solid ${STATUS_BUTTON_UI_CONFIG.custom.icon} appdosc-card__status-button-symbol`;
+    fallbackIconWrap.appendChild(fallbackIcon);
+
+    const fallbackText = document.createElement('span');
+    fallbackText.className = 'appdosc-card__status-button-text';
+    fallbackText.textContent = currentStatus;
+
+    fallback.append(fallbackIconWrap, fallbackText);
     fallback.setAttribute('aria-pressed', 'true');
     fallback.disabled = true;
     optionsContainer.appendChild(fallback);
