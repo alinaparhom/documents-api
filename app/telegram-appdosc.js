@@ -1377,7 +1377,15 @@ function showViewerLoader(fileName) {
       return;
     }
     const elapsed = Math.round((performance.now() - start) / 1000);
-    if (timeEl) timeEl.textContent = elapsed > 0 ? `${elapsed} сек` : '';
+    if (timeEl) {
+      if (elapsed >= 12) {
+        timeEl.textContent = `${elapsed} сек · интернет медленный, продолжаем загрузку`;
+      } else if (elapsed >= 5) {
+        timeEl.textContent = `${elapsed} сек · файл ещё загружается`;
+      } else {
+        timeEl.textContent = elapsed > 0 ? `${elapsed} сек` : '';
+      }
+    }
   }, 500);
   return token;
 }
@@ -7381,13 +7389,12 @@ function populateCardFiles(card, files) {
 
   container.hidden = false;
 
-  const maxToShow = 3;
   const title = document.createElement('div');
   title.className = 'appdosc-card__files-title';
   title.textContent = `Файлы (${safeFiles.length})`;
   container.appendChild(title);
 
-  safeFiles.slice(0, maxToShow).forEach((file) => {
+  safeFiles.forEach((file) => {
     const element = document.createElement('div');
     element.className = 'appdosc-card__file';
     const displayName = normalizeValue(file.originalName)
@@ -7407,6 +7414,18 @@ function populateCardFiles(card, files) {
     if (size.textContent) {
       element.appendChild(size);
     }
+    const downloadButton = document.createElement('button');
+    downloadButton.type = 'button';
+    downloadButton.className = 'appdosc-card__file-download';
+    downloadButton.setAttribute('aria-label', `Скачать ${displayName}`);
+    downloadButton.title = `Скачать ${displayName}`;
+    downloadButton.innerHTML = '<svg class="appdosc-card__file-download-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10"></path><path d="m7 10 5 5 5-5"></path><path d="M5 20h14"></path></svg>';
+    downloadButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void handleCardFileDownload(file, downloadButton);
+    });
+    element.appendChild(downloadButton);
     if (displayName) {
       element.title = displayName;
     } else {
@@ -7414,15 +7433,131 @@ function populateCardFiles(card, files) {
     }
     container.appendChild(element);
   });
+}
 
-  if (safeFiles.length > maxToShow) {
-    const more = document.createElement('span');
-    more.className = 'appdosc-card__file appdosc-card__file--more';
-    const hiddenCount = safeFiles.length - maxToShow;
-    more.textContent = `+${hiddenCount}`;
-    more.title = `Ещё ${hiddenCount} ${hiddenCount === 1 ? 'файл' : hiddenCount >= 2 && hiddenCount <= 4 ? 'файла' : 'файлов'}`;
-    container.appendChild(more);
+function setCardFileDownloadLoading(button, isLoading) {
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
   }
+  button.disabled = Boolean(isLoading);
+  button.dataset.loading = isLoading ? 'true' : 'false';
+  button.setAttribute('aria-busy', isLoading ? 'true' : 'false');
+}
+
+async function handleCardFileDownload(file, button) {
+  if (!file || typeof file !== 'object') {
+    setStatus('warning', 'Нет файла для скачивания.');
+    return;
+  }
+  if (button && button.dataset.loading === 'true') {
+    return;
+  }
+
+  const fileName = getAttachmentName(file)
+    || normalizeValue(file.originalName)
+    || normalizeValue(file.storedName)
+    || 'document';
+  const downloadUrl = buildDownloadUrl(file) || resolveFileFetchUrl(file);
+  if (!downloadUrl) {
+    setStatus('warning', 'Не удалось найти ссылку для скачивания.');
+    return;
+  }
+
+  setCardFileDownloadLoading(button, true);
+  setStatus('info', `Готовим скачивание: ${fileName}`);
+  const slowTimer = window.setTimeout(() => {
+    setStatus('info', 'Файл ещё загружается. При медленном интернете это может занять несколько секунд.');
+  }, 2500);
+
+  try {
+    const fetched = await downloadFileFromUrl(downloadUrl, fileName);
+    if (fetched || triggerDownloadFromUrl(downloadUrl, fileName)) {
+      setStatus('success', 'Файл отправлен на скачивание.');
+      return;
+    }
+    throw new Error('download_unavailable');
+  } catch (error) {
+    const opened = openExternalDocument(downloadUrl);
+    if (opened) {
+      setStatus('info', 'Открыли файл в новой вкладке для сохранения.');
+      return;
+    }
+    setStatus('error', 'Не удалось скачать файл. Попробуйте ещё раз.');
+  } finally {
+    window.clearTimeout(slowTimer);
+    setCardFileDownloadLoading(button, false);
+  }
+}
+
+async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary) {
+  const resolvedName = fileName || getAttachmentName(file) || 'document';
+  const primaryUrl = normalizeValue(downloadUrl) || buildDownloadUrl(file) || resolveFileFetchUrl(file);
+
+  setStatus('info', 'Пересылка не открылась. Пробуем скачать файл...');
+
+  if (primaryUrl) {
+    const fetched = await downloadFileFromUrl(primaryUrl, resolvedName);
+    if (fetched) {
+      sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+        method: 'telegram_forward_fallback_fetch',
+        downloadUrl: primaryUrl,
+        fileName: resolvedName,
+      }));
+      setStatus('success', 'Файл отправлен на скачивание.');
+      return true;
+    }
+
+    if (triggerDownloadFromUrl(primaryUrl, resolvedName)) {
+      sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+        method: 'telegram_forward_fallback_link',
+        downloadUrl: primaryUrl,
+        fileName: resolvedName,
+      }));
+      setStatus('success', 'Файл отправлен на скачивание.');
+      return true;
+    }
+  }
+
+  try {
+    const preview = isSummary
+      ? await ensureTaskSummaryPreview(task, file)
+      : await ensureTaskAttachmentPreview(task, file);
+    if (preview && preview.blob) {
+      downloadBlob(preview.blob, preview.fileName || resolvedName);
+      sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+        method: 'telegram_forward_fallback_preview',
+        previewUrl: preview.previewUrl || '',
+        fileName: preview.fileName || resolvedName,
+      }));
+      setStatus('success', 'Файл подготовлен для скачивания.');
+      return true;
+    }
+  } catch (error) {
+    logDownloadConsole('telegram_forward_fallback_preview_error', {
+      message: error && error.message ? error.message : 'preview_download_failed',
+      fileName: resolvedName,
+    });
+  }
+
+  if (primaryUrl) {
+    const opened = openExternalDocument(primaryUrl);
+    if (opened) {
+      sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+        method: 'telegram_forward_fallback_external',
+        downloadUrl: primaryUrl,
+        fileName: resolvedName,
+      }));
+      setStatus('info', 'Файл открыт в новой вкладке для сохранения.');
+      return true;
+    }
+  }
+
+  sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
+    reason: 'telegram_forward_fallback_failed',
+    fileName: resolvedName,
+  }));
+  setStatus('error', 'Не удалось переслать или скачать файл.');
+  return false;
 }
 
 function setCardExpandedState(card, expanded) {
@@ -11302,11 +11437,6 @@ async function handleViewerDownloadClick() {
 
   const downloadUrl = buildDownloadUrl(file);
   const isWebPlatform = Boolean(getWebPlatformFlag());
-  const hasWebApp = typeof window !== 'undefined'
-    && window.Telegram
-    && window.Telegram.WebApp;
-  const canDirectDownload = isWebPlatform || !hasWebApp;
-  const isAndroid = isAndroidPlatform();
   logDownloadConsole('click', {
     fileName,
     downloadUrl,
@@ -11317,234 +11447,59 @@ async function handleViewerDownloadClick() {
     fileName,
     platform: isWebPlatform ? 'web' : 'telegram',
   }));
-  setStatus('info', 'Готовим отправку в Telegram...');
+  setActionButtonLoading(elements.viewerDownload, true);
+  const slowForwardTimer = window.setTimeout(() => {
+    setStatus('info', 'Файл ещё подготавливается. При медленном интернете это может занять несколько секунд.');
+  }, 2500);
 
-  const shareUrl = await resolveShareUrlForTelegram(task, file, fileName, downloadUrl);
-  if (shareUrl) {
+  try {
+    setStatus('info', 'Готовим пересылку в Telegram...');
+    const shareUrl = await resolveShareUrlForTelegram(task, file, fileName, downloadUrl);
+    if (!shareUrl) {
+      logDownloadConsole('telegram_forward_url_missing', { fileName, downloadUrl });
+      sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
+        reason: 'telegram_forward_url_missing',
+        fileName,
+      }));
+      await fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary);
+      return;
+    }
+
     const sharedInTelegram = shareFileViaTelegramLink(shareUrl, fileName);
     if (sharedInTelegram) {
       logDownloadConsole('telegram_share_success', { fileName, shareUrl, downloadUrl });
       sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-        method: 'telegram_share_link',
+        method: 'telegram_forward_link',
         downloadUrl: shareUrl,
         fileName,
       }));
       setStatus('success', 'Открылся выбор чата в Telegram. Выберите получателя.');
       return;
     }
-    logDownloadConsole('telegram_share_fallback_download', { fileName, shareUrl, downloadUrl });
-  }
 
-  setStatus('info', 'Готовим файл для сохранения...');
-
-  if (isAndroid) {
-    let androidOpenUrl = downloadUrl;
-    if (isSummary && !androidOpenUrl) {
-      try {
-        const summaryPreview = await ensureTaskSummaryPreview(task, file);
-        file.previewUrl = summaryPreview.previewUrl;
-        file.resolvedUrl = summaryPreview.previewUrl;
-        fileName = summaryPreview.fileName || fileName;
-        androidOpenUrl = buildPreviewUrl(summaryPreview.previewUrl, fileName);
-      } catch (error) {
-        logDownloadConsole('android_summary_prepare_error', {
-          message: error && error.message ? error.message : 'summary_prepare_failed',
-        });
-      }
-    }
-
-    if (!androidOpenUrl) {
-      const previewCandidate = file.previewUrl || file.resolvedUrl || '';
-      const previewUrl = buildPreviewUrl(previewCandidate, fileName);
-      if (previewUrl) {
-        androidOpenUrl = previewUrl;
-      }
-    }
-
-    if (androidOpenUrl) {
-      const mode = openExternalDocument(androidOpenUrl);
-      if (mode) {
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'android_open',
-          downloadUrl: androidOpenUrl,
-          fileName,
-        }));
-        setStatus('info', 'Открыли файл в браузере для скачивания.');
-        return;
-      }
-    }
-  }
-
-  if (runtimeEnvironment.isIos && !isWebPlatform) {
-    logDownloadConsole('ios_share_attempt', { fileName, downloadUrl });
-    try {
-      let iosBlob = null;
-      if (isSummary) {
-        const preview = await ensureTaskSummaryPreview(task, file);
-        iosBlob = preview.blob;
-        fileName = preview.fileName || fileName;
-      } else {
-        const preview = await ensureTaskAttachmentPreview(task, file);
-        iosBlob = preview.blob;
-        fileName = preview.fileName || fileName;
-      }
-      if (!iosBlob && downloadUrl) {
-        iosBlob = await fetchFileAsBlob(downloadUrl);
-      }
-      if (iosBlob) {
-        const shared = await shareFileViaNativeShare(iosBlob, fileName);
-        if (shared) {
-          logDownloadConsole('ios_share_success', { fileName, method: 'native_share' });
-          sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-            method: 'ios_native_share',
-            fileName,
-          }));
-          setStatus('info', 'Файл отправлен.');
-          return;
-        }
-        logDownloadConsole('ios_share_not_supported', { fileName });
-        downloadBlob(iosBlob, fileName);
-        logDownloadConsole('ios_blob_download_fallback', { fileName });
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'ios_blob_fallback',
-          fileName,
-        }));
-        setStatus('info', 'Файл подготовлен. Проверьте загрузки.');
-        return;
-      }
-    } catch (error) {
-      logDownloadConsole('ios_share_error', {
-        message: error && error.message ? error.message : 'ios_share_failed',
-        fileName,
-      });
-    }
-  }
-
-  if (isWebPlatform && isSummary) {
-    try {
-      logDownloadConsole('summary_open_attempt', { fileName });
-      const preview = await ensureTaskSummaryPreview(task, file);
-      const summaryUrl = buildPreviewUrl(preview.previewUrl, preview.fileName);
-      const summaryMode = openExternalDocument(summaryUrl);
-      if (summaryMode) {
-        logDownloadConsole('summary_open_success', { summaryUrl, mode: summaryMode });
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'summary',
-          downloadUrl: summaryUrl,
-          fileName: preview.fileName || fileName,
-        }));
-        setStatus('info', 'Открыли файл «Общее» в новой вкладке.');
-        return;
-      }
-    } catch (error) {
-      logDownloadConsole('summary_open_error', {
-        message: error && error.message ? error.message : 'summary_open_failed',
-        fileName,
-      });
-    }
-  }
-
-  if (canDirectDownload && downloadUrl) {
-    logDownloadConsole('direct_download_attempt', { downloadUrl, fileName });
-    if (isWebPlatform) {
-      const fetchDownloadTriggered = await downloadFileFromUrl(downloadUrl, fileName);
-      if (fetchDownloadTriggered) {
-        logDownloadConsole('direct_download_success', { downloadUrl, fileName, method: 'fetch' });
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'direct_fetch',
-          downloadUrl,
-          fileName,
-        }));
-        setStatus('info', 'Файл отправлен на скачивание.');
-        return;
-      }
-      logDownloadConsole('direct_download_fallback', { downloadUrl, fileName, method: 'link' });
-      const directDownloadTriggered = triggerDownloadFromUrl(downloadUrl, fileName);
-      if (directDownloadTriggered) {
-        logDownloadConsole('direct_download_success', { downloadUrl, fileName, method: 'link' });
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'direct',
-          downloadUrl,
-          fileName,
-        }));
-        setStatus('info', 'Файл отправлен на скачивание.');
-        return;
-      }
-    }
-    if (!isWebPlatform) {
-      const directDownloadTriggered = triggerDownloadFromUrl(downloadUrl, fileName);
-      if (directDownloadTriggered) {
-        logDownloadConsole('direct_download_success', { downloadUrl, fileName, method: 'link' });
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'direct',
-          downloadUrl,
-          fileName,
-        }));
-        setStatus('info', 'Файл отправлен на скачивание.');
-        return;
-      }
-    }
-  }
-
-  try {
-    logDownloadConsole('preview_prepare', { fileName });
-    const preview = isSummary
-      ? await ensureTaskSummaryPreview(task, file)
-      : await ensureTaskAttachmentPreview(task, file);
-    downloadBlob(preview.blob, preview.fileName);
-    logDownloadConsole('preview_download_success', {
-      fileName: preview.fileName || fileName,
-      previewUrl: preview.previewUrl || '',
-    });
-    sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-      method: 'preview',
-      previewUrl: preview.previewUrl || '',
-      fileName: preview.fileName || fileName,
+    logDownloadConsole('telegram_forward_open_failed', { fileName, shareUrl, downloadUrl });
+    sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
+      reason: 'telegram_forward_open_failed',
+      downloadUrl: shareUrl,
+      fileName,
     }));
-    if (preview.isOffice) {
-      if (downloadUrl) {
-        logDownloadConsole('office_external_open', { downloadUrl, fileName });
-        openExternalDocument(downloadUrl);
-      }
-    }
-    setStatus('info', 'Файл подготовлен. Проверьте загрузки или новую вкладку.');
+    await fallbackDownloadViewerFile(task, file, fileName, downloadUrl || shareUrl, isSummary);
+    return;
   } catch (error) {
-    if (downloadUrl) {
-      logDownloadConsole('fallback_download_attempt', { downloadUrl, fileName });
-      const directDownloadTriggered = triggerDownloadFromUrl(downloadUrl, fileName);
-      if (directDownloadTriggered) {
-        logDownloadConsole('fallback_download_success', { downloadUrl, fileName });
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'fallback',
-          downloadUrl,
-          fileName,
-        }));
-        setStatus('info', 'Файл отправлен на скачивание.');
-        return;
-      }
-    }
-    if (downloadUrl) {
-      const mode = openExternalDocument(downloadUrl);
-      if (mode) {
-        logDownloadConsole('external_open_success', { downloadUrl, fileName, mode });
-        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-          method: 'external',
-          downloadUrl,
-          fileName,
-        }));
-        setStatus('info', 'Файл открыт в новой вкладке для сохранения.');
-        return;
-      }
-    }
-    logDownloadConsole('download_error', {
-      message: error && error.message ? error.message : 'download_failed',
+    logDownloadConsole('telegram_forward_error', {
+      message: error && error.message ? error.message : 'telegram_forward_failed',
       fileName,
       downloadUrl,
     });
     sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
-      reason: error && error.message ? error.message : 'download_failed',
+      reason: error && error.message ? error.message : 'telegram_forward_failed',
+      fileName,
     }));
-    setStatus('error', 'Не удалось подготовить файл для скачивания.');
+    await fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary);
+    return;
+  } finally {
+    window.clearTimeout(slowForwardTimer);
+    setActionButtonLoading(elements.viewerDownload, false);
   }
 }
 
