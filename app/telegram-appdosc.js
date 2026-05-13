@@ -16,6 +16,7 @@ const ENTRY_LOG_ENDPOINT = '/docs.php?action=mini_app_entry_log';
 const PDF_LOG_ENDPOINT = '/docs.php?action=mini_app_pdf_log';
 const PDF_UPLOAD_ENDPOINT = '/docs.php?action=mini_app_upload_pdf';
 const TELEGRAM_AVATAR_ENDPOINT = '/docs.php?action=mini_app_telegram_avatar';
+const FILE_DOWNLOAD_ENDPOINT = '/docs.php?action=mini_app_download_file';
 const OFFICE_LOG_ENDPOINT = '/frontworks_log.php';
 const DOC_LOAD_LOG_ENDPOINT = '/docs.php?action=mini_app_doc_load_log';
 let aiDialogLoader = null;
@@ -1477,6 +1478,18 @@ function getWebPlatformFlag() {
   }
 
   return resolveWebPlatformFlag(runtimeEnvironment.webAppPlatform || '');
+}
+
+function getTelegramWebApp() {
+  if (typeof window === 'undefined' || !window.Telegram || !window.Telegram.WebApp) {
+    return null;
+  }
+
+  return window.Telegram.WebApp;
+}
+
+function isTelegramWebAppAvailable() {
+  return Boolean(getTelegramWebApp());
 }
 
 function isAndroidPlatform() {
@@ -9041,6 +9054,36 @@ function triggerDownloadFromUrl(url, filename) {
   }
 }
 
+function createDownloadFileAccessUrl(rawUrl, fileName = '', disposition = 'attachment') {
+  const normalizedUrl = normalizeValue(rawUrl);
+  if (!normalizedUrl || typeof window === 'undefined') {
+    return normalizedUrl;
+  }
+
+  try {
+    const absoluteUrl = new URL(normalizedUrl, window.location.origin);
+    if (absoluteUrl.origin !== window.location.origin) {
+      return absoluteUrl.toString();
+    }
+
+    const publicPath = absoluteUrl.pathname.replace(/^\/+/, '');
+    if (!publicPath || !publicPath.toLowerCase().startsWith('documents/')) {
+      return absoluteUrl.toString();
+    }
+
+    const endpointUrl = new URL(FILE_DOWNLOAD_ENDPOINT, window.location.origin);
+    endpointUrl.searchParams.set('path', publicPath);
+    if (fileName) {
+      endpointUrl.searchParams.set('name', fileName);
+    }
+    endpointUrl.searchParams.set('disposition', disposition === 'inline' ? 'inline' : 'attachment');
+
+    return endpointUrl.toString();
+  } catch (error) {
+    return normalizedUrl;
+  }
+}
+
 async function downloadFileFromUrl(url, filename) {
   if (!url || typeof fetch !== 'function') {
     return false;
@@ -9140,7 +9183,7 @@ function shareFileViaTelegramLink(url, fileName) {
   const shareText = fileName ? `Файл: ${fileName}` : 'Файл';
   const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(normalizedUrl)}&text=${encodeURIComponent(shareText)}`;
   try {
-    const webApp = window && window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    const webApp = getTelegramWebApp();
     if (webApp && typeof webApp.openTelegramLink === 'function') {
       webApp.openTelegramLink(telegramShareUrl);
       return true;
@@ -11045,7 +11088,29 @@ function buildDownloadUrl(file) {
   if (!resolved) {
     return '';
   }
-  return appendCacheBuster(toAbsoluteUrl(resolved));
+  const fileName = getAttachmentName(file)
+    || normalizeValue(file.originalName)
+    || normalizeValue(file.storedName)
+    || 'document';
+
+  return createDownloadFileAccessUrl(toAbsoluteUrl(resolved), fileName, 'attachment');
+}
+
+function buildTelegramShareUrl(file) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+  const source = file.resolvedUrl || file.url || file.previewUrl || '';
+  const resolved = resolveDocumentUrl(source);
+  if (!resolved) {
+    return '';
+  }
+  const fileName = getAttachmentName(file)
+    || normalizeValue(file.originalName)
+    || normalizeValue(file.storedName)
+    || 'document';
+
+  return createDownloadFileAccessUrl(toAbsoluteUrl(resolved), fileName, 'inline');
 }
 
 function getDownloadPlatformType() {
@@ -11066,12 +11131,19 @@ function getDownloadPlatformType() {
 
 function shouldOpenExternalFirstForDownload() {
   const platform = getDownloadPlatformType();
-  return platform === 'ios' || platform === 'web';
+  return isTelegramWebAppAvailable()
+    || platform === 'ios'
+    || platform === 'android'
+    || platform === 'telegram_desktop'
+    || platform === 'web';
 }
 
 function getDownloadActionTitle(fileName = '') {
   const name = normalizeValue(fileName);
   const suffix = name ? `: ${name}` : '';
+  if (isTelegramWebAppAvailable()) {
+    return `Переслать в Telegram или скачать файл${suffix}`;
+  }
   const platform = getDownloadPlatformType();
   if (platform === 'ios' || platform === 'web') {
     return `Открыть файл для сохранения${suffix}`;
@@ -11558,43 +11630,46 @@ async function handleViewerDownloadClick() {
   }, 2500);
 
   try {
+    if (isTelegramWebAppAvailable()) {
+      setStatus('info', 'Открываем пересылку в Telegram...');
+      const quickShareUrl = buildTelegramShareUrl(file);
+      const shareUrl = quickShareUrl || await resolveShareUrlForTelegram(task, file, fileName, downloadUrl);
+      if (!shareUrl) {
+        logDownloadConsole('telegram_forward_url_missing', { fileName, downloadUrl });
+        sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
+          reason: 'telegram_forward_url_missing',
+          fileName,
+        }));
+        await fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary);
+        return;
+      }
+
+      const sharedInTelegram = shareFileViaTelegramLink(shareUrl, fileName);
+      if (sharedInTelegram) {
+        logDownloadConsole('telegram_share_success', { fileName, shareUrl, downloadUrl });
+        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+          method: 'telegram_forward_link',
+          downloadUrl: shareUrl,
+          fileName,
+        }));
+        setStatus('success', 'Открылся выбор чата в Telegram. Выберите получателя.');
+        return;
+      }
+
+      logDownloadConsole('telegram_forward_open_failed', { fileName, shareUrl, downloadUrl });
+      sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
+        reason: 'telegram_forward_open_failed',
+        downloadUrl: shareUrl,
+        fileName,
+      }));
+      await fallbackDownloadViewerFile(task, file, fileName, downloadUrl || shareUrl, isSummary);
+      return;
+    }
+
     const directDownloaded = await fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary, { direct: true });
     if (directDownloaded) {
       return;
     }
-
-    setStatus('info', 'Готовим пересылку в Telegram...');
-    const shareUrl = await resolveShareUrlForTelegram(task, file, fileName, downloadUrl);
-    if (!shareUrl) {
-      logDownloadConsole('telegram_forward_url_missing', { fileName, downloadUrl });
-      sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
-        reason: 'telegram_forward_url_missing',
-        fileName,
-      }));
-      await fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary);
-      return;
-    }
-
-    const sharedInTelegram = shareFileViaTelegramLink(shareUrl, fileName);
-    if (sharedInTelegram) {
-      logDownloadConsole('telegram_share_success', { fileName, shareUrl, downloadUrl });
-      sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-        method: 'telegram_forward_link',
-        downloadUrl: shareUrl,
-        fileName,
-      }));
-      setStatus('success', 'Открылся выбор чата в Telegram. Выберите получателя.');
-      return;
-    }
-
-    logDownloadConsole('telegram_forward_open_failed', { fileName, shareUrl, downloadUrl });
-    sendDownloadLog('viewer_download_error', buildViewerDownloadLogDetails(task, file, {
-      reason: 'telegram_forward_open_failed',
-      downloadUrl: shareUrl,
-      fileName,
-    }));
-    await fallbackDownloadViewerFile(task, file, fileName, downloadUrl || shareUrl, isSummary);
-    return;
   } catch (error) {
     logDownloadConsole('telegram_forward_error', {
       message: error && error.message ? error.message : 'telegram_forward_failed',

@@ -9979,6 +9979,229 @@ function build_public_path(string $folder, ?string $fileName = null): string
     return 'documents/' . implode('/', $encodedParts);
 }
 
+function docs_resolve_public_document_file(string $rawPath): ?array
+{
+    $rawPath = trim($rawPath);
+    if ($rawPath === '') {
+        return null;
+    }
+
+    $path = parse_url($rawPath, PHP_URL_PATH);
+    if (!is_string($path) || $path === '') {
+        $path = $rawPath;
+    }
+
+    $path = ltrim($path, "/\\");
+    if (stripos($path, 'documents/') !== 0) {
+        return null;
+    }
+
+    $relative = substr($path, strlen('documents/'));
+    if (!is_string($relative) || trim($relative) === '') {
+        return null;
+    }
+
+    $segments = preg_split('#/+#', $relative, -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($segments) || empty($segments)) {
+        return null;
+    }
+
+    $safeSegments = [];
+    foreach ($segments as $segment) {
+        $decoded = rawurldecode((string) $segment);
+        if ($decoded === '' || $decoded === '.' || $decoded === '..') {
+            return null;
+        }
+        if (strpos($decoded, "\0") !== false || strpos($decoded, '/') !== false || strpos($decoded, '\\') !== false) {
+            return null;
+        }
+        $safeSegments[] = $decoded;
+    }
+
+    $root = realpath(DOCUMENTS_ROOT);
+    if (!is_string($root) || $root === '') {
+        return null;
+    }
+
+    $filePath = $root . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $safeSegments);
+    $realPath = realpath($filePath);
+    if (!is_string($realPath) || !is_file($realPath) || !is_readable($realPath)) {
+        return null;
+    }
+
+    $rootPrefix = rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+    if (strpos($realPath, $rootPrefix) !== 0) {
+        return null;
+    }
+
+    return [
+        'path' => $realPath,
+        'name' => basename($realPath),
+    ];
+}
+
+function docs_build_content_disposition_header(string $disposition, string $fileName): string
+{
+    $disposition = strtolower(trim($disposition)) === 'inline' ? 'inline' : 'attachment';
+    $fileName = docs_sanitize_filename($fileName, 'document');
+    $asciiName = preg_replace('/[^A-Za-z0-9._-]+/', '_', $fileName);
+    $asciiName = is_string($asciiName) ? trim($asciiName, '._-') : '';
+    if ($asciiName === '') {
+        $extension = pathinfo($fileName, PATHINFO_EXTENSION);
+        $asciiName = $extension !== '' ? 'document.' . $extension : 'document';
+    }
+
+    return $disposition
+        . '; filename="' . addcslashes($asciiName, "\\\"") . '"'
+        . "; filename*=UTF-8''" . rawurlencode($fileName);
+}
+
+function docs_detect_download_mime_type(string $path): string
+{
+    if (function_exists('finfo_open')) {
+        $finfo = @finfo_open(FILEINFO_MIME_TYPE);
+        if ($finfo) {
+            $mime = @finfo_file($finfo, $path);
+            @finfo_close($finfo);
+            if (is_string($mime) && $mime !== '') {
+                return $mime;
+            }
+        }
+    }
+
+    if (function_exists('mime_content_type')) {
+        $mime = @mime_content_type($path);
+        if (is_string($mime) && $mime !== '') {
+            return $mime;
+        }
+    }
+
+    return 'application/octet-stream';
+}
+
+function docs_stream_file_response(string $path, string $fileName, string $disposition, string $method): void
+{
+    $size = @filesize($path);
+    if ($size === false || $size < 0) {
+        respond_error('Файл недоступен.', 404);
+    }
+
+    $fileSize = (int) $size;
+    $start = 0;
+    $end = max(0, $fileSize - 1);
+    $status = 200;
+
+    $range = isset($_SERVER['HTTP_RANGE']) ? trim((string) $_SERVER['HTTP_RANGE']) : '';
+    if ($range !== '' && preg_match('/^bytes=(\d*)-(\d*)$/', $range, $matches)) {
+        if ($fileSize === 0) {
+            http_response_code(416);
+            header('Content-Range: bytes */0');
+            exit;
+        }
+
+        $rangeStart = $matches[1] !== '' ? (int) $matches[1] : null;
+        $rangeEnd = $matches[2] !== '' ? (int) $matches[2] : null;
+
+        if ($rangeStart === null && $rangeEnd !== null) {
+            $start = max(0, $fileSize - $rangeEnd);
+        } elseif ($rangeStart !== null) {
+            $start = $rangeStart;
+        }
+
+        if ($rangeEnd !== null && $rangeStart !== null) {
+            $end = min($end, $rangeEnd);
+        }
+
+        if ($start > $end || $start >= $fileSize) {
+            http_response_code(416);
+            header('Content-Range: bytes */' . $fileSize);
+            exit;
+        }
+
+        $status = 206;
+    }
+
+    $length = $fileSize === 0 ? 0 : $end - $start + 1;
+    $mime = docs_detect_download_mime_type($path);
+
+    http_response_code($status);
+    header_remove('Content-Type');
+    header_remove('Pragma');
+    header('Content-Type: ' . $mime);
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Disposition: ' . docs_build_content_disposition_header($disposition, $fileName));
+    header('Content-Length: ' . $length);
+    header('Accept-Ranges: bytes');
+    header('Cache-Control: private, max-age=300, must-revalidate', true);
+    header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 300) . ' GMT', true);
+    if ($status === 206) {
+        header('Content-Range: bytes ' . $start . '-' . $end . '/' . $fileSize);
+    }
+
+    if (strtoupper($method) === 'HEAD') {
+        exit;
+    }
+
+    while (ob_get_level() > 0) {
+        @ob_end_clean();
+    }
+
+    $handle = @fopen($path, 'rb');
+    if ($handle === false) {
+        exit;
+    }
+
+    if ($start > 0) {
+        @fseek($handle, $start);
+    }
+
+    $remaining = $length;
+    while ($remaining > 0 && !feof($handle)) {
+        $chunkSize = min(8192, $remaining);
+        $buffer = fread($handle, $chunkSize);
+        if ($buffer === false || $buffer === '') {
+            break;
+        }
+        echo $buffer;
+        $remaining -= strlen($buffer);
+        flush();
+    }
+
+    fclose($handle);
+    exit;
+}
+
+function docs_handle_mini_app_download_file(string $method): void
+{
+    $method = strtoupper($method);
+    if ($method !== 'GET' && $method !== 'HEAD') {
+        respond_error('Некорректный метод запроса.', 405, ['allowedMethod' => 'GET']);
+    }
+
+    $rawPath = isset($_GET['path']) && is_string($_GET['path']) ? $_GET['path'] : '';
+    if ($rawPath === '' && isset($_GET['file']) && is_string($_GET['file'])) {
+        $rawPath = $_GET['file'];
+    }
+
+    $resolved = docs_resolve_public_document_file($rawPath);
+    if ($resolved === null) {
+        respond_error('Файл не найден.', 404);
+    }
+
+    $fileName = isset($_GET['name']) && is_string($_GET['name'])
+        ? sanitize_text_field($_GET['name'], 255)
+        : '';
+    if ($fileName === '') {
+        $fileName = (string) $resolved['name'];
+    }
+
+    $disposition = isset($_GET['disposition']) && is_string($_GET['disposition'])
+        ? $_GET['disposition']
+        : 'attachment';
+
+    docs_stream_file_response((string) $resolved['path'], $fileName, $disposition, $method);
+}
+
 function load_organizations(): array
 {
     $names = [];
@@ -13709,6 +13932,10 @@ switch ($action) {
             'error' => 'avatar_not_found',
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         exit;
+
+    case 'mini_app_download_file':
+        docs_handle_mini_app_download_file($method);
+        break;
 
     case 'mini_app_user_journal':
         docs_handle_mini_app_user_journal($method);
