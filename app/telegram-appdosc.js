@@ -41,8 +41,8 @@ const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
 const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
 const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
-const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 3 * 1000;
-const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 1500;
+const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 0;
+const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 0;
 const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 1200;
 const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
 const ENABLE_TASK_PDF_WARMUP = true;
@@ -242,7 +242,7 @@ async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', reques
     const waitStartedAt = Date.now();
     let awaited = null;
     let timedOut = false;
-    if (requestSource === 'user_click') {
+    if (requestSource === 'user_click' && TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS > 0) {
       let sharedPromiseTimeoutId = null;
       const sharedPromiseTimeout = new Promise((_, reject) => {
         sharedPromiseTimeoutId = window.setTimeout(() => {
@@ -368,18 +368,27 @@ async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', reques
   const fetchStartedAtPerf = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
     ? performance.now()
     : Date.now();
-  const abortController = typeof AbortController === 'function' ? new AbortController() : null;
-  const timeoutId = window.setTimeout(() => {
-    if (abortController) {
-      abortController.abort('fetch_timeout');
+  const shouldUseFetchTimeout = fetchTimeoutMs > 0;
+  const abortController = shouldUseFetchTimeout && typeof AbortController === 'function' ? new AbortController() : null;
+  let timeoutId = null;
+  const clearFetchTimeout = () => {
+    if (timeoutId === null) {
+      return;
     }
-  }, fetchTimeoutMs);
+    window.clearTimeout(timeoutId);
+    timeoutId = null;
+  };
+  if (shouldUseFetchTimeout && abortController) {
+    timeoutId = window.setTimeout(() => {
+      abortController.abort('fetch_timeout');
+    }, fetchTimeoutMs);
+  }
   const requestPromise = fetch(previewUrl, {
     credentials: sameOrigin ? 'include' : 'omit',
     cache: sameOrigin ? 'no-cache' : 'no-store',
     ...(abortController ? { signal: abortController.signal } : {}),
   }).then(async (response) => {
-    window.clearTimeout(timeoutId);
+    clearFetchTimeout();
     const responseReceivedAt = Date.now();
     const fetchRespondedAt = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
       ? performance.now()
@@ -430,7 +439,7 @@ async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', reques
     setTaskPdfBinaryCacheEntry(previewUrl, result);
     return result;
   }).catch((error) => {
-    window.clearTimeout(timeoutId);
+    clearFetchTimeout();
     const isTimeoutError = Boolean(error && (error.name === 'AbortError' || error === 'fetch_timeout' || error.message === 'fetch_timeout'));
     if (!isTimeoutError) {
       throw error;
@@ -461,7 +470,7 @@ async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', reques
     pdfFetchTimeoutUrls.add(normalizePdfBinaryCacheKey(previewUrl));
     throw timeoutError;
   }).finally(() => {
-    window.clearTimeout(timeoutId);
+    clearFetchTimeout();
     const key = normalizePdfBinaryCacheKey(previewUrl);
     if (!key) {
       return;
@@ -808,7 +817,7 @@ const MINI_APP_PDF_FONT_REGULAR_URL = '/shrift/Roboto-Regular.ttf';
 const MINI_APP_PDF_FONT_BOLD_URL = '/shrift/RobotoFlex.ttf';
 const TELEGRAM_DESKTOP_PLATFORMS = ['tdesktop', 'desktop', 'macos', 'windows', 'linux'];
 const ENTRY_STATUS_EXCLUSIONS = new Set(['distributed', 'accepted', 'done', 'cancelled']);
-const ENTRY_STATUS_LABEL_EXCLUSIONS = new Set(['распределено', 'в работе', 'отменено', 'выполнено', 'просрочено']);
+const ENTRY_STATUS_LABEL_EXCLUSIONS = new Set(['распределено', 'в работе', 'отменено', 'выполнено']);
 
 const STATUS_SUMMARY_CONFIG = {
   distributed: {
@@ -5640,7 +5649,10 @@ function createCard(task, index, anchorRegistry) {
     card.classList.add('appdosc-card--tone-control');
   }
 
-  if (isOverdue(task)) {
+  const personalDueDateInfo = resolvePersonalTaskDueDateInfo(task);
+  const taskOverdue = personalDueDateInfo.overdue === true;
+
+  if (taskOverdue) {
     card.classList.add('appdosc-card--overdue');
     card.classList.remove('appdosc-card--tone-control');
     card.classList.add('appdosc-card--tone-overdue');
@@ -5771,7 +5783,7 @@ function createCard(task, index, anchorRegistry) {
   }
   toggleSection(card, '[data-field="aiBrief"]', true);
 
-  const compactDueDateInfo = formatCompactDueDate(task, completed);
+  const compactDueDateInfo = formatCompactDueDate(task, completed, personalDueDateInfo);
   setCompactDueDateText(card.querySelector('[data-field="dueDate"]'), compactDueDateInfo);
   ensureCompactDueDateRow(card, compactDueDateInfo);
   setCardField(card, '[data-field="senderCompact"]', senderCompact, {
@@ -5779,11 +5791,14 @@ function createCard(task, index, anchorRegistry) {
     setTitle: false,
   });
 
-  const dueDate = parseDate(task.dueDate);
-  const dueDateLabel = formatDate(task.dueDate);
+  const dueDateValue = personalDueDateInfo.hasPersonalDueDate
+    ? personalDueDateInfo.dueDate
+    : task.dueDate;
+  const dueDate = parseDate(dueDateValue);
+  const dueDateLabel = formatDate(dueDateValue);
   const dueState = completed
     ? 'Выполнено'
-    : (isOverdue(task)
+    : (taskOverdue
       ? `Просрочено · ${dueDateLabel}`
       : (dueDate ? `До ${dueDateLabel}` : 'Срок не указан'));
   const executorInsight = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
@@ -6588,27 +6603,14 @@ function isTaskExcludedByEntryStatus(task, directorState) {
     return true;
   }
   const statusLabel = normalizeName(getTaskStatusValue(task));
-  if (statusLabel && (ENTRY_STATUS_LABEL_EXCLUSIONS.has(statusLabel) || statusLabel.includes('просроч'))) {
+  if (statusLabel && ENTRY_STATUS_LABEL_EXCLUSIONS.has(statusLabel)) {
     return true;
   }
-  if (directorState && directorState.isActive && isDirectorAssignmentOverdue(task)) {
-    return true;
-  }
-  return isOverdue(task);
+  return isTaskOverdueByCompactRule(task);
 }
 
 function isTaskOverdueByCompactRule(task) {
-  const statusLabel = normalizeName(getTaskStatusValue(task));
-  if (statusLabel.includes('просроч')) {
-    return true;
-  }
-
-  const personalOverdue = isCurrentUserAssignmentOverdue(task);
-  if (personalOverdue !== null) {
-    return personalOverdue;
-  }
-
-  return isDirectorAssignmentOverdue(task) || isOverdue(task);
+  return resolvePersonalTaskDueDateInfo(task).overdue === true;
 }
 
 
@@ -7034,8 +7036,14 @@ function formatDayCountLabel(days) {
   return 'дней';
 }
 
-function formatCompactDueDate(task, completed = false) {
-  const dueDate = parseDate(task && task.dueDate);
+function formatCompactDueDate(task, completed = false, personalDueDateInfo = null) {
+  const resolvedDueDateInfo = personalDueDateInfo && typeof personalDueDateInfo === 'object'
+    ? personalDueDateInfo
+    : resolvePersonalTaskDueDateInfo(task);
+  const dueValue = resolvedDueDateInfo.hasPersonalDueDate
+    ? resolvedDueDateInfo.dueDate
+    : task && task.dueDate;
+  const dueDate = parseDate(dueValue);
   if (!dueDate) {
     return {
       label: 'Не указан',
@@ -7043,8 +7051,8 @@ function formatCompactDueDate(task, completed = false) {
     };
   }
 
-  const label = formatDate(task.dueDate);
-  if (completed) {
+  const label = formatDate(dueValue);
+  if (completed || !resolvedDueDateInfo.hasPersonalDueDate) {
     return {
       label,
       extra: '',
@@ -7151,15 +7159,47 @@ function formatPeopleCount(count, singular, few, many) {
 }
 
 function getUniqueAssignmentCount(task, type) {
+  const entries = collectTaskAssignments(task, type);
+  if (Array.isArray(entries) && entries.length) {
+    const groups = [];
+    entries.forEach((entry) => {
+      const profile = buildResponsibleProfile(entry);
+      const tokens = profile
+        ? collectResponsibleSearchTokens(profile.token, profile.searchTokens, profile.label, profile.sourceLabel)
+        : collectResponsibleSearchTokens(
+          entry && entry.id,
+          entry && entry.telegram,
+          entry && entry.chatId,
+          entry && entry.email,
+          entry && entry.number,
+          entry && entry.login,
+          entry && entry.responsible,
+          entry && entry.name,
+          entry && entry.fio,
+        );
+
+      if (!tokens.size) {
+        groups.push(new Set([`anonymous:${groups.length}`]));
+        return;
+      }
+
+      const existing = groups.find((group) => hasTokenIntersection(group, tokens));
+      if (existing) {
+        tokens.forEach((token) => existing.add(token));
+      } else {
+        groups.push(tokens);
+      }
+    });
+    return groups.length;
+  }
+
   const identifiers = type === 'subordinate'
     ? getTaskSubordinateIdentifiers(task)
     : getTaskResponsibleIdentifiers(task);
-  const values = Array.isArray(identifiers) ? identifiers.map(normalizeValue).filter(Boolean) : [];
-  if (values.length) {
-    return new Set(values).size;
-  }
-  const entries = collectTaskAssignments(task, type);
-  return Array.isArray(entries) ? entries.length : 0;
+  const values = Array.isArray(identifiers)
+    ? identifiers.map((value) => normalizeResponsibleCompact(value) || normalizeResponsibleKey(value)).filter(Boolean)
+    : [];
+  return values.length ? new Set(values).size : 0;
 }
 
 function buildPeopleDisclosureMeta(task, executorText, responseLabel) {
@@ -7417,8 +7457,8 @@ function populateCardFiles(card, files) {
     const downloadButton = document.createElement('button');
     downloadButton.type = 'button';
     downloadButton.className = 'appdosc-card__file-download';
-    downloadButton.setAttribute('aria-label', `Скачать ${displayName}`);
-    downloadButton.title = `Скачать ${displayName}`;
+    downloadButton.setAttribute('aria-label', getDownloadActionTitle(displayName));
+    downloadButton.title = getDownloadActionTitle(displayName);
     downloadButton.innerHTML = '<svg class="appdosc-card__file-download-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10"></path><path d="m7 10 5 5 5-5"></path><path d="M5 20h14"></path></svg>';
     downloadButton.addEventListener('click', (event) => {
       event.preventDefault();
@@ -7470,6 +7510,14 @@ async function handleCardFileDownload(file, button) {
   }, 2500);
 
   try {
+    if (shouldOpenExternalFirstForDownload()) {
+      const opened = openExternalDocument(downloadUrl);
+      if (opened) {
+        setStatus('info', 'Файл открыт для сохранения.');
+        return;
+      }
+    }
+
     const fetched = await downloadFileFromUrl(downloadUrl, fileName);
     if (fetched || triggerDownloadFromUrl(downloadUrl, fileName)) {
       setStatus('success', 'Файл отправлен на скачивание.');
@@ -7489,17 +7537,31 @@ async function handleCardFileDownload(file, button) {
   }
 }
 
-async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary) {
+async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary, options = {}) {
   const resolvedName = fileName || getAttachmentName(file) || 'document';
   const primaryUrl = normalizeValue(downloadUrl) || buildDownloadUrl(file) || resolveFileFetchUrl(file);
+  const directMode = Boolean(options && options.direct);
 
-  setStatus('info', 'Пересылка не открылась. Пробуем скачать файл...');
+  setStatus('info', directMode ? 'Готовим скачивание файла...' : 'Пересылка не открылась. Пробуем скачать файл...');
 
   if (primaryUrl) {
+    if (shouldOpenExternalFirstForDownload()) {
+      const opened = openExternalDocument(primaryUrl);
+      if (opened) {
+        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+          method: directMode ? 'direct_external' : 'telegram_forward_fallback_external_first',
+          downloadUrl: primaryUrl,
+          fileName: resolvedName,
+        }));
+        setStatus('info', 'Файл открыт для сохранения.');
+        return true;
+      }
+    }
+
     const fetched = await downloadFileFromUrl(primaryUrl, resolvedName);
     if (fetched) {
       sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-        method: 'telegram_forward_fallback_fetch',
+        method: directMode ? 'direct_fetch' : 'telegram_forward_fallback_fetch',
         downloadUrl: primaryUrl,
         fileName: resolvedName,
       }));
@@ -7509,7 +7571,7 @@ async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isS
 
     if (triggerDownloadFromUrl(primaryUrl, resolvedName)) {
       sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-        method: 'telegram_forward_fallback_link',
+        method: directMode ? 'direct_link' : 'telegram_forward_fallback_link',
         downloadUrl: primaryUrl,
         fileName: resolvedName,
       }));
@@ -7523,9 +7585,18 @@ async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isS
       ? await ensureTaskSummaryPreview(task, file)
       : await ensureTaskAttachmentPreview(task, file);
     if (preview && preview.blob) {
+      if (await shareFileViaNativeShare(preview.blob, preview.fileName || resolvedName)) {
+        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+          method: directMode ? 'direct_native_share' : 'telegram_forward_fallback_native_share',
+          previewUrl: preview.previewUrl || '',
+          fileName: preview.fileName || resolvedName,
+        }));
+        setStatus('success', 'Файл передан в системное меню сохранения.');
+        return true;
+      }
       downloadBlob(preview.blob, preview.fileName || resolvedName);
       sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-        method: 'telegram_forward_fallback_preview',
+        method: directMode ? 'direct_preview' : 'telegram_forward_fallback_preview',
         previewUrl: preview.previewUrl || '',
         fileName: preview.fileName || resolvedName,
       }));
@@ -7543,7 +7614,7 @@ async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isS
     const opened = openExternalDocument(primaryUrl);
     if (opened) {
       sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
-        method: 'telegram_forward_fallback_external',
+        method: directMode ? 'direct_external_fallback' : 'telegram_forward_fallback_external',
         downloadUrl: primaryUrl,
         fileName: resolvedName,
       }));
@@ -9616,7 +9687,7 @@ function applyStatusBadge(card, statusText, normalizedStatus, task) {
     statusTone = 'done';
   } else if (statusKey === 'cancelled') {
     statusTone = 'danger';
-  } else if (isOverdue(task)) {
+  } else if (isTaskOverdueByCompactRule(task)) {
     statusTone = 'warn';
   } else if (statusKey === 'distributed') {
     statusTone = 'distributed';
@@ -10526,7 +10597,8 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions, traceCon
             if (hasPartialRender) {
               docLoadStep('ios рендеринг: частичный, отображаем');
             } else {
-              return null;
+              updateViewerLoaderStep('Рендеринг продолжается…', 95);
+              docLoadStep('ios рендеринг: продолжается');
             }
           }
         }
@@ -10976,6 +11048,37 @@ function buildDownloadUrl(file) {
   return appendCacheBuster(toAbsoluteUrl(resolved));
 }
 
+function getDownloadPlatformType() {
+  if (runtimeEnvironment.isIos) {
+    return 'ios';
+  }
+  if (isAndroidPlatform()) {
+    return 'android';
+  }
+  if (isTelegramDesktopPlatform()) {
+    return 'telegram_desktop';
+  }
+  if (getWebPlatformFlag()) {
+    return 'web';
+  }
+  return 'browser';
+}
+
+function shouldOpenExternalFirstForDownload() {
+  const platform = getDownloadPlatformType();
+  return platform === 'ios' || platform === 'web';
+}
+
+function getDownloadActionTitle(fileName = '') {
+  const name = normalizeValue(fileName);
+  const suffix = name ? `: ${name}` : '';
+  const platform = getDownloadPlatformType();
+  if (platform === 'ios' || platform === 'web') {
+    return `Открыть файл для сохранения${suffix}`;
+  }
+  return `Скачать файл${suffix}`;
+}
+
 function updateViewerDownloadState(file) {
   if (!elements.viewerDownload) {
     return;
@@ -10983,6 +11086,8 @@ function updateViewerDownloadState(file) {
   const hasFile = Boolean(file && (file.isSummary || file.resolvedUrl || file.url || file.previewUrl));
   elements.viewerDownload.disabled = !hasFile;
   elements.viewerDownload.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
+  elements.viewerDownload.title = hasFile ? getDownloadActionTitle(getAttachmentName(file)) : 'Файл недоступен';
+  elements.viewerDownload.setAttribute('aria-label', hasFile ? getDownloadActionTitle(getAttachmentName(file)) : 'Файл недоступен');
   updateViewerBriefState(file);
 }
 
@@ -11453,6 +11558,11 @@ async function handleViewerDownloadClick() {
   }, 2500);
 
   try {
+    const directDownloaded = await fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary, { direct: true });
+    if (directDownloaded) {
+      return;
+    }
+
     setStatus('info', 'Готовим пересылку в Telegram...');
     const shareUrl = await resolveShareUrlForTelegram(task, file, fileName, downloadUrl);
     if (!shareUrl) {
@@ -11670,7 +11780,9 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
 
   if (isPdf && isWebPlatform) {
     const webFetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
-    const webPreviouslyTimedOut = webFetchCacheKey && pdfFetchTimeoutUrls.has(webFetchCacheKey);
+    const webPreviouslyTimedOut = TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK > 0
+      && webFetchCacheKey
+      && pdfFetchTimeoutUrls.has(webFetchCacheKey);
     if (webPreviouslyTimedOut) {
       logViewFlow('inline:web_skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl, platform: 'telegram_web' });
       startTaskViewTracePhase(task, traceContext, 'fallback', {
@@ -11786,7 +11898,9 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
   if (isPdf) {
     if (runtimeEnvironment.isIos) {
       const fetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
-      const previouslyTimedOut = fetchCacheKey && pdfFetchTimeoutUrls.has(fetchCacheKey);
+      const previouslyTimedOut = TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK > 0
+        && fetchCacheKey
+        && pdfFetchTimeoutUrls.has(fetchCacheKey);
       if (previouslyTimedOut) {
         logViewFlow('inline:ios_skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl });
         logViewerDebugDeep('inline:ios_skip_fetch_timeout_cached', {
@@ -11918,7 +12032,9 @@ async function openDocumentLink(rawUrl, fileName, task, preferredPreviewUrl, vie
       return { mode: 'external_prompt' };
     }
     const otherFetchCacheKey = normalizePdfBinaryCacheKey(absolutePreviewUrl);
-    const otherPreviouslyTimedOut = otherFetchCacheKey && pdfFetchTimeoutUrls.has(otherFetchCacheKey);
+    const otherPreviouslyTimedOut = TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK > 0
+      && otherFetchCacheKey
+      && pdfFetchTimeoutUrls.has(otherFetchCacheKey);
     if (otherPreviouslyTimedOut) {
       logViewFlow('inline:skip_fetch_timeout_cached', { previewUrl: absolutePreviewUrl });
       startTaskViewTracePhase(task, traceContext, 'fallback', {
@@ -18462,6 +18578,27 @@ function isDateValueOverdue(value) {
   return date.getTime() < today.getTime();
 }
 
+function pickPersonalDueDateForDisplay(dueDates) {
+  const normalizedDueDates = Array.isArray(dueDates)
+    ? Array.from(new Set(dueDates.map(normalizeAssignmentDueDate).filter(Boolean)))
+    : [];
+  if (!normalizedDueDates.length) {
+    return '';
+  }
+
+  const overdueDueDates = normalizedDueDates.filter((dueDate) => isDateValueOverdue(dueDate));
+  const source = overdueDueDates.length ? overdueDueDates : normalizedDueDates;
+  return source
+    .slice()
+    .sort((left, right) => {
+      const leftDate = parseDate(left);
+      const rightDate = parseDate(right);
+      const leftTime = leftDate ? leftDate.getTime() : Number.MAX_SAFE_INTEGER;
+      const rightTime = rightDate ? rightDate.getTime() : Number.MAX_SAFE_INTEGER;
+      return leftTime - rightTime;
+    })[0] || '';
+}
+
 function collectCurrentUserAssignmentDueDates(task) {
   if (!task || typeof task !== 'object') {
     return [];
@@ -18492,13 +18629,162 @@ function collectCurrentUserAssignmentDueDates(task) {
   return Array.from(new Set(dueDates));
 }
 
-function isCurrentUserAssignmentOverdue(task) {
-  const dueDates = collectCurrentUserAssignmentDueDates(task);
-  if (!dueDates.length) {
+function getSelectedAssignmentDueContext() {
+  const directorState = ensureDirectorState();
+  const normalizedFilters = normalizeTaskFilters(state.taskFilter);
+  const subordinateFilter = normalizedFilters.find((filter) => isSubordinateFilter(filter)) || '';
+  if (subordinateFilter) {
+    return {
+      role: 'subordinate',
+      token: normalizeResponsibleKey(getSubordinateFilterToken(subordinateFilter)),
+    };
+  }
+
+  const responsibleFilter = normalizedFilters.find((filter) => isResponsibleFilter(filter)) || '';
+  if (responsibleFilter) {
+    return {
+      role: 'responsible',
+      token: normalizeResponsibleKey(getResponsibleFilterToken(responsibleFilter)),
+    };
+  }
+
+  if (!directorState || directorState.isActive !== true) {
     return null;
   }
 
-  return dueDates.some((dueDate) => isDateValueOverdue(dueDate));
+  const subordinateToken = normalizeResponsibleKey(directorState.selectedSubordinateToken || '');
+  if (subordinateToken) {
+    return {
+      role: 'subordinate',
+      token: subordinateToken,
+    };
+  }
+
+  const responsibleToken = normalizeResponsibleKey(directorState.selectedResponsibleToken || '');
+  if (responsibleToken) {
+    return {
+      role: 'responsible',
+      token: responsibleToken,
+    };
+  }
+
+  return null;
+}
+
+function buildAssignmentDueFilterTokens(role, token) {
+  const normalizedToken = normalizeResponsibleKey(token);
+  const tokens = collectResponsibleSearchTokens(normalizedToken);
+  if (normalizedToken) {
+    tokens.add(normalizedToken);
+  }
+
+  const directorState = ensureDirectorState();
+  const directory = role === 'subordinate'
+    ? directorState.subordinateDirectory
+    : directorState.responsibleDirectory;
+  const directoryEntry = directory instanceof Map ? directory.get(normalizedToken) : null;
+  if (directoryEntry && typeof directoryEntry === 'object') {
+    collectResponsibleSearchTokens(
+      directoryEntry.token,
+      directoryEntry.searchTokens,
+      directoryEntry.label,
+      directoryEntry.name,
+      directoryEntry.sourceName,
+    ).forEach((value) => tokens.add(value));
+  }
+
+  return tokens;
+}
+
+function findAssignmentEntryByDueContext(task, context) {
+  if (!task || typeof task !== 'object' || !context || !context.token) {
+    return null;
+  }
+
+  const role = context.role === 'subordinate' ? 'subordinate' : 'responsible';
+  const filterTokens = buildAssignmentDueFilterTokens(role, context.token);
+  if (!filterTokens.size) {
+    return null;
+  }
+
+  const entries = collectTaskAssignments(task, role);
+  let matchedEntry = null;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const profile = buildResponsibleProfile(entry);
+    const entryTokens = profile
+      ? collectResponsibleSearchTokens(
+        profile.token,
+        profile.searchTokens,
+        profile.label,
+        profile.sourceLabel,
+      )
+      : collectResponsibleSearchTokens(
+        entry && entry.id,
+        entry && entry.telegram,
+        entry && entry.chatId,
+        entry && entry.email,
+        entry && entry.number,
+        entry && entry.login,
+        entry && entry.responsible,
+        entry && entry.name,
+        entry && entry.fio,
+      );
+
+    if (hasTokenIntersection(filterTokens, entryTokens)) {
+      if (normalizeAssignmentDueDate(entry && entry.assignmentDueDate)) {
+        return entry;
+      }
+      matchedEntry = matchedEntry || entry;
+    }
+  }
+
+  return matchedEntry;
+}
+
+function buildPersonalTaskDueDateInfo(dueDate, source = 'none', role = '') {
+  const normalizedDueDate = normalizeAssignmentDueDate(dueDate);
+  return {
+    dueDate: normalizedDueDate,
+    hasPersonalDueDate: Boolean(normalizedDueDate),
+    overdue: normalizedDueDate ? isDateValueOverdue(normalizedDueDate) : false,
+    source,
+    role,
+  };
+}
+
+function resolvePersonalTaskDueDateInfo(task) {
+  if (!task || typeof task !== 'object') {
+    return buildPersonalTaskDueDateInfo('');
+  }
+
+  const statusKey = getTaskStatusKeyForUser(task);
+  const isInactive = statusKey === 'done' || statusKey === 'cancelled' || isTaskCompleted(task);
+  const selectedContext = getSelectedAssignmentDueContext();
+
+  if (selectedContext && selectedContext.token) {
+    const entry = findAssignmentEntryByDueContext(task, selectedContext);
+    const dueDate = entry && typeof entry === 'object'
+      ? normalizeAssignmentDueDate(entry.assignmentDueDate)
+      : '';
+    const info = buildPersonalTaskDueDateInfo(dueDate, 'selected', selectedContext.role);
+    if (isInactive) {
+      info.overdue = false;
+    }
+    return info;
+  }
+
+  const dueDate = pickPersonalDueDateForDisplay(collectCurrentUserAssignmentDueDates(task));
+  const info = buildPersonalTaskDueDateInfo(dueDate, 'current-user', '');
+  if (isInactive) {
+    info.overdue = false;
+  }
+  return info;
+}
+
+function isCurrentUserAssignmentOverdue(task) {
+  const info = resolvePersonalTaskDueDateInfo(task);
+  return info.hasPersonalDueDate ? info.overdue === true : null;
 }
 
 function isDirectorAssignmentOverdue(task) {

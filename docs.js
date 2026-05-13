@@ -52,7 +52,7 @@
       organizations: [],
       user: null,
       adminScope: '',
-      permissions: { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false }
+      permissions: { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false, canManageSubordinates: false }
     };
   }
 
@@ -129,6 +129,9 @@
       }
       if (!Object.prototype.hasOwnProperty.call(normalized.permissions, 'canDeleteDocuments')) {
         normalized.permissions.canDeleteDocuments = false;
+      }
+      if (!Object.prototype.hasOwnProperty.call(normalized.permissions, 'canManageSubordinates')) {
+        normalized.permissions.canManageSubordinates = false;
       }
     }
 
@@ -1049,6 +1052,13 @@
   var COLUMN_ORDER_STORAGE_PREFIX = 'documents:column-order:';
   var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'На доработку', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
+  var REVIEW_FLOW_RESPONSIBLE_SUBORDINATE = 'responsible_subordinate_v1';
+  var SUBORDINATE_WORKFLOW_STATUS_LABELS = {
+    pending: 'Ожидаем',
+    submitted: 'На проверке',
+    accepted: 'Выполнено',
+    revision: 'В работе'
+  };
   var INSTRUCTION_OPTIONS = ['В работу', 'Для информации', 'Для участия', 'Пояснить', 'Предоставить объяснение', 'Предоставить информацию'];
   var TABLE_COLUMN_MAP = (function() {
     var map = {};
@@ -1594,6 +1604,28 @@
       node.textContent = text;
     }
     return node;
+  }
+
+  function ensureSubordinateReviewStyle() {
+    if (document.getElementById('documents-subordinate-review-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-subordinate-review-style';
+    style.textContent = '' +
+      '.documents-subordinate-review{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(148,163,184,0.22);}' +
+      '.documents-subordinate-review__line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}' +
+      '.documents-subordinate-review__badge{display:inline-flex;align-items:center;min-height:24px;padding:3px 8px;border-radius:999px;background:rgba(148,163,184,0.14);color:#334155;font-size:12px;font-weight:700;}' +
+      '.documents-subordinate-review__badge--submitted{background:rgba(59,130,246,0.12);color:#1d4ed8;}' +
+      '.documents-subordinate-review__badge--accepted{background:rgba(34,197,94,0.14);color:#15803d;}' +
+      '.documents-subordinate-review__badge--revision{background:rgba(245,158,11,0.16);color:#b45309;}' +
+      '.documents-subordinate-review__hint{font-size:12px;line-height:1.4;color:#64748b;}' +
+      '.documents-subordinate-review__comment{width:100%;min-height:64px;resize:vertical;border:1px solid rgba(148,163,184,0.38);border-radius:10px;padding:8px 10px;font-size:12px;line-height:1.45;color:#0f172a;background:rgba(255,255,255,0.96);box-sizing:border-box;}' +
+      '.documents-subordinate-review__comment:focus{outline:none;border-color:rgba(37,99,235,0.55);box-shadow:0 0 0 3px rgba(37,99,235,0.12);}' +
+      '.documents-subordinate-review__actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}' +
+      '.documents-subordinate-review__actions .documents-action{margin-top:0;}' +
+      '.documents-subordinate-review__meta{font-size:12px;line-height:1.4;color:#64748b;white-space:pre-wrap;}';
+    document.head.appendChild(style);
   }
 
   function ensureClockStyle() {
@@ -4407,6 +4439,39 @@
     return null;
   }
 
+  function copyAssigneeWorkflowFields(target, source, overwrite) {
+    if (!target || !source || typeof source !== 'object') {
+      return;
+    }
+    [
+      'submissionStatus',
+      'submittedAt',
+      'submittedBy',
+      'submittedByTelegram',
+      'submittedById',
+      'submittedByLogin',
+      'reviewStatus',
+      'reviewComment',
+      'reviewedAt',
+      'reviewedBy',
+      'reviewedByTelegram',
+      'reviewedById',
+      'reviewedByLogin'
+    ].forEach(function(field) {
+      if (!Object.prototype.hasOwnProperty.call(source, field)) {
+        return;
+      }
+      if (!overwrite && target[field]) {
+        return;
+      }
+      var value = source[field];
+      if (value === null || value === undefined || value === '') {
+        return;
+      }
+      target[field] = String(value);
+    });
+  }
+
   function buildAssigneeSnapshot(entry, fallbackLabel, fallbackId) {
     var snapshot = {};
     var idFromEntry = entry ? getResponsibleId(entry) : '';
@@ -4460,6 +4525,7 @@
       if (entry.assignedBy && !snapshot.assignedBy) {
         snapshot.assignedBy = entry.assignedBy;
       }
+      copyAssigneeWorkflowFields(snapshot, entry, false);
     }
     if (!snapshot.name && fallbackLabel) {
       snapshot.name = fallbackLabel;
@@ -7606,6 +7672,7 @@
       if (info.assignmentInstruction && !snapshot.assignmentInstruction) {
         snapshot.assignmentInstruction = String(info.assignmentInstruction);
       }
+      copyAssigneeWorkflowFields(snapshot, info, true);
       if (info.assignedAt && !snapshot.assignedAt) {
         snapshot.assignedAt = info.assignedAt;
       }
@@ -7711,6 +7778,7 @@
         if (!existing.assignmentInstruction && snapshot.assignmentInstruction) {
           existing.assignmentInstruction = snapshot.assignmentInstruction;
         }
+        copyAssigneeWorkflowFields(existing, snapshot, true);
         if (!existing.login && snapshot.login) {
           existing.login = snapshot.login;
         }
@@ -10236,6 +10304,9 @@
     if (isCurrentUserAdmin()) {
       return true;
     }
+    if (state.permissions && state.permissions.canManageSubordinates === true) {
+      return true;
+    }
     if (state.access.role !== 'user') {
       return false;
     }
@@ -10264,6 +10335,213 @@
     return Boolean(allowed[userRole]);
   }
 
+  function documentHasResponsibleSubordinateReviewFlow(doc) {
+    if (!doc || typeof doc !== 'object') {
+      return false;
+    }
+    var flow = doc.reviewFlow || doc.review_flow || '';
+    return String(flow).trim() === REVIEW_FLOW_RESPONSIBLE_SUBORDINATE;
+  }
+
+  function normalizeSubordinateSubmissionStatus(value) {
+    var normalized = normalizeStatusValue(value);
+    if (!normalized) {
+      return '';
+    }
+    var map = {
+      submitted: 'submitted',
+      submit: 'submitted',
+      review: 'submitted',
+      'на проверке': 'submitted',
+      'на проверку': 'submitted',
+      'отправлено': 'submitted',
+      'отправлен': 'submitted'
+    };
+    return map[normalized] || '';
+  }
+
+  function normalizeSubordinateReviewStatus(value) {
+    var normalized = normalizeStatusValue(value);
+    if (!normalized) {
+      return '';
+    }
+    var map = {
+      accepted: 'accepted',
+      accept: 'accepted',
+      done: 'accepted',
+      completed: 'accepted',
+      'выполнено': 'accepted',
+      'принять': 'accepted',
+      'принято': 'accepted',
+      'принят': 'accepted',
+      revision: 'revision',
+      rework: 'revision',
+      revise: 'revision',
+      'на доработку': 'revision',
+      'на доработке': 'revision',
+      'доработка': 'revision',
+      'доработать': 'revision'
+    };
+    return map[normalized] || '';
+  }
+
+  function getSubordinateWorkflowStatus(entry) {
+    var reviewStatus = normalizeSubordinateReviewStatus(entry && entry.reviewStatus);
+    if (reviewStatus === 'accepted') {
+      return 'accepted';
+    }
+    if (reviewStatus === 'revision') {
+      return 'revision';
+    }
+    if (normalizeSubordinateSubmissionStatus(entry && entry.submissionStatus) === 'submitted') {
+      return 'submitted';
+    }
+    return 'pending';
+  }
+
+  function getSubordinateWorkflowLabel(entry) {
+    var status = getSubordinateWorkflowStatus(entry);
+    return SUBORDINATE_WORKFLOW_STATUS_LABELS[status] || SUBORDINATE_WORKFLOW_STATUS_LABELS.pending;
+  }
+
+  function getSubordinateMutationId(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return '';
+    }
+    var candidates = [entry.id, entry.telegram, entry.telegramId, entry.chatId, entry.login, entry.email, entry.number, entry.responsible, entry.name];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = candidates[i];
+      if (candidate === null || candidate === undefined) {
+        continue;
+      }
+      var value = String(candidate).trim();
+      if (value) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  function isCurrentUserResponsibleForDocument(doc) {
+    var assignees = resolveAssigneeList(doc);
+    for (var i = 0; i < assignees.length; i += 1) {
+      var entry = assignees[i];
+      if (!entry || typeof entry !== 'object' || isSubordinateSnapshot(entry)) {
+        continue;
+      }
+      if (matchesCurrentUserAssignee(entry)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function canReviewSubordinateEntry(doc, entry) {
+    if (!documentHasResponsibleSubordinateReviewFlow(doc)) {
+      return false;
+    }
+    if (matchesCurrentUserAssignee(entry)) {
+      return false;
+    }
+    return isCurrentUserAdmin() || canManageInstructions() || isCurrentUserResponsibleForDocument(doc);
+  }
+
+  function getLatestAssigneeStatus(doc, entry) {
+    var history = collectAssigneeStatusHistory(doc, entry);
+    if (Array.isArray(history) && history.length) {
+      var latest = history[history.length - 1];
+      if (latest && latest.status) {
+        return String(latest.status).trim();
+      }
+    }
+    return entry && entry.status ? String(entry.status).trim() : '';
+  }
+
+  function subordinateLatestStatusIsInWork(doc, entry) {
+    var normalized = normalizeStatusValue(getLatestAssigneeStatus(doc, entry));
+    return normalized.indexOf('в работе') !== -1 || normalized.indexOf('принято в работу') !== -1;
+  }
+
+  function canSubmitSubordinateEntry(doc, entry) {
+    if (!documentHasResponsibleSubordinateReviewFlow(doc)) {
+      return false;
+    }
+    if (!matchesCurrentUserAssignee(entry)) {
+      return false;
+    }
+    if (isCurrentUserAdmin() || canManageInstructions() || isCurrentUserResponsibleForDocument(doc)) {
+      return false;
+    }
+    var workflowStatus = getSubordinateWorkflowStatus(entry);
+    return workflowStatus !== 'accepted' && workflowStatus !== 'submitted';
+  }
+
+  function appendSubordinateReviewControls(container, doc, entry) {
+    if (!container || !documentHasResponsibleSubordinateReviewFlow(doc) || !entry) {
+      return;
+    }
+    ensureSubordinateReviewStyle();
+
+    var workflowStatus = getSubordinateWorkflowStatus(entry);
+    var review = createElement('div', 'documents-subordinate-review');
+    var line = createElement('div', 'documents-subordinate-review__line');
+    var badge = createElement('span', 'documents-subordinate-review__badge documents-subordinate-review__badge--' + workflowStatus, getSubordinateWorkflowLabel(entry));
+    line.appendChild(badge);
+    review.appendChild(line);
+
+    var reviewedAt = entry.reviewedAt ? formatDateTime(entry.reviewedAt) : '';
+    var reviewedBy = entry.reviewedBy || entry.reviewedByName || entry.reviewedByLogin || '';
+    if (reviewedAt || reviewedBy || entry.reviewComment) {
+      var metaText = [];
+      if (reviewedBy || reviewedAt) {
+        metaText.push('Решение: ' + [reviewedBy, reviewedAt].filter(Boolean).join(' · '));
+      }
+      if (entry.reviewComment) {
+        metaText.push('Комментарий: ' + entry.reviewComment);
+      }
+      review.appendChild(createElement('div', 'documents-subordinate-review__meta', metaText.join('\n')));
+    }
+
+    if (canSubmitSubordinateEntry(doc, entry)) {
+      var canSubmitNow = subordinateLatestStatusIsInWork(doc, entry);
+      var submitButton = createElement('button', 'documents-action documents-action--assign', workflowStatus === 'revision' ? 'Отправить повторно' : 'Отправить на проверку');
+      submitButton.type = 'button';
+      submitButton.disabled = !canSubmitNow;
+      submitButton.addEventListener('click', function() {
+        submitSubordinateForReview(doc, entry, submitButton);
+      });
+      line.appendChild(submitButton);
+      if (!canSubmitNow) {
+        review.appendChild(createElement('div', 'documents-subordinate-review__hint', 'Сначала установите статус «В работе».'));
+      }
+    }
+
+    if (canReviewSubordinateEntry(doc, entry) && workflowStatus === 'submitted') {
+      var textarea = document.createElement('textarea');
+      textarea.className = 'documents-subordinate-review__comment';
+      textarea.placeholder = 'Комментарий для доработки';
+      textarea.setAttribute('aria-label', 'Комментарий для доработки');
+      review.appendChild(textarea);
+
+      var actions = createElement('div', 'documents-subordinate-review__actions');
+      var acceptButton = createElement('button', 'documents-action documents-action--assign', 'Принять');
+      var revisionButton = createElement('button', 'documents-action documents-action--assign', 'На доработку');
+      acceptButton.type = 'button';
+      revisionButton.type = 'button';
+      acceptButton.addEventListener('click', function() {
+        reviewSubordinateCompletion(doc, entry, 'accepted', textarea, acceptButton, revisionButton);
+      });
+      revisionButton.addEventListener('click', function() {
+        reviewSubordinateCompletion(doc, entry, 'revision', textarea, revisionButton, acceptButton);
+      });
+      actions.appendChild(acceptButton);
+      actions.appendChild(revisionButton);
+      review.appendChild(actions);
+    }
+
+    container.appendChild(review);
+  }
+
   function createSubordinateCell(doc, viewState) {
     var container = createElement('div', 'documents-assignee');
     var info = createElement('div', 'documents-assignee__info');
@@ -10285,7 +10563,9 @@
             resendAssigneeNotification(doc, entryInfo, context.entryNode);
           };
         }
-        info.appendChild(createAssigneeEntryNode(entry, options));
+        var entryNode = createAssigneeEntryNode(entry, options);
+        appendSubordinateReviewControls(entryNode, doc, entry);
+        info.appendChild(entryNode);
       });
     } else {
       info.appendChild(createElement('div', 'documents-assignee__empty', 'Не назначены'));
@@ -12785,7 +13065,15 @@
     if (meta) {
       meta.textContent = 'Сохраняем...';
     }
-    sendUpdate(doc.id, { status: nextStatus, statusUpdatedAt: buildNextStatusTimestamp(doc) }, 'Статус документа обновлён.')
+    var request = documentHasResponsibleSubordinateReviewFlow(doc)
+      ? sendTaskMutation({
+        documentId: doc.id,
+        updateType: 'status',
+        status: nextStatus,
+        statusUpdatedAt: buildNextStatusTimestamp(doc)
+      }, 'Статус документа обновлён.')
+      : sendUpdate(doc.id, { status: nextStatus, statusUpdatedAt: buildNextStatusTimestamp(doc) }, 'Статус документа обновлён.');
+    request
       .catch(function(error) {
         showMessage('error', 'Не удалось обновить статус: ' + error.message);
         if (select) {
@@ -13832,7 +14120,7 @@
       state.storageDisplayPath = data.storageDisplayPath;
     }
     if (!state.permissions || typeof state.permissions !== 'object') {
-      state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false };
+      state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false, canManageSubordinates: false };
     }
     if (data && data.permissions && typeof data.permissions === 'object') {
       if (Object.prototype.hasOwnProperty.call(data.permissions, 'canManageInstructions')
@@ -13847,6 +14135,10 @@
         && typeof data.permissions.canDeleteDocuments === 'boolean') {
         state.permissions.canDeleteDocuments = data.permissions.canDeleteDocuments;
       }
+      if (Object.prototype.hasOwnProperty.call(data.permissions, 'canManageSubordinates')
+        && typeof data.permissions.canManageSubordinates === 'boolean') {
+        state.permissions.canManageSubordinates = data.permissions.canManageSubordinates;
+      }
     }
     if (data && typeof data.canManageInstructions === 'boolean') {
       state.permissions.canManageInstructions = data.canManageInstructions;
@@ -13856,6 +14148,9 @@
     }
     if (data && typeof data.canDeleteDocuments === 'boolean') {
       state.permissions.canDeleteDocuments = data.canDeleteDocuments;
+    }
+    if (data && typeof data.canManageSubordinates === 'boolean') {
+      state.permissions.canManageSubordinates = data.canManageSubordinates;
     }
     if (data && data.userId !== undefined && data.userId !== null) {
       var resolvedId = String(data.userId).trim();
@@ -14024,6 +14319,130 @@
       .then(handleResponse)
       .then(function(data) {
         return updateStateFromPayload(data);
+      });
+  }
+
+  function applyTaskMutationPayload(data) {
+    var task = data && data.task && typeof data.task === 'object' ? data.task : null;
+    if (!task || !task.id || !Array.isArray(state.documents)) {
+      return;
+    }
+    var replaced = false;
+    for (var i = 0; i < state.documents.length; i += 1) {
+      var current = state.documents[i];
+      if (current && current.id && String(current.id) === String(task.id)) {
+        state.documents[i] = task;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      state.documents.push(task);
+    }
+    refreshUserAssignmentKeys();
+    recalculateUnviewedCounters();
+    updateClockUserDisplay();
+    updateTable();
+  }
+
+  function sendTaskMutation(payload, successMessage) {
+    if (!state.organization) {
+      return Promise.reject(new Error('Не выбрана организация.'));
+    }
+    var body = payload && typeof payload === 'object' ? payload : {};
+    body.action = 'mini_app_update_task';
+    body.organization = state.organization;
+    mergeTelegramUserId(body);
+    return fetch(buildApiUrl('mini_app_update_task', { organization: state.organization }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(body)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        applyTaskMutationPayload(data);
+        if (successMessage) {
+          showMessage('success', successMessage);
+        } else if (data && data.message) {
+          showMessage('success', data.message);
+        }
+        return data;
+      });
+  }
+
+  function submitSubordinateForReview(doc, entry, button) {
+    if (!doc || !doc.id) {
+      return;
+    }
+    var subordinateId = getSubordinateMutationId(entry);
+    if (!subordinateId) {
+      showMessage('error', 'Не удалось определить подчинённого для отправки.');
+      return;
+    }
+    if (button) {
+      button.disabled = true;
+      button.classList.add('documents-action--pending');
+    }
+    sendTaskMutation({
+      documentId: doc.id,
+      updateType: 'subordinate_submit',
+      subordinateId: subordinateId
+    })
+      .catch(function(error) {
+        showMessage('error', error && error.message ? error.message : 'Не удалось отправить выполнение на проверку.');
+      })
+      .finally(function() {
+        if (button) {
+          button.disabled = false;
+          button.classList.remove('documents-action--pending');
+        }
+      });
+  }
+
+  function reviewSubordinateCompletion(doc, entry, reviewStatus, textarea, primaryButton, secondaryButton) {
+    if (!doc || !doc.id) {
+      return;
+    }
+    var subordinateId = getSubordinateMutationId(entry);
+    if (!subordinateId) {
+      showMessage('error', 'Не удалось определить подчинённого для приёмки.');
+      return;
+    }
+    var normalizedReviewStatus = normalizeSubordinateReviewStatus(reviewStatus);
+    var reviewComment = textarea ? String(textarea.value || '').trim() : '';
+    if (normalizedReviewStatus === 'revision' && !reviewComment) {
+      showMessage('error', 'Комментарий обязателен для отправки на доработку.');
+      if (textarea && typeof textarea.focus === 'function') {
+        textarea.focus();
+      }
+      return;
+    }
+    if (primaryButton) {
+      primaryButton.disabled = true;
+      primaryButton.classList.add('documents-action--pending');
+    }
+    if (secondaryButton) {
+      secondaryButton.disabled = true;
+    }
+    sendTaskMutation({
+      documentId: doc.id,
+      updateType: 'subordinate_review',
+      subordinateId: subordinateId,
+      reviewStatus: normalizedReviewStatus,
+      reviewComment: reviewComment
+    })
+      .catch(function(error) {
+        showMessage('error', error && error.message ? error.message : 'Не удалось сохранить решение по выполнению.');
+      })
+      .finally(function() {
+        if (primaryButton) {
+          primaryButton.disabled = false;
+          primaryButton.classList.remove('documents-action--pending');
+        }
+        if (secondaryButton) {
+          secondaryButton.disabled = false;
+        }
       });
   }
 

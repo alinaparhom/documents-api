@@ -14718,6 +14718,9 @@ switch ($action) {
     case 'mini_app_update_task':
         $requestContext = docs_build_request_user_context();
         docs_log_missing_telegram_user_id('mini_app_update_task', $requestContext);
+        $sessionAuth = docs_get_session_auth();
+        $sessionRole = is_array($sessionAuth) ? strtolower((string) ($sessionAuth['role'] ?? '')) : '';
+        $sessionAuthArray = is_array($sessionAuth) ? $sessionAuth : null;
 
         if ($method !== 'POST') {
             respond_error('Некорректный метод запроса.', 405);
@@ -14736,6 +14739,16 @@ switch ($action) {
         $organizationCandidate = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
         if ($organizationCandidate === '') {
             respond_error('Не указана организация.');
+        }
+        if ($sessionRole === 'admin' || $sessionRole === 'user') {
+            $accessContext = docs_resolve_access_context($organizationCandidate);
+            if ($sessionRole === 'admin') {
+                $sessionAuth = docs_require_admin_session($accessContext);
+                $sessionAuthArray = is_array($sessionAuth) ? $sessionAuth : null;
+            }
+            if (!empty($accessContext['active']) && is_string($accessContext['active'])) {
+                $organizationCandidate = $accessContext['active'];
+            }
         }
 
         $documentId = sanitize_text_field((string) ($payload['documentId'] ?? ''), 200);
@@ -14878,16 +14891,28 @@ switch ($action) {
         $reviewedSubordinate = null;
         $submittedSubordinate = null;
 
-        $isDirector = docs_user_is_block2_member($block2, $requestContext);
+        $isAdminSession = $sessionRole === 'admin';
+        $isDirector = $isAdminSession || docs_user_is_block2_member($block2, $requestContext);
         $isTaskResponsible = docs_request_matches_record_responsible_only($records[$recordIndex], $requestContext);
         $isTaskSubordinate = docs_request_matches_record_subordinate($records[$recordIndex], $requestContext);
         $actsAsTaskSubordinate = !$isTaskResponsible && $isTaskSubordinate;
         $isTaskAssignee = $isTaskResponsible || $isTaskSubordinate;
         $canManageAssignments = $isDirector || $isTaskResponsible;
         $canManageSubordinates = $isDirector || $isTaskResponsible;
-        $assignmentAuthorRole = docs_resolve_assignment_author_role_from_context($isDirector, $isTaskResponsible, $actsAsTaskSubordinate);
-        $assignmentAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
-        $assignmentAuthorMeta = docs_extract_assignment_author_meta($requestContext['user'] ?? null);
+        $assignmentAuthorRole = $sessionAuthArray !== null
+            ? docs_resolve_assignment_author_role_from_session($sessionAuthArray)
+            : docs_resolve_assignment_author_role_from_context($isDirector, $isTaskResponsible, $actsAsTaskSubordinate);
+        if ($assignmentAuthorRole === '') {
+            $assignmentAuthorRole = docs_resolve_assignment_author_role_from_context($isDirector, $isTaskResponsible, $actsAsTaskSubordinate);
+        }
+        $assignmentAuthor = docs_build_assignment_author_label($sessionAuthArray);
+        if ($assignmentAuthor === '') {
+            $assignmentAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
+        }
+        $assignmentAuthorMeta = docs_extract_assignment_author_meta($sessionAuthArray);
+        if (empty($assignmentAuthorMeta)) {
+            $assignmentAuthorMeta = docs_extract_assignment_author_meta($requestContext['user'] ?? null);
+        }
         $kruglikTraceEnabled = ((string) ($records[$recordIndex]['id'] ?? '') === 'doc_25c118e109b59dd4')
             || ((string) ($records[$recordIndex]['registryNumber'] ?? '') === '907');
 
@@ -16249,7 +16274,7 @@ switch ($action) {
                 ]);
             }
 
-            $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
+            $statusAuthor = $assignmentAuthor;
             $records[$recordIndex]['directorStatus'] = 'done';
             $records[$recordIndex]['directorStatusUpdatedAt'] = date('c');
             $records[$recordIndex]['directorStatusAuthor'] = $statusAuthor;
@@ -16268,6 +16293,7 @@ switch ($action) {
             $rawStatus = isset($payload['status']) ? (string) $payload['status'] : '';
             $nextStatus = sanitize_status($rawStatus);
             $isCompletedStatus = mb_stripos($nextStatus, 'выполн') !== false;
+            $shouldCompleteReviewFlowTask = false;
             if ($isCompletedStatus && docs_review_flow_enabled($records[$recordIndex]) && !$isDirector) {
                 $reviewSummary = docs_get_subordinate_review_summary($records[$recordIndex]);
                 if (!$isTaskResponsible) {
@@ -16281,16 +16307,20 @@ switch ($action) {
                         'totalSubordinates' => $reviewSummary['total'],
                     ]);
                 }
+                $shouldCompleteReviewFlowTask = true;
             }
 
-            $statusAuthor = docs_build_assignment_author_label($requestContext['user'] ?? null);
+            $statusAuthor = $assignmentAuthor;
             $statusAssigneeKey = docs_match_status_change_assignee_key(
                 $records[$recordIndex],
                 $requestContext,
                 $sessionAuthArray,
                 $statusAuthor
             );
-            $shouldUpdateSharedStatus = $isDirector || $statusAssigneeKey === null || $statusAssigneeKey === '';
+            $shouldUpdateSharedStatus = $isDirector
+                || $shouldCompleteReviewFlowTask
+                || $statusAssigneeKey === null
+                || $statusAssigneeKey === '';
             if ($shouldUpdateSharedStatus) {
                 $records[$recordIndex]['status'] = $nextStatus;
                 $records[$recordIndex]['statusUpdatedAt'] = $nextStatus === '' ? null : date('c');
