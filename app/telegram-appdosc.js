@@ -7523,6 +7523,14 @@ async function handleCardFileDownload(file, button) {
   }, 2500);
 
   try {
+    if (runtimeEnvironment.isIos) {
+      const shared = await shareDownloadUrlViaNativeShare(downloadUrl, fileName);
+      if (shared) {
+        setStatus('success', 'Открылось меню iOS. Выберите «Сохранить в Файлы».');
+        return;
+      }
+    }
+
     if (shouldOpenExternalFirstForDownload()) {
       const opened = openExternalDocument(downloadUrl);
       if (opened) {
@@ -7558,6 +7566,19 @@ async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isS
   setStatus('info', directMode ? 'Готовим скачивание файла...' : 'Пересылка не открылась. Пробуем скачать файл...');
 
   if (primaryUrl) {
+    if (runtimeEnvironment.isIos) {
+      const shared = await shareDownloadUrlViaNativeShare(primaryUrl, resolvedName);
+      if (shared) {
+        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+          method: directMode ? 'direct_ios_native_share' : 'telegram_forward_fallback_ios_native_share',
+          downloadUrl: primaryUrl,
+          fileName: resolvedName,
+        }));
+        setStatus('success', 'Открылось меню iOS. Выберите «Сохранить в Файлы».');
+        return true;
+      }
+    }
+
     if (shouldOpenExternalFirstForDownload()) {
       const opened = openExternalDocument(primaryUrl);
       if (opened) {
@@ -9172,6 +9193,19 @@ async function shareFileViaNativeShare(blob, fileName) {
     }
     return false;
   }
+}
+
+async function shareDownloadUrlViaNativeShare(url, fileName) {
+  if (!url || !fileName || !runtimeEnvironment.isIos) {
+    return false;
+  }
+
+  const blob = await fetchFileAsBlob(url);
+  if (!blob) {
+    return false;
+  }
+
+  return shareFileViaNativeShare(blob, fileName);
 }
 
 
@@ -11131,8 +11165,11 @@ function getDownloadPlatformType() {
 
 function shouldOpenExternalFirstForDownload() {
   const platform = getDownloadPlatformType();
+  if (platform === 'ios') {
+    return false;
+  }
+
   return isTelegramWebAppAvailable()
-    || platform === 'ios'
     || platform === 'android'
     || platform === 'telegram_desktop'
     || platform === 'web';
