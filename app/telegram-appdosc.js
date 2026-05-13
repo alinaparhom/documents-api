@@ -2573,8 +2573,12 @@ function updateTaskFolderButtonVisual(button, task) {
   const currentFolderName = getFolderName(task && task.folderId);
   const currentFolderColor = getFolderColorById(task && task.folderId);
   button.dataset.taskId = String((task && task.id) || '');
+  button.dataset.folderSelected = currentFolderColor ? 'true' : 'false';
   button.setAttribute('aria-label', `Папка задачи: ${currentFolderName}. Нажмите, чтобы изменить.`);
   button.innerHTML = `
+    <span class="task-folder-select__icon" aria-hidden="true">
+      <span class="task-folder-select__dot"></span>
+    </span>
     <span class="task-folder-select__content">
       <span class="task-folder-select__caption">Папка</span>
       <span class="task-folder-select__value">${escapeHtml(currentFolderName)}</span>
@@ -2582,9 +2586,15 @@ function updateTaskFolderButtonVisual(button, task) {
     <span class="task-folder-select__chevron" aria-hidden="true">⌄</span>
   `;
   if (currentFolderColor) {
+    button.style.setProperty('--task-folder-current-color', currentFolderColor);
+    button.style.setProperty('--task-folder-current-soft', getFolderColorRgba(currentFolderColor, 0.12));
+    button.style.setProperty('--task-folder-current-border', getFolderColorRgba(currentFolderColor, 0.38));
     button.style.borderColor = getFolderColorRgba(currentFolderColor, 0.4);
     button.style.boxShadow = `0 0 0 1px ${getFolderColorRgba(currentFolderColor, 0.2)} inset`;
   } else {
+    button.style.removeProperty('--task-folder-current-color');
+    button.style.removeProperty('--task-folder-current-soft');
+    button.style.removeProperty('--task-folder-current-border');
     button.style.borderColor = '';
     button.style.boxShadow = '';
   }
@@ -3347,14 +3357,8 @@ function getStatusSummaryKey(status) {
   return STATUS_LABEL_TO_KEY[normalized] || '';
 }
 
-function isDirectorCompletionMarked(task) {
-  const directorState = ensureDirectorState();
-  if (!directorState.isActive || !task || typeof task !== 'object') {
-    return false;
-  }
-
-  const organization = getTaskOrganization(task);
-  if (!organization || !userIsDirectorForOrganization(organization)) {
+function taskHasDirectorCompletionMarker(task) {
+  if (!task || typeof task !== 'object') {
     return false;
   }
 
@@ -3368,6 +3372,28 @@ function isDirectorCompletionMarked(task) {
 
   const completionMarkers = [task.directorCompletedAt, task.director_completed_at];
   return completionMarkers.some((value) => normalizeValue(value));
+}
+
+function userCanCompleteDirectorAssignmentForTask(task) {
+  const directorState = ensureDirectorState();
+  if (!directorState.isActive || !task || typeof task !== 'object') {
+    return false;
+  }
+
+  const organization = getTaskOrganization(task);
+  if (organization && userIsDirectorForOrganization(organization)) {
+    return true;
+  }
+
+  return isTaskAssignedToCurrentDirector(task);
+}
+
+function isDirectorCompletionMarked(task) {
+  if (!userCanCompleteDirectorAssignmentForTask(task)) {
+    return false;
+  }
+
+  return taskHasDirectorCompletionMarker(task);
 }
 
 function getTaskStatusKeyForUser(task) {
@@ -6567,9 +6593,21 @@ function confirmDeleteFolder(folder) {
 function setupTaskFolderControl(card, task) {
   let btn = card.querySelector('.task-folder-select');
   let row = card.querySelector('.task-folder-row');
+  const expandedActions = card.querySelector('[data-card-expanded-actions]');
   if (!row) {
     row = document.createElement('div');
-    row.className = 'task-folder-row';
+    row.className = 'task-folder-row task-folder-row--expanded';
+    row.dataset.expandedControl = 'folder';
+  } else {
+    row.classList.add('task-folder-row--expanded');
+    row.dataset.expandedControl = 'folder';
+  }
+
+  if (expandedActions instanceof HTMLElement) {
+    if (row.parentNode !== expandedActions) {
+      expandedActions.prepend(row);
+    }
+  } else if (!row.parentNode) {
     const headerText = card.querySelector('.appdosc-card__header-text');
     if (headerText) {
       headerText.appendChild(row);
@@ -6578,6 +6616,7 @@ function setupTaskFolderControl(card, task) {
       if (header) header.appendChild(row); else card.prepend(row);
     }
   }
+
   if (!btn) {
     btn = document.createElement('button');
     btn.type = 'button';
@@ -6597,6 +6636,7 @@ function setupTaskFolderControl(card, task) {
       persistTaskFolderToRegistry(task);
     }, { currentFolderId: task.folderId });
   };
+  syncDirectorCompletionActionVisibility(card, card.dataset.expanded === 'true');
 }
 
 function setupTaskSelectionControl(card, task) {
@@ -8096,6 +8136,7 @@ function setCardExpandedState(card, expanded) {
   card.dataset.expanded = isExpanded ? 'true' : 'false';
   setClass(card, 'appdosc-card--collapsed', !isExpanded);
   rememberCardExpansion(card, isExpanded);
+  syncDirectorCompletionActionVisibility(card, isExpanded);
   if (isExpanded && card.__task) {
     markTaskViewedOnExpand(card.__task, card, 'mini_app_expand_card');
   }
@@ -14010,7 +14051,7 @@ function setDirectorCompletionButtonPressed(button) {
   button.dataset.completed = 'true';
   button.setAttribute('aria-pressed', 'true');
   button.disabled = true;
-  button.textContent = 'Завершено';
+  button.innerHTML = '<i class="fa-solid fa-check appdosc-card__director-action-icon" aria-hidden="true"></i><span>Завершено</span>';
   setClass(button, 'appdosc-card__action--loading', false);
 }
 
@@ -14018,12 +14059,14 @@ function createDirectorCompletionButton(task, variant = 'compact', completed = f
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'appdosc-card__action appdosc-card__action--director-mini';
+  button.dataset.directorCompletionButton = variant;
+  button.setAttribute('aria-pressed', 'false');
   if (variant === 'compact') {
     button.classList.add('appdosc-card__action--compact');
   } else {
     button.classList.add('appdosc-card__action--expanded');
   }
-  button.textContent = 'Завершить назначение';
+  button.innerHTML = '<i class="fa-solid fa-check-double appdosc-card__director-action-icon" aria-hidden="true"></i><span>Завершить назначение</span>';
   setActionButtonLoading(button, false);
 
   if (completed) {
@@ -14051,6 +14094,51 @@ function createDirectorCompletionButton(task, variant = 'compact', completed = f
   return button;
 }
 
+function createDirectorCompletionPanel(task, completed = false) {
+  const panel = document.createElement('div');
+  panel.className = 'appdosc-card__director-completion-panel';
+
+  const icon = document.createElement('span');
+  icon.className = 'appdosc-card__director-completion-icon';
+  icon.innerHTML = '<i class="fa-solid fa-user-check" aria-hidden="true"></i>';
+
+  const copy = document.createElement('span');
+  copy.className = 'appdosc-card__director-completion-copy';
+
+  const label = document.createElement('span');
+  label.className = 'appdosc-card__director-completion-title';
+  label.textContent = completed ? 'Назначение закрыто' : 'Контроль назначения';
+
+  const hint = document.createElement('span');
+  hint.className = 'appdosc-card__director-completion-hint';
+  hint.textContent = completed
+    ? 'Задача отмечена выполненной для директора'
+    : 'Завершите, когда назначение больше не требует контроля';
+
+  copy.append(label, hint);
+  panel.append(icon, copy, createDirectorCompletionButton(task, 'expanded', completed));
+  return panel;
+}
+
+function syncDirectorCompletionActionVisibility(card, isExpanded = false) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  const compactContainer = card.querySelector('[data-card-compact-actions]');
+  const expandedContainer = card.querySelector('[data-card-expanded-actions]');
+  const hasDirectorCompletion = card.dataset.directorCompletion === 'true';
+  const hasExpandedControls = expandedContainer instanceof HTMLElement
+    && Boolean(expandedContainer.querySelector('.task-folder-row, .appdosc-card__director-completion-panel'));
+
+  if (compactContainer instanceof HTMLElement) {
+    compactContainer.hidden = !hasDirectorCompletion || Boolean(isExpanded);
+  }
+  if (expandedContainer instanceof HTMLElement) {
+    expandedContainer.hidden = !hasExpandedControls || !Boolean(isExpanded);
+  }
+}
+
 function setupDirectorCompactCompletion(card, task) {
   if (!card || !task) {
     return;
@@ -14068,9 +14156,8 @@ function setupDirectorCompactCompletion(card, task) {
     }
   });
 
-  const organization = getTaskOrganization(task);
-  const currentDirectorTask = organization && userIsDirectorForOrganization(organization);
-  const directorCompleted = currentDirectorTask && isDirectorCompletionMarked(task);
+  const currentDirectorTask = userCanCompleteDirectorAssignmentForTask(task);
+  const directorCompleted = currentDirectorTask && taskHasDirectorCompletionMarker(task);
   const shouldShowButton = currentDirectorTask && (directorCompleted || !isTaskCompleted(task));
   delete card.dataset.directorCompletion;
   delete card.dataset.iosDirectorCompletion;
@@ -14087,12 +14174,11 @@ function setupDirectorCompactCompletion(card, task) {
   card.dataset.directorCompletion = 'true';
   if (compactContainer instanceof HTMLElement) {
     compactContainer.appendChild(createDirectorCompletionButton(task, 'compact', directorCompleted));
-    compactContainer.hidden = false;
   }
   if (expandedContainer instanceof HTMLElement) {
-    expandedContainer.appendChild(createDirectorCompletionButton(task, 'expanded', directorCompleted));
-    expandedContainer.hidden = false;
+    expandedContainer.appendChild(createDirectorCompletionPanel(task, directorCompleted));
   }
+  syncDirectorCompletionActionVisibility(card, card.dataset.expanded === 'true');
 }
 
 function setupCompleteButton(button, task) {
@@ -14499,7 +14585,22 @@ async function handleCardComplete(button, task) {
   lastRenderedTasksSignature = '';
   if (isDirectorMiniButton) {
     completedOptimistically = true;
-    setDirectorCompletionButtonPressed(button);
+    const card = button.closest('[data-card]');
+    if (card instanceof HTMLElement) {
+      card.querySelectorAll('.appdosc-card__action--director-mini').forEach((item) => {
+        setDirectorCompletionButtonPressed(item);
+      });
+      const completionTitle = card.querySelector('.appdosc-card__director-completion-title');
+      if (completionTitle instanceof HTMLElement) {
+        completionTitle.textContent = 'Назначение закрыто';
+      }
+      const completionHint = card.querySelector('.appdosc-card__director-completion-hint');
+      if (completionHint instanceof HTMLElement) {
+        completionHint.textContent = 'Задача отмечена выполненной для директора';
+      }
+    } else {
+      setDirectorCompletionButtonPressed(button);
+    }
     window.setTimeout(() => {
       lastRenderedTasksSignature = '';
       refreshVisibleTaskUi();
