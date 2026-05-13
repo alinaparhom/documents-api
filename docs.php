@@ -12563,6 +12563,25 @@ function docs_handle_mini_app_client_log(string $method): void
 
     $downloadEvents = ['viewer_download_click', 'viewer_download_success', 'viewer_download_error'];
     $viewEvents = [
+        'bootstrap_after_init_telegram',
+        'bootstrap_elements_ready',
+        'bootstrap_events_bound',
+        'bootstrap_start',
+        'init',
+        'init_no_webapp',
+        'ios_stage',
+        'render_error',
+        'render_success',
+        'runtime_error',
+        'runtime_unhandled_rejection',
+        'tasks_load_start',
+        'tasks_loaded',
+        'tasks_load_error',
+        'tasks_payload_invalid_items',
+        'tasks_payload_received',
+        'tasks_payload_empty_after_normalization',
+        'tasks_stats_mismatch',
+        'ai_dialog_blocked_no_fresh_files',
         'task_view_watch_open_click',
         'task_view_watch_open_success',
         'task_view_watch_open_error',
@@ -12573,33 +12592,90 @@ function docs_handle_mini_app_client_log(string $method): void
         'task_view_watch_tab_skip_busy',
         'task_view_watch_tab_cache_hit',
         'task_view_watch_tab_cache_save',
+        'task_view_watch_phase_start',
+        'task_view_watch_phase_end',
+        'task_view_watch_phase_error',
+        'task_view_watch_warning',
         'task_view_open_start',
         'task_view_open',
+        'task_view_open_failed',
         'task_view_inline_mode',
         'task_view_inline_start',
+        'task_view_inline_success',
+        'task_view_inline_error',
+        'task_view_inline_attempt',
+        'task_view_inline_unavailable',
         'task_view_inline_viewer_ready',
+        'task_view_inline_viewer_missing',
+        'task_view_inline_headers',
         'task_view_resolve',
+        'task_view_stage',
         'task_view_error',
         'task_view_files_resolved',
+        'task_view_files_empty',
+        'task_view_fetch_start',
         'task_view_fetch_success',
+        'task_view_fetch_error',
         'task_view_pdf_render_result',
         'task_view_pdf_diagnostics',
         'task_view_pdf_page_count',
+        'director_mode_enabled',
+        'task_assign_error',
+        'task_assign_request',
+        'task_assign_success',
+        'task_assign_remove_request',
+        'task_assign_remove_success',
+        'task_assign_remove_error',
+        'task_assign_debug',
+        'task_complete_error',
+        'task_complete_request',
+        'task_complete_success',
+        'task_update_error',
+        'task_update_request',
+        'task_update_request_debug',
+        'task_update_response',
+        'task_update_response_debug',
+        'task_subordinate_assign_request',
+        'task_subordinate_assign_success',
+        'task_subordinate_assign_error',
+        'task_subordinate_remove_request',
+        'task_subordinate_remove_success',
+        'task_subordinate_remove_error',
+        'task_subordinate_review_request',
+        'task_subordinate_review_success',
+        'task_subordinate_review_error',
+        'task_subordinate_submit_request',
+        'task_subordinate_submit_success',
+        'task_subordinate_submit_error',
+        'task_status_request',
+        'task_status_success',
+        'task_status_error',
+        'task_due_update_request',
+        'task_due_update_success',
+        'task_due_update_error',
+        'task_view_click',
     ];
     $platformRaw = isset($payload['platform']) ? (string) $payload['platform'] : '';
     $detailsPlatform = isset($details['platform']) ? (string) $details['platform'] : '';
     $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
     $clientPlatform = docs_detect_client_platform($userAgent);
+    $platformRawLower = mb_strtolower($platformRaw, 'UTF-8');
+    $detailsPlatformLower = mb_strtolower($detailsPlatform, 'UTF-8');
     $isAndroid = $clientPlatform === 'android'
-        || mb_strtolower($platformRaw, 'UTF-8') === 'android'
-        || mb_strtolower($detailsPlatform, 'UTF-8') === 'android';
+        || $platformRawLower === 'android'
+        || $detailsPlatformLower === 'android';
+    $isIos = $clientPlatform === 'ios'
+        || in_array($platformRawLower, ['ios', 'iphone', 'ipad'], true)
+        || in_array($detailsPlatformLower, ['ios', 'iphone', 'ipad'], true)
+        || preg_match('/iPad|iPhone|iPod/i', $userAgent) === 1;
+    $logPlatform = $isIos ? 'ios' : ($isAndroid ? 'android' : $clientPlatform);
 
     $logContext = [
         'event' => $event,
         'userId' => $requestContext['primaryId'] ?? null,
         'filterSource' => $requestContext['filterSource'] ?? null,
         'telegramInitData' => $requestContext['telegramInitData'] ?? null,
-        'platform' => $isAndroid ? 'android' : $clientPlatform,
+        'platform' => $logPlatform,
     ];
 
     if (!empty($details)) {
@@ -12616,8 +12692,8 @@ function docs_handle_mini_app_client_log(string $method): void
 
     $logged = false;
 
-    if (in_array($event, $downloadEvents, true) && $isAndroid) {
-        docs_write_android_download_log('Mini app android download', $logContext);
+    if (in_array($event, $downloadEvents, true) && ($isAndroid || $isIos)) {
+        docs_write_android_download_log('Mini app ' . $logPlatform . ' download', $logContext);
         $logged = true;
     }
 

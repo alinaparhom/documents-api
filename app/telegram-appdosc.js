@@ -42,9 +42,9 @@ const taskPdfBinaryCache = new Map();
 const TASK_PDF_BINARY_CACHE_TTL_MS = 3 * 60 * 1000;
 const TASK_PDF_BINARY_CACHE_MAX_ENTRIES = 24;
 const TASK_PDF_FETCH_TIMEOUT_MS_WARMUP = 3 * 1000;
-const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 0;
-const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 0;
-const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 1200;
+const TASK_PDF_FETCH_TIMEOUT_MS_USER_CLICK = 18 * 1000;
+const TASK_PDF_SHARED_PROMISE_WAIT_TIMEOUT_MS = 3500;
+const AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS = 2200;
 const TASK_SNAPSHOT_FETCH_TIMEOUT_MS = 2500;
 const ENABLE_TASK_PDF_WARMUP = true;
 const pdfFetchTimeoutUrls = new Set();
@@ -182,10 +182,81 @@ function ensurePdfTimingDiagnostics(details, fallback = {}) {
   };
 }
 
+function concatUint8Chunks(chunks, totalLength) {
+  if (!Array.isArray(chunks) || totalLength <= 0) {
+    return new Uint8Array(0);
+  }
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    if (!(chunk instanceof Uint8Array) || !chunk.byteLength) {
+      return;
+    }
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  });
+  return result;
+}
+
+async function readResponseArrayBufferWithProgress(response, onProgress) {
+  const contentLengthRaw = response && response.headers ? response.headers.get('content-length') : '';
+  const parsedTotal = Number.parseInt(contentLengthRaw || '', 10);
+  const totalBytes = Number.isFinite(parsedTotal) && parsedTotal > 0 ? parsedTotal : 0;
+  const canStream = response
+    && response.body
+    && typeof response.body.getReader === 'function'
+    && typeof onProgress === 'function';
+
+  if (!canStream) {
+    return response.arrayBuffer();
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  const startedAt = Date.now();
+  let loadedBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (!(value instanceof Uint8Array) || !value.byteLength) {
+      continue;
+    }
+    chunks.push(value);
+    loadedBytes += value.byteLength;
+    try {
+      onProgress({
+        loadedBytes,
+        totalBytes,
+        startedAt,
+        finished: false,
+      });
+    } catch (_error) {
+      // Прогресс не должен срывать загрузку файла.
+    }
+  }
+
+  try {
+    onProgress({
+      loadedBytes,
+      totalBytes,
+      startedAt,
+      finished: true,
+    });
+  } catch (_error) {
+    // Прогресс не должен срывать загрузку файла.
+  }
+
+  return concatUint8Chunks(chunks, loadedBytes).buffer;
+}
+
 async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', requestId = '', options = {}) {
   const requestSource = source === 'warmup' ? 'warmup' : 'user_click';
   const normalizedRequestId = normalizeValue(requestId) || createPdfRequestId();
   const traceId = normalizeValue(options && options.traceId) || normalizedRequestId;
+  const onProgress = typeof (options && options.onProgress) === 'function' ? options.onProgress : null;
   const diagnosticsContext = options && options.diagnosticsContext && typeof options.diagnosticsContext === 'object'
     ? options.diagnosticsContext
     : {};
@@ -399,7 +470,8 @@ async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', reques
       error.responseStatus = response.status;
       throw error;
     }
-    const arrayBuffer = await response.arrayBuffer();
+    const contentLength = response.headers ? response.headers.get('content-length') : '';
+    const arrayBuffer = await readResponseArrayBufferWithProgress(response, onProgress);
     const arrayBufferReadyAt = Date.now();
     const arrayBufferReadyAtPerf = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
       ? performance.now()
@@ -414,7 +486,7 @@ async function fetchPdfBinaryForViewer(previewUrl, source = 'user_click', reques
       responseUrl: response.url || previewUrl,
       headers: collectResponseHeaders(response),
       contentType: response.headers ? response.headers.get('content-type') : '',
-      contentLength: response.headers ? response.headers.get('content-length') : '',
+      contentLength,
       fetchDurationMs: ttfbMs,
       ttfbMs,
       downloadMs,
@@ -694,6 +766,10 @@ const ALLOWED_LOG_EVENTS = new Set([
   'task_view_watch_tab_skip_busy',
   'task_view_watch_tab_cache_hit',
   'task_view_watch_tab_cache_save',
+  'task_view_watch_phase_start',
+  'task_view_watch_phase_end',
+  'task_view_watch_phase_error',
+  'task_view_watch_warning',
   'task_view_inline_headers',
   'task_view_pdf_diagnostics',
   'task_view_pdf_render_result',
@@ -742,6 +818,7 @@ const ALLOWED_LOG_EVENTS = new Set([
   'tasks_payload_invalid_items',
   'tasks_payload_received',
   'tasks_payload_empty_after_normalization',
+  'tasks_stats_mismatch',
   'director_mode_enabled',
   'task_assign_debug',
 ]);
@@ -1243,6 +1320,8 @@ const docLoadTracker = {
   meta: {},
   timerInterval: null,
   loaderToken: null,
+  loaderTransferRenderAt: 0,
+  loaderHideTimer: null,
 };
 const viewerOpenMetrics = {
   sessionOpenId: 0,
@@ -1346,6 +1425,120 @@ function docLoadSetMeta(partialMeta) {
   };
 }
 
+function applyViewerLoaderProgress(loader, progress) {
+  if (!(loader instanceof HTMLElement) || typeof progress !== 'number') {
+    return;
+  }
+  const normalized = Math.min(100, Math.max(0, Math.round(progress)));
+  loader.dataset.viewerLoaderProgress = String(normalized);
+  if (normalized >= 100) {
+    loader.dataset.viewerLoaderCompletedAt = String(Date.now());
+  } else if (loader.dataset.viewerLoaderCompletedAt) {
+    delete loader.dataset.viewerLoaderCompletedAt;
+  }
+  const barEl = loader.querySelector('[data-viewer-loader-bar]');
+  const ringEl = loader.querySelector('[data-viewer-loader-ring]');
+  const percentEl = loader.querySelector('[data-viewer-loader-percent]');
+  if (barEl instanceof HTMLElement) {
+    barEl.style.width = `${normalized}%`;
+  }
+  if (ringEl && ringEl.style) {
+    ringEl.style.strokeDashoffset = String(100 - normalized);
+  }
+  if (percentEl instanceof HTMLElement) {
+    percentEl.textContent = `${normalized}%`;
+  }
+}
+
+function formatViewerLoaderBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 Б';
+  }
+  if (value < 1024) {
+    return `${Math.round(value)} Б`;
+  }
+  if (value < 1024 * 1024) {
+    return `${Math.round(value / 1024)} КБ`;
+  }
+  const megabytes = value / (1024 * 1024);
+  return `${megabytes >= 10 ? Math.round(megabytes) : megabytes.toFixed(1)} МБ`;
+}
+
+function formatViewerLoaderDuration(ms) {
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value <= 0) {
+    return 'меньше секунды';
+  }
+  const seconds = Math.max(1, Math.round(value / 1000));
+  if (seconds < 60) {
+    return `${seconds} сек`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const restSeconds = seconds % 60;
+  return restSeconds > 0 ? `${minutes} мин ${restSeconds} сек` : `${minutes} мин`;
+}
+
+function buildViewerLoaderEstimateText(loader, elapsedMs) {
+  if (!(loader instanceof HTMLElement)) {
+    return '';
+  }
+  const progress = Number.parseInt(loader.dataset.viewerLoaderProgress || '0', 10);
+  if (!Number.isFinite(progress) || progress <= 0 || progress >= 100 || elapsedMs < 1200) {
+    return '';
+  }
+  const etaMs = (elapsedMs * (100 - progress)) / progress;
+  if (!Number.isFinite(etaMs) || etaMs <= 0) {
+    return '';
+  }
+  return `${Math.round(elapsedMs / 1000)} сек · осталось ~${formatViewerLoaderDuration(etaMs)}`;
+}
+
+function updateViewerLoaderTransfer(progress, token = docLoadTracker.loaderToken) {
+  const loader = document.querySelector('[data-viewer-loader]');
+  if (!loader || loader.hidden || (token && docLoadTracker.loaderToken && token !== docLoadTracker.loaderToken)) {
+    return;
+  }
+  const now = Date.now();
+  const finished = Boolean(progress && progress.finished);
+  if (!finished && now - docLoadTracker.loaderTransferRenderAt < 250) {
+    return;
+  }
+  docLoadTracker.loaderTransferRenderAt = now;
+
+  const loadedBytes = Math.max(0, Number(progress && progress.loadedBytes) || 0);
+  const totalBytes = Math.max(0, Number(progress && progress.totalBytes) || 0);
+  const startedAt = Number(progress && progress.startedAt) || now;
+  const elapsedMs = Math.max(1, now - startedAt);
+  const speedBytesPerMs = loadedBytes > 0 ? loadedBytes / elapsedMs : 0;
+  const timeEl = loader.querySelector('[data-viewer-loader-time]');
+  let text = '';
+
+  if (totalBytes > 0) {
+    const percent = Math.min(99, Math.max(0, (loadedBytes / totalBytes) * 100));
+    const mappedProgress = Math.min(62, Math.max(45, 45 + (percent * 0.17)));
+    applyViewerLoaderProgress(loader, finished ? 62 : mappedProgress);
+    const displayLoadedBytes = Math.min(loadedBytes, totalBytes);
+    const remainingBytes = Math.max(0, totalBytes - displayLoadedBytes);
+    const etaMs = speedBytesPerMs > 0 && remainingBytes > 0 ? remainingBytes / speedBytesPerMs : 0;
+    text = `Загружено ${formatViewerLoaderBytes(displayLoadedBytes)} из ${formatViewerLoaderBytes(totalBytes)}`;
+    if (!finished && etaMs > 0) {
+      text += ` · осталось ~${formatViewerLoaderDuration(etaMs)}`;
+    }
+  } else {
+    const speedText = speedBytesPerMs > 0
+      ? ` · скорость ${formatViewerLoaderBytes(speedBytesPerMs * 1000)}/с`
+      : '';
+    text = `Загружено ${formatViewerLoaderBytes(loadedBytes)}${speedText}`;
+  }
+
+  if (timeEl instanceof HTMLElement && text !== '') {
+    timeEl.textContent = text;
+  }
+  loader.dataset.viewerLoaderTransferText = text;
+  loader.dataset.viewerLoaderTransferAt = String(now);
+}
+
 function sendDocLoadLog(payload) {
   if (!payload || typeof fetch !== 'function') return;
   try {
@@ -1371,12 +1564,20 @@ function showViewerLoader(fileName) {
   docLoadTracker.loaderToken = token;
   const titleEl = loader.querySelector('[data-viewer-loader-title]');
   const stepEl = loader.querySelector('[data-viewer-loader-step]');
-  const barEl = loader.querySelector('[data-viewer-loader-bar]');
   const timeEl = loader.querySelector('[data-viewer-loader-time]');
   if (titleEl) titleEl.textContent = fileName ? `Загрузка: ${fileName}` : 'Загрузка документа';
   if (stepEl) stepEl.textContent = 'Подготовка…';
-  if (barEl) barEl.style.width = '0%';
   if (timeEl) timeEl.textContent = '';
+  if (docLoadTracker.loaderHideTimer) {
+    window.clearTimeout(docLoadTracker.loaderHideTimer);
+    docLoadTracker.loaderHideTimer = null;
+  }
+  loader.dataset.viewerLoaderStartedAt = String(Date.now());
+  loader.dataset.viewerLoaderTransferText = '';
+  loader.dataset.viewerLoaderTransferAt = '0';
+  delete loader.dataset.viewerLoaderCompletedAt;
+  docLoadTracker.loaderTransferRenderAt = 0;
+  applyViewerLoaderProgress(loader, 0);
   loader.hidden = false;
   const start = performance.now();
   if (docLoadTracker.timerInterval) clearInterval(docLoadTracker.timerInterval);
@@ -1388,7 +1589,15 @@ function showViewerLoader(fileName) {
     }
     const elapsed = Math.round((performance.now() - start) / 1000);
     if (timeEl) {
-      if (elapsed >= 12) {
+      const transferAt = Number.parseInt(loader.dataset.viewerLoaderTransferAt || '0', 10);
+      const transferText = loader.dataset.viewerLoaderTransferText || '';
+      const elapsedMs = Math.max(0, Math.round(performance.now() - start));
+      const estimateText = buildViewerLoaderEstimateText(loader, elapsedMs);
+      if (transferText && Number.isFinite(transferAt) && Date.now() - transferAt < 1600) {
+        timeEl.textContent = transferText;
+      } else if (estimateText) {
+        timeEl.textContent = estimateText;
+      } else if (elapsed >= 12) {
         timeEl.textContent = `${elapsed} сек · интернет медленный, продолжаем загрузку`;
       } else if (elapsed >= 5) {
         timeEl.textContent = `${elapsed} сек · файл ещё загружается`;
@@ -1404,9 +1613,8 @@ function updateViewerLoaderStep(step, progress, token = docLoadTracker.loaderTok
   const loader = document.querySelector('[data-viewer-loader]');
   if (!loader || loader.hidden || (token && docLoadTracker.loaderToken && token !== docLoadTracker.loaderToken)) return;
   const stepEl = loader.querySelector('[data-viewer-loader-step]');
-  const barEl = loader.querySelector('[data-viewer-loader-bar]');
   if (stepEl && step) stepEl.textContent = step;
-  if (barEl && typeof progress === 'number') barEl.style.width = `${Math.min(100, Math.max(0, progress))}%`;
+  applyViewerLoaderProgress(loader, progress);
 }
 
 function openViewerLoadingShell(previewUrl, fileName, viewerOptions = {}, message = 'Файл загружается...') {
@@ -1436,9 +1644,32 @@ function hideViewerLoader(token = docLoadTracker.loaderToken) {
     return;
   }
   const loader = document.querySelector('[data-viewer-loader]');
-  if (loader) loader.hidden = true;
+  if (docLoadTracker.loaderHideTimer) {
+    window.clearTimeout(docLoadTracker.loaderHideTimer);
+    docLoadTracker.loaderHideTimer = null;
+  }
+  if (loader instanceof HTMLElement && !loader.hidden) {
+    const progress = Number.parseInt(loader.dataset.viewerLoaderProgress || '0', 10);
+    const completedAt = Number.parseInt(loader.dataset.viewerLoaderCompletedAt || '0', 10);
+    const finishDelayMs = 360;
+    const elapsedAfterComplete = completedAt > 0 ? Date.now() - completedAt : finishDelayMs;
+    if (progress >= 100 && elapsedAfterComplete < finishDelayMs) {
+      docLoadTracker.loaderHideTimer = window.setTimeout(() => {
+        docLoadTracker.loaderHideTimer = null;
+        hideViewerLoader(token);
+      }, Math.max(40, finishDelayMs - elapsedAfterComplete));
+      return;
+    }
+  }
+  if (loader) {
+    loader.hidden = true;
+    loader.dataset.viewerLoaderTransferText = '';
+    loader.dataset.viewerLoaderTransferAt = '0';
+    delete loader.dataset.viewerLoaderCompletedAt;
+  }
   if (docLoadTracker.timerInterval) { clearInterval(docLoadTracker.timerInterval); docLoadTracker.timerInterval = null; }
   docLoadTracker.loaderToken = null;
+  docLoadTracker.loaderTransferRenderAt = 0;
 }
 
 function ensureIosDiagnosticsState(forceEnable = false) {
@@ -1501,6 +1732,20 @@ function isAndroidPlatform() {
   }
   const userAgent = runtimeEnvironment.userAgent || '';
   return typeof userAgent === 'string' && userAgent.toLowerCase().includes('android');
+}
+
+function isMobileSingleFilePickerPlatform() {
+  const platform = String(
+    (state && state.telegram && state.telegram.platform)
+      || runtimeEnvironment.webAppPlatform
+      || runtimeEnvironment.platform
+      || '',
+  ).toLowerCase();
+  if (/(ios|iphone|ipad|android|web)/i.test(platform)) {
+    return true;
+  }
+  const userAgent = String(runtimeEnvironment.userAgent || '').toLowerCase();
+  return /(iphone|ipad|ipod|android|mobile)/i.test(userAgent);
 }
 
 let isWebPlatform = getWebPlatformFlag();
@@ -1773,9 +2018,6 @@ function logClientEvent(eventName, details, options) {
   if (normalizedEvent === '' || !ALLOWED_LOG_EVENTS.has(normalizedEvent)) {
     return false;
   }
-  if (!normalizedEvent.startsWith('task_view_')) {
-    return false;
-  }
 
   const normalizedDetails = prepareLogDetails(details);
   let finalDetails = normalizedDetails;
@@ -1823,7 +2065,8 @@ function sendDownloadLog(eventName, details, options) {
   if (normalizedEvent === '' || !DOWNLOAD_LOG_EVENTS.has(normalizedEvent)) {
     return false;
   }
-  if (!isAndroidPlatform()) {
+  const platform = getDownloadPlatformType();
+  if (platform !== 'android' && platform !== 'ios') {
     return false;
   }
 
@@ -1845,7 +2088,7 @@ function sendDownloadLog(eventName, details, options) {
   if (context) {
     payload.context = context;
   }
-  payload.platform = 'android';
+  payload.platform = platform;
 
   const keepalive = options && typeof options === 'object' && Object.prototype.hasOwnProperty.call(options, 'keepalive')
     ? Boolean(options.keepalive)
@@ -2439,6 +2682,10 @@ const state = {
     responsibleDirectory: new Map(),
     subordinateDirectory: new Map(),
     responsibleTaskMap: new Map(),
+    responsibleTaskCounts: new Map(),
+    subordinateTaskCounts: new Map(),
+    responsibleButtonsSignature: '',
+    subordinateButtonsSignature: '',
     visibilityRuleLogged: false,
     completedVisibilityLogged: false,
   },
@@ -2496,6 +2743,18 @@ function ensureDirectorState() {
   }
   if (!(state.director.responsibleTaskMap instanceof Map)) {
     state.director.responsibleTaskMap = new Map();
+  }
+  if (!(state.director.responsibleTaskCounts instanceof Map)) {
+    state.director.responsibleTaskCounts = new Map();
+  }
+  if (!(state.director.subordinateTaskCounts instanceof Map)) {
+    state.director.subordinateTaskCounts = new Map();
+  }
+  if (typeof state.director.responsibleButtonsSignature !== 'string') {
+    state.director.responsibleButtonsSignature = '';
+  }
+  if (typeof state.director.subordinateButtonsSignature !== 'string') {
+    state.director.subordinateButtonsSignature = '';
   }
   if (typeof state.director.initialized !== 'boolean') {
     state.director.initialized = false;
@@ -2577,8 +2836,31 @@ function summarizeTaskForLog(task) {
   return Object.keys(summary).length ? summary : null;
 }
 
-function logIosStage() {
-  // Диагностические логи для iOS отключены.
+const IOS_STAGE_LOG_THROTTLE_MS = 750;
+const IOS_STAGE_LOG_LIMIT = 80;
+let iosStageLogLastAt = 0;
+let iosStageLogCount = 0;
+
+function logIosStage(stage, details = {}) {
+  if (!runtimeEnvironment.isIos && !iosDiagnostics.enabled) {
+    return;
+  }
+  const normalizedStage = normalizeValue(stage);
+  if (!normalizedStage || iosStageLogCount >= IOS_STAGE_LOG_LIMIT) {
+    return;
+  }
+  const now = Date.now();
+  if (now - iosStageLogLastAt < IOS_STAGE_LOG_THROTTLE_MS) {
+    return;
+  }
+  iosStageLogLastAt = now;
+  iosStageLogCount += 1;
+  const payload = isPlainObject(details) ? { ...details } : { value: details };
+  logClientEvent('ios_stage', {
+    ...payload,
+    stage: normalizedStage,
+    count: iosStageLogCount,
+  }, { keepalive: true });
 }
 
 let globalErrorHandlersAttached = false;
@@ -2646,6 +2928,23 @@ function safeRender(reason) {
     safeRenderImmediate(reason);
   }, RENDER_THROTTLE_MS);
   return true;
+}
+
+function refreshTasksInBackground() {
+  const refreshPromise = loadTasks(true);
+  if (refreshPromise && typeof refreshPromise.catch === 'function') {
+    refreshPromise.catch(() => {});
+  }
+}
+
+function refreshVisibleTaskUi() {
+  updateSummaryFilterState();
+  updateVisibleTasks();
+  updateStats();
+  updateSummaryFilterState();
+  renderCards();
+  renderBulkFolderPanel();
+  updateFooter();
 }
 
 function isPlainObject(value) {
@@ -4118,6 +4417,7 @@ function updateStateFromPayload(payload) {
   }
   let filterChanged = false;
   if (directorModeAllTasks && hasAssigneeFilters(state.taskFilter)) {
+    state.activeFilters.statusFilters = [];
     state.taskFilter = [];
     filterChanged = true;
   }
@@ -10410,6 +10710,7 @@ async function openPdfInline(previewUrl, fileName, task, viewerOptions, traceCon
     });
     const fetchPayload = await fetchPdfBinaryForViewer(previewUrl, 'user_click', requestId, {
       traceId: traceContext && traceContext.traceId ? traceContext.traceId : '',
+      onProgress: (progress) => updateViewerLoaderTransfer(progress),
       diagnosticsContext: buildPdfDiagnosticsRequiredFields(task, traceContext, {
         fileName: fileName || '',
         previewUrl: previewUrl || '',
@@ -13924,10 +14225,25 @@ async function handleCardComplete(button, task) {
   setActionButtonLoading(button, true);
   setStatus('info', 'Отмечаем задачу выполненной...');
   const startedAt = Date.now();
+  const rollbackCompletion = {
+    directorStatus: {
+      exists: Object.prototype.hasOwnProperty.call(task, 'directorStatus'),
+      value: task.directorStatus,
+    },
+    directorCompletedAt: {
+      exists: Object.prototype.hasOwnProperty.call(task, 'directorCompletedAt'),
+      value: task.directorCompletedAt,
+    },
+  };
   logClientEvent('task_complete_request', {
     taskId: task.id || null,
     organization,
   });
+
+  task.directorStatus = 'done';
+  task.directorCompletedAt = new Date().toISOString();
+  lastRenderedTasksSignature = '';
+  refreshVisibleTaskUi();
 
   try {
     await sendTaskMutation({
@@ -13940,9 +14256,18 @@ async function handleCardComplete(button, task) {
       organization,
       durationMs: Date.now() - startedAt,
     });
-    await loadTasks(true);
+    refreshTasksInBackground();
     setStatus('success', 'Задача отмечена выполненной.');
   } catch (error) {
+    Object.entries(rollbackCompletion).forEach(([field, entry]) => {
+      if (entry.exists) {
+        task[field] = entry.value;
+      } else {
+        delete task[field];
+      }
+    });
+    lastRenderedTasksSignature = '';
+    refreshVisibleTaskUi();
     const message = error instanceof Error ? error.message : String(error);
     logClientEvent('task_complete_error', {
       taskId: task.id || null,
@@ -17446,6 +17771,10 @@ function updateDirectorTracking(previousKnownKeys) {
     directorState.knownTaskKeys.clear();
     directorState.responsibles = [];
     directorState.subordinates = [];
+    directorState.responsibleTaskCounts = new Map();
+    directorState.subordinateTaskCounts = new Map();
+    directorState.responsibleButtonsSignature = '';
+    directorState.subordinateButtonsSignature = '';
     directorState.initialized = false;
     directorState.summaryExpanded = false;
     directorState.responsiblePanelExpanded = false;
@@ -17461,6 +17790,7 @@ function updateDirectorTracking(previousKnownKeys) {
       directorState.subordinateDirectory = new Map();
     }
     if (hasAssigneeFilters(state.taskFilter)) {
+      state.activeFilters.statusFilters = [];
       state.taskFilter = [];
       directorState.visibilityRuleLogged = false;
       updateVisibleTasks();
@@ -17472,6 +17802,8 @@ function updateDirectorTracking(previousKnownKeys) {
   directorState.initialized = true;
   directorState.responsibles = responsibles;
   directorState.subordinates = subordinates;
+  directorState.responsibleTaskCounts = calculateResponsibleTaskCounts(tasks);
+  directorState.subordinateTaskCounts = calculateSubordinateTaskCounts(tasks);
   directorState.isActive = true;
 
   if (!hadInitialized && (directorState.responsibles.length > 0 || directorState.subordinates.length > 0)) {
@@ -17489,6 +17821,7 @@ function updateDirectorTracking(previousKnownKeys) {
       const currentToken = getResponsibleFilterToken(responsibleFilter);
       const tokenExists = directorState.responsibles.some((entry) => entry.token === currentToken);
       if (!tokenExists) {
+        state.activeFilters.statusFilters = [];
         state.taskFilter = [];
         directorState.selectedResponsibleToken = '';
         directorState.selectedSubordinateToken = '';
@@ -17498,6 +17831,7 @@ function updateDirectorTracking(previousKnownKeys) {
       const currentToken = getSubordinateFilterToken(subordinateFilter);
       const tokenExists = directorState.subordinates.some((entry) => entry.token === currentToken);
       if (!tokenExists) {
+        state.activeFilters.statusFilters = [];
         state.taskFilter = [];
         directorState.selectedResponsibleToken = '';
         directorState.selectedSubordinateToken = '';
@@ -17731,6 +18065,25 @@ function resolveResponsibleCount(entry, counts, tasks) {
   return count;
 }
 
+function buildDirectorButtonsSignature(entries, counts, source = 'responsible') {
+  const list = Array.isArray(entries) ? entries : [];
+  const map = counts instanceof Map ? counts : new Map();
+  return list.map((entry) => {
+    if (!entry || !entry.token) {
+      return '';
+    }
+    const token = entry.token;
+    const name = normalizeValue(entry.displayName)
+      || normalizeValue(entry.sourceName)
+      || normalizeValue(entry.name)
+      || normalizeValue(entry.label);
+    const count = source === 'subordinate'
+      ? (map.get(normalizeResponsibleKey(token) || token) || 0)
+      : (typeof entry.count === 'number' ? entry.count : 0);
+    return `${token}:${name}:${count}`;
+  }).filter(Boolean).join('|');
+}
+
 function getTaskShortTitle(task, fallbackIndex = 0) {
   if (!task || typeof task !== 'object') {
     return `Задача ${fallbackIndex + 1}`;
@@ -17869,10 +18222,20 @@ function renderResponsibleButtons() {
   const directorState = ensureDirectorState();
   const responsibles = Array.isArray(directorState.responsibles) ? directorState.responsibles : [];
   const tasks = Array.isArray(state.tasks) ? state.tasks : [];
-  const counts = calculateResponsibleTaskCounts(tasks);
+  const counts = directorState.responsibleTaskCounts instanceof Map
+    ? directorState.responsibleTaskCounts
+    : calculateResponsibleTaskCounts(tasks);
+  const signature = buildDirectorButtonsSignature(responsibles, counts, 'responsible');
+  if (directorState.responsibleButtonsSignature === signature
+    && elements.responsibleButtons instanceof Map
+    && elements.responsibleButtons.size > 0
+    && elements.responsibleList.children.length > 0) {
+    return;
+  }
 
   elements.responsibleList.innerHTML = '';
   elements.responsibleButtons = new Map();
+  directorState.responsibleButtonsSignature = signature;
 
   responsibles.forEach((entry) => {
     const token = entry.token || '';
@@ -17907,10 +18270,20 @@ function renderSubordinateButtons() {
   const directorState = ensureDirectorState();
   const subordinates = Array.isArray(directorState.subordinates) ? directorState.subordinates : [];
   const tasks = Array.isArray(state.tasks) ? state.tasks : [];
-  const counts = calculateSubordinateTaskCounts(tasks);
+  const counts = directorState.subordinateTaskCounts instanceof Map
+    ? directorState.subordinateTaskCounts
+    : calculateSubordinateTaskCounts(tasks);
+  const signature = buildDirectorButtonsSignature(subordinates, counts, 'subordinate');
+  if (directorState.subordinateButtonsSignature === signature
+    && elements.subordinateButtons instanceof Map
+    && elements.subordinateButtons.size > 0
+    && elements.subordinateList.children.length > 0) {
+    return;
+  }
 
   elements.subordinateList.innerHTML = '';
   elements.subordinateButtons = new Map();
+  directorState.subordinateButtonsSignature = signature;
 
   const debugEntries = [];
 
@@ -18206,6 +18579,31 @@ function handleSummaryToggleClick() {
   });
 }
 
+function syncDirectorPanelExpandedState(source = 'responsible') {
+  const directorState = ensureDirectorState();
+  const isSubordinate = source === 'subordinate';
+  const panel = isSubordinate ? elements.subordinatePanel : elements.responsiblePanel;
+  const list = isSubordinate ? elements.subordinateList : elements.responsibleList;
+  const toggle = isSubordinate ? elements.subordinateToggle : elements.responsibleToggle;
+  const icon = isSubordinate ? elements.subordinateToggleIcon : elements.responsibleToggleIcon;
+  const expanded = isSubordinate
+    ? directorState.subordinatePanelExpanded === true
+    : directorState.responsiblePanelExpanded === true;
+
+  if (list instanceof HTMLElement) {
+    list.hidden = !expanded;
+  }
+  if (toggle instanceof HTMLElement) {
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  }
+  if (icon instanceof HTMLElement) {
+    icon.textContent = expanded ? '▲' : '▼';
+  }
+  if (panel instanceof HTMLElement) {
+    setClass(panel, 'appdosc__responsible-panel--collapsed', !expanded);
+  }
+}
+
 function handleResponsibleToggleClick() {
   const directorState = ensureDirectorState();
   const hasResponsibles = Array.isArray(directorState.responsibles)
@@ -18215,7 +18613,7 @@ function handleResponsibleToggleClick() {
   }
 
   directorState.responsiblePanelExpanded = directorState.responsiblePanelExpanded !== true;
-  updateDirectorSummary();
+  syncDirectorPanelExpandedState('responsible');
 }
 
 function handleSubordinateToggleClick() {
@@ -18227,7 +18625,7 @@ function handleSubordinateToggleClick() {
   }
 
   directorState.subordinatePanelExpanded = directorState.subordinatePanelExpanded !== true;
-  updateDirectorSummary();
+  syncDirectorPanelExpandedState('subordinate');
 }
 
 function handleResponsibleButtonClick(token, options = {}) {
@@ -18297,9 +18695,10 @@ function handleResponsibleButtonClick(token, options = {}) {
     }
   }
 
+  state.activeFilters.statusFilters = nextFilters;
   state.taskFilter = nextFilters;
   state.selectedCardAnchor = '';
-  updateVisibleTasks();
+  refreshVisibleTaskUi();
   const reason = !nextFilters.length
     ? `${source}_filter_reset`
     : `${source}_filter_change`;
@@ -18337,7 +18736,8 @@ function handleResponsibleButtonClick(token, options = {}) {
       selectedSubordinate: directorState.selectedSubordinateToken || null,
     });
   }
-  safeRender(reason);
+  syncDirectorPanelExpandedState('responsible');
+  syncDirectorPanelExpandedState('subordinate');
 }
 
 function matchesAssigneeStatusKey(assigneeKey, ids, names) {
@@ -19792,6 +20192,224 @@ function buildMutationSnapshotEntries(task, role) {
     .filter((entry) => entry);
 }
 
+function collectAssignmentIdentityKeys(entry, fallbackValue = '') {
+  const keys = [];
+  const seen = new Set();
+  const add = (candidate) => {
+    const normalized = normalizeIdentifier(candidate);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    keys.push(normalized);
+  };
+
+  add(fallbackValue);
+  if (entry && typeof entry === 'object') {
+    [
+      entry.id,
+      entry.subordinateId,
+      entry.subordinate,
+      entry.telegram,
+      entry.chatId,
+      entry.email,
+      entry.number,
+      entry.login,
+      entry.responsible,
+      entry.name,
+    ].forEach(add);
+  }
+
+  return keys;
+}
+
+function assignmentEntryMatchesValue(entry, value) {
+  const targetKeys = collectAssignmentIdentityKeys(null, value);
+  if (!targetKeys.length) {
+    return false;
+  }
+  const entryKeys = collectAssignmentIdentityKeys(entry);
+  return targetKeys.some((key) => entryKeys.includes(key));
+}
+
+function removeAssignmentEntryFromList(list, role, value, fallbackRole = 'responsible') {
+  if (!Array.isArray(list) || !list.length) {
+    return list;
+  }
+  const desiredRole = role === 'subordinate' ? 'subordinate' : 'responsible';
+  return list.filter((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return true;
+    }
+    if (resolveAssigneeRole(entry, fallbackRole) !== desiredRole) {
+      return true;
+    }
+    return !assignmentEntryMatchesValue(entry, value);
+  });
+}
+
+function taskHasAssignmentValue(task, role, value) {
+  return collectTaskAssignments(task, role)
+    .some((entry) => assignmentEntryMatchesValue(entry, value));
+}
+
+function buildOptimisticAssignmentEntry(role, assignment, referenceEntry = null) {
+  const normalizedRole = role === 'subordinate' ? 'subordinate' : 'responsible';
+  const source = referenceEntry && typeof referenceEntry === 'object' ? referenceEntry : {};
+  const id = normalizeValue(assignment && assignment.id)
+    || normalizeValue(source.id)
+    || normalizeValue(source.subordinateId)
+    || normalizeValue(source.telegram)
+    || normalizeValue(source.chatId);
+  const entry = {
+    ...source,
+    role: normalizedRole,
+  };
+
+  if (id) {
+    entry.id = id;
+  }
+  if (normalizedRole === 'subordinate') {
+    entry.subordinateId = normalizeValue(entry.subordinateId) || id;
+  }
+
+  const displayName = normalizeValue(entry.responsible || entry.name || entry.fio) || id;
+  if (displayName && !entry.name) {
+    entry.name = displayName;
+  }
+  if (displayName && !entry.responsible) {
+    entry.responsible = displayName;
+  }
+
+  if (assignment && Object.prototype.hasOwnProperty.call(assignment, 'assignmentComment')) {
+    entry.assignmentComment = normalizeAssignmentComment(assignment.assignmentComment);
+  }
+  if (assignment && Object.prototype.hasOwnProperty.call(assignment, 'assignmentDueDate')) {
+    const dueDate = normalizeAssignmentDueDate(assignment.assignmentDueDate);
+    if (dueDate) {
+      entry.assignmentDueDate = dueDate;
+    } else {
+      delete entry.assignmentDueDate;
+    }
+  }
+  if (normalizedRole === 'responsible' && assignment && Object.prototype.hasOwnProperty.call(assignment, 'assignmentInstruction')) {
+    const instruction = normalizeAssignmentInstruction(assignment.assignmentInstruction);
+    if (instruction) {
+      entry.assignmentInstruction = instruction;
+    } else {
+      delete entry.assignmentInstruction;
+    }
+  }
+
+  return entry;
+}
+
+function cloneAssignmentValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => (
+      entry && typeof entry === 'object' ? { ...entry } : entry
+    ));
+  }
+  if (value && typeof value === 'object') {
+    return { ...value };
+  }
+  return value;
+}
+
+function createTaskAssignmentSnapshot(task) {
+  if (!task || typeof task !== 'object') {
+    return null;
+  }
+  const fields = ['assignees', 'assignee', 'responsibles', 'responsible', 'subordinates', 'subordinate'];
+  const snapshot = {};
+  fields.forEach((field) => {
+    snapshot[field] = {
+      exists: Object.prototype.hasOwnProperty.call(task, field),
+      value: cloneAssignmentValue(task[field]),
+    };
+  });
+  return snapshot;
+}
+
+function restoreTaskAssignmentSnapshot(task, snapshot) {
+  if (!task || typeof task !== 'object' || !snapshot || typeof snapshot !== 'object') {
+    return;
+  }
+  Object.entries(snapshot).forEach(([field, entry]) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    if (entry.exists) {
+      task[field] = cloneAssignmentValue(entry.value);
+    } else {
+      delete task[field];
+    }
+  });
+}
+
+function addOptimisticAssignmentToTask(task, role, assignment, referenceEntry = null) {
+  if (!task || typeof task !== 'object' || !assignment || !assignment.id) {
+    return false;
+  }
+  const normalizedRole = role === 'subordinate' ? 'subordinate' : 'responsible';
+  if (taskHasAssignmentValue(task, normalizedRole, assignment.id)) {
+    return false;
+  }
+
+  const entry = buildOptimisticAssignmentEntry(normalizedRole, assignment, referenceEntry);
+  if (normalizedRole === 'subordinate') {
+    if (!Array.isArray(task.subordinates)) {
+      task.subordinates = [];
+    }
+    task.subordinates.push(entry);
+    return true;
+  }
+
+  if (!Array.isArray(task.assignees)) {
+    task.assignees = [];
+  }
+  task.assignees.push(entry);
+  return true;
+}
+
+function removeOptimisticAssignmentFromTask(task, role, value) {
+  if (!task || typeof task !== 'object' || !normalizeValue(value)) {
+    return false;
+  }
+  const normalizedRole = role === 'subordinate' ? 'subordinate' : 'responsible';
+  const beforeCount = collectTaskAssignments(task, normalizedRole).length;
+
+  task.assignees = removeAssignmentEntryFromList(task.assignees, normalizedRole, value, 'responsible');
+  if (normalizedRole === 'subordinate') {
+    task.subordinates = removeAssignmentEntryFromList(task.subordinates, normalizedRole, value, 'subordinate');
+    if (task.subordinate && assignmentEntryMatchesValue(task.subordinate, value)) {
+      task.subordinate = null;
+    }
+  } else {
+    task.responsibles = removeAssignmentEntryFromList(task.responsibles, normalizedRole, value, 'responsible');
+    if (task.assignee && resolveAssigneeRole(task.assignee, 'responsible') === 'responsible'
+      && assignmentEntryMatchesValue(task.assignee, value)) {
+      task.assignee = null;
+    }
+    if (task.responsible && assignmentEntryMatchesValue(task.responsible, value)) {
+      task.responsible = null;
+    }
+  }
+
+  return collectTaskAssignments(task, normalizedRole).length !== beforeCount;
+}
+
+function refreshDirectorStateAfterLocalTaskMutation() {
+  const directorState = ensureDirectorState();
+  const previousKnownKeys = new Set(directorState.knownTaskKeys);
+  updateDirectorTracking(previousKnownKeys);
+  directorState.responsibleButtonsSignature = '';
+  directorState.subordinateButtonsSignature = '';
+  lastRenderedTasksSignature = '';
+  updateDirectorSummary();
+  refreshVisibleTaskUi();
+}
+
 
 
 function sendResponseViewerLog(stage, payload = {}) {
@@ -20237,7 +20855,7 @@ async function resolveTaskForAiDialog(task, options = {}) {
     : AI_DIALOG_TASK_RESOLVE_TIMEOUT_MS;
   const hardDeadlineAt = startedAt + timeoutMs;
   const isIosClient = Boolean(runtimeEnvironment && runtimeEnvironment.isIos);
-  const maxAttempts = isIosClient ? 3 : 1;
+  const maxAttempts = isIosClient ? 4 : 1;
   let latestTask = null;
   let snapshotStatus = 'local';
 
@@ -21244,8 +21862,7 @@ function createResponseUploadControls(task, entry, setStatus) {
   input.type = 'file';
   input.accept = 'image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip,.rar';
   input.multiple = true;
-  const isTelegramMobile = resolveWebPlatformFlag((state && state.telegram && state.telegram.platform) || runtimeEnvironment.webAppPlatform || '');
-  if (isTelegramMobile) {
+  if (isMobileSingleFilePickerPlatform()) {
     input.multiple = false;
   }
 
@@ -21542,6 +22159,16 @@ function setupAssignmentControls(card, task) {
       entry.responsible,
       entry.name,
     ].forEach(registerKey);
+  };
+
+  const unregisterAssignmentKeys = (entry, fallbackValue, identifier) => {
+    collectAssignmentIdentityKeys(entry, fallbackValue)
+      .concat(collectAssignmentIdentityKeys(null, identifier))
+      .forEach((key) => {
+        existingKeys.delete(key);
+        assignedKeyRegistry.delete(key);
+        renderedAssignedKeys.delete(key);
+      });
   };
 
   assignedEntries.forEach(registerAssignedEntry);
@@ -22067,6 +22694,7 @@ function setupAssignmentControls(card, task) {
       setAssignmentRowBusy(row, true, null, removeButton, commentInput, deadlineInput, instructionSelect);
       setStatus('info', 'Удаляем ответственного...');
       const startedAt = Date.now();
+      const rollbackSnapshot = createTaskAssignmentSnapshot(task);
 
       logClientEvent('task_assign_remove_request', {
         taskId: task.id || null,
@@ -22075,6 +22703,13 @@ function setupAssignmentControls(card, task) {
         assigneeIds: normalizedValues,
         assigneeValues: rawValues,
       });
+
+      selection.delete(row);
+      unregisterAssignmentKeys(referenceEntry, targetValue, normalizedValue);
+      removeOptimisticAssignmentFromTask(task, 'responsible', targetValue);
+      row.remove();
+      updateBulkState();
+      refreshDirectorStateAfterLocalTaskMutation();
 
       try {
         await sendTaskMutation({
@@ -22094,11 +22729,11 @@ function setupAssignmentControls(card, task) {
           durationMs: Date.now() - startedAt,
         });
 
+        refreshTasksInBackground();
         setStatus('success', 'Ответственный удалён.');
-        selection.delete(row);
-        updateBulkState();
-        await loadTasks(true);
       } catch (error) {
+        restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
+        refreshDirectorStateAfterLocalTaskMutation();
         const errorDetails = buildErrorDetails(error);
         const message = errorDetails.message || 'Ошибка назначения.';
         logClientEvent('task_assign_remove_error', {
@@ -22225,6 +22860,33 @@ function setupAssignmentControls(card, task) {
       bulk: true,
     });
 
+    const rollbackSnapshot = createTaskAssignmentSnapshot(task);
+    busyRows.forEach((row) => {
+      row.dataset.assigned = 'true';
+      const assigneeValue = normalizeValue(row.dataset.assigneeValue);
+      const controls = rowControls.get(row) || {};
+      const assignment = payloadAssignments.find((item) => normalizeValue(item.id) === assigneeValue) || null;
+      const referenceEntry = findAssignmentEntryByIdentifier(
+        assignmentCandidates,
+        normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
+      );
+      if (assignment) {
+        addOptimisticAssignmentToTask(task, 'responsible', assignment, referenceEntry);
+        registerRenderedEntryKeys(referenceEntry, assigneeValue, normalizeIdentifier(assigneeValue));
+        registerAssignedEntry(referenceEntry || assignment);
+      }
+      const note = row.querySelector('.appdosc-card__assign-note');
+      if (note instanceof HTMLElement) {
+        note.textContent = 'Назначен';
+      }
+      if (controls.removeButton instanceof HTMLButtonElement) {
+        controls.removeButton.disabled = false;
+      }
+    });
+    selection.clear();
+    updateBulkState();
+    refreshDirectorStateAfterLocalTaskMutation();
+
     try {
       await sendTaskMutation({
         updateType: 'assign_add',
@@ -22244,12 +22906,12 @@ function setupAssignmentControls(card, task) {
         durationMs: Date.now() - startedAt,
       });
 
-      setStatus('success', payloadAssignments.length > 1 ? 'Ответственные назначены.' : 'Ответственный назначен.');
-      selection.clear();
-      updateBulkState();
       setBulkAssignFeedback(bulkButton, 'Назначение успешно', updateBulkState, 'success');
-      await loadTasks(true);
+      refreshTasksInBackground();
+      setStatus('success', payloadAssignments.length > 1 ? 'Ответственные назначены.' : 'Ответственный назначен.');
     } catch (error) {
+      restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
+      refreshDirectorStateAfterLocalTaskMutation();
       const errorDetails = buildErrorDetails(error);
       const message = errorDetails.message || 'Ошибка назначения.';
       logClientEvent('task_assign_error', {
@@ -22300,7 +22962,6 @@ function setupAssignmentControls(card, task) {
     searchMeta.textContent = 'Ответственные для назначения отсутствуют.';
   }
 
-  populateComboOptions();
   hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {
@@ -22715,6 +23376,12 @@ function setupSubordinateControls(card, task) {
     ].forEach(register);
   };
 
+  const unregisterRenderedEntry = (entry, value, identifier) => {
+    collectAssignmentIdentityKeys(entry, value)
+      .concat(collectAssignmentIdentityKeys(null, identifier))
+      .forEach((key) => renderedEntryKeys.delete(key));
+  };
+
   const updateSearchMeta = (query, visibleCount, totalCount) => {
     if (visibleCount <= 0) {
       searchMeta.textContent = query
@@ -23126,6 +23793,7 @@ function setupSubordinateControls(card, task) {
       setAssignmentRowBusy(row, true, null, removeButton, commentInput, deadlineInput);
       setStatus('info', 'Удаляем подчинённого...');
       const startedAt = Date.now();
+      const rollbackSnapshot = createTaskAssignmentSnapshot(task);
 
       logSubordinateDebug('remove_request', {
         task: buildTaskDebugSummary(task),
@@ -23140,6 +23808,13 @@ function setupSubordinateControls(card, task) {
         subordinateIds: normalizedValues,
         subordinateValues: rawValues,
       });
+
+      selection.delete(row);
+      unregisterRenderedEntry(referenceEntry, targetValue, normalizedValue);
+      removeOptimisticAssignmentFromTask(task, 'subordinate', targetValue);
+      row.remove();
+      updateBulkState();
+      refreshDirectorStateAfterLocalTaskMutation();
 
       try {
         await sendTaskMutation({
@@ -23159,11 +23834,11 @@ function setupSubordinateControls(card, task) {
           durationMs: Date.now() - startedAt,
         });
 
+        refreshTasksInBackground();
         setStatus('success', 'Подчинённый удалён.');
-        selection.delete(row);
-        updateBulkState();
-        await loadTasks(true);
       } catch (error) {
+        restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
+        refreshDirectorStateAfterLocalTaskMutation();
         const errorDetails = buildErrorDetails(error);
         const message = errorDetails.message || 'Ошибка назначения.';
         logClientEvent('task_subordinate_remove_error', {
@@ -23260,6 +23935,24 @@ function setupSubordinateControls(card, task) {
       bulk: true,
     });
 
+    const rollbackSnapshot = createTaskAssignmentSnapshot(task);
+    busyRows.forEach((row) => {
+      row.dataset.assigned = 'true';
+      const assigneeValue = normalizeValue(row.dataset.assigneeValue);
+      const assignment = payloadAssignments.find((item) => normalizeValue(item.id) === assigneeValue) || null;
+      const referenceEntry = findAssignmentEntryByIdentifier(
+        assignmentCandidates,
+        normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
+      );
+      if (assignment) {
+        addOptimisticAssignmentToTask(task, 'subordinate', assignment, referenceEntry);
+        registerRenderedEntry(referenceEntry || assignment, assigneeValue, normalizeIdentifier(assigneeValue));
+      }
+    });
+    selection.clear();
+    updateBulkState();
+    refreshDirectorStateAfterLocalTaskMutation();
+
     try {
       await sendTaskMutation({
         updateType: 'subordinates_add',
@@ -23280,12 +23973,12 @@ function setupSubordinateControls(card, task) {
         durationMs: Date.now() - startedAt,
       });
 
-      setStatus('success', payloadAssignments.length > 1 ? 'Подчинённые назначены.' : 'Подчинённый назначен.');
-      selection.clear();
-      updateBulkState();
       setBulkAssignFeedback(bulkButton, 'Назначение успешно', updateBulkState, 'success');
-      await loadTasks(true);
+      refreshTasksInBackground();
+      setStatus('success', payloadAssignments.length > 1 ? 'Подчинённые назначены.' : 'Подчинённый назначен.');
     } catch (error) {
+      restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
+      refreshDirectorStateAfterLocalTaskMutation();
       const errorDetails = buildErrorDetails(error);
       const message = errorDetails.message || 'Ошибка назначения.';
       logClientEvent('task_subordinate_assign_error', {
@@ -23314,7 +24007,6 @@ function setupSubordinateControls(card, task) {
   bulkButton.addEventListener('click', handleBulkAssign);
   updateBulkState();
 
-  populateComboOptions();
   hideOptionsList();
 
   currentIdentifiers.forEach((identifier) => {

@@ -1038,6 +1038,34 @@ export function createPdfViewer(root = document) {
     }
   }
 
+  function appendPdfCanvasActionMessage(message, options = {}) {
+    if (!elements.pdfCanvas) {
+      return;
+    }
+    const previous = elements.pdfCanvas.querySelector('[data-pdf-action-message]');
+    if (previous && previous.parentNode) {
+      previous.parentNode.removeChild(previous);
+    }
+    const box = document.createElement('div');
+    box.className = 'appdosc-pdf-viewer__message';
+    box.dataset.pdfActionMessage = 'true';
+    box.textContent = message;
+
+    if (options && options.actionLabel && typeof options.onAction === 'function') {
+      const actionButton = document.createElement('button');
+      actionButton.type = 'button';
+      actionButton.className = 'appdosc-pdf-viewer__action';
+      actionButton.textContent = options.actionLabel;
+      actionButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        options.onAction();
+      });
+      box.appendChild(actionButton);
+    }
+
+    elements.pdfCanvas.appendChild(box);
+  }
+
   function destroyPdfDocument() {
     if (pdfRenderState.doc && typeof pdfRenderState.doc.destroy === 'function') {
       try {
@@ -1269,7 +1297,7 @@ export function createPdfViewer(root = document) {
       logPdfEvent('layout:empty', getPdfLayoutMetrics());
       pdfRenderState.renderedPages = 0;
       pdfRenderState.totalPages = pdfRenderState.doc ? pdfRenderState.doc.numPages : 0;
-      pdfRenderState.renderStatus = 'layout_failed';
+      pdfRenderState.renderStatus = 'failed';
       return false;
     }
     const currentToken = ++pdfRenderState.renderToken;
@@ -1710,6 +1738,14 @@ export function createPdfViewer(root = document) {
         && pdfRenderState.renderedPages === pdfRenderState.totalPages;
       pdfZoomState.useCanvas = hasVisibleContent;
       updateZoomControls();
+      if (isIos && hasVisibleContent && !hasCompleteContent) {
+        appendPdfCanvasActionMessage('Показана часть PDF. Откройте файл полностью в новой вкладке.', {
+          actionLabel: 'Открыть полностью',
+          onAction: () => {
+            window.open(url, '_blank', 'noopener');
+          },
+        });
+      }
       logPdfEvent('загрузка:успех', {
         url,
         pages: doc.numPages,
@@ -1720,7 +1756,7 @@ export function createPdfViewer(root = document) {
         hasVisibleContent,
         hasData: Boolean(data),
       });
-      return hasCompleteContent;
+      return hasCompleteContent || (isIos && hasVisibleContent);
     } catch (error) {
       pdfRenderState.loading = false;
       pdfZoomState.useCanvas = false;
@@ -2146,6 +2182,16 @@ export function createPdfViewer(root = document) {
         pdfRenderState.loadPromise = loadPdfDocument(resolvedUrl, data).then(async (loaded) => {
           if (loaded) {
             return true;
+          }
+          const { isIos } = detectMobilePlatform();
+          if (isIos) {
+            const switched = fallbackToFrame(
+              pdfRenderState.renderStatus === 'empty' ? 'canvas_empty' : 'canvas_incomplete',
+            );
+            if (!switched) {
+              fallbackToMessage();
+            }
+            return false;
           }
           const retryUrl = `${resolvedUrl}${resolvedUrl.includes('?') ? '&' : '?'}retry=${Date.now()}`;
           logPdfEvent('загрузка:повтор', { url: retryUrl });

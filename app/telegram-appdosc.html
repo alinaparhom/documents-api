@@ -282,33 +282,76 @@
 
       .appdosc-viewer__loader-card {
         display: grid;
-        grid-template-columns: 44px minmax(0, 1fr);
+        grid-template-columns: 54px minmax(0, 1fr);
         align-items: center;
-        gap: 12px;
-        width: min(420px, 100%);
-        padding: 14px;
-        border: 1px solid rgba(203, 213, 225, 0.78);
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.95);
-        box-shadow: 0 20px 44px rgba(15, 23, 42, 0.24);
+        gap: 14px;
+        width: min(440px, 100%);
+        padding: 16px;
+        border: 1px solid rgba(203, 213, 225, 0.82);
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(248, 250, 252, 0.94));
+        box-shadow: 0 22px 48px rgba(15, 23, 42, 0.24);
+        animation: appdoscViewerLoaderIn 0.18s ease-out both;
       }
 
       .appdosc-viewer__loader-spinner {
-        width: 44px;
-        height: 44px;
+        position: relative;
+        width: 54px;
+        height: 54px;
         color: #2563eb;
       }
 
       .appdosc-viewer__loader-svg {
-        width: 44px;
-        height: 44px;
-        animation: appdoscViewerSpin 0.9s linear infinite;
+        width: 54px;
+        height: 54px;
+        transform: rotate(-90deg);
       }
 
-      .appdosc-viewer__loader-svg circle {
+      .appdosc-viewer__loader-svg-track {
+        stroke: rgba(148, 163, 184, 0.26);
+      }
+
+      .appdosc-viewer__loader-svg-progress {
         stroke: currentColor;
-        stroke-dasharray: 84;
-        stroke-dashoffset: 24;
+        stroke-dasharray: 100;
+        stroke-dashoffset: 100;
+        filter: drop-shadow(0 0 7px rgba(37, 99, 235, 0.32));
+        transition: stroke-dashoffset 0.28s ease;
+      }
+
+      .appdosc-viewer__loader-pulse {
+        position: absolute;
+        inset: 12px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(6, 182, 212, 0.18));
+        animation: appdoscViewerLoaderPulse 1.2s ease-in-out infinite;
+      }
+
+      .appdosc-viewer__loader-file {
+        position: absolute;
+        inset: 16px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(37, 99, 235, 0.24);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.82);
+        color: #2563eb;
+      }
+
+      .appdosc-viewer__loader-file::before,
+      .appdosc-viewer__loader-file::after {
+        content: "";
+        display: block;
+        width: 11px;
+        height: 2px;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.72;
+      }
+
+      .appdosc-viewer__loader-file::after {
+        width: 8px;
+        opacity: 0.48;
       }
 
       .appdosc-viewer__loader-title {
@@ -327,7 +370,24 @@
         line-height: 1.35;
       }
 
+      .appdosc-viewer__loader-status {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .appdosc-viewer__loader-percent {
+        flex: 0 0 auto;
+        color: #2563eb;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
       .appdosc-viewer__loader-bar {
+        position: relative;
         height: 6px;
         margin-top: 10px;
         overflow: hidden;
@@ -336,6 +396,7 @@
       }
 
       .appdosc-viewer__loader-bar-fill {
+        position: relative;
         width: 0;
         height: 100%;
         border-radius: inherit;
@@ -343,10 +404,115 @@
         transition: width 0.24s ease;
       }
 
-      @keyframes appdoscViewerSpin {
-        to {
-          transform: rotate(360deg);
+      .appdosc-viewer__loader-bar-fill::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.72), transparent);
+        transform: translateX(-100%);
+        animation: appdoscViewerLoaderShimmer 1.15s ease-in-out infinite;
+      }
+
+      .appdosc-viewer__loader-dots {
+        display: inline-flex;
+        gap: 4px;
+        margin-left: 6px;
+        vertical-align: middle;
+      }
+
+      .appdosc-viewer__loader-dots span {
+        width: 4px;
+        height: 4px;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.38;
+        animation: appdoscViewerLoaderDot 1s ease-in-out infinite;
+      }
+
+      .appdosc-viewer__loader-dots span:nth-child(2) {
+        animation-delay: 0.14s;
+      }
+
+      .appdosc-viewer__loader-dots span:nth-child(3) {
+        animation-delay: 0.28s;
+      }
+
+      @keyframes appdoscViewerLoaderIn {
+        from {
+          opacity: 0;
+          transform: translateY(6px) scale(0.985);
         }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      @keyframes appdoscViewerLoaderPulse {
+        0%, 100% {
+          transform: scale(0.96);
+          opacity: 0.55;
+        }
+        50% {
+          transform: scale(1.05);
+          opacity: 0.9;
+        }
+      }
+
+      @keyframes appdoscViewerLoaderShimmer {
+        to {
+          transform: translateX(100%);
+        }
+      }
+
+      @keyframes appdoscViewerLoaderDot {
+        0%, 100% {
+          opacity: 0.28;
+          transform: translateY(0);
+        }
+        50% {
+          opacity: 0.85;
+          transform: translateY(-2px);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .appdosc-viewer__loader-card,
+        .appdosc-viewer__loader-pulse,
+        .appdosc-viewer__loader-bar-fill::after,
+        .appdosc-viewer__loader-dots span {
+          animation: none;
+        }
+
+        .appdosc-viewer__loader-svg-progress,
+        .appdosc-viewer__loader-bar-fill {
+          transition: none;
+        }
+      }
+
+      :root[data-theme='dark'] .appdosc-viewer__loader {
+        background: rgba(2, 6, 23, 0.34);
+      }
+
+      :root[data-theme='dark'] .appdosc-viewer__loader-card {
+        border-color: rgba(71, 85, 105, 0.78);
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.97), rgba(30, 41, 59, 0.94));
+        box-shadow: 0 24px 54px rgba(0, 0, 0, 0.42);
+      }
+
+      :root[data-theme='dark'] .appdosc-viewer__loader-title {
+        color: #f8fafc;
+      }
+
+      :root[data-theme='dark'] .appdosc-viewer__loader-step,
+      :root[data-theme='dark'] .appdosc-viewer__loader-time {
+        color: #cbd5e1;
+      }
+
+      :root[data-theme='dark'] .appdosc-viewer__loader-file {
+        background: rgba(15, 23, 42, 0.82);
+        border-color: rgba(96, 165, 250, 0.28);
+        color: #60a5fa;
       }
 
       .appdosc-assignee-picker__button {
@@ -5370,12 +5536,21 @@
               <div class="appdosc-viewer__loader-card">
                 <div class="appdosc-viewer__loader-spinner">
                   <svg viewBox="0 0 44 44" class="appdosc-viewer__loader-svg">
-                    <circle cx="22" cy="22" r="18" fill="none" stroke-width="3.5" stroke-linecap="round" />
+                    <circle class="appdosc-viewer__loader-svg-track" cx="22" cy="22" r="18" fill="none" stroke-width="3.5" />
+                    <circle class="appdosc-viewer__loader-svg-progress" data-viewer-loader-ring cx="22" cy="22" r="18" fill="none" stroke-width="3.5" stroke-linecap="round" pathLength="100" />
                   </svg>
+                  <span class="appdosc-viewer__loader-pulse" aria-hidden="true"></span>
+                  <span class="appdosc-viewer__loader-file" aria-hidden="true"></span>
                 </div>
                 <div class="appdosc-viewer__loader-info">
                   <div class="appdosc-viewer__loader-title" data-viewer-loader-title>Загрузка документа</div>
-                  <div class="appdosc-viewer__loader-step" data-viewer-loader-step>Подготовка…</div>
+                  <div class="appdosc-viewer__loader-status">
+                    <div class="appdosc-viewer__loader-step">
+                      <span data-viewer-loader-step>Подготовка…</span>
+                      <span class="appdosc-viewer__loader-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+                    </div>
+                    <div class="appdosc-viewer__loader-percent" data-viewer-loader-percent>0%</div>
+                  </div>
                   <div class="appdosc-viewer__loader-bar">
                     <div class="appdosc-viewer__loader-bar-fill" data-viewer-loader-bar></div>
                   </div>
