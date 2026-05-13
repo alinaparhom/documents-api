@@ -2931,7 +2931,7 @@ function safeRender(reason) {
 }
 
 function refreshTasksInBackground() {
-  const refreshPromise = loadTasks(true);
+  const refreshPromise = loadTasks(true, { silent: true });
   if (refreshPromise && typeof refreshPromise.catch === 'function') {
     refreshPromise.catch(() => {});
   }
@@ -3402,6 +3402,7 @@ const FALLBACK_CARD_TEMPLATE = `
     </div>
     <div class="appdosc-card__compact-actions" data-card-compact-actions hidden></div>
   </header>
+  <div class="appdosc-card__expanded-actions" data-card-expanded-actions hidden></div>
   <dl class="appdosc-card__details">
     <div class="appdosc-card__detail">
       <dt>Рег. №</dt>
@@ -4221,7 +4222,8 @@ function buildRequestBody(options = {}) {
   return payload;
 }
 
-async function loadTasks(force = false) {
+async function loadTasks(force = false, options = {}) {
+  const silent = Boolean(options && options.silent);
   if (state.loading && !force) {
     return;
   }
@@ -4237,9 +4239,11 @@ async function loadTasks(force = false) {
   loadTasksAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const signal = loadTasksAbortController ? loadTasksAbortController.signal : undefined;
 
-  setLoading(true);
-  clearStatus();
-  logClientEvent('tasks_load_start', { force });
+  if (!silent) {
+    setLoading(true);
+    clearStatus();
+  }
+  logClientEvent('tasks_load_start', { force, silent });
   const startedAt = Date.now();
 
   try {
@@ -4306,16 +4310,21 @@ async function loadTasks(force = false) {
       return;
     }
     state.error = error instanceof Error ? error.message : String(error);
-    setStatus('error', state.error);
-    renderEmpty();
+    if (!silent) {
+      setStatus('error', state.error);
+      renderEmpty();
+    }
     logClientEvent('tasks_load_error', {
       message: state.error,
       hasTelegramId: Boolean(state.telegram.id),
+      silent,
       durationMs: Date.now() - startedAt,
     });
   } finally {
     lastTasksLoadAt = Date.now();
-    setLoading(false);
+    if (!silent) {
+      setLoading(false);
+    }
   }
 }
 
@@ -6922,6 +6931,15 @@ function isTaskExcludedByEntryStatus(task, directorState) {
   return isTaskOverdueByCompactRule(task);
 }
 
+function shouldShowOnlyTasksWithoutStatus(filters) {
+  const { statusFilters, overdue } = splitTaskFilters(filters);
+  return statusFilters.length === 0 && !overdue && state.activeFilters.overdue !== true;
+}
+
+function taskHasNoVisibleStatus(task) {
+  return getTaskStatusKeyForUser(task) === '' && normalizeName(getTaskStatusValue(task)) === '';
+}
+
 function isTaskOverdueByCompactRule(task) {
   return resolvePersonalTaskDueDateInfo(task).overdue === true;
 }
@@ -7084,7 +7102,9 @@ function updateVisibleTasks() {
     visible = directorFiltered;
   }
 
-  if (shouldApplyEntryStatusExclusion(normalizedFilters)) {
+  if (shouldShowOnlyTasksWithoutStatus(normalizedFilters)) {
+    visible = visible.filter(({ task }) => taskHasNoVisibleStatus(task));
+  } else if (shouldApplyEntryStatusExclusion(normalizedFilters)) {
     visible = visible.filter(({ task }) => !isTaskExcludedByEntryStatus(task, directorState));
   }
 
@@ -13792,34 +13812,29 @@ function setBulkAssignFeedback(button, message, resetCallback, status) {
   }, BULK_ASSIGN_FEEDBACK_TIMEOUT_MS);
 }
 
-function setupDirectorCompactCompletion(card, task) {
-  if (!card || !task) {
+function setDirectorCompletionButtonPressed(button) {
+  if (!(button instanceof HTMLElement)) {
     return;
   }
 
-  const container = card.querySelector('[data-card-compact-actions]');
-  if (!container) {
-    return;
-  }
+  delete button.dataset.loading;
+  button.dataset.completed = 'true';
+  button.setAttribute('aria-pressed', 'true');
+  button.disabled = true;
+  button.textContent = 'Завершено';
+  setClass(button, 'appdosc-card__action--loading', false);
+}
 
-  container.innerHTML = '';
-
-  const organization = getTaskOrganization(task);
-  const directorAssigned = organization
-    && userIsDirectorForOrganization(organization)
-    && isTaskAssignedToCurrentDirector(task)
-    && !isTaskCompleted(task);
-
-  if (!directorAssigned) {
-    container.hidden = true;
-    return;
-  }
-
-  const isReviewStatus = isTaskUnderReview(task);
+function createDirectorCompletionButton(task, variant = 'compact') {
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'appdosc-card__action appdosc-card__action--compact appdosc-card__action--director-mini';
-  button.textContent = isReviewStatus ? 'Проверено' : 'Завершить назначение';
+  button.className = 'appdosc-card__action appdosc-card__action--director-mini';
+  if (variant === 'compact') {
+    button.classList.add('appdosc-card__action--compact');
+  } else {
+    button.classList.add('appdosc-card__action--expanded');
+  }
+  button.textContent = 'Завершить назначение';
   setActionButtonLoading(button, false);
 
   button.addEventListener('click', async (event) => {
@@ -13830,9 +13845,7 @@ function setupDirectorCompactCompletion(card, task) {
       return;
     }
 
-    const confirmMessage = isReviewStatus
-      ? 'Отметить задачу как проверенную? Она исчезнет из списка директора и будет доступна в разделе «Выполнено».'
-      : 'Завершить задачу? Она исчезнет из списка директора и будет доступна в разделе «Выполнено».';
+    const confirmMessage = 'Завершить назначение? Задача исчезнет из списка директора и будет доступна в разделе «Выполнено».';
     const confirmed = window.confirm(confirmMessage);
     if (!confirmed) {
       return;
@@ -13841,8 +13854,49 @@ function setupDirectorCompactCompletion(card, task) {
     await handleCardComplete(button, task);
   });
 
-  container.appendChild(button);
-  container.hidden = false;
+  return button;
+}
+
+function setupDirectorCompactCompletion(card, task) {
+  if (!card || !task) {
+    return;
+  }
+
+  const compactContainer = card.querySelector('[data-card-compact-actions]');
+  const expandedContainer = card.querySelector('[data-card-expanded-actions]');
+  if (!compactContainer && !expandedContainer) {
+    return;
+  }
+
+  [compactContainer, expandedContainer].forEach((container) => {
+    if (container instanceof HTMLElement) {
+      container.innerHTML = '';
+    }
+  });
+
+  const organization = getTaskOrganization(task);
+  const directorAssigned = organization
+    && userIsDirectorForOrganization(organization)
+    && isTaskAssignedToCurrentDirector(task)
+    && !isTaskCompleted(task);
+
+  if (!directorAssigned) {
+    [compactContainer, expandedContainer].forEach((container) => {
+      if (container instanceof HTMLElement) {
+        container.hidden = true;
+      }
+    });
+    return;
+  }
+
+  if (compactContainer instanceof HTMLElement) {
+    compactContainer.appendChild(createDirectorCompletionButton(task, 'compact'));
+    compactContainer.hidden = false;
+  }
+  if (expandedContainer instanceof HTMLElement) {
+    expandedContainer.appendChild(createDirectorCompletionButton(task, 'expanded'));
+    expandedContainer.hidden = false;
+  }
 }
 
 function setupCompleteButton(button, task) {
@@ -14222,6 +14276,10 @@ async function handleCardComplete(button, task) {
     return;
   }
 
+  const isDirectorMiniButton = button.classList
+    && button.classList.contains('appdosc-card__action--director-mini');
+  let completedOptimistically = false;
+
   setActionButtonLoading(button, true);
   setStatus('info', 'Отмечаем задачу выполненной...');
   const startedAt = Date.now();
@@ -14243,7 +14301,16 @@ async function handleCardComplete(button, task) {
   task.directorStatus = 'done';
   task.directorCompletedAt = new Date().toISOString();
   lastRenderedTasksSignature = '';
-  refreshVisibleTaskUi();
+  if (isDirectorMiniButton) {
+    completedOptimistically = true;
+    setDirectorCompletionButtonPressed(button);
+    window.setTimeout(() => {
+      lastRenderedTasksSignature = '';
+      refreshVisibleTaskUi();
+    }, 650);
+  } else {
+    refreshVisibleTaskUi();
+  }
 
   try {
     await sendTaskMutation({
@@ -14259,6 +14326,7 @@ async function handleCardComplete(button, task) {
     refreshTasksInBackground();
     setStatus('success', 'Задача отмечена выполненной.');
   } catch (error) {
+    completedOptimistically = false;
     Object.entries(rollbackCompletion).forEach(([field, entry]) => {
       if (entry.exists) {
         task[field] = entry.value;
@@ -14276,7 +14344,9 @@ async function handleCardComplete(button, task) {
     });
     setStatus('error', message);
   } finally {
-    setActionButtonLoading(button, false);
+    if (!completedOptimistically) {
+      setActionButtonLoading(button, false);
+    }
   }
 }
 
@@ -20399,15 +20469,26 @@ function removeOptimisticAssignmentFromTask(task, role, value) {
   return collectTaskAssignments(task, normalizedRole).length !== beforeCount;
 }
 
-function refreshDirectorStateAfterLocalTaskMutation() {
+function refreshDirectorStateAfterLocalTaskMutation(options = {}) {
   const directorState = ensureDirectorState();
+  const shouldRenderCards = !(options && options.renderCards === false);
   const previousKnownKeys = new Set(directorState.knownTaskKeys);
   updateDirectorTracking(previousKnownKeys);
   directorState.responsibleButtonsSignature = '';
   directorState.subordinateButtonsSignature = '';
   lastRenderedTasksSignature = '';
+  if (shouldRenderCards) {
+    updateDirectorSummary();
+    refreshVisibleTaskUi();
+    return;
+  }
+  updateSummaryFilterState();
+  updateVisibleTasks();
+  updateStats();
+  updateSummaryFilterState();
   updateDirectorSummary();
-  refreshVisibleTaskUi();
+  renderBulkFolderPanel();
+  updateFooter();
 }
 
 
@@ -22862,30 +22943,12 @@ function setupAssignmentControls(card, task) {
 
     const rollbackSnapshot = createTaskAssignmentSnapshot(task);
     busyRows.forEach((row) => {
-      row.dataset.assigned = 'true';
-      const assigneeValue = normalizeValue(row.dataset.assigneeValue);
-      const controls = rowControls.get(row) || {};
-      const assignment = payloadAssignments.find((item) => normalizeValue(item.id) === assigneeValue) || null;
-      const referenceEntry = findAssignmentEntryByIdentifier(
-        assignmentCandidates,
-        normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
-      );
-      if (assignment) {
-        addOptimisticAssignmentToTask(task, 'responsible', assignment, referenceEntry);
-        registerRenderedEntryKeys(referenceEntry, assigneeValue, normalizeIdentifier(assigneeValue));
-        registerAssignedEntry(referenceEntry || assignment);
-      }
+      row.dataset.syncState = 'pending';
       const note = row.querySelector('.appdosc-card__assign-note');
       if (note instanceof HTMLElement) {
-        note.textContent = 'Назначен';
-      }
-      if (controls.removeButton instanceof HTMLButtonElement) {
-        controls.removeButton.disabled = false;
+        note.textContent = 'Назначаем...';
       }
     });
-    selection.clear();
-    updateBulkState();
-    refreshDirectorStateAfterLocalTaskMutation();
 
     try {
       await sendTaskMutation({
@@ -22906,9 +22969,34 @@ function setupAssignmentControls(card, task) {
         durationMs: Date.now() - startedAt,
       });
 
+      busyRows.forEach((row) => {
+        row.dataset.assigned = 'true';
+        const assigneeValue = normalizeValue(row.dataset.assigneeValue);
+        const controls = rowControls.get(row) || {};
+        const assignment = payloadAssignments.find((item) => normalizeValue(item.id) === assigneeValue) || null;
+        const referenceEntry = findAssignmentEntryByIdentifier(
+          assignmentCandidates,
+          normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
+        );
+        if (assignment) {
+          addOptimisticAssignmentToTask(task, 'responsible', assignment, referenceEntry);
+          registerRenderedEntryKeys(referenceEntry, assigneeValue, normalizeIdentifier(assigneeValue));
+          registerAssignedEntry(referenceEntry || assignment);
+        }
+        const note = row.querySelector('.appdosc-card__assign-note');
+        if (note instanceof HTMLElement) {
+          note.textContent = 'Назначен';
+        }
+        if (controls.removeButton instanceof HTMLButtonElement) {
+          controls.removeButton.disabled = false;
+        }
+      });
+      selection.clear();
+      updateBulkState();
       setBulkAssignFeedback(bulkButton, 'Назначение успешно', updateBulkState, 'success');
-      refreshTasksInBackground();
+      refreshDirectorStateAfterLocalTaskMutation({ renderCards: false });
       setStatus('success', payloadAssignments.length > 1 ? 'Ответственные назначены.' : 'Ответственный назначен.');
+      refreshTasksInBackground();
     } catch (error) {
       restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
       refreshDirectorStateAfterLocalTaskMutation();
@@ -22929,7 +23017,11 @@ function setupAssignmentControls(card, task) {
       setBulkAssignFeedback(bulkButton, 'Назначение неуспешно', updateBulkState, 'error');
     } finally {
       setActionButtonLoading(bulkButton, false);
+      updateBulkState();
       busyRows.forEach((row) => {
+        if (row instanceof HTMLElement && row.dataset.syncState === 'pending') {
+          delete row.dataset.syncState;
+        }
         const controls = rowControls.get(row) || {};
         setAssignmentRowBusy(
           row,
@@ -22940,6 +23032,12 @@ function setupAssignmentControls(card, task) {
           controls.deadlineInput,
           controls.instructionSelect,
         );
+        if (row instanceof HTMLElement && row.dataset.assigned !== 'true') {
+          const note = row.querySelector('.appdosc-card__assign-note');
+          if (note instanceof HTMLElement) {
+            note.textContent = 'Новый кандидат';
+          }
+        }
       });
     }
   };
@@ -23937,21 +24035,8 @@ function setupSubordinateControls(card, task) {
 
     const rollbackSnapshot = createTaskAssignmentSnapshot(task);
     busyRows.forEach((row) => {
-      row.dataset.assigned = 'true';
-      const assigneeValue = normalizeValue(row.dataset.assigneeValue);
-      const assignment = payloadAssignments.find((item) => normalizeValue(item.id) === assigneeValue) || null;
-      const referenceEntry = findAssignmentEntryByIdentifier(
-        assignmentCandidates,
-        normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
-      );
-      if (assignment) {
-        addOptimisticAssignmentToTask(task, 'subordinate', assignment, referenceEntry);
-        registerRenderedEntry(referenceEntry || assignment, assigneeValue, normalizeIdentifier(assigneeValue));
-      }
+      row.dataset.syncState = 'pending';
     });
-    selection.clear();
-    updateBulkState();
-    refreshDirectorStateAfterLocalTaskMutation();
 
     try {
       await sendTaskMutation({
@@ -23973,9 +24058,25 @@ function setupSubordinateControls(card, task) {
         durationMs: Date.now() - startedAt,
       });
 
+      busyRows.forEach((row) => {
+        row.dataset.assigned = 'true';
+        const assigneeValue = normalizeValue(row.dataset.assigneeValue);
+        const assignment = payloadAssignments.find((item) => normalizeValue(item.id) === assigneeValue) || null;
+        const referenceEntry = findAssignmentEntryByIdentifier(
+          assignmentCandidates,
+          normalizeIdentifier(assigneeValue) || assigneeValue.toLowerCase(),
+        );
+        if (assignment) {
+          addOptimisticAssignmentToTask(task, 'subordinate', assignment, referenceEntry);
+          registerRenderedEntry(referenceEntry || assignment, assigneeValue, normalizeIdentifier(assigneeValue));
+        }
+      });
+      selection.clear();
+      updateBulkState();
       setBulkAssignFeedback(bulkButton, 'Назначение успешно', updateBulkState, 'success');
-      refreshTasksInBackground();
+      refreshDirectorStateAfterLocalTaskMutation({ renderCards: false });
       setStatus('success', payloadAssignments.length > 1 ? 'Подчинённые назначены.' : 'Подчинённый назначен.');
+      refreshTasksInBackground();
     } catch (error) {
       restoreTaskAssignmentSnapshot(task, rollbackSnapshot);
       refreshDirectorStateAfterLocalTaskMutation();
@@ -23997,7 +24098,11 @@ function setupSubordinateControls(card, task) {
       setBulkAssignFeedback(bulkButton, 'Назначение неуспешно', updateBulkState, 'error');
     } finally {
       setActionButtonLoading(bulkButton, false);
+      updateBulkState();
       busyRows.forEach((row) => {
+        if (row instanceof HTMLElement && row.dataset.syncState === 'pending') {
+          delete row.dataset.syncState;
+        }
         const controls = rowControls.get(row) || {};
         setAssignmentRowBusy(row, false, controls.assignButton, controls.removeButton, controls.commentInput, controls.deadlineInput);
       });
