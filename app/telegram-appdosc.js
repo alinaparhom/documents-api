@@ -1719,6 +1719,48 @@ function getTelegramWebApp() {
   return window.Telegram.WebApp;
 }
 
+function downloadViaTelegramWebApp(url, fileName) {
+  const webApp = getTelegramWebApp();
+  if (!webApp || typeof webApp.downloadFile !== 'function') {
+    return Promise.resolve(false);
+  }
+
+  const normalizedUrl = toAbsoluteUrl(url);
+  const normalizedName = normalizeValue(fileName) || 'document';
+  if (!normalizedUrl || !/^https:\/\//i.test(normalizedUrl)) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (success) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(Boolean(success));
+    };
+
+    try {
+      const result = webApp.downloadFile({
+        url: normalizedUrl,
+        file_name: normalizedName,
+      }, (accepted) => {
+        finish(accepted !== false);
+      });
+
+      if (result && typeof result.then === 'function') {
+        result.then(() => finish(true)).catch(() => finish(false));
+        return;
+      }
+
+      window.setTimeout(() => finish(true), 500);
+    } catch (error) {
+      finish(false);
+    }
+  });
+}
+
 function isTelegramWebAppAvailable() {
   return Boolean(getTelegramWebApp());
 }
@@ -6203,6 +6245,9 @@ function openBottomSheet(contentBuilder) {
   const sheet = document.createElement('div');
   sheet.className = 'bottom-sheet';
   const content = contentBuilder(closeBottomSheet);
+  if (content instanceof HTMLElement && content.classList.contains('folder-picker-modal')) {
+    sheet.classList.add('bottom-sheet--folder-picker');
+  }
   sheet.appendChild(content);
   document.body.appendChild(overlay);
   document.body.appendChild(sheet);
@@ -7831,13 +7876,14 @@ async function handleCardFileDownload(file, button) {
     || normalizeValue(file.storedName)
     || 'document';
   const downloadUrl = buildDownloadUrl(file) || resolveFileFetchUrl(file);
+  const directDownloadUrl = buildDirectDownloadUrl(file);
   if (!downloadUrl) {
     setStatus('warning', 'Не удалось найти ссылку для скачивания.');
     return;
   }
 
   setCardFileDownloadLoading(button, true);
-  setStatus('info', `Готовим скачивание: ${fileName}`);
+  setStatus('info', `Скачиваю выбранный файл: ${fileName}`);
   const slowTimer = window.setTimeout(() => {
     setStatus('info', 'Файл ещё загружается. При медленном интернете это может занять несколько секунд.');
   }, 2500);
@@ -7849,29 +7895,57 @@ async function handleCardFileDownload(file, button) {
         setStatus('success', 'Открылось меню iOS. Выберите «Сохранить в Файлы».');
         return;
       }
-    }
-
-    if (shouldOpenExternalFirstForDownload()) {
       const opened = openExternalDocument(downloadUrl);
       if (opened) {
-        setStatus('info', 'Файл открыт для сохранения.');
+        setStatus('info', 'Открываю файл для сохранения.');
         return;
       }
     }
 
+    if (isAndroidPlatform()) {
+      const telegramDownloaded = await downloadViaTelegramWebApp(directDownloadUrl || downloadUrl, fileName);
+      if (telegramDownloaded) {
+        setStatus('success', 'Скачивание файла запущено.');
+        return;
+      }
+
+      const blob = await fetchFileAsBlob(downloadUrl);
+      if (blob) {
+        downloadBlob(blob, fileName);
+        setStatus('success', 'Выбранный файл отправлен на скачивание.');
+        return;
+      }
+
+      const fetched = await downloadFileFromUrl(downloadUrl, fileName);
+      if (fetched) {
+        setStatus('success', 'Выбранный файл отправлен на скачивание.');
+        return;
+      }
+    }
+
+    if (!isAndroidPlatform() && shouldOpenExternalFirstForDownload()) {
+      const opened = openExternalDocument(downloadUrl);
+      if (opened) {
+        setStatus('info', 'Открываю файл для сохранения.');
+        return;
+      }
+    }
+
+    const fallbackLinkUrl = isAndroidPlatform() ? '' : downloadUrl;
     const fetched = await downloadFileFromUrl(downloadUrl, fileName);
-    if (fetched || triggerDownloadFromUrl(downloadUrl, fileName)) {
-      setStatus('success', 'Файл отправлен на скачивание.');
+    if (fetched || (fallbackLinkUrl && triggerDownloadFromUrl(fallbackLinkUrl, fileName))) {
+      setStatus('success', 'Выбранный файл отправлен на скачивание.');
       return;
     }
     throw new Error('download_unavailable');
   } catch (error) {
-    const opened = openExternalDocument(downloadUrl);
+    const fallbackExternalUrl = isAndroidPlatform() ? '' : downloadUrl;
+    const opened = fallbackExternalUrl ? openExternalDocument(fallbackExternalUrl) : null;
     if (opened) {
-      setStatus('info', 'Открыли файл в новой вкладке для сохранения.');
+      setStatus('info', 'Открываю файл для сохранения.');
       return;
     }
-    setStatus('error', 'Не удалось скачать файл. Попробуйте ещё раз.');
+    setStatus('error', 'Не удалось скачать именно этот файл. Попробуйте ещё раз.');
   } finally {
     window.clearTimeout(slowTimer);
     setCardFileDownloadLoading(button, false);
@@ -7881,6 +7955,7 @@ async function handleCardFileDownload(file, button) {
 async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary, options = {}) {
   const resolvedName = fileName || getAttachmentName(file) || 'document';
   const primaryUrl = normalizeValue(downloadUrl) || buildDownloadUrl(file) || resolveFileFetchUrl(file);
+  const directDownloadUrl = buildDirectDownloadUrl(file);
   const directMode = Boolean(options && options.direct);
 
   setStatus('info', directMode ? 'Готовим скачивание файла...' : 'Пересылка не открылась. Пробуем скачать файл...');
@@ -7899,7 +7974,32 @@ async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isS
       }
     }
 
-    if (shouldOpenExternalFirstForDownload()) {
+    if (isAndroidPlatform()) {
+      const telegramDownloaded = await downloadViaTelegramWebApp(directDownloadUrl || primaryUrl, resolvedName);
+      if (telegramDownloaded) {
+        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+          method: directMode ? 'direct_android_telegram_download' : 'telegram_forward_fallback_android_telegram_download',
+          downloadUrl: directDownloadUrl || primaryUrl,
+          fileName: resolvedName,
+        }));
+        setStatus('success', 'Скачивание файла запущено.');
+        return true;
+      }
+
+      const blob = await fetchFileAsBlob(primaryUrl);
+      if (blob) {
+        downloadBlob(blob, resolvedName);
+        sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
+          method: directMode ? 'direct_android_blob' : 'telegram_forward_fallback_android_blob',
+          downloadUrl: primaryUrl,
+          fileName: resolvedName,
+        }));
+        setStatus('success', 'Файл отправлен на скачивание.');
+        return true;
+      }
+    }
+
+    if (!isAndroidPlatform() && shouldOpenExternalFirstForDownload()) {
       const opened = openExternalDocument(primaryUrl);
       if (opened) {
         sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
@@ -7923,10 +8023,11 @@ async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isS
       return true;
     }
 
-    if (triggerDownloadFromUrl(primaryUrl, resolvedName)) {
+    const linkDownloadUrl = isAndroidPlatform() ? '' : primaryUrl;
+    if (linkDownloadUrl && triggerDownloadFromUrl(linkDownloadUrl, resolvedName)) {
       sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
         method: directMode ? 'direct_link' : 'telegram_forward_fallback_link',
-        downloadUrl: primaryUrl,
+        downloadUrl: linkDownloadUrl,
         fileName: resolvedName,
       }));
       setStatus('success', 'Файл отправлен на скачивание.');
@@ -7964,12 +8065,13 @@ async function fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isS
     });
   }
 
-  if (primaryUrl) {
-    const opened = openExternalDocument(primaryUrl);
+  const finalExternalUrl = isAndroidPlatform() ? '' : primaryUrl;
+  if (finalExternalUrl) {
+    const opened = openExternalDocument(finalExternalUrl);
     if (opened) {
       sendDownloadLog('viewer_download_success', buildViewerDownloadLogDetails(task, file, {
         method: directMode ? 'direct_external_fallback' : 'telegram_forward_fallback_external',
-        downloadUrl: primaryUrl,
+        downloadUrl: finalExternalUrl,
         fileName: resolvedName,
       }));
       setStatus('info', 'Файл открыт в новой вкладке для сохранения.');
@@ -9374,7 +9476,7 @@ function downloadBlob(blob, filename) {
   }, 1000);
 }
 
-function triggerDownloadFromUrl(url, filename) {
+function triggerDownloadFromUrl(url, filename, options = {}) {
   if (!url || typeof document === 'undefined') {
     return false;
   }
@@ -9384,7 +9486,9 @@ function triggerDownloadFromUrl(url, filename) {
     if (filename) {
       link.download = filename;
     }
-    link.target = '_blank';
+    if (!options || options.targetBlank !== false) {
+      link.target = '_blank';
+    }
     link.rel = 'noopener';
     document.body.appendChild(link);
     link.click();
@@ -9418,6 +9522,9 @@ function createDownloadFileAccessUrl(rawUrl, fileName = '', disposition = 'attac
       endpointUrl.searchParams.set('name', fileName);
     }
     endpointUrl.searchParams.set('disposition', disposition === 'inline' ? 'inline' : 'attachment');
+    if (disposition !== 'inline') {
+      endpointUrl.searchParams.set('_', String(Date.now()));
+    }
 
     return endpointUrl.toString();
   } catch (error) {
@@ -11434,12 +11541,87 @@ function getViewerFileToDownload() {
   return null;
 }
 
+function resolveTaskFileDownloadSource(file) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+
+  const candidates = [
+    file.url,
+    file.sourceUrl,
+    file.downloadUrl,
+    file.fileUrl,
+    file.file,
+    file.path,
+    file.storedName,
+  ];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const source = normalizeValue(candidates[index]);
+    if (!source) {
+      continue;
+    }
+    const resolved = resolveDocumentUrl(source);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return '';
+}
+
+function isDocsPhpUrl(url) {
+  const normalized = normalizeValue(url);
+  if (!normalized) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(normalized, window.location.origin);
+    return /\/docs\.php$/i.test(parsed.pathname);
+  } catch (error) {
+    return /(?:^|\/)docs\.php(?:[?#]|$)/i.test(normalized);
+  }
+}
+
+function buildDirectDownloadUrl(file) {
+  if (!file || typeof file !== 'object') {
+    return '';
+  }
+
+  const candidates = [
+    file.resolvedUrl,
+    file.url,
+    file.sourceUrl,
+    file.downloadUrl,
+    file.fileUrl,
+    file.file,
+    file.path,
+  ];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const source = normalizeValue(candidates[index]);
+    const isInlineUrl = source.startsWith('blob:') || source.startsWith('data:');
+    if (!source || isDocsPhpUrl(source) || isInlineUrl) {
+      continue;
+    }
+
+    const resolved = resolveDocumentUrl(source);
+    const absoluteUrl = toAbsoluteUrl(resolved);
+    const isAbsoluteInlineUrl = absoluteUrl.startsWith('blob:') || absoluteUrl.startsWith('data:');
+    if (absoluteUrl && !isDocsPhpUrl(absoluteUrl) && !isAbsoluteInlineUrl) {
+      return absoluteUrl;
+    }
+  }
+
+  return '';
+}
+
 function buildDownloadUrl(file) {
   if (!file || typeof file !== 'object') {
     return '';
   }
-  const source = file.resolvedUrl || file.url || file.previewUrl || '';
-  const resolved = resolveDocumentUrl(source);
+  const resolved = resolveTaskFileDownloadSource(file);
   if (!resolved) {
     return '';
   }
@@ -11988,6 +12170,13 @@ async function handleViewerDownloadClick() {
   }, 2500);
 
   try {
+    if (isAndroidPlatform()) {
+      const directDownloaded = await fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary, { direct: true });
+      if (directDownloaded) {
+        return;
+      }
+    }
+
     if (isTelegramWebAppAvailable()) {
       setStatus('info', 'Открываем пересылку в Telegram...');
       const quickShareUrl = buildTelegramShareUrl(file);
@@ -13880,11 +14069,11 @@ function setupDirectorCompactCompletion(card, task) {
   });
 
   const organization = getTaskOrganization(task);
-  const currentDirectorTask = organization
-    && userIsDirectorForOrganization(organization)
-    && isTaskAssignedToCurrentDirector(task);
+  const currentDirectorTask = organization && userIsDirectorForOrganization(organization);
   const directorCompleted = currentDirectorTask && isDirectorCompletionMarked(task);
   const shouldShowButton = currentDirectorTask && (directorCompleted || !isTaskCompleted(task));
+  delete card.dataset.directorCompletion;
+  delete card.dataset.iosDirectorCompletion;
 
   if (!shouldShowButton) {
     [compactContainer, expandedContainer].forEach((container) => {
@@ -13895,6 +14084,7 @@ function setupDirectorCompactCompletion(card, task) {
     return;
   }
 
+  card.dataset.directorCompletion = 'true';
   if (compactContainer instanceof HTMLElement) {
     compactContainer.appendChild(createDirectorCompletionButton(task, 'compact', directorCompleted));
     compactContainer.hidden = false;

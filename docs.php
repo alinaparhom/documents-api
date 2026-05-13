@@ -10132,8 +10132,14 @@ function docs_stream_file_response(string $path, string $fileName, string $dispo
     header('Content-Disposition: ' . docs_build_content_disposition_header($disposition, $fileName));
     header('Content-Length: ' . $length);
     header('Accept-Ranges: bytes');
-    header('Cache-Control: private, max-age=300, must-revalidate', true);
-    header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 300) . ' GMT', true);
+    if (strtolower(trim($disposition)) === 'attachment') {
+        header('Cache-Control: private, no-store, no-cache, must-revalidate', true);
+        header('Pragma: no-cache', true);
+        header('Expires: 0', true);
+    } else {
+        header('Cache-Control: private, max-age=300, must-revalidate', true);
+        header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 300) . ' GMT', true);
+    }
     if ($status === 206) {
         header('Content-Range: bytes ' . $start . '-' . $end . '/' . $fileSize);
     }

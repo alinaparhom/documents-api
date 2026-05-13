@@ -2392,23 +2392,35 @@
 
       .appdosc-card[data-expanded='false'] .task-meta {
         position: static !important;
-        display: flex !important;
+        display: grid !important;
+        grid-template-columns: auto auto auto minmax(0, 1fr) !important;
         align-items: center !important;
-        gap: 8px !important;
-        flex-wrap: nowrap !important;
+        gap: 4px !important;
         min-width: 0 !important;
         margin: 0 !important;
         flex: 0 0 auto !important;
         max-width: 100% !important;
-        font: inherit !important;
+        font: 700 11px/1.15 Inter, system-ui, sans-serif !important;
       }
 
       .appdosc-card[data-expanded='false'] .task-date,
       .appdosc-card[data-expanded='false'] .task-number {
-        font: inherit !important;
+        font-size: 10px !important;
+        line-height: 1.1 !important;
+        min-height: 17px !important;
+        padding: 2px 6px !important;
+        opacity: .92;
+      }
+
+      .appdosc-card[data-expanded='false'] .task-status-badge {
+        justify-self: end !important;
+        grid-column: -1 !important;
+        margin-left: 6px !important;
+        max-width: min(46vw, 168px) !important;
         min-height: 18px !important;
         padding: 2px 7px !important;
-        opacity: .92;
+        font-size: 9.5px !important;
+        line-height: 1.1 !important;
       }
 
       .appdosc-card[data-expanded='false'] .task-name {
@@ -4378,8 +4390,10 @@
       .task-folder-checkbox{position:static;flex:0 0 auto;width:16px;height:16px;accent-color:#4d91ff;margin:0 4px 0 0;z-index:3;border-radius:6px;background:rgba(255,255,255,.92);box-shadow:0 1px 3px rgba(15,23,42,.18)}
       .bottom-sheet-overlay{position:fixed;inset:0;background:rgba(15,23,42,.35);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);z-index:1000}
       .bottom-sheet{position:fixed;left:0;right:0;bottom:0;max-height:88dvh;overflow:auto;-webkit-overflow-scrolling:touch;background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,250,255,.94));border-radius:24px 24px 0 0;padding:28px 16px calc(16px + env(safe-area-inset-bottom));border-top:1px solid rgba(148,163,184,.34);box-shadow:0 -16px 40px rgba(15,23,42,.2);z-index:1001;color:#0f172a;animation:sheetSlideUp .22s ease-out}
+      .bottom-sheet.bottom-sheet--folder-picker{left:0!important;right:0!important;bottom:0!important;width:auto!important;max-height:min(88dvh,720px)!important;overflow:hidden!important;translate:none!important;border-radius:24px 24px 0 0!important;border:0!important;border-top:1px solid rgba(148,163,184,.34)!important;padding:28px 16px calc(16px + env(safe-area-inset-bottom))!important}
       .bottom-sheet::before{content:'';position:absolute;left:50%;top:9px;width:44px;height:5px;border-radius:999px;background:rgba(148,163,184,.52);transform:translateX(-50%)}
       .danger-btn{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.45);color:#b91c1c}
+      .folder-picker-modal{display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;gap:10px;min-height:0;max-height:min(676px,calc(88dvh - 44px))}
       .folder-modal-head{display:grid;gap:4px;margin-bottom:14px}
       .folder-modal-kicker{width:max-content;padding:3px 8px;border-radius:999px;background:rgba(59,130,246,.1);color:#1d4ed8;font-size:11px;font-weight:800;line-height:1.2}
       .folder-modal-title{margin:0;font-size:18px;font-weight:800;color:#0f172a;line-height:1.2}
@@ -4395,20 +4409,30 @@
       .folder-color-swatch.is-selected{box-shadow:0 0 0 2px #0f172a,0 0 0 5px rgba(77,145,255,.18)}
       .folder-modal-color-input{width:100%;height:42px;margin-top:0;border:1px solid rgba(148,163,184,.42);border-radius:14px;background:rgba(255,255,255,.95);padding:5px 7px;box-shadow:0 6px 16px rgba(59,130,246,.08)}
       .folder-modal-input--error{border-color:rgba(239,68,68,.7)!important;box-shadow:0 0 0 3px rgba(239,68,68,.16)}
+      .folder-picker-modal .folder-modal-head{margin-bottom:2px}
+      .folder-picker-modal .folder-modal-field{margin-top:0}
       .folder-modal-hint{margin-top:8px;font-size:12px;color:#64748b}
+      .folder-picker-modal .folder-modal-hint{margin:0;color:#64748b;font-size:12px;font-weight:700}
       .folder-modal-notice{margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(254,242,242,.96);border:1px solid rgba(248,113,113,.45);color:#991b1b;font-size:13px;line-height:1.3;opacity:0;transform:translateY(-4px);transition:opacity .2s ease,transform .2s ease}
       .folder-modal-notice.is-visible{opacity:1;transform:translateY(0)}
       .folder-picker-list{margin-top:10px;display:grid;gap:8px;max-height:min(48vh,380px);overflow:auto;padding:2px}
+      .folder-picker-modal .folder-picker-list{min-height:0;max-height:none;margin-top:0;padding:2px 2px 8px;overscroll-behavior:contain}
       .folder-picker-item{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:50px;padding:10px 12px;border-radius:14px;border:1px solid rgba(148,163,184,.32);background:rgba(255,255,255,.94);color:#0f172a;font-size:14px;box-shadow:0 6px 14px rgba(15,23,42,.05);text-align:left}
+      .folder-picker-modal .folder-picker-item{min-height:56px;padding:11px 13px;border-radius:16px;background:linear-gradient(145deg,rgba(255,255,255,.98),rgba(248,251,255,.94));box-shadow:0 8px 18px rgba(15,23,42,.06);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
       .folder-picker-item.is-current{border-color:rgba(77,145,255,.5);background:rgba(239,246,255,.96)}
+      .folder-picker-modal .folder-picker-item.is-current{border-color:rgba(77,145,255,.64);background:linear-gradient(145deg,rgba(239,246,255,.98),rgba(255,255,255,.95));box-shadow:0 0 0 1px rgba(77,145,255,.12) inset,0 10px 22px rgba(37,99,235,.1)}
+      .folder-picker-modal .folder-picker-item:active{transform:scale(.985)}
       .folder-picker-item__name-wrap{display:inline-flex;align-items:center;gap:9px;min-width:0}
       .folder-picker-item__color{width:14px;height:14px;flex:0 0 auto;border-radius:999px;box-shadow:0 0 0 2px rgba(255,255,255,.9),0 0 0 3px rgba(148,163,184,.32)}
       .folder-picker-item__text{display:grid;gap:2px;min-width:0}
       .folder-picker-item__name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;font-weight:800}
       .folder-picker-item__meta{font-size:11px;color:#2563eb;font-weight:700}
       .folder-picker-item__arrow{color:#64748b;font-size:18px;line-height:1}
+      .folder-picker-modal .folder-picker-item.is-current .folder-picker-item__arrow{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;background:rgba(37,99,235,.12);color:#1d4ed8;font-size:0}
+      .folder-picker-modal .folder-picker-item.is-current .folder-picker-item__arrow::before{content:'✓';font-size:14px;font-weight:900;line-height:1}
       .folder-picker-empty{padding:12px;border-radius:14px;border:1px dashed rgba(148,163,184,.44);color:#64748b;text-align:center;font-size:13px}
       .folder-picker-create{width:100%;min-height:42px;margin-top:10px;border:1px dashed rgba(77,145,255,.5);border-radius:14px;background:rgba(239,246,255,.74);color:#1d4ed8;font-size:14px;font-weight:800}
+      .folder-picker-modal .folder-picker-create{position:sticky;bottom:0;min-height:46px;margin-top:0;border-style:solid;border-color:rgba(77,145,255,.38);background:linear-gradient(145deg,rgba(239,246,255,.98),rgba(255,255,255,.96));box-shadow:0 -10px 20px rgba(255,255,255,.9),0 8px 18px rgba(37,99,235,.08)}
       .folder-modal-actions{display:flex;gap:10px;margin-top:14px}
       .folder-modal-actions .appdosc-card__action{flex:1}
       .folder-modal-action--ghost{background:rgba(255,255,255,.72);border:1px solid rgba(148,163,184,.36);color:#334155}
@@ -5311,8 +5335,225 @@
           padding-right:10px!important;
         }
       }
+      :root{
+        --appdosc-card-font-base:14px;
+        --appdosc-card-font-meta:11px;
+        --appdosc-card-font-title:14px;
+        --appdosc-card-font-subtitle:13px;
+        --appdosc-card-font-detail-label:11px;
+        --appdosc-card-font-detail-value:13px;
+        --appdosc-card-font-file:12.5px;
+        --appdosc-card-font-action:12.5px;
+      }
+      @media (min-width:768px){
+        :root{
+          --appdosc-card-font-base:15px;
+          --appdosc-card-font-meta:12px;
+          --appdosc-card-font-title:15px;
+          --appdosc-card-font-subtitle:14px;
+          --appdosc-card-font-detail-label:12px;
+          --appdosc-card-font-detail-value:14px;
+          --appdosc-card-font-file:13px;
+          --appdosc-card-font-action:13px;
+        }
+      }
+      @media (max-width:430px){
+        :root{
+          --appdosc-card-font-base:13px;
+          --appdosc-card-font-meta:10.5px;
+          --appdosc-card-font-title:13.5px;
+          --appdosc-card-font-subtitle:12.5px;
+          --appdosc-card-font-detail-label:10.5px;
+          --appdosc-card-font-detail-value:12.5px;
+          --appdosc-card-font-file:12px;
+          --appdosc-card-font-action:12px;
+        }
+      }
+      @media (max-width:360px){
+        :root{
+          --appdosc-card-font-base:12.5px;
+          --appdosc-card-font-meta:10px;
+          --appdosc-card-font-title:13px;
+          --appdosc-card-font-subtitle:12px;
+          --appdosc-card-font-detail-label:10px;
+          --appdosc-card-font-detail-value:12px;
+          --appdosc-card-font-file:11.5px;
+          --appdosc-card-font-action:11.5px;
+        }
+      }
+      .appdosc-card.task-card{
+        font-size:var(--appdosc-card-font-base)!important;
+      }
+      .appdosc-card .task-date,
+      .appdosc-card .task-number,
+      .appdosc-card .task-status-badge,
+      .appdosc-card__meta{
+        font-size:var(--appdosc-card-font-meta)!important;
+      }
+      .appdosc-card .appdosc-card__title,
+      .appdosc-card .task-name{
+        font-size:var(--appdosc-card-font-title)!important;
+        min-width:0!important;
+      }
+      .appdosc-card .appdosc-card__subtitle{
+        font-size:var(--appdosc-card-font-subtitle)!important;
+        min-width:0!important;
+      }
+      .appdosc-card[data-expanded='false'] .appdosc-card__header{
+        grid-template-columns:minmax(0,1fr) 24px!important;
+        grid-template-areas:"main actions" "compact compact"!important;
+        align-items:start!important;
+        min-width:0!important;
+      }
+      .appdosc-card[data-expanded='false'] .task-main,
+      .appdosc-card[data-expanded='false'] .appdosc-card__header-text{
+        min-width:0!important;
+        overflow:hidden!important;
+      }
+      .appdosc-card[data-expanded='false'] .task-meta{
+        display:grid!important;
+        grid-template-columns:auto auto auto minmax(0,1fr)!important;
+        flex-wrap:nowrap!important;
+        align-items:center!important;
+        gap:4px!important;
+        min-width:0!important;
+      }
+      .appdosc-card[data-expanded='false'] .task-date,
+      .appdosc-card[data-expanded='false'] .task-number,
+      .appdosc-card[data-expanded='false'] .task-status-badge{
+        max-width:100%!important;
+        min-width:0!important;
+      }
+      .appdosc-card[data-expanded='false'] .task-date,
+      .appdosc-card[data-expanded='false'] .task-number{
+        min-height:17px!important;
+        padding:2px 6px!important;
+        font-size:10px!important;
+        line-height:1.1!important;
+      }
+      .appdosc-card[data-expanded='false'] .task-status-badge{
+        justify-self:end!important;
+        grid-column:-1!important;
+        margin-left:6px!important;
+        max-width:min(46vw,168px)!important;
+        min-height:18px!important;
+        padding:2px 7px!important;
+        font-size:9.5px!important;
+        line-height:1.1!important;
+      }
+      .appdosc-card[data-expanded='false'] .appdosc-card__side{
+        width:24px!important;
+        min-width:24px!important;
+        overflow:visible!important;
+      }
+      .appdosc-card[data-expanded='true'] .appdosc-card__detail dt,
+      .appdosc-card[data-expanded='true'] .appdosc-card__people-details .appdosc-card__detail dt{
+        font-size:var(--appdosc-card-font-detail-label)!important;
+        min-width:0!important;
+      }
+      .appdosc-card[data-expanded='true'] .appdosc-card__detail dd,
+      .appdosc-card[data-expanded='true'] .appdosc-card__people-details .appdosc-card__detail dd{
+        font-size:var(--appdosc-card-font-detail-value)!important;
+        min-width:0!important;
+        overflow-wrap:anywhere!important;
+        word-break:normal!important;
+      }
+      .appdosc-card[data-expanded='true'] .appdosc-card__block-text,
+      .appdosc-card[data-expanded='true'] .appdosc-ai-brief-row__label{
+        font-size:var(--appdosc-card-font-detail-value)!important;
+        min-width:0!important;
+        overflow-wrap:anywhere!important;
+      }
+      .appdosc-card[data-expanded='true'] .appdosc-card__file{
+        grid-template-columns:26px minmax(0,1fr) auto 38px!important;
+        font-size:var(--appdosc-card-font-file)!important;
+        min-width:0!important;
+        overflow:hidden!important;
+      }
+      .appdosc-card[data-expanded='true'] .appdosc-card__file-name{
+        min-width:0!important;
+        max-width:100%!important;
+        overflow:hidden!important;
+        text-overflow:ellipsis!important;
+        white-space:nowrap!important;
+      }
+      .appdosc-card[data-expanded='true'] .appdosc-card__file-size{
+        min-width:0!important;
+        max-width:96px!important;
+        overflow:hidden!important;
+        text-overflow:ellipsis!important;
+      }
+      .appdosc-card[data-expanded='true'] .appdosc-card__file-download{
+        flex:0 0 auto!important;
+      }
+      .appdosc-card[data-expanded='true'] .appdosc-card__action{
+        font-size:var(--appdosc-card-font-action)!important;
+        white-space:normal!important;
+        overflow-wrap:anywhere!important;
+      }
+      @media (max-width:430px){
+        .appdosc-card[data-expanded='false'] .appdosc-card__header{
+          grid-template-columns:minmax(0,1fr) 22px!important;
+          gap:7px!important;
+          min-height:58px!important;
+          padding:8px 9px!important;
+        }
+        .appdosc-card[data-expanded='false'] .task-meta{
+          gap:3px!important;
+        }
+        .appdosc-card[data-expanded='false'] .task-date,
+        .appdosc-card[data-expanded='false'] .task-number,
+        .appdosc-card[data-expanded='false'] .task-status-badge{
+          min-height:17px!important;
+          padding:2px 5px!important;
+          font-size:9.5px!important;
+        }
+        .appdosc-card[data-expanded='false'] .task-status-badge{
+          max-width:min(44vw,148px)!important;
+          padding-inline:6px!important;
+        }
+        .appdosc-card[data-expanded='true'] .appdosc-card__detail,
+        .appdosc-card[data-expanded='true'] .appdosc-card__people-details .appdosc-card__detail{
+          grid-template-columns:minmax(78px,30%) minmax(0,1fr)!important;
+        }
+        .appdosc-card[data-expanded='true'] .appdosc-card__file{
+          grid-template-columns:24px minmax(0,1fr) 36px!important;
+          grid-template-rows:auto auto!important;
+          gap:3px 8px!important;
+        }
+        .appdosc-card[data-expanded='true'] .appdosc-card__file-icon{
+          grid-row:1 / 3!important;
+        }
+        .appdosc-card[data-expanded='true'] .appdosc-card__file-size{
+          grid-column:2!important;
+          grid-row:2!important;
+          max-width:100%!important;
+        }
+        .appdosc-card[data-expanded='true'] .appdosc-card__file-download{
+          grid-column:3!important;
+          grid-row:1 / 3!important;
+          width:34px!important;
+          height:34px!important;
+        }
+        .appdosc-card[data-expanded='true'] .appdosc-card__footer,
+        .appdosc-card[data-expanded='true'] .appdosc-card__actions{
+          grid-template-columns:1fr!important;
+          justify-content:stretch!important;
+        }
+      }
+      @media (max-width:360px){
+        .appdosc-card[data-expanded='true'] .appdosc-card__detail,
+        .appdosc-card[data-expanded='true'] .appdosc-card__people-details .appdosc-card__detail{
+          grid-template-columns:1fr!important;
+        }
+        .appdosc-card[data-expanded='true'] .appdosc-card__file{
+          grid-template-columns:22px minmax(0,1fr) 34px!important;
+        }
+      }
       @media (min-width:768px){
         .bottom-sheet{left:50%;right:auto;bottom:24px;width:min(560px,calc(100vw - 32px));max-height:min(720px,calc(100dvh - 48px));translate:-50% 0;border-radius:24px;border:1px solid rgba(148,163,184,.36);padding:30px 18px 18px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(96,125,170,.42) transparent}
+        .bottom-sheet.bottom-sheet--folder-picker{left:50%!important;right:auto!important;bottom:24px!important;width:min(480px,calc(100vw - 32px))!important;max-height:min(680px,calc(100dvh - 48px))!important;translate:-50% 0!important;border-radius:24px!important;border:1px solid rgba(148,163,184,.36)!important;padding:30px 18px 18px!important;box-shadow:0 24px 60px rgba(15,23,42,.24)!important}
+        .bottom-sheet.bottom-sheet--folder-picker .folder-picker-modal{max-height:min(632px,calc(100dvh - 96px))}
         .bottom-sheet::-webkit-scrollbar,.folder-picker-list::-webkit-scrollbar{width:8px}
         .bottom-sheet::-webkit-scrollbar-thumb,.folder-picker-list::-webkit-scrollbar-thumb{background:rgba(96,125,170,.42);border-radius:999px;border:2px solid transparent;background-clip:content-box}
         .bottom-sheet::-webkit-scrollbar-track,.folder-picker-list::-webkit-scrollbar-track{background:transparent}
