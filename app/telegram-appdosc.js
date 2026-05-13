@@ -13825,7 +13825,7 @@ function setDirectorCompletionButtonPressed(button) {
   setClass(button, 'appdosc-card__action--loading', false);
 }
 
-function createDirectorCompletionButton(task, variant = 'compact') {
+function createDirectorCompletionButton(task, variant = 'compact', completed = false) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'appdosc-card__action appdosc-card__action--director-mini';
@@ -13837,11 +13837,16 @@ function createDirectorCompletionButton(task, variant = 'compact') {
   button.textContent = 'Завершить назначение';
   setActionButtonLoading(button, false);
 
+  if (completed) {
+    setDirectorCompletionButtonPressed(button);
+    return button;
+  }
+
   button.addEventListener('click', async (event) => {
     event.preventDefault();
     event.stopPropagation();
 
-    if (button.dataset.loading === 'true') {
+    if (button.dataset.loading === 'true' || button.dataset.completed === 'true') {
       return;
     }
 
@@ -13875,12 +13880,13 @@ function setupDirectorCompactCompletion(card, task) {
   });
 
   const organization = getTaskOrganization(task);
-  const directorAssigned = organization
+  const currentDirectorTask = organization
     && userIsDirectorForOrganization(organization)
-    && isTaskAssignedToCurrentDirector(task)
-    && !isTaskCompleted(task);
+    && isTaskAssignedToCurrentDirector(task);
+  const directorCompleted = currentDirectorTask && isDirectorCompletionMarked(task);
+  const shouldShowButton = currentDirectorTask && (directorCompleted || !isTaskCompleted(task));
 
-  if (!directorAssigned) {
+  if (!shouldShowButton) {
     [compactContainer, expandedContainer].forEach((container) => {
       if (container instanceof HTMLElement) {
         container.hidden = true;
@@ -13890,11 +13896,11 @@ function setupDirectorCompactCompletion(card, task) {
   }
 
   if (compactContainer instanceof HTMLElement) {
-    compactContainer.appendChild(createDirectorCompletionButton(task, 'compact'));
+    compactContainer.appendChild(createDirectorCompletionButton(task, 'compact', directorCompleted));
     compactContainer.hidden = false;
   }
   if (expandedContainer instanceof HTMLElement) {
-    expandedContainer.appendChild(createDirectorCompletionButton(task, 'expanded'));
+    expandedContainer.appendChild(createDirectorCompletionButton(task, 'expanded', directorCompleted));
     expandedContainer.hidden = false;
   }
 }
