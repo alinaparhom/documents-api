@@ -6193,15 +6193,9 @@ function createCard(task, index, anchorRegistry) {
       : (dueDate ? `До ${dueDateLabel}` : 'Срок не указан'));
   const executorInsight = formatEntityDisplay(resolveExecutor(task), 'Исполнитель');
   const senderInsight = senderCompact === 'не указан' ? 'Не указан' : senderCompact;
-  const responseRows = normalizeValue(responseSummaryText)
-    ? responseSummaryText
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-    : [];
-  const responseCount = responseRows.filter((row) => /Ответ:/i.test(row)).length;
+  const responseCount = countResponsesFromSummary(responseSummaryText);
   const filesCount = Array.isArray(task.files) ? task.files.length : 0;
-  const responseLabel = responseCount === 1 ? '1 ответ' : (responseCount > 1 && responseCount < 5 ? `${responseCount} ответа` : `${responseCount} ответов`);
+  const responseLabel = responseCount > 0 ? formatResponseCountLabel(responseCount) : '';
   const filesLabel = filesCount === 1 ? '1 файл' : (filesCount > 1 && filesCount < 5 ? `${filesCount} файла` : `${filesCount} файлов`);
 
   setCardField(card, '[data-field="insightSender"]', senderInsight, {
@@ -20066,9 +20060,11 @@ function attachEvents() {
     });
   }
   if (elements.filterResetButton) {
-    elements.filterResetButton.addEventListener('click', (event) => {
-      const resetMode = event && event.shiftKey ? 'all' : 'statuses';
-      resetCompactFilters(resetMode);
+    elements.filterResetButton.addEventListener('click', () => {
+      resetCompactFilters('all');
+      if (rangeCalendarInstance && typeof rangeCalendarInstance.clear === 'function') {
+        rangeCalendarInstance.clear();
+      }
       updateVisibleTasks();
       safeRender('compact_filter_reset');
     });
@@ -21322,6 +21318,40 @@ function buildResponseSummaryName(entry, role, index) {
   return normalizeValue(entry && entry.responsible)
     || normalizeValue(entry && entry.name)
     || `${roleLabel} ${index + 1}`;
+}
+
+function formatResponseCountLabel(count) {
+  const safeCount = Number.isFinite(Number(count)) ? Math.max(0, Math.trunc(Number(count))) : 0;
+  const mod100 = safeCount % 100;
+  const mod10 = safeCount % 10;
+  if (mod100 >= 11 && mod100 <= 19) {
+    return `${safeCount} ответов`;
+  }
+  if (mod10 === 1) {
+    return `${safeCount} ответ`;
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return `${safeCount} ответа`;
+  }
+  return `${safeCount} ответов`;
+}
+
+function countResponsesFromSummary(summaryText) {
+  const rows = normalizeValue(summaryText)
+    ? summaryText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    : [];
+
+  return rows.reduce((total, row) => {
+    const match = /Ответ:\s*(\d+)/i.exec(row);
+    if (!match) {
+      return total;
+    }
+    const count = Number.parseInt(match[1], 10);
+    return Number.isFinite(count) && count > 0 ? total + count : total;
+  }, 0);
 }
 
 function buildTaskResponseSummary(task) {
