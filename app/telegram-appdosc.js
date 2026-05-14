@@ -6239,6 +6239,7 @@ function createCard(task, index, anchorRegistry) {
   if (viewButton) {
     viewButton.addEventListener('click', () => handleCardView(viewButton, task));
   }
+  setupTaskHistoryAction(card, task);
   updateCardViewInfo(card, task);
 
   const completeButton = card.querySelector('[data-card-complete]');
@@ -6271,6 +6272,9 @@ function openBottomSheet(contentBuilder) {
   const content = contentBuilder(closeBottomSheet);
   if (content instanceof HTMLElement && content.classList.contains('folder-picker-modal')) {
     sheet.classList.add('bottom-sheet--folder-picker');
+  }
+  if (content instanceof HTMLElement && content.classList.contains('task-history-modal')) {
+    sheet.classList.add('bottom-sheet--task-history');
   }
   sheet.appendChild(content);
   document.body.appendChild(overlay);
@@ -6635,6 +6639,856 @@ function setupTaskFolderControl(card, task) {
     }, { currentFolderId: task.folderId });
   };
   syncDirectorCompletionActionVisibility(card, card.dataset.expanded === 'true');
+}
+
+function setupTaskHistoryAction(card, task) {
+  if (!(card instanceof HTMLElement) || !task || typeof task !== 'object') {
+    return;
+  }
+
+  const actions = card.querySelector('.appdosc-card__actions');
+  if (!(actions instanceof HTMLElement)) {
+    return;
+  }
+
+  let button = actions.querySelector('[data-card-history]');
+  if (!(button instanceof HTMLButtonElement)) {
+    button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'appdosc-card__action appdosc-card__action--history';
+    button.dataset.cardHistory = 'true';
+    button.innerHTML = [
+      '<span class="appdosc-card__history-button-icon" aria-hidden="true"><i class="fa-solid fa-clock-rotate-left"></i></span>',
+      '<span class="appdosc-card__history-button-text">История</span>',
+      '<span class="appdosc-card__history-button-count" data-card-history-count hidden></span>',
+    ].join('');
+
+    const viewInfo = actions.querySelector('[data-card-view-info]');
+    if (viewInfo instanceof HTMLElement) {
+      actions.insertBefore(button, viewInfo);
+    } else {
+      actions.appendChild(button);
+    }
+  }
+
+  const count = buildTaskHistoryTimeline(task).length;
+  const countElement = button.querySelector('[data-card-history-count]');
+  if (countElement instanceof HTMLElement) {
+    countElement.textContent = String(count);
+    countElement.hidden = count <= 0;
+  }
+
+  button.title = count > 0 ? `История задачи: ${count}` : 'История задачи';
+  button.setAttribute('aria-label', button.title);
+  button.addEventListener('click', () => openTaskHistoryModal(task));
+}
+
+function buildTaskHistoryTimeline(task) {
+  if (!task || typeof task !== 'object') {
+    return [];
+  }
+
+  const items = [];
+  const seen = new Set();
+  let sequence = 0;
+
+  const addItem = (input) => {
+    if (!input || typeof input !== 'object') {
+      return;
+    }
+
+    const title = normalizeValue(input.title);
+    const details = normalizeValue(input.details);
+    const meta = normalizeValue(input.meta);
+    const at = normalizeValue(input.at);
+    if (!title && !details) {
+      return;
+    }
+
+    const date = parseDate(at);
+    const timestamp = date ? date.getTime() : Number.NaN;
+    const notes = Array.isArray(input.notes)
+      ? input.notes.map(normalizeValue).filter(Boolean)
+      : [];
+    const key = [
+      input.type || '',
+      at,
+      title,
+      details,
+      meta,
+      notes.join('|'),
+    ].join('::').toLowerCase();
+
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+
+    items.push({
+      type: normalizeValue(input.type) || 'event',
+      tone: normalizeTaskHistoryTone(input.tone),
+      icon: normalizeTaskHistoryIcon(input.icon),
+      title,
+      details,
+      meta,
+      at,
+      date,
+      timestamp,
+      notes,
+      sequence,
+    });
+    sequence += 1;
+  };
+
+  appendTaskCreatedHistoryItem(task, addItem);
+  appendTaskAssignmentHistoryItems(task, addItem);
+  appendTaskStatusHistoryItems(task, addItem);
+  appendTaskAssigneeStatusHistoryItems(task, addItem);
+  appendTaskSubmissionHistoryItems(task, addItem);
+  appendTaskResponseHistoryItems(task, addItem);
+  appendTaskStructuredHistoryItems(task, addItem);
+  appendTaskCompletionHistoryItems(task, addItem);
+  appendTaskCurrentStatusHistoryItem(task, addItem, items);
+
+  return items.sort(compareTaskHistoryItems);
+}
+
+function compareTaskHistoryItems(left, right) {
+  const leftHasDate = Number.isFinite(left.timestamp);
+  const rightHasDate = Number.isFinite(right.timestamp);
+  if (leftHasDate && rightHasDate && left.timestamp !== right.timestamp) {
+    return left.timestamp - right.timestamp;
+  }
+  if (leftHasDate !== rightHasDate) {
+    return leftHasDate ? -1 : 1;
+  }
+  return left.sequence - right.sequence;
+}
+
+function normalizeTaskHistoryTone(value) {
+  const normalized = normalizeValue(value).toLowerCase();
+  const allowed = new Set(['default', 'info', 'success', 'warning', 'danger', 'accent', 'muted']);
+  return allowed.has(normalized) ? normalized : 'default';
+}
+
+function normalizeTaskHistoryIcon(value) {
+  const normalized = normalizeValue(value);
+  return /^fa-[a-z0-9-]+$/i.test(normalized) ? normalized : 'fa-clock';
+}
+
+function resolveTaskHistoryPersonLabel(value) {
+  if (!value || typeof value !== 'object') {
+    return normalizeValue(value);
+  }
+
+  return normalizeValue(
+    value.name
+      || value.fullName
+      || value.displayName
+      || value.fio
+      || value.responsible
+      || value.title
+      || value.login
+      || value.email
+      || value.telegram
+      || value.id
+  );
+}
+
+function appendTaskCreatedHistoryItem(task, addItem) {
+  const createdAt = normalizeValue(task.createdAt || task.registrationTime || task.registrationDate || task.date);
+  if (!createdAt) {
+    return;
+  }
+
+  const author = resolveTaskHistoryPersonLabel(task.createdBy || task.author || task.sender || task.correspondent);
+  addItem({
+    type: 'created',
+    tone: 'accent',
+    icon: 'fa-file-circle-plus',
+    title: task.createdAt || task.registrationTime ? 'Задача создана' : 'Задача зарегистрирована',
+    details: normalizeValue(task.document) || normalizeValue(task.summary) || normalizeValue(task.registryNumber),
+    meta: author ? `Источник: ${author}` : '',
+    at: createdAt,
+  });
+}
+
+function appendTaskAssignmentHistoryItems(task, addItem) {
+  const appendRole = (role) => {
+    const entries = collectTaskAssignments(task, role);
+    entries.forEach((entry, index) => {
+      if (!entry || typeof entry !== 'object') {
+        return;
+      }
+
+      const label = getTaskHistoryAssignmentLabel(entry, role, index);
+      const assignedBy = normalizeValue(
+        entry.assignedBy
+          || entry.assignmentAuthorName
+          || entry.assignmentAuthor
+          || entry.assignedByLogin
+          || entry.assignedById
+      );
+      const assignedAt = normalizeValue(entry.assignedAt || entry.assignmentAt || '');
+      const notes = [];
+      const dueDate = normalizeAssignmentDueDate(entry.assignmentDueDate || entry.dueDate);
+      const instruction = normalizeAssignmentInstruction(entry.assignmentInstruction || entry.instruction);
+      const comment = normalizeAssignmentComment(entry.assignmentComment || entry.comment);
+
+      if (dueDate) {
+        notes.push(`Срок: ${formatDate(dueDate)}`);
+      }
+      if (instruction) {
+        notes.push(`Поручение: ${truncateText(instruction, 130)}`);
+      }
+      if (comment) {
+        notes.push(`Комментарий: ${truncateText(comment, 130)}`);
+      }
+
+      addItem({
+        type: 'assignment',
+        tone: role === 'subordinate' ? 'info' : 'accent',
+        icon: role === 'subordinate' ? 'fa-user-group' : 'fa-user-plus',
+        title: role === 'subordinate' ? 'Назначен подчинённый' : 'Назначен ответственный',
+        details: label,
+        meta: assignedBy ? `Назначил: ${assignedBy}` : '',
+        at: assignedAt,
+        notes,
+      });
+    });
+  };
+
+  appendRole('responsible');
+  appendRole('subordinate');
+}
+
+function appendTaskStatusHistoryItems(task, addItem) {
+  const history = Array.isArray(task.statusHistory) ? task.statusHistory : [];
+  if (!history.length) {
+    return;
+  }
+
+  const sorted = history
+    .filter((entry) => entry && typeof entry === 'object')
+    .slice()
+    .sort((left, right) => compareHistoryDateValues(
+      left.changedAt || left.date || left.updatedAt || left.timestamp,
+      right.changedAt || right.date || right.updatedAt || right.timestamp
+    ));
+  let previousStatus = '';
+
+  sorted.forEach((entry) => {
+    const status = normalizeValue(entry.status || entry.newStatus || entry.newValue || entry.value);
+    if (!status) {
+      return;
+    }
+
+    const oldStatus = normalizeValue(entry.oldStatus || entry.previousStatus || entry.oldValue || entry.from) || previousStatus;
+    const detail = oldStatus && oldStatus !== status ? `${oldStatus} → ${status}` : status;
+    const changedBy = normalizeValue(entry.changedBy || entry.author || entry.actorName || entry.userName);
+    const statusTone = resolveTaskHistoryStatusTone(status);
+
+    addItem({
+      type: 'status',
+      tone: statusTone,
+      icon: resolveTaskHistoryStatusIcon(status),
+      title: 'Статус задачи',
+      details: detail,
+      meta: changedBy ? `Изменил: ${changedBy}` : '',
+      at: entry.changedAt || entry.date || entry.updatedAt || entry.timestamp || task.statusUpdatedAt || '',
+    });
+
+    previousStatus = status;
+  });
+}
+
+function appendTaskAssigneeStatusHistoryItems(task, addItem) {
+  const history = Array.isArray(task.assigneeStatusHistory) ? task.assigneeStatusHistory : [];
+  if (!history.length) {
+    return;
+  }
+
+  history.forEach((record) => {
+    if (!record || typeof record !== 'object') {
+      return;
+    }
+
+    const assigneeLabel = resolveTaskHistoryAssigneeLabel(task, record.assigneeKey);
+    const entries = Array.isArray(record.entries) ? record.entries : [];
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return;
+      }
+
+      const status = normalizeValue(entry.status);
+      if (!status) {
+        return;
+      }
+
+      const changedBy = normalizeValue(entry.changedBy || entry.author || entry.actorName);
+      addItem({
+        type: 'assignee_status',
+        tone: resolveTaskHistoryStatusTone(status),
+        icon: resolveTaskHistoryStatusIcon(status),
+        title: 'Статус исполнителя',
+        details: assigneeLabel ? `${assigneeLabel}: ${status}` : status,
+        meta: changedBy ? `Изменил: ${changedBy}` : '',
+        at: entry.changedAt || entry.date || entry.updatedAt || entry.timestamp || '',
+      });
+    });
+  });
+}
+
+function appendTaskSubmissionHistoryItems(task, addItem) {
+  const subordinates = collectTaskAssignments(task, 'subordinate');
+  subordinates.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+
+    const label = getTaskHistoryAssignmentLabel(entry, 'subordinate', index);
+    const submittedAt = normalizeValue(entry.submittedAt);
+    if (submittedAt || normalizeSubordinateSubmissionStatus(entry.submissionStatus) === 'submitted') {
+      const submittedBy = normalizeValue(entry.submittedBy || entry.submittedByLogin || entry.submittedById);
+      addItem({
+        type: 'submission',
+        tone: 'warning',
+        icon: 'fa-paper-plane',
+        title: 'Отправлено на проверку',
+        details: label,
+        meta: submittedBy ? `Отправил: ${submittedBy}` : '',
+        at: submittedAt,
+      });
+    }
+
+    const reviewStatus = normalizeSubordinateReviewStatus(entry.reviewStatus);
+    if (reviewStatus) {
+      const reviewedBy = normalizeValue(entry.reviewedBy || entry.reviewedByLogin || entry.reviewedById);
+      const reviewComment = normalizeAssignmentComment(entry.reviewComment);
+      addItem({
+        type: 'review',
+        tone: reviewStatus === 'accepted' ? 'success' : 'warning',
+        icon: reviewStatus === 'accepted' ? 'fa-user-check' : 'fa-rotate-left',
+        title: reviewStatus === 'accepted' ? 'Выполнение принято' : 'Возвращено на доработку',
+        details: label,
+        meta: reviewedBy ? `Проверил: ${reviewedBy}` : '',
+        at: entry.reviewedAt || '',
+        notes: reviewComment ? [`Комментарий: ${truncateText(reviewComment, 130)}`] : [],
+      });
+    }
+  });
+}
+
+function appendTaskResponseHistoryItems(task, addItem) {
+  const responses = Array.isArray(task.responses) ? task.responses : [];
+  responses.forEach((file, index) => {
+    if (!file || typeof file !== 'object') {
+      return;
+    }
+
+    const fileName = normalizeValue(file.originalName || file.name || file.storedName) || `Ответ ${index + 1}`;
+    const uploadedBy = findResponsibleNameInAccessByFile(file)
+      || normalizeValue(file.uploadedByName || file.uploadedBy || file.uploadedByLogin || file.uploadedById);
+
+    addItem({
+      type: 'response',
+      tone: 'info',
+      icon: 'fa-file-arrow-up',
+      title: 'Загружен ответ',
+      details: fileName,
+      meta: uploadedBy ? `Автор: ${uploadedBy}` : '',
+      at: file.uploadedAt || '',
+    });
+  });
+}
+
+function appendTaskStructuredHistoryItems(task, addItem) {
+  const events = Array.isArray(task.taskEvents) ? task.taskEvents : [];
+  events.forEach((event) => {
+    if (!event || typeof event !== 'object') {
+      return;
+    }
+
+    const type = normalizeValue(event.type || event.eventType) || 'event';
+    const text = normalizeValue(event.text || event.title || event.message);
+    const oldValue = normalizeValue(event.oldValue || event.from || event.previousValue);
+    const newValue = normalizeValue(event.newValue || event.to || event.value);
+    const actor = normalizeValue(event.actorName || event.actor || event.userName || event.createdBy);
+    const target = normalizeValue(event.targetName || event.target || event.assigneeName);
+    const details = text || (oldValue && newValue ? `${oldValue} → ${newValue}` : (newValue || target));
+
+    addItem({
+      type,
+      tone: resolveTaskHistoryEventTone(type, newValue || text),
+      icon: resolveTaskHistoryEventIcon(type, newValue || text),
+      title: resolveTaskHistoryEventTitle(type),
+      details,
+      meta: actor ? `Автор: ${actor}` : '',
+      at: event.createdAt || event.changedAt || event.date || event.timestamp || '',
+    });
+  });
+}
+
+function appendTaskCompletionHistoryItems(task, addItem) {
+  const directorCompletedAt = normalizeValue(task.directorCompletedAt || task.completedAt);
+  const directorStatus = normalizeValue(task.directorStatus || task.completionStatus).toLowerCase();
+  if (!directorCompletedAt && directorStatus !== 'done') {
+    return;
+  }
+
+  addItem({
+    type: 'completion',
+    tone: 'success',
+    icon: 'fa-circle-check',
+    title: 'Назначение закрыто',
+    details: 'Задача отмечена выполненной для контроля',
+    meta: '',
+    at: directorCompletedAt || task.statusUpdatedAt || task.updatedAt || '',
+  });
+}
+
+function appendTaskCurrentStatusHistoryItem(task, addItem, existingItems) {
+  const hasStatusHistory = Array.isArray(existingItems)
+    && existingItems.some((item) => item && (item.type === 'status' || item.type === 'assignee_status'));
+  if (hasStatusHistory) {
+    return;
+  }
+
+  const status = getTaskStatusValue(task);
+  if (!status) {
+    return;
+  }
+
+  addItem({
+    type: 'status_current',
+    tone: resolveTaskHistoryStatusTone(status),
+    icon: resolveTaskHistoryStatusIcon(status),
+    title: 'Текущий статус',
+    details: status,
+    meta: '',
+    at: task.statusUpdatedAt || task.updatedAt || '',
+  });
+}
+
+function compareHistoryDateValues(leftValue, rightValue) {
+  const leftDate = parseDate(leftValue);
+  const rightDate = parseDate(rightValue);
+  const leftTime = leftDate ? leftDate.getTime() : Number.NaN;
+  const rightTime = rightDate ? rightDate.getTime() : Number.NaN;
+  const leftHasDate = Number.isFinite(leftTime);
+  const rightHasDate = Number.isFinite(rightTime);
+  if (leftHasDate && rightHasDate && leftTime !== rightTime) {
+    return leftTime - rightTime;
+  }
+  if (leftHasDate !== rightHasDate) {
+    return leftHasDate ? -1 : 1;
+  }
+  return 0;
+}
+
+function getTaskHistoryAssignmentLabel(entry, role, index) {
+  const roleLabel = role === 'subordinate' ? 'Подчинённый' : 'Ответственный';
+  return normalizeValue(
+    entry && (
+      entry.responsible
+      || entry.name
+      || entry.fullName
+      || entry.displayName
+      || entry.fio
+      || entry.subordinate
+      || entry.login
+      || entry.email
+      || entry.number
+      || entry.id
+    )
+  ) || `${roleLabel} ${index + 1}`;
+}
+
+function buildTaskHistoryAssigneeLabelMap(task) {
+  const map = new Map();
+  const add = (key, label) => {
+    const normalizedKey = normalizeValue(key).toLowerCase();
+    const normalizedLabel = normalizeValue(label);
+    if (normalizedKey && normalizedLabel && !map.has(normalizedKey)) {
+      map.set(normalizedKey, normalizedLabel);
+    }
+  };
+
+  const addEntry = (entry, role, index) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+
+    const label = getTaskHistoryAssignmentLabel(entry, role, index);
+    const names = [
+      entry.responsible,
+      entry.name,
+      entry.fullName,
+      entry.displayName,
+      entry.fio,
+      entry.subordinate,
+      label,
+    ];
+    const ids = [
+      entry.id,
+      entry.subordinateId,
+      entry.telegram,
+      entry.chatId,
+      entry.email,
+      entry.number,
+      entry.login,
+    ];
+
+    names.forEach((name) => {
+      const normalizedName = normalizeName(name);
+      if (normalizedName) {
+        add(`name::${normalizedName}`, label);
+        add(normalizedName, label);
+      }
+    });
+    ids.forEach((id) => {
+      const normalizedId = normalizeIdentifier(id);
+      if (normalizedId) {
+        add(`id::${normalizedId}`, label);
+        add(normalizedId, label);
+      }
+    });
+  };
+
+  collectTaskAssignments(task, 'responsible').forEach((entry, index) => addEntry(entry, 'responsible', index));
+  collectTaskAssignments(task, 'subordinate').forEach((entry, index) => addEntry(entry, 'subordinate', index));
+
+  return map;
+}
+
+function resolveTaskHistoryAssigneeLabel(task, assigneeKey) {
+  const rawKey = normalizeValue(assigneeKey).toLowerCase();
+  if (!rawKey) {
+    return '';
+  }
+
+  const map = buildTaskHistoryAssigneeLabelMap(task);
+  if (map.has(rawKey)) {
+    return map.get(rawKey);
+  }
+
+  const stripped = rawKey.replace(/^(id|name)::/u, '');
+  if (stripped && map.has(stripped)) {
+    return map.get(stripped);
+  }
+
+  if (rawKey.startsWith('id::')) {
+    return `ID ${rawKey.slice(4)}`;
+  }
+  if (rawKey.startsWith('name::')) {
+    return rawKey.slice(6);
+  }
+  return rawKey;
+}
+
+function resolveTaskHistoryStatusTone(status) {
+  const statusKey = getStatusSummaryKey(status);
+  if (statusKey === 'done') {
+    return 'success';
+  }
+  if (statusKey === 'cancelled') {
+    return 'danger';
+  }
+  if (statusKey === 'review') {
+    return 'warning';
+  }
+  if (statusKey === 'accepted') {
+    return 'info';
+  }
+  if (statusKey === 'distributed') {
+    return 'accent';
+  }
+  return 'default';
+}
+
+function resolveTaskHistoryStatusIcon(status) {
+  const statusKey = getStatusSummaryKey(status);
+  if (statusKey === 'done') {
+    return 'fa-circle-check';
+  }
+  if (statusKey === 'cancelled') {
+    return 'fa-ban';
+  }
+  if (statusKey === 'review') {
+    return 'fa-magnifying-glass';
+  }
+  if (statusKey === 'accepted') {
+    return 'fa-briefcase';
+  }
+  if (statusKey === 'distributed') {
+    return 'fa-share-nodes';
+  }
+  return 'fa-circle-dot';
+}
+
+function resolveTaskHistoryEventTone(type, value) {
+  const normalizedType = normalizeValue(type).toLowerCase();
+  if (normalizedType.includes('status')) {
+    return resolveTaskHistoryStatusTone(value);
+  }
+  if (normalizedType.includes('assign')) {
+    return 'accent';
+  }
+  if (normalizedType.includes('complete') || normalizedType.includes('done')) {
+    return 'success';
+  }
+  if (normalizedType.includes('review') || normalizedType.includes('submit')) {
+    return 'warning';
+  }
+  if (normalizedType.includes('cancel') || normalizedType.includes('reject')) {
+    return 'danger';
+  }
+  return 'default';
+}
+
+function resolveTaskHistoryEventIcon(type, value) {
+  const normalizedType = normalizeValue(type).toLowerCase();
+  if (normalizedType.includes('status')) {
+    return resolveTaskHistoryStatusIcon(value);
+  }
+  if (normalizedType.includes('assign')) {
+    return 'fa-user-plus';
+  }
+  if (normalizedType.includes('complete') || normalizedType.includes('done')) {
+    return 'fa-circle-check';
+  }
+  if (normalizedType.includes('review')) {
+    return 'fa-magnifying-glass';
+  }
+  if (normalizedType.includes('submit')) {
+    return 'fa-paper-plane';
+  }
+  if (normalizedType.includes('file') || normalizedType.includes('response')) {
+    return 'fa-file-arrow-up';
+  }
+  return 'fa-clock';
+}
+
+function resolveTaskHistoryEventTitle(type) {
+  const normalizedType = normalizeValue(type).toLowerCase();
+  if (normalizedType.includes('status')) {
+    return 'Статус задачи';
+  }
+  if (normalizedType.includes('assign')) {
+    return 'Назначение';
+  }
+  if (normalizedType.includes('complete') || normalizedType.includes('done')) {
+    return 'Завершение';
+  }
+  if (normalizedType.includes('review')) {
+    return 'Проверка';
+  }
+  if (normalizedType.includes('submit')) {
+    return 'Отправка на проверку';
+  }
+  if (normalizedType.includes('file') || normalizedType.includes('response')) {
+    return 'Ответ';
+  }
+  return 'Событие';
+}
+
+function formatTaskHistoryDateTime(value) {
+  const normalized = normalizeValue(value);
+  if (!normalized) {
+    return 'Без даты';
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/u.test(normalized)) {
+    return formatDate(normalized);
+  }
+
+  const formatted = formatDateTimeCompact(normalized);
+  return formatted && formatted !== '—' ? formatted : 'Без даты';
+}
+
+function buildTaskHistorySummaryText(task, count) {
+  const parts = [];
+  const entryNumber = normalizeValue(task.entryNumber || task.registryNumber || task.documentNumber);
+  const status = getTaskStatusValue(task);
+  if (entryNumber) {
+    parts.push(`№ ${entryNumber}`);
+  }
+  if (status) {
+    parts.push(status);
+  }
+  parts.push(`${count} ${formatTaskHistoryEventCountLabel(count)}`);
+  return parts.join(' · ');
+}
+
+function formatTaskHistoryEventCountLabel(count) {
+  const value = Math.abs(Math.trunc(Number(count) || 0));
+  const mod100 = value % 100;
+  const mod10 = value % 10;
+  if (mod100 >= 11 && mod100 <= 19) {
+    return 'событий';
+  }
+  if (mod10 === 1) {
+    return 'событие';
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return 'события';
+  }
+  return 'событий';
+}
+
+function appendTaskHistoryStat(container, iconClass, label, value) {
+  const item = document.createElement('span');
+  item.className = 'task-history-modal__stat';
+
+  const icon = document.createElement('i');
+  icon.className = `fa-solid ${iconClass}`;
+  icon.setAttribute('aria-hidden', 'true');
+
+  const text = document.createElement('span');
+  text.textContent = `${label}: ${value}`;
+
+  item.append(icon, text);
+  container.appendChild(item);
+}
+
+function appendTaskHistoryStats(container, items) {
+  const assignments = items.filter((item) => item.type === 'assignment').length;
+  const statuses = items.filter((item) => item.type === 'status' || item.type === 'assignee_status' || item.type === 'status_current').length;
+  const responses = items.filter((item) => item.type === 'response' || item.type === 'submission' || item.type === 'review').length;
+
+  appendTaskHistoryStat(container, 'fa-user-plus', 'Назначения', assignments);
+  appendTaskHistoryStat(container, 'fa-circle-dot', 'Статусы', statuses);
+  appendTaskHistoryStat(container, 'fa-file-arrow-up', 'Ответы', responses);
+}
+
+function openTaskHistoryModal(task) {
+  const items = buildTaskHistoryTimeline(task);
+  openBottomSheet((close) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'task-history-modal';
+
+    const header = document.createElement('div');
+    header.className = 'task-history-modal__header';
+
+    const titleGroup = document.createElement('div');
+    titleGroup.className = 'task-history-modal__title-group';
+
+    const kicker = document.createElement('span');
+    kicker.className = 'task-history-modal__kicker';
+    kicker.textContent = 'Журнал задачи';
+
+    const title = document.createElement('h3');
+    title.className = 'task-history-modal__title';
+    title.textContent = 'История';
+
+    const subtitle = document.createElement('p');
+    subtitle.className = 'task-history-modal__subtitle';
+    subtitle.textContent = buildTaskHistorySummaryText(task, items.length);
+
+    titleGroup.append(kicker, title, subtitle);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'task-history-modal__close';
+    closeButton.setAttribute('aria-label', 'Закрыть историю');
+    closeButton.innerHTML = '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
+    closeButton.addEventListener('click', close);
+
+    header.append(titleGroup, closeButton);
+    wrap.appendChild(header);
+
+    if (items.length) {
+      const stats = document.createElement('div');
+      stats.className = 'task-history-modal__stats';
+      appendTaskHistoryStats(stats, items);
+      wrap.appendChild(stats);
+
+      const list = document.createElement('div');
+      list.className = 'task-history-modal__list';
+      items.forEach((item, index) => {
+        list.appendChild(createTaskHistoryListItem(item, index === items.length - 1));
+      });
+      wrap.appendChild(list);
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'task-history-modal__empty';
+      empty.innerHTML = '<i class="fa-solid fa-clock" aria-hidden="true"></i><span>История по задаче пока не найдена.</span>';
+      wrap.appendChild(empty);
+    }
+
+    return wrap;
+  });
+}
+
+function createTaskHistoryListItem(item, isLatest) {
+  const row = document.createElement('div');
+  row.className = `task-history-item task-history-item--${item.tone}`;
+  if (isLatest) {
+    row.classList.add('task-history-item--latest');
+  }
+
+  const marker = document.createElement('span');
+  marker.className = 'task-history-item__marker';
+  marker.setAttribute('aria-hidden', 'true');
+
+  const icon = document.createElement('i');
+  icon.className = `fa-solid ${item.icon}`;
+  marker.appendChild(icon);
+
+  const body = document.createElement('div');
+  body.className = 'task-history-item__body';
+
+  const top = document.createElement('div');
+  top.className = 'task-history-item__top';
+
+  const title = document.createElement('div');
+  title.className = 'task-history-item__title';
+  title.textContent = item.title || 'Событие';
+
+  const time = document.createElement('time');
+  time.className = 'task-history-item__time';
+  if (item.date instanceof Date && !Number.isNaN(item.date.getTime())) {
+    time.dateTime = item.date.toISOString();
+  }
+  time.textContent = formatTaskHistoryDateTime(item.at);
+
+  top.append(title, time);
+  body.appendChild(top);
+
+  if (item.details) {
+    const details = document.createElement('div');
+    details.className = 'task-history-item__details';
+    details.textContent = item.details;
+    body.appendChild(details);
+  }
+
+  if (item.meta || isLatest) {
+    const meta = document.createElement('div');
+    meta.className = 'task-history-item__meta';
+    meta.textContent = item.meta || 'Последнее событие';
+    if (isLatest) {
+      const latestBadge = document.createElement('span');
+      latestBadge.className = 'task-history-item__latest-badge';
+      latestBadge.textContent = 'последнее';
+      meta.appendChild(latestBadge);
+    }
+    body.appendChild(meta);
+  }
+
+  if (item.notes.length) {
+    const notes = document.createElement('div');
+    notes.className = 'task-history-item__notes';
+    item.notes.forEach((note) => {
+      const noteElement = document.createElement('span');
+      noteElement.className = 'task-history-item__note';
+      noteElement.textContent = note;
+      notes.appendChild(noteElement);
+    });
+    body.appendChild(notes);
+  }
+
+  row.append(marker, body);
+  return row;
 }
 
 function setupTaskSelectionControl(card, task) {
