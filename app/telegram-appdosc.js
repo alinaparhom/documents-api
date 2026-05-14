@@ -3374,18 +3374,27 @@ function taskHasDirectorCompletionMarker(task) {
   return completionMarkers.some((value) => normalizeValue(value));
 }
 
-function userCanCompleteDirectorAssignmentForTask(task) {
-  const directorState = ensureDirectorState();
-  if (!directorState.isActive || !task || typeof task !== 'object') {
+function isCurrentUserDirectorForTask(task) {
+  return currentUserHasTaskRole(task, 'director');
+}
+
+function isCurrentUserExplicitDirectorForTask(task) {
+  if (!task || typeof task !== 'object') {
     return false;
   }
 
-  const organization = getTaskOrganization(task);
-  if (organization && userIsDirectorForOrganization(organization)) {
-    return true;
+  const telegramIds = getCurrentTelegramIdentifierCandidates();
+
+  if (!telegramIds.length) {
+    return false;
   }
 
-  return isTaskAssignedToCurrentDirector(task);
+  const directorIdentifiers = getTaskDirectorIdentifiers(task);
+  return directorIdentifiers.some((identifier) => telegramIds.includes(identifier));
+}
+
+function userCanCompleteDirectorAssignmentForTask(task) {
+  return isCurrentUserExplicitDirectorForTask(task);
 }
 
 function isDirectorCompletionMarked(task) {
@@ -4681,9 +4690,12 @@ function updateUserPanel() {
   }
 
   if (elements.userRole) {
-    const role = normalizeValue(state.telegram.role)
-      || getCurrentUserPositionFromAccess()
-      || getCurrentUserPositionFromTasks();
+    let role = normalizeValue(state.telegram.role);
+    if (normalizeCurrentUserTaskRole(role) === 'director' && !userHasDirectorAccess()) {
+      state.telegram.role = '';
+      role = '';
+    }
+    role = role || getCurrentUserPositionFromAccess() || getCurrentUserPositionFromTasks();
     if (!state.telegram.role && role) {
       state.telegram.role = role;
     }
@@ -4768,7 +4780,8 @@ function updateStats() {
   const directorState = ensureDirectorState();
   const normalizedFilters = normalizeTaskFilters(state.taskFilter);
   state.taskFilter = normalizedFilters;
-  const folderScopedTasks = resolveFolderScope(state.tasks, state.activeFilters.folderId || activeFolderId);
+  const folderScopedTasks = resolveFolderScope(state.tasks, state.activeFilters.folderId || activeFolderId)
+    .filter((task) => currentUserParticipatesInTask(task));
   const filterLabel = formatTaskFiltersForLog(normalizedFilters);
   const directorActive = directorState.isActive === true;
   const usingResponsibleFilter = directorActive
@@ -4776,7 +4789,7 @@ function updateStats() {
   const overallStats = computeStatsFromTasks(folderScopedTasks, { useDirectorDeadlines: directorActive });
 
   let statsSource = 'global';
-  let displayStats = state.stats;
+  let displayStats = overallStats;
 
   if (directorActive) {
     const statsTasks = getAssigneeTasksForStats(normalizedFilters, directorState);
@@ -4807,16 +4820,7 @@ function updateStats() {
     }
   }
 
-  const hasRangeFilter = Boolean(
-    normalizeDateInputValue(state.compactFilters?.dateFrom)
-    || normalizeDateInputValue(state.compactFilters?.dateTo),
-  );
-  const rangeStats = hasRangeFilter
-    ? computeStatsFromTasks(getVisibleTasksForStats(), { useDirectorDeadlines: directorActive })
-    : null;
-  const statusStatsSource = isPlainObject(rangeStats?.statuses)
-    ? rangeStats
-    : overallStats;
+  const statusStatsSource = overallStats;
 
   const resolvedStatusCounts = isPlainObject(statusStatsSource.statuses)
     ? statusStatsSource.statuses
@@ -5213,7 +5217,7 @@ function applyCompactFilters(visibleItems) {
   const source = Array.isArray(visibleItems) ? visibleItems : [];
   const useOverdueOnly = state.activeFilters.overdue === true;
   const overdueSource = useOverdueOnly
-    ? buildVisibleTaskItemsByMatch(state.tasks, () => true)
+    ? buildVisibleTaskItemsByMatch(state.tasks, (task) => currentUserParticipatesInTask(task))
     : source;
   if (!overdueSource.length) {
     return [];
@@ -6767,7 +6771,10 @@ function getAssigneeTasksForStats(filters, directorState) {
     return getVisibleTasksForStats();
   }
 
-  const baseItems = applyTaskFilter(filters, state.tasks);
+  const userTasks = Array.isArray(state.tasks)
+    ? state.tasks.filter((task) => currentUserParticipatesInTask(task))
+    : [];
+  const baseItems = applyTaskFilter(filters, userTasks);
 
   if (hasAssigneeFilters(filters)) {
     return extractTasksFromItems(baseItems);
@@ -6777,14 +6784,14 @@ function getAssigneeTasksForStats(filters, directorState) {
   const normalizedResponsible = normalizeResponsibleKey(directorState.selectedResponsibleToken || '');
   if (normalizedResponsible) {
     return extractTasksFromItems(
-      applyTaskFilter(`${RESPONSIBLE_FILTER_PREFIX}${normalizedResponsible}`, state.tasks),
+      applyTaskFilter(`${RESPONSIBLE_FILTER_PREFIX}${normalizedResponsible}`, userTasks),
     );
   }
 
   const normalizedSubordinate = normalizeResponsibleKey(directorState.selectedSubordinateToken || '');
   if (normalizedSubordinate) {
     return extractTasksFromItems(
-      applyTaskFilter(`${SUBORDINATE_FILTER_PREFIX}${normalizedSubordinate}`, state.tasks),
+      applyTaskFilter(`${SUBORDINATE_FILTER_PREFIX}${normalizedSubordinate}`, userTasks),
     );
   }
 
@@ -7053,7 +7060,9 @@ function ensureActiveFolderId(value) {
 }
 
 function getFolderCount(folderId) {
-  return resolveFolderScope(state.tasks, folderId).length;
+  return resolveFolderScope(state.tasks, folderId)
+    .filter((task) => currentUserParticipatesInTask(task))
+    .length;
 }
 
 function selectFolder(folderId) {
@@ -7122,7 +7131,10 @@ function renderFolders() {
   elements.foldersList.appendChild(addButton);
 
   if (elements.foldersCount) {
-    elements.foldersCount.textContent = String(state.tasks.length);
+    const userTaskCount = Array.isArray(state.tasks)
+      ? state.tasks.filter((task) => currentUserParticipatesInTask(task)).length
+      : 0;
+    elements.foldersCount.textContent = String(userTaskCount);
   }
 }
 
@@ -7144,11 +7156,12 @@ function updateVisibleTasks() {
   state.compactFilters.dateTo = state.activeFilters.dateTo;
   state.compactFilters.showOverdueOnly = state.activeFilters.overdue;
   state.compactFilters.groupFilters = state.activeFilters.groupFilters;
-  const directorState = ensureDirectorState();
   const entryTaskId = normalizeValue(state.entryTaskId);
 
   if (entryTaskId) {
-    const matched = buildVisibleTaskItemsByMatch(state.tasks, (task) => taskMatchesEntryTask(task, entryTaskId));
+    const matched = buildVisibleTaskItemsByMatch(state.tasks, (task) => {
+      return currentUserParticipatesInTask(task) && taskMatchesEntryTask(task, entryTaskId);
+    });
     const matchedTask = matched.length ? matched[0].task : null;
     const isTelegramDeepLink = Boolean(state.telegram.startParam);
     if (isTelegramDeepLink && isTaskOverdueByCompactRule(matchedTask)) {
@@ -7161,50 +7174,12 @@ function updateVisibleTasks() {
   const folderScopedTasks = resolveFolderScope(state.tasks, state.activeFilters.folderId);
 
   const filtered = applyTaskFilter(normalizedFilters, folderScopedTasks);
-  let visible = filtered;
-
-  const hasAssigneeFilter = hasAssigneeFilters(normalizedFilters);
-  if (directorState.isActive && !hasAssigneeFilter) {
-    const directorFiltered = filtered.filter(({ task }) => isTaskAssignedToCurrentDirector(task));
-
-    if (directorState.visibilityRuleLogged === false) {
-      logDirectorDebug('visibility_rule_applied', {
-        filter: formatTaskFiltersForLog(normalizedFilters),
-        responsibleFilter: false,
-        totalBefore: filtered.length,
-        totalAfter: directorFiltered.length,
-        check: 'isTaskAssignedToCurrentDirector',
-      });
-      directorState.visibilityRuleLogged = true;
-    }
-
-    visible = directorFiltered;
-  }
+  let visible = filtered.filter(({ task }) => currentUserParticipatesInTask(task));
 
   if (shouldShowOnlyTasksWithoutStatus(normalizedFilters)) {
     visible = visible.filter(({ task }) => taskHasNoVisibleStatus(task));
   } else if (shouldApplyEntryStatusExclusion(normalizedFilters)) {
-    visible = visible.filter(({ task }) => !isTaskExcludedByEntryStatus(task, directorState));
-  }
-
-  if (directorState.isActive) {
-    const { statusFilters } = splitTaskFilters(normalizedFilters);
-    const showCompleted = statusFilters.some((filter) => getStatusFilterKey(filter) === 'done');
-    if (!showCompleted) {
-      const withoutCompleted = visible.filter(({ task }) => {
-        return getTaskStatusKeyForUser(task) !== 'done';
-      });
-
-      if (directorState.completedVisibilityLogged === false) {
-        logDirectorDebug('completed_hidden_for_director', {
-          filter: formatTaskFiltersForLog(normalizedFilters),
-          removed: visible.length - withoutCompleted.length,
-        });
-        directorState.completedVisibilityLogged = true;
-      }
-
-      visible = withoutCompleted;
-    }
+    visible = visible.filter(({ task }) => !isTaskExcludedByEntryStatus(task));
   }
 
   state.visibleTasks = applyCompactFilters(visible);
@@ -14548,6 +14523,15 @@ async function handleCardComplete(button, task) {
     setStatus('error', 'Не удалось определить организацию задачи.');
     return;
   }
+  if (!userCanCompleteDirectorAssignmentForTask(task)) {
+    setStatus('error', 'Завершить назначение может только директор.');
+    logClientEvent('task_complete_error', {
+      taskId: task.id || null,
+      organization,
+      message: 'director_required',
+    });
+    return;
+  }
   if (button.dataset.loading === 'true') {
     return;
   }
@@ -15332,6 +15316,34 @@ function normalizeIdentifier(value) {
   return string.replace(/^@+/, '').toLowerCase().replace(/\s+/g, '');
 }
 
+function getCurrentTelegramIdentifierCandidates() {
+  const candidates = [
+    state.telegram.id,
+    state.telegram.chatId,
+  ]
+    .map((value) => normalizeTelegramUserId(value))
+    .filter(Boolean);
+
+  return Array.from(new Set(candidates));
+}
+
+function entryMatchesCurrentTelegramDirector(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return false;
+  }
+
+  const currentIds = getCurrentTelegramIdentifierCandidates();
+  if (!currentIds.length) {
+    return false;
+  }
+
+  const fields = ['telegram', 'chatId', 'chat_id', 'telegramId', 'telegram_user_id'];
+  return fields.some((field) => {
+    const entryId = normalizeTelegramUserId(entry[field]);
+    return entryId && currentIds.includes(entryId);
+  });
+}
+
 function normalizeResponsibleKey(value) {
   if (value === null || value === undefined) {
     return '';
@@ -15632,26 +15644,32 @@ function collectUserDirectoryEntries(payload) {
   }
 
   const buckets = [];
-  const appendArray = (value) => {
+  const appendArray = (value, role = '') => {
     if (Array.isArray(value) && value.length) {
-      buckets.push(...value);
+      value.forEach((entry) => {
+        if (entry && typeof entry === 'object' && role) {
+          buckets.push({ ...entry, __directoryRole: role });
+          return;
+        }
+        buckets.push(entry);
+      });
     }
   };
 
-  appendArray(payload.responsibles);
-  appendArray(payload.subordinates);
-  appendArray(payload.directors);
-  appendArray(payload.block1);
-  appendArray(payload.block2);
-  appendArray(payload.block3);
+  appendArray(payload.responsibles, 'responsible');
+  appendArray(payload.subordinates, 'subordinate');
+  appendArray(payload.directors, 'director');
+  appendArray(payload.block1, 'responsible');
+  appendArray(payload.block2, 'director');
+  appendArray(payload.block3, 'subordinate');
 
   if (payload.settings && typeof payload.settings === 'object') {
-    appendArray(payload.settings.responsibles);
-    appendArray(payload.settings.subordinates);
-    appendArray(payload.settings.directors);
-    appendArray(payload.settings.block1);
-    appendArray(payload.settings.block2);
-    appendArray(payload.settings.block3);
+    appendArray(payload.settings.responsibles, 'responsible');
+    appendArray(payload.settings.subordinates, 'subordinate');
+    appendArray(payload.settings.directors, 'director');
+    appendArray(payload.settings.block1, 'responsible');
+    appendArray(payload.settings.block2, 'director');
+    appendArray(payload.settings.block3, 'subordinate');
   }
 
   return buckets.filter((entry) => entry && typeof entry === 'object');
@@ -15728,7 +15746,14 @@ function getCurrentUserResponsibleFromTask(task) {
     pools.push(...task.subordinates);
   }
   if (Array.isArray(task.directors)) {
-    pools.push(...task.directors);
+    task.directors.forEach((entry) => {
+      if (entryMatchesCurrentTelegramDirector(entry)) {
+        pools.push(entry);
+      }
+    });
+  }
+  if (task.director && typeof task.director === 'object' && entryMatchesCurrentTelegramDirector(task.director)) {
+    pools.push(task.director);
   }
 
   for (const entry of pools) {
@@ -15756,15 +15781,19 @@ function getCurrentUserResponsibleFromAccess() {
     return '';
   }
 
-  const groups = [access.responsibles, access.subordinates, access.directors];
+  const groups = [
+    { key: 'responsibles', value: access.responsibles },
+    { key: 'subordinates', value: access.subordinates },
+    { key: 'directors', value: access.directors },
+  ];
   const entries = [];
-  groups.forEach((group) => {
+  groups.forEach(({ key, value: group }) => {
     if (!group || typeof group !== 'object') {
       return;
     }
     Object.values(group).forEach((list) => {
       if (Array.isArray(list) && list.length) {
-        entries.push(...list);
+        list.forEach((entry) => entries.push({ key, entry }));
       }
     });
   });
@@ -15787,11 +15816,17 @@ function getCurrentUserResponsibleFromAccess() {
   const ids = Array.from(new Set(idCandidates));
   const names = [];
 
-  for (const entry of entries) {
+  for (const item of entries) {
+    const entry = item && item.entry;
     if (!entry || typeof entry !== 'object') {
       continue;
     }
-    if (!entryMatchesUser(entry, ids, names)) {
+    const isDirectorEntry = item.key === 'directors'
+      || normalizeCurrentUserTaskRole(entry.__directoryRole || entry.role) === 'director';
+    const matched = isDirectorEntry
+      ? entryMatchesCurrentTelegramDirector(entry)
+      : entryMatchesUser(entry, ids, names);
+    if (!matched) {
       continue;
     }
     const responsible = normalizeValue(entry.responsible)
@@ -15813,20 +15848,24 @@ function getCurrentUserPositionFromAccess() {
     return '';
   }
 
-  const groups = access ? [access.responsibles, access.subordinates, access.directors] : [];
+  const groups = access ? [
+    { key: 'responsibles', value: access.responsibles },
+    { key: 'subordinates', value: access.subordinates },
+    { key: 'directors', value: access.directors },
+  ] : [];
   const entries = [];
-  groups.forEach((group) => {
+  groups.forEach(({ key, value: group }) => {
     if (!group || typeof group !== 'object') {
       return;
     }
     Object.values(group).forEach((list) => {
       if (Array.isArray(list) && list.length) {
-        entries.push(...list);
+        list.forEach((entry) => entries.push({ key, entry }));
       }
     });
   });
   if (directoryEntries.length) {
-    entries.push(...directoryEntries);
+    directoryEntries.forEach((entry) => entries.push({ key: 'directory', entry }));
   }
 
   if (!entries.length) {
@@ -15857,11 +15896,17 @@ function getCurrentUserPositionFromAccess() {
   pushName([state.telegram.firstName, state.telegram.lastName].filter(Boolean).join(' '));
   pushName(state.telegram.username);
 
-  for (const entry of entries) {
+  for (const item of entries) {
+    const entry = item && item.entry;
     if (!entry || typeof entry !== 'object') {
       continue;
     }
-    if (!entryMatchesUser(entry, ids, names)) {
+    const isDirectorEntry = item.key === 'directors'
+      || normalizeCurrentUserTaskRole(entry.__directoryRole || entry.role) === 'director';
+    const matched = isDirectorEntry
+      ? entryMatchesCurrentTelegramDirector(entry)
+      : entryMatchesUser(entry, ids, names);
+    if (!matched) {
       continue;
     }
     const position = normalizeValue(entry.position);
@@ -15903,7 +15948,14 @@ function getCurrentUserPositionFromTasks() {
       pools.push(...task.subordinates);
     }
     if (Array.isArray(task.directors)) {
-      pools.push(...task.directors);
+      task.directors.forEach((entry) => {
+        if (entryMatchesCurrentTelegramDirector(entry)) {
+          pools.push(entry);
+        }
+      });
+    }
+    if (task.director && typeof task.director === 'object' && entryMatchesCurrentTelegramDirector(task.director)) {
+      pools.push(task.director);
     }
 
     for (const entry of pools) {
@@ -15969,7 +16021,7 @@ function entryMatchesUser(entry, ids, names) {
   const nameList = Array.isArray(names) ? names : [];
 
   if (idList.length) {
-    const idFields = ['telegram', 'chatId', 'id', 'number', 'email', 'login', 'userId', 'token'];
+    const idFields = ['telegram', 'chatId', 'id', 'number', 'email', 'login', 'username', 'telegramUsername', 'telegram_username', 'userId', 'token'];
     for (const field of idFields) {
       if (!entry[field]) {
         continue;
@@ -15997,18 +16049,183 @@ function entryMatchesUser(entry, ids, names) {
   return false;
 }
 
+function normalizeCurrentUserTaskRole(role) {
+  const normalized = normalizeName(role);
+  if (normalized === 'responsible' || normalized === 'ответственный' || normalized === 'assignee') {
+    return 'responsible';
+  }
+  if (normalized === 'subordinate' || normalized === 'подчиненный' || normalized === 'подчинённый') {
+    return 'subordinate';
+  }
+  if (normalized === 'director' || normalized === 'директор' || normalized === 'руководитель') {
+    return 'director';
+  }
+  return '';
+}
+
+function appendTaskRoleEntry(entries, entry) {
+  if (Array.isArray(entry)) {
+    entry.forEach((item) => appendTaskRoleEntry(entries, item));
+    return;
+  }
+  if (entry && typeof entry === 'object') {
+    entries.push(entry);
+    return;
+  }
+  const scalar = normalizeValue(entry);
+  if (scalar) {
+    entries.push({
+      id: scalar,
+      username: scalar,
+      name: scalar,
+      responsible: scalar,
+    });
+  }
+}
+
+function collectTaskRoleEntries(task, role) {
+  if (!task || typeof task !== 'object') {
+    return [];
+  }
+
+  const entries = [];
+  if (role === 'director') {
+    appendTaskRoleEntry(entries, task.director);
+    if (Array.isArray(task.directors)) {
+      task.directors.forEach((entry) => appendTaskRoleEntry(entries, entry));
+    }
+    return entries;
+  }
+
+  if (role === 'subordinate') {
+    if (Array.isArray(task.assignees)) {
+      task.assignees.forEach((entry) => {
+        if (resolveAssigneeRole(entry, 'responsible') === 'subordinate') {
+          appendTaskRoleEntry(entries, entry);
+        }
+      });
+    }
+    if (task.assignee && resolveAssigneeRole(task.assignee, 'responsible') === 'subordinate') {
+      appendTaskRoleEntry(entries, task.assignee);
+    }
+    if (Array.isArray(task.subordinates)) {
+      task.subordinates.forEach((entry) => appendTaskRoleEntry(entries, entry));
+    }
+    appendTaskRoleEntry(entries, task.subordinate);
+    return entries;
+  }
+
+  if (Array.isArray(task.assignees)) {
+    task.assignees.forEach((entry) => {
+      if (resolveAssigneeRole(entry, 'responsible') !== 'subordinate') {
+        appendTaskRoleEntry(entries, entry);
+      }
+    });
+  }
+  if (task.assignee && resolveAssigneeRole(task.assignee, 'responsible') !== 'subordinate') {
+    appendTaskRoleEntry(entries, task.assignee);
+  }
+  if (Array.isArray(task.responsibles)) {
+    task.responsibles.forEach((entry) => appendTaskRoleEntry(entries, entry));
+  }
+  appendTaskRoleEntry(entries, task.responsible);
+
+  return entries;
+}
+
+function taskRoleEntriesMatchCurrentUser(entries, ids, names) {
+  const idList = Array.isArray(ids) ? ids : [];
+  const nameList = Array.isArray(names) ? names : [];
+
+  return entries.some((entry) => {
+    if (entry && typeof entry === 'object') {
+      return entryMatchesUser(entry, idList, nameList);
+    }
+    const normalizedId = normalizeIdentifier(entry);
+    if (normalizedId && idList.includes(normalizedId)) {
+      return true;
+    }
+    const normalizedName = normalizeName(entry);
+    return Boolean(normalizedName && nameList.includes(normalizedName));
+  });
+}
+
+function isCurrentUserResponsibleForTask(task) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+  if (getTaskResponsibleIdentifiers(task).some((identifier) => ids.includes(identifier))) {
+    return true;
+  }
+  return taskRoleEntriesMatchCurrentUser(collectTaskRoleEntries(task, 'responsible'), ids, names);
+}
+
+function isCurrentUserSubordinateForTask(task) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+  const { ids, names } = getUserIdentifierCandidates();
+  if (!ids.length && !names.length) {
+    return false;
+  }
+  if (getTaskSubordinateIdentifiers(task).some((identifier) => ids.includes(identifier))) {
+    return true;
+  }
+  return taskRoleEntriesMatchCurrentUser(collectTaskRoleEntries(task, 'subordinate'), ids, names);
+}
+
+function getCurrentUserTaskRoles(task) {
+  const roles = new Set();
+  if (!task || typeof task !== 'object') {
+    return roles;
+  }
+
+  if (Array.isArray(task.currentUserRoles)) {
+    task.currentUserRoles.forEach((role) => {
+      const normalizedRole = normalizeCurrentUserTaskRole(role);
+      if (normalizedRole && (normalizedRole !== 'director' || isCurrentUserExplicitDirectorForTask(task))) {
+        roles.add(normalizedRole);
+      }
+    });
+    return roles;
+  }
+
+  if (isCurrentUserResponsibleForTask(task)) {
+    roles.add('responsible');
+  }
+  if (isCurrentUserSubordinateForTask(task)) {
+    roles.add('subordinate');
+  }
+  if (isCurrentUserExplicitDirectorForTask(task)) {
+    roles.add('director');
+  }
+
+  return roles;
+}
+
+function currentUserHasTaskRole(task, role) {
+  const normalizedRole = normalizeCurrentUserTaskRole(role);
+  if (!normalizedRole) {
+    return false;
+  }
+  return getCurrentUserTaskRoles(task).has(normalizedRole);
+}
+
+function currentUserParticipatesInTask(task) {
+  return getCurrentUserTaskRoles(task).size > 0;
+}
+
 function userIsDirectorForOrganization(organization) {
   const directors = getDirectorsForOrganization(organization);
   if (!directors.length) {
     return false;
   }
 
-  const { ids, names } = getUserIdentifierCandidates();
-  if (!ids.length && !names.length) {
-    return false;
-  }
-
-  return directors.some((entry) => entryMatchesUser(entry, ids, names));
+  return directors.some((entry) => entryMatchesCurrentTelegramDirector(entry));
 }
 
 function userHasDirectorAccess() {
@@ -16021,14 +16238,9 @@ function userHasDirectorAccess() {
     return false;
   }
 
-  const { ids, names } = getUserIdentifierCandidates();
-  if (!ids.length && !names.length) {
-    return false;
-  }
-
   return Object.keys(state.access.directors).some((key) => {
     const entries = Array.isArray(state.access.directors[key]) ? state.access.directors[key] : [];
-    return entries.some((entry) => entryMatchesUser(entry, ids, names));
+    return entries.some((entry) => entryMatchesCurrentTelegramDirector(entry));
   });
 }
 
@@ -16515,7 +16727,18 @@ function getTaskRoleIdentifiers(task, role) {
     if (entryRole !== desiredRole) {
       return;
     }
-    const candidates = [entry.id, entry.telegram, entry.chatId, entry.email, entry.number, entry.login];
+    const candidates = [
+      entry.id,
+      entry.telegram,
+      entry.chatId,
+      entry.email,
+      entry.number,
+      entry.login,
+      entry.username,
+      entry.telegramUsername,
+      entry.telegram_username,
+      entry.userId,
+    ];
     candidates.forEach((candidate) => {
       const normalizedValue = normalizeValue(candidate);
       if (normalizedValue) {
@@ -16852,10 +17075,16 @@ function getTaskDirectorIdentifiers(task) {
     if (!entry || typeof entry !== 'object') {
       return;
     }
-    const candidates = [entry.id, entry.telegram, entry.chatId, entry.email, entry.number, entry.login];
+    const candidates = [
+      entry.telegram,
+      entry.chatId,
+      entry.telegramId,
+      entry.telegram_user_id,
+      entry.chat_id,
+    ];
     candidates.forEach((value) => {
       const normalizedValue = normalizeValue(value);
-      if (normalizedValue) {
+      if (normalizedValue && /^-?\d{4,}$/.test(normalizeIdentifier(normalizedValue))) {
         push(normalizedValue);
       }
     });
@@ -17461,92 +17690,49 @@ function getDirectorOrganizationKeys() {
 
 function isTaskAssignedToCurrentDirector(task) {
   ensureDirectorState();
-  if (!task || typeof task !== 'object') {
-    return false;
+  return currentUserHasTaskRole(task, 'director');
+}
+
+function resetDirectorTrackingState(options = {}) {
+  const directorState = ensureDirectorState();
+  const clearDirectories = Boolean(options && options.clearDirectories);
+
+  directorState.isActive = false;
+  directorState.organizations = [];
+  directorState.knownTaskKeys.clear();
+  directorState.responsibles = [];
+  directorState.subordinates = [];
+  directorState.responsibleTaskCounts = new Map();
+  directorState.subordinateTaskCounts = new Map();
+  directorState.responsibleButtonsSignature = '';
+  directorState.subordinateButtonsSignature = '';
+  directorState.initialized = false;
+  directorState.summaryExpanded = false;
+  directorState.responsiblePanelExpanded = false;
+  directorState.subordinatePanelExpanded = false;
+  directorState.selectedResponsibleToken = '';
+  directorState.selectedSubordinateToken = '';
+  directorState.visibilityRuleLogged = false;
+
+  if (!clearDirectories) {
+    return;
   }
 
-  const { ids, names } = getUserIdentifierCandidates();
-  if (!ids.length && !names.length) {
-    return false;
+  if (directorState.responsibleDirectory instanceof Map) {
+    directorState.responsibleDirectory.clear();
+  } else {
+    directorState.responsibleDirectory = new Map();
   }
-
-  const directorIdentifiers = getTaskDirectorIdentifiers(task);
-  if (directorIdentifiers.some((identifier) => ids.includes(identifier))) {
-    return true;
+  if (directorState.responsibleTaskMap instanceof Map) {
+    directorState.responsibleTaskMap.clear();
+  } else {
+    directorState.responsibleTaskMap = new Map();
   }
-
-  const matchesName = (value) => {
-    const normalized = normalizeName(value);
-    return normalized && names.includes(normalized);
-  };
-
-  if (task.director && typeof task.director === 'object') {
-    if (matchesName(task.director.responsible || task.director.name || task.director.fio)) {
-      return true;
-    }
+  if (directorState.subordinateDirectory instanceof Map) {
+    directorState.subordinateDirectory.clear();
+  } else {
+    directorState.subordinateDirectory = new Map();
   }
-
-  if (Array.isArray(task.directors)) {
-    for (const entry of task.directors) {
-      if (entry && typeof entry === 'object') {
-        if (matchesName(entry.responsible || entry.name || entry.fio)) {
-          return true;
-        }
-      } else if (matchesName(entry)) {
-        return true;
-      }
-    }
-  }
-
-  if (matchesName(task.responsible)) {
-    return true;
-  }
-
-  if (Array.isArray(task.responsibles)) {
-    for (const entry of task.responsibles) {
-      if (entry && typeof entry === 'object') {
-        if (matchesName(entry.responsible || entry.name || entry.fio)) {
-          return true;
-        }
-      } else if (matchesName(entry)) {
-        return true;
-      }
-    }
-  }
-
-  const assigneeIdentifiers = getTaskAssigneeIdentifiers(task);
-  if (assigneeIdentifiers.some((identifier) => ids.includes(identifier))) {
-    return true;
-  }
-
-  if (task.assignee && typeof task.assignee === 'object') {
-    if (matchesName(task.assignee.responsible || task.assignee.name || task.assignee.fio)) {
-      return true;
-    }
-  }
-
-  if (Array.isArray(task.assignees)) {
-    for (const entry of task.assignees) {
-      if (entry && typeof entry === 'object') {
-        if (matchesName(entry.responsible || entry.name || entry.fio)) {
-          return true;
-        }
-      } else if (matchesName(entry)) {
-        return true;
-      }
-    }
-  }
-
-  const assignmentAuthors = getTaskAssignmentAuthors(task);
-  if (assignmentAuthors.ids.some((value) => ids.includes(value))) {
-    return true;
-  }
-
-  if (assignmentAuthors.names.some((value) => names.includes(value))) {
-    return true;
-  }
-
-  return false;
 }
 
 function notifyDirectorAboutAssignments(tasks) {
@@ -17788,9 +17974,6 @@ function updateDirectorTracking(previousKnownKeys) {
     : new Set(directorState.knownTaskKeys);
   const hadInitialized = directorState.initialized === true;
 
-  const organizationKeys = getDirectorOrganizationKeys();
-  directorState.organizations = organizationKeys;
-
   const tasks = Array.isArray(state.tasks) ? state.tasks : [];
   const assignedTasks = [];
   tasks.forEach((task, index) => {
@@ -17798,6 +17981,25 @@ function updateDirectorTracking(previousKnownKeys) {
       assignedTasks.push({ task, index });
     }
   });
+
+  if (!assignedTasks.length) {
+    resetDirectorTrackingState({ clearDirectories: true });
+    if (hasAssigneeFilters(state.taskFilter)) {
+      state.activeFilters.statusFilters = [];
+      state.taskFilter = [];
+      updateVisibleTasks();
+    }
+    return;
+  }
+
+  const organizationKeys = Array.from(new Set([
+    ...getDirectorOrganizationKeys(),
+    ...assignedTasks
+      .map(({ task }) => getTaskOrganizationKey(task))
+      .filter((key) => key),
+  ]));
+  directorState.organizations = organizationKeys;
+
   const assignedIndexSet = new Set(assignedTasks.map(({ index }) => index));
 
   const directory = directorState.responsibleDirectory instanceof Map
@@ -17809,9 +18011,6 @@ function updateDirectorTracking(previousKnownKeys) {
   directorState.responsibleDirectory = directory;
   directorState.responsibleTaskMap = historyMap;
 
-  const hasStoredResponsibles = directory.size > 0
-    || Array.from(historyMap.values()).some((set) => set instanceof Set && set.size > 0);
-
   const newKnownKeys = new Set();
   const newAssignments = [];
   const organizationSet = new Set(organizationKeys);
@@ -17822,7 +18021,6 @@ function updateDirectorTracking(previousKnownKeys) {
     : new Map();
   const relevantTokens = new Set();
   const currentCounts = new Map();
-  let hasTaskAssignees = false;
 
   const ensureDirectoryEntry = (profile) => {
     if (!profile || !profile.token) {
@@ -17959,7 +18157,6 @@ function updateDirectorTracking(previousKnownKeys) {
     if (!responsibleProfiles.length && !subordinateProfiles.length) {
       return;
     }
-    hasTaskAssignees = true;
 
     const seenResponsibleTokens = new Set();
     responsibleProfiles.forEach((profile) => {
@@ -18001,8 +18198,9 @@ function updateDirectorTracking(previousKnownKeys) {
     }
 
     const organizationKey = getTaskOrganizationKey(task);
-    const matchesOrganization = organizationSet.size === 0
-      || (organizationKey && organizationSet.has(organizationKey));
+    const matchesOrganization = organizationSet.size > 0
+      && organizationKey
+      && organizationSet.has(organizationKey);
     const matchesAssignment = assignedIndexSet.has(index);
 
     if (!matchesOrganization && !matchesAssignment) {
@@ -18120,40 +18318,13 @@ function updateDirectorTracking(previousKnownKeys) {
     .filter((entry) => entry && entry.token)
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru', { sensitivity: 'base' }));
 
-  const shouldActivateDirectorView = organizationKeys.length > 0
-    || assignedTasks.length > 0
-    || responsibles.length > 0
-    || subordinates.length > 0
-    || hasStoredResponsibles
-    || hasTaskAssignees;
+  const shouldActivateDirectorView = assignedTasks.length > 0;
 
   if (!shouldActivateDirectorView) {
-    directorState.isActive = false;
-    directorState.knownTaskKeys.clear();
-    directorState.responsibles = [];
-    directorState.subordinates = [];
-    directorState.responsibleTaskCounts = new Map();
-    directorState.subordinateTaskCounts = new Map();
-    directorState.responsibleButtonsSignature = '';
-    directorState.subordinateButtonsSignature = '';
-    directorState.initialized = false;
-    directorState.summaryExpanded = false;
-    directorState.responsiblePanelExpanded = false;
-    directorState.subordinatePanelExpanded = false;
-    directorState.selectedResponsibleToken = '';
-    directorState.selectedSubordinateToken = '';
-    directorState.visibilityRuleLogged = false;
-    directory.clear();
-    historyMap.clear();
-    if (directorState.subordinateDirectory instanceof Map) {
-      directorState.subordinateDirectory.clear();
-    } else {
-      directorState.subordinateDirectory = new Map();
-    }
+    resetDirectorTrackingState({ clearDirectories: true });
     if (hasAssigneeFilters(state.taskFilter)) {
       state.activeFilters.statusFilters = [];
       state.taskFilter = [];
-      directorState.visibilityRuleLogged = false;
       updateVisibleTasks();
     }
     return;

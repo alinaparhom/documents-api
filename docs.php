@@ -6042,23 +6042,98 @@ function split_name_tokens(string $value): array
 function extract_assignee_filter_from_array(array $source): ?array
 {
     $ids = [];
-    $userId = normalize_identifier_value($source['telegram_user_id'] ?? null);
-    if ($userId !== '') {
-        $ids[] = $userId;
+    $pushId = static function ($value) use (&$ids): void {
+        $normalized = normalize_identifier_value($value);
+        if ($normalized !== '' && !in_array($normalized, $ids, true)) {
+            $ids[] = $normalized;
+        }
+    };
+
+    $pushId($source['telegram_user_id'] ?? null);
+    $pushId($source['telegram_chat_id'] ?? null);
+    $pushId($source['user_id'] ?? null);
+    $pushId($source['chat_id'] ?? null);
+
+    $username = normalize_username_value(
+        $source['telegram_username']
+        ?? ($source['username'] ?? null)
+    );
+    $fullName = sanitize_text_field((string) (
+        $source['telegram_full_name']
+        ?? ($source['full_name'] ?? ($source['name'] ?? ''))
+    ), 200);
+
+    $nameTokens = [];
+    $rawNameTokens = $source['telegram_name_tokens'] ?? ($source['nameTokens'] ?? null);
+    if (is_array($rawNameTokens)) {
+        foreach ($rawNameTokens as $token) {
+            $normalizedToken = sanitize_text_field((string) $token, 80);
+            if ($normalizedToken !== '') {
+                $nameTokens[] = mb_strtolower($normalizedToken, 'UTF-8');
+            }
+        }
     }
 
-    $chatId = normalize_identifier_value($source['telegram_chat_id'] ?? null);
-    if ($chatId !== '' && !in_array($chatId, $ids, true)) {
-        $ids[] = $chatId;
+    if (empty($nameTokens) && $fullName !== '') {
+        $nameTokens = split_name_tokens($fullName);
     }
 
-    if (empty($ids)) {
+    $nameTokens = array_values(array_unique(array_filter($nameTokens, static function ($token) {
+        return is_string($token) && $token !== '';
+    })));
+
+    if (empty($ids) && $username === '' && empty($nameTokens) && $fullName === '') {
         return null;
     }
 
-    return [
-        'ids' => array_values(array_unique($ids)),
-    ];
+    $filter = [];
+    if (!empty($ids)) {
+        $filter['ids'] = array_values(array_unique($ids));
+    }
+    if ($username !== '') {
+        $filter['username'] = $username;
+    }
+    if (!empty($nameTokens)) {
+        $filter['nameTokens'] = $nameTokens;
+    }
+    if ($fullName !== '') {
+        $filter['fullName'] = $fullName;
+    }
+
+    return $filter;
+}
+
+function assignee_filter_has_identity(?array $filter): bool
+{
+    if ($filter === null || empty($filter)) {
+        return false;
+    }
+
+    if (isset($filter['ids']) && is_array($filter['ids'])) {
+        foreach ($filter['ids'] as $id) {
+            if (normalize_identifier_value($id) !== '') {
+                return true;
+            }
+        }
+    }
+
+    if (!empty($filter['username']) && normalize_username_value($filter['username']) !== '') {
+        return true;
+    }
+
+    if (!empty($filter['fullName']) && docs_normalize_name_candidate_value($filter['fullName']) !== '') {
+        return true;
+    }
+
+    if (isset($filter['nameTokens']) && is_array($filter['nameTokens'])) {
+        foreach ($filter['nameTokens'] as $token) {
+            if (trim((string) $token) !== '') {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 function extract_assignee_match_data(array $record): array
@@ -6094,8 +6169,27 @@ function extract_assignee_match_data(array $record): array
             }
         }
     }
+    foreach (['responsible', 'subordinate', 'director', 'assignee'] as $singleKey) {
+        if (!array_key_exists($singleKey, $record)) {
+            continue;
+        }
+        if (is_array($record[$singleKey])) {
+            $assignees[] = $record[$singleKey];
+            continue;
+        }
+        $singleName = sanitize_text_field((string) $record[$singleKey], 200);
+        if ($singleName !== '') {
+            $assignees[] = [
+                'id' => $singleName,
+                'username' => $singleName,
+                'name' => $singleName,
+            ];
+        }
+    }
 
     $idFields = ['id', 'chatId', 'chat_id', 'telegram', 'email', 'number', 'login'];
+    $usernameFields = ['username', 'userName', 'telegramUsername', 'telegram_username'];
+    $nameFields = ['name', 'responsible', 'fio', 'fullName', 'displayName'];
     foreach ($assignees as $assignee) {
         if (!is_array($assignee)) {
             continue;
@@ -6118,7 +6212,18 @@ function extract_assignee_match_data(array $record): array
             }
         }
 
-        foreach (['name', 'responsible'] as $field) {
+        foreach ($usernameFields as $field) {
+            if (!isset($assignee[$field])) {
+                continue;
+            }
+
+            $username = normalize_username_value($assignee[$field]);
+            if ($username !== '') {
+                $data['usernames'][] = $username;
+            }
+        }
+
+        foreach ($nameFields as $field) {
             if (!isset($assignee[$field])) {
                 continue;
             }
@@ -6201,8 +6306,9 @@ function document_matches_assignee_filter_core(array $record, array $filter, ?ar
     }
 
     if (!empty($filter['username'])) {
+        $expectedUsername = normalize_username_value($filter['username']);
         foreach ($matchData['usernames'] as $candidateUsername) {
-            if ($candidateUsername === $filter['username']) {
+            if ($expectedUsername !== '' && $candidateUsername === $expectedUsername) {
                 if ($trace !== null) {
                     $trace['matchedBy'] = 'username';
                     $trace['matchedValue'] = $candidateUsername;
@@ -6213,11 +6319,28 @@ function document_matches_assignee_filter_core(array $record, array $filter, ?ar
     }
 
     if (!empty($filter['nameTokens'])) {
+        $expectedTokens = array_values(array_filter(array_map(static function ($token) {
+            return mb_strtolower(trim((string) $token), 'UTF-8');
+        }, (array) $filter['nameTokens'])));
         foreach ($matchData['names'] as $candidateTokens) {
-            if (empty(array_diff($filter['nameTokens'], $candidateTokens))) {
+            if (!empty($expectedTokens) && empty(array_diff($expectedTokens, $candidateTokens))) {
                 if ($trace !== null) {
                     $trace['matchedBy'] = 'nameTokens';
                     $trace['matchedValue'] = implode(' ', $candidateTokens);
+                }
+                return true;
+            }
+        }
+    }
+
+    if (!empty($filter['fullName'])) {
+        $expectedName = docs_normalize_name_candidate_value($filter['fullName']);
+        foreach ($matchData['names'] as $candidateTokens) {
+            $candidateName = docs_normalize_name_candidate_value(implode(' ', $candidateTokens));
+            if ($expectedName !== '' && $candidateName === $expectedName) {
+                if ($trace !== null) {
+                    $trace['matchedBy'] = 'fullName';
+                    $trace['matchedValue'] = $candidateName;
                 }
                 return true;
             }
@@ -6527,6 +6650,10 @@ function summarize_assignee_filter_for_log(?array $filter): array
 
     if (!empty($filter['username'])) {
         $summary['username'] = (string) $filter['username'];
+    }
+
+    if (!empty($filter['fullName'])) {
+        $summary['fullName'] = (string) $filter['fullName'];
     }
 
     if (isset($filter['nameTokens']) && is_array($filter['nameTokens'])) {
@@ -6882,7 +7009,7 @@ function docs_entry_matches_candidate(array $entry, string $candidate): bool
 {
     $normalizedId = docs_normalize_identifier_candidate_value($candidate);
     if ($normalizedId !== '') {
-        foreach (['telegram', 'chatId', 'id', 'number', 'email', 'login'] as $field) {
+        foreach (['telegram', 'chatId', 'chat_id', 'id', 'userId', 'user_id', 'number', 'email', 'login', 'username', 'userName', 'telegramUsername', 'telegram_username'] as $field) {
             if (!isset($entry[$field])) {
                 continue;
             }
@@ -6894,10 +7021,15 @@ function docs_entry_matches_candidate(array $entry, string $candidate): bool
     }
 
     $normalizedName = docs_normalize_name_candidate_value($candidate);
-    if ($normalizedName !== '' && isset($entry['responsible'])) {
-        $entryName = docs_normalize_name_candidate_value($entry['responsible']);
-        if ($entryName !== '' && $entryName === $normalizedName) {
-            return true;
+    if ($normalizedName !== '') {
+        foreach (['responsible', 'name', 'fio', 'fullName', 'displayName'] as $field) {
+            if (!isset($entry[$field])) {
+                continue;
+            }
+            $entryName = docs_normalize_name_candidate_value($entry[$field]);
+            if ($entryName !== '' && $entryName === $normalizedName) {
+                return true;
+            }
         }
     }
 
@@ -7146,40 +7278,15 @@ function docs_user_is_block2_member(array $block2, array $requestContext): bool
         return false;
     }
 
-    $candidates = [];
+    $userCandidates = docs_collect_request_identity_candidates($requestContext);
+    $filter = [
+        'ids' => $userCandidates['ids'] ?? [],
+        'username' => '',
+        'fullName' => '',
+        'nameTokens' => [],
+    ];
 
-    if (!empty($requestContext['primaryId'])) {
-        $candidates[] = (string) $requestContext['primaryId'];
-    }
-
-    if (isset($requestContext['raw']['telegram_user_id']) && $requestContext['raw']['telegram_user_id'] !== '') {
-        $candidates[] = (string) $requestContext['raw']['telegram_user_id'];
-    }
-
-    if (isset($requestContext['raw']['telegram_chat_id']) && $requestContext['raw']['telegram_chat_id'] !== '') {
-        $candidates[] = (string) $requestContext['raw']['telegram_chat_id'];
-    }
-
-    if (isset($requestContext['user']['username']) && $requestContext['user']['username'] !== '') {
-        $candidates[] = (string) $requestContext['user']['username'];
-    }
-
-    if (isset($requestContext['user']['fullName']) && $requestContext['user']['fullName'] !== '') {
-        $candidates[] = (string) $requestContext['user']['fullName'];
-    }
-
-    if (isset($requestContext['user']['firstName']) || isset($requestContext['user']['lastName'])) {
-        $full = trim((string) ($requestContext['user']['firstName'] ?? '') . ' ' . (string) ($requestContext['user']['lastName'] ?? ''));
-        if ($full !== '') {
-            $candidates[] = $full;
-        }
-    }
-
-    $candidates = array_values(array_unique(array_filter($candidates, static function ($value) {
-        return $value !== null && $value !== '';
-    })));
-
-    if (empty($candidates)) {
+    if (empty($filter['ids']) || !is_array($filter['ids'])) {
         return false;
     }
 
@@ -7188,10 +7295,8 @@ function docs_user_is_block2_member(array $block2, array $requestContext): bool
             continue;
         }
 
-        foreach ($candidates as $candidate) {
-            if (docs_entry_matches_candidate($entry, $candidate)) {
-                return true;
-            }
+        if (docs_director_participant_matches_filter($entry, $filter)) {
+            return true;
         }
     }
 
@@ -9209,19 +9314,255 @@ function docs_extract_directors(array $record): array
 {
     $directors = [];
 
-    if (isset($record['director']) && is_array($record['director']) && !empty($record['director'])) {
-        $directors[] = $record['director'];
+    if (array_key_exists('director', $record)) {
+        if (is_array($record['director']) && !empty($record['director'])) {
+            $directors[] = $record['director'];
+        } else {
+            $directorEntry = docs_role_participant_from_scalar($record['director']);
+            if (!empty($directorEntry)) {
+                $directors[] = $directorEntry;
+            }
+        }
     }
 
     if (isset($record['directors']) && is_array($record['directors'])) {
         foreach ($record['directors'] as $entry) {
             if (is_array($entry) && !empty($entry)) {
                 $directors[] = $entry;
+                continue;
+            }
+
+            $directorEntry = docs_role_participant_from_scalar($entry);
+            if (!empty($directorEntry)) {
+                $directors[] = $directorEntry;
             }
         }
     }
 
     return $directors;
+}
+
+function docs_role_participant_from_scalar($value): array
+{
+    if (!is_scalar($value)) {
+        return [];
+    }
+
+    $label = sanitize_text_field((string) $value, 200);
+    if ($label === '') {
+        return [];
+    }
+
+    return [
+        'id' => $label,
+        'username' => $label,
+        'name' => $label,
+        'responsible' => $label,
+    ];
+}
+
+function docs_append_role_participant(array &$participants, $entry): void
+{
+    if (is_array($entry) && !empty($entry)) {
+        $participants[] = $entry;
+        return;
+    }
+
+    $scalarEntry = docs_role_participant_from_scalar($entry);
+    if (!empty($scalarEntry)) {
+        $participants[] = $scalarEntry;
+    }
+}
+
+function docs_collect_record_role_participants(array $record, string $role): array
+{
+    $participants = [];
+    $normalizedRole = docs_normalize_assignment_role($role);
+
+    if ($normalizedRole === 'director') {
+        foreach (docs_extract_directors($record) as $entry) {
+            docs_append_role_participant($participants, $entry);
+        }
+
+        return docs_filter_unique_assignees_by_primary_keys($participants);
+    }
+
+    if ($normalizedRole === 'subordinate') {
+        foreach (docs_extract_assignees($record) as $entry) {
+            $entryRole = docs_normalize_assignment_role((string) ($entry['role'] ?? ''));
+            if ($entryRole === 'subordinate') {
+                docs_append_role_participant($participants, $entry);
+            }
+        }
+
+        if (isset($record['subordinates']) && is_array($record['subordinates'])) {
+            foreach ($record['subordinates'] as $entry) {
+                docs_append_role_participant($participants, $entry);
+            }
+        }
+
+        if (array_key_exists('subordinate', $record)) {
+            docs_append_role_participant($participants, $record['subordinate']);
+        }
+
+        return docs_filter_unique_assignees_by_primary_keys($participants);
+    }
+
+    foreach (docs_extract_assignees($record) as $entry) {
+        $entryRole = docs_normalize_assignment_role((string) ($entry['role'] ?? 'responsible'));
+        if ($entryRole !== 'subordinate') {
+            docs_append_role_participant($participants, $entry);
+        }
+    }
+
+    if (isset($record['responsibles']) && is_array($record['responsibles'])) {
+        foreach ($record['responsibles'] as $entry) {
+            docs_append_role_participant($participants, $entry);
+        }
+    }
+
+    if (array_key_exists('responsible', $record)) {
+        docs_append_role_participant($participants, $record['responsible']);
+    }
+
+    if (array_key_exists('assignee', $record)) {
+        $assigneeRole = is_array($record['assignee'])
+            ? docs_normalize_assignment_role((string) ($record['assignee']['role'] ?? 'responsible'))
+            : 'responsible';
+        if ($assigneeRole !== 'subordinate') {
+            docs_append_role_participant($participants, $record['assignee']);
+        }
+    }
+
+    return docs_filter_unique_assignees_by_primary_keys($participants);
+}
+
+function docs_role_participant_matches_filter(array $entry, array $filter): bool
+{
+    if (!assignee_filter_has_identity($filter)) {
+        return false;
+    }
+
+    foreach ((array) ($filter['ids'] ?? []) as $id) {
+        $candidate = (string) $id;
+        if ($candidate !== '' && docs_entry_matches_candidate($entry, $candidate)) {
+            return true;
+        }
+    }
+
+    if (!empty($filter['username']) && docs_entry_matches_candidate($entry, (string) $filter['username'])) {
+        return true;
+    }
+
+    if (!empty($filter['fullName']) && docs_entry_matches_candidate($entry, (string) $filter['fullName'])) {
+        return true;
+    }
+
+    $expectedTokens = [];
+    if (isset($filter['nameTokens']) && is_array($filter['nameTokens'])) {
+        foreach ($filter['nameTokens'] as $token) {
+            $normalizedToken = mb_strtolower(trim((string) $token), 'UTF-8');
+            if ($normalizedToken !== '') {
+                $expectedTokens[] = $normalizedToken;
+            }
+        }
+    }
+    $expectedTokens = array_values(array_unique($expectedTokens));
+    if (empty($expectedTokens)) {
+        return false;
+    }
+
+    foreach (['responsible', 'name', 'fio', 'fullName', 'displayName'] as $field) {
+        if (empty($entry[$field])) {
+            continue;
+        }
+        $candidateTokens = split_name_tokens((string) $entry[$field]);
+        if (!empty($candidateTokens) && empty(array_diff($expectedTokens, $candidateTokens))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_director_participant_matches_filter(array $entry, array $filter): bool
+{
+    if (!assignee_filter_has_identity($filter) || empty($filter['ids']) || !is_array($filter['ids'])) {
+        return false;
+    }
+
+    $entryIds = [];
+    foreach (['telegram', 'chatId', 'chat_id', 'telegramId', 'telegram_user_id'] as $field) {
+        if (empty($entry[$field])) {
+            continue;
+        }
+
+        $normalized = docs_normalize_identifier_candidate_value($entry[$field]);
+        if ($normalized !== '' && preg_match('/^-?\d{4,}$/', $normalized)) {
+            $entryIds[$normalized] = true;
+        }
+    }
+
+    if (empty($entryIds)) {
+        return false;
+    }
+
+    foreach ($filter['ids'] as $candidate) {
+        $normalized = docs_normalize_identifier_candidate_value($candidate);
+        if ($normalized !== '' && isset($entryIds[$normalized])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_resolve_record_roles_for_filter(array $record, ?array $filter): array
+{
+    if (!assignee_filter_has_identity($filter)) {
+        return [];
+    }
+
+    $roles = [];
+    foreach (['responsible', 'subordinate', 'director'] as $role) {
+        foreach (docs_collect_record_role_participants($record, $role) as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $matched = $role === 'director'
+                ? docs_director_participant_matches_filter($entry, $filter)
+                : docs_role_participant_matches_filter($entry, $filter);
+
+            if ($matched) {
+                $roles[] = $role;
+                break;
+            }
+        }
+    }
+
+    return array_values(array_unique($roles));
+}
+
+function docs_request_matches_record_director(array $record, array $requestContext): bool
+{
+    $userCandidates = docs_collect_request_identity_candidates($requestContext);
+    if (empty($userCandidates['ids']) && empty($userCandidates['names'])) {
+        return false;
+    }
+
+    $directors = docs_extract_directors($record);
+    if (empty($directors)) {
+        return false;
+    }
+
+    foreach ($directors as $director) {
+        if (is_array($director) && docs_director_participant_matches_filter($director, ['ids' => $userCandidates['ids'] ?? []])) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function docs_collect_assignee_index_keys(array $assignee): array
@@ -10397,8 +10738,20 @@ function docs_build_request_user_context(): array
 
     $sessionAuth = docs_get_session_auth();
     if (is_array($sessionAuth)) {
+        $sessionMatchesTelegram = true;
+        if ($normalizedTelegramId !== '') {
+            $sessionMatchesTelegram = false;
+            foreach (['telegramId', 'chatId', 'id', 'telegram'] as $sessionTelegramField) {
+                $sessionTelegramId = normalize_identifier_value($sessionAuth[$sessionTelegramField] ?? null);
+                if ($sessionTelegramId !== '' && $sessionTelegramId === $normalizedTelegramId) {
+                    $sessionMatchesTelegram = true;
+                    break;
+                }
+            }
+        }
+
         $sessionPosition = sanitize_text_field((string) ($sessionAuth['position'] ?? ''), 160);
-        if ($sessionPosition !== '') {
+        if ($sessionPosition !== '' && $sessionMatchesTelegram) {
             if (!is_array($user)) {
                 $user = [
                     'id' => $primaryId,
@@ -10412,13 +10765,13 @@ function docs_build_request_user_context(): array
         }
 
         $sessionRole = $sessionAuth['role'] ?? 'guest';
-        if ($sessionRole === 'admin') {
+        if ($sessionRole === 'admin' && $sessionMatchesTelegram) {
             $filter = null;
             $filterSource = 'session_admin';
             if ($primaryId === '') {
                 $primaryId = normalize_identifier_value($sessionAuth['login'] ?? '');
             }
-        } elseif ($sessionRole === 'user') {
+        } elseif ($sessionRole === 'user' && $sessionMatchesTelegram) {
             $sessionFilter = docs_build_session_user_filter_from_auth($sessionAuth);
             if ($sessionFilter !== null) {
                 $filter = $sessionFilter;
@@ -14162,8 +14515,8 @@ switch ($action) {
                 $filter['ids'] = $filterIds;
             }
 
-            if ($filter === null || empty($filterIds)) {
-                respond_error('Не удалось определить Telegram ID. Откройте мини-приложение из Telegram.', 400, [
+            if (!assignee_filter_has_identity($filter)) {
+                respond_error('Не удалось определить пользователя Telegram. Откройте мини-приложение из Telegram.', 400, [
                     'requiresTelegramId' => true,
                 ]);
             }
@@ -14347,6 +14700,10 @@ switch ($action) {
                 $result['username'] = $extra['username'];
             }
 
+            if (!empty($extra['fullName']) && (empty($result['fullName']) || !is_string($result['fullName']))) {
+                $result['fullName'] = $extra['fullName'];
+            }
+
             if (isset($result['username'])) {
                 $normalizedUsername = normalize_username_value($result['username']);
                 if ($normalizedUsername === '') {
@@ -14373,6 +14730,15 @@ switch ($action) {
 
                 if (!empty($tokens)) {
                     $result['nameTokens'] = $tokens;
+                }
+            }
+
+            if (isset($result['fullName'])) {
+                $normalizedFullName = sanitize_text_field((string) $result['fullName'], 200);
+                if ($normalizedFullName === '') {
+                    unset($result['fullName']);
+                } else {
+                    $result['fullName'] = $normalizedFullName;
                 }
             }
 
@@ -14435,11 +14801,13 @@ switch ($action) {
             }, $filter['ids'])));
         }
 
-        if ($filter === null || empty($filterIds)) {
+        if (!assignee_filter_has_identity($filter)) {
             if ($isIosClient) {
                 $iosDebugSteps[] = [
                     'stage' => 'filter_missing',
                     'idsPresent' => !empty($filterIds),
+                    'usernamePresent' => !empty($filter['username']),
+                    'nameTokensPresent' => !empty($filter['nameTokens']),
                 ];
                 log_docs_event('Mini app tasks (iOS) debug summary', array_filter([
                     'userAgent' => $userAgent !== '' ? $userAgent : null,
@@ -14450,7 +14818,7 @@ switch ($action) {
                     return $value !== null && $value !== [];
                 }));
             }
-            respond_error('Не удалось определить Telegram ID. Откройте мини-приложение из Telegram.', 400, [
+            respond_error('Не удалось определить пользователя Telegram. Откройте мини-приложение из Telegram.', 400, [
                 'requiresTelegramId' => true,
             ]);
         }
@@ -14537,39 +14905,47 @@ switch ($action) {
 
             $isDirectorForOrganization = !empty($directorReasonsForOrganization);
             $effectiveFilter = $filter;
-            if ($isDirectorForOrganization) {
-                $filteredRecords = [];
-                if (is_array($prepared)) {
-                    foreach ($prepared as $record) {
-                        if (is_array($record)) {
-                            $filteredRecords[] = $record;
-                        }
+            $filteredRecords = [];
+            $hasDirectorTaskRoleForOrganization = false;
+
+            if ($shouldTraceMiniAppUser && is_array($prepared)) {
+                foreach ($prepared as $record) {
+                    if (is_array($record)) {
+                        docs_trace_mini_app_task_visibility(
+                            $record,
+                            $effectiveFilter,
+                            $responsiblesWithCounts,
+                            $organization,
+                            $folder,
+                            'prepared'
+                        );
                     }
                 }
-            } else {
-                if ($shouldTraceMiniAppUser && is_array($prepared)) {
-                    foreach ($prepared as $record) {
-                        if (is_array($record)) {
-                            docs_trace_mini_app_task_visibility(
-                                $record,
-                                $effectiveFilter,
-                                $responsiblesWithCounts,
-                                $organization,
-                                $folder,
-                                'prepared'
-                            );
-                        }
-                    }
-                }
-                $filteredRecords = filter_documents_for_assignee($prepared, $effectiveFilter, $responsiblesWithCounts);
             }
 
-            if ($isDirectorForOrganization) {
+            if (is_array($prepared)) {
+                foreach ($prepared as $record) {
+                    if (!is_array($record)) {
+                        continue;
+                    }
+
+                    $currentUserRoles = docs_resolve_record_roles_for_filter($record, $effectiveFilter);
+                    if (empty($currentUserRoles)) {
+                        continue;
+                    }
+
+                    $record['currentUserRoles'] = $currentUserRoles;
+                    if (in_array('director', $currentUserRoles, true)) {
+                        $hasDirectorTaskRoleForOrganization = true;
+                    }
+                    $filteredRecords[] = $record;
+                }
+            }
+
+            if ($hasDirectorTaskRoleForOrganization) {
                 $directorModeActive = true;
                 $directorOrganizations[] = $organization;
-                foreach ($directorReasonsForOrganization as $reason) {
-                    $directorModeReasons[$reason] = true;
-                }
+                $directorModeReasons['task_director'] = true;
             }
 
             if ($isIosClient) {
@@ -14581,8 +14957,9 @@ switch ($action) {
                     'matchedCount' => is_array($filteredRecords) ? count($filteredRecords) : 0,
                     'responsiblesCount' => is_array($responsibles) ? count($responsibles) : 0,
                     'directorsCount' => is_array($directors) ? count($directors) : 0,
-                    'directorMode' => $isDirectorForOrganization,
-                    'filterBypassed' => $isDirectorForOrganization,
+                    'directorMode' => $hasDirectorTaskRoleForOrganization,
+                    'globalDirectorAccess' => $isDirectorForOrganization,
+                    'filterBypassed' => false,
                 ];
             }
 
@@ -14709,7 +15086,7 @@ switch ($action) {
         })));
         $directorModeSummary = [
             'active' => $directorModeActive,
-            'allTasks' => $directorModeActive,
+            'allTasks' => false,
         ];
         if (!empty($directorOrganizations)) {
             $directorModeSummary['organizations'] = $directorOrganizations;
@@ -14860,7 +15237,15 @@ switch ($action) {
                     }
 
                     foreach ($summary[$groupKey] as $entry) {
-                        if (!$tryMatchEntry($entry, $userCandidates)) {
+                        $matched = $groupKey === 'directors'
+                            ? docs_director_participant_matches_filter($entry, [
+                                'ids' => isset($filter['ids']) && is_array($filter['ids']) ? $filter['ids'] : [],
+                                'username' => '',
+                                'fullName' => '',
+                                'nameTokens' => [],
+                            ])
+                            : $tryMatchEntry($entry, $userCandidates);
+                        if (!$matched) {
                             continue;
                         }
 
@@ -15202,6 +15587,7 @@ switch ($action) {
 
         $isAdminSession = $sessionRole === 'admin';
         $isDirector = $isAdminSession || docs_user_is_block2_member($block2, $requestContext);
+        $isTaskDirector = docs_request_matches_record_director($records[$recordIndex], $requestContext);
         $isTaskResponsible = docs_request_matches_record_responsible_only($records[$recordIndex], $requestContext);
         $isTaskSubordinate = docs_request_matches_record_subordinate($records[$recordIndex], $requestContext);
         $actsAsTaskSubordinate = !$isTaskResponsible && $isTaskSubordinate;
@@ -16577,9 +16963,10 @@ switch ($action) {
 
             $message = 'Кратко ИИ сохранено.';
         } elseif ($updateType === 'complete') {
-            if (!$isDirector) {
+            if (!$isTaskDirector) {
                 respond_error('Недостаточно прав для завершения задачи.', 403, [
                     'requiresDirector' => true,
+                    'requiresTaskDirector' => true,
                 ]);
             }
 

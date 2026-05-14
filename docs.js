@@ -13966,6 +13966,7 @@
       var xhr = new XMLHttpRequest();
       xhr.open('POST', url, true);
       xhr.withCredentials = true;
+      xhr.timeout = 600000;
 
       if (xhr.upload && typeof progressHandler === 'function') {
         xhr.upload.onprogress = function(event) {
@@ -13978,7 +13979,15 @@
       }
 
       xhr.onerror = function() {
-        reject(new Error('Сетевая ошибка при загрузке данных.'));
+        reject(new Error('Не удалось связаться с сервером. Проверьте интернет и повторите загрузку.'));
+      };
+
+      xhr.ontimeout = function() {
+        reject(new Error('Сервер слишком долго не отвечает. Повторите загрузку чуть позже.'));
+      };
+
+      xhr.onabort = function() {
+        reject(new Error('Загрузка была прервана. Повторите сохранение.'));
       };
 
       xhr.onload = function() {
@@ -16214,6 +16223,7 @@
 
         if (!isEditMode && !directorSelect.value) {
           submitButton.disabled = false;
+          setUploadProgressActive(false);
           directorSelect.focus();
           showMessage('error', 'Выберите директора перед созданием задачи.');
           return;
@@ -16221,6 +16231,7 @@
 
         if (assigneesEditor.hasMissingTelegramSelection()) {
           submitButton.disabled = false;
+          setUploadProgressActive(false);
           showMessage('error', TELEGRAM_MISSING_MESSAGE);
           return;
         }
@@ -16228,6 +16239,7 @@
         correspondentField.input.value = normalizeTextInputValue(correspondentField.input.value);
         if (!correspondentField.input.value) {
           submitButton.disabled = false;
+          setUploadProgressActive(false);
           correspondentField.input.focus();
           showMessage('error', 'Заполните поле «Отправитель / получатель».');
           return;
@@ -16344,6 +16356,9 @@
           if (typeof formData.delete === 'function') {
             formData.delete('attachments[]');
           }
+          attachmentFiles.forEach(function(file) {
+            formData.append('attachments[]', file);
+          });
           logFilesDiagnostics('submit-create', {
             newFilesCount: attachmentFiles.length,
             newFileNames: attachmentFiles.map(function(file) { return file.name; }).slice(0, 10)
@@ -16414,7 +16429,7 @@
             }
 
             var uploadPromise = Promise.resolve();
-            if (attachmentFiles.length && createdOrUpdatedDocumentId) {
+            if (isEditMode && attachmentFiles.length && createdOrUpdatedDocumentId) {
               var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
@@ -16453,19 +16468,25 @@
                 showMessage('success', isEditMode ? 'Документ обновлён.' : 'Документ добавлен.');
               }
               updateUploadProgress(100, 'Готово. Документ и файлы успешно сохранены.', 'is-stage-success');
-              return refreshRegistrySilently();
-            })
-              .catch(function(error) {
+              return refreshRegistrySilently().catch(function(error) {
                 docsLogger.warn('Перезапись', {
-                  action: 'refresh-error',
+                  action: 'refresh-after-save-error',
                   documentId: doc && doc.id ? doc.id : null,
                   message: error && error.message ? error.message : String(error)
                 });
                 if (typeof window !== 'undefined' && window.refreshDocumentsRegistry) {
-                  return window.refreshDocumentsRegistry();
+                  return window.refreshDocumentsRegistry().catch(function(fallbackError) {
+                    docsLogger.warn('Перезапись', {
+                      action: 'refresh-after-save-fallback-error',
+                      documentId: doc && doc.id ? doc.id : null,
+                      message: fallbackError && fallbackError.message ? fallbackError.message : String(fallbackError)
+                    });
+                    return null;
+                  });
                 }
-                return Promise.reject(error);
+                return null;
               });
+            });
           })
           .catch(function(error) {
             submitButton.disabled = false;
