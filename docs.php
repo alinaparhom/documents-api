@@ -1279,6 +1279,8 @@ function docs_find_assignment_entry_with_upload_fallback(
 
 function docs_user_has_assignee_view_access(array $record, array $requestContext): bool
 {
+    docs_prune_assignee_views_for_record($record);
+
     if (empty($record['assigneeViews']) || !is_array($record['assigneeViews'])) {
         return false;
     }
@@ -4941,6 +4943,71 @@ function docs_sanitize_assignee_views_payload($value): array
     }
 
     return $result;
+}
+
+function docs_collect_valid_assignee_view_keys(array $record, ?array $assigneesOverride = null): array
+{
+    $validKeys = [];
+    $viewParticipants = docs_extract_view_participants($record, $assigneesOverride);
+
+    foreach ($viewParticipants as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        foreach (docs_collect_assignee_index_keys($entry) as $key) {
+            $normalizedKey = mb_strtolower(trim((string) $key), 'UTF-8');
+            if ($normalizedKey !== '') {
+                $validKeys[$normalizedKey] = true;
+            }
+        }
+    }
+
+    return $validKeys;
+}
+
+function docs_prune_assignee_views_for_record(array &$record, ?array $assigneesOverride = null): void
+{
+    if (!isset($record['assigneeViews']) || !is_array($record['assigneeViews'])) {
+        return;
+    }
+
+    $validKeys = docs_collect_valid_assignee_view_keys($record, $assigneesOverride);
+    if (empty($validKeys)) {
+        unset($record['assigneeViews']);
+        return;
+    }
+
+    $filteredViews = [];
+    foreach ($record['assigneeViews'] as $viewEntry) {
+        if (!is_array($viewEntry)) {
+            continue;
+        }
+
+        $viewKey = !empty($viewEntry['assigneeKey'])
+            ? mb_strtolower(trim((string) $viewEntry['assigneeKey']), 'UTF-8')
+            : '';
+        $viewId = isset($viewEntry['id'])
+            ? docs_normalize_identifier_candidate_value($viewEntry['id'])
+            : '';
+
+        $keep = $viewKey !== '' && isset($validKeys[$viewKey]);
+        if (!$keep && $viewId !== '') {
+            $keep = isset($validKeys['id::' . $viewId]);
+        }
+
+        if ($keep) {
+            $filteredViews[] = $viewEntry;
+        }
+    }
+
+    $sanitizedViews = docs_sanitize_assignee_views_payload($filteredViews);
+    if (!empty($sanitizedViews)) {
+        $record['assigneeViews'] = $sanitizedViews;
+        return;
+    }
+
+    unset($record['assigneeViews']);
 }
 
 function docs_collect_status_change_candidate_keys(array $requestContext, ?array $sessionAuth, string $statusChangeAuthor): array
@@ -9674,7 +9741,7 @@ function docs_apply_assignees_to_record(array &$record, array $assignees, ?array
     }
 
     if (empty($assignees)) {
-        unset($record['assignees'], $record['assignee']);
+        unset($record['assignees'], $record['assignee'], $record['assigneeViews']);
         if ($newAssignees !== null) {
             $newAssignees = [];
         }
@@ -9684,60 +9751,7 @@ function docs_apply_assignees_to_record(array &$record, array $assignees, ?array
     $record['assignees'] = $assignees;
     unset($record['assignee']);
 
-    if (isset($record['assigneeViews']) && is_array($record['assigneeViews'])) {
-        $validKeys = [];
-        $viewParticipants = docs_extract_view_participants($record, $assignees);
-        foreach ($viewParticipants as $assigneeEntry) {
-            if (!is_array($assigneeEntry)) {
-                continue;
-            }
-
-            $keys = docs_collect_assignee_index_keys($assigneeEntry);
-            foreach ($keys as $key) {
-                if ($key !== '') {
-                    $validKeys[mb_strtolower($key, 'UTF-8')] = true;
-                }
-            }
-        }
-
-        $filteredViews = [];
-        foreach ($record['assigneeViews'] as $viewEntry) {
-            if (!is_array($viewEntry)) {
-                continue;
-            }
-
-            $viewKey = '';
-            if (!empty($viewEntry['assigneeKey'])) {
-                $viewKey = mb_strtolower((string) $viewEntry['assigneeKey'], 'UTF-8');
-            }
-
-            $viewId = isset($viewEntry['id'])
-                ? docs_normalize_identifier_candidate_value($viewEntry['id'])
-                : '';
-
-            $keep = false;
-            if ($viewKey !== '' && isset($validKeys[$viewKey])) {
-                $keep = true;
-            } elseif ($viewId !== '') {
-                foreach ($validKeys as $key => $_) {
-                    if (strpos($key, 'id::') === 0 && substr($key, 4) === $viewId) {
-                        $keep = true;
-                        break;
-                    }
-                }
-            }
-
-            if ($keep) {
-                $filteredViews[] = $viewEntry;
-            }
-        }
-
-        if (!empty($filteredViews)) {
-            $record['assigneeViews'] = docs_sanitize_assignee_views_payload(array_values($filteredViews));
-        } else {
-            unset($record['assigneeViews']);
-        }
-    }
+    docs_prune_assignee_views_for_record($record, $assignees);
 
     if (isset($record['assigneeStatusHistory']) && is_array($record['assigneeStatusHistory'])) {
         $validStatusKeys = [];
@@ -12684,14 +12698,7 @@ function docs_prepare_records_for_response(array $records, string $organization,
             }
         }
 
-        if (isset($record['assigneeViews']) && is_array($record['assigneeViews'])) {
-            $sanitizedViews = docs_sanitize_assignee_views_payload($record['assigneeViews']);
-            if (!empty($sanitizedViews)) {
-                $record['assigneeViews'] = $sanitizedViews;
-            } else {
-                unset($record['assigneeViews']);
-            }
-        }
+        docs_prune_assignee_views_for_record($record);
 
         if (isset($record['assigneeStatusHistory']) && is_array($record['assigneeStatusHistory'])) {
             $sanitizedStatusHistory = docs_sanitize_assignee_status_history_collection($record['assigneeStatusHistory']);
