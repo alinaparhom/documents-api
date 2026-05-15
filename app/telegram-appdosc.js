@@ -3208,8 +3208,13 @@ const STATUS_CLASSES = {
   error: 'appdosc__status-message--error',
   info: 'appdosc__status-message--info',
 };
+const STATUS_TOAST_DEFAULT_DURATION_MS = 6500;
+const STATUS_TOAST_LONG_DURATION_MS = 9500;
+const STATUS_TOAST_INFO_DURATION_MS = 4500;
 let toastTimerId = null;
 let statusClearTimerId = null;
+let statusInlineParent = null;
+let statusToastHost = null;
 
 const TASK_FILTERS = ['all', 'overdue', ...STATUS_FILTERS];
 const DEFAULT_TASK_FILTER = 'all';
@@ -3609,6 +3614,7 @@ function initElements() {
   elements.filterGroupList = document.querySelector('[data-filter-group-list]');
   elements.filterGroupAddButton = document.querySelector('[data-filter-group-add]');
   elements.status = document.querySelector('[data-status]');
+  statusInlineParent = elements.status instanceof HTMLElement ? elements.status.parentElement : null;
   elements.updated = document.querySelector('[data-updated]');
   elements.cardsContainer = document.querySelector('[data-cards-container]');
   elements.placeholder = document.querySelector('[data-placeholder]');
@@ -20773,15 +20779,69 @@ function scrollAppToTop() {
   }
 }
 
+function getStatusToastHost() {
+  if (statusToastHost instanceof HTMLElement && document.body.contains(statusToastHost)) {
+    return statusToastHost;
+  }
+
+  if (typeof document === 'undefined' || !document.body) {
+    return null;
+  }
+
+  statusToastHost = document.querySelector('[data-status-toast-host]');
+  if (!(statusToastHost instanceof HTMLElement)) {
+    statusToastHost = document.createElement('div');
+    statusToastHost.dataset.statusToastHost = 'true';
+    document.body.appendChild(statusToastHost);
+  }
+
+  statusToastHost.classList.add('appdosc-toast-layer');
+
+  return statusToastHost;
+}
+
+function placeStatusElement(showAsToast) {
+  if (!(elements.status instanceof HTMLElement)) {
+    return null;
+  }
+
+  if (showAsToast) {
+    const host = getStatusToastHost();
+    if (host instanceof HTMLElement && elements.status.parentElement !== host) {
+      host.appendChild(elements.status);
+    }
+
+    if (statusInlineParent instanceof HTMLElement) {
+      statusInlineParent.hidden = true;
+      statusInlineParent.classList.remove('appdosc-toast-layer');
+    }
+
+    return host;
+  }
+
+  if (statusInlineParent instanceof HTMLElement && elements.status.parentElement !== statusInlineParent) {
+    statusInlineParent.appendChild(elements.status);
+  }
+
+  if (statusToastHost instanceof HTMLElement) {
+    statusToastHost.classList.remove('appdosc-toast-layer');
+  }
+
+  return elements.status.parentElement;
+}
+
 function setStatus(type, message) {
   if (!message) {
     clearStatus();
     return;
   }
-  if (!elements.status || !elements.status.parentElement) {
+  if (!elements.status) {
     return;
   }
-  const statusContainer = elements.status.closest('.appdosc__status');
+  const host = placeStatusElement(true);
+  if (!(host instanceof HTMLElement)) {
+    return;
+  }
   if (toastTimerId) {
     window.clearTimeout(toastTimerId);
     toastTimerId = null;
@@ -20790,11 +20850,7 @@ function setStatus(type, message) {
     window.clearTimeout(statusClearTimerId);
     statusClearTimerId = null;
   }
-  const host = elements.status.parentElement;
   host.classList.add('appdosc-toast-layer');
-  if (statusContainer) {
-    statusContainer.hidden = false;
-  }
   elements.status.textContent = message;
   elements.status.hidden = false;
   elements.status.className = 'appdosc__status-message appdosc-toast';
@@ -20802,16 +20858,21 @@ function setStatus(type, message) {
     elements.status.classList.add(`appdosc-toast--${type}`);
   }
   requestAnimationFrame(() => elements.status && elements.status.classList.add('is-visible'));
-  toastTimerId = window.setTimeout(() => clearStatus(), 2600);
+  const duration = type === 'error' || type === 'warning'
+    ? STATUS_TOAST_LONG_DURATION_MS
+    : (type === 'info' ? STATUS_TOAST_INFO_DURATION_MS : STATUS_TOAST_DEFAULT_DURATION_MS);
+  toastTimerId = window.setTimeout(() => clearStatus(), duration);
 }
 
 function setStatusAction(type, message, actionLabel, actionHandler, options = {}) {
   if (!elements.status) {
     return;
   }
-  const statusContainer = elements.status.closest('.appdosc__status');
-  const host = elements.status.parentElement;
   const showAsToast = Boolean(options && options.toast);
+  const host = placeStatusElement(showAsToast);
+  const statusContainer = showAsToast
+    ? null
+    : elements.status.closest('.appdosc__status');
 
   if (toastTimerId) {
     window.clearTimeout(toastTimerId);
@@ -20826,7 +20887,7 @@ function setStatusAction(type, message, actionLabel, actionHandler, options = {}
   if (statusContainer) {
     statusContainer.hidden = !message;
   }
-  if (host) {
+  if (host instanceof HTMLElement) {
     if (showAsToast) {
       host.classList.add('appdosc-toast-layer');
     } else {
@@ -20908,8 +20969,11 @@ function clearStatus() {
     window.clearTimeout(statusClearTimerId);
     statusClearTimerId = null;
   }
-  const statusContainer = elements.status.closest('.appdosc__status');
   const host = elements.status.parentElement;
+  const isToast = host instanceof HTMLElement && host.dataset.statusToastHost === 'true';
+  const statusContainer = isToast
+    ? (statusInlineParent instanceof HTMLElement ? statusInlineParent : null)
+    : elements.status.closest('.appdosc__status');
   elements.status.classList.remove('is-visible');
   statusClearTimerId = window.setTimeout(() => {
     statusClearTimerId = null;
@@ -22505,13 +22569,24 @@ function resolveAssignmentValueFromEntry(entry) {
 
   const candidates = [
     entry.id,
+    entry.userId,
+    entry.subordinateId,
+    entry.subordinate,
     entry.telegram,
+    entry.telegramId,
+    entry.telegram_id,
     entry.chatId,
+    entry.chat_id,
     entry.email,
     entry.number,
+    entry.responsibleNumber,
     entry.login,
+    entry.username,
     entry.responsible,
     entry.name,
+    entry.fullName,
+    entry.fio,
+    entry.displayName,
   ];
 
   for (let index = 0; index < candidates.length; index += 1) {
@@ -22584,7 +22659,7 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
   } else if (canReview && isCurrentSubordinate && submitted) {
     const hint = document.createElement('div');
     hint.className = 'appdosc-card__subordinate-review-hint';
-    hint.textContent = 'Выполнение отправлено на проверку. Ожидайте решения другого ответственного.';
+    hint.textContent = 'Ответственный уведомлен.  Задача перемещена в статус «На проверке».';
     wrapper.appendChild(hint);
   }
 
@@ -22616,6 +22691,11 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
       revisionButton.type = 'button';
       revisionButton.className = 'appdosc-card__action appdosc-card__action--ghost';
       revisionButton.textContent = 'На доработку';
+
+      const resolveSubordinateId = () => (
+        resolveAssignmentValueFromEntry(entry)
+        || normalizeValue(fallbackValue)
+      );
 
       const submitReview = async (decision) => {
         if (!task.id) {
@@ -22657,7 +22737,7 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
         });
 
         try {
-          await sendTaskMutation({
+          const result = await sendTaskMutation({
             updateType: 'subordinate_review',
             organization,
             documentId: task.id,
@@ -22674,7 +22754,9 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
             durationMs: Date.now() - startedAt,
           });
 
-          setStatus('success', decision === 'accepted' ? 'Выполнение принято.' : 'Отправлено на доработку.');
+          setStatus('success', result && result.message
+            ? result.message
+            : (decision === 'accepted' ? 'Выполнение принято.' : 'Отправлено на доработку.'));
           await loadTasks(true);
         } catch (error) {
           const errorDetails = buildErrorDetails(error);
@@ -23346,11 +23428,11 @@ function createResponseUploadControls(task, entry, setStatus) {
 
     try {
       if (editingTextResponse && normalizeValue(editingTextResponse.storedName)) {
-        await updateTaskResponseText(task, normalizeValue(editingTextResponse.storedName), messageValue, setStatus);
-        meta.textContent = 'Текстовый ответ обновлён';
+        const result = await updateTaskResponseText(task, normalizeValue(editingTextResponse.storedName), messageValue, setStatus);
+        meta.textContent = result && result.message ? result.message : 'Текстовый ответ обновлён';
       } else {
-        await uploadTaskResponseFiles(task, [], setStatus, messageValue, entry);
-        meta.textContent = 'Текстовый ответ сохранён';
+        const result = await uploadTaskResponseFiles(task, [], setStatus, messageValue, entry);
+        meta.textContent = result && result.message ? result.message : 'Текстовый ответ сохранён';
       }
       textInput.value = '';
       editingTextResponse = null;

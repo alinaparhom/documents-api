@@ -10408,7 +10408,28 @@
     if (!entry || typeof entry !== 'object') {
       return '';
     }
-    var candidates = [entry.id, entry.telegram, entry.telegramId, entry.chatId, entry.login, entry.email, entry.number, entry.responsible, entry.name];
+    var candidates = [
+      entry.id,
+      entry.userId,
+      entry.subordinateId,
+      entry.subordinate,
+      entry.telegram,
+      entry.telegramId,
+      entry.telegram_id,
+      entry.chatId,
+      entry.chat_id,
+      entry.login,
+      entry.username,
+      entry.email,
+      entry.number,
+      entry.responsibleNumber,
+      entry.responsible_number,
+      entry.responsible,
+      entry.name,
+      entry.fullName,
+      entry.fio,
+      entry.displayName
+    ];
     for (var i = 0; i < candidates.length; i += 1) {
       var candidate = candidates[i];
       if (candidate === null || candidate === undefined) {
@@ -14438,6 +14459,7 @@
       documentId: doc.id,
       updateType: 'subordinate_review',
       subordinateId: subordinateId,
+      subordinateIds: [subordinateId],
       reviewStatus: normalizedReviewStatus,
       reviewComment: reviewComment
     })
