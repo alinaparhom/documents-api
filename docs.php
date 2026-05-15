@@ -729,7 +729,7 @@ function docs_resolve_application_base_url(): string
     return $scheme . '://' . $host;
 }
 
-function docs_send_telegram_message(string $chatId, string $text, ?string $botToken = null, ?array $replyMarkup = null): array
+function docs_send_telegram_message(string $chatId, string $text, ?string $botToken = null, ?array $replyMarkup = null, ?string $parseMode = null): array
 {
     $chatId = trim($chatId);
     $text = trim($text);
@@ -758,6 +758,11 @@ function docs_send_telegram_message(string $chatId, string $text, ?string $botTo
         'text' => $text,
         'disable_web_page_preview' => '1',
     ];
+
+    $parseMode = $parseMode !== null ? trim($parseMode) : '';
+    if ($parseMode !== '') {
+        $payload['parse_mode'] = $parseMode;
+    }
 
     if ($replyMarkup !== null) {
         $encodedReplyMarkup = json_encode($replyMarkup, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -1872,47 +1877,52 @@ function docs_build_subordinate_submission_notification_message(
     array $subordinate,
     string $appUrl
 ): string {
+    $escape = static function (string $value): string {
+        return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    };
     $lines = [];
     $subordinateName = docs_extract_assignee_display_name($subordinate);
 
-    $lines[] = ($subordinateName !== '' ? '🔎 ' . $subordinateName : '🔎 Подчинённый')
+    $lines[] = '<b><u>🚨 НА ПРОВЕРКУ 🚨</u></b>';
+    $lines[] = '';
+    $lines[] = '👤 ' . $escape($subordinateName !== '' ? $subordinateName : 'Подчинённый')
         . ' отправил выполнение на проверку.';
 
     $organizationName = sanitize_text_field($organization, 160);
     if ($organizationName !== '') {
-        $lines[] = 'Организация: ' . $organizationName;
+        $lines[] = '🏢 Организация: ' . $escape($organizationName);
     }
 
     $registryNumber = sanitize_text_field((string) ($record['registryNumber'] ?? ''), 120);
     if ($registryNumber !== '') {
-        $lines[] = 'Рег. №: ' . $registryNumber;
+        $lines[] = '🧾 Рег. №: ' . $escape($registryNumber);
     }
 
     $content = sanitize_text_field((string) ($record['correspondent'] ?? ''), 250);
     if ($content === '') {
         $content = sanitize_text_field((string) ($record['summary'] ?? ''), 250);
     }
-    $lines[] = 'Содержание: ' . ($content !== '' ? $content : 'не указано');
+    $lines[] = '📄 Содержание: ' . $escape($content !== '' ? $content : 'не указано');
 
     $instruction = sanitize_instruction($subordinate['assignmentInstruction'] ?? '');
     if ($instruction === '') {
         $instruction = sanitize_instruction($record['instruction'] ?? '');
     }
-    $lines[] = 'Поручение: ' . ($instruction !== '' ? docs_truncate_notification_text($instruction, 350) : 'не указано');
+    $lines[] = '📝 Поручение: ' . $escape($instruction !== '' ? docs_truncate_notification_text($instruction, 350) : 'не указано');
 
     $due = sanitize_date_field($subordinate['assignmentDueDate'] ?? '');
     if ($due === '') {
         $due = sanitize_date_field($record['dueDate'] ?? '');
     }
     $dueLabel = docs_format_human_date($due);
-    $lines[] = 'Срок: ' . ($dueLabel !== '' ? $dueLabel : 'не указан');
+    $lines[] = '⏱ Срок: ' . $escape($dueLabel !== '' ? $dueLabel : 'не указан');
 
     $responseNames = docs_collect_response_file_names_from_record($record);
-    $lines[] = 'Файл Ответ: ' . (!empty($responseNames) ? implode(', ', $responseNames) : 'не указан');
+    $lines[] = '📎 Файл Ответ: ' . $escape(!empty($responseNames) ? implode(', ', $responseNames) : 'не указан');
 
     if ($appUrl !== '') {
         $lines[] = '';
-        $lines[] = 'Открыть задачу: кнопка ниже.';
+        $lines[] = '🔗 Открыть задачу: кнопка ниже.';
     }
 
     $message = trim(implode("\n", $lines));
@@ -2010,7 +2020,7 @@ function docs_notify_responsible_about_subordinate_submission(
         ],
     ]);
 
-    $result = docs_send_telegram_message((string) $chatId, $message, $botToken, $replyMarkup);
+    $result = docs_send_telegram_message((string) $chatId, $message, $botToken, $replyMarkup, 'HTML');
     docs_write_response_log(
         !empty($result['success'])
             ? 'Уведомление ответственному об отправке на проверку отправлено'
@@ -4637,6 +4647,10 @@ function docs_prepare_responses_for_record(array &$record, string $folder): void
             'uploadedAt' => isset($response['uploadedAt']) ? (string) $response['uploadedAt'] : '',
             'uploadedBy' => sanitize_text_field((string) ($response['uploadedBy'] ?? ''), 200),
             'uploadedByKey' => sanitize_text_field((string) ($response['uploadedByKey'] ?? ''), 200),
+            'uploadedByName' => sanitize_text_field((string) ($response['uploadedByName'] ?? ($response['uploadedBy'] ?? '')), 200),
+            'uploadedByTelegram' => sanitize_text_field((string) ($response['uploadedByTelegram'] ?? ''), 120),
+            'uploadedById' => sanitize_text_field((string) ($response['uploadedById'] ?? ''), 120),
+            'uploadedByLogin' => sanitize_text_field((string) ($response['uploadedByLogin'] ?? ''), 120),
         ];
 
         if ($documentId !== '') {
@@ -8152,6 +8166,48 @@ function docs_apply_subordinate_submission_to_entry(array $entry, array $submitt
     return array_filter($entry, static function ($value) {
         return $value !== '';
     });
+}
+
+function docs_resolve_subordinate_submission_candidate_from_entry(array $entry): string
+{
+    foreach (['id', 'telegram', 'chatId', 'number', 'email', 'login', 'name', 'responsible'] as $field) {
+        if (!isset($entry[$field]) || !is_scalar($entry[$field])) {
+            continue;
+        }
+
+        $candidate = sanitize_text_field((string) $entry[$field], 200);
+        if ($candidate !== '') {
+            return $candidate;
+        }
+    }
+
+    return '';
+}
+
+function docs_record_entry_is_subordinate(array $record, array $entry): bool
+{
+    if (docs_normalize_assignment_role((string) ($entry['role'] ?? '')) === 'subordinate') {
+        return true;
+    }
+
+    $entryKeys = array_map(static function ($key): string {
+        return mb_strtolower(trim((string) $key), 'UTF-8');
+    }, docs_collect_assignee_index_keys($entry));
+    $entryKeys = array_values(array_filter($entryKeys, static fn(string $key): bool => $key !== ''));
+    if (empty($entryKeys)) {
+        return false;
+    }
+
+    foreach (docs_collect_unique_subordinate_review_entries($record) as $subordinate) {
+        $subordinateKeys = array_map(static function ($key): string {
+            return mb_strtolower(trim((string) $key), 'UTF-8');
+        }, docs_collect_assignee_index_keys($subordinate));
+        if (!empty(array_intersect($entryKeys, $subordinateKeys))) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function docs_append_subordinate_status_history(
@@ -16750,12 +16806,6 @@ switch ($action) {
                 respond_error('Подчинённый не найден среди назначенных.', 404);
             }
 
-            if (!docs_subordinate_latest_status_is_in_work($records[$recordIndex], $submittedSubordinate, $subordinateCandidate)) {
-                respond_error('Сначала установите статус «В работе».', 422, [
-                    'requiresInWorkStatus' => true,
-                ]);
-            }
-
             $submitterStatusKeys = docs_collect_status_change_candidate_keys(
                 $requestContext,
                 $sessionAuthArray,
@@ -19905,6 +19955,11 @@ switch ($action) {
         $uploaderKey = (string) ($resolvedUploadAuthor['key'] ?? '');
         $uploaderLabel = (string) ($resolvedUploadAuthor['label'] ?? 'Пользователь');
         $uploaderSource = (string) ($resolvedUploadAuthor['source'] ?? 'fallback');
+        $uploaderTelegramId = normalize_identifier_value($resolvedUploadAuthor['telegramUserId'] ?? ($requestContext['primaryId'] ?? ''));
+        $uploaderId = normalize_identifier_value($requestContext['primaryId'] ?? $uploaderTelegramId);
+        $uploaderLogin = isset($requestContext['user']) && is_array($requestContext['user'])
+            ? sanitize_text_field((string) ($requestContext['user']['login'] ?? ($requestContext['user']['username'] ?? '')), 120)
+            : '';
         $uploadedAt = date('c');
         $names = $hasAttachments ? $_FILES['attachments']['name'] : [];
         $tmpNames = $hasAttachments ? $_FILES['attachments']['tmp_name'] : [];
@@ -19959,7 +20014,7 @@ switch ($action) {
         ]);
 
         $uploadErrors = [];
-        $processUpload = function ($name, $tmpPath, $error, $size, $sequence) use (&$records, $recordIndex, $responseDir, $folder, $documentId, $uploadedAt, $uploaderKey, $uploaderLabel, &$uploadedStoredNames, &$uploadErrors, $organization) {
+        $processUpload = function ($name, $tmpPath, $error, $size, $sequence) use (&$records, $recordIndex, $responseDir, $folder, $documentId, $uploadedAt, $uploaderKey, $uploaderLabel, $uploaderTelegramId, $uploaderId, $uploaderLogin, &$uploadedStoredNames, &$uploadErrors, $organization) {
             $normalizedName = docs_normalize_uploaded_filename((string) $name);
             if ($error !== UPLOAD_ERR_OK) {
                 $uploadErrors[] = [
@@ -20030,6 +20085,10 @@ switch ($action) {
                 'uploadedAt' => $uploadedAt,
                 'uploadedBy' => $uploaderLabel,
                 'uploadedByKey' => $uploaderKey,
+                'uploadedByName' => $uploaderLabel,
+                'uploadedByTelegram' => $uploaderTelegramId,
+                'uploadedById' => $uploaderId,
+                'uploadedByLogin' => $uploaderLogin,
                 'url' => build_public_path($folder, 'Ответы/' . $documentId . '/' . $storedName),
             ];
         };
@@ -20076,6 +20135,10 @@ switch ($action) {
                     'uploadedAt' => $uploadedAt,
                     'uploadedBy' => $uploaderLabel,
                     'uploadedByKey' => $uploaderKey,
+                    'uploadedByName' => $uploaderLabel,
+                    'uploadedByTelegram' => $uploaderTelegramId,
+                    'uploadedById' => $uploaderId,
+                    'uploadedByLogin' => $uploaderLogin,
                     'url' => build_public_path($folder, 'Ответы/' . $documentId . '/' . $storedName),
                 ];
             }
@@ -20119,6 +20182,130 @@ switch ($action) {
             ]);
         }
 
+        $autoSubmittedSubordinate = null;
+        $autoSubmissionCandidate = '';
+        $submissionRequestContext = $requestContext;
+        if ($uploaderLabel !== '') {
+            if (!isset($submissionRequestContext['raw']) || !is_array($submissionRequestContext['raw'])) {
+                $submissionRequestContext['raw'] = [];
+            }
+            if (empty($submissionRequestContext['raw']['telegram_full_name'])) {
+                $submissionRequestContext['raw']['telegram_full_name'] = $uploaderLabel;
+            }
+            if (!isset($submissionRequestContext['user']) || !is_array($submissionRequestContext['user'])) {
+                $submissionRequestContext['user'] = [];
+            }
+            if (empty($submissionRequestContext['user']['fullName'])) {
+                $submissionRequestContext['user']['fullName'] = $uploaderLabel;
+            }
+        }
+        if ($uploaderTelegramId !== '') {
+            if (!isset($submissionRequestContext['raw']) || !is_array($submissionRequestContext['raw'])) {
+                $submissionRequestContext['raw'] = [];
+            }
+            if (empty($submissionRequestContext['raw']['telegram_user_id'])) {
+                $submissionRequestContext['raw']['telegram_user_id'] = $uploaderTelegramId;
+            }
+            if (empty($submissionRequestContext['primaryId'])) {
+                $submissionRequestContext['primaryId'] = $uploaderTelegramId;
+            }
+            if (!isset($submissionRequestContext['user']) || !is_array($submissionRequestContext['user'])) {
+                $submissionRequestContext['user'] = [];
+            }
+            if (empty($submissionRequestContext['user']['id'])) {
+                $submissionRequestContext['user']['id'] = $uploaderTelegramId;
+            }
+        }
+
+        $autoAssignmentEntry = is_array($assignmentEntry) ? $assignmentEntry : null;
+        if (!is_array($autoAssignmentEntry)
+            || !docs_record_entry_is_subordinate($records[$recordIndex], $autoAssignmentEntry)) {
+            $uploadedAssignmentEntry = docs_find_assignment_entry_for_uploaded_responses(
+                $records[$recordIndex],
+                $submissionRequestContext,
+                $uploadedStoredNames
+            );
+            if (is_array($uploadedAssignmentEntry)) {
+                $autoAssignmentEntry = $uploadedAssignmentEntry;
+            }
+        }
+
+        if (is_array($autoAssignmentEntry)
+            && docs_review_flow_enabled($records[$recordIndex])
+            && docs_record_entry_is_subordinate($records[$recordIndex], $autoAssignmentEntry)) {
+            $currentSharedStatus = sanitize_status(
+                isset($records[$recordIndex]['status']) ? (string) $records[$recordIndex]['status'] : ''
+            );
+
+            if (!in_array($currentSharedStatus, ['Выполнено', 'Отменено'], true)) {
+                $autoSubmissionCandidate = docs_resolve_subordinate_submission_candidate_from_entry($autoAssignmentEntry);
+                if ($autoSubmissionCandidate !== '') {
+                    $submitterMeta = [
+                        'label' => $uploaderLabel,
+                        'telegram' => $uploaderTelegramId,
+                        'id' => $uploaderId,
+                        'login' => $uploaderLogin,
+                    ];
+
+                    $submittedSubordinate = docs_apply_subordinate_submission(
+                        $records[$recordIndex],
+                        $autoSubmissionCandidate,
+                        $submissionRequestContext,
+                        $submitterMeta
+                    );
+
+                    if (is_array($submittedSubordinate)
+                        && empty($submittedSubordinate['__forbidden'])
+                        && empty($submittedSubordinate['__accepted'])) {
+                        $autoSubmittedSubordinate = $submittedSubordinate;
+                        $submitterStatusKeys = docs_collect_status_change_candidate_keys(
+                            $requestContext,
+                            is_array($sessionAuth) ? $sessionAuth : null,
+                            $uploaderLabel
+                        );
+                        docs_append_subordinate_status_history(
+                            $records[$recordIndex],
+                            $autoSubmittedSubordinate,
+                            $autoSubmissionCandidate,
+                            'На проверке',
+                            $uploaderLabel,
+                            $submitterStatusKeys
+                        );
+
+                        $reviewSharedStatus = 'На проверке';
+                        if ($currentSharedStatus !== $reviewSharedStatus) {
+                            $statusUpdatedAt = date('c');
+                            $records[$recordIndex]['status'] = $reviewSharedStatus;
+                            $records[$recordIndex]['statusUpdatedAt'] = $statusUpdatedAt;
+                            docs_append_status_history(
+                                $records[$recordIndex],
+                                $reviewSharedStatus,
+                                $uploaderLabel,
+                                $statusUpdatedAt
+                            );
+                        }
+
+                        docs_write_response_log('Ответ подчинённого автоматически отправлен на проверку', [
+                            'organization' => $organization,
+                            'folder' => $folder,
+                            'documentId' => $documentId,
+                            'subordinateCandidate' => $autoSubmissionCandidate,
+                            'uploadedStoredNames' => $uploadedStoredNames,
+                        ]);
+                    } else {
+                        docs_write_response_log('Ответ подчинённого сохранён без автоматической отправки на проверку', [
+                            'organization' => $organization,
+                            'folder' => $folder,
+                            'documentId' => $documentId,
+                            'subordinateCandidate' => $autoSubmissionCandidate,
+                            'submissionResult' => is_array($submittedSubordinate) ? $submittedSubordinate : null,
+                            'uploadedStoredNames' => $uploadedStoredNames,
+                        ]);
+                    }
+                }
+            }
+        }
+
         $records[$recordIndex]['updatedAt'] = date('c');
         if ($registryHandle !== null) {
             docs_save_registry_locked($registryHandle, $records);
@@ -20153,7 +20340,9 @@ switch ($action) {
         ]);
 
         $responsePayload = [
-            'message' => 'Ответы загружены.',
+            'message' => is_array($autoSubmittedSubordinate)
+                ? 'Ответ загружен. Задача перемещена в статус «На проверке».'
+                : 'Ответы загружены.',
             'organization' => $organization,
             'documents' => array_values($filteredRecords),
             'permissions' => $permissions,
@@ -20163,7 +20352,12 @@ switch ($action) {
         ];
 
         if (is_array($uploadedRecord) && !empty($uploadedStoredNames)) {
-            respond_success_with_background_task($responsePayload, function () use ($uploadedRecord, $folder, $organization, $requestContext, $uploadedStoredNames): void {
+            respond_success_with_background_task($responsePayload, function () use ($uploadedRecord, $folder, $organization, $requestContext, $uploadedStoredNames, $autoSubmittedSubordinate): void {
+                if (is_array($autoSubmittedSubordinate)) {
+                    docs_notify_responsible_about_subordinate_submission($uploadedRecord, $folder, $organization, $autoSubmittedSubordinate);
+                    return;
+                }
+
                 docs_notify_assignment_author_about_response($uploadedRecord, $folder, $organization, $requestContext, $uploadedStoredNames);
             });
         }

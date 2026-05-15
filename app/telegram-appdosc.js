@@ -22542,7 +22542,6 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
   const workflowStatus = getSubordinateWorkflowStatus(entry);
   const submitted = workflowStatus === 'submitted';
   const accepted = workflowStatus === 'accepted';
-  const revision = workflowStatus === 'revision';
   const matchesCurrentUserEntry = currentUserMatchesAssignmentEntry(entry);
   const isResponsibleForTask = userIsResponsibleAssigneeForTask(task);
   const isCurrentSubordinate = !userIsDirectorForOrganization(organization)
@@ -22551,10 +22550,7 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
     && matchesCurrentUserEntry;
   const canReview = currentUserCanReviewSubordinates(task);
   const canReviewEntry = canReview && !matchesCurrentUserEntry;
-  const currentStatusKey = getStatusSummaryKey(getTaskStatusValue(task));
-  const subordinateIsInWork = currentStatusKey === 'accepted' || revision;
-  const canSubmit = isCurrentSubordinate && !accepted && subordinateIsInWork && (!submitted || revision);
-  if (!canReviewEntry && !canSubmit && !reviewStatus && !reviewComment && workflowStatus === 'pending') {
+  if (!canReviewEntry && !reviewStatus && !reviewComment && workflowStatus === 'pending') {
     if (!isCurrentSubordinate) {
       return;
     }
@@ -22580,79 +22576,10 @@ function appendSubordinateReviewControls(container, task, entry, fallbackValue =
 
   wrapper.appendChild(state);
 
-  const resolveSubordinateId = () => normalizeValue(fallbackValue || resolveAssignmentValueFromEntry(entry));
-
-  if (canSubmit) {
-    const submitButton = document.createElement('button');
-    submitButton.type = 'button';
-    submitButton.className = 'appdosc-card__action appdosc-card__action--response appdosc-card__subordinate-submit';
-    submitButton.textContent = revision ? 'Отправить повторно' : 'Отправить на проверку';
-
-    submitButton.addEventListener('click', async () => {
-      if (!task.id) {
-        setStatus('error', 'Не удалось определить задачу.');
-        return;
-      }
-
-      const subordinateId = resolveSubordinateId();
-      if (!subordinateId) {
-        setStatus('error', 'Не удалось определить подчинённого.');
-        return;
-      }
-
-      if (submitButton.dataset.loading === 'true') {
-        return;
-      }
-
-      setActionButtonLoading(submitButton, true);
-      setStatus('info', 'Отправляем выполнение на проверку...');
-      const startedAt = Date.now();
-
-      logClientEvent('task_subordinate_submit_request', {
-        taskId: task.id || null,
-        organization,
-        subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
-      });
-
-      try {
-        await sendTaskMutation({
-          updateType: 'subordinate_submit',
-          organization,
-          documentId: task.id,
-          subordinateId,
-        });
-
-        logClientEvent('task_subordinate_submit_success', {
-          taskId: task.id || null,
-          organization,
-          subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
-          durationMs: Date.now() - startedAt,
-        });
-
-        setStatus('success', 'Выполнение отправлено на проверку.');
-        await loadTasks(true);
-      } catch (error) {
-        const errorDetails = buildErrorDetails(error);
-        const message = errorDetails.message || 'Не удалось отправить выполнение на проверку.';
-        logClientEvent('task_subordinate_submit_error', {
-          taskId: task.id || null,
-          organization,
-          subordinateId: normalizeIdentifier(subordinateId) || subordinateId,
-          message,
-          errorStatus: errorDetails.status,
-          errorResponse: errorDetails.responseText,
-        });
-        setStatus('error', message);
-      } finally {
-        setActionButtonLoading(submitButton, false);
-      }
-    });
-
-    wrapper.appendChild(submitButton);
-  } else if (isCurrentSubordinate && !accepted && !submitted && !subordinateIsInWork) {
+  if (isCurrentSubordinate && !accepted && !submitted) {
     const hint = document.createElement('div');
     hint.className = 'appdosc-card__subordinate-review-hint';
-    hint.textContent = 'Сначала установите статус «В работе».';
+    hint.textContent = 'Загрузите ответ — задача автоматически уйдёт на проверку.';
     wrapper.appendChild(hint);
   } else if (canReview && isCurrentSubordinate && submitted) {
     const hint = document.createElement('div');
