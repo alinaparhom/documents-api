@@ -6068,6 +6068,340 @@ function docs_normalize_column_order_map($map): array
     return $normalized;
 }
 
+function docs_normalize_table_preferences_profile_key(string $profile): string
+{
+    $key = preg_replace('/[^a-z0-9:_-]/i', '', strtolower(trim($profile)));
+
+    return is_string($key) && $key !== '' ? $key : 'default';
+}
+
+function docs_sanitize_table_filter_selections($input): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $allowed = array_fill_keys(DOCS_COLUMN_ORDER_DEFAULTS, true);
+    $normalized = [];
+
+    foreach ($input as $key => $values) {
+        if (!is_string($key) || !isset($allowed[$key]) || !is_array($values)) {
+            continue;
+        }
+
+        $selected = [];
+        $seen = [];
+        foreach ($values as $value) {
+            $text = sanitize_text_field((string) $value, 220);
+            if ($text === '') {
+                continue;
+            }
+            $lookup = mb_strtolower($text, 'UTF-8');
+            if (isset($seen[$lookup])) {
+                continue;
+            }
+            $seen[$lookup] = true;
+            $selected[] = $text;
+            if (count($selected) >= 200) {
+                break;
+            }
+        }
+
+        if (!empty($selected)) {
+            $normalized[$key] = $selected;
+        }
+    }
+
+    return $normalized;
+}
+
+function docs_sanitize_table_filter_preferences($input): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $allowed = array_fill_keys(DOCS_COLUMN_ORDER_DEFAULTS, true);
+    $normalized = [];
+
+    foreach ($input as $key => $entry) {
+        if (!is_string($key) || !isset($allowed[$key])) {
+            continue;
+        }
+
+        $text = '';
+        $selected = [];
+        if (is_array($entry)) {
+            $text = sanitize_text_field((string) ($entry['text'] ?? ''), 180);
+            $selectedMap = docs_sanitize_table_filter_selections([$key => $entry['selected'] ?? []]);
+            $selected = $selectedMap[$key] ?? [];
+        } else {
+            $text = sanitize_text_field((string) $entry, 180);
+        }
+
+        if ($text !== '' || !empty($selected)) {
+            $normalized[$key] = [
+                'text' => $text,
+                'selected' => $selected,
+            ];
+        }
+    }
+
+    return $normalized;
+}
+
+function docs_sanitize_table_filter_order($input, array $filters): array
+{
+    $allowed = array_fill_keys(DOCS_COLUMN_ORDER_DEFAULTS, true);
+    $seen = [];
+    $order = [];
+
+    $append = static function ($value) use (&$seen, &$order, $allowed, $filters): void {
+        if (!is_string($value) && !is_int($value)) {
+            return;
+        }
+        $key = trim((string) $value);
+        if ($key === '' || !isset($allowed[$key]) || isset($seen[$key]) || !isset($filters[$key])) {
+            return;
+        }
+        $seen[$key] = true;
+        $order[] = $key;
+    };
+
+    if (is_array($input)) {
+        foreach ($input as $value) {
+            $append($value);
+        }
+    }
+
+    foreach (DOCS_COLUMN_ORDER_DEFAULTS as $key) {
+        $append($key);
+    }
+
+    return $order;
+}
+
+function docs_sanitize_table_sorting($input): array
+{
+    $result = [
+        'enabled' => false,
+        'rules' => [],
+    ];
+    if (!is_array($input) || empty($input['rules']) || !is_array($input['rules'])) {
+        return $result;
+    }
+
+    $allowed = array_fill_keys(DOCS_COLUMN_ORDER_DEFAULTS, true);
+    unset($allowed['actions'], $allowed['files']);
+    $seen = [];
+    foreach ($input['rules'] as $rule) {
+        if (!is_array($rule)) {
+            continue;
+        }
+        $column = sanitize_text_field((string) ($rule['column'] ?? ''), 80);
+        if ($column === '' || !isset($allowed[$column]) || isset($seen[$column])) {
+            continue;
+        }
+        $direction = strtolower(sanitize_text_field((string) ($rule['direction'] ?? ''), 10));
+        $seen[$column] = true;
+        $result['rules'][] = [
+            'column' => $column,
+            'direction' => $direction === 'desc' ? 'desc' : 'asc',
+        ];
+        if (count($result['rules']) >= 3) {
+            break;
+        }
+    }
+    $result['enabled'] = !empty($result['rules']) && !empty($input['enabled']);
+
+    return $result;
+}
+
+function docs_sanitize_table_columns($input): array
+{
+    $source = is_array($input) ? $input : [];
+    $columns = [];
+
+    foreach (DOCS_COLUMN_WIDTH_DEFAULTS as $key => $defaultWidth) {
+        $entry = isset($source[$key]) && is_array($source[$key]) ? $source[$key] : [];
+        $width = docs_sanitize_column_widths([$key => $entry['width'] ?? $defaultWidth]);
+        $columns[$key] = [
+            'visible' => !array_key_exists('visible', $entry) || $entry['visible'] !== false,
+            'width' => $width[$key] ?? $defaultWidth,
+        ];
+    }
+
+    return $columns;
+}
+
+function docs_sanitize_table_grouping($input): array
+{
+    $source = is_array($input) ? $input : [];
+    $column = sanitize_text_field((string) ($source['column'] ?? ''), 80);
+    $allowed = array_fill_keys(DOCS_COLUMN_ORDER_DEFAULTS, true);
+    $allowed['department'] = true;
+    unset($allowed['actions'], $allowed['summary'], $allowed['resolution'], $allowed['instruction']);
+
+    return [
+        'column' => $column !== '' && isset($allowed[$column]) ? $column : '',
+    ];
+}
+
+function docs_sanitize_table_page_size($value): int|string
+{
+    if (is_string($value) && mb_strtolower(trim($value), 'UTF-8') === 'all') {
+        return 'all';
+    }
+
+    $pageSize = (int) $value;
+    if (!in_array($pageSize, [25, 50, 100], true)) {
+        return 25;
+    }
+
+    return $pageSize;
+}
+
+function docs_table_filter_texts(array $filters): array
+{
+    $texts = [];
+    foreach ($filters as $key => $entry) {
+        if (isset($entry['text']) && $entry['text'] !== '') {
+            $texts[$key] = $entry['text'];
+        }
+    }
+
+    return $texts;
+}
+
+function docs_table_filter_selected_values(array $filters): array
+{
+    $selected = [];
+    foreach ($filters as $key => $entry) {
+        if (!empty($entry['selected']) && is_array($entry['selected'])) {
+            $selected[$key] = $entry['selected'];
+        }
+    }
+
+    return $selected;
+}
+
+function docs_sanitize_custom_document_tabs($input): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $tabs = [];
+    $seen = [];
+    foreach ($input as $index => $item) {
+        if (!is_array($item) || count($tabs) >= 24) {
+            continue;
+        }
+        $name = sanitize_text_field((string) ($item['name'] ?? ($item['label'] ?? '')), 48);
+        if ($name === '') {
+            continue;
+        }
+        $id = sanitize_text_field((string) ($item['id'] ?? ''), 80);
+        if ($id === '' || in_array($id, ['all', 'overdue', 'completed', 'withoutStatus'], true) || isset($seen[$id])) {
+            $id = 'custom_' . time() . '_' . (int) $index;
+        }
+        $seen[$id] = true;
+
+        $filters = docs_sanitize_table_filter_preferences($item['filters'] ?? []);
+        $selections = docs_sanitize_table_filter_selections($item['filterSelections'] ?? []);
+        foreach ($selections as $key => $values) {
+            if (!isset($filters[$key])) {
+                $filters[$key] = ['text' => '', 'selected' => $values];
+            } elseif (empty($filters[$key]['selected'])) {
+                $filters[$key]['selected'] = $values;
+            }
+        }
+
+        $baseTab = sanitize_text_field((string) ($item['baseTab'] ?? 'all'), 40);
+        if (!in_array($baseTab, ['all', 'overdue', 'completed', 'withoutStatus'], true)) {
+            $baseTab = 'all';
+        }
+
+        $tabs[] = [
+            'id' => $id,
+            'name' => $name,
+            'filters' => docs_table_filter_texts($filters),
+            'filterSelections' => docs_table_filter_selected_values($filters),
+            'filterOrder' => docs_sanitize_table_filter_order($item['filterOrder'] ?? [], $filters),
+            'globalSearchQuery' => sanitize_text_field((string) ($item['globalSearchQuery'] ?? ''), 180),
+            'sorting' => docs_sanitize_table_sorting($item['sorting'] ?? []),
+            'showUnassignedOnly' => !empty($item['showUnassignedOnly']),
+            'showUnviewedOnly' => !empty($item['showUnviewedOnly']),
+            'baseTab' => $baseTab,
+            'custom' => true,
+        ];
+    }
+
+    return $tabs;
+}
+
+function docs_sanitize_table_preferences($input): array
+{
+    $source = is_array($input) ? $input : [];
+    $filters = docs_sanitize_table_filter_preferences($source['filters'] ?? []);
+    $view = isset($source['view']) && is_array($source['view']) ? $source['view'] : [];
+    $pageSize = docs_sanitize_table_page_size($view['pageSize'] ?? ($source['tablePageSize'] ?? 25));
+    $density = sanitize_text_field((string) ($view['density'] ?? ($source['tableDensity'] ?? 'normal')), 20);
+    if (!in_array($density, ['normal', 'compact'], true)) {
+        $density = 'normal';
+    }
+    $groupingSource = isset($source['grouping']) && is_array($source['grouping'])
+        ? $source['grouping']
+        : ['column' => $source['groupingColumn'] ?? ''];
+    $grouping = docs_sanitize_table_grouping($groupingSource);
+
+    return [
+        'filters' => $filters,
+        'filterOrder' => docs_sanitize_table_filter_order($source['filterOrder'] ?? [], $filters),
+        'globalSearchQuery' => sanitize_text_field((string) ($source['globalSearchQuery'] ?? ''), 180),
+        'sorting' => docs_sanitize_table_sorting($source['sorting'] ?? []),
+        'columns' => docs_sanitize_table_columns($source['columns'] ?? []),
+        'columnOrder' => docs_sanitize_column_order($source['columnOrder'] ?? []),
+        'customDocumentTabs' => docs_sanitize_custom_document_tabs($source['customDocumentTabs'] ?? []),
+        'tablePageSize' => $pageSize,
+        'view' => [
+            'density' => $density,
+            'pageSize' => $pageSize,
+        ],
+        'grouping' => $grouping,
+        'groupingColumn' => $grouping['column'],
+        'showUnassignedOnly' => !empty($source['showUnassignedOnly']),
+        'showUnviewedOnly' => !empty($source['showUnviewedOnly']),
+    ];
+}
+
+function docs_normalize_table_preferences_map($map): array
+{
+    if (!is_array($map)) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach ($map as $profile => $entry) {
+        if (!is_string($profile) || $profile === '') {
+            continue;
+        }
+        $profileKey = docs_normalize_table_preferences_profile_key($profile);
+        $entryArray = is_array($entry) ? $entry : [];
+        $preferences = docs_sanitize_table_preferences($entryArray['preferences'] ?? []);
+        $normalizedEntry = ['preferences' => $preferences];
+        if (isset($entryArray['updatedAt']) && is_string($entryArray['updatedAt']) && $entryArray['updatedAt'] !== '') {
+            $normalizedEntry['updatedAt'] = $entryArray['updatedAt'];
+        }
+        if (isset($entryArray['updatedBy']) && $entryArray['updatedBy'] !== '') {
+            $normalizedEntry['updatedBy'] = sanitize_text_field((string) $entryArray['updatedBy'], 200);
+        }
+        $normalized[$profileKey] = $normalizedEntry;
+    }
+
+    return $normalized;
+}
+
 function normalize_identifier_value($value): string
 {
     if (is_int($value) || is_float($value)) {
@@ -6918,6 +7252,8 @@ function load_admin_settings(string $folder): array
         'block2' => [],
         'block3' => [],
         'columnWidths' => [],
+        'columnOrders' => [],
+        'tablePreferences' => [],
     ];
 
     $file = get_settings_path($folder);
@@ -6939,8 +7275,14 @@ function load_admin_settings(string $folder): array
     $sanitized['columnWidths'] = isset($decoded['columnWidths'])
         ? docs_normalize_column_width_map($decoded['columnWidths'])
         : [];
+    $sanitized['columnOrders'] = isset($decoded['columnOrders'])
+        ? docs_normalize_column_order_map($decoded['columnOrders'])
+        : [];
+    $sanitized['tablePreferences'] = isset($decoded['tablePreferences'])
+        ? docs_normalize_table_preferences_map($decoded['tablePreferences'])
+        : [];
 
-    return $sanitized + ['columnWidths' => []];
+    return $sanitized + ['columnWidths' => [], 'columnOrders' => [], 'tablePreferences' => []];
 }
 
 function load_responsibles_for_folder(string $folder): array
@@ -9002,6 +9344,11 @@ function save_admin_settings(string $folder, array $settings): void
         $settings['columnOrders'] = docs_normalize_column_order_map($settings['columnOrders']);
     } elseif (isset($existing['columnOrders']) && is_array($existing['columnOrders'])) {
         $settings['columnOrders'] = docs_normalize_column_order_map($existing['columnOrders']);
+    }
+    if (isset($settings['tablePreferences'])) {
+        $settings['tablePreferences'] = docs_normalize_table_preferences_map($settings['tablePreferences']);
+    } elseif (isset($existing['tablePreferences']) && is_array($existing['tablePreferences'])) {
+        $settings['tablePreferences'] = docs_normalize_table_preferences_map($existing['tablePreferences']);
     }
 
     $json = json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -17529,6 +17876,146 @@ switch ($action) {
             'settings' => $settings,
             'message' => 'Настройки администратора сохранены.',
         ]);
+        break;
+
+    case 'load_table_preferences':
+        if ($method !== 'GET') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($_GET['organization'] ?? ''));
+        if ($requestedOrganization === '') {
+            respond_error('Не указана организация.');
+        }
+
+        $folder = sanitize_folder_name($requestedOrganization);
+        $requestContext = docs_build_request_user_context();
+        $sessionAuth = docs_get_session_auth();
+        $settings = load_admin_settings($folder);
+        $block2 = isset($settings['block2']) && is_array($settings['block2'])
+            ? $settings['block2']
+            : [];
+        $profile = docs_resolve_column_width_profile(
+            $requestedOrganization,
+            $requestContext,
+            is_array($sessionAuth) ? $sessionAuth : null,
+            $block2
+        );
+        $profileKey = docs_normalize_table_preferences_profile_key($profile);
+
+        $preferencesMap = isset($settings['tablePreferences']) && is_array($settings['tablePreferences'])
+            ? $settings['tablePreferences']
+            : [];
+        $profileSettings = isset($preferencesMap[$profileKey]) && is_array($preferencesMap[$profileKey])
+            ? $preferencesMap[$profileKey]
+            : [];
+        if (empty($profileSettings) && strpos($profile, ':') !== false) {
+            $fallbackProfile = strstr($profile, ':', true);
+            $fallbackKey = is_string($fallbackProfile)
+                ? docs_normalize_table_preferences_profile_key($fallbackProfile)
+                : '';
+            if ($fallbackKey !== '' && isset($preferencesMap[$fallbackKey]) && is_array($preferencesMap[$fallbackKey])) {
+                $profileSettings = $preferencesMap[$fallbackKey];
+            }
+        }
+
+        $preferences = isset($profileSettings['preferences'])
+            ? docs_sanitize_table_preferences($profileSettings['preferences'])
+            : null;
+        $response = [
+            'organization' => $requestedOrganization,
+            'profile' => $profile,
+            'preferences' => $preferences,
+        ];
+        if (isset($profileSettings['updatedAt']) && is_string($profileSettings['updatedAt'])) {
+            $response['updatedAt'] = $profileSettings['updatedAt'];
+        }
+        if (isset($profileSettings['updatedBy']) && is_string($profileSettings['updatedBy']) && $profileSettings['updatedBy'] !== '') {
+            $response['updatedBy'] = $profileSettings['updatedBy'];
+        }
+
+        respond_success($response);
+        break;
+
+    case 'save_table_preferences':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        if ($requestedOrganization === '') {
+            respond_error('Не указана организация.');
+        }
+
+        $sessionAuth = docs_get_session_auth();
+        if (!is_array($sessionAuth)) {
+            respond_error('Доступ запрещён. Требуются права администратора или ответственного.', 403, [
+                'requiresAdmin' => true,
+                'requiresResponsible' => true,
+            ]);
+        }
+
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $sessionRole = strtolower((string) ($sessionAuth['role'] ?? ''));
+        if ($sessionRole === 'admin') {
+            $sessionAuth = docs_require_admin_session($accessContext);
+        } elseif ($sessionRole !== 'user') {
+            respond_error('Доступ запрещён. Требуются права администратора или ответственного.', 403, [
+                'requiresAdmin' => true,
+                'requiresResponsible' => true,
+            ]);
+        }
+
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $settings = load_admin_settings($folder);
+        $block2 = isset($settings['block2']) && is_array($settings['block2'])
+            ? $settings['block2']
+            : [];
+        $requestContext = docs_build_request_user_context();
+        $profile = docs_resolve_column_width_profile(
+            $organization,
+            $requestContext,
+            is_array($sessionAuth) ? $sessionAuth : null,
+            $block2
+        );
+        $profileKey = docs_normalize_table_preferences_profile_key($profile);
+        $preferences = docs_sanitize_table_preferences($payload['preferences'] ?? []);
+        $preferencesMap = isset($settings['tablePreferences']) && is_array($settings['tablePreferences'])
+            ? $settings['tablePreferences']
+            : [];
+        $entry = [
+            'preferences' => $preferences,
+            'updatedAt' => date('c'),
+        ];
+        $updatedBy = docs_build_assignment_author_label($sessionAuth);
+        if ($updatedBy !== '') {
+            $entry['updatedBy'] = $updatedBy;
+        }
+        $preferencesMap[$profileKey] = $entry;
+        $settings['tablePreferences'] = $preferencesMap;
+        save_admin_settings($folder, $settings);
+
+        $response = [
+            'organization' => $organization,
+            'profile' => $profile,
+            'preferences' => $preferences,
+            'updatedAt' => $entry['updatedAt'],
+            'message' => 'Настройки таблицы сохранены.',
+        ];
+        if (isset($entry['updatedBy'])) {
+            $response['updatedBy'] = $entry['updatedBy'];
+        }
+
+        respond_success($response);
         break;
 
     case 'load_column_widths':

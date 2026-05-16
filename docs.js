@@ -584,6 +584,10 @@
 
   var TELEGRAM_INIT_DATA_COOKIE = 'docsapp_init_data';
   var TELEGRAM_INIT_DATA_STORAGE_KEY = 'docsapp.initData';
+  var MESSAGE_DEFAULT_DURATION_MS = 6500;
+  var MESSAGE_LONG_DURATION_MS = 9500;
+  var MESSAGE_INFO_DURATION_MS = 4500;
+  var messageTimerId = null;
   var elements = {
     addButton: null,
     adminButton: null,
@@ -593,6 +597,13 @@
     responsibleButton: null,
     unviewedButton: null,
     unviewedCounter: null,
+    filterModeButton: null,
+    sortModeButton: null,
+    moveModeButton: null,
+    resetButton: null,
+    groupButton: null,
+    viewButton: null,
+    toolbarMenu: null,
     message: null,
     tableWrapper: null,
     tableBody: null,
@@ -600,14 +611,36 @@
     tableTopSpacer: null,
     tableBottomSpacer: null,
     emptyState: null,
+    tableToolbar: null,
+    globalSearchInput: null,
+    columnsButton: null,
+    columnsPopover: null,
+    pagination: null,
+    paginationInfo: null,
+    paginationButtons: null,
+    pageSizeSelect: null,
+    selectAllCheckbox: null,
+    selectAllHeaderCell: null,
+    selectFilterCell: null,
+    selectionCol: null,
+    filterRow: null,
+    tabsBar: null,
     filterBar: null,
     searchPopover: null,
     searchLabel: null,
     searchInput: null,
+    searchOptions: null,
+    searchOptionSummary: null,
+    searchSelectAll: null,
     searchApply: null,
+    searchClear: null,
     searchReset: null,
     searchButtons: {},
+    filterButtons: {},
+    sortIndicators: {},
     headerCells: {},
+    filterCells: {},
+    filterControls: {},
     groupCells: {}
   };
   var adminElements = {
@@ -967,9 +1000,17 @@
       }
     }
     setToolbarState();
+    refreshDocumentTabsIfNeeded();
     updateTable();
     refreshColumnWidthsIfNeeded();
     refreshColumnOrderIfNeeded();
+    if (state.organization) {
+      loadTablePreferences(state.organization, true).catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось обновить настройки таблицы после смены доступа:', error);
+        }
+      });
+    }
     updateClockUserDisplay();
     refreshPersonalSettingsIfNeeded(normalized);
     syncPresenceTracking();
@@ -1049,6 +1090,10 @@
   var TABLE_COLUMN_KEYS = TABLE_COLUMNS.map(function(column) {
     return column.key;
   });
+  var TABLE_SELECTION_COLUMN_KEY = '__select';
+  var TABLE_SELECTION_COLUMN_WIDTH = 44;
+  var DOCUMENT_TABS_STORAGE_PREFIX = 'documents:tabs:';
+  var TABLE_PREFERENCES_STORAGE_PREFIX = 'documents:table-preferences:';
   var COLUMN_ORDER_STORAGE_PREFIX = 'documents:column-order:';
   var STATUS_OPTIONS = ['Принято в работу', 'На проверке', 'На доработку', 'Выполнено', 'Отменено'];
   var ASSIGNEE_STATUS_OPTIONS = STATUS_OPTIONS.slice();
@@ -1098,6 +1143,8 @@
     return { key: column.key, label: column.label };
   });
   var searchEventsBound = false;
+  var documentTabsObserver = null;
+  var documentTabsRestoreFrame = 0;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -1108,6 +1155,9 @@
     storagePath: '',
     storageDisplayPath: '',
     documents: [],
+    registryLoading: false,
+    registryLoaded: false,
+    registryLoadError: '',
     visualSettings: cloneVisualSettings(DEFAULT_VISUAL_SETTINGS),
     columnWidthOverrides: null,
     columnVisibility: {},
@@ -1131,16 +1181,36 @@
       maxVisibleRows: 80,
       overscan: 12,
       filteredEntries: [],
-      renderFrame: 0
+      renderFrame: 0,
+      progressiveFrame: 0,
+      progressiveToken: 0,
+      progressiveBatchSize: 60,
+      progressiveThreshold: 140
     },
+    selectedDocumentIds: {},
+    currentPageDocumentIds: [],
+    globalSearchQuery: '',
+    tablePage: 1,
+    tablePageSize: 25,
+    tableTotalEntries: 0,
+    tableFilteredEntries: [],
     directorCache: {},
     responsiblesIndex: {},
     subordinatesIndex: {},
     directorsIndex: {},
     filters: {},
+    filterSelections: {},
     filterOrder: [],
     showUnassignedOnly: false,
     showUnviewedOnly: false,
+    activeDocumentTab: 'all',
+    customDocumentTabs: [],
+    documentTabsProfileKey: '',
+    headerFilterMode: false,
+    headerSortMode: false,
+    columnMoveMode: false,
+    tableDensity: 'normal',
+    groupingColumn: '',
     unviewedCount: 0,
     activeSearchColumn: '',
     activeSearchButton: null,
@@ -1181,7 +1251,11 @@
       }
     },
     resizeTimer: null,
-    resizeListenerAttached: false
+    resizeListenerAttached: false,
+    tablePreferencesLoaded: false,
+    tablePreferencesLoadingPromise: null,
+    tablePreferencesSavingTimer: null,
+    tablePreferencesApplying: false
   };
 
   function readCookieValue(name) {
@@ -1604,6 +1678,188 @@
       node.textContent = text;
     }
     return node;
+  }
+
+  function createSvgIcon(name, className) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    if (className) {
+      svg.setAttribute('class', className);
+    }
+
+    function append(tag, attrs) {
+      var node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (var key in attrs) {
+        if (Object.prototype.hasOwnProperty.call(attrs, key)) {
+          node.setAttribute(key, attrs[key]);
+        }
+      }
+      svg.appendChild(node);
+    }
+
+    if (name === 'pencil') {
+      append('path', { d: 'M12 20h9' });
+      append('path', { d: 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z' });
+      return svg;
+    }
+    if (name === 'eye-off') {
+      append('path', { d: 'M3 3l18 18' });
+      append('path', { d: 'M10.6 10.6a2 2 0 0 0 2.8 2.8' });
+      append('path', { d: 'M9.9 4.2A10.7 10.7 0 0 1 12 4c5 0 9 4.5 10 8a12.6 12.6 0 0 1-2.2 3.7' });
+      append('path', { d: 'M6.6 6.6A12.5 12.5 0 0 0 2 12c1 3.5 5 8 10 8 1.5 0 2.9-.4 4.1-1' });
+      return svg;
+    }
+    if (name === 'filter') {
+      append('path', { d: 'M4 5h16l-6 7v5l-4 2v-7Z' });
+      return svg;
+    }
+    if (name === 'search') {
+      append('circle', { cx: '11', cy: '11', r: '7' });
+      append('path', { d: 'M20 20l-3.5-3.5' });
+      return svg;
+    }
+    if (name === 'download') {
+      append('path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' });
+      append('path', { d: 'M7 10l5 5 5-5' });
+      append('path', { d: 'M12 15V3' });
+      return svg;
+    }
+    if (name === 'message') {
+      append('path', { d: 'M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z' });
+      return svg;
+    }
+    if (name === 'sparkles') {
+      append('path', { d: 'M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6Z' });
+      append('path', { d: 'M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8Z' });
+      append('path', { d: 'M5 14l.7 1.8L8 16.5l-2.3.7L5 19l-.7-1.8L2 16.5l2.3-.7Z' });
+      return svg;
+    }
+    if (name === 'trash') {
+      append('path', { d: 'M3 6h18' });
+      append('path', { d: 'M8 6V4h8v2' });
+      append('path', { d: 'M19 6l-1 14H6L5 6' });
+      append('path', { d: 'M10 11v5' });
+      append('path', { d: 'M14 11v5' });
+      return svg;
+    }
+    if (name === 'columns') {
+      append('rect', { x: '3', y: '4', width: '18', height: '16', rx: '2' });
+      append('path', { d: 'M9 4v16' });
+      append('path', { d: 'M15 4v16' });
+      return svg;
+    }
+    if (name === 'sort') {
+      append('path', { d: 'M7 4v16' });
+      append('path', { d: 'M4 7l3-3 3 3' });
+      append('path', { d: 'M17 20V4' });
+      append('path', { d: 'M14 17l3 3 3-3' });
+      return svg;
+    }
+    if (name === 'group') {
+      append('rect', { x: '4', y: '4', width: '7', height: '7', rx: '1.5' });
+      append('rect', { x: '13', y: '4', width: '7', height: '7', rx: '1.5' });
+      append('rect', { x: '4', y: '13', width: '7', height: '7', rx: '1.5' });
+      append('path', { d: 'M13 17h7' });
+      return svg;
+    }
+    if (name === 'sliders') {
+      append('path', { d: 'M4 6h8' });
+      append('path', { d: 'M16 6h4' });
+      append('circle', { cx: '14', cy: '6', r: '2' });
+      append('path', { d: 'M4 12h3' });
+      append('path', { d: 'M11 12h9' });
+      append('circle', { cx: '9', cy: '12', r: '2' });
+      append('path', { d: 'M4 18h10' });
+      append('path', { d: 'M18 18h2' });
+      append('circle', { cx: '16', cy: '18', r: '2' });
+      return svg;
+    }
+    if (name === 'move') {
+      append('path', { d: 'M12 3v18' });
+      append('path', { d: 'M8 7l4-4 4 4' });
+      append('path', { d: 'M8 17l4 4 4-4' });
+      append('path', { d: 'M3 12h18' });
+      append('path', { d: 'M7 8l-4 4 4 4' });
+      append('path', { d: 'M17 8l4 4-4 4' });
+      return svg;
+    }
+    if (name === 'rotate-ccw') {
+      append('path', { d: 'M3 12a9 9 0 1 0 3-6.7' });
+      append('path', { d: 'M3 4v6h6' });
+      return svg;
+    }
+    if (name === 'table') {
+      append('rect', { x: '3', y: '4', width: '18', height: '16', rx: '2' });
+      append('path', { d: 'M3 10h18' });
+      append('path', { d: 'M9 4v16' });
+      return svg;
+    }
+    if (name === 'chevron-down') {
+      append('path', { d: 'M6 9l6 6 6-6' });
+      return svg;
+    }
+    if (name === 'x') {
+      append('path', { d: 'M18 6L6 18' });
+      append('path', { d: 'M6 6l12 12' });
+      return svg;
+    }
+
+    append('path', { d: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z' });
+    append('circle', { cx: '12', cy: '12', r: '3' });
+    return svg;
+  }
+
+  function ensureDocumentsMessageStyle() {
+    if (document.getElementById('documents-message-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-message-style';
+    style.textContent = '' +
+      '.documents-message{' +
+      'position:fixed;' +
+      'left:50%;' +
+      'top:calc(12px + env(safe-area-inset-top));' +
+      'z-index:2147483000;' +
+      'display:none;' +
+      'width:min(680px,calc(100vw - 24px));' +
+      'box-sizing:border-box;' +
+      'padding:12px 14px;' +
+      'border:1px solid rgba(148,163,184,.4);' +
+      'border-radius:16px;' +
+      'background:rgba(255,255,255,.9);' +
+      'color:#0f172a;' +
+      'box-shadow:0 14px 34px rgba(15,23,42,.18);' +
+      'backdrop-filter:blur(14px);' +
+      '-webkit-backdrop-filter:blur(14px);' +
+      'font:600 14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
+      'overflow-wrap:anywhere;' +
+      'opacity:0;' +
+      'transform:translate(-50%,-14px);' +
+      'transition:opacity .22s ease,transform .22s ease;' +
+      '}' +
+      '.documents-message.is-visible{opacity:1;transform:translate(-50%,0);}' +
+      '.documents-message--success{border-color:rgba(74,222,128,.48);background:rgba(240,253,244,.92);color:#166534;}' +
+      '.documents-message--info{border-color:rgba(125,211,252,.6);background:rgba(239,246,255,.92);color:#1e3a8a;}' +
+      '.documents-message--warning{border-color:rgba(251,191,36,.56);background:rgba(255,251,235,.94);color:#92400e;}' +
+      '.documents-message--error{border-color:rgba(248,113,113,.48);background:rgba(254,242,242,.92);color:#991b1b;}' +
+      '@media (prefers-color-scheme:dark){' +
+      '.documents-message{background:rgba(15,23,42,.9);border-color:rgba(100,116,139,.58);color:#e2e8f0;box-shadow:0 18px 40px rgba(2,6,23,.38);}' +
+      '.documents-message--success{background:rgba(20,83,45,.9);color:#dcfce7;}' +
+      '.documents-message--info{background:rgba(30,58,138,.88);color:#dbeafe;}' +
+      '.documents-message--warning{background:rgba(120,53,15,.9);color:#fef3c7;}' +
+      '.documents-message--error{background:rgba(69,10,10,.9);color:#fecaca;}' +
+      '}';
+    document.head.appendChild(style);
   }
 
   function ensureSubordinateReviewStyle() {
@@ -3074,6 +3330,68 @@
       'display:flex;' +
       'gap:10px;' +
       '}' +
+      '.documents-search-popover__summary{' +
+      'font-size:12px;' +
+      'line-height:1.35;' +
+      'color:#64748b;' +
+      '}' +
+      '.documents-search-popover__checks{' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'gap:6px;' +
+      'max-height:230px;' +
+      'overflow:auto;' +
+      'padding:6px;' +
+      'border:1px solid rgba(226,232,240,0.95);' +
+      'border-radius:12px;' +
+      'background:rgba(248,250,252,0.72);' +
+      'scrollbar-width:thin;' +
+      '}' +
+      '.documents-search-popover__check{' +
+      'display:flex;' +
+      'align-items:flex-start;' +
+      'gap:8px;' +
+      'padding:6px 8px;' +
+      'border-radius:8px;' +
+      'font-size:13px;' +
+      'line-height:1.35;' +
+      'color:#172554;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-search-popover__check:hover{' +
+      'background:#ffffff;' +
+      '}' +
+      '.documents-search-popover__check input{' +
+      'margin:1px 0 0;' +
+      'accent-color:#2563eb;' +
+      'flex:0 0 auto;' +
+      '}' +
+      '.documents-search-popover__check span{' +
+      'min-width:0;' +
+      'overflow-wrap:anywhere;' +
+      '}' +
+      '.documents-search-popover__tools{' +
+      'display:flex;' +
+      'gap:8px;' +
+      '}' +
+      '.documents-search-popover__tool{' +
+      'flex:1 1 auto;' +
+      'height:30px;' +
+      'border:1px solid rgba(148,163,184,0.35);' +
+      'border-radius:8px;' +
+      'background:#ffffff;' +
+      'color:#2563eb;' +
+      'font-size:12px;' +
+      'font-weight:700;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-search-popover__tool:hover,.documents-search-popover__tool:focus-visible{' +
+      'background:#eff6ff;' +
+      'outline:none;' +
+      '}' +
+      '.documents-search-popover__tool--danger{' +
+      'color:#dc2626;' +
+      '}' +
       '.documents-search-popover__button{' +
       'flex:1 1 auto;' +
       'padding:10px 12px;' +
@@ -3092,6 +3410,10 @@
       '.documents-search-popover__button--reset{' +
       'background:rgba(148,163,184,0.18);' +
       'color:#1e293b;' +
+      '}' +
+      '.documents-search-popover__button--clear{' +
+      'background:rgba(254,242,242,0.96);' +
+      'color:#b91c1c;' +
       '}' +
       '.documents-search-popover__button:hover{' +
       'transform:translateY(-1px);' +
@@ -3148,6 +3470,20 @@
       '.documents-filter-chip--responsible .documents-filter-chip__value{' +
       'color:#047857;' +
       '}' +
+      '.documents-filter-chip--warning{' +
+      'border-color:rgba(245,158,11,0.42);' +
+      'box-shadow:0 10px 22px rgba(245,158,11,0.18);' +
+      '}' +
+      '.documents-filter-chip--warning .documents-filter-chip__value{' +
+      'color:#92400e;' +
+      '}' +
+      '.documents-filter-chip--muted{' +
+      'border-color:rgba(148,163,184,0.45);' +
+      'box-shadow:0 10px 22px rgba(100,116,139,0.14);' +
+      '}' +
+      '.documents-filter-chip--muted .documents-filter-chip__value{' +
+      'color:#334155;' +
+      '}' +
       '.documents-filter-bar__clear{' +
       'border:none;' +
       'border-radius:999px;' +
@@ -3162,6 +3498,152 @@
       '}' +
       '.documents-filter-bar__clear:hover{' +
       'transform:translateY(-1px);' +
+      '}' +
+      '.documents-filter-bar__clear:disabled{' +
+      'opacity:.55;' +
+      'cursor:default;' +
+      'transform:none;' +
+      'box-shadow:none;' +
+      '}' +
+      '.documents-filter-bar__hint{' +
+      'color:#64748b;' +
+      'font-size:12px;' +
+      'font-weight:600;' +
+      '}' +
+      '.documents-tabs{' +
+      'display:flex;' +
+      'align-items:flex-end;' +
+      'gap:8px;' +
+      'margin:14px 0 0;' +
+      'padding:0 2px;' +
+      'border-bottom:1px solid rgba(148,163,184,0.34);' +
+      'overflow-x:auto;' +
+      'scrollbar-width:thin;' +
+      '}' +
+      '.documents-tabs__list{' +
+      'display:flex;' +
+      'align-items:flex-end;' +
+      'gap:6px;' +
+      'min-width:0;' +
+      '}' +
+      '.documents-tab-shell{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'position:relative;' +
+      'flex:0 0 auto;' +
+      '}' +
+      '.documents-tab{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'gap:8px;' +
+      'max-width:260px;' +
+      'min-height:38px;' +
+      'padding:8px 12px 9px;' +
+      'border:1px solid rgba(148,163,184,0.38);' +
+      'border-bottom:none;' +
+      'border-radius:12px 12px 0 0;' +
+      'background:rgba(248,250,252,0.82);' +
+      'color:#334155;' +
+      'font-size:13px;' +
+      'font-weight:700;' +
+      'line-height:1.2;' +
+      'white-space:nowrap;' +
+      'cursor:pointer;' +
+      'transition:background 0.2s ease,color 0.2s ease,box-shadow 0.2s ease,transform 0.2s ease;' +
+      '}' +
+      '.documents-tab:hover,.documents-tab:focus-visible{' +
+      'background:#ffffff;' +
+      'color:#1d4ed8;' +
+      'outline:none;' +
+      'box-shadow:0 10px 24px rgba(37,99,235,0.13);' +
+      '}' +
+      '.documents-tab.is-active{' +
+      'background:#ffffff;' +
+      'color:#1d4ed8;' +
+      'border-color:rgba(37,99,235,0.38);' +
+      'box-shadow:0 -1px 0 #ffffff inset,0 10px 24px rgba(37,99,235,0.12);' +
+      'transform:translateY(1px);' +
+      '}' +
+      '.documents-tab__label{' +
+      'display:block;' +
+      'min-width:0;' +
+      'overflow:hidden;' +
+      'text-overflow:ellipsis;' +
+      '}' +
+      '.documents-tab__count{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'min-width:22px;' +
+      'min-height:22px;' +
+      'padding:2px 7px;' +
+      'border-radius:999px;' +
+      'background:rgba(148,163,184,0.18);' +
+      'color:#475569;' +
+      'font-size:12px;' +
+      'font-weight:800;' +
+      'font-variant-numeric:tabular-nums;' +
+      '}' +
+      '.documents-tab.is-active .documents-tab__count{' +
+      'background:rgba(37,99,235,0.12);' +
+      'color:#1d4ed8;' +
+      '}' +
+      '.documents-tab-shell--custom .documents-tab{' +
+      'padding-right:34px;' +
+      '}' +
+      '.documents-tab__close{' +
+      'position:absolute;' +
+      'right:7px;' +
+      'top:8px;' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'width:22px;' +
+      'height:22px;' +
+      'border:0;' +
+      'border-radius:999px;' +
+      'background:transparent;' +
+      'color:#64748b;' +
+      'font-size:17px;' +
+      'line-height:1;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-tab__close:hover,.documents-tab__close:focus-visible{' +
+      'background:rgba(239,68,68,0.12);' +
+      'color:#dc2626;' +
+      'outline:none;' +
+      '}' +
+      '.documents-tabs__add{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'flex:0 0 auto;' +
+      'width:36px;' +
+      'height:36px;' +
+      'margin-bottom:1px;' +
+      'border:1px solid rgba(148,163,184,0.38);' +
+      'border-bottom:none;' +
+      'border-radius:12px 12px 0 0;' +
+      'background:rgba(255,255,255,0.78);' +
+      'color:#2563eb;' +
+      'font-size:22px;' +
+      'font-weight:700;' +
+      'line-height:1;' +
+      'cursor:pointer;' +
+      'transition:background 0.2s ease,box-shadow 0.2s ease,transform 0.2s ease;' +
+      '}' +
+      '.documents-tabs__add:hover,.documents-tabs__add:focus-visible{' +
+      'background:#ffffff;' +
+      'outline:none;' +
+      'box-shadow:0 10px 24px rgba(37,99,235,0.14);' +
+      'transform:translateY(-1px);' +
+      '}' +
+      '.documents-filter-chip--tab{' +
+      'border-color:rgba(37,99,235,0.42);' +
+      'box-shadow:0 10px 22px rgba(37,99,235,0.18);' +
+      '}' +
+      '.documents-filter-chip--tab .documents-filter-chip__value{' +
+      'color:#1d4ed8;' +
       '}' +
       '.documents-cell--highlight{' +
       'background:rgba(59,130,246,0.12);' +
@@ -3257,12 +3739,354 @@
       '.documents-actions__panel--open{' +
       'display:flex;' +
       '}' +
+      '.documents-column-resize-handle{' +
+      'position:absolute;' +
+      'top:0;' +
+      'right:-4px;' +
+      'width:8px;' +
+      'height:100%;' +
+      'cursor:col-resize;' +
+      'touch-action:none;' +
+      'z-index:20;' +
+      '}' +
+      '.documents-column-resize-handle::after{' +
+      'content:"";' +
+      'position:absolute;' +
+      'top:10px;' +
+      'bottom:10px;' +
+      'left:3px;' +
+      'width:2px;' +
+      'border-radius:2px;' +
+      'background:transparent;' +
+      '}' +
+      '.documents-column-resize-handle:hover::after,.documents-column-resize-handle.is-resizing::after{' +
+      'background:#2563eb;' +
+      '}' +
+      '.documents-columns-menu{' +
+      'position:fixed;' +
+      'z-index:2600;' +
+      'display:none;' +
+      'width:min(320px,calc(100vw - 24px));' +
+      'max-height:min(70vh,520px);' +
+      'padding:12px;' +
+      'border:1px solid rgba(148,163,184,0.3);' +
+      'border-radius:14px;' +
+      'background:#ffffff;' +
+      'box-shadow:0 22px 48px rgba(15,23,42,0.18);' +
+      'overflow:auto;' +
+      '}' +
+      '.documents-columns-menu--visible{' +
+      'display:block;' +
+      '}' +
+      '.documents-columns-menu__title{' +
+      'font-size:13px;' +
+      'font-weight:800;' +
+      'color:#0f172a;' +
+      'margin-bottom:8px;' +
+      '}' +
+      '.documents-columns-menu__list{' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'gap:4px;' +
+      '}' +
+      '.documents-columns-menu__item{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'gap:8px;' +
+      'padding:7px 8px;' +
+      'border-radius:8px;' +
+      'font-size:13px;' +
+      'color:#172554;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-columns-menu__item:hover{' +
+      'background:#f8fafc;' +
+      '}' +
+      '.documents-columns-menu__item input{' +
+      'accent-color:#2563eb;' +
+      '}' +
+      '.documents-columns-button{' +
+      '}' +
+      '.documents-table-tool{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'gap:8px;' +
+      'height:38px;' +
+      'padding:0 12px;' +
+      'border:1px solid #e2e8f0;' +
+      'border-radius:6px;' +
+      'background:#fff;' +
+      'color:#172554;' +
+      'font-size:13px;' +
+      'font-weight:700;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-table-tool:hover,.documents-table-tool:focus-visible{' +
+      'background:#f8fafc;' +
+      'border-color:#bfdbfe;' +
+      'outline:none;' +
+      '}' +
+      '.documents-table-tool.is-active,.documents-table-tool[aria-pressed="true"]{' +
+      'background:#eff6ff;' +
+      'border-color:#93c5fd;' +
+      'color:#1d4ed8;' +
+      '}' +
+      '.documents-table-tool--menu{' +
+      'padding-right:9px;' +
+      '}' +
+      '.documents-table-tool__chevron{' +
+      'width:14px;' +
+      'height:14px;' +
+      'color:#64748b;' +
+      '}' +
+      '.documents-table-tool__label{' +
+      'white-space:nowrap;' +
+      '}' +
+      '.documents-table-tool__badge{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'min-height:20px;' +
+      'padding:1px 7px;' +
+      'border-radius:999px;' +
+      'background:#e0f2fe;' +
+      'color:#0369a1;' +
+      'font-size:11px;' +
+      'font-weight:800;' +
+      'line-height:1;' +
+      '}' +
+      '.documents-table-tool__badge[hidden]{display:none;}' +
+      '.documents-table-tools{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'justify-content:flex-end;' +
+      'gap:10px;' +
+      'flex:0 0 auto;' +
+      'flex-wrap:wrap;' +
+      'min-width:0;' +
+      '}' +
+      '.documents-toolbar-menu{' +
+      'position:fixed;' +
+      'z-index:2650;' +
+      'display:none;' +
+      'width:min(300px,calc(100vw - 24px));' +
+      'padding:8px;' +
+      'border:1px solid rgba(148,163,184,0.3);' +
+      'border-radius:14px;' +
+      'background:#ffffff;' +
+      'box-shadow:0 22px 48px rgba(15,23,42,0.18);' +
+      '}' +
+      '.documents-toolbar-menu--visible{' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'gap:4px;' +
+      '}' +
+      '.documents-toolbar-menu__item{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'justify-content:space-between;' +
+      'gap:10px;' +
+      'width:100%;' +
+      'min-height:34px;' +
+      'padding:7px 9px;' +
+      'border:0;' +
+      'border-radius:8px;' +
+      'background:transparent;' +
+      'color:#172554;' +
+      'font-size:13px;' +
+      'font-weight:700;' +
+      'text-align:left;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-toolbar-menu__item:hover,.documents-toolbar-menu__item:focus-visible{' +
+      'background:#f8fafc;' +
+      'outline:none;' +
+      '}' +
+      '.documents-toolbar-menu__item.is-active{' +
+      'background:#eff6ff;' +
+      'color:#1d4ed8;' +
+      '}' +
+      '.documents-toolbar-menu__item:disabled{' +
+      'color:#94a3b8;' +
+      'cursor:default;' +
+      'background:transparent;' +
+      '}' +
+      '.documents-toolbar-menu__note{' +
+      'padding:7px 9px 5px;' +
+      'font-size:12px;' +
+      'line-height:1.35;' +
+      'color:#64748b;' +
+      '}' +
+      '.documents-actions--icons{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'flex-direction:row;' +
+      'gap:5px;' +
+      'width:auto;' +
+      'min-width:0;' +
+      '}' +
+      '.documents-action-icon{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'width:28px;' +
+      'height:28px;' +
+      'padding:0;' +
+      'border:1px solid #dbeafe;' +
+      'border-radius:6px;' +
+      'background:#fff;' +
+      'color:#172554;' +
+      'cursor:pointer;' +
+      'transition:background .16s ease,border-color .16s ease,color .16s ease;' +
+      '}' +
+      '.documents-action-icon:hover,.documents-action-icon:focus-visible{' +
+      'background:#eff6ff;' +
+      'border-color:#93c5fd;' +
+      'color:#2563eb;' +
+      'outline:none;' +
+      '}' +
+      '.documents-action-icon:disabled{' +
+      'opacity:.45;' +
+      'cursor:default;' +
+      '}' +
+      '.documents-action-icon--delete:hover,.documents-action-icon--delete:focus-visible{' +
+      'background:#fef2f2;' +
+      'border-color:#fecaca;' +
+      'color:#dc2626;' +
+      '}' +
       '@media (max-width:640px){' +
       '.documents-actions__panel{' +
       'padding:6px;' +
       '}' +
       '}' +
       '';
+    document.head.appendChild(style);
+  }
+
+  function ensureRegistryTableViewStyle() {
+    if (document.getElementById('documents-registry-table-view-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-registry-table-view-style';
+    style.textContent = '' +
+      '.documents-workspace{display:flex;flex-direction:column;gap:12px;color:#172554;}' +
+      '.documents-table-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:10px;min-width:0;}' +
+      '.documents-table-toolbar .documents-tabs{flex:0 0 auto;width:100%;margin:0;padding:0;border-bottom:1px solid #dbeafe;overflow-x:auto;}' +
+      '.documents-table-tools{width:100%;justify-content:flex-start;}' +
+      '.documents-global-search{position:relative;display:block;flex:0 0 min(320px,34vw);min-width:220px;margin-left:auto;}' +
+      '.documents-global-search__input{width:100%;height:38px;padding:0 38px 0 14px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;font-size:13px;outline:none;transition:border-color .18s ease,box-shadow .18s ease;}' +
+      '.documents-global-search__input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(37,99,235,.12);}' +
+      '.documents-global-search__icon{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:inline-flex;color:#64748b;pointer-events:none;}' +
+      '.documents-tabs__list{gap:0;}' +
+      '.documents-tab-shell{margin:0;}' +
+      '.documents-tab{min-height:40px;padding:10px 18px;border-color:#e2e8f0;border-radius:6px 6px 0 0;background:#fff;color:#334155;box-shadow:none;}' +
+      '.documents-tab:hover,.documents-tab:focus-visible{box-shadow:none;background:#f8fafc;color:#2563eb;}' +
+      '.documents-tab.is-active{color:#2563eb;border-color:#dbeafe;border-bottom-color:#2563eb;box-shadow:0 2px 0 #2563eb;transform:none;}' +
+      '.documents-tab__count{min-width:24px;min-height:20px;padding:1px 7px;background:#eff6ff;color:#2563eb;font-size:12px;}' +
+      '.documents-tab-shell:nth-child(2) .documents-tab__count{background:#fff1f2;color:#ef4444;}' +
+      '.documents-tab-shell:nth-child(3) .documents-tab__count{background:#ecfdf5;color:#10b981;}' +
+      '.documents-tabs__add{width:38px;height:40px;margin:0;border-color:#e2e8f0;border-radius:6px 6px 0 0;background:#fff;box-shadow:none;font-size:20px;}' +
+      '.documents-table-wrapper{border:1px solid #e2e8f0;border-radius:6px;background:#fff;box-shadow:0 14px 35px rgba(15,23,42,.06);overflow-x:auto;overflow-y:visible;}' +
+      '.documents-table{border-collapse:separate;border-spacing:0;table-layout:fixed;background:#fff;color:#172554;font-size:13px;}' +
+      '.documents-table__head th{background:#fff;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;color:#0f172a;font-size:12px;font-weight:800;text-align:left;}' +
+      '.documents-table__header-row th{height:48px;padding:0 12px;z-index:9;overflow:visible;}' +
+      '.documents-table__filter-row th{position:sticky;top:var(--documents-sticky-top,48px);z-index:8;height:52px;padding:8px 10px;background:#fff;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;}' +
+      '.documents-table__header-cell--select,.documents-table__filter-cell--select{left:0;z-index:12;text-align:center;}' +
+      '.documents-table .documents-table__header-cell--sortable{cursor:default;}' +
+      '.documents-workspace--sort-mode .documents-table .documents-table__header-cell--sortable{cursor:pointer;}' +
+      '.documents-workspace--sort-mode .documents-table .documents-table__header-cell--sortable:hover{background:#f8fafc;}' +
+      '.documents-header-content{gap:8px;}' +
+      '.documents-header-label{font-size:12px;line-height:1.25;color:#0f172a;}' +
+      '.documents-header-tools{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;}' +
+      '.documents-header-sort-icon{display:inline-flex;align-items:center;justify-content:center;min-width:12px;color:#94a3b8;font-size:11px;line-height:1;}' +
+      '.documents-table__header-cell[data-sort-direction="asc"] .documents-header-sort-icon,.documents-table__header-cell[data-sort-direction="desc"] .documents-header-sort-icon{color:#2563eb;}' +
+      '.documents-workspace:not(.documents-workspace--sort-mode) .documents-header-sort-icon:not(.is-active){display:none;}' +
+      '.documents-header-sort-icon.is-active{color:#2563eb;}' +
+      '.documents-header-filter-button{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:#94a3b8;cursor:pointer;}' +
+      '.documents-header-filter-button:hover,.documents-header-filter-button:focus-visible{background:#eff6ff;color:#2563eb;outline:none;}' +
+      '.documents-workspace:not(.documents-workspace--filter-mode) .documents-header-filter-button:not(.is-active){display:none;}' +
+      '.documents-header-filter-button.is-active{background:#eff6ff;color:#2563eb;}' +
+      '.documents-column-drag-handle{display:none;width:20px;height:20px;min-width:20px;border:0;background:transparent;color:#94a3b8;border-radius:4px;font-size:12px;}' +
+      '.documents-workspace--move-mode .documents-column-drag-handle{display:inline-flex;align-items:center;justify-content:center;}' +
+      '.documents-column-drag-handle:hover{background:#f1f5f9;color:#2563eb;}' +
+      '.documents-workspace--move-mode .documents-table__header-row th:not(.documents-table__header-cell--select){background:#f8fbff;}' +
+      '.documents-workspace--move-mode .documents-header-label{color:#1d4ed8;}' +
+      '.documents-column-filter{width:100%;height:32px;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;font-size:12px;outline:none;}' +
+      '.documents-column-filter--input{padding:0 9px;}' +
+      '.documents-column-filter--select{padding:0 28px 0 9px;}' +
+      '.documents-column-filter:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(37,99,235,.1);}' +
+      '.documents-column-filter--static{color:#475569;}' +
+      '.documents-table tbody td{height:auto;min-height:48px;padding:7px 12px;border-bottom:1px solid #edf2f7;border-right:1px solid #f1f5f9;vertical-align:top;background:#fff;color:#172554;overflow-wrap:anywhere;word-break:normal;}' +
+      '.documents-workspace--density-compact .documents-table__header-row th{height:42px;padding:0 10px;}' +
+      '.documents-workspace--density-compact .documents-table tbody td{min-height:40px;padding:5px 10px;font-size:12px;}' +
+      '.documents-workspace--density-compact .documents-action-icon{width:26px;height:26px;}' +
+      '.documents-table tbody tr:hover td{background:#f8fbff;}' +
+      '.documents-row--overdue td{background:#fff7f7;color:#ef4444;}' +
+      '.documents-row--overdue:hover td{background:#fff1f2;}' +
+      '.documents-row--overdue td:first-child{box-shadow:inset 3px 0 0 #ef4444;}' +
+      '.documents-row--overdue td[data-column-key="entryNumber"],.documents-row--overdue td[data-column-key="registrationDate"],.documents-row--overdue td[data-column-key="dueDate"]{color:#ef4444;font-weight:800;}' +
+      '.documents-table tbody td.documents-cell--select{position:sticky;left:0;z-index:4;text-align:center;padding:0 10px;background:#fff;}' +
+      '.documents-table tbody .documents-row--overdue td.documents-cell--select{background:#fff7f7;}' +
+      '.documents-table tbody .documents-row--overdue:hover td.documents-cell--select{background:#fff1f2;}' +
+      '.documents-row-select{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin:0;}' +
+      '.documents-row-select__checkbox{width:16px;height:16px;margin:0;border:1px solid #cbd5e1;border-radius:4px;accent-color:#2563eb;cursor:pointer;}' +
+      '.documents-status{display:flex;flex-direction:column;align-items:flex-start;gap:4px;}' +
+      '.documents-status__value{font-weight:700;color:#64748b;}' +
+      '.documents-status__value--overdue{display:inline-flex;align-items:center;min-height:24px;padding:2px 7px;border:1px solid #f87171;border-radius:6px;background:#fff;color:#ef4444;font-size:12px;line-height:1;}' +
+      '.documents-status__meta{font-size:11px;color:#94a3b8;}' +
+      '.documents-status[data-overdue=\"true\"] .documents-status__meta{display:none;}' +
+      '.documents-table tbody td.documents-cell--assignee{position:relative;padding-right:32px;}' +
+      '.documents-assignee{position:relative;min-height:28px;}' +
+      '.documents-assignee__info{display:flex;flex-direction:column;gap:4px;min-width:0;}' +
+      '.documents-assignee__entry{display:flex;flex-direction:column;gap:3px;min-width:0;}' +
+      '.documents-assignee__line{display:flex;align-items:center;gap:7px;min-width:0;line-height:1.25;}' +
+      '.documents-assignee__name{display:inline;min-width:0;color:#172554;font-weight:700;overflow-wrap:anywhere;}' +
+      '.documents-assignee__entry--unviewed .documents-assignee__name{color:#172554;text-decoration:underline;text-decoration-color:#ef4444;text-decoration-thickness:2px;text-underline-offset:3px;}' +
+      '.documents-assignee__view-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:#334155;}' +
+      '.documents-assignee__view-icon--unviewed{color:#334155;}' +
+      '.documents-assignee__details{display:flex;flex-direction:column;gap:2px;margin-top:4px;padding-left:0;font-size:11px;line-height:1.35;color:#64748b;}' +
+      '.documents-assignee__detail{overflow-wrap:anywhere;}' +
+      '.documents-assignee__empty{color:#94a3b8;font-weight:600;line-height:1.25;}' +
+      '.documents-assignee__edit{position:absolute;top:0;right:0;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:#334155;cursor:pointer;}' +
+      '.documents-assignee__edit:hover,.documents-assignee__edit:focus-visible{background:#eff6ff;color:#2563eb;outline:none;}' +
+      '.documents-row--collapsed .documents-subordinate-review{display:none;}' +
+      '.documents-row--collapsed .documents-assignee__details{display:none;}' +
+      '.documents-actions__toggle{min-height:30px;padding:6px 10px;border-radius:5px;background:#fff;border-color:#dbeafe;color:#172554;font-size:12px;box-shadow:none;}' +
+      '.documents-actions__toggle::after{content:\"⌄\";margin-left:8px;font-size:11px;color:#64748b;}' +
+      '.documents-actions__panel{position:static;width:auto;min-width:0;margin-top:0;z-index:auto;box-shadow:none;border:0;background:transparent;padding:0;}' +
+      '.documents-actions__panel[hidden]:not(.documents-actions__panel--open){display:none;}' +
+      '.documents-actions--icons .documents-actions__panel{display:flex;flex-wrap:wrap;gap:5px;}' +
+      '.documents-files__summary{font-weight:700;color:#172554;}' +
+      '.documents-files__list,.documents-instruction__list,.documents-due__list,.documents-status__meta{display:none;}' +
+      '.documents-row--expanded .documents-files__list,.documents-row--expanded .documents-instruction__list,.documents-row--expanded .documents-due__list,.documents-row--expanded .documents-status__meta{display:block;}' +
+      '.documents-row--expanded .documents-status[data-overdue="true"] .documents-status__meta{display:none;}' +
+      '.documents-group-row td{position:sticky;left:0;z-index:3;padding:8px 12px;background:#f8fafc;border-bottom:1px solid #dbeafe;border-right:0;color:#172554;font-weight:800;}' +
+      '.documents-group-row__content{display:flex;align-items:center;gap:10px;min-height:26px;}' +
+      '.documents-group-row__label{display:inline-flex;align-items:center;padding:3px 8px;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:800;}' +
+      '.documents-group-row__count{color:#64748b;font-size:12px;font-weight:700;}' +
+      '.documents-empty{display:flex;align-items:center;justify-content:center;gap:10px;min-height:120px;padding:24px;box-sizing:border-box;color:#64748b;font-size:14px;font-weight:700;text-align:center;}' +
+      '.documents-empty--loading::before{content:"";width:18px;height:18px;border:2px solid #dbeafe;border-top-color:#2563eb;border-radius:999px;animation:documents-empty-spin .75s linear infinite;}' +
+      '.documents-empty--error{color:#b91c1c;background:#fef2f2;}' +
+      '@keyframes documents-empty-spin{to{transform:rotate(360deg);}}' +
+      '.documents-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:100%;box-sizing:border-box;padding:12px 16px;border-top:1px solid #e2e8f0;border-radius:0 0 6px 6px;background:#fff;color:#172554;font-size:13px;}' +
+      '.documents-pagination[hidden]{display:none;}' +
+      '.documents-pagination__left{display:flex;align-items:center;gap:18px;flex-wrap:wrap;}' +
+      '.documents-pagination__size{display:inline-flex;align-items:center;gap:8px;}' +
+      '.documents-pagination__select{height:32px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;padding:0 26px 0 8px;}' +
+      '.documents-pagination__buttons{display:flex;align-items:center;gap:6px;}' +
+      '.documents-pagination__button{min-width:32px;height:32px;padding:0 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:#172554;font-weight:700;cursor:pointer;}' +
+      '.documents-pagination__button:hover:not(:disabled){background:#eff6ff;color:#2563eb;}' +
+      '.documents-pagination__button.is-active{background:#2563eb;color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.25);}' +
+      '.documents-pagination__button:disabled{opacity:.35;cursor:default;}' +
+      '.documents-pagination__ellipsis{min-width:28px;text-align:center;color:#64748b;}' +
+      '@media (max-width:760px){' +
+      '.documents-table-toolbar{align-items:stretch;flex-direction:column;}' +
+      '.documents-table-tools{width:100%;justify-content:space-between;}' +
+      '.documents-global-search{flex:1 1 auto;width:100%;min-width:0;}' +
+      '.documents-pagination{align-items:flex-start;flex-direction:column;}' +
+      '.documents-pagination__buttons{width:100%;overflow-x:auto;padding-bottom:2px;}' +
+      '}';
     document.head.appendChild(style);
   }
 
@@ -3309,10 +4133,14 @@
       return;
     }
     var groupHeight = elements.groupRow ? (elements.groupRow.offsetHeight || 0) : 0;
+    var headerHeight = elements.headerRow ? (elements.headerRow.offsetHeight || 0) : 0;
     if (elements.groupRow) {
       elements.groupRow.style.setProperty('--documents-sticky-top', '0px');
     }
     elements.headerRow.style.setProperty('--documents-sticky-top', groupHeight + 'px');
+    if (elements.filterRow) {
+      elements.filterRow.style.setProperty('--documents-sticky-top', (groupHeight + headerHeight) + 'px');
+    }
   }
 
   function isPopoverVisible() {
@@ -3335,8 +4163,20 @@
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('spellcheck', 'false');
 
+    var summary = createElement('div', 'documents-search-popover__summary', 'Значения загружаются...');
+    var optionTools = createElement('div', 'documents-search-popover__tools');
+    var selectAllButton = createElement('button', 'documents-search-popover__tool', 'Выбрать всё');
+    selectAllButton.type = 'button';
+    var clearButton = createElement('button', 'documents-search-popover__tool documents-search-popover__tool--danger', 'Очистить');
+    clearButton.type = 'button';
+    optionTools.appendChild(selectAllButton);
+    optionTools.appendChild(clearButton);
+    var optionsList = createElement('div', 'documents-search-popover__checks');
+    optionsList.setAttribute('role', 'group');
+    optionsList.setAttribute('aria-label', 'Значения фильтра');
+
     var actions = createElement('div', 'documents-search-popover__actions');
-    var applyButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--apply', 'Искать');
+    var applyButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--apply', 'Применить');
     applyButton.type = 'button';
     var resetButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--reset', 'Сброс');
     resetButton.type = 'button';
@@ -3346,6 +4186,9 @@
 
     content.appendChild(label);
     content.appendChild(input);
+    content.appendChild(summary);
+    content.appendChild(optionTools);
+    content.appendChild(optionsList);
     content.appendChild(actions);
     popover.appendChild(content);
 
@@ -3356,6 +4199,10 @@
     elements.searchInput = input;
     elements.searchApply = applyButton;
     elements.searchReset = resetButton;
+    elements.searchOptions = optionsList;
+    elements.searchOptionSummary = summary;
+    elements.searchSelectAll = selectAllButton;
+    elements.searchClear = clearButton;
 
     popover.setAttribute('aria-hidden', 'true');
     popover.setAttribute('role', 'dialog');
@@ -3366,6 +4213,19 @@
     });
     resetButton.addEventListener('click', function() {
       resetPopoverFilter();
+    });
+    selectAllButton.addEventListener('click', function() {
+      setSearchPopoverOptionChecks(true);
+    });
+    clearButton.addEventListener('click', function() {
+      if (elements.searchInput) {
+        elements.searchInput.value = '';
+      }
+      setSearchPopoverOptionChecks(false);
+    });
+    input.addEventListener('input', function() {
+      var columnKey = elements.searchPopover ? (elements.searchPopover.dataset.columnKey || state.activeSearchColumn) : '';
+      renderSearchPopoverOptions(columnKey, input.value);
     });
     input.addEventListener('keydown', function(event) {
       if (event.key === 'Enter') {
@@ -3424,6 +4284,122 @@
     popover.style.top = top + 'px';
   }
 
+  function getColumnFilterOptions(columnKey, optionQuery) {
+    if (!columnKey) {
+      return [];
+    }
+    var query = normalizeValueForMatch(optionQuery);
+    var documents = Array.isArray(state.documents) ? state.documents : [];
+    var lookup = Object.create(null);
+    var options = [];
+
+    for (var i = 0; i < documents.length; i += 1) {
+      var doc = documents[i];
+      if (!documentVisibleForCurrentUser(doc)) {
+        continue;
+      }
+      var values = computeFilterValues(doc, i);
+      if (!matchesActiveDocumentTab(doc, values)) {
+        continue;
+      }
+      if (!matchesDocumentFilters(values, columnKey)) {
+        continue;
+      }
+      var candidates = getColumnFilterOptionValues(values, columnKey);
+      for (var j = 0; j < candidates.length; j += 1) {
+        var label = normalizeTextInputValue(candidates[j]) || '—';
+        if (query && normalizeValueForMatch(label).indexOf(query) === -1) {
+          continue;
+        }
+        var key = normalizeValueForMatch(label) || '__empty';
+        if (!lookup[key]) {
+          lookup[key] = {
+            value: label,
+            label: label,
+            count: 0
+          };
+          options.push(lookup[key]);
+        }
+        lookup[key].count += 1;
+      }
+    }
+
+    options.sort(function(a, b) {
+      if (a.label === '—') {
+        return 1;
+      }
+      if (b.label === '—') {
+        return -1;
+      }
+      return String(a.label).localeCompare(String(b.label), 'ru', { sensitivity: 'base', numeric: true });
+    });
+    return options;
+  }
+
+  function getSearchPopoverSelectedValues() {
+    if (!elements.searchOptions) {
+      return [];
+    }
+    var selected = [];
+    var checkboxes = elements.searchOptions.querySelectorAll('input[type="checkbox"]');
+    for (var i = 0; i < checkboxes.length; i += 1) {
+      if (checkboxes[i].checked) {
+        selected.push(checkboxes[i].value);
+      }
+    }
+    return selected;
+  }
+
+  function setSearchPopoverOptionChecks(checked) {
+    if (!elements.searchOptions) {
+      return;
+    }
+    var checkboxes = elements.searchOptions.querySelectorAll('input[type="checkbox"]');
+    for (var i = 0; i < checkboxes.length; i += 1) {
+      checkboxes[i].checked = Boolean(checked);
+    }
+    if (elements.searchOptionSummary) {
+      elements.searchOptionSummary.textContent = checked
+        ? 'Выбраны все видимые значения: ' + checkboxes.length
+        : 'Значения не выбраны';
+    }
+  }
+
+  function renderSearchPopoverOptions(columnKey, query) {
+    if (!elements.searchOptions) {
+      return;
+    }
+    var options = getColumnFilterOptions(columnKey, query);
+    var selectedLookup = Object.create(null);
+    getFilterSelectionList(columnKey).forEach(function(value) {
+      var key = normalizeValueForMatch(value);
+      if (key) {
+        selectedLookup[key] = true;
+      }
+    });
+    elements.searchOptions.innerHTML = '';
+    if (!options.length) {
+      elements.searchOptions.appendChild(createElement('div', 'documents-search-popover__summary', 'Нет значений для выбора'));
+    } else {
+      options.forEach(function(option) {
+        var label = createElement('label', 'documents-search-popover__check');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = option.value;
+        checkbox.checked = Boolean(selectedLookup[normalizeValueForMatch(option.value)]);
+        label.appendChild(checkbox);
+        label.appendChild(createElement('span', '', option.label + ' (' + option.count + ')'));
+        elements.searchOptions.appendChild(label);
+      });
+    }
+    if (elements.searchOptionSummary) {
+      var selectedCount = getFilterSelectionList(columnKey).length;
+      elements.searchOptionSummary.textContent = selectedCount
+        ? 'Выбрано значений: ' + selectedCount + '. Показано: ' + options.length
+        : 'Показано значений: ' + options.length;
+    }
+  }
+
   function openSearchPopover(columnKey, button) {
     if (!columnKey || !button) {
       return;
@@ -3450,6 +4426,7 @@
         ? definition.searchHint
         : 'Введите запрос';
       elements.searchInput.value = state.filters[columnKey] || '';
+      renderSearchPopoverOptions(columnKey, '');
       window.setTimeout(function() {
         if (elements.searchInput) {
           elements.searchInput.focus({ preventScroll: true });
@@ -3480,6 +4457,619 @@
     updateSearchButtonStates();
   }
 
+  function isColumnsPopoverVisible() {
+    return !!(elements.columnsPopover && elements.columnsPopover.classList.contains('documents-columns-menu--visible'));
+  }
+
+  function ensureColumnsPopover(container) {
+    ensureSearchStyles();
+    if (elements.columnsPopover || !container) {
+      return;
+    }
+    var popover = createElement('div', 'documents-columns-menu');
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-modal', 'false');
+    popover.setAttribute('aria-hidden', 'true');
+    container.appendChild(popover);
+    elements.columnsPopover = popover;
+  }
+
+  function positionColumnsPopover(anchor) {
+    if (!elements.columnsPopover || !anchor) {
+      return;
+    }
+    var rect = anchor.getBoundingClientRect();
+    var popover = elements.columnsPopover;
+    var width = popover.offsetWidth || 300;
+    var height = popover.offsetHeight || 420;
+    var top = rect.bottom + 8;
+    var left = rect.right - width;
+    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || width;
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || height;
+    if (left + width > viewportWidth - 12) {
+      left = viewportWidth - width - 12;
+    }
+    if (left < 12) {
+      left = 12;
+    }
+    if (top + height > viewportHeight - 12) {
+      top = rect.top - height - 8;
+    }
+    if (top < 12) {
+      top = 12;
+    }
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+  }
+
+  function isColumnVisible(columnKey) {
+    var config = state.visualSettings && state.visualSettings.columns
+      ? state.visualSettings.columns[columnKey]
+      : null;
+    return !config || config.visible !== false;
+  }
+
+  function renderColumnsMenu() {
+    if (!elements.columnsPopover) {
+      return;
+    }
+    var visibleCount = TABLE_COLUMNS.reduce(function(count, column) {
+      return count + (isColumnVisible(column.key) ? 1 : 0);
+    }, 0);
+    elements.columnsPopover.innerHTML = '';
+    elements.columnsPopover.appendChild(createElement('div', 'documents-columns-menu__title', 'Скрыть столбцы'));
+    var list = createElement('div', 'documents-columns-menu__list');
+    TABLE_COLUMNS.forEach(function(column) {
+      var item = createElement('label', 'documents-columns-menu__item');
+      var checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = isColumnVisible(column.key);
+      checkbox.disabled = checkbox.checked && visibleCount <= 1;
+      checkbox.addEventListener('change', function() {
+        if (!checkbox.checked && visibleCount <= 1) {
+          checkbox.checked = true;
+          return;
+        }
+        setColumnVisibility(column.key, checkbox.checked);
+        renderColumnsMenu();
+      });
+      item.appendChild(checkbox);
+      item.appendChild(createElement('span', '', column.label));
+      list.appendChild(item);
+    });
+    elements.columnsPopover.appendChild(list);
+  }
+
+  function openColumnsPopover(anchor) {
+    ensureColumnsPopover(document.body);
+    bindSearchEvents();
+    renderColumnsMenu();
+    if (elements.columnsPopover) {
+      elements.columnsPopover.classList.add('documents-columns-menu--visible');
+      elements.columnsPopover.setAttribute('aria-hidden', 'false');
+      positionColumnsPopover(anchor);
+    }
+  }
+
+  function closeColumnsPopover() {
+    if (!elements.columnsPopover) {
+      return;
+    }
+    elements.columnsPopover.classList.remove('documents-columns-menu--visible');
+    elements.columnsPopover.setAttribute('aria-hidden', 'true');
+  }
+
+  function toggleColumnsPopover(anchor) {
+    if (isColumnsPopoverVisible()) {
+      closeColumnsPopover();
+      return;
+    }
+    closeToolbarMenu();
+    openColumnsPopover(anchor);
+  }
+
+  function createToolbarButton(iconName, label, options) {
+    var config = options && typeof options === 'object' ? options : {};
+    var button = createElement('button', config.menu ? 'documents-table-tool documents-table-tool--menu' : 'documents-table-tool');
+    button.type = 'button';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    if (config.pressed) {
+      button.setAttribute('aria-pressed', 'false');
+    }
+    button.appendChild(createSvgIcon(iconName, 'documents-table-tool__icon'));
+    button.appendChild(createElement('span', 'documents-table-tool__label', label));
+    var badge = createElement('span', 'documents-table-tool__badge', '');
+    badge.hidden = true;
+    button.appendChild(badge);
+    if (config.menu) {
+      button.setAttribute('aria-haspopup', 'menu');
+      button.setAttribute('aria-expanded', 'false');
+      button.appendChild(createSvgIcon('chevron-down', 'documents-table-tool__chevron'));
+    }
+    return button;
+  }
+
+  function setToolbarButtonBadge(button, text) {
+    if (!button || typeof button.querySelector !== 'function') {
+      return;
+    }
+    var badge = button.querySelector('.documents-table-tool__badge');
+    if (!badge) {
+      return;
+    }
+    var value = text ? String(text) : '';
+    badge.textContent = value;
+    badge.hidden = value === '';
+  }
+
+  function isToolbarMenuVisible() {
+    return !!(elements.toolbarMenu && elements.toolbarMenu.classList.contains('documents-toolbar-menu--visible'));
+  }
+
+  function ensureToolbarMenu(container) {
+    ensureSearchStyles();
+    if (elements.toolbarMenu || !container) {
+      return;
+    }
+    var menu = createElement('div', 'documents-toolbar-menu');
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-hidden', 'true');
+    container.appendChild(menu);
+    elements.toolbarMenu = menu;
+  }
+
+  function positionToolbarMenu(anchor) {
+    if (!elements.toolbarMenu || !anchor) {
+      return;
+    }
+    var rect = anchor.getBoundingClientRect();
+    var menu = elements.toolbarMenu;
+    var width = menu.offsetWidth || 280;
+    var height = menu.offsetHeight || 220;
+    var top = rect.bottom + 8;
+    var left = rect.right - width;
+    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || width;
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || height;
+    if (left + width > viewportWidth - 12) {
+      left = viewportWidth - width - 12;
+    }
+    if (left < 12) {
+      left = 12;
+    }
+    if (top + height > viewportHeight - 12) {
+      top = rect.top - height - 8;
+    }
+    if (top < 12) {
+      top = 12;
+    }
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+  }
+
+  function closeToolbarMenu() {
+    if (!elements.toolbarMenu) {
+      return;
+    }
+    elements.toolbarMenu.classList.remove('documents-toolbar-menu--visible');
+    elements.toolbarMenu.setAttribute('aria-hidden', 'true');
+    elements.toolbarMenu.dataset.anchor = '';
+    [elements.groupButton, elements.viewButton, elements.resetButton].forEach(function(button) {
+      if (button) {
+        button.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
+  function openToolbarMenu(anchor, render) {
+    ensureToolbarMenu(document.body);
+    bindSearchEvents();
+    closeColumnsPopover();
+    closeSearchPopover();
+    if (!elements.toolbarMenu || !anchor) {
+      return;
+    }
+    elements.toolbarMenu.innerHTML = '';
+    if (typeof render === 'function') {
+      render(elements.toolbarMenu);
+    }
+    elements.toolbarMenu.classList.add('documents-toolbar-menu--visible');
+    elements.toolbarMenu.setAttribute('aria-hidden', 'false');
+    elements.toolbarMenu.dataset.anchor = anchor.dataset.toolbarMenuAnchor || '';
+    anchor.setAttribute('aria-expanded', 'true');
+    positionToolbarMenu(anchor);
+  }
+
+  function appendToolbarMenuButton(menu, label, handler, options) {
+    if (!menu) {
+      return null;
+    }
+    var config = options && typeof options === 'object' ? options : {};
+    var button = createElement('button', 'documents-toolbar-menu__item');
+    button.type = 'button';
+    button.setAttribute('role', 'menuitem');
+    button.textContent = label;
+    if (config.active) {
+      button.classList.add('is-active');
+      button.setAttribute('aria-current', 'true');
+    }
+    if (config.disabled) {
+      button.disabled = true;
+      button.setAttribute('aria-disabled', 'true');
+    } else {
+      button.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeToolbarMenu();
+        if (typeof handler === 'function') {
+          handler();
+        }
+      });
+    }
+    menu.appendChild(button);
+    return button;
+  }
+
+  function hasActiveColumnFilter(columnKey) {
+    return Boolean((state.filters && state.filters[columnKey] && String(state.filters[columnKey]).trim()) || hasFilterSelection(columnKey));
+  }
+
+  function getActiveColumnFilterCount() {
+    return getActiveFilterKeysInOrder().length;
+  }
+
+  function getHiddenColumnCount() {
+    return TABLE_COLUMNS.reduce(function(count, column) {
+      return count + (isColumnVisible(column.key) ? 0 : 1);
+    }, 0);
+  }
+
+  function hasColumnWidthsChangedFromDefaults() {
+    var current = buildColumnWidthMap(state.columnWidthOverrides || state.columnWidths || null);
+    for (var i = 0; i < TABLE_COLUMNS.length; i += 1) {
+      var key = TABLE_COLUMNS[i].key;
+      if (current[key] !== getColumnDefaultWidth(key)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function hasActiveSorting() {
+    var sorting = state.visualSettings && state.visualSettings.sorting
+      ? normalizeSortingSettings(state.visualSettings.sorting)
+      : buildDefaultSortingSettings();
+    return sorting.enabled && sorting.rules.length > 0;
+  }
+
+  function hasViewSettingsChanged() {
+    return getHiddenColumnCount() > 0
+      || !columnOrdersEqual(state.columnOrder, getDefaultColumnOrder())
+      || hasColumnWidthsChangedFromDefaults()
+      || normalizeTableDensity(state.tableDensity) !== 'normal'
+      || normalizeTablePageSize(state.tablePageSize) !== 25;
+  }
+
+  function hasActiveTableParameters() {
+    return hasActiveDocumentTab()
+      || hasActiveFilters()
+      || state.showUnassignedOnly
+      || state.showUnviewedOnly
+      || hasActiveSorting()
+      || Boolean(normalizeGroupingColumn(state.groupingColumn))
+      || getHiddenColumnCount() > 0
+      || state.columnMoveMode === true;
+  }
+
+  function updateHeaderToolModes() {
+    var workspace = getWorkspaceElement();
+    if (workspace) {
+      workspace.classList.toggle('documents-workspace--filter-mode', state.headerFilterMode === true);
+      workspace.classList.toggle('documents-workspace--sort-mode', state.headerSortMode === true);
+      workspace.classList.toggle('documents-workspace--move-mode', state.columnMoveMode === true);
+      workspace.classList.toggle('documents-workspace--density-compact', state.tableDensity === 'compact');
+      workspace.classList.toggle('documents-workspace--density-normal', state.tableDensity !== 'compact');
+    }
+
+    var hasColumnFilters = false;
+    TABLE_COLUMNS.forEach(function(column) {
+      var key = column.key;
+      var isCurrent = state.activeSearchColumn === key && isPopoverVisible();
+      var filterActive = hasActiveColumnFilter(key);
+      hasColumnFilters = hasColumnFilters || filterActive;
+      var filterButton = elements.filterButtons && elements.filterButtons[key];
+      if (filterButton) {
+        filterButton.classList.toggle('is-active', isCurrent || filterActive);
+        filterButton.setAttribute('aria-pressed', filterActive ? 'true' : 'false');
+      }
+      var sortIndicator = elements.sortIndicators && elements.sortIndicators[key];
+      var sortRule = getActiveSortRule(key);
+      if (sortIndicator) {
+        sortIndicator.classList.toggle('is-active', Boolean(sortRule));
+      }
+      var headerCell = elements.headerCells && elements.headerCells[key];
+      if (headerCell && isSortableTableColumn(key)) {
+        if (sortRule) {
+          var direction = normalizeSortDirection(sortRule.direction);
+          headerCell.title = 'Сортировка: ' + (direction === 'desc' ? 'по убыванию' : 'по возрастанию')
+            + (state.headerSortMode ? '. Клик изменит режим.' : '. Включите режим «Сортировка», чтобы изменить.');
+        } else {
+          headerCell.title = state.headerSortMode
+            ? 'Сортировка: сброшена. Клик включит сортировку по возрастанию.'
+            : 'Включите режим «Сортировка», чтобы сортировать по этому столбцу.';
+        }
+      }
+    });
+
+    if (elements.filterModeButton) {
+      elements.filterModeButton.classList.toggle('is-active', state.headerFilterMode === true || hasColumnFilters);
+      elements.filterModeButton.setAttribute('aria-pressed', state.headerFilterMode === true ? 'true' : 'false');
+      setToolbarButtonBadge(elements.filterModeButton, hasColumnFilters ? String(getActiveColumnFilterCount()) : '');
+    }
+    if (elements.sortModeButton) {
+      var sorting = state.visualSettings && state.visualSettings.sorting
+        ? normalizeSortingSettings(state.visualSettings.sorting)
+        : buildDefaultSortingSettings();
+      elements.sortModeButton.classList.toggle('is-active', state.headerSortMode === true || sorting.enabled);
+      elements.sortModeButton.setAttribute('aria-pressed', state.headerSortMode === true ? 'true' : 'false');
+      setToolbarButtonBadge(elements.sortModeButton, sorting.enabled ? String(sorting.rules.length) : '');
+    }
+    if (elements.moveModeButton) {
+      elements.moveModeButton.classList.toggle('is-active', state.columnMoveMode === true);
+      elements.moveModeButton.setAttribute('aria-pressed', state.columnMoveMode === true ? 'true' : 'false');
+    }
+    if (elements.viewButton) {
+      elements.viewButton.classList.toggle('is-active', state.tableDensity === 'compact' || normalizeTablePageSize(state.tablePageSize) !== 25);
+      setToolbarButtonBadge(elements.viewButton, normalizeTablePageSize(state.tablePageSize) === 'all' ? 'Все' : '');
+    }
+    if (elements.groupButton) {
+      var groupingColumn = normalizeGroupingColumn(state.groupingColumn);
+      elements.groupButton.classList.toggle('is-active', Boolean(groupingColumn));
+      setToolbarButtonBadge(elements.groupButton, groupingColumn ? getGroupingLabel(groupingColumn) : '');
+    }
+    if (elements.columnsButton) {
+      var hiddenCount = getHiddenColumnCount();
+      elements.columnsButton.classList.toggle('is-active', hiddenCount > 0);
+      setToolbarButtonBadge(elements.columnsButton, hiddenCount > 0 ? String(hiddenCount) : '');
+    }
+    if (elements.resetButton) {
+      elements.resetButton.classList.toggle('is-active', hasActiveTableParameters() || hasViewSettingsChanged());
+    }
+  }
+
+  function toggleHeaderFilterMode() {
+    state.headerFilterMode = !state.headerFilterMode;
+    updateHeaderToolModes();
+    showMessage('info', state.headerFilterMode ? 'Иконки фильтров показаны.' : 'Неактивные иконки фильтров скрыты.', MESSAGE_INFO_DURATION_MS);
+  }
+
+  function toggleHeaderSortMode() {
+    state.headerSortMode = !state.headerSortMode;
+    updateHeaderToolModes();
+    showMessage('info', state.headerSortMode ? 'Сортировка по заголовкам включена.' : 'Сортировка по заголовкам выключена.', MESSAGE_INFO_DURATION_MS);
+  }
+
+  function toggleColumnMoveMode() {
+    state.columnMoveMode = !state.columnMoveMode;
+    updateHeaderToolModes();
+    updateFilterBar();
+    showMessage('info', state.columnMoveMode ? 'Перемещение включено. Перетащите ручку в заголовке.' : 'Перемещение выключено.', MESSAGE_INFO_DURATION_MS);
+  }
+
+  function normalizeTableDensity(value) {
+    return String(value || '').toLowerCase() === 'compact' ? 'compact' : 'normal';
+  }
+
+  function applyTableDensity() {
+    state.tableDensity = normalizeTableDensity(state.tableDensity);
+    state.virtualTable.rowHeight = 0;
+    updateHeaderToolModes();
+    handleTableResize();
+  }
+
+  function setTableDensity(value) {
+    var nextDensity = normalizeTableDensity(value);
+    if (state.tableDensity === nextDensity) {
+      return;
+    }
+    state.tableDensity = nextDensity;
+    applyTableDensity();
+    scheduleTablePreferencesSave();
+    showMessage('info', nextDensity === 'compact' ? 'Вид: компактный.' : 'Вид: обычный.', MESSAGE_INFO_DURATION_MS);
+  }
+
+  function persistColumnWidthMap(widthMap, message) {
+    var normalized = buildColumnWidthMap(widthMap);
+    state.columnWidthOverrides = normalized;
+    var nextVisual = cloneVisualSettings(state.visualSettings);
+    TABLE_COLUMNS.forEach(function(column) {
+      if (!nextVisual.columns[column.key]) {
+        nextVisual.columns[column.key] = {
+          width: getColumnDefaultWidth(column.key),
+          fontSize: nextVisual.fontSize,
+          visible: true
+        };
+      }
+      nextVisual.columns[column.key].width = normalized[column.key];
+    });
+    state.visualSettings = nextVisual;
+    applyColumnWidths(normalized);
+    if (state.organization) {
+      saveColumnWidths(normalized).catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось сохранить ширины столбцов:', error);
+        }
+      });
+    }
+    scheduleTablePreferencesSave();
+    if (message) {
+      showMessage('success', message);
+    }
+  }
+
+  function normalizeGroupingColumn(columnKey) {
+    var key = String(columnKey || '');
+    if (!key) {
+      return '';
+    }
+    if (key === 'department') {
+      return 'department';
+    }
+    if (!Object.prototype.hasOwnProperty.call(TABLE_COLUMN_MAP, key)) {
+      return '';
+    }
+    if (key === 'actions' || key === 'summary' || key === 'resolution' || key === 'instruction') {
+      return '';
+    }
+    return key;
+  }
+
+  function getGroupingLabel(columnKey) {
+    var key = normalizeGroupingColumn(columnKey);
+    if (key === 'department') {
+      return 'Отдел';
+    }
+    var column = key ? getColumnDefinition(key) : null;
+    return column && column.label ? column.label : key;
+  }
+
+  function collectDocumentDepartments(doc) {
+    var departments = [];
+    var seen = Object.create(null);
+
+    function addDepartment(value) {
+      var text = value === undefined || value === null ? '' : String(value).trim();
+      if (!text) {
+        return;
+      }
+      var lookup = text.toLowerCase();
+      if (seen[lookup]) {
+        return;
+      }
+      seen[lookup] = true;
+      departments.push(text);
+    }
+
+    var directorEntry = resolveDirectorEntry(doc);
+    if (directorEntry && typeof directorEntry === 'object') {
+      addDepartment(directorEntry.department);
+    }
+
+    resolveAssigneeList(doc).forEach(function(entry) {
+      if (entry && typeof entry === 'object') {
+        addDepartment(entry.department);
+      }
+    });
+
+    return departments;
+  }
+
+  function getGroupingValue(entry, columnKey) {
+    var key = normalizeGroupingColumn(columnKey);
+    var doc = entry && entry.doc ? entry.doc : null;
+    var values = entry && entry.values ? entry.values : {};
+    if (!key) {
+      return '';
+    }
+    if (key === 'assignee') {
+      var assignees = resolveAssigneeList(doc).filter(function(item) {
+        return !isSubordinateSnapshot(item);
+      }).map(buildAssigneeDisplayName).filter(Boolean);
+      return assignees.length ? assignees.join(', ') : 'Не назначен';
+    }
+    if (key === 'subordinates') {
+      var subordinates = resolveSubordinateList(doc).map(buildAssigneeDisplayName).filter(Boolean);
+      return subordinates.length ? subordinates.join(', ') : 'Не назначены';
+    }
+    if (key === 'department') {
+      var departments = collectDocumentDepartments(doc);
+      return departments.length ? departments.join(', ') : 'Без отдела';
+    }
+    if (key === 'files') {
+      return values.__hasFiles === true ? 'Есть файлы' : 'Без файлов';
+    }
+    if (key === 'status') {
+      if (values.__overdue === true) {
+        return 'Просрочено';
+      }
+      return values.status ? String(values.status) : 'Без статуса';
+    }
+    var value = values[key];
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return 'Без значения';
+    }
+    return String(value).trim();
+  }
+
+  function setTableGrouping(columnKey) {
+    var nextColumn = normalizeGroupingColumn(columnKey);
+    if (state.groupingColumn === nextColumn) {
+      return;
+    }
+    state.groupingColumn = nextColumn;
+    resetTablePage();
+    updateHeaderToolModes();
+    updateFilterBar();
+    scheduleTablePreferencesSave();
+    updateTable();
+    showMessage('info', nextColumn ? ('Группировка: ' + getGroupingLabel(nextColumn)) : 'Группировка выключена.', MESSAGE_INFO_DURATION_MS);
+  }
+
+  function openGroupingMenu(anchor) {
+    openToolbarMenu(anchor, function(menu) {
+      var current = normalizeGroupingColumn(state.groupingColumn);
+      appendToolbarMenuButton(menu, 'Без группировки', function() {
+        setTableGrouping('');
+      }, { active: !current });
+      menu.appendChild(createElement('div', 'documents-toolbar-menu__note', 'Группировать по'));
+      [
+        { key: 'status', label: 'Статусу' },
+        { key: 'direction', label: 'Типу' },
+        { key: 'department', label: 'Отделу' },
+        { key: 'assignee', label: 'Ответственному' },
+        { key: 'subordinates', label: 'Подчинённым' },
+        { key: 'director', label: 'Директору' },
+        { key: 'dueDate', label: 'Сроку' },
+        { key: 'registrationDate', label: 'Дате регистрации' },
+        { key: 'files', label: 'Файлам' }
+      ].forEach(function(item) {
+        appendToolbarMenuButton(menu, item.label, function() {
+          setTableGrouping(item.key);
+        }, { active: current === item.key });
+      });
+    });
+  }
+
+  function openViewMenu(anchor) {
+    openToolbarMenu(anchor, function(menu) {
+      menu.appendChild(createElement('div', 'documents-toolbar-menu__note', 'Плотность'));
+      appendToolbarMenuButton(menu, 'Компактный', function() {
+        setTableDensity('compact');
+      }, { active: state.tableDensity === 'compact' });
+      appendToolbarMenuButton(menu, 'Обычный', function() {
+        setTableDensity('normal');
+      }, { active: state.tableDensity !== 'compact' });
+      menu.appendChild(createElement('div', 'documents-toolbar-menu__note', 'Записей на странице'));
+      [25, 50, 100, 'all'].forEach(function(size) {
+        appendToolbarMenuButton(menu, getPageSizeLabel(size), function() {
+          setTablePageSize(size);
+        }, { active: normalizeTablePageSize(state.tablePageSize) === normalizeTablePageSize(size) });
+      });
+    });
+  }
+
+  function openResetMenu(anchor) {
+    openToolbarMenu(anchor, function(menu) {
+      appendToolbarMenuButton(menu, 'Сбросить фильтры и параметры', function() {
+        resetWorkingTableParameters();
+      }, { active: hasWorkingTableParameters() });
+      menu.appendChild(createElement('div', 'documents-toolbar-menu__note', 'Вид таблицы'));
+      appendToolbarMenuButton(menu, 'Сбросить вид таблицы', function() {
+        resetTableViewSettings();
+      }, { active: hasViewSettingsChanged() });
+    });
+  }
+
   function handleDocumentClick(event) {
     if (activeRowActionsMenu) {
       var clickTarget = event && event.target;
@@ -3488,6 +5078,32 @@
         : false;
       if (!keepOpen) {
         closeActiveRowActionsMenu();
+      }
+    }
+    if (isColumnsPopoverVisible()) {
+      var columnsTarget = event && event.target;
+      var keepColumnsOpen = elements.columnsPopover && columnsTarget instanceof Node
+        ? elements.columnsPopover.contains(columnsTarget)
+        : false;
+      if (!keepColumnsOpen && elements.columnsButton && columnsTarget instanceof Node) {
+        keepColumnsOpen = elements.columnsButton.contains(columnsTarget);
+      }
+      if (!keepColumnsOpen) {
+        closeColumnsPopover();
+      }
+    }
+    if (isToolbarMenuVisible()) {
+      var toolbarTarget = event && event.target;
+      var keepToolbarOpen = elements.toolbarMenu && toolbarTarget instanceof Node
+        ? elements.toolbarMenu.contains(toolbarTarget)
+        : false;
+      if (!keepToolbarOpen && toolbarTarget instanceof Node) {
+        keepToolbarOpen = [elements.groupButton, elements.viewButton, elements.resetButton].some(function(button) {
+          return button && button.contains(toolbarTarget);
+        });
+      }
+      if (!keepToolbarOpen) {
+        closeToolbarMenu();
       }
     }
     if (!isPopoverVisible()) {
@@ -3503,10 +5119,19 @@
   }
 
   function handleWindowPositionChange() {
-    if (!isPopoverVisible() || !state.activeSearchButton) {
-      return;
+    if (isPopoverVisible() && state.activeSearchButton) {
+      positionSearchPopover(state.activeSearchButton);
     }
-    positionSearchPopover(state.activeSearchButton);
+    if (isColumnsPopoverVisible() && elements.columnsButton) {
+      positionColumnsPopover(elements.columnsButton);
+    }
+    if (isToolbarMenuVisible()) {
+      var anchorKey = elements.toolbarMenu ? elements.toolbarMenu.dataset.anchor : '';
+      var anchor = anchorKey && elements[anchorKey] ? elements[anchorKey] : null;
+      if (anchor) {
+        positionToolbarMenu(anchor);
+      }
+    }
   }
 
   function applyPopoverFilter() {
@@ -3520,6 +5145,7 @@
     }
     var value = elements.searchInput ? elements.searchInput.value : '';
     applyFilter(columnKey, value);
+    applyFilterSelection(columnKey, getSearchPopoverSelectedValues());
     closeSearchPopover();
   }
 
@@ -3529,7 +5155,7 @@
     }
     var columnKey = elements.searchPopover.dataset.columnKey || state.activeSearchColumn;
     if (columnKey) {
-      applyFilter(columnKey, '');
+      clearColumnFilter(columnKey);
     }
     closeSearchPopover();
   }
@@ -3581,10 +5207,230 @@
     return true;
   }
 
+  function resetTablePage() {
+    state.tablePage = 1;
+    if (elements.tableScroll) {
+      elements.tableScroll.scrollTop = 0;
+    }
+  }
+
+  function getDocumentSelectionId(doc) {
+    if (!doc || typeof doc !== 'object') {
+      return '';
+    }
+    if (doc.id !== undefined && doc.id !== null && String(doc.id).trim() !== '') {
+      return String(doc.id);
+    }
+    return '';
+  }
+
+  function setDocumentSelected(docId, selected) {
+    var id = docId ? String(docId) : '';
+    if (!id) {
+      return;
+    }
+    if (selected) {
+      state.selectedDocumentIds[id] = true;
+    } else if (Object.prototype.hasOwnProperty.call(state.selectedDocumentIds, id)) {
+      delete state.selectedDocumentIds[id];
+    }
+  }
+
+  function isDocumentSelected(docId) {
+    var id = docId ? String(docId) : '';
+    return Boolean(id && state.selectedDocumentIds && state.selectedDocumentIds[id]);
+  }
+
+  function setCurrentPageSelection(selected) {
+    var ids = Array.isArray(state.currentPageDocumentIds) ? state.currentPageDocumentIds : [];
+    for (var i = 0; i < ids.length; i += 1) {
+      setDocumentSelected(ids[i], selected);
+    }
+    syncRenderedRowSelectionStates();
+    updateSelectionControls();
+  }
+
+  function syncRenderedRowSelectionStates() {
+    if (!elements.tableBody || typeof elements.tableBody.querySelectorAll !== 'function') {
+      return;
+    }
+    var checkboxes = elements.tableBody.querySelectorAll('.documents-row .documents-row-select__checkbox');
+    for (var i = 0; i < checkboxes.length; i += 1) {
+      var checkbox = checkboxes[i];
+      var row = checkbox && typeof checkbox.closest === 'function' ? checkbox.closest('.documents-row') : null;
+      var docId = row && row.dataset ? row.dataset.docId || '' : '';
+      var checked = isDocumentSelected(docId);
+      checkbox.checked = checked;
+      if (checked) {
+        checkbox.setAttribute('checked', 'checked');
+      } else {
+        checkbox.removeAttribute('checked');
+      }
+    }
+  }
+
+  function updateSelectionControls() {
+    if (!elements.selectAllCheckbox) {
+      return;
+    }
+    var ids = Array.isArray(state.currentPageDocumentIds) ? state.currentPageDocumentIds : [];
+    var selectedCount = 0;
+    for (var i = 0; i < ids.length; i += 1) {
+      if (isDocumentSelected(ids[i])) {
+        selectedCount += 1;
+      }
+    }
+    elements.selectAllCheckbox.checked = ids.length > 0 && selectedCount === ids.length;
+    elements.selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < ids.length;
+    elements.selectAllCheckbox.disabled = ids.length === 0;
+    elements.selectAllCheckbox.setAttribute('aria-label', ids.length
+      ? 'Выбрать строки на текущей странице'
+      : 'На текущей странице нет строк для выбора');
+  }
+
+  function filterMatchesSpecialValue(values, columnKey, query) {
+    if (!values || !columnKey || !query) {
+      return null;
+    }
+    if (columnKey === 'files') {
+      if (query === 'has') {
+        return values.__hasFiles === true;
+      }
+      if (query === 'none') {
+        return values.__hasFiles !== true;
+      }
+    }
+    if (columnKey === 'status' && query === '__overdue__') {
+      return values.__overdue === true;
+    }
+    return null;
+  }
+
+  function getColumnFilterOptionValues(values, columnKey) {
+    if (!values || !columnKey) {
+      return [];
+    }
+    if (columnKey === 'files') {
+      return [values.__hasFiles === true ? 'Есть файлы' : 'Без файлов'];
+    }
+    if (columnKey === 'status') {
+      var statusValues = [];
+      if (values.__overdue === true) {
+        statusValues.push('Просрочено');
+      }
+      if (values.status) {
+        statusValues.push(String(values.status));
+      } else {
+        statusValues.push('—');
+      }
+      return statusValues;
+    }
+    var value = values[columnKey];
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return ['—'];
+    }
+    return [String(value).trim()];
+  }
+
+  function filterSelectionMatchesValue(values, columnKey, selectedValues) {
+    if (!Array.isArray(selectedValues) || !selectedValues.length) {
+      return true;
+    }
+    var selectedLookup = Object.create(null);
+    for (var i = 0; i < selectedValues.length; i += 1) {
+      var normalizedSelection = normalizeValueForMatch(selectedValues[i]);
+      if (normalizedSelection) {
+        selectedLookup[normalizedSelection] = true;
+      }
+    }
+    var candidates = getColumnFilterOptionValues(values, columnKey);
+    for (var j = 0; j < candidates.length; j += 1) {
+      var normalizedCandidate = normalizeValueForMatch(candidates[j]);
+      if (normalizedCandidate && selectedLookup[normalizedCandidate]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function getFilterSelectionList(columnKey) {
+    if (!columnKey || !state.filterSelections || !Array.isArray(state.filterSelections[columnKey])) {
+      return [];
+    }
+    return state.filterSelections[columnKey].filter(function(value) {
+      return normalizeTextInputValue(value) !== '';
+    });
+  }
+
+  function hasFilterSelection(columnKey) {
+    return getFilterSelectionList(columnKey).length > 0;
+  }
+
+  function getActiveFilterKeysInOrder() {
+    var keys = [];
+    var seen = Object.create(null);
+    function addKey(key) {
+      if (!key || seen[key]) {
+        return;
+      }
+      if ((state.filters && state.filters[key]) || hasFilterSelection(key)) {
+        seen[key] = true;
+        keys.push(key);
+      }
+    }
+    (Array.isArray(state.filterOrder) ? state.filterOrder : []).forEach(addKey);
+    TABLE_COLUMNS.forEach(function(column) {
+      addKey(column.key);
+    });
+    return keys;
+  }
+
+  function getColumnFilterSummaryText(columnKey) {
+    var parts = [];
+    if (state.filters && state.filters[columnKey]) {
+      parts.push(String(state.filters[columnKey]));
+    }
+    var selected = getFilterSelectionList(columnKey);
+    if (selected.length) {
+      parts.push(selected.length <= 2 ? selected.join(', ') : ('выбрано: ' + selected.length));
+    }
+    return parts.join('; ');
+  }
+
+  function matchesGlobalSearch(values) {
+    var query = normalizeValueForMatch(state.globalSearchQuery);
+    if (!query) {
+      return true;
+    }
+    if (!values || typeof values !== 'object') {
+      return false;
+    }
+    var parts = query.split(' ');
+    var haystackParts = [];
+    TABLE_COLUMNS.forEach(function(column) {
+      if (!column || !column.key) {
+        return;
+      }
+      var value = values[column.key];
+      if (value !== undefined && value !== null) {
+        haystackParts.push(String(value));
+      }
+    });
+    var haystack = normalizeValueForMatch(haystackParts.join(' '));
+    for (var i = 0; i < parts.length; i += 1) {
+      if (parts[i] && haystack.indexOf(parts[i]) === -1) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   function computeFilterValues(doc, originalIndex) {
     var values = {
       entryNumber: '',
       registryNumber: '',
+      actions: '',
+      files: '',
       registrationDate: '',
       direction: '',
       correspondent: '',
@@ -3625,6 +5471,21 @@
     values.dueDate = dueFormatted === '—' ? '' : dueFormatted;
     values.status = resolveCurrentUserStatus(doc) || (doc.status ? String(doc.status) : '');
     values.instruction = doc.instruction ? String(doc.instruction) : '';
+    var attachments = Array.isArray(doc.files) ? doc.files : [];
+    if (attachments.length) {
+      var fileTokens = ['has', 'Файлы', 'Есть файлы', 'Файлы (' + attachments.length + ')'];
+      attachments.forEach(function(file) {
+        var fileName = getAttachmentName(file);
+        if (fileName) {
+          fileTokens.push(fileName);
+        }
+      });
+      values.files = fileTokens.join(' ');
+      values.__hasFiles = true;
+    } else {
+      values.files = 'none Без файлов';
+      values.__hasFiles = false;
+    }
 
     var instructionAssignments = buildInstructionAssignments(doc);
     if (instructionAssignments.length) {
@@ -3784,11 +5645,12 @@
     values.__unviewedResponsibleCount = viewState.unviewedResponsibles.length;
     values.__unviewedSubordinateCount = viewState.unviewedSubordinates.length;
     values.__hasUnviewed = isDocumentUnviewed(viewState);
+    values.__overdue = isDocumentOverdueForTab(doc);
 
     return values;
   }
 
-  function matchesDocumentFilters(values) {
+  function matchesDocumentFilters(values, excludedColumnKey) {
     if (!values) {
       return false;
     }
@@ -3796,13 +5658,39 @@
       if (!Object.prototype.hasOwnProperty.call(state.filters, key)) {
         continue;
       }
+      if (excludedColumnKey && key === excludedColumnKey) {
+        continue;
+      }
       var query = state.filters[key];
       if (!query) {
+        continue;
+      }
+      var specialMatch = filterMatchesSpecialValue(values, key, query);
+      if (specialMatch === false) {
+        return false;
+      }
+      if (specialMatch === true) {
         continue;
       }
       if (!valueMatchesQuery(values[key], query)) {
         return false;
       }
+    }
+    if (state.filterSelections && typeof state.filterSelections === 'object') {
+      for (var selectedKey in state.filterSelections) {
+        if (!Object.prototype.hasOwnProperty.call(state.filterSelections, selectedKey)) {
+          continue;
+        }
+        if (excludedColumnKey && selectedKey === excludedColumnKey) {
+          continue;
+        }
+        if (!filterSelectionMatchesValue(values, selectedKey, getFilterSelectionList(selectedKey))) {
+          return false;
+        }
+      }
+    }
+    if (!matchesGlobalSearch(values)) {
+      return false;
     }
     if (state.showUnassignedOnly && values.__hasAssignee) {
       return false;
@@ -3814,12 +5702,25 @@
   }
 
   function hasActiveFilters() {
+    if (state.globalSearchQuery && String(state.globalSearchQuery).trim()) {
+      return true;
+    }
     for (var key in state.filters) {
       if (!Object.prototype.hasOwnProperty.call(state.filters, key)) {
         continue;
       }
       if (String(state.filters[key]).trim()) {
         return true;
+      }
+    }
+    if (state.filterSelections && typeof state.filterSelections === 'object') {
+      for (var selectedKey in state.filterSelections) {
+        if (!Object.prototype.hasOwnProperty.call(state.filterSelections, selectedKey)) {
+          continue;
+        }
+        if (getFilterSelectionList(selectedKey).length) {
+          return true;
+        }
       }
     }
     if (state.showUnviewedOnly) {
@@ -3832,10 +5733,765 @@
     return TABLE_COLUMN_MAP[columnKey] || null;
   }
 
+  function getBuiltInDocumentTabs() {
+    return [
+      { id: 'all', label: 'Все' },
+      { id: 'overdue', label: 'Просроченные' },
+      { id: 'completed', label: 'Выполненные' },
+      { id: 'withoutStatus', label: 'Без статусов' }
+    ];
+  }
+
+  function isBuiltInDocumentTabId(tabId) {
+    var id = String(tabId || '');
+    var tabs = getBuiltInDocumentTabs();
+    for (var i = 0; i < tabs.length; i += 1) {
+      if (tabs[i].id === id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function normalizeDocumentTabName(value) {
+    var text = normalizeTextInputValue(value);
+    if (!text) {
+      return '';
+    }
+    return text.length > 48 ? text.slice(0, 48).trim() : text;
+  }
+
+  function normalizeDocumentTabBaseId(tabId) {
+    var id = String(tabId || '');
+    return isBuiltInDocumentTabId(id) ? id : 'all';
+  }
+
+  function cloneFilterMap(filters) {
+    var result = {};
+    if (!filters || typeof filters !== 'object') {
+      return result;
+    }
+    TABLE_COLUMNS.forEach(function(column) {
+      if (!column || !column.key || !Object.prototype.hasOwnProperty.call(filters, column.key)) {
+        return;
+      }
+      var value = normalizeTextInputValue(filters[column.key]);
+      if (value) {
+        result[column.key] = value.length > 180 ? value.slice(0, 180).trim() : value;
+      }
+    });
+    return result;
+  }
+
+  function normalizeFilterOrder(filters, order) {
+    var result = [];
+    var seen = Object.create(null);
+    var sourceOrder = Array.isArray(order) ? order : [];
+
+    function addKey(key) {
+      var normalizedKey = String(key || '');
+      if (!normalizedKey || seen[normalizedKey] || !Object.prototype.hasOwnProperty.call(filters, normalizedKey)) {
+        return;
+      }
+      seen[normalizedKey] = true;
+      result.push(normalizedKey);
+    }
+
+    sourceOrder.forEach(addKey);
+    TABLE_COLUMNS.forEach(function(column) {
+      addKey(column.key);
+    });
+
+    return result;
+  }
+
+  function normalizeDocumentTabSnapshot(source) {
+    var data = source && typeof source === 'object' ? source : {};
+    var filters = cloneFilterMap(data.filters);
+    var filterSelections = cloneFilterSelections(data.filterSelections);
+    var orderSource = Object.assign({}, filters);
+    Object.keys(filterSelections).forEach(function(key) {
+      orderSource[key] = filterSelections[key];
+    });
+    return {
+      filters: filters,
+      filterSelections: filterSelections,
+      filterOrder: normalizeFilterOrder(orderSource, data.filterOrder),
+      globalSearchQuery: normalizeTextInputValue(data.globalSearchQuery),
+      sorting: normalizeSortingSettings(data.sorting),
+      showUnassignedOnly: data.showUnassignedOnly === true,
+      showUnviewedOnly: data.showUnviewedOnly === true,
+      baseTab: normalizeDocumentTabBaseId(data.baseTab)
+    };
+  }
+
+  function normalizeCustomDocumentTabs(tabs) {
+    var result = [];
+    var seen = Object.create(null);
+    var list = Array.isArray(tabs) ? tabs : [];
+
+    for (var i = 0; i < list.length && result.length < 24; i += 1) {
+      var item = list[i];
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      var name = normalizeDocumentTabName(item.name || item.label);
+      if (!name) {
+        continue;
+      }
+      var id = normalizeTextInputValue(item.id);
+      if (!id || isBuiltInDocumentTabId(id) || seen[id]) {
+        id = 'custom_' + String(Date.now()) + '_' + String(i);
+      }
+      seen[id] = true;
+      var snapshot = normalizeDocumentTabSnapshot(item);
+      result.push({
+        id: id,
+        name: name,
+        filters: snapshot.filters,
+        filterSelections: snapshot.filterSelections,
+        filterOrder: snapshot.filterOrder,
+        globalSearchQuery: snapshot.globalSearchQuery,
+        sorting: snapshot.sorting,
+        showUnassignedOnly: snapshot.showUnassignedOnly,
+        showUnviewedOnly: snapshot.showUnviewedOnly,
+        baseTab: snapshot.baseTab,
+        custom: true
+      });
+    }
+
+    return result;
+  }
+
+  function getDocumentTabsStorageKey() {
+    if (!state.organization) {
+      return '';
+    }
+    return DOCUMENT_TABS_STORAGE_PREFIX + state.organization + ':' + getAccessProfileKey(state.access);
+  }
+
+  function saveCustomDocumentTabs() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    var key = getDocumentTabsStorageKey();
+    if (!key) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, JSON.stringify(normalizeCustomDocumentTabs(state.customDocumentTabs)));
+    } catch (error) {
+      if (typeof docsLogger.warn === 'function') {
+        docsLogger.warn('Не удалось сохранить вкладки документов:', error);
+      }
+    }
+  }
+
+  function loadCustomDocumentTabs() {
+    var key = getDocumentTabsStorageKey();
+    state.documentTabsProfileKey = key;
+    if (!key || typeof window === 'undefined' || !window.localStorage) {
+      state.customDocumentTabs = [];
+      return state.customDocumentTabs;
+    }
+    try {
+      var raw = window.localStorage.getItem(key);
+      state.customDocumentTabs = raw ? normalizeCustomDocumentTabs(JSON.parse(raw)) : [];
+    } catch (error) {
+      state.customDocumentTabs = [];
+    }
+    if (state.activeDocumentTab !== 'all' && !getDocumentTabDefinition(state.activeDocumentTab)) {
+      state.activeDocumentTab = 'all';
+    }
+    return state.customDocumentTabs;
+  }
+
+  function refreshDocumentTabsIfNeeded() {
+    var key = getDocumentTabsStorageKey();
+    if (state.documentTabsProfileKey === key) {
+      return;
+    }
+    loadCustomDocumentTabs();
+    renderDocumentTabs();
+  }
+
+  function getCustomDocumentTab(tabId) {
+    var id = String(tabId || '');
+    var tabs = Array.isArray(state.customDocumentTabs) ? state.customDocumentTabs : [];
+    for (var i = 0; i < tabs.length; i += 1) {
+      if (tabs[i] && tabs[i].id === id) {
+        return tabs[i];
+      }
+    }
+    return null;
+  }
+
+  function getDocumentTabDefinition(tabId) {
+    var id = String(tabId || 'all');
+    var builtInTabs = getBuiltInDocumentTabs();
+    for (var i = 0; i < builtInTabs.length; i += 1) {
+      if (builtInTabs[i].id === id) {
+        return builtInTabs[i];
+      }
+    }
+    return getCustomDocumentTab(id);
+  }
+
+  function getDocumentTabLabel(tabId) {
+    var tab = getDocumentTabDefinition(tabId);
+    if (!tab) {
+      return '';
+    }
+    return tab.custom ? tab.name : tab.label;
+  }
+
+  function hasActiveDocumentTab() {
+    return Boolean(state.activeDocumentTab && state.activeDocumentTab !== 'all');
+  }
+
+  function isDocumentCompletedForTab(doc) {
+    var status = normalizeStatusValue(resolveDocumentStatus(doc));
+    if (!status || status === '—') {
+      return false;
+    }
+    return status.indexOf('выполн') !== -1
+      || status === 'done'
+      || status === 'complete'
+      || status === 'completed'
+      || status === 'accepted';
+  }
+
+  function isDocumentOverdueForTab(doc) {
+    if (!doc || !doc.dueDate || isDocumentCompletedForTab(doc)) {
+      return false;
+    }
+    var dueTime = parseSortableDate(doc.dueDate);
+    if (dueTime === null) {
+      return false;
+    }
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return dueTime < today.getTime();
+  }
+
+  function isDocumentWithoutStatusForTab(doc) {
+    var status = normalizeStatusValue(resolveDocumentStatus(doc));
+    return !status || status === '—';
+  }
+
+  function matchesBuiltInDocumentTab(tabId, doc) {
+    var id = normalizeDocumentTabBaseId(tabId);
+    if (id === 'overdue') {
+      return isDocumentOverdueForTab(doc);
+    }
+    if (id === 'completed') {
+      return isDocumentCompletedForTab(doc);
+    }
+    if (id === 'withoutStatus') {
+      return isDocumentWithoutStatusForTab(doc);
+    }
+    return true;
+  }
+
+  function matchesDocumentFilterSnapshot(values, snapshot) {
+    if (!values) {
+      return false;
+    }
+    var data = normalizeDocumentTabSnapshot(snapshot);
+    for (var key in data.filters) {
+      if (!Object.prototype.hasOwnProperty.call(data.filters, key)) {
+        continue;
+      }
+      var specialMatch = filterMatchesSpecialValue(values, key, data.filters[key]);
+      if (specialMatch === false) {
+        return false;
+      }
+      if (specialMatch === true) {
+        continue;
+      }
+      if (!valueMatchesQuery(values[key], data.filters[key])) {
+        return false;
+      }
+    }
+    for (var selectedKey in data.filterSelections) {
+      if (!Object.prototype.hasOwnProperty.call(data.filterSelections, selectedKey)) {
+        continue;
+      }
+      if (!filterSelectionMatchesValue(values, selectedKey, data.filterSelections[selectedKey])) {
+        return false;
+      }
+    }
+    var globalQuery = normalizeValueForMatch(data.globalSearchQuery);
+    if (globalQuery) {
+      var parts = globalQuery.split(' ');
+      var haystackParts = [];
+      TABLE_COLUMNS.forEach(function(column) {
+        var value = values[column.key];
+        if (value !== undefined && value !== null) {
+          haystackParts.push(String(value));
+        }
+      });
+      var haystack = normalizeValueForMatch(haystackParts.join(' '));
+      for (var i = 0; i < parts.length; i += 1) {
+        if (parts[i] && haystack.indexOf(parts[i]) === -1) {
+          return false;
+        }
+      }
+    }
+    if (data.showUnassignedOnly && values.__hasAssignee) {
+      return false;
+    }
+    if (data.showUnviewedOnly && !values.__hasUnviewed) {
+      return false;
+    }
+    return true;
+  }
+
+  function matchesDocumentTabDefinition(tab, doc, values) {
+    if (!tab) {
+      return true;
+    }
+    if (tab.custom) {
+      return matchesBuiltInDocumentTab(tab.baseTab, doc) && matchesDocumentFilterSnapshot(values, tab);
+    }
+    return matchesBuiltInDocumentTab(tab.id, doc);
+  }
+
+  function matchesActiveDocumentTab(doc, values) {
+    var tab = getDocumentTabDefinition(state.activeDocumentTab);
+    if (!tab) {
+      state.activeDocumentTab = 'all';
+      return true;
+    }
+    return matchesDocumentTabDefinition(tab, doc, values);
+  }
+
+  function calculateDocumentTabCounts() {
+    var counts = {};
+    var builtInTabs = getBuiltInDocumentTabs();
+    var customTabs = Array.isArray(state.customDocumentTabs) ? state.customDocumentTabs : [];
+    var documents = Array.isArray(state.documents) ? state.documents : [];
+
+    builtInTabs.forEach(function(tab) {
+      counts[tab.id] = 0;
+    });
+    customTabs.forEach(function(tab) {
+      if (tab && tab.id) {
+        counts[tab.id] = 0;
+      }
+    });
+
+    for (var i = 0; i < documents.length; i += 1) {
+      var doc = documents[i];
+      if (!documentVisibleForCurrentUser(doc)) {
+        continue;
+      }
+      counts.all += 1;
+      if (isDocumentOverdueForTab(doc)) {
+        counts.overdue += 1;
+      }
+      if (isDocumentCompletedForTab(doc)) {
+        counts.completed += 1;
+      }
+      if (isDocumentWithoutStatusForTab(doc)) {
+        counts.withoutStatus += 1;
+      }
+      if (customTabs.length) {
+        var values = computeFilterValues(doc, i);
+        customTabs.forEach(function(tab) {
+          if (tab && tab.id && matchesDocumentTabDefinition(tab, doc, values)) {
+            counts[tab.id] = (counts[tab.id] || 0) + 1;
+          }
+        });
+      }
+    }
+
+    return counts;
+  }
+
+  function ensureDocumentTabsBar() {
+    var workspace = getWorkspaceElement();
+    if (!workspace) {
+      return null;
+    }
+    var targetParent = elements.tableToolbar && workspace.contains(elements.tableToolbar)
+      ? elements.tableToolbar
+      : workspace;
+
+    var tabsBar = elements.tabsBar;
+    if (!tabsBar || !workspace.contains(tabsBar)) {
+      tabsBar = targetParent.querySelector('.documents-tabs') || workspace.querySelector('.documents-tabs');
+    }
+    if (!tabsBar) {
+      tabsBar = createElement('div', 'documents-tabs');
+    }
+
+    if (tabsBar.className !== 'documents-tabs') {
+      tabsBar.className = 'documents-tabs';
+    }
+
+    if (tabsBar.parentNode !== targetParent) {
+      var anchor = elements.filterBar && workspace.contains(elements.filterBar)
+        ? elements.filterBar
+        : null;
+      if (targetParent === workspace && !anchor) {
+        anchor = elements.tableWrapper && workspace.contains(elements.tableWrapper)
+          ? elements.tableWrapper
+          : workspace.querySelector('.documents-filter-bar, .documents-table-wrapper');
+      }
+      if (targetParent !== workspace) {
+        targetParent.insertBefore(tabsBar, targetParent.firstChild);
+      } else if (anchor) {
+        workspace.insertBefore(tabsBar, anchor);
+      } else {
+        workspace.appendChild(tabsBar);
+      }
+    }
+
+    elements.tabsBar = tabsBar;
+    return tabsBar;
+  }
+
+  function scheduleDocumentTabsRestore() {
+    if (documentTabsRestoreFrame) {
+      return;
+    }
+    var restore = function() {
+      documentTabsRestoreFrame = 0;
+      renderDocumentTabs();
+    };
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      documentTabsRestoreFrame = window.requestAnimationFrame(restore);
+      return;
+    }
+    documentTabsRestoreFrame = window.setTimeout(restore, 0);
+  }
+
+  function observeDocumentTabsContainer() {
+    if (documentTabsObserver || typeof MutationObserver === 'undefined') {
+      return;
+    }
+    var host = state.host || document.getElementById('documents-root');
+    if (!host) {
+      return;
+    }
+    documentTabsObserver = new MutationObserver(function(mutations) {
+      var shouldRestore = false;
+      for (var i = 0; i < mutations.length; i += 1) {
+        var mutation = mutations[i];
+        if (!mutation || mutation.type !== 'childList') {
+          continue;
+        }
+        for (var j = 0; j < mutation.removedNodes.length; j += 1) {
+          var node = mutation.removedNodes[j];
+          if (!node || node.nodeType !== 1) {
+            continue;
+          }
+          if ((node.classList && node.classList.contains('documents-tabs'))
+            || (typeof node.querySelector === 'function' && node.querySelector('.documents-tabs'))) {
+            shouldRestore = true;
+            break;
+          }
+        }
+        if (shouldRestore) {
+          break;
+        }
+      }
+      if (shouldRestore) {
+        scheduleDocumentTabsRestore();
+      }
+    });
+    documentTabsObserver.observe(host, { childList: true, subtree: true });
+  }
+
+  function renderDocumentTabs() {
+    var tabsBar = ensureDocumentTabsBar();
+    if (!tabsBar) {
+      return;
+    }
+    var activeTab = getDocumentTabDefinition(state.activeDocumentTab);
+    if (!activeTab) {
+      state.activeDocumentTab = 'all';
+    }
+    var counts = calculateDocumentTabCounts();
+    var builtInTabs = getBuiltInDocumentTabs();
+    var customTabs = Array.isArray(state.customDocumentTabs) ? state.customDocumentTabs : [];
+    var list = createElement('div', 'documents-tabs__list');
+    list.setAttribute('role', 'tablist');
+    list.setAttribute('aria-label', 'Вкладки документов');
+
+    function appendTab(tab) {
+      if (!tab) {
+        return;
+      }
+      var labelText = tab.custom ? tab.name : tab.label;
+      var count = counts[tab.id] || 0;
+      var shell = createElement('div', tab.custom ? 'documents-tab-shell documents-tab-shell--custom' : 'documents-tab-shell');
+      var button = createElement('button', 'documents-tab');
+      button.type = 'button';
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', state.activeDocumentTab === tab.id ? 'true' : 'false');
+      button.setAttribute('aria-label', labelText + ': ' + count);
+      if (state.activeDocumentTab === tab.id) {
+        button.classList.add('is-active');
+      }
+      button.appendChild(createElement('span', 'documents-tab__label', labelText));
+      if (count > 0 || tab.id === 'all') {
+        button.appendChild(createElement('span', 'documents-tab__count', String(count)));
+      }
+      button.addEventListener('click', function() {
+        activateDocumentTab(tab.id);
+      });
+      shell.appendChild(button);
+
+      if (tab.custom) {
+        var closeButton = createElement('button', 'documents-tab__close', '×');
+        closeButton.type = 'button';
+        closeButton.title = 'Удалить вкладку «' + labelText + '»';
+        closeButton.setAttribute('aria-label', 'Удалить вкладку «' + labelText + '»');
+        closeButton.addEventListener('click', function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          deleteCustomDocumentTab(tab.id);
+        });
+        shell.appendChild(closeButton);
+      }
+
+      list.appendChild(shell);
+    }
+
+    builtInTabs.forEach(appendTab);
+    customTabs.forEach(appendTab);
+
+    var addButton = createElement('button', 'documents-tabs__add', '+');
+    addButton.type = 'button';
+    addButton.title = 'Добавить вкладку по текущим фильтрам';
+    addButton.setAttribute('aria-label', 'Добавить вкладку по текущим фильтрам');
+    addButton.addEventListener('click', handleAddDocumentTab);
+
+    tabsBar.innerHTML = '';
+    tabsBar.appendChild(list);
+    tabsBar.appendChild(addButton);
+  }
+
+  function buildCurrentDocumentTabSnapshot() {
+    var activeTab = getDocumentTabDefinition(state.activeDocumentTab);
+    var baseTab = activeTab && activeTab.custom
+      ? normalizeDocumentTabBaseId(activeTab.baseTab)
+      : normalizeDocumentTabBaseId(state.activeDocumentTab);
+    var filters = cloneFilterMap(state.filters);
+    var filterSelections = cloneFilterSelections(state.filterSelections);
+    var orderSource = Object.assign({}, filters);
+    Object.keys(filterSelections).forEach(function(key) {
+      orderSource[key] = filterSelections[key];
+    });
+    return {
+      filters: filters,
+      filterSelections: filterSelections,
+      filterOrder: normalizeFilterOrder(orderSource, state.filterOrder),
+      globalSearchQuery: state.globalSearchQuery || '',
+      sorting: state.visualSettings && state.visualSettings.sorting
+        ? normalizeSortingSettings(state.visualSettings.sorting)
+        : buildDefaultSortingSettings(),
+      showUnassignedOnly: state.showUnassignedOnly === true,
+      showUnviewedOnly: state.showUnviewedOnly === true,
+      baseTab: baseTab
+    };
+  }
+
+  function documentTabSnapshotHasFilters(snapshot) {
+    var data = normalizeDocumentTabSnapshot(snapshot);
+    if (data.baseTab !== 'all' || data.showUnassignedOnly || data.showUnviewedOnly) {
+      return true;
+    }
+    for (var key in data.filters) {
+      if (Object.prototype.hasOwnProperty.call(data.filters, key) && data.filters[key]) {
+        return true;
+      }
+    }
+    for (var selectedKey in data.filterSelections) {
+      if (Object.prototype.hasOwnProperty.call(data.filterSelections, selectedKey) && data.filterSelections[selectedKey].length) {
+        return true;
+      }
+    }
+    if (data.globalSearchQuery) {
+      return true;
+    }
+    if (data.sorting && data.sorting.enabled && data.sorting.rules.length) {
+      return true;
+    }
+    return false;
+  }
+
+  function buildDocumentTabSuggestedName(snapshot) {
+    var data = normalizeDocumentTabSnapshot(snapshot);
+    var parts = [];
+    var baseLabel = data.baseTab !== 'all' ? getDocumentTabLabel(data.baseTab) : '';
+    if (baseLabel) {
+      parts.push(baseLabel);
+    }
+    for (var i = 0; i < data.filterOrder.length && parts.length < 3; i += 1) {
+      var key = data.filterOrder[i];
+      var column = getColumnDefinition(key);
+      if (column && data.filters[key]) {
+        parts.push(column.label + ': ' + data.filters[key]);
+      } else if (column && data.filterSelections[key] && data.filterSelections[key].length) {
+        parts.push(column.label + ': выбрано ' + data.filterSelections[key].length);
+      }
+    }
+    if (data.globalSearchQuery) {
+      parts.push('Поиск: ' + data.globalSearchQuery);
+    }
+    if (data.sorting && data.sorting.enabled && data.sorting.rules.length) {
+      var sortColumn = getColumnDefinition(data.sorting.rules[0].column);
+      if (sortColumn) {
+        parts.push('Сортировка: ' + sortColumn.label);
+      }
+    }
+    if (data.showUnassignedOnly) {
+      parts.push('Без ответственных');
+    }
+    if (data.showUnviewedOnly) {
+      parts.push('Не просмотрено');
+    }
+    return normalizeDocumentTabName(parts.join(' / ')) || 'Моя вкладка';
+  }
+
+  function restoreDocumentTabSnapshot(tab) {
+    var snapshot = normalizeDocumentTabSnapshot(tab);
+    state.filters = snapshot.filters;
+    state.filterSelections = snapshot.filterSelections;
+    state.filterOrder = snapshot.filterOrder;
+    state.globalSearchQuery = snapshot.globalSearchQuery;
+    var nextVisual = cloneVisualSettings(state.visualSettings);
+    nextVisual.sorting = normalizeSortingSettings(snapshot.sorting);
+    state.visualSettings = nextVisual;
+    state.showUnassignedOnly = snapshot.showUnassignedOnly;
+    state.showUnviewedOnly = snapshot.showUnviewedOnly;
+  }
+
+  function activateDocumentTab(tabId) {
+    var tab = getDocumentTabDefinition(tabId) || getDocumentTabDefinition('all');
+    if (!tab) {
+      return;
+    }
+    state.activeDocumentTab = tab.id;
+    if (tab.custom) {
+      restoreDocumentTabSnapshot(tab);
+    }
+    resetTablePage();
+    closeSearchPopover();
+    if (elements.globalSearchInput) {
+      elements.globalSearchInput.value = state.globalSearchQuery || '';
+    }
+    syncColumnFilterControls();
+    updateResponsibleButtonState();
+    updateUnviewedButtonState();
+    updateSearchButtonStates();
+    updateHeaderSortIndicators();
+    updateFilterBar();
+    renderDocumentTabs();
+    if (elements.tableScroll) {
+      elements.tableScroll.scrollTop = 0;
+    }
+    updateTable();
+  }
+
+  function deleteCustomDocumentTab(tabId) {
+    var id = String(tabId || '');
+    var removedTab = getCustomDocumentTab(id);
+    state.customDocumentTabs = (Array.isArray(state.customDocumentTabs) ? state.customDocumentTabs : []).filter(function(tab) {
+      return tab && tab.id !== id;
+    });
+    if (state.activeDocumentTab === id) {
+      state.activeDocumentTab = removedTab && removedTab.baseTab ? normalizeDocumentTabBaseId(removedTab.baseTab) : 'all';
+      resetTablePage();
+    }
+    saveCustomDocumentTabs();
+    scheduleTablePreferencesSave();
+    renderDocumentTabs();
+    updateFilterBar();
+    updateTable();
+  }
+
+  function handleAddDocumentTab() {
+    var snapshot = buildCurrentDocumentTabSnapshot();
+    if (!documentTabSnapshotHasFilters(snapshot)) {
+      showMessage('warning', 'Сначала выберите вкладку или настройте фильтры, затем сохраните свою вкладку.');
+      return;
+    }
+    if (typeof window === 'undefined' || typeof window.prompt !== 'function') {
+      showMessage('error', 'Браузер не поддерживает быстрый ввод названия вкладки.');
+      return;
+    }
+    var suggestedName = buildDocumentTabSuggestedName(snapshot);
+    var name = window.prompt('Название вкладки', suggestedName);
+    if (name === null) {
+      return;
+    }
+    var normalizedName = normalizeDocumentTabName(name);
+    if (!normalizedName) {
+      showMessage('warning', 'Название вкладки не может быть пустым.');
+      return;
+    }
+    var tab = {
+      id: 'custom_' + String(Date.now()) + '_' + String(Math.floor(Math.random() * 100000)),
+      name: normalizedName,
+      filters: snapshot.filters,
+      filterSelections: snapshot.filterSelections,
+      filterOrder: snapshot.filterOrder,
+      globalSearchQuery: snapshot.globalSearchQuery,
+      sorting: snapshot.sorting,
+      showUnassignedOnly: snapshot.showUnassignedOnly,
+      showUnviewedOnly: snapshot.showUnviewedOnly,
+      baseTab: snapshot.baseTab,
+      custom: true
+    };
+    state.customDocumentTabs.push(tab);
+    state.customDocumentTabs = normalizeCustomDocumentTabs(state.customDocumentTabs);
+    saveCustomDocumentTabs();
+    scheduleTablePreferencesSave();
+    activateDocumentTab(tab.id);
+    showMessage('success', 'Вкладка «' + normalizedName + '» добавлена.');
+  }
+
+  function deactivateCustomDocumentTabForFilterChange() {
+    var tab = getCustomDocumentTab(state.activeDocumentTab);
+    if (!tab) {
+      return;
+    }
+    state.activeDocumentTab = tab.baseTab ? normalizeDocumentTabBaseId(tab.baseTab) : 'all';
+    renderDocumentTabs();
+  }
+
+  function createDocumentTabChip() {
+    var tab = getDocumentTabDefinition(state.activeDocumentTab);
+    if (!tab || tab.id === 'all') {
+      return null;
+    }
+    var chip = createElement('div', 'documents-filter-chip documents-filter-chip--tab');
+    chip.appendChild(createElement('span', 'documents-filter-chip__label', 'Вкладка:'));
+    chip.appendChild(createElement('span', 'documents-filter-chip__value', tab.custom ? tab.name : tab.label));
+    var removeButton = createElement('button', 'documents-filter-chip__remove', '×');
+    removeButton.type = 'button';
+    removeButton.title = 'Показать все вкладки';
+    removeButton.addEventListener('click', function() {
+      state.activeDocumentTab = 'all';
+      resetTablePage();
+      renderDocumentTabs();
+      updateFilterBar();
+      scheduleTablePreferencesSave();
+      updateTable();
+    });
+    chip.appendChild(removeButton);
+    return chip;
+  }
+
   function applyFilter(columnKey, query) {
     if (!columnKey) {
       return;
     }
+    deactivateCustomDocumentTabForFilterChange();
     var trimmed = typeof query === 'string' ? query.trim() : '';
     if (trimmed) {
       state.filters[columnKey] = trimmed;
@@ -3850,41 +6506,243 @@
         return key !== columnKey;
       });
     }
+    resetTablePage();
+    syncColumnFilterControls();
     updateSearchButtonStates();
     updateFilterBar();
+    scheduleTablePreferencesSave();
     updateTable();
   }
 
-  function removeFilter(columnKey) {
-    if (!columnKey || !Object.prototype.hasOwnProperty.call(state.filters, columnKey)) {
+  function applyFilterSelection(columnKey, selectedValues) {
+    if (!columnKey) {
       return;
     }
-    delete state.filters[columnKey];
+    deactivateCustomDocumentTabForFilterChange();
+    var selected = normalizeFilterSelections((function() {
+      var map = {};
+      map[columnKey] = Array.isArray(selectedValues) ? selectedValues : [];
+      return map;
+    })());
+    if (!state.filterSelections || typeof state.filterSelections !== 'object') {
+      state.filterSelections = {};
+    }
+    if (selected[columnKey] && selected[columnKey].length) {
+      state.filterSelections[columnKey] = selected[columnKey];
+      if (state.filterOrder.indexOf(columnKey) === -1) {
+        state.filterOrder.push(columnKey);
+      }
+    } else if (Object.prototype.hasOwnProperty.call(state.filterSelections, columnKey)) {
+      delete state.filterSelections[columnKey];
+      if (!state.filters[columnKey]) {
+        state.filterOrder = state.filterOrder.filter(function(key) {
+          return key !== columnKey;
+        });
+      }
+    }
+    resetTablePage();
+    updateSearchButtonStates();
+    updateFilterBar();
+    scheduleTablePreferencesSave();
+    updateTable();
+  }
+
+  function clearColumnFilter(columnKey) {
+    if (!columnKey) {
+      return;
+    }
+    deactivateCustomDocumentTabForFilterChange();
+    if (state.filters && Object.prototype.hasOwnProperty.call(state.filters, columnKey)) {
+      delete state.filters[columnKey];
+    }
+    if (state.filterSelections && Object.prototype.hasOwnProperty.call(state.filterSelections, columnKey)) {
+      delete state.filterSelections[columnKey];
+    }
     state.filterOrder = state.filterOrder.filter(function(key) {
       return key !== columnKey;
     });
+    resetTablePage();
+    syncColumnFilterControls();
     if (state.activeSearchColumn === columnKey) {
       closeSearchPopover();
     }
     updateSearchButtonStates();
     updateFilterBar();
+    scheduleTablePreferencesSave();
     updateTable();
   }
 
+  function removeFilter(columnKey) {
+    if (!columnKey || (!Object.prototype.hasOwnProperty.call(state.filters, columnKey) && !hasFilterSelection(columnKey))) {
+      return;
+    }
+    clearColumnFilter(columnKey);
+  }
+
   function resetAllFilters() {
-    if (!hasActiveFilters() && !state.showUnassignedOnly && !isPopoverVisible()) {
+    if (!hasActiveFilters() && !state.showUnassignedOnly && !hasActiveDocumentTab() && !isPopoverVisible()) {
       return;
     }
     state.filters = {};
     state.filterOrder = [];
+    state.filterSelections = {};
+    state.globalSearchQuery = '';
     state.showUnassignedOnly = false;
     state.showUnviewedOnly = false;
+    state.activeDocumentTab = 'all';
+    resetTablePage();
+    if (elements.globalSearchInput) {
+      elements.globalSearchInput.value = '';
+    }
+    syncColumnFilterControls();
     closeSearchPopover();
+    renderDocumentTabs();
     updateResponsibleButtonState();
     updateUnviewedButtonState();
     updateSearchButtonStates();
     updateFilterBar();
+    scheduleTablePreferencesSave();
     updateTable();
+  }
+
+  function resetTableSorting() {
+    if (!hasActiveSorting()) {
+      return false;
+    }
+    var nextVisual = cloneVisualSettings(state.visualSettings);
+    nextVisual.sorting = buildDefaultSortingSettings();
+    state.visualSettings = nextVisual;
+    updateHeaderSortIndicators();
+    resetTablePage();
+    scheduleTablePreferencesSave();
+    updateTable();
+    updateFilterBar();
+    return true;
+  }
+
+  function hasWorkingTableParameters() {
+    return hasActiveDocumentTab()
+      || hasActiveFilters()
+      || state.showUnassignedOnly
+      || state.showUnviewedOnly
+      || hasActiveSorting()
+      || Boolean(normalizeGroupingColumn(state.groupingColumn))
+      || state.columnMoveMode === true
+      || isPopoverVisible();
+  }
+
+  function resetWorkingTableParameters() {
+    if (!hasWorkingTableParameters()) {
+      showMessage('info', 'Фильтры и параметры уже сброшены.', MESSAGE_INFO_DURATION_MS);
+      return;
+    }
+
+    state.filters = {};
+    state.filterOrder = [];
+    state.filterSelections = {};
+    state.globalSearchQuery = '';
+    state.showUnassignedOnly = false;
+    state.showUnviewedOnly = false;
+    state.activeDocumentTab = 'all';
+    state.groupingColumn = '';
+    state.columnMoveMode = false;
+
+    if (hasActiveSorting()) {
+      var nextVisual = cloneVisualSettings(state.visualSettings);
+      nextVisual.sorting = buildDefaultSortingSettings();
+      state.visualSettings = nextVisual;
+    }
+
+    resetTablePage();
+    if (elements.globalSearchInput) {
+      elements.globalSearchInput.value = '';
+    }
+    syncColumnFilterControls();
+    closeSearchPopover();
+    renderDocumentTabs();
+    updateResponsibleButtonState();
+    updateUnviewedButtonState();
+    updateSearchButtonStates();
+    updateHeaderSortIndicators();
+    updateHeaderToolModes();
+    updateFilterBar();
+    scheduleTablePreferencesSave();
+    updateTable();
+    showMessage('success', 'Фильтры и параметры таблицы сброшены.', MESSAGE_INFO_DURATION_MS);
+  }
+
+  function showAllTableColumns() {
+    if (getHiddenColumnCount() < 1) {
+      return;
+    }
+    var nextVisual = cloneVisualSettings(state.visualSettings);
+    TABLE_COLUMNS.forEach(function(column) {
+      if (!nextVisual.columns[column.key]) {
+        nextVisual.columns[column.key] = {
+          width: getEffectiveColumnWidth(column.key),
+          fontSize: nextVisual.fontSize,
+          visible: true
+        };
+      }
+      nextVisual.columns[column.key].visible = true;
+    });
+    state.visualSettings = nextVisual;
+    applyVisualSettings(nextVisual);
+    renderColumnsMenu();
+    updateHeaderToolModes();
+    updateFilterBar();
+    scheduleTablePreferencesSave();
+    updateTable();
+  }
+
+  function resetTableViewSettings() {
+    var defaultOrder = getDefaultColumnOrder();
+    var defaultWidths = buildDefaultColumnWidthMap();
+    var nextVisual = cloneVisualSettings(state.visualSettings);
+
+    TABLE_COLUMNS.forEach(function(column) {
+      nextVisual.columns[column.key] = {
+        width: getColumnDefaultWidth(column.key),
+        fontSize: nextVisual.fontSize,
+        visible: true
+      };
+    });
+
+    state.visualSettings = nextVisual;
+    state.tableDensity = 'normal';
+    state.tablePageSize = 25;
+    state.columnWidthOverrides = defaultWidths;
+    resetTablePage();
+
+    applyVisualSettings(nextVisual);
+    applyColumnOrder(defaultOrder, { render: true });
+    applyColumnWidths(defaultWidths);
+    applyTableDensity();
+
+    if (state.organization) {
+      saveColumnWidths(defaultWidths).catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось сохранить сброс ширин столбцов:', error);
+        }
+      });
+      saveColumnOrder(defaultOrder).catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось сохранить сброс порядка столбцов:', error);
+        }
+      });
+    } else {
+      saveColumnOrderToLocalStorage(defaultOrder);
+    }
+
+    if (elements.pageSizeSelect) {
+      elements.pageSizeSelect.value = '25';
+    }
+    renderColumnsMenu();
+    updateHeaderToolModes();
+    updateFilterBar();
+    scheduleTablePreferencesSave();
+    updateTable();
+    showMessage('success', 'Вид таблицы восстановлен.', MESSAGE_INFO_DURATION_MS);
   }
 
   function updateSearchButtonStates() {
@@ -3900,7 +6758,7 @@
         continue;
       }
       var isCurrent = state.activeSearchColumn === key && isPopoverVisible();
-      var hasFilter = !!(state.filters[key] && String(state.filters[key]).trim());
+      var hasFilter = !!(state.filters[key] && String(state.filters[key]).trim()) || hasFilterSelection(key);
       if (isCurrent || hasFilter) {
         button.classList.add('documents-table__header-cell--active');
       } else {
@@ -3909,6 +6767,7 @@
     }
     updateResponsibleButtonState();
     updateUnviewedButtonState();
+    updateHeaderToolModes();
   }
 
   function createFilterChip(columnKey, value) {
@@ -3916,7 +6775,7 @@
     var chip = createElement('div', 'documents-filter-chip');
     var labelText = column ? column.label : columnKey;
     var label = createElement('span', 'documents-filter-chip__label', labelText + ':');
-    var valueNode = createElement('span', 'documents-filter-chip__value', value);
+    var valueNode = createElement('span', 'documents-filter-chip__value', value || getColumnFilterSummaryText(columnKey));
     var removeButton = createElement('button', 'documents-filter-chip__remove', '×');
     removeButton.type = 'button';
     removeButton.title = 'Удалить фильтр «' + labelText + '»';
@@ -3957,12 +6816,56 @@
     return chip;
   }
 
+  function createParameterChip(labelText, valueText, removeTitle, removeHandler, modifierClass) {
+    var className = 'documents-filter-chip';
+    if (modifierClass) {
+      className += ' ' + modifierClass;
+    }
+    var chip = createElement('div', className);
+    chip.appendChild(createElement('span', 'documents-filter-chip__label', labelText + ':'));
+    chip.appendChild(createElement('span', 'documents-filter-chip__value', valueText));
+    if (typeof removeHandler === 'function') {
+      var removeButton = createElement('button', 'documents-filter-chip__remove', '×');
+      removeButton.type = 'button';
+      removeButton.title = removeTitle || 'Сбросить параметр';
+      removeButton.addEventListener('click', removeHandler);
+      chip.appendChild(removeButton);
+    }
+    return chip;
+  }
+
+  function pluralize(count, one, few, many) {
+    var value = Math.abs(Number(count) || 0);
+    var mod10 = value % 10;
+    var mod100 = value % 100;
+    if (mod10 === 1 && mod100 !== 11) {
+      return one;
+    }
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return few;
+    }
+    return many;
+  }
+
+  function getSortingSummaryText() {
+    var sorting = state.visualSettings && state.visualSettings.sorting
+      ? normalizeSortingSettings(state.visualSettings.sorting)
+      : buildDefaultSortingSettings();
+    if (!sorting.enabled || !sorting.rules.length) {
+      return '';
+    }
+    return sorting.rules.map(function(rule) {
+      var column = getColumnDefinition(rule.column);
+      var label = column ? column.label : rule.column;
+      return label + ' ' + (normalizeSortDirection(rule.direction) === 'desc' ? 'убыв.' : 'возр.');
+    }).join(', ');
+  }
+
   function updateFilterBar() {
     if (!elements.filterBar) {
       return;
     }
-    var hasFilters = hasActiveFilters() || state.showUnassignedOnly || state.showUnviewedOnly;
-    if (!hasFilters) {
+    if (!hasActiveTableParameters()) {
       elements.filterBar.innerHTML = '';
       elements.filterBar.classList.add('documents-filter-bar--hidden');
       return;
@@ -3971,14 +6874,30 @@
     elements.filterBar.classList.remove('documents-filter-bar--hidden');
     elements.filterBar.innerHTML = '';
 
-    elements.filterBar.appendChild(createElement('span', 'documents-filter-bar__title', 'Активные фильтры:'));
+    elements.filterBar.appendChild(createElement('span', 'documents-filter-bar__title', 'Выбрано:'));
 
-    for (var i = 0; i < state.filterOrder.length; i += 1) {
-      var key = state.filterOrder[i];
-      if (!state.filters[key]) {
-        continue;
-      }
-      elements.filterBar.appendChild(createFilterChip(key, state.filters[key]));
+    var tabChip = createDocumentTabChip();
+    if (tabChip) {
+      elements.filterBar.appendChild(tabChip);
+    }
+
+    if (state.globalSearchQuery && String(state.globalSearchQuery).trim()) {
+      elements.filterBar.appendChild(createParameterChip('Поиск', String(state.globalSearchQuery).trim(), 'Очистить общий поиск', function() {
+        state.globalSearchQuery = '';
+        if (elements.globalSearchInput) {
+          elements.globalSearchInput.value = '';
+        }
+        resetTablePage();
+        updateFilterBar();
+        scheduleTablePreferencesSave();
+        updateTable();
+      }, 'documents-filter-chip--muted'));
+    }
+
+    var activeFilterKeys = getActiveFilterKeysInOrder();
+    for (var i = 0; i < activeFilterKeys.length; i += 1) {
+      var key = activeFilterKeys[i];
+      elements.filterBar.appendChild(createFilterChip(key, getColumnFilterSummaryText(key)));
     }
 
     if (state.showUnassignedOnly) {
@@ -3988,12 +6907,47 @@
       elements.filterBar.appendChild(createUnviewedChip());
     }
 
-    elements.filterBar.appendChild(createElement('span', 'documents-filter-bar__hint', 'Esc — сбросить поиск'));
+    if (hasActiveSorting()) {
+      elements.filterBar.appendChild(createParameterChip('Сортировка', getSortingSummaryText(), 'Сбросить сортировку', function() {
+        resetTableSorting();
+      }, 'documents-filter-chip--muted'));
+    }
+
+    var groupingColumn = normalizeGroupingColumn(state.groupingColumn);
+    if (groupingColumn) {
+      elements.filterBar.appendChild(createParameterChip('Группировка', getGroupingLabel(groupingColumn), 'Отключить группировку', function() {
+        setTableGrouping('');
+      }, 'documents-filter-chip--warning'));
+    }
+
+    var hiddenCount = getHiddenColumnCount();
+    if (hiddenCount > 0) {
+      elements.filterBar.appendChild(createParameterChip('Скрыто', hiddenCount + ' ' + pluralize(hiddenCount, 'столбец', 'столбца', 'столбцов'), 'Показать все столбцы', function() {
+        showAllTableColumns();
+      }, 'documents-filter-chip--muted'));
+    }
+
+    if (state.columnMoveMode) {
+      elements.filterBar.appendChild(createParameterChip('Перемещение', 'включено', 'Выключить перемещение столбцов', function() {
+        toggleColumnMoveMode();
+        updateFilterBar();
+      }, 'documents-filter-chip--warning'));
+    }
+
+    elements.filterBar.appendChild(createElement(
+      'span',
+      'documents-filter-bar__hint',
+      state.columnMoveMode ? 'Перетащите ручку в заголовке' : 'Каждый крестик сбрасывает только свой параметр'
+    ));
 
     var clearButton = createElement('button', 'documents-filter-bar__clear', 'Сбросить все');
     clearButton.type = 'button';
+    clearButton.disabled = !hasWorkingTableParameters();
+    clearButton.title = clearButton.disabled
+      ? 'Для вида таблицы используйте крестик на чипе или меню «Сбросить вид таблицы»'
+      : 'Сбросить фильтры, поиск, вкладку, сортировку и группировку';
     clearButton.addEventListener('click', function() {
-      resetAllFilters();
+      resetWorkingTableParameters();
     });
     elements.filterBar.appendChild(clearButton);
   }
@@ -4039,13 +6993,16 @@
     if (elements.responsibleButton && elements.responsibleButton.disabled && typeof forceState !== 'boolean') {
       return;
     }
+    deactivateCustomDocumentTabForFilterChange();
     if (typeof forceState === 'boolean') {
       state.showUnassignedOnly = forceState;
     } else {
       state.showUnassignedOnly = !state.showUnassignedOnly;
     }
+    resetTablePage();
     updateResponsibleButtonState();
     updateFilterBar();
+    scheduleTablePreferencesSave();
     updateTable();
   }
 
@@ -4053,13 +7010,16 @@
     if (elements.unviewedButton && elements.unviewedButton.disabled && typeof forceState !== 'boolean') {
       return;
     }
+    deactivateCustomDocumentTabForFilterChange();
     if (typeof forceState === 'boolean') {
       state.showUnviewedOnly = forceState;
     } else {
       state.showUnviewedOnly = !state.showUnviewedOnly;
     }
+    resetTablePage();
     updateUnviewedButtonState();
     updateFilterBar();
+    scheduleTablePreferencesSave();
     updateTable();
   }
 
@@ -4071,7 +7031,380 @@
       handleSearchEscape(event);
       return;
     }
+    if (isColumnsPopoverVisible()) {
+      event.preventDefault();
+      closeColumnsPopover();
+      return;
+    }
+    if (isToolbarMenuVisible()) {
+      event.preventDefault();
+      closeToolbarMenu();
+      return;
+    }
     resetAllFilters();
+  }
+
+  function handleGlobalSearchInput() {
+    state.globalSearchQuery = elements.globalSearchInput ? elements.globalSearchInput.value : '';
+    resetTablePage();
+    updateFilterBar();
+    scheduleTablePreferencesSave();
+    updateTable();
+  }
+
+  function setColumnFilterControlValue(control, value) {
+    if (!control) {
+      return;
+    }
+    var nextValue = value ? String(value) : '';
+    if (control.value !== nextValue) {
+      control.value = nextValue;
+    }
+  }
+
+  function syncColumnFilterControls() {
+    if (!elements.filterControls) {
+      return;
+    }
+    for (var key in elements.filterControls) {
+      if (!Object.prototype.hasOwnProperty.call(elements.filterControls, key)) {
+        continue;
+      }
+      setColumnFilterControlValue(elements.filterControls[key], state.filters[key] || '');
+    }
+  }
+
+  function appendFilterOption(select, value, label) {
+    var option = createElement('option', '', label);
+    option.value = value;
+    select.appendChild(option);
+  }
+
+  function createSelectFilterControl(column, options) {
+    var select = document.createElement('select');
+    select.className = 'documents-column-filter documents-column-filter--select';
+    select.setAttribute('aria-label', 'Фильтр: ' + column.label);
+    appendFilterOption(select, '', 'Все');
+    for (var i = 0; i < options.length; i += 1) {
+      appendFilterOption(select, options[i].value, options[i].label);
+    }
+    select.value = state.filters[column.key] || '';
+    select.addEventListener('change', function() {
+      applyFilter(column.key, select.value);
+    });
+    return select;
+  }
+
+  function createTextFilterControl(column) {
+    var input = document.createElement('input');
+    input.className = 'documents-column-filter documents-column-filter--input';
+    input.type = 'text';
+    input.value = state.filters[column.key] || '';
+    input.placeholder = column.searchHint || column.label;
+    input.setAttribute('aria-label', 'Фильтр: ' + column.label);
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('spellcheck', 'false');
+    if (column.key === 'registrationDate' || column.key === 'documentDate' || column.key === 'dueDate') {
+      input.placeholder = 'дд.мм.гггг';
+      input.inputMode = 'numeric';
+    }
+    input.addEventListener('input', function() {
+      applyFilter(column.key, input.value);
+    });
+    return input;
+  }
+
+  function createColumnFilterControl(column) {
+    if (!column || !column.key) {
+      return null;
+    }
+    if (column.key === 'actions') {
+      var actionsSelect = document.createElement('select');
+      actionsSelect.className = 'documents-column-filter documents-column-filter--select documents-column-filter--static';
+      actionsSelect.setAttribute('aria-label', 'Действия');
+      appendFilterOption(actionsSelect, '', 'Все');
+      return actionsSelect;
+    }
+    if (column.key === 'files') {
+      return createSelectFilterControl(column, [
+        { value: 'has', label: 'Есть файлы' },
+        { value: 'none', label: 'Без файлов' }
+      ]);
+    }
+    if (column.key === 'status') {
+      var statusOptions = [{ value: '__overdue__', label: 'Просрочено' }];
+      STATUS_OPTIONS.forEach(function(status) {
+        statusOptions.push({ value: status, label: status });
+      });
+      return createSelectFilterControl(column, statusOptions);
+    }
+    if (column.key === 'direction') {
+      return createSelectFilterControl(column, [
+        { value: 'Входящий', label: 'Входящий' },
+        { value: 'Исходящий', label: 'Исходящий' }
+      ]);
+    }
+    if (!column.searchable) {
+      return null;
+    }
+    return createTextFilterControl(column);
+  }
+
+  function isSortableTableColumn(columnKey) {
+    if (!columnKey || !Object.prototype.hasOwnProperty.call(TABLE_COLUMN_MAP, columnKey)) {
+      return false;
+    }
+    return columnKey !== 'actions' && columnKey !== 'files';
+  }
+
+  function getActiveSortRule(columnKey) {
+    var sorting = state.visualSettings && state.visualSettings.sorting
+      ? normalizeSortingSettings(state.visualSettings.sorting)
+      : buildDefaultSortingSettings();
+    if (!sorting.enabled || !sorting.rules.length) {
+      return null;
+    }
+    for (var i = 0; i < sorting.rules.length; i += 1) {
+      if (sorting.rules[i] && sorting.rules[i].column === columnKey) {
+        return sorting.rules[i];
+      }
+    }
+    return null;
+  }
+
+  function updateHeaderSortIndicators() {
+    if (!elements.headerCells) {
+      return;
+    }
+    TABLE_COLUMNS.forEach(function(column) {
+      var cell = elements.headerCells[column.key];
+      if (!cell) {
+        return;
+      }
+      var rule = getActiveSortRule(column.key);
+      var direction = rule ? normalizeSortDirection(rule.direction) : '';
+      var indicator = cell.querySelector('.documents-header-sort-icon');
+      var label = column.label || column.key;
+      if (direction) {
+        cell.dataset.sortDirection = direction;
+        cell.setAttribute('aria-sort', direction === 'desc' ? 'descending' : 'ascending');
+        cell.title = 'Сортировка: ' + (direction === 'desc' ? 'по убыванию' : 'по возрастанию') + '. Клик изменит режим.';
+        if (indicator) {
+          indicator.textContent = direction === 'desc' ? '↓' : '↑';
+          indicator.title = 'Сортировка «' + label + '»: ' + (direction === 'desc' ? 'по убыванию' : 'по возрастанию');
+        }
+      } else {
+        delete cell.dataset.sortDirection;
+        cell.removeAttribute('aria-sort');
+        if (isSortableTableColumn(column.key)) {
+          cell.title = 'Сортировка: сброшена. Клик включит сортировку по возрастанию.';
+        } else {
+          cell.title = '';
+        }
+        if (indicator) {
+          indicator.textContent = isSortableTableColumn(column.key) ? '↕' : '';
+          indicator.title = isSortableTableColumn(column.key)
+            ? 'Сортировка «' + label + '»: сброшена'
+            : '';
+        }
+      }
+    });
+    updateHeaderToolModes();
+  }
+
+  function toggleColumnSorting(columnKey) {
+    if (!isSortableTableColumn(columnKey)) {
+      return;
+    }
+    var currentRule = getActiveSortRule(columnKey);
+    var currentDirection = currentRule ? normalizeSortDirection(currentRule.direction) : '';
+    var nextSettings = cloneVisualSettings(state.visualSettings);
+    var message = '';
+    var column = getColumnDefinition(columnKey);
+    var columnLabel = column ? column.label : columnKey;
+
+    if (!currentDirection) {
+      nextSettings.sorting = {
+        enabled: true,
+        rules: [{ column: columnKey, direction: 'asc' }]
+      };
+      message = 'Сортировка «' + columnLabel + '»: по возрастанию';
+    } else if (currentDirection === 'asc') {
+      nextSettings.sorting = {
+        enabled: true,
+        rules: [{ column: columnKey, direction: 'desc' }]
+      };
+      message = 'Сортировка «' + columnLabel + '»: по убыванию';
+    } else {
+      nextSettings.sorting = buildDefaultSortingSettings();
+      message = 'Сортировка «' + columnLabel + '» сброшена';
+    }
+
+    state.visualSettings = nextSettings;
+    resetTablePage();
+    updateHeaderSortIndicators();
+    updateFilterBar();
+    updateTable();
+    scheduleTablePreferencesSave();
+    showMessage('info', message, MESSAGE_INFO_DURATION_MS);
+  }
+
+  function focusColumnFilterControl(columnKey) {
+    var control = elements.filterControls && elements.filterControls[columnKey]
+      ? elements.filterControls[columnKey]
+      : null;
+    if (!control || typeof control.focus !== 'function') {
+      return;
+    }
+    try {
+      control.focus({ preventScroll: true });
+    } catch (error) {
+      control.focus();
+    }
+    if (typeof control.select === 'function') {
+      control.select();
+    }
+  }
+
+  function normalizeTablePageSize(value) {
+    if (String(value || '').toLowerCase() === 'all') {
+      return 'all';
+    }
+    var size = Number(value);
+    if (size === 50 || size === 100) {
+      return size;
+    }
+    return 25;
+  }
+
+  function isAllRowsPageSize(value) {
+    return normalizeTablePageSize(value) === 'all';
+  }
+
+  function getPageSizeLabel(value) {
+    return isAllRowsPageSize(value) ? 'Все строки' : String(normalizeTablePageSize(value));
+  }
+
+  function getTablePageCount(total) {
+    var size = normalizeTablePageSize(state.tablePageSize);
+    if (size === 'all') {
+      return 1;
+    }
+    var count = Math.ceil(Math.max(0, Number(total) || 0) / size);
+    return count > 0 ? count : 1;
+  }
+
+  function setTablePage(page) {
+    var pageCount = getTablePageCount(state.tableTotalEntries);
+    var nextPage = Math.max(1, Math.min(pageCount, Number(page) || 1));
+    if (state.tablePage === nextPage) {
+      return;
+    }
+    state.tablePage = nextPage;
+    if (elements.tableScroll) {
+      elements.tableScroll.scrollTop = 0;
+    }
+    updateTable();
+  }
+
+  function setTablePageSize(size) {
+    state.tablePageSize = normalizeTablePageSize(size);
+    if (elements.pageSizeSelect && elements.pageSizeSelect.value !== String(state.tablePageSize)) {
+      elements.pageSizeSelect.value = String(state.tablePageSize);
+    }
+    resetTablePage();
+    scheduleTablePreferencesSave();
+    updateHeaderToolModes();
+    updateTable();
+  }
+
+  function buildPaginationItems(currentPage, pageCount) {
+    var items = [];
+    var seen = {};
+
+    function addPage(page) {
+      if (page < 1 || page > pageCount || seen[page]) {
+        return;
+      }
+      seen[page] = true;
+      items.push(page);
+    }
+
+    addPage(1);
+    addPage(currentPage - 1);
+    addPage(currentPage);
+    addPage(currentPage + 1);
+    addPage(pageCount);
+
+    items.sort(function(a, b) { return a - b; });
+
+    var result = [];
+    for (var i = 0; i < items.length; i += 1) {
+      if (i > 0 && items[i] - items[i - 1] > 1) {
+        result.push('ellipsis-' + i);
+      }
+      result.push(items[i]);
+    }
+    return result;
+  }
+
+  function renderPaginationControls(totalEntries, pageEntriesCount) {
+    if (!elements.pagination) {
+      return;
+    }
+    var total = Math.max(0, Number(totalEntries) || 0);
+    var pageSize = normalizeTablePageSize(state.tablePageSize);
+    var showAllRows = pageSize === 'all';
+    var pageCount = getTablePageCount(total);
+    var currentPage = Math.max(1, Math.min(pageCount, Number(state.tablePage) || 1));
+    var shouldShowPagination = total > 0 && !showAllRows && pageCount > 1;
+    state.tablePage = currentPage;
+
+    elements.pagination.hidden = !shouldShowPagination;
+    elements.pagination.setAttribute('aria-hidden', shouldShowPagination ? 'false' : 'true');
+
+    if (elements.pageSizeSelect && elements.pageSizeSelect.value !== String(pageSize)) {
+      elements.pageSizeSelect.value = String(pageSize);
+    }
+
+    if (elements.paginationInfo) {
+      var start = total > 0 ? (showAllRows ? 1 : ((currentPage - 1) * pageSize + 1)) : 0;
+      var end = total > 0 ? (showAllRows ? total : Math.min(total, start + Math.max(0, pageEntriesCount || 0) - 1)) : 0;
+      elements.paginationInfo.textContent = 'Записей: ' + start + '–' + end + ' из ' + total;
+    }
+
+    if (!elements.paginationButtons) {
+      return;
+    }
+    elements.paginationButtons.innerHTML = '';
+    if (!shouldShowPagination) {
+      return;
+    }
+
+    function addButton(label, page, className, disabled, current) {
+      var button = createElement('button', className || 'documents-pagination__button', label);
+      button.type = 'button';
+      button.disabled = Boolean(disabled);
+      if (current) {
+        button.classList.add('is-active');
+        button.setAttribute('aria-current', 'page');
+      }
+      button.addEventListener('click', function() {
+        setTablePage(page);
+      });
+      elements.paginationButtons.appendChild(button);
+    }
+
+    addButton('‹', currentPage - 1, 'documents-pagination__button documents-pagination__button--arrow', currentPage <= 1, false);
+    var items = buildPaginationItems(currentPage, pageCount);
+    for (var i = 0; i < items.length; i += 1) {
+      if (typeof items[i] === 'string') {
+        elements.paginationButtons.appendChild(createElement('span', 'documents-pagination__ellipsis', '...'));
+      } else {
+        addButton(String(items[i]), items[i], 'documents-pagination__button', false, items[i] === currentPage);
+      }
+    }
+    addButton('›', currentPage + 1, 'documents-pagination__button documents-pagination__button--arrow', currentPage >= pageCount, false);
   }
 
   function normalizeResponsibleId(value) {
@@ -5160,22 +8493,48 @@
     return string.length < 2 ? '0' + string : string;
   }
 
-  function showMessage(type, text) {
+  function showMessage(type, text, durationOverride) {
     if (!elements.message) {
       return;
     }
+    ensureDocumentsMessageStyle();
+    if (messageTimerId) {
+      window.clearTimeout(messageTimerId);
+      messageTimerId = null;
+    }
     elements.message.className = 'documents-message';
-    if (!text || type !== 'error') {
+    elements.message.classList.remove('is-visible');
+    if (!text) {
       elements.message.style.display = 'none';
       elements.message.textContent = '';
       return;
     }
-    elements.message.classList.add('documents-message--error');
+    var normalizedType = ['success', 'info', 'warning', 'error'].indexOf(type) !== -1 ? type : 'info';
+    elements.message.classList.add('documents-message--' + normalizedType);
     elements.message.style.display = 'block';
+    elements.message.setAttribute('role', normalizedType === 'error' ? 'alert' : 'status');
+    elements.message.setAttribute('aria-live', normalizedType === 'error' ? 'assertive' : 'polite');
     elements.message.textContent = text;
+    window.requestAnimationFrame(function() {
+      if (elements.message) {
+        elements.message.classList.add('is-visible');
+      }
+    });
+    var duration = Number(durationOverride) > 0
+      ? Number(durationOverride)
+      : (normalizedType === 'error' || normalizedType === 'warning'
+      ? MESSAGE_LONG_DURATION_MS
+      : (normalizedType === 'info' ? MESSAGE_INFO_DURATION_MS : MESSAGE_DEFAULT_DURATION_MS));
+    messageTimerId = window.setTimeout(function() {
+      clearMessage();
+    }, duration);
   }
 
   function clearMessage() {
+    if (messageTimerId) {
+      window.clearTimeout(messageTimerId);
+      messageTimerId = null;
+    }
     showMessage('', '');
   }
 
@@ -5356,6 +8715,14 @@
       if (headerCell) {
         headerCell.style.display = visible ? '' : 'none';
       }
+      var filterCell = elements.filterCells && elements.filterCells[column.key];
+      if (filterCell) {
+        filterCell.style.display = visible ? '' : 'none';
+      }
+      var col = elements.columnCols && elements.columnCols[column.key];
+      if (col) {
+        col.style.display = visible ? '' : 'none';
+      }
       if (elements.tableBody) {
         var cells = elements.tableBody.querySelectorAll('td[data-column-key="' + column.key + '"]');
         for (var i = 0; i < cells.length; i += 1) {
@@ -5433,6 +8800,25 @@
     return true;
   }
 
+  function setColumnVisibility(columnKey, visible) {
+    if (!Object.prototype.hasOwnProperty.call(TABLE_COLUMN_MAP, columnKey)) {
+      return;
+    }
+    var nextSettings = cloneVisualSettings(state.visualSettings);
+    if (!nextSettings.columns[columnKey]) {
+      nextSettings.columns[columnKey] = {
+        width: getEffectiveColumnWidth(columnKey),
+        fontSize: nextSettings.fontSize,
+        visible: true
+      };
+    }
+    nextSettings.columns[columnKey].visible = visible !== false;
+    state.visualSettings = nextSettings;
+    applyVisualSettings(nextSettings);
+    updateFilterBar();
+    scheduleTablePreferencesSave();
+  }
+
   function areWidthOverrideMapsEqual(left, right) {
     for (var i = 0; i < TABLE_COLUMNS.length; i += 1) {
       var key = TABLE_COLUMNS[i].key;
@@ -5466,6 +8852,7 @@
     );
     var visibilityChanged = !areColumnVisibilitySettingsEqual(previous.columns, normalized.columns);
     state.visualSettings = normalized;
+    updateHeaderSortIndicators();
     var widthOverrides = extractColumnWidthOverrides(normalized.columns);
     var widthOverridesChanged = !areWidthOverrideMapsEqual(state.columnWidthOverrides, widthOverrides);
     state.columnWidthOverrides = Object.keys(widthOverrides).length ? widthOverrides : null;
@@ -8165,17 +11552,11 @@
     if (!entry || typeof entry !== 'object') {
       return lines;
     }
+    if (entry.position) {
+      lines.push(String(entry.position));
+    }
     if (entry.department) {
       lines.push(String(entry.department));
-    }
-    if (entry.telegram) {
-      lines.push('TG: ' + String(entry.telegram));
-    }
-    if (entry.chatId) {
-      lines.push('ID: ' + String(entry.chatId));
-    }
-    if (entry.login) {
-      lines.push('Логин: ' + String(entry.login));
     }
     if (entry.email) {
       lines.push(String(entry.email));
@@ -8201,7 +11582,7 @@
       return '—';
     }
     var parts = [];
-    var name = entry.name || entry.responsible || entry.email || entry.telegram || entry.id || '';
+    var name = entry.name || entry.responsible || entry.email || entry.department || entry.position || '';
     if (name) {
       parts.push(String(name));
     }
@@ -9239,8 +12620,14 @@
     }
     recordDocumentView(doc, 'download_button');
     var initialText = button.textContent;
+    var initialHtml = button.innerHTML;
+    var iconButton = button.classList && button.classList.contains('documents-action-icon');
     button.disabled = true;
-    button.textContent = 'Скачиваем...';
+    if (iconButton) {
+      button.setAttribute('aria-busy', 'true');
+    } else {
+      button.textContent = 'Скачиваем...';
+    }
     var allAttachments = Array.isArray(doc.files) ? doc.files.slice() : [];
     generateDocumentPdf(doc, {
       summaryAttachments: allAttachments,
@@ -9269,7 +12656,12 @@
       })
       .finally(function() {
         button.disabled = false;
-        button.textContent = initialText;
+        if (iconButton) {
+          button.innerHTML = initialHtml;
+          button.removeAttribute('aria-busy');
+        } else {
+          button.textContent = initialText;
+        }
       });
   }
 
@@ -9403,58 +12795,69 @@
     var nameText = assignee && assignee.name
       ? assignee.name
       : (assignee && assignee.id ? 'Ответственный #' + assignee.id : 'Не назначен');
-    entryNode.appendChild(createElement('div', 'documents-assignee__name', nameText));
+    var line = createElement('div', 'documents-assignee__line');
+    var nameNode = createElement('span', 'documents-assignee__name', nameText);
+    var viewIcon = createElement('span', config.unviewed
+      ? 'documents-assignee__view-icon documents-assignee__view-icon--unviewed'
+      : 'documents-assignee__view-icon');
+    viewIcon.title = config.unviewed ? 'Не просмотрел' : 'Просмотрел';
+    viewIcon.appendChild(createSvgIcon(config.unviewed ? 'eye-off' : 'eye', 'documents-assignee__view-svg'));
+    line.appendChild(nameNode);
+    line.appendChild(viewIcon);
+    entryNode.appendChild(line);
 
+    if (assignee && typeof assignee === 'object') {
+      var details = createElement('div', 'documents-assignee__details');
+      var positionText = assignee.position || assignee.department || assignee.note || '—';
+      var assignedByText = assignee.assignedBy || assignee.assignedByLogin || assignee.assignedByTelegram || '—';
+      var assignedAtText = assignee.assignedAt ? formatDateTime(assignee.assignedAt) : '';
+      var viewedAtText = '';
+      if (config.viewedAt && !config.unviewed) {
+        viewedAtText = formatStatusTimestamp(config.viewedAt) || formatDateTime(config.viewedAt);
+      }
+      [
+        'Должность: ' + (positionText || '—'),
+        'Назначил: ' + (assignedByText || '—'),
+        'Назначено: ' + (assignedAtText && assignedAtText !== '—' ? assignedAtText : '—'),
+        'Просмотрено: ' + (viewedAtText ? viewedAtText : 'Не просмотрено')
+      ].forEach(function(text) {
+        details.appendChild(createElement('div', 'documents-assignee__detail', text));
+      });
+      entryNode.appendChild(details);
+    }
+
+    var titleParts = [];
     if (assignee) {
-      var titleParts = [];
       if (assignee.position) {
         titleParts.push(assignee.position);
       }
       if (assignee.department) {
         titleParts.push(assignee.department);
       }
-      if (titleParts.length) {
-        entryNode.appendChild(createElement('div', 'documents-assignee__meta documents-assignee__meta--muted', titleParts.join(' · ')));
-      }
-      var metaParts = [];
       if (assignee.telegram) {
-        metaParts.push('TG: ' + assignee.telegram);
+        titleParts.push('TG: ' + assignee.telegram);
       }
       if (assignee.chatId) {
-        metaParts.push('ID: ' + assignee.chatId);
+        titleParts.push('ID: ' + assignee.chatId);
       }
       if (assignee.email) {
-        metaParts.push(assignee.email);
-      }
-      if (metaParts.length) {
-        entryNode.appendChild(createElement('div', 'documents-assignee__meta', metaParts.join(' • ')));
+        titleParts.push(assignee.email);
       }
       if (assignee.note) {
-        entryNode.appendChild(createElement('div', 'documents-assignee__note', assignee.note));
+        titleParts.push(assignee.note);
       }
       if (assignee.status) {
-        entryNode.appendChild(createElement('div', 'documents-assignee__status', 'Статус: ' + assignee.status));
-      }
-      if (assignee.assignedBy) {
-        entryNode.appendChild(createElement('div', 'documents-assignee__meta', 'Назначил: ' + assignee.assignedBy));
-      }
-      if (assignee.assignedAt) {
-        var assignedAt = formatDateTime(assignee.assignedAt);
-        if (assignedAt) {
-          entryNode.appendChild(createElement('div', 'documents-assignee__meta documents-assignee__meta--muted', 'Назначено: ' + assignedAt));
-        }
+        titleParts.push('Статус: ' + assignee.status);
       }
     }
-
     if (config.viewedAt && !config.unviewed) {
       var viewedAt = formatStatusTimestamp(config.viewedAt) || formatDateTime(config.viewedAt);
       if (viewedAt) {
-        entryNode.appendChild(createElement('div', 'documents-assignee__meta documents-assignee__meta--muted', 'Просмотрено: ' + viewedAt));
+        titleParts.push('Просмотрено: ' + viewedAt);
       }
     }
-
-    if (config.unviewed) {
-      entryNode.appendChild(createElement('div', 'documents-assignee__badge documents-assignee__badge--unviewed', 'Не просмотрено'));
+    if (titleParts.length) {
+      entryNode.title = titleParts.join(' • ');
     }
 
     if (config.unviewed && typeof config.onResend === 'function') {
@@ -9522,6 +12925,22 @@
     }
 
     return true;
+  }
+
+  function createAssignmentEditButton(label, handler) {
+    var button = createElement('button', 'documents-assignee__edit');
+    button.type = 'button';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.appendChild(createSvgIcon('pencil', 'documents-assignee__edit-icon'));
+    button.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof handler === 'function') {
+        handler();
+      }
+    });
+    return button;
   }
 
   function createAssignmentEditor(initialAssignees, options) {
@@ -10181,7 +13600,7 @@
       return container;
     }
 
-    var name = entry.name || entry.responsible || entry.email || entry.telegram || entry.id || '';
+    var name = entry.name || entry.responsible || entry.email || entry.department || entry.position || '';
     var nameNode = createElement('div', 'documents-director__name', name || '—');
     container.appendChild(nameNode);
 
@@ -10286,12 +13705,12 @@
 
     var canManageAssignees = isCurrentUserAdmin();
     if (canManageAssignees) {
-      var button = createElement('button', 'documents-action documents-action--assign', primaryAssignee ? 'Изменить' : 'Назначить');
-      button.type = 'button';
-      button.addEventListener('click', function() {
-        openAssigneeModal(doc);
-      });
-      container.appendChild(button);
+      container.appendChild(createAssignmentEditButton(
+        primaryAssignee ? 'Изменить ответственных' : 'Назначить ответственных',
+        function() {
+          openAssigneeModal(doc);
+        }
+      ));
     }
 
     return container;
@@ -10631,12 +14050,12 @@
     }
 
     if (canManageSubordinates()) {
-      var button = createElement('button', 'documents-action documents-action--assign', subordinates.length ? 'Изменить' : 'Назначить');
-      button.type = 'button';
-      button.addEventListener('click', function() {
-        openSubordinateModal(doc);
-      });
-      container.appendChild(button);
+      container.appendChild(createAssignmentEditButton(
+        subordinates.length ? 'Изменить подчинённых' : 'Назначить подчинённых',
+        function() {
+          openSubordinateModal(doc);
+        }
+      ));
     }
 
     return container;
@@ -12432,13 +15851,136 @@
     element.style.maxWidth = value;
   }
 
+  function measureTextWidth(text, font) {
+    var value = String(text === undefined || text === null ? '' : text);
+    if (!value) {
+      return 0;
+    }
+    if (!measureTextWidth.canvas) {
+      measureTextWidth.canvas = document.createElement('canvas');
+    }
+    var context = measureTextWidth.canvas.getContext('2d');
+    if (!context) {
+      return Math.min(value.length * 8, COLUMN_WIDTH_MAX);
+    }
+    context.font = font || '13px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    var lines = value.split(/\s*[\n\r]\s*/g);
+    var maxWidth = 0;
+    for (var i = 0; i < lines.length; i += 1) {
+      var parts = String(lines[i] || '').split(/\s{2,}/g);
+      for (var j = 0; j < parts.length; j += 1) {
+        maxWidth = Math.max(maxWidth, context.measureText(parts[j]).width || 0);
+      }
+    }
+    return maxWidth;
+  }
+
+  function getAutoFitTextForEntry(entry, columnKey) {
+    var doc = entry && entry.doc ? entry.doc : null;
+    var values = entry && entry.values ? entry.values : {};
+    if (columnKey === 'actions') {
+      return 'Действия';
+    }
+    if (columnKey === 'files') {
+      var files = doc && Array.isArray(doc.files) ? doc.files : [];
+      if (!files.length) {
+        return 'Без файлов';
+      }
+      return files.map(getAttachmentName).filter(Boolean).join('\n') || ('Файлы (' + files.length + ')');
+    }
+    if (columnKey === 'assignee') {
+      var assignees = resolveAssigneeList(doc).filter(function(item) {
+        return !isSubordinateSnapshot(item);
+      }).map(buildAssigneeDisplayName).filter(Boolean);
+      return assignees.length ? assignees.join('\n') : 'Не назначен';
+    }
+    if (columnKey === 'subordinates') {
+      var subordinates = resolveSubordinateList(doc).map(buildAssigneeDisplayName).filter(Boolean);
+      return subordinates.length ? subordinates.join('\n') : 'Не назначены';
+    }
+    if (columnKey === 'director') {
+      var director = resolveDirectorEntry(doc);
+      if (!director) {
+        return '—';
+      }
+      return [
+        director.name,
+        director.department,
+        director.email,
+        director.note
+      ].filter(Boolean).join('\n') || '—';
+    }
+    return values && values[columnKey] !== undefined && values[columnKey] !== null
+      ? String(values[columnKey])
+      : '';
+  }
+
+  function autoFitColumnWidth(columnKey) {
+    if (!Object.prototype.hasOwnProperty.call(TABLE_COLUMN_MAP, columnKey)) {
+      return;
+    }
+    var column = getColumnDefinition(columnKey);
+    var candidates = [column ? column.label : columnKey];
+    var entries = Array.isArray(state.tableFilteredEntries) && state.tableFilteredEntries.length
+      ? state.tableFilteredEntries
+      : [];
+    if (!entries.length && Array.isArray(state.documents)) {
+      for (var i = 0; i < state.documents.length; i += 1) {
+        var doc = state.documents[i];
+        if (!documentVisibleForCurrentUser(doc)) {
+          continue;
+        }
+        var values = computeFilterValues(doc, i);
+        if (matchesActiveDocumentTab(doc, values) && matchesDocumentFilters(values)) {
+          entries.push({ doc: doc, values: values, index: i });
+        }
+        if (entries.length >= 300) {
+          break;
+        }
+      }
+    }
+    for (var entryIndex = 0; entryIndex < entries.length && entryIndex < 300; entryIndex += 1) {
+      candidates.push(getAutoFitTextForEntry(entries[entryIndex], columnKey));
+    }
+
+    var fontSize = getColumnFontSize(
+      columnKey,
+      state.visualSettings && state.visualSettings.columns ? state.visualSettings.columns : null,
+      state.visualSettings ? state.visualSettings.fontSize : DEFAULT_COLUMN_FONT_SIZE
+    );
+    var font = '700 ' + fontSize + 'px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    var maxTextWidth = 0;
+    for (var textIndex = 0; textIndex < candidates.length; textIndex += 1) {
+      maxTextWidth = Math.max(maxTextWidth, measureTextWidth(candidates[textIndex], font));
+    }
+
+    var extra = columnKey === 'actions' ? 28 : 54;
+    var nextWidth = clampColumnWidth(Math.ceil(maxTextWidth + extra));
+    if (nextWidth === null) {
+      return;
+    }
+    var widthMap = buildColumnWidthMap(state.columnWidthOverrides || state.columnWidths || null);
+    widthMap[columnKey] = nextWidth;
+    persistColumnWidthMap(widthMap, 'Ширина «' + (column ? column.label : columnKey) + '» подобрана.');
+  }
+
   function applyColumnWidths(previewWidths) {
     var overrides = previewWidths || state.columnWidthOverrides || null;
     var widthMap = buildColumnWidthMap(overrides);
-    var totalWidth = 0;
+    var totalWidth = TABLE_SELECTION_COLUMN_WIDTH;
 
     if (!elements.headerCells) {
       elements.headerCells = {};
+    }
+
+    if (elements.selectionCol) {
+      setElementColumnWidth(elements.selectionCol, TABLE_SELECTION_COLUMN_WIDTH);
+    }
+    if (elements.selectAllHeaderCell) {
+      setElementColumnWidth(elements.selectAllHeaderCell, TABLE_SELECTION_COLUMN_WIDTH);
+    }
+    if (elements.selectFilterCell) {
+      setElementColumnWidth(elements.selectFilterCell, TABLE_SELECTION_COLUMN_WIDTH);
     }
 
     TABLE_COLUMNS.forEach(function(column) {
@@ -12447,13 +15989,20 @@
       if (!isFinite(width) || width <= 0) {
         width = getColumnDefaultWidth(key);
       }
-      totalWidth += width;
+      var visible = isColumnVisible(key);
+      if (visible) {
+        totalWidth += width;
+      }
       var headerCell = elements.headerCells[key];
       if (headerCell) {
-        setElementColumnWidth(headerCell, width);
+        setElementColumnWidth(headerCell, visible ? width : 1);
+      }
+      var filterCell = elements.filterCells && elements.filterCells[key];
+      if (filterCell) {
+        setElementColumnWidth(filterCell, visible ? width : 1);
       }
       if (elements.columnCols && elements.columnCols[key]) {
-        setElementColumnWidth(elements.columnCols[key], width);
+        setElementColumnWidth(elements.columnCols[key], visible ? width : 1);
       }
     });
 
@@ -12462,6 +16011,70 @@
       elements.table.style.width = tableWidth || '';
       elements.table.style.minWidth = tableWidth || '100%';
     }
+  }
+
+  function startColumnResize(columnKey, event) {
+    if (!columnKey || !event || (event.button !== undefined && event.button !== 0)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    closeSearchPopover();
+    closeColumnsPopover();
+    closeToolbarMenu();
+
+    var handle = event.currentTarget;
+    var startX = Number(event.clientX) || 0;
+    var startWidth = getEffectiveColumnWidth(columnKey);
+    var previewWidths = buildColumnWidthMap(state.columnWidthOverrides || state.columnWidths || null);
+    if (handle && typeof handle.setPointerCapture === 'function' && event.pointerId !== undefined) {
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch (captureError) {}
+    }
+    if (handle && handle.classList) {
+      handle.classList.add('is-resizing');
+    }
+
+    function applyPreview(nextWidth) {
+      var width = clampColumnWidth(nextWidth);
+      if (width === null) {
+        return;
+      }
+      previewWidths[columnKey] = width;
+      state.columnWidthOverrides = previewWidths;
+      var nextVisual = cloneVisualSettings(state.visualSettings);
+      if (nextVisual.columns[columnKey]) {
+        nextVisual.columns[columnKey].width = width;
+      }
+      state.visualSettings = nextVisual;
+      applyColumnWidths(previewWidths);
+    }
+
+    function handleMove(moveEvent) {
+      var currentX = Number(moveEvent.clientX) || startX;
+      applyPreview(startWidth + currentX - startX);
+    }
+
+    function handleUp() {
+      document.removeEventListener('pointermove', handleMove);
+      document.removeEventListener('pointerup', handleUp);
+      document.removeEventListener('pointercancel', handleUp);
+      if (handle && handle.classList) {
+        handle.classList.remove('is-resizing');
+      }
+      state.columnWidthOverrides = buildColumnWidthMap(previewWidths);
+      saveColumnWidths(state.columnWidthOverrides).catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось сохранить ширину столбца:', error);
+        }
+      });
+      scheduleTablePreferencesSave();
+    }
+
+    document.addEventListener('pointermove', handleMove);
+    document.addEventListener('pointerup', handleUp, { once: true });
+    document.addEventListener('pointercancel', handleUp, { once: true });
   }
 
   function handleTableResize() {
@@ -12509,6 +16122,391 @@
     var canManage = state.permissions && state.permissions.canManageInstructions ? '1' : '0';
     var userKey = getCurrentUserKey();
     return role + ':' + canManage + ':' + (userKey || 'guest');
+  }
+
+  function getTablePreferencesStorageKey() {
+    if (!state.organization) {
+      return '';
+    }
+    var userKey = getCurrentUserKey();
+    var userPart = userKey ? ':' + userKey : ':guest';
+    return TABLE_PREFERENCES_STORAGE_PREFIX + state.organization + ':' + getAccessProfileKey(state.access) + userPart;
+  }
+
+  function normalizeFilterSelections(selections) {
+    var normalized = {};
+    if (!selections || typeof selections !== 'object') {
+      return normalized;
+    }
+    TABLE_COLUMNS.forEach(function(column) {
+      var source = selections[column.key];
+      if (!Array.isArray(source)) {
+        return;
+      }
+      var values = [];
+      var seen = Object.create(null);
+      for (var i = 0; i < source.length && values.length < 200; i += 1) {
+        var value = normalizeTextInputValue(source[i]);
+        if (!value) {
+          continue;
+        }
+        var key = normalizeValueForMatch(value);
+        if (seen[key]) {
+          continue;
+        }
+        seen[key] = true;
+        values.push(value.length > 220 ? value.slice(0, 220).trim() : value);
+      }
+      if (values.length) {
+        normalized[column.key] = values;
+      }
+    });
+    return normalized;
+  }
+
+  function cloneFilterSelections(selections) {
+    return normalizeFilterSelections(selections);
+  }
+
+  function normalizeTablePreferences(preferences) {
+    var source = preferences && typeof preferences === 'object' ? preferences : {};
+    var filters = {};
+    var filterSelections = {};
+    var rawFilters = source.filters && typeof source.filters === 'object' ? source.filters : {};
+
+    TABLE_COLUMNS.forEach(function(column) {
+      var value = rawFilters[column.key];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        var text = normalizeTextInputValue(value.text);
+        if (text) {
+          filters[column.key] = text.length > 180 ? text.slice(0, 180).trim() : text;
+        }
+        if (Array.isArray(value.selected)) {
+          filterSelections[column.key] = value.selected;
+        }
+        return;
+      }
+      var legacy = normalizeTextInputValue(value);
+      if (legacy) {
+        filters[column.key] = legacy.length > 180 ? legacy.slice(0, 180).trim() : legacy;
+      }
+    });
+
+    filterSelections = normalizeFilterSelections(
+      source.filterSelections && typeof source.filterSelections === 'object'
+        ? Object.assign({}, source.filterSelections, filterSelections)
+        : filterSelections
+    );
+
+    var columns = {};
+    var rawColumns = source.columns && typeof source.columns === 'object' ? source.columns : {};
+    TABLE_COLUMNS.forEach(function(column) {
+      var item = rawColumns[column.key];
+      if (!item || typeof item !== 'object') {
+        return;
+      }
+      var width = clampColumnWidth(item.width);
+      columns[column.key] = {
+        visible: item.visible !== false
+      };
+      if (width !== null) {
+        columns[column.key].width = width;
+      }
+    });
+
+    var orderSource = Object.assign({}, filters);
+    Object.keys(filterSelections).forEach(function(key) {
+      orderSource[key] = filterSelections[key];
+    });
+
+    var view = source.view && typeof source.view === 'object' ? source.view : {};
+    var viewPageSize = view.pageSize !== undefined ? view.pageSize : source.tablePageSize;
+    var grouping = source.grouping && typeof source.grouping === 'object' ? source.grouping : {};
+    var groupingColumn = normalizeGroupingColumn(grouping.column || source.groupingColumn);
+
+    return {
+      filters: filters,
+      filterOrder: normalizeFilterOrder(orderSource, source.filterOrder),
+      filterSelections: filterSelections,
+      globalSearchQuery: normalizeTextInputValue(source.globalSearchQuery),
+      sorting: normalizeSortingSettings(source.sorting),
+      columns: columns,
+      columnOrder: normalizeColumnOrder(source.columnOrder),
+      customDocumentTabs: normalizeCustomDocumentTabs(source.customDocumentTabs),
+      tablePageSize: normalizeTablePageSize(viewPageSize),
+      view: {
+        density: normalizeTableDensity(view.density || source.tableDensity),
+        pageSize: normalizeTablePageSize(viewPageSize)
+      },
+      grouping: {
+        column: groupingColumn
+      },
+      groupingColumn: groupingColumn,
+      tableDensity: normalizeTableDensity(view.density || source.tableDensity),
+      showUnassignedOnly: source.showUnassignedOnly === true,
+      showUnviewedOnly: source.showUnviewedOnly === true
+    };
+  }
+
+  function buildTablePreferencesPayload() {
+    var filters = {};
+    TABLE_COLUMNS.forEach(function(column) {
+      var text = state.filters && state.filters[column.key] ? String(state.filters[column.key]) : '';
+      var selected = state.filterSelections && Array.isArray(state.filterSelections[column.key])
+        ? state.filterSelections[column.key].slice()
+        : [];
+      if (text || selected.length) {
+        filters[column.key] = {
+          text: text,
+          selected: selected
+        };
+      }
+    });
+
+    var columns = {};
+    var currentWidths = buildColumnWidthMap(state.columnWidthOverrides || state.columnWidths || null);
+    TABLE_COLUMNS.forEach(function(column) {
+      var config = state.visualSettings && state.visualSettings.columns && state.visualSettings.columns[column.key]
+        ? state.visualSettings.columns[column.key]
+        : null;
+      columns[column.key] = {
+        visible: !config || config.visible !== false,
+        width: currentWidths[column.key] || getColumnDefaultWidth(column.key)
+      };
+    });
+
+    var orderSource = Object.assign({}, state.filters);
+    if (state.filterSelections && typeof state.filterSelections === 'object') {
+      Object.keys(state.filterSelections).forEach(function(key) {
+        orderSource[key] = state.filterSelections[key];
+      });
+    }
+
+    var pageSize = normalizeTablePageSize(state.tablePageSize);
+    var density = normalizeTableDensity(state.tableDensity);
+
+    return {
+      filters: filters,
+      filterOrder: normalizeFilterOrder(orderSource, state.filterOrder),
+      globalSearchQuery: state.globalSearchQuery || '',
+      sorting: state.visualSettings && state.visualSettings.sorting
+        ? normalizeSortingSettings(state.visualSettings.sorting)
+        : buildDefaultSortingSettings(),
+      columns: columns,
+      columnOrder: normalizeColumnOrder(state.columnOrder),
+      customDocumentTabs: normalizeCustomDocumentTabs(state.customDocumentTabs),
+      tablePageSize: pageSize,
+      view: {
+        density: density,
+        pageSize: pageSize
+      },
+      grouping: {
+        column: normalizeGroupingColumn(state.groupingColumn)
+      },
+      showUnassignedOnly: state.showUnassignedOnly === true,
+      showUnviewedOnly: state.showUnviewedOnly === true
+    };
+  }
+
+  function saveTablePreferencesToLocalStorage(preferences) {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    var key = getTablePreferencesStorageKey();
+    if (!key) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, JSON.stringify(normalizeTablePreferences(preferences)));
+    } catch (error) {
+      if (typeof docsLogger.warn === 'function') {
+        docsLogger.warn('Не удалось сохранить настройки таблицы в localStorage:', error);
+      }
+    }
+  }
+
+  function loadTablePreferencesFromLocalStorage() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return null;
+    }
+    var key = getTablePreferencesStorageKey();
+    if (!key) {
+      return null;
+    }
+    try {
+      var raw = window.localStorage.getItem(key);
+      return raw ? normalizeTablePreferences(JSON.parse(raw)) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function applyTablePreferences(preferences, options) {
+    if (!preferences || typeof preferences !== 'object') {
+      return null;
+    }
+    var normalized = normalizeTablePreferences(preferences);
+    var config = options && typeof options === 'object' ? options : {};
+    var previousApplying = state.tablePreferencesApplying;
+    state.tablePreferencesApplying = true;
+
+    state.filters = cloneFilterMap(normalized.filters);
+    state.filterOrder = normalizeFilterOrder(state.filters, normalized.filterOrder);
+    state.filterSelections = cloneFilterSelections(normalized.filterSelections);
+    state.globalSearchQuery = normalized.globalSearchQuery;
+    state.showUnassignedOnly = normalized.showUnassignedOnly;
+    state.showUnviewedOnly = normalized.showUnviewedOnly;
+    state.tablePageSize = normalized.tablePageSize;
+    state.tableDensity = normalizeTableDensity(normalized.tableDensity || (normalized.view && normalized.view.density));
+    state.groupingColumn = normalizeGroupingColumn(normalized.groupingColumn || (normalized.grouping && normalized.grouping.column));
+
+    state.customDocumentTabs = normalized.customDocumentTabs;
+    saveCustomDocumentTabs();
+
+    var nextVisual = cloneVisualSettings(state.visualSettings);
+    nextVisual.sorting = normalizeSortingSettings(normalized.sorting);
+    TABLE_COLUMNS.forEach(function(column) {
+      var source = normalized.columns[column.key];
+      if (!source) {
+        return;
+      }
+      var existing = nextVisual.columns[column.key] || {
+        width: getColumnDefaultWidth(column.key),
+        fontSize: nextVisual.fontSize,
+        visible: true
+      };
+      nextVisual.columns[column.key] = {
+        width: source.width !== undefined ? source.width : existing.width,
+        fontSize: existing.fontSize,
+        visible: source.visible !== false
+      };
+    });
+    applyVisualSettings(nextVisual);
+
+    if (Array.isArray(normalized.columnOrder) && normalized.columnOrder.length) {
+      applyColumnOrder(normalized.columnOrder, { render: config.render !== false });
+    }
+
+    if (elements.globalSearchInput) {
+      elements.globalSearchInput.value = state.globalSearchQuery || '';
+    }
+    applyTableDensity();
+    syncColumnFilterControls();
+    updateSearchButtonStates();
+    updateResponsibleButtonState();
+    updateUnviewedButtonState();
+    renderDocumentTabs();
+    updateFilterBar();
+    if (config.render !== false) {
+      resetTablePage();
+      updateTable();
+    }
+
+    state.tablePreferencesLoaded = true;
+    state.tablePreferencesApplying = previousApplying;
+    return normalized;
+  }
+
+  function scheduleTablePreferencesSave() {
+    if (state.tablePreferencesApplying) {
+      return;
+    }
+    if (state.tablePreferencesSavingTimer) {
+      window.clearTimeout(state.tablePreferencesSavingTimer);
+    }
+    state.tablePreferencesSavingTimer = window.setTimeout(function() {
+      state.tablePreferencesSavingTimer = null;
+      saveTablePreferences();
+    }, 500);
+  }
+
+  function saveTablePreferences() {
+    var preferences = buildTablePreferencesPayload();
+    saveTablePreferencesToLocalStorage(preferences);
+    if (!state.organization || typeof fetch !== 'function') {
+      return Promise.resolve(preferences);
+    }
+    var payload = {
+      action: 'save_table_preferences',
+      organization: state.organization,
+      user_key: getCurrentUserKey() || '',
+      preferences: preferences
+    };
+    mergeTelegramUserId(payload);
+    return fetch(buildApiUrl('save_table_preferences', {
+      organization: state.organization,
+      user_key: getCurrentUserKey() || ''
+    }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    })
+      .then(handleResponse)
+      .then(function(data) {
+        if (data && data.preferences) {
+          saveTablePreferencesToLocalStorage(data.preferences);
+        }
+        return data && data.preferences ? data.preferences : preferences;
+      })
+      .catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Настройки таблицы сохранены локально, но не отправлены на сервер:', error);
+        }
+        return preferences;
+      });
+  }
+
+  function loadTablePreferences(organization, force) {
+    if (!organization || typeof fetch !== 'function') {
+      var localOnly = loadTablePreferencesFromLocalStorage();
+      if (localOnly) {
+        applyTablePreferences(localOnly, { render: true });
+      }
+      return Promise.resolve(localOnly || null);
+    }
+    if (!force && state.tablePreferencesLoadingPromise) {
+      return state.tablePreferencesLoadingPromise;
+    }
+
+    var local = loadTablePreferencesFromLocalStorage();
+    if (local) {
+      applyTablePreferences(local, { render: false });
+    }
+
+    var promise = fetch(buildApiUrl('load_table_preferences', {
+      organization: organization,
+      user_key: getCurrentUserKey() || ''
+    }), { credentials: 'same-origin' })
+      .then(handleResponse)
+      .then(function(data) {
+        var preferences = data && data.preferences ? normalizeTablePreferences(data.preferences) : null;
+        if (preferences) {
+          saveTablePreferencesToLocalStorage(preferences);
+          applyTablePreferences(preferences, { render: true });
+        } else if (local) {
+          applyTablePreferences(local, { render: true });
+          return local;
+        }
+        return preferences;
+      })
+      .catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось загрузить серверные настройки таблицы:', error);
+        }
+        if (local) {
+          applyTablePreferences(local, { render: true });
+          return local;
+        }
+        return null;
+      })
+      .finally(function() {
+        if (state.tablePreferencesLoadingPromise === promise) {
+          state.tablePreferencesLoadingPromise = null;
+        }
+      });
+    state.tablePreferencesLoadingPromise = promise;
+    return promise;
   }
 
   function loadColumnWidths(organization, force) {
@@ -12617,6 +16615,10 @@
       if (headerCell && headerCell.parentNode === elements.headerRow) {
         elements.headerRow.appendChild(headerCell);
       }
+      var filterCell = elements.filterCells && elements.filterCells[column.key];
+      if (filterCell && elements.filterRow && filterCell.parentNode === elements.filterRow) {
+        elements.filterRow.appendChild(filterCell);
+      }
     });
 
     if (elements.tableBody) {
@@ -12648,11 +16650,12 @@
     }
 
     if (elements.tableTopSpacer && elements.tableTopSpacer.firstChild) {
-      elements.tableTopSpacer.firstChild.colSpan = orderedColumns.length;
+      elements.tableTopSpacer.firstChild.colSpan = orderedColumns.length + 1;
     }
     if (elements.tableBottomSpacer && elements.tableBottomSpacer.firstChild) {
-      elements.tableBottomSpacer.firstChild.colSpan = orderedColumns.length;
+      elements.tableBottomSpacer.firstChild.colSpan = orderedColumns.length + 1;
     }
+    updateHeaderSortIndicators();
   }
 
   function applyColumnOrder(order, options) {
@@ -13116,10 +17119,18 @@
   function createStatusCell(doc) {
     var container = createElement('div', 'documents-status');
     var statusText = resolveDocumentStatus(doc);
+    var isOverdue = isDocumentOverdueForTab(doc);
     var role = state.access ? state.access.role : '';
     var hasPermission = state.permissions && state.permissions.canManageInstructions && role !== 'admin';
     var canEditStatus = hasPermission || (role === 'user' && isDocumentAssignedToCurrentUser(doc));
     var meta = createElement('div', 'documents-status__meta', formatStatusMetaText(doc));
+
+    if (isOverdue) {
+      container.dataset.overdue = 'true';
+      container.appendChild(createElement('div', 'documents-status__value documents-status__value--overdue', 'Просрочено'));
+      container.appendChild(meta);
+      return container;
+    }
 
     if (canEditStatus) {
       var select = document.createElement('select');
@@ -13130,7 +17141,7 @@
         handleStatusSelectChange(doc, select, meta);
       });
       container.appendChild(select);
-    } else {
+    } else if (!isOverdue) {
       container.appendChild(createElement('div', 'documents-status__value', statusText));
     }
 
@@ -13147,16 +17158,8 @@
       tr.classList.add('documents-row--control');
     }
 
-    if (doc.dueDate && status.indexOf('выполн') === -1) {
-      var due = new Date(doc.dueDate);
-      var today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (!isNaN(due.getTime())) {
-        due.setHours(0, 0, 0, 0);
-        if (due < today) {
-          tr.classList.add('documents-row--overdue');
-        }
-      }
+    if (isDocumentOverdueForTab(doc)) {
+      tr.classList.add('documents-row--overdue');
     }
   }
 
@@ -13165,16 +17168,19 @@
     tr.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
     tr.classList.toggle('documents-row--expanded', isExpanded);
     tr.classList.toggle('documents-row--collapsed', !isExpanded);
-    if (docId !== null && docId !== undefined) {
-      state.rowExpandedState.set(String(docId), isExpanded);
+    var rowKey = docId !== null && docId !== undefined ? String(docId) : '';
+    if (rowKey) {
+      state.rowExpandedState.set(rowKey, isExpanded);
     }
   }
 
-  function createTableRow(doc, index, filterValues) {
+  function createTableRow(doc, index, filterValues, rowStateKey) {
     var tr = createElement('tr', '');
+    var expandedKey = rowStateKey ? String(rowStateKey) : getDocumentSelectionId(doc);
     tr.classList.add('documents-row');
     tr.setAttribute('tabindex', '0');
-    tr.dataset.docId = doc && doc.id !== undefined && doc.id !== null ? String(doc.id) : '';
+    tr.dataset.docId = getDocumentSelectionId(doc);
+    tr.dataset.rowKey = expandedKey;
     tr._cellSignatures = {};
 
     function toggleRowExpanded(forceState) {
@@ -13182,10 +17188,10 @@
         ? forceState
         : tr.getAttribute('aria-expanded') !== 'true';
       if (typeof forceState === 'boolean') {
-        setTableRowExpanded(tr, doc && doc.id, forceState);
+        setTableRowExpanded(tr, expandedKey, forceState);
       } else {
         var currentlyExpanded = tr.getAttribute('aria-expanded') === 'true';
-        setTableRowExpanded(tr, doc && doc.id, !currentlyExpanded);
+        setTableRowExpanded(tr, expandedKey, !currentlyExpanded);
       }
       if (nextExpanded) {
         recordDocumentView(doc, 'row_expand_auto_view');
@@ -13238,9 +17244,9 @@
 
     setTableRowExpanded(
       tr,
-      doc && doc.id,
-      doc && doc.id !== undefined && doc.id !== null
-        ? state.rowExpandedState.get(String(doc.id)) === true
+      expandedKey,
+      expandedKey
+        ? state.rowExpandedState.get(expandedKey) === true
         : false
     );
     syncTableRowState(tr, doc);
@@ -13261,11 +17267,15 @@
     td.className = descriptor.className || '';
     if (columnKey) {
       td.dataset.columnKey = columnKey;
-      td.style.fontSize = getColumnFontSize(
-        columnKey,
-        state.visualSettings && state.visualSettings.columns,
-        state.visualSettings && state.visualSettings.fontSize
-      ) + 'px';
+      if (columnKey === TABLE_SELECTION_COLUMN_KEY) {
+        td.style.fontSize = '';
+      } else {
+        td.style.fontSize = getColumnFontSize(
+          columnKey,
+          state.visualSettings && state.visualSettings.columns,
+          state.visualSettings && state.visualSettings.fontSize
+        ) + 'px';
+      }
     } else {
       delete td.dataset.columnKey;
       td.style.fontSize = '';
@@ -13280,6 +17290,42 @@
     }
     td.dataset.renderSignature = signature;
     return true;
+  }
+
+  function createRowSelectionCell(doc) {
+    var docId = getDocumentSelectionId(doc);
+    var label = createElement('label', 'documents-row-select');
+    var checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'documents-row-select__checkbox';
+    checkbox.checked = isDocumentSelected(docId);
+    checkbox.disabled = !docId;
+    if (checkbox.checked) {
+      checkbox.setAttribute('checked', 'checked');
+    }
+    if (checkbox.disabled) {
+      checkbox.setAttribute('disabled', 'disabled');
+    }
+    checkbox.setAttribute('aria-label', docId ? 'Выбрать документ' : 'Документ нельзя выбрать');
+    checkbox.addEventListener('click', function(event) {
+      event.stopPropagation();
+    });
+    checkbox.addEventListener('change', function(event) {
+      event.stopPropagation();
+      setDocumentSelected(docId, checkbox.checked);
+      updateSelectionControls();
+    });
+    label.appendChild(checkbox);
+    return label;
+  }
+
+  function createRowActionIconButton(iconName, label, className) {
+    var button = createElement('button', className || 'documents-action-icon');
+    button.type = 'button';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.appendChild(createSvgIcon(iconName, 'documents-action-icon__svg'));
+    return button;
   }
 
   function renderTableRowCells(tr, doc, index, filterValues, force) {
@@ -13300,11 +17346,13 @@
       if (columnKey === 'entryNumber') {
         normalizedClass += (normalizedClass ? ' ' : '') + 'documents-cell--toggle';
       }
-      if (columnKey && state.filters[columnKey]) {
+      if (columnKey && (state.filters[columnKey] || hasFilterSelection(columnKey))) {
         var valueForMatch = filterValues && Object.prototype.hasOwnProperty.call(filterValues, columnKey)
           ? filterValues[columnKey]
           : displayValue;
-        if (valueMatchesQuery(valueForMatch, state.filters[columnKey])) {
+        var textMatches = state.filters[columnKey] ? valueMatchesQuery(valueForMatch, state.filters[columnKey]) : true;
+        var selectedMatches = filterValues ? filterSelectionMatchesValue(filterValues, columnKey, getFilterSelectionList(columnKey)) : true;
+        if (textMatches && selectedMatches) {
           normalizedClass += (normalizedClass ? ' ' : '') + 'documents-cell--highlight';
         }
       }
@@ -13346,16 +17394,11 @@
     descriptorsByKey.entryNumber = buildCellDescriptor(displayNumber, '', 'entryNumber');
 
     ensureSearchStyles();
-    var actions = createElement('div', 'documents-actions');
-    var actionsToggleButton = createElement('button', 'documents-actions__toggle', 'Действия');
-    actionsToggleButton.type = 'button';
-    actionsToggleButton.setAttribute('aria-expanded', 'false');
-    actionsToggleButton.setAttribute('aria-label', 'Показать действия по документу');
+    var actions = createElement('div', 'documents-actions documents-actions--icons');
     var actionsPanel = createElement('div', 'documents-actions__panel');
     actionsPanel.setAttribute('role', 'group');
     actionsPanel.setAttribute('aria-label', 'Действия с документом');
-    actionsPanel.hidden = true;
-    actions.appendChild(actionsToggleButton);
+    actionsPanel.hidden = false;
     actions.appendChild(actionsPanel);
     var isAdmin = isCurrentUserAdmin();
     var canDeleteDocuments = isAdmin || (state.permissions && state.permissions.canDeleteDocuments === true);
@@ -13367,25 +17410,23 @@
       || effectiveRole === 'director'
       || effectiveRole.indexOf('директор') !== -1;
 
-    var pdfButton = createElement('button', 'documents-action documents-action--pdf', 'Скачать');
-    pdfButton.type = 'button';
+    var pdfButton = createRowActionIconButton('download', 'Скачать документ', 'documents-action-icon documents-action-icon--pdf');
     pdfButton.addEventListener('click', function() {
       handlePdfDownload(pdfButton, doc);
     });
     actionsPanel.appendChild(pdfButton);
 
-    var responseButton = createElement('button', 'documents-action documents-action--assign', 'Ответ');
-    responseButton.type = 'button';
+    var responseButton = createRowActionIconButton('message', 'Ответить по документу', 'documents-action-icon documents-action-icon--response');
     responseButton.addEventListener('click', function() {
       openResponseModal(doc);
     });
     actionsPanel.appendChild(responseButton);
 
-    var briefActionButton = createElement('button', 'documents-action documents-action--ai', 'Кратко ИИ');
-    briefActionButton.type = 'button';
+    var briefActionButton = createRowActionIconButton('sparkles', 'Кратко ИИ', 'documents-action-icon documents-action-icon--ai');
     briefActionButton.disabled = !attachments.length;
     if (!attachments.length) {
       briefActionButton.title = 'Нет прикреплённых файлов.';
+      briefActionButton.setAttribute('aria-label', 'Кратко ИИ недоступно: нет прикреплённых файлов');
     }
     briefActionButton.addEventListener('click', function() {
       if (!attachments.length) {
@@ -13394,10 +17435,9 @@
       if (briefActionButton.dataset.loading === '1') {
         return;
       }
-      var defaultBriefLabel = 'Кратко ИИ';
       briefActionButton.dataset.loading = '1';
       briefActionButton.disabled = true;
-      briefActionButton.textContent = '⏳ Открываю...';
+      briefActionButton.setAttribute('aria-busy', 'true');
       var linkedFiles = attachments.map(function(file) {
         return {
           name: getAttachmentName(file),
@@ -13420,15 +17460,14 @@
         }
       }).finally(function() {
         briefActionButton.dataset.loading = '0';
-        briefActionButton.textContent = defaultBriefLabel;
+        briefActionButton.removeAttribute('aria-busy');
         briefActionButton.disabled = !attachments.length;
       });
     });
     actionsPanel.appendChild(briefActionButton);
 
     if (isAdmin && state.permissions && state.permissions.canCreateDocuments) {
-      var editButton = createElement('button', 'documents-action documents-action--edit', 'Редактировать');
-      editButton.type = 'button';
+      var editButton = createRowActionIconButton('pencil', 'Редактировать документ', 'documents-action-icon documents-action-icon--edit');
       editButton.addEventListener('click', function() {
         openDocumentForm(doc);
       });
@@ -13436,14 +17475,12 @@
     }
 
     if (isAdmin && canDeleteDocuments && !isDirectorRole) {
-      var deleteButton = createElement('button', 'documents-action documents-action--delete', 'Удалить');
-      deleteButton.type = 'button';
+      var deleteButton = createRowActionIconButton('trash', 'Удалить документ', 'documents-action-icon documents-action-icon--delete');
       deleteButton.addEventListener('click', function() {
         deleteDocument(doc);
       });
       actionsPanel.appendChild(deleteButton);
     }
-    setupRowActionsMenu(actions, actionsToggleButton, actionsPanel);
 
     descriptorsByKey.registryNumber = buildCellDescriptor(doc.registryNumber || '—', '', 'registryNumber');
     descriptorsByKey.actions = buildCellDescriptor(actions, '', 'actions');
@@ -13502,7 +17539,9 @@
     descriptorsByKey.dueDate = buildCellDescriptor(createDueDateCell(doc), '', 'dueDate');
     descriptorsByKey.instruction = buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction');
 
-    var descriptors = [];
+    var descriptors = [
+      buildCellDescriptor(createRowSelectionCell(doc), 'documents-cell--select', TABLE_SELECTION_COLUMN_KEY)
+    ];
     getOrderedColumns().forEach(function(column) {
       if (descriptorsByKey[column.key]) {
         descriptors.push(descriptorsByKey[column.key]);
@@ -13700,11 +17739,97 @@
     return list;
   }
 
+  function buildGroupedPageEntries(entries) {
+    var columnKey = normalizeGroupingColumn(state.groupingColumn);
+    var pageEntries = Array.isArray(entries) ? entries : [];
+    if (!columnKey || !pageEntries.length) {
+      return pageEntries;
+    }
+
+    var groups = [];
+    var groupMap = Object.create(null);
+    pageEntries.forEach(function(entry) {
+      var label = getGroupingValue(entry, columnKey) || 'Без значения';
+      var lookup = normalizeValueForMatch(label) || '__empty';
+      if (!groupMap[lookup]) {
+        groupMap[lookup] = {
+          key: lookup,
+          label: label,
+          entries: []
+        };
+        groups.push(groupMap[lookup]);
+      }
+      groupMap[lookup].entries.push(entry);
+    });
+
+    var result = [];
+    groups.forEach(function(group) {
+      result.push({
+        group: true,
+        groupKey: group.key,
+        groupLabel: group.label,
+        groupColumn: columnKey,
+        groupCount: group.entries.length
+      });
+      group.entries.forEach(function(entry) {
+        result.push(entry);
+      });
+    });
+    return result;
+  }
+
+  function formatDocumentsCount(count) {
+    var value = Math.max(0, Number(count) || 0);
+    var mod10 = value % 10;
+    var mod100 = value % 100;
+    var suffix = 'документов';
+    if (mod10 === 1 && mod100 !== 11) {
+      suffix = 'документ';
+    } else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      suffix = 'документа';
+    }
+    return value + ' ' + suffix;
+  }
+
+  function createTableGroupRow(entry) {
+    var row = createElement('tr', 'documents-group-row');
+    var groupColumn = entry && entry.groupColumn ? entry.groupColumn : state.groupingColumn;
+    var groupCount = Number(entry && entry.groupCount) || 0;
+    row.dataset.groupKey = entry && entry.groupKey ? entry.groupKey : '';
+    var cell = document.createElement('td');
+    cell.colSpan = normalizeColumnOrder(state.columnOrder).length + 1;
+
+    var content = createElement('div', 'documents-group-row__content');
+    var label = createElement('span', 'documents-group-row__label', entry && entry.groupLabel ? entry.groupLabel : 'Без значения');
+    var count = createElement(
+      'span',
+      'documents-group-row__count',
+      (getGroupingLabel(groupColumn) ? getGroupingLabel(groupColumn) + ' • ' : '') + formatDocumentsCount(groupCount)
+    );
+    content.appendChild(label);
+    content.appendChild(count);
+    cell.appendChild(content);
+    row.appendChild(cell);
+    return row;
+  }
+
+  function removeVirtualGroupRows() {
+    if (!elements.tableBody || typeof elements.tableBody.querySelectorAll !== 'function') {
+      return;
+    }
+    var rows = elements.tableBody.querySelectorAll('.documents-group-row');
+    for (var i = 0; i < rows.length; i += 1) {
+      if (rows[i] && rows[i].parentNode) {
+        rows[i].parentNode.removeChild(rows[i]);
+      }
+    }
+  }
+
   function createTableSpacerRow(className) {
     var row = createElement('tr', className);
     row.setAttribute('aria-hidden', 'true');
     var cell = document.createElement('td');
-    cell.colSpan = normalizeColumnOrder(state.columnOrder).length;
+    cell.colSpan = normalizeColumnOrder(state.columnOrder).length + 1;
     cell.style.padding = '0';
     cell.style.border = '0';
     cell.style.height = '0px';
@@ -13761,8 +17886,21 @@
   function getVirtualRange(totalRows) {
     var rowHeight = ensureVirtualRowHeight();
     var scrollContainer = elements.tableScroll;
+    var useDocumentScroll = scrollContainer
+      && scrollContainer.style
+      && scrollContainer.style.overflowY === 'visible'
+      && typeof scrollContainer.getBoundingClientRect === 'function'
+      && typeof window !== 'undefined';
     var viewportHeight = scrollContainer ? scrollContainer.clientHeight : 0;
     var scrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+
+    if (useDocumentScroll) {
+      var rect = scrollContainer.getBoundingClientRect();
+      viewportHeight = window.innerHeight || document.documentElement.clientHeight || rowHeight * state.virtualTable.minVisibleRows;
+      var virtualHeight = Math.max(totalRows * rowHeight, rect.height || 0);
+      var maxScrollTop = Math.max(0, virtualHeight - viewportHeight);
+      scrollTop = Math.max(0, Math.min(maxScrollTop, -rect.top));
+    }
 
     if (!(viewportHeight > 0)) {
       viewportHeight = rowHeight * state.virtualTable.minVisibleRows;
@@ -13795,7 +17933,9 @@
       window.cancelAnimationFrame(state.virtualTable.renderFrame);
       state.virtualTable.renderFrame = 0;
     }
+    cancelProgressiveTableRender();
     state.virtualTable.filteredEntries = [];
+    removeVirtualGroupRows();
     setSpacerHeight(elements.tableTopSpacer, 0);
     setSpacerHeight(elements.tableBottomSpacer, 0);
     state.rowCache.forEach(function(row, cacheId) {
@@ -13809,6 +17949,171 @@
     });
   }
 
+  function cancelProgressiveTableRender() {
+    if (state.virtualTable.progressiveFrame && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(state.virtualTable.progressiveFrame);
+    }
+    state.virtualTable.progressiveFrame = 0;
+    state.virtualTable.progressiveToken = (Number(state.virtualTable.progressiveToken) || 0) + 1;
+  }
+
+  function getEntryDocumentCacheKey(entry) {
+    var doc = entry && entry.doc ? entry.doc : null;
+    if (!doc || doc.id === undefined || doc.id === null) {
+      return '';
+    }
+    return String(doc.id);
+  }
+
+  function getEntryRowCacheKey(entry, rowIndex) {
+    var doc = entry && entry.doc ? entry.doc : null;
+    var documentKey = getEntryDocumentCacheKey(entry);
+    var sourceIndex = entry && typeof entry.index === 'number' ? entry.index : rowIndex;
+    var displayIndex = entry && typeof entry.displayIndex === 'number' ? entry.displayIndex : rowIndex;
+    var fallbackParts = [
+      doc && doc.entryNumber !== undefined && doc.entryNumber !== null ? String(doc.entryNumber) : '',
+      doc && doc.registryNumber !== undefined && doc.registryNumber !== null ? String(doc.registryNumber) : '',
+      doc && doc.documentNumber !== undefined && doc.documentNumber !== null ? String(doc.documentNumber) : ''
+    ].filter(function(part) {
+      return part !== '';
+    });
+    var fallbackKey = fallbackParts.length ? fallbackParts.join('|') : 'row';
+    return (documentKey || fallbackKey) + '::' + sourceIndex + '::' + displayIndex;
+  }
+
+  function pruneRowCacheForEntries(entries, clearExpansionState) {
+    var activeIds = Object.create(null);
+    for (var i = 0; i < entries.length; i += 1) {
+      var cacheKey = getEntryRowCacheKey(entries[i], i);
+      if (cacheKey) {
+        activeIds[cacheKey] = true;
+      }
+    }
+    state.rowCache.forEach(function(cachedRow, cachedId) {
+      if (activeIds[cachedId]) {
+        return;
+      }
+      if (cachedRow && cachedRow.parentNode) {
+        cachedRow.parentNode.removeChild(cachedRow);
+      }
+      state.rowCache.delete(cachedId);
+      if (clearExpansionState) {
+        state.rowExpandedState.delete(cachedId);
+      }
+    });
+  }
+
+  function appendTableEntryToFragment(fragment, filteredEntry, rowIndex, visibleIds) {
+    var entry = filteredEntry || {};
+    if (entry.group === true) {
+      fragment.appendChild(createTableGroupRow(entry));
+      return;
+    }
+    var filteredDoc = entry.doc;
+    if (!filteredDoc || typeof filteredDoc !== 'object') {
+      return;
+    }
+    var valueSet = entry.values || {};
+    var displayIndex = typeof entry.displayIndex === 'number' ? entry.displayIndex : rowIndex;
+    valueSet.entryNumber = filteredDoc.entryNumber !== undefined && filteredDoc.entryNumber !== null
+      ? String(filteredDoc.entryNumber)
+      : String(displayIndex + 1);
+
+    var cacheKey = getEntryRowCacheKey(entry, rowIndex);
+    var row = state.rowCache.get(cacheKey);
+    if (!row) {
+      row = createTableRow(filteredDoc, displayIndex, valueSet, cacheKey);
+      state.rowCache.set(cacheKey, row);
+    } else {
+      row.dataset.docId = getDocumentSelectionId(filteredDoc);
+      row.dataset.rowKey = cacheKey;
+      renderTableRowCells(row, filteredDoc, displayIndex, valueSet, false);
+    }
+    setTableRowExpanded(row, cacheKey, state.rowExpandedState.get(cacheKey) === true);
+    fragment.appendChild(row);
+    if (visibleIds) {
+      visibleIds[cacheKey] = true;
+    }
+  }
+
+  function resetTableBodyForFullRender() {
+    if (!elements.tableBody) {
+      return;
+    }
+    while (elements.tableBody.firstChild) {
+      elements.tableBody.removeChild(elements.tableBody.firstChild);
+    }
+    setSpacerHeight(elements.tableTopSpacer, 0);
+    setSpacerHeight(elements.tableBottomSpacer, 0);
+    elements.tableBody.appendChild(elements.tableTopSpacer);
+    elements.tableBody.appendChild(elements.tableBottomSpacer);
+  }
+
+  function renderFullTableRowsProgressively(entries) {
+    if (!elements.tableBody) {
+      return;
+    }
+    cancelProgressiveTableRender();
+    var token = state.virtualTable.progressiveToken;
+    var batchSize = Math.max(20, Number(state.virtualTable.progressiveBatchSize) || 60);
+    var rowIndex = 0;
+
+    pruneRowCacheForEntries(entries, false);
+    resetTableBodyForFullRender();
+
+    function getFrameDeadline() {
+      if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+        return performance.now() + 10;
+      }
+      return 0;
+    }
+
+    function appendBatch() {
+      if (token !== state.virtualTable.progressiveToken || !elements.tableBody) {
+        return;
+      }
+      var fragment = document.createDocumentFragment();
+      var renderedCount = 0;
+      var deadline = getFrameDeadline();
+
+      while (rowIndex < entries.length && renderedCount < batchSize) {
+        appendTableEntryToFragment(fragment, entries[rowIndex], rowIndex, null);
+        rowIndex += 1;
+        renderedCount += 1;
+        if (renderedCount >= 20 && deadline && performance.now() > deadline) {
+          break;
+        }
+      }
+
+      if (elements.tableBottomSpacer && elements.tableBottomSpacer.parentNode === elements.tableBody) {
+        elements.tableBody.insertBefore(fragment, elements.tableBottomSpacer);
+      } else {
+        elements.tableBody.appendChild(fragment);
+      }
+
+      setSpacerHeight(elements.tableTopSpacer, 0);
+      setSpacerHeight(elements.tableBottomSpacer, 0);
+
+      if (rowIndex < entries.length) {
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          state.virtualTable.progressiveFrame = window.requestAnimationFrame(appendBatch);
+        } else {
+          appendBatch();
+        }
+        return;
+      }
+
+      state.virtualTable.progressiveFrame = 0;
+      if (!state.virtualTable.rowHeight && state.rowCache.size) {
+        state.virtualTable.rowHeight = ensureVirtualRowHeight();
+      }
+      syncRenderedRowSelectionStates();
+      updateSelectionControls();
+    }
+
+    appendBatch();
+  }
+
   function renderVirtualTableRows() {
     if (!elements.tableBody) {
       return;
@@ -13820,32 +18125,29 @@
       return;
     }
 
-    var range = getVirtualRange(entries.length);
+    cancelProgressiveTableRender();
+    removeVirtualGroupRows();
+
+    var pageSize = normalizeTablePageSize(state.tablePageSize);
+    var groupingColumn = normalizeGroupingColumn(state.groupingColumn);
+    var renderWholePage = groupingColumn || pageSize === 'all'
+      ? true
+      : entries.length <= Math.max(100, pageSize);
+    var largeWholePage = renderWholePage && entries.length > Math.max(1, Number(state.virtualTable.progressiveThreshold) || 140);
+
+    if (largeWholePage) {
+      renderFullTableRowsProgressively(entries);
+      return;
+    }
+
+    var range = renderWholePage
+      ? { startIndex: 0, endIndex: entries.length - 1, rowHeight: 0 }
+      : getVirtualRange(entries.length);
     var fragment = document.createDocumentFragment();
     var visibleIds = {};
 
     for (var rowIndex = range.startIndex; rowIndex <= range.endIndex; rowIndex += 1) {
-      var filteredEntry = entries[rowIndex] || {};
-      var filteredDoc = filteredEntry.doc;
-      if (!filteredDoc || filteredDoc.id === undefined || filteredDoc.id === null) {
-        continue;
-      }
-      var valueSet = filteredEntry.values || {};
-      valueSet.entryNumber = filteredDoc.entryNumber !== undefined && filteredDoc.entryNumber !== null
-        ? String(filteredDoc.entryNumber)
-        : String(rowIndex + 1);
-
-      var cacheKey = String(filteredDoc.id);
-      var row = state.rowCache.get(cacheKey);
-      if (!row) {
-        row = createTableRow(filteredDoc, rowIndex, valueSet);
-        state.rowCache.set(cacheKey, row);
-      } else {
-        renderTableRowCells(row, filteredDoc, rowIndex, valueSet, false);
-      }
-      setTableRowExpanded(row, cacheKey, state.rowExpandedState.get(cacheKey) === true);
-      fragment.appendChild(row);
-      visibleIds[cacheKey] = true;
+      appendTableEntryToFragment(fragment, entries[rowIndex], rowIndex, visibleIds);
     }
 
     state.rowCache.forEach(function(cachedRow, cachedId) {
@@ -13869,8 +18171,8 @@
     elements.tableBody.appendChild(fragment);
     elements.tableBody.appendChild(elements.tableBottomSpacer);
 
-    setSpacerHeight(elements.tableTopSpacer, range.startIndex * range.rowHeight);
-    setSpacerHeight(elements.tableBottomSpacer, (entries.length - range.endIndex - 1) * range.rowHeight);
+    setSpacerHeight(elements.tableTopSpacer, renderWholePage ? 0 : range.startIndex * range.rowHeight);
+    setSpacerHeight(elements.tableBottomSpacer, renderWholePage ? 0 : (entries.length - range.endIndex - 1) * range.rowHeight);
 
     if (!state.virtualTable.rowHeight && state.rowCache.size) {
       state.virtualTable.rowHeight = ensureVirtualRowHeight();
@@ -13891,14 +18193,60 @@
     renderVirtualTableRows();
   }
 
+  function shouldRenderVirtualTableOnScroll() {
+    var entries = Array.isArray(state.virtualTable.filteredEntries) ? state.virtualTable.filteredEntries : [];
+    if (!entries.length) {
+      return false;
+    }
+    if (normalizeGroupingColumn(state.groupingColumn)) {
+      return false;
+    }
+    var pageSize = normalizeTablePageSize(state.tablePageSize);
+    if (pageSize === 'all') {
+      return false;
+    }
+    return entries.length > Math.max(100, pageSize);
+  }
+
   function bindVirtualTableScroll(container) {
     if (!container || container.dataset.virtualScrollBound === 'true') {
       return;
     }
     container.dataset.virtualScrollBound = 'true';
     container.addEventListener('scroll', function() {
+      if (!shouldRenderVirtualTableOnScroll()) {
+        return;
+      }
       scheduleVirtualTableRender();
     }, { passive: true });
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('scroll', function() {
+        if (!shouldRenderVirtualTableOnScroll()) {
+          return;
+        }
+        scheduleVirtualTableRender();
+      }, { passive: true });
+    }
+  }
+
+  function setTableEmptyState(kind, message) {
+    if (!elements.emptyState) {
+      return;
+    }
+    var stateKind = kind ? String(kind) : '';
+    elements.emptyState.classList.toggle('documents-empty--loading', stateKind === 'loading');
+    elements.emptyState.classList.toggle('documents-empty--error', stateKind === 'error');
+    elements.emptyState.style.display = 'flex';
+    elements.emptyState.textContent = message || '';
+  }
+
+  function hideTableEmptyState() {
+    if (!elements.emptyState) {
+      return;
+    }
+    elements.emptyState.classList.remove('documents-empty--loading', 'documents-empty--error');
+    elements.emptyState.style.display = 'none';
+    elements.emptyState.textContent = '';
   }
 
   function updateTable() {
@@ -13915,40 +18263,69 @@
         continue;
       }
       var values = computeFilterValues(doc, i);
-      if (matchesDocumentFilters(values)) {
+      if (matchesActiveDocumentTab(doc, values) && matchesDocumentFilters(values)) {
         filteredEntries.push({ doc: doc, values: values, index: i });
       }
     }
 
     filteredEntries = applyTableSorting(filteredEntries);
+    for (var entryIndex = 0; entryIndex < filteredEntries.length; entryIndex += 1) {
+      filteredEntries[entryIndex].displayIndex = entryIndex;
+    }
+    state.tableFilteredEntries = filteredEntries;
+    state.tableTotalEntries = filteredEntries.length;
+    renderDocumentTabs();
 
-    var filtersActive = hasActiveFilters() || state.showUnassignedOnly;
+    var filtersActive = hasActiveDocumentTab() || hasActiveFilters() || state.showUnassignedOnly;
 
     if (!filteredEntries.length) {
+      var waitingForRegistry = Boolean(state.organization && (state.registryLoading || (!state.registryLoaded && !state.registryLoadError)));
+      state.currentPageDocumentIds = [];
+      renderPaginationControls(0, 0);
+      updateSelectionControls();
       clearVirtualTableRows(true);
-      if (elements.emptyState) {
-        elements.emptyState.style.display = 'block';
-        if (!documents.length) {
-          elements.emptyState.textContent = state.organization
-            ? 'Реестр пуст. Добавьте первый документ.'
-            : 'Организация не определена для этой страницы.';
-        } else if (filtersActive) {
-          elements.emptyState.textContent = 'По текущим фильтрам ничего не найдено.';
-        } else {
-          elements.emptyState.textContent = 'Документы не найдены.';
-        }
+      if (waitingForRegistry) {
+        setTableEmptyState('loading', 'Загружаем реестр документов...');
+      } else if (state.registryLoadError) {
+        setTableEmptyState('error', 'Не удалось загрузить реестр. Обновите страницу или повторите позже.');
+      } else if (!documents.length) {
+        setTableEmptyState('', state.organization
+          ? 'Реестр пуст. Добавьте первый документ.'
+          : 'Организация не определена для этой страницы.');
+      } else if (filtersActive) {
+        setTableEmptyState('', 'По текущим фильтрам ничего не найдено.');
+      } else {
+        setTableEmptyState('', 'Документы не найдены.');
       }
       applyColumnWidths();
       setToolbarState();
       return;
     }
 
-    if (elements.emptyState) {
-      elements.emptyState.style.display = 'none';
+    var pageSize = normalizeTablePageSize(state.tablePageSize);
+    state.tablePageSize = pageSize;
+    var pageCount = getTablePageCount(filteredEntries.length);
+    if (state.tablePage > pageCount) {
+      state.tablePage = pageCount;
     }
+    if (state.tablePage < 1) {
+      state.tablePage = 1;
+    }
+    var pageEntries = pageSize === 'all'
+      ? filteredEntries.slice()
+      : filteredEntries.slice((state.tablePage - 1) * pageSize, (state.tablePage - 1) * pageSize + pageSize);
+    state.currentPageDocumentIds = pageEntries.map(function(entry) {
+      return getDocumentSelectionId(entry && entry.doc);
+    }).filter(function(id) {
+      return Boolean(id);
+    });
 
-    state.virtualTable.filteredEntries = filteredEntries;
+    hideTableEmptyState();
+
+    state.virtualTable.filteredEntries = buildGroupedPageEntries(pageEntries);
     renderVirtualTableRows();
+    renderPaginationControls(filteredEntries.length, pageEntries.length);
+    updateSelectionControls();
 
     applyColumnWidths();
     setToolbarState();
@@ -14196,6 +18573,7 @@
       }
     }
     refreshUserAssignmentKeys();
+    refreshDocumentTabsIfNeeded();
     recalculateUnviewedCounters();
     updateClockUserDisplay();
     updateTable();
@@ -14292,12 +18670,18 @@
   function loadRegistry(organization) {
     if (!organization) {
       state.documents = [];
+      state.registryLoading = false;
+      state.registryLoaded = true;
+      state.registryLoadError = '';
       updateTable();
       sendClientDiagnostics('registry_skipped', { reason: 'organization_missing' });
       return Promise.resolve([]);
     }
 
     clearMessage();
+    state.registryLoading = true;
+    state.registryLoadError = '';
+    updateTable();
 
     return fetch(buildApiUrl('list', { organization: organization }), {
       credentials: 'same-origin',
@@ -14305,6 +18689,9 @@
     })
       .then(handleResponse)
       .then(function(data) {
+        state.registryLoading = false;
+        state.registryLoaded = true;
+        state.registryLoadError = '';
         var documents = updateStateFromPayload(data);
         var summary = {
           count: documents.length
@@ -14331,8 +18718,12 @@
         return documents;
       })
       .catch(function(error) {
+        var message = error && error.message ? error.message : String(error);
+        state.registryLoading = false;
+        state.registryLoadError = message;
+        updateTable();
         sendClientDiagnostics('registry_load_error', { message: error && error.message ? error.message : String(error) });
-        showMessage('error', 'Не удалось загрузить реестр: ' + (error && error.message ? error.message : String(error)));
+        showMessage('error', 'Не удалось загрузить реестр: ' + message);
         throw error;
       });
   }
@@ -17123,6 +21514,7 @@
       saveColumnOrder(order).catch(function(error) {
         showMessage('warning', 'Порядок сохранён локально, но не отправлен на сервер: ' + error.message);
       });
+      scheduleTablePreferencesSave();
     }
 
     elements.headerRow.addEventListener('pointerdown', function(event) {
@@ -17130,6 +21522,9 @@
         ? event.target.closest('.documents-column-drag-handle')
         : null;
       if (!handle) {
+        return;
+      }
+      if (state.columnMoveMode !== true) {
         return;
       }
       var columnKey = handle.dataset.dragColumn || '';
@@ -17167,6 +21562,7 @@
     host.innerHTML = '';
 
     ensureSearchStyles();
+    ensureRegistryTableViewStyle();
 
     if (!state.resizeListenerAttached && typeof window !== 'undefined' && window && typeof window.addEventListener === 'function') {
       window.addEventListener('resize', handleTableResize);
@@ -17265,15 +21661,119 @@
     }
 
     var message = createElement('div', 'documents-message');
+    var tableToolbar = createElement('div', 'documents-table-toolbar');
+    var tabsBar = createElement('div', 'documents-tabs');
+    var tableTools = createElement('div', 'documents-table-tools');
+    var filterModeButton = createToolbarButton('filter', 'Фильтр', { pressed: true });
+    filterModeButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeToolbarMenu();
+      closeColumnsPopover();
+      toggleHeaderFilterMode();
+    });
+    var sortModeButton = createToolbarButton('sort', 'Сортировка', { pressed: true });
+    sortModeButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeToolbarMenu();
+      closeColumnsPopover();
+      toggleHeaderSortMode();
+    });
+    var moveModeButton = createToolbarButton('move', 'Перемещение', { pressed: true });
+    moveModeButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeToolbarMenu();
+      closeColumnsPopover();
+      toggleColumnMoveMode();
+    });
+    var columnsButton = createToolbarButton('columns', 'Скрыть столбцы');
+    columnsButton.classList.add('documents-columns-button');
+    columnsButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleColumnsPopover(columnsButton);
+    });
+    var groupButton = createToolbarButton('group', 'Группировка', { menu: true });
+    groupButton.dataset.toolbarMenuAnchor = 'groupButton';
+    groupButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (isToolbarMenuVisible() && elements.toolbarMenu && elements.toolbarMenu.dataset.anchor === 'groupButton') {
+        closeToolbarMenu();
+        return;
+      }
+      openGroupingMenu(groupButton);
+    });
+    var viewButton = createToolbarButton('table', 'Вид', { menu: true });
+    viewButton.dataset.toolbarMenuAnchor = 'viewButton';
+    viewButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (isToolbarMenuVisible() && elements.toolbarMenu && elements.toolbarMenu.dataset.anchor === 'viewButton') {
+        closeToolbarMenu();
+        return;
+      }
+      openViewMenu(viewButton);
+    });
+    var resetButton = createToolbarButton('rotate-ccw', 'Сбросить', { menu: true });
+    resetButton.dataset.toolbarMenuAnchor = 'resetButton';
+    resetButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var menuTarget = event.target && typeof event.target.closest === 'function'
+        ? event.target.closest('.documents-table-tool__chevron')
+        : null;
+      if (!menuTarget) {
+        closeToolbarMenu();
+        closeColumnsPopover();
+        resetWorkingTableParameters();
+        return;
+      }
+      if (isToolbarMenuVisible() && elements.toolbarMenu && elements.toolbarMenu.dataset.anchor === 'resetButton') {
+        closeToolbarMenu();
+        return;
+      }
+      openResetMenu(resetButton);
+    });
+    var globalSearchWrap = createElement('label', 'documents-global-search');
+    var globalSearchInput = document.createElement('input');
+    globalSearchInput.type = 'search';
+    globalSearchInput.className = 'documents-global-search__input';
+    globalSearchInput.placeholder = 'Поиск по таблице...';
+    globalSearchInput.value = state.globalSearchQuery || '';
+    globalSearchInput.setAttribute('autocomplete', 'off');
+    globalSearchInput.setAttribute('spellcheck', 'false');
+    globalSearchInput.setAttribute('aria-label', 'Поиск по таблице');
+    globalSearchInput.addEventListener('input', handleGlobalSearchInput);
+    globalSearchWrap.appendChild(globalSearchInput);
+    var globalSearchIcon = createElement('span', 'documents-global-search__icon');
+    globalSearchIcon.appendChild(createSvgIcon('search', 'documents-global-search__svg'));
+    globalSearchWrap.appendChild(globalSearchIcon);
+    tableToolbar.appendChild(tabsBar);
+    tableTools.appendChild(filterModeButton);
+    tableTools.appendChild(sortModeButton);
+    tableTools.appendChild(moveModeButton);
+    tableTools.appendChild(columnsButton);
+    tableTools.appendChild(groupButton);
+    tableTools.appendChild(viewButton);
+    tableTools.appendChild(resetButton);
+    tableTools.appendChild(globalSearchWrap);
+    tableToolbar.appendChild(tableTools);
     var filterBar = createElement('div', 'documents-filter-bar documents-filter-bar--hidden');
 
     var tableWrapper = createElement('div', 'documents-table-wrapper');
     tableWrapper.style.position = 'relative';
-    tableWrapper.style.maxHeight = '100vh';
-    tableWrapper.style.overflow = 'auto';
+    tableWrapper.style.overflowX = 'auto';
+    tableWrapper.style.overflowY = 'visible';
     tableWrapper.style.webkitOverflowScrolling = 'touch';
     var table = createElement('table', 'documents-table');
     var colgroup = createElement('colgroup', 'documents-table__colgroup');
+    var selectionCol = document.createElement('col');
+    selectionCol.dataset.columnKey = TABLE_SELECTION_COLUMN_KEY;
+    setElementColumnWidth(selectionCol, TABLE_SELECTION_COLUMN_WIDTH);
+    colgroup.appendChild(selectionCol);
     elements.columnCols = {};
     getOrderedColumns().forEach(function(column) {
       var col = document.createElement('col');
@@ -17289,7 +21789,31 @@
     var headerRow = createElement('tr', 'documents-table__header-row');
     elements.headerRow = headerRow;
     elements.searchButtons = {};
+    elements.filterButtons = {};
+    elements.sortIndicators = {};
     elements.headerCells = {};
+    elements.filterCells = {};
+    elements.filterControls = {};
+
+    var selectHeaderCell = createElement('th', 'documents-table__header-cell documents-table__header-cell--select');
+    selectHeaderCell.setAttribute('scope', 'col');
+    selectHeaderCell.dataset.columnKey = TABLE_SELECTION_COLUMN_KEY;
+    var selectAllLabel = createElement('label', 'documents-row-select documents-row-select--all');
+    var selectAllCheckbox = document.createElement('input');
+    selectAllCheckbox.type = 'checkbox';
+    selectAllCheckbox.className = 'documents-row-select__checkbox';
+    selectAllCheckbox.setAttribute('aria-label', 'Выбрать строки на текущей странице');
+    selectAllCheckbox.addEventListener('click', function(event) {
+      event.stopPropagation();
+    });
+    selectAllCheckbox.addEventListener('change', function() {
+      setCurrentPageSelection(selectAllCheckbox.checked);
+    });
+    selectAllLabel.appendChild(selectAllCheckbox);
+    selectHeaderCell.appendChild(selectAllLabel);
+    setElementColumnWidth(selectHeaderCell, TABLE_SELECTION_COLUMN_WIDTH);
+    headerRow.appendChild(selectHeaderCell);
+
     getOrderedColumns().forEach(function(column) {
       var headerCell = createElement('th', 'documents-table__header-cell');
       headerCell.setAttribute('scope', 'col');
@@ -17299,6 +21823,25 @@
       headerCell.appendChild(headerContent);
       var label = createElement('span', 'documents-header-label', column.label);
       headerContent.appendChild(label);
+      var headerTools = createElement('span', 'documents-header-tools');
+      var sortIndicator = createElement('span', 'documents-header-sort-icon', isSortableTableColumn(column.key) ? '↕' : '');
+      sortIndicator.setAttribute('aria-hidden', 'true');
+      elements.sortIndicators[column.key] = sortIndicator;
+      headerTools.appendChild(sortIndicator);
+      if (column.searchable || column.key === 'files') {
+        var filterButton = createElement('button', 'documents-header-filter-button');
+        filterButton.type = 'button';
+        filterButton.title = 'Открыть фильтр «' + column.label + '»';
+        filterButton.setAttribute('aria-label', 'Открыть фильтр «' + column.label + '»');
+        filterButton.appendChild(createSvgIcon('filter', 'documents-header-filter-icon'));
+        filterButton.addEventListener('click', function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openSearchPopover(column.key, filterButton);
+        });
+        elements.filterButtons[column.key] = filterButton;
+        headerTools.appendChild(filterButton);
+      }
       var dragHandle = createElement('button', 'documents-column-drag-handle', '⋮⋮');
       dragHandle.type = 'button';
       dragHandle.dataset.dragColumn = column.key;
@@ -17308,22 +21851,52 @@
         event.preventDefault();
         event.stopPropagation();
       });
-      headerContent.appendChild(dragHandle);
-      if (column.searchable) {
-        headerCell.classList.add('documents-table__header-cell--searchable');
-        headerCell.title = 'Поиск по столбцу «' + column.label + '»';
+      headerTools.appendChild(dragHandle);
+      headerContent.appendChild(headerTools);
+      var resizeHandle = createElement('span', 'documents-column-resize-handle');
+      resizeHandle.setAttribute('role', 'separator');
+      resizeHandle.setAttribute('aria-orientation', 'vertical');
+      resizeHandle.setAttribute('aria-label', 'Изменить ширину столбца «' + column.label + '»');
+      resizeHandle.title = 'Изменить ширину столбца. Двойной клик — автоподбор.';
+      resizeHandle.addEventListener('pointerdown', function(event) {
+        startColumnResize(column.key, event);
+      });
+      resizeHandle.addEventListener('dblclick', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        autoFitColumnWidth(column.key);
+      });
+      headerCell.appendChild(resizeHandle);
+      if (isSortableTableColumn(column.key)) {
+        headerCell.classList.add('documents-table__header-cell--sortable');
         headerCell.setAttribute('tabindex', '0');
-        headerCell.setAttribute('aria-haspopup', 'dialog');
-        headerCell.addEventListener('click', function() {
-          openSearchPopover(column.key, headerCell);
+        headerCell.title = 'Сортировать по столбцу «' + column.label + '»';
+        headerCell.addEventListener('click', function(event) {
+          if (!state.headerSortMode) {
+            return;
+          }
+          if (event.target && typeof event.target.closest === 'function'
+            && event.target.closest('button, input, select, textarea, a, label, .documents-column-resize-handle')) {
+            return;
+          }
+          toggleColumnSorting(column.key);
         });
         headerCell.addEventListener('keydown', function(event) {
           var key = event.key || '';
-          if (key === 'Enter' || key === ' ' || key === 'Spacebar' || key === 'Space') {
-            event.preventDefault();
-            openSearchPopover(column.key, headerCell);
+          if (key !== 'Enter' && key !== ' ' && key !== 'Spacebar' && key !== 'Space') {
+            return;
           }
+          if (event.target !== headerCell) {
+            return;
+          }
+          if (!state.headerSortMode) {
+            return;
+          }
+          event.preventDefault();
+          toggleColumnSorting(column.key);
         });
+      }
+      if (column.searchable || column.key === 'files' || column.key === 'actions') {
         elements.searchButtons[column.key] = headerCell;
       }
       setElementColumnWidth(headerCell, getEffectiveColumnWidth(column.key));
@@ -17340,7 +21913,34 @@
     var empty = createElement('div', 'documents-empty', 'Загрузка реестра документов...');
     tableWrapper.appendChild(empty);
 
+    var pagination = createElement('div', 'documents-pagination');
+    pagination.hidden = true;
+    pagination.setAttribute('aria-hidden', 'true');
+    var paginationLeft = createElement('div', 'documents-pagination__left');
+    var pageSizeLabel = createElement('label', 'documents-pagination__size');
+    pageSizeLabel.appendChild(createElement('span', '', 'Показать по:'));
+    var pageSizeSelect = document.createElement('select');
+    pageSizeSelect.className = 'documents-pagination__select';
+    [25, 50, 100, 'all'].forEach(function(size) {
+      var option = createElement('option', '', getPageSizeLabel(size));
+      option.value = String(size);
+      pageSizeSelect.appendChild(option);
+    });
+    pageSizeSelect.value = String(normalizeTablePageSize(state.tablePageSize));
+    pageSizeSelect.addEventListener('change', function() {
+      setTablePageSize(pageSizeSelect.value);
+    });
+    pageSizeLabel.appendChild(pageSizeSelect);
+    var paginationInfo = createElement('span', 'documents-pagination__info', 'Записей: 0–0 из 0');
+    paginationLeft.appendChild(pageSizeLabel);
+    paginationLeft.appendChild(paginationInfo);
+    var paginationButtons = createElement('div', 'documents-pagination__buttons');
+    pagination.appendChild(paginationLeft);
+    pagination.appendChild(paginationButtons);
+    tableWrapper.appendChild(pagination);
+
     workspace.appendChild(message);
+    workspace.appendChild(tableToolbar);
     workspace.appendChild(filterBar);
     workspace.appendChild(tableWrapper);
 
@@ -17360,6 +21960,16 @@
     elements.unviewedCounter = unviewedCounter;
     elements.settingsButton = settingsButton;
     elements.message = message;
+    elements.tableToolbar = tableToolbar;
+    elements.filterModeButton = filterModeButton;
+    elements.sortModeButton = sortModeButton;
+    elements.moveModeButton = moveModeButton;
+    elements.columnsButton = columnsButton;
+    elements.groupButton = groupButton;
+    elements.viewButton = viewButton;
+    elements.resetButton = resetButton;
+    elements.globalSearchInput = globalSearchInput;
+    elements.tabsBar = tabsBar;
     elements.filterBar = filterBar;
     elements.tableWrapper = tableWrapper;
     elements.table = table;
@@ -17367,15 +21977,30 @@
     elements.tableScroll = tableWrapper;
     elements.emptyState = empty;
     elements.columnDropLine = dropLine;
+    elements.selectionCol = selectionCol;
+    elements.selectAllHeaderCell = selectHeaderCell;
+    elements.selectFilterCell = null;
+    elements.selectAllCheckbox = selectAllCheckbox;
+    elements.filterRow = null;
+    elements.pagination = pagination;
+    elements.paginationInfo = paginationInfo;
+    elements.paginationButtons = paginationButtons;
+    elements.pageSizeSelect = pageSizeSelect;
 
+    updateHeaderSortIndicators();
     bindVirtualTableScroll(tableWrapper);
     bindColumnDragAndDrop();
+    observeDocumentTabsContainer();
 
     updateResponsibleButtonState();
     updateUnviewedButtonState();
+    renderDocumentTabs();
     updateSearchButtonStates();
+    applyTableDensity();
     updateFilterBar();
     ensureSearchPopover(document.body);
+    ensureColumnsPopover(document.body);
+    ensureToolbarMenu(document.body);
     bindSearchEvents();
     handleTableResize();
   }
@@ -17440,6 +22065,11 @@
     } else {
       state.columnOrder = getDefaultColumnOrder();
     }
+    loadCustomDocumentTabs();
+    var initialTablePreferences = loadTablePreferencesFromLocalStorage();
+    if (initialTablePreferences) {
+      applyTablePreferences(initialTablePreferences, { render: false });
+    }
     buildLayout(host);
     applyVisualSettings(state.visualSettings);
     setToolbarState();
@@ -17457,15 +22087,22 @@
     bootstrapDocsSettingsIfReady();
 
     if (state.organization) {
-      loadColumnOrder(state.organization).catch(function(error) {
+      var legacyColumnOrderLoad = loadColumnOrder(state.organization).catch(function(error) {
         if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось загрузить порядок столбцов:', error);
         }
       });
-      loadColumnWidths(state.organization).catch(function(error) {
+      var legacyColumnWidthLoad = loadColumnWidths(state.organization).catch(function(error) {
         if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось загрузить настройки ширины столбцов:', error);
         }
+      });
+      Promise.all([legacyColumnOrderLoad, legacyColumnWidthLoad]).finally(function() {
+        loadTablePreferences(state.organization).catch(function(error) {
+          if (typeof docsLogger.warn === 'function') {
+            docsLogger.warn('Не удалось загрузить настройки таблицы:', error);
+          }
+        });
       });
       fetchAdminSettings().catch(function(error) {
         docsLogger.warn('Не удалось загрузить настройки ответственных:', error);
@@ -17476,6 +22113,10 @@
         }
       });
     } else {
+      state.registryLoading = false;
+      state.registryLoaded = true;
+      state.registryLoadError = '';
+      updateTable();
       showMessage('error', 'Не удалось определить организацию для этой страницы.');
     }
 
