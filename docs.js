@@ -9303,6 +9303,139 @@
     });
   }
 
+  function collectAvailableCreationOrganizations() {
+    var list = [];
+    var seen = Object.create(null);
+
+    function addOrganization(candidate) {
+      if (candidate === null || candidate === undefined) {
+        return;
+      }
+      var name = String(candidate).trim();
+      if (!name || seen[name]) {
+        return;
+      }
+      seen[name] = true;
+      list.push(name);
+    }
+
+    if (state.access && Array.isArray(state.access.organizations)) {
+      state.access.organizations.forEach(addOrganization);
+    }
+    addOrganization(state.organization);
+
+    return list;
+  }
+
+  function ensureOrganizationPickerStyles() {
+    if (document.getElementById('documents-org-picker-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-org-picker-style';
+    style.textContent = [
+      '.documents-org-picker{display:grid;gap:10px;padding:12px;border:1px solid rgba(148,163,184,.32);border-radius:16px;background:linear-gradient(135deg,rgba(255,255,255,.9),rgba(239,246,255,.78));box-shadow:0 12px 30px rgba(15,23,42,.08);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}',
+      '.documents-org-picker__helper{font-size:13px;line-height:1.35;color:#475569}',
+      '.documents-org-picker__list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}',
+      '.documents-org-picker__option{display:flex;align-items:center;gap:10px;min-height:44px;padding:10px 12px;border:1px solid rgba(37,99,235,.18);border-radius:14px;background:rgba(255,255,255,.82);color:#0f172a;font-weight:600;cursor:pointer;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}',
+      '.documents-org-picker__option:has(input:checked){border-color:rgba(37,99,235,.56);box-shadow:0 8px 20px rgba(37,99,235,.12);background:rgba(239,246,255,.95)}',
+      '.documents-org-picker__option:active{transform:scale(.99)}',
+      '.documents-org-picker__option input{width:18px;height:18px;accent-color:#2563eb;flex:0 0 auto}',
+      '.documents-org-picker__name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.documents-org-picker__counter{font-size:12px;font-weight:700;color:#2563eb}',
+      '@media (max-width:640px){.documents-org-picker{padding:10px;border-radius:14px}.documents-org-picker__list{grid-template-columns:1fr}.documents-org-picker__option{min-height:48px}}'
+    ].join('');
+    document.head.appendChild(style);
+  }
+
+  function createOrganizationsPicker(initialOrganizations) {
+    ensureOrganizationPickerStyles();
+    var organizations = collectAvailableCreationOrganizations();
+    var selected = Object.create(null);
+    var selectedCount = 0;
+    var wrapper = createElement('div', 'documents-org-picker');
+    var helper = createElement(
+      'div',
+      'documents-org-picker__helper',
+      organizations.length > 1
+        ? 'Выберите одну или несколько организаций-исполнителей. Ответственные представители выбранных организаций получат уведомление автоматически.'
+        : 'Организация-исполнитель выбрана автоматически. Ответственные представители получат уведомление.'
+    );
+    var list = createElement('div', 'documents-org-picker__list');
+    var counter = createElement('div', 'documents-org-picker__counter');
+
+    function setSelected(name, checked) {
+      if (!name) {
+        return;
+      }
+      var wasSelected = Boolean(selected[name]);
+      if (checked && !wasSelected) {
+        selected[name] = true;
+        selectedCount += 1;
+      } else if (!checked && wasSelected) {
+        delete selected[name];
+        selectedCount = Math.max(0, selectedCount - 1);
+      }
+      counter.textContent = selectedCount ? 'Выбрано: ' + selectedCount : 'Не выбрано';
+    }
+
+    var initialLookup = Object.create(null);
+    if (Array.isArray(initialOrganizations)) {
+      initialOrganizations.forEach(function(item) {
+        var name = item === null || item === undefined ? '' : String(item).trim();
+        if (name) {
+          initialLookup[name] = true;
+        }
+      });
+    }
+    if (!Object.keys(initialLookup).length && state.organization) {
+      initialLookup[String(state.organization).trim()] = true;
+    }
+
+    organizations.forEach(function(name) {
+      var option = createElement('label', 'documents-org-picker__option');
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.name = 'target_organizations[]';
+      input.value = name;
+      input.checked = Boolean(initialLookup[name]);
+      var text = createElement('span', 'documents-org-picker__name', name);
+      option.appendChild(input);
+      option.appendChild(text);
+      list.appendChild(option);
+      setSelected(name, input.checked);
+      input.addEventListener('change', function() {
+        setSelected(name, input.checked);
+      });
+    });
+
+    if (!organizations.length && state.organization) {
+      organizations.push(state.organization);
+      selected[state.organization] = true;
+      selectedCount = 1;
+      counter.textContent = 'Выбрано: 1';
+    }
+
+    wrapper.appendChild(helper);
+    wrapper.appendChild(list);
+    wrapper.appendChild(counter);
+
+    return {
+      element: wrapper,
+      collect: function() {
+        return organizations.filter(function(name) {
+          return Boolean(selected[name]);
+        });
+      },
+      focus: function() {
+        var firstInput = wrapper.querySelector('input[type="checkbox"]');
+        if (firstInput) {
+          firstInput.focus();
+        }
+      }
+    };
+  }
+
   function createSubordinatesEditor(initialAssignees) {
     return createAssignmentEditor(initialAssignees, {
       fillSelect: fillSubordinateSelect,
@@ -14089,41 +14222,56 @@
       var documentDateField = addField({ name: 'document_date', label: 'Дата документа', type: 'date' });
       grid.appendChild(documentDateField.field);
 
-      var executorField = addField({ name: 'executor', label: 'Исполнитель', placeholder: 'ФИО или отдел' });
-      grid.appendChild(executorField.field);
-
-      var directorField = addField({ name: 'director_index', label: 'Директор', type: 'select' });
-      var directorSelect = directorField.input;
-      var directorPlaceholder = createElement('option', '', 'Не выбран');
-      directorPlaceholder.value = '';
-      directorSelect.appendChild(directorPlaceholder);
-      var storedDirectorEntry = isEditMode ? resolveStoredDirectorEntry(doc) : null;
-      var directorsList = state.admin && state.admin.settings && Array.isArray(state.admin.settings.block2)
-        ? state.admin.settings.block2
-        : [];
-      directorsList.forEach(function(entry, index) {
-        if (!entry || typeof entry !== 'object') {
-          return;
-        }
-        var option = createElement('option', '', buildResponsibleLabel(entry) || '—');
-        option.value = String(index);
-        directorSelect.appendChild(option);
-      });
-      if (!directorsList.length) {
-        directorSelect.disabled = true;
-        directorSelect.title = 'Список директоров пуст. Добавьте их в настройках администратора.';
-      }
+      var organizationsPicker = null;
       if (!isEditMode) {
-        directorSelect.required = true;
+        var organizationsField = createElement('div', 'documents-form__field documents-form__field--wide');
+        var organizationsLabel = createElement('label', '', 'Организации-исполнители *');
+        organizationsField.appendChild(organizationsLabel);
+        organizationsPicker = createOrganizationsPicker([state.organization]);
+        organizationsField.appendChild(organizationsPicker.element);
+        grid.appendChild(organizationsField);
       }
-      grid.appendChild(directorField.field);
 
-      var assigneesField = createElement('div', 'documents-form__field');
-      var assigneesLabel = createElement('label', '', 'Ответственные');
-      assigneesField.appendChild(assigneesLabel);
+      var executorField = null;
+      if (isEditMode) {
+        executorField = addField({ name: 'executor', label: 'Исполнитель', placeholder: 'ФИО или отдел' });
+        grid.appendChild(executorField.field);
+      }
+
+      var directorField = null;
+      var directorSelect = null;
+      var storedDirectorEntry = isEditMode ? resolveStoredDirectorEntry(doc) : null;
+      if (isEditMode) {
+        directorField = addField({ name: 'director_index', label: 'Директор', type: 'select' });
+        directorSelect = directorField.input;
+        var directorPlaceholder = createElement('option', '', 'Не выбран');
+        directorPlaceholder.value = '';
+        directorSelect.appendChild(directorPlaceholder);
+        var directorsList = state.admin && state.admin.settings && Array.isArray(state.admin.settings.block2)
+          ? state.admin.settings.block2
+          : [];
+        directorsList.forEach(function(entry, index) {
+          if (!entry || typeof entry !== 'object') {
+            return;
+          }
+          var option = createElement('option', '', buildResponsibleLabel(entry) || '—');
+          option.value = String(index);
+          directorSelect.appendChild(option);
+        });
+        if (!directorsList.length) {
+          directorSelect.disabled = true;
+          directorSelect.title = 'Список директоров пуст. Добавьте их в настройках администратора.';
+        }
+        grid.appendChild(directorField.field);
+      }
+
+      var assigneesEditor = null;
       var currentAssignees = [];
       var preservedSubordinates = [];
       if (isEditMode) {
+        var assigneesField = createElement('div', 'documents-form__field');
+        var assigneesLabel = createElement('label', '', 'Ответственные');
+        assigneesField.appendChild(assigneesLabel);
         var existingAssignees = resolveAssigneeList(doc);
         if (existingAssignees && existingAssignees.length) {
           for (var i = 0; i < existingAssignees.length; i += 1) {
@@ -14138,10 +14286,10 @@
             }
           }
         }
+        assigneesEditor = createAssigneesEditor(currentAssignees);
+        assigneesField.appendChild(assigneesEditor.element);
+        grid.appendChild(assigneesField);
       }
-      var assigneesEditor = createAssigneesEditor(currentAssignees);
-      assigneesField.appendChild(assigneesEditor.element);
-      grid.appendChild(assigneesField);
 
       var dueDateField = addField({ name: 'due_date', label: 'Срок исполнения', type: 'date' });
       grid.appendChild(dueDateField.field);
@@ -14510,7 +14658,7 @@
           correspondent: normalizeTextInputValue(correspondentField.input.value),
           documentNumber: normalizeTextInputValue(documentNumberField.input.value),
           documentDate: normalizeTextInputValue(documentDateField.input.value),
-          executor: normalizeTextInputValue(executorField.input.value),
+          executor: executorField ? normalizeTextInputValue(executorField.input.value) : '',
           dueDate: normalizeTextInputValue(dueDateField.input.value),
           summary: normalizeTextInputValue(summaryField.input.value),
           resolution: normalizeTextInputValue(resolutionField.input.value),
@@ -14519,6 +14667,9 @@
       }
 
       function resolveDirectorSelection() {
+        if (!directorSelect) {
+          return { director: {}, directors: [] };
+        }
         var selection = directorSelect.value ? String(directorSelect.value).trim() : '';
         if (!selection) {
           return { director: {}, directors: [] };
@@ -14615,15 +14766,20 @@
         var attachmentFiles = attachmentsStore.slice();
         var updateFields = null;
 
-        if (!isEditMode && !directorSelect.value) {
+        var selectedOrganizations = organizationsPicker ? organizationsPicker.collect() : [state.organization];
+        if (!isEditMode && !selectedOrganizations.length) {
           submitButton.disabled = false;
-          directorSelect.focus();
-          showMessage('error', 'Выберите директора перед созданием задачи.');
+          setUploadProgressActive(false);
+          if (organizationsPicker) {
+            organizationsPicker.focus();
+          }
+          showMessage('error', 'Выберите хотя бы одну организацию-исполнителя.');
           return;
         }
 
-        if (assigneesEditor.hasMissingTelegramSelection()) {
+        if (assigneesEditor && assigneesEditor.hasMissingTelegramSelection()) {
           submitButton.disabled = false;
+          setUploadProgressActive(false);
           showMessage('error', TELEGRAM_MISSING_MESSAGE);
           return;
         }
@@ -14636,8 +14792,10 @@
           return;
         }
 
-        var selectedAssignees = assigneesEditor.collect();
-        var combinedAssignees = mergeAssigneesWithSubordinates(selectedAssignees, preservedSubordinates);
+        var selectedAssignees = assigneesEditor ? assigneesEditor.collect() : [];
+        var combinedAssignees = assigneesEditor
+          ? mergeAssigneesWithSubordinates(selectedAssignees, preservedSubordinates)
+          : preservedSubordinates.slice();
 
         if (isEditMode) {
           updateFields = fillFieldsFromForm();
@@ -14698,8 +14856,26 @@
           var createFields = fillFieldsFromForm();
           formData = new FormData(form);
           formData.append('action', 'create');
-          formData.append('organization', state.organization);
+          var primaryOrganization = selectedOrganizations[0] || state.organization;
+          if (typeof formData.delete === 'function') {
+            formData.delete('organizations');
+            formData.delete('organizations[]');
+            formData.delete('target_organizations');
+            formData.delete('target_organizations[]');
+          }
+          formData.append('organization', primaryOrganization);
+          formData.append('organizations', JSON.stringify(selectedOrganizations));
+          formData.append('target_organizations', JSON.stringify(selectedOrganizations));
+          formData.append('notify_responsible_representatives', '1');
+          formData.append('auto_notify_org_responsibles', '1');
+          selectedOrganizations.forEach(function(organizationName) {
+            formData.append('organizations[]', organizationName);
+            formData.append('target_organizations[]', organizationName);
+          });
           setFormDataValue(formData, 'correspondent', createFields.correspondent);
+          setFormDataValue(formData, 'executor', '');
+          setFormDataValue(formData, 'director', '');
+          setFormDataValue(formData, 'directors', JSON.stringify([]));
 
           if (typeof formData.delete === 'function') {
             formData.delete('assignee_name');
@@ -14715,9 +14891,10 @@
             formData.delete('assignee_id');
             formData.delete('assignees');
             formData.delete('assignee_status');
+            formData.delete('director_index');
           }
+          formData.append('assignees', JSON.stringify(combinedAssignees));
           if (combinedAssignees.length) {
-            formData.append('assignees', JSON.stringify(combinedAssignees));
             var primaryAssignee = combinedAssignees[0];
             if (primaryAssignee.id) {
               formData.append('assignee_id', primaryAssignee.id);
@@ -14749,7 +14926,8 @@
           }
           logFilesDiagnostics('submit-create', {
             newFilesCount: attachmentFiles.length,
-            newFileNames: attachmentFiles.map(function(file) { return file.name; }).slice(0, 10)
+            newFileNames: attachmentFiles.map(function(file) { return file.name; }).slice(0, 10),
+            targetOrganizations: selectedOrganizations
           });
         }
 
@@ -14890,7 +15068,9 @@
         correspondentField.input.value = doc.correspondent || '';
         documentNumberField.input.value = doc.documentNumber || doc.document_number || '';
         documentDateField.input.value = doc.documentDate || doc.document_date || '';
-        executorField.input.value = doc.executor || '';
+        if (executorField) {
+          executorField.input.value = doc.executor || '';
+        }
         dueDateField.input.value = doc.dueDate || '';
         summaryField.input.value = doc.summary || '';
         resolutionField.input.value = doc.resolution || '';
@@ -14933,9 +15113,9 @@
               break;
             }
           }
-          if (selectedIndex !== '') {
+          if (selectedIndex !== '' && directorSelect) {
             directorSelect.value = selectedIndex;
-          } else if (directorEntry) {
+          } else if (directorEntry && directorSelect) {
             var lockedLabel = buildResponsibleLabel(directorEntry) || 'Назначен ранее';
             var lockedOption = createElement('option', '', lockedLabel);
             lockedOption.value = 'locked-director';
