@@ -1195,6 +1195,7 @@
     columnWidthProfileKey: '',
     columnWidthsLoaded: false,
     columnWidthsLoadingPromise: null,
+    columnWidthsRenderSignature: '',
     rowCache: new Map(),
     rowExpandedState: new Map(),
     virtualTable: {
@@ -6099,7 +6100,7 @@
     } else if (typeof event.stopPropagation === 'function') {
       event.stopPropagation();
     }
-    resetPopoverFilter();
+    closeSearchPopover();
   }
 
   function normalizeValueForMatch(value) {
@@ -17166,6 +17167,7 @@
     var overrides = previewWidths || state.columnWidthOverrides || null;
     var widthMap = buildColumnWidthMap(overrides);
     var totalWidth = 0;
+    var renderSignatureParts = [];
 
     if (!elements.headerCells) {
       elements.headerCells = {};
@@ -17181,6 +17183,22 @@
       if (visible) {
         totalWidth += width;
       }
+      renderSignatureParts.push(key + ':' + width + ':' + (visible ? '1' : '0'));
+    });
+
+    var nextSignature = renderSignatureParts.join('|') + '|total:' + totalWidth;
+    if (state.columnWidthsRenderSignature === nextSignature) {
+      return;
+    }
+    state.columnWidthsRenderSignature = nextSignature;
+
+    TABLE_COLUMNS.forEach(function(column) {
+      var key = column.key;
+      var width = Number(widthMap[key]);
+      if (!isFinite(width) || width <= 0) {
+        width = getColumnDefaultWidth(key);
+      }
+      var visible = isColumnVisible(key);
       var headerCell = elements.headerCells[key];
       if (headerCell) {
         if (visible) {
@@ -19451,7 +19469,7 @@
       renderDocumentTabs();
     }
 
-    var filtersActive = hasActiveDocumentTab() || hasActiveFilters() || state.showUnassignedOnly;
+    var filtersActive = hasActiveDocumentTab() || hasActiveFilters() || state.showUnassignedOnly || state.showUnviewedOnly;
 
     if (!filteredEntries.length) {
       var waitingForRegistry = Boolean(state.organization && (state.registryLoading || (!state.registryLoaded && !state.registryLoadError)));
