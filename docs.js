@@ -619,21 +619,23 @@
     paginationInfo: null,
     paginationButtons: null,
     pageSizeSelect: null,
-    selectAllCheckbox: null,
-    selectAllHeaderCell: null,
-    selectFilterCell: null,
-    selectionCol: null,
     filterRow: null,
     tabsBar: null,
     filterBar: null,
     searchPopover: null,
+    searchTitlebar: null,
+    searchBody: null,
+    searchCollapse: null,
     searchLabel: null,
     searchInput: null,
     searchOptions: null,
+    searchOptionsInner: null,
     searchOptionSummary: null,
-    searchSelectAll: null,
+    searchProgress: null,
+    searchProgressBar: null,
+    searchProgressLabel: null,
+    searchSelectAllCheckbox: null,
     searchApply: null,
-    searchClear: null,
     searchReset: null,
     searchButtons: {},
     filterButtons: {},
@@ -669,6 +671,7 @@
     templateUploadInput: null,
     templateCloseButton: null
   };
+  var adminRenderTokens = {};
   var clockState = {
     container: null,
     time: null,
@@ -981,6 +984,7 @@
     }
 
     state.access = normalized;
+    invalidateFilterValuesCache();
     refreshUserAssignmentKeys();
     if (normalized.permissions && typeof normalized.permissions === 'object') {
       if (!state.permissions || typeof state.permissions !== 'object') {
@@ -1064,7 +1068,6 @@
   var TABLE_GROUPS = [
     { key: 'flow', label: 'Входящие и исходящие', span: 10 },
     { key: 'execution', label: 'Исполнение', span: 5 },
-    { key: 'resolution', label: 'Резолюция', span: 1 },
     { key: 'control', label: 'Контроль', span: 2 }
   ];
   var TABLE_COLUMNS = [
@@ -1083,15 +1086,15 @@
     { key: 'assignee', label: 'Ответственный', group: 'execution', searchable: true, searchHint: 'Введите ответственного или отдел' },
     { key: 'subordinates', label: 'Подчинённые', group: 'execution', searchable: true, searchHint: 'Введите подчинённого или отдел' },
     { key: 'summary', label: 'Содержание', group: 'execution', searchable: true, searchHint: 'Введите ключевые слова' },
-    { key: 'resolution', label: 'Резолюция', group: 'resolution', searchable: true, searchHint: 'Введите текст резолюции' },
     { key: 'dueDate', label: 'Срок', group: 'control', searchable: true, searchHint: 'Например: 01.04.2024' },
     { key: 'instruction', label: 'Поручения', group: 'control', searchable: true, searchHint: 'Выберите поручение' }
   ];
   var TABLE_COLUMN_KEYS = TABLE_COLUMNS.map(function(column) {
     return column.key;
   });
-  var TABLE_SELECTION_COLUMN_KEY = '__select';
-  var TABLE_SELECTION_COLUMN_WIDTH = 44;
+  var FILTER_EMPTY_SELECTION_VALUE = '__documents_empty_filter_selection__';
+  var FILTER_EXCLUDE_SELECTION_PREFIX = '__documents_exclude_filter_v1__::';
+  var FILTER_SELECTION_MAX_VALUES = 5000;
   var DOCUMENT_TABS_STORAGE_PREFIX = 'documents:tabs:';
   var TABLE_PREFERENCES_STORAGE_PREFIX = 'documents:table-preferences:';
   var COLUMN_ORDER_STORAGE_PREFIX = 'documents:column-order:';
@@ -1129,7 +1132,6 @@
     assignee: 220,
     subordinates: 220,
     summary: 320,
-    resolution: 260,
     dueDate: 160,
     instruction: 210,
     status: 180,
@@ -1145,6 +1147,26 @@
   var searchEventsBound = false;
   var documentTabsObserver = null;
   var documentTabsRestoreFrame = 0;
+  var columnFilterInputTimer = null;
+  var globalSearchInputTimer = null;
+  var tableFilterInputTimer = null;
+  var searchOptionsRenderToken = 0;
+  var searchOptionsScrollFrame = 0;
+  var searchOptionsVirtualState = null;
+  var searchSelectionDraft = null;
+  var searchPopoverPointerState = null;
+  var searchPopoverLayout = {
+    left: null,
+    top: null,
+    width: 380,
+    height: null,
+    collapsed: false
+  };
+  var SEARCH_OPTIONS_BATCH_SIZE = 80;
+  var SEARCH_OPTION_ROW_HEIGHT = 34;
+  var SEARCH_OPTION_OVERSCAN = 8;
+  var SEARCH_POPOVER_MIN_WIDTH = 300;
+  var SEARCH_POPOVER_MIN_HEIGHT = 260;
 
   var DEFAULT_VISUAL_SETTINGS = buildDefaultVisualSettings();
 
@@ -1187,8 +1209,6 @@
       progressiveBatchSize: 60,
       progressiveThreshold: 140
     },
-    selectedDocumentIds: {},
-    currentPageDocumentIds: [],
     globalSearchQuery: '',
     tablePage: 1,
     tablePageSize: 25,
@@ -1200,12 +1220,14 @@
     directorsIndex: {},
     filters: {},
     filterSelections: {},
+    filterSelectionMeta: {},
     filterOrder: [],
     showUnassignedOnly: false,
     showUnviewedOnly: false,
     activeDocumentTab: 'all',
     customDocumentTabs: [],
     documentTabsProfileKey: '',
+    documentTabsDirty: true,
     headerFilterMode: false,
     headerSortMode: false,
     columnMoveMode: false,
@@ -1255,7 +1277,8 @@
     tablePreferencesLoaded: false,
     tablePreferencesLoadingPromise: null,
     tablePreferencesSavingTimer: null,
-    tablePreferencesApplying: false
+    tablePreferencesApplying: false,
+    filterValuesCacheVersion: 1
   };
 
   function readCookieValue(name) {
@@ -2299,6 +2322,27 @@
 
   var aiResponseModalScriptPromise = null;
 
+  function addAiResponseModalScriptCandidate(candidates, seen, source) {
+    var value = source ? String(source).trim() : '';
+    if (!value) {
+      return;
+    }
+    var key = value;
+    try {
+      key = new URL(value, window.location.href).href.replace(/[?#].*$/g, '');
+    } catch (error) {}
+    if (seen[key]) {
+      return;
+    }
+    seen[key] = true;
+    candidates.push(value);
+  }
+
+  function appendAssetVersion(source, version) {
+    var separator = String(source).indexOf('?') === -1 ? '?' : '&';
+    return source + separator + 'v=' + encodeURIComponent(version);
+  }
+
   function ensureAiResponseModalScript() {
     if (window.openDocumentsAiResponseModal) {
       return Promise.resolve(window.openDocumentsAiResponseModal);
@@ -2322,15 +2366,16 @@
         }
       }
 
-      var candidates = [
-        '/js/documents/docs-ai-response-modal.js',
-        '/docs-ai-response-modal.js',
-        'docs-ai-response-modal.js',
-        './docs-ai-response-modal.js'
-      ];
+      var candidates = [];
+      var seenCandidates = Object.create(null);
+      addAiResponseModalScriptCandidate(candidates, seenCandidates, '/docs-ai-response-modal.js');
       if (scriptDirectory) {
-        candidates.unshift(scriptDirectory + 'docs-ai-response-modal.js');
+        addAiResponseModalScriptCandidate(candidates, seenCandidates, scriptDirectory + 'docs-ai-response-modal.js');
       }
+      addAiResponseModalScriptCandidate(candidates, seenCandidates, window.DOCUMENTS_AI_MODAL_URL || '');
+      addAiResponseModalScriptCandidate(candidates, seenCandidates, '/js/documents/docs-ai-response-modal.js');
+      addAiResponseModalScriptCandidate(candidates, seenCandidates, 'docs-ai-response-modal.js');
+      addAiResponseModalScriptCandidate(candidates, seenCandidates, './docs-ai-response-modal.js');
       var index = 0;
 
       function loadNext() {
@@ -2343,7 +2388,7 @@
           reject(new Error('Не удалось загрузить модуль ИИ-ответа. Проверьте путь к docs-ai-response-modal.js.'));
           return;
         }
-        var src = candidates[index] + '?v=' + encodeURIComponent(version);
+        var src = appendAssetVersion(candidates[index], version);
         index += 1;
         var script = document.createElement('script');
         script.src = src;
@@ -2364,6 +2409,24 @@
       loadNext();
     });
     return aiResponseModalScriptPromise;
+  }
+
+  function preloadAiResponseModalScript() {
+    if (typeof window === 'undefined' || window.openDocumentsAiResponseModal) {
+      return;
+    }
+    var run = function() {
+      ensureAiResponseModalScript().catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось заранее загрузить модуль ИИ-ответа:', error);
+        }
+      });
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(run, { timeout: 2500 });
+      return;
+    }
+    window.setTimeout(run, 700);
   }
 
   function openAiResponseModal(config) {
@@ -3207,7 +3270,9 @@
       'font-weight:600;' +
       'color:#0f172a;' +
       'line-height:1.35;' +
-      'word-break:break-word;' +
+      'word-break:normal;' +
+      'overflow-wrap:normal;' +
+      'hyphens:none;' +
       'flex:1 1 auto;' +
       'min-width:0;' +
       'transition:color 0.2s ease;' +
@@ -3288,36 +3353,150 @@
       '.documents-search-popover{' +
       'position:fixed;' +
       'z-index:2500;' +
-      'min-width:260px;' +
-      'max-width:340px;' +
+      'right:12px;' +
+      'top:12px;' +
+      'bottom:12px;' +
+      'min-width:300px;' +
+      'min-height:260px;' +
+      'width:min(380px,calc(100vw - 24px));' +
+      'max-width:calc(100vw - 24px);' +
+      'max-height:calc(100vh - 24px);' +
       'background:#ffffff;' +
-      'border-radius:16px;' +
-      'box-shadow:0 22px 48px rgba(15,23,42,0.18);' +
-      'border:1px solid rgba(148,163,184,0.28);' +
+      'border-radius:10px;' +
+      'box-shadow:0 18px 42px rgba(15,23,42,0.2);' +
+      'border:1px solid rgba(148,163,184,0.38);' +
       'padding:0;' +
       'display:none;' +
+      'overflow:hidden;' +
       '}' +
       '.documents-search-popover--visible{' +
       'display:block;' +
       '}' +
+      '.documents-search-popover--collapsed{' +
+      'min-height:0;' +
+      'height:auto!important;' +
+      '}' +
       '.documents-search-popover__content{' +
-      'padding:16px;' +
       'display:flex;' +
       'flex-direction:column;' +
-      'gap:12px;' +
+      'height:100%;' +
+      'max-height:calc(100vh - 24px);' +
+      'box-sizing:border-box;' +
+      '}' +
+      '.documents-search-popover__titlebar{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'justify-content:space-between;' +
+      'gap:10px;' +
+      'padding:10px 10px 8px;' +
+      'border-bottom:1px solid #e2e8f0;' +
+      'cursor:move;' +
+      'user-select:none;' +
+      'touch-action:none;' +
       '}' +
       '.documents-search-popover__label{' +
-      'font-weight:600;' +
-      'font-size:14px;' +
+      'font-weight:800;' +
+      'font-size:13px;' +
       'color:#0f172a;' +
+      'min-width:0;' +
+      'overflow:hidden;' +
+      'text-overflow:ellipsis;' +
+      'white-space:nowrap;' +
+      '}' +
+      '.documents-search-popover__window-actions{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'gap:4px;' +
+      'flex:0 0 auto;' +
+      '}' +
+      '.documents-search-popover__window-button{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'width:26px;' +
+      'height:26px;' +
+      'border:0;' +
+      'border-radius:6px;' +
+      'background:transparent;' +
+      'color:#64748b;' +
+      'font-size:16px;' +
+      'font-weight:800;' +
+      'line-height:1;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-search-popover__window-button:hover,.documents-search-popover__window-button:focus-visible{' +
+      'background:#eff6ff;' +
+      'color:#2563eb;' +
+      'outline:none;' +
+      '}' +
+      '.documents-search-popover__body{' +
+      'display:flex;' +
+      'flex:1 1 auto;' +
+      'min-height:0;' +
+      'flex-direction:column;' +
+      'gap:8px;' +
+      'padding:10px;' +
+      'box-sizing:border-box;' +
+      '}' +
+      '.documents-search-popover--collapsed .documents-search-popover__body,' +
+      '.documents-search-popover--collapsed .documents-search-popover__resize{' +
+      'display:none;' +
+      '}' +
+      '.documents-search-popover__sort{' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'gap:2px;' +
+      'padding-bottom:8px;' +
+      'border-bottom:1px solid #e2e8f0;' +
+      '}' +
+      '.documents-search-popover__sort-button{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'gap:9px;' +
+      'width:100%;' +
+      'min-height:34px;' +
+      'padding:7px 8px;' +
+      'border:0;' +
+      'border-radius:6px;' +
+      'background:transparent;' +
+      'color:#172554;' +
+      'font-size:13px;' +
+      'font-weight:700;' +
+      'text-align:left;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-search-popover__sort-button:hover,.documents-search-popover__sort-button:focus-visible{' +
+      'background:#f8fafc;' +
+      'outline:none;' +
+      '}' +
+      '.documents-search-popover__sort-button.is-active{' +
+      'background:#eff6ff;' +
+      'color:#1d4ed8;' +
+      '}' +
+      '.documents-search-popover__sort-button:disabled{' +
+      'opacity:.45;' +
+      'cursor:default;' +
+      'background:transparent;' +
+      '}' +
+      '.documents-search-popover__sort-icon{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'width:20px;' +
+      'min-width:20px;' +
+      'font-size:15px;' +
+      'line-height:1;' +
+      'color:inherit;' +
       '}' +
       '.documents-search-popover__input{' +
       'width:100%;' +
-      'padding:10px 12px;' +
-      'border-radius:12px;' +
+      'height:36px;' +
+      'box-sizing:border-box;' +
+      'padding:0 10px;' +
+      'border-radius:6px;' +
       'border:1px solid rgba(148,163,184,0.45);' +
       'background:rgba(248,250,252,0.85);' +
-      'font-size:14px;' +
+      'font-size:13px;' +
       'transition:border-color 0.2s ease, box-shadow 0.2s ease;' +
       '}' +
       '.documents-search-popover__input:focus{' +
@@ -3328,31 +3507,114 @@
       '}' +
       '.documents-search-popover__actions{' +
       'display:flex;' +
-      'gap:10px;' +
+      'justify-content:flex-end;' +
+      'gap:8px;' +
+      'padding-top:8px;' +
+      'border-top:1px solid #e2e8f0;' +
       '}' +
       '.documents-search-popover__summary{' +
       'font-size:12px;' +
       'line-height:1.35;' +
       'color:#64748b;' +
       '}' +
-      '.documents-search-popover__checks{' +
-      'display:flex;' +
-      'flex-direction:column;' +
+      '.documents-search-popover__progress{' +
+      'display:none;' +
       'gap:6px;' +
-      'max-height:230px;' +
+      'flex-direction:column;' +
+      '}' +
+      '.documents-search-popover__progress.is-visible{' +
+      'display:flex;' +
+      '}' +
+      '.documents-search-popover__progress-track{' +
+      'height:6px;' +
+      'overflow:hidden;' +
+      'border-radius:999px;' +
+      'background:#e2e8f0;' +
+      '}' +
+      '.documents-search-popover__progress-bar{' +
+      'display:block;' +
+      'width:0%;' +
+      'height:100%;' +
+      'border-radius:inherit;' +
+      'background:#2563eb;' +
+      'transition:width .16s ease;' +
+      '}' +
+      '.documents-search-popover__progress-label{' +
+      'font-size:11px;' +
+      'line-height:1.3;' +
+      'color:#64748b;' +
+      'font-weight:700;' +
+      '}' +
+      '.documents-search-popover__check--all{' +
+      'flex:0 0 auto;' +
+      'margin:0 0 2px;' +
+      'background:#f8fafc;' +
+      '}' +
+      '.documents-search-popover__checks{' +
+      'display:block;' +
+      'position:relative;' +
+      'flex:1 1 auto;' +
+      'max-height:none;' +
+      'min-height:110px;' +
       'overflow:auto;' +
-      'padding:6px;' +
+      'padding:4px;' +
       'border:1px solid rgba(226,232,240,0.95);' +
-      'border-radius:12px;' +
-      'background:rgba(248,250,252,0.72);' +
+      'border-radius:6px;' +
+      'background:#ffffff;' +
       'scrollbar-width:thin;' +
+      '}' +
+      '.documents-search-popover__virtual{' +
+      'position:relative;' +
+      'min-height:100%;' +
+      '}' +
+      '.documents-search-popover__option{' +
+      'position:absolute;' +
+      'left:0;' +
+      'right:0;' +
+      'display:flex;' +
+      'align-items:center;' +
+      'justify-content:space-between;' +
+      'gap:10px;' +
+      'height:32px;' +
+      'padding:0 8px;' +
+      'border:0;' +
+      'border-radius:5px;' +
+      'background:transparent;' +
+      'color:#172554;' +
+      'font-size:13px;' +
+      'line-height:1.25;' +
+      'text-align:left;' +
+      'cursor:pointer;' +
+      'box-sizing:border-box;' +
+      '}' +
+      '.documents-search-popover__option:hover,.documents-search-popover__option:focus-visible{' +
+      'background:#eff6ff;' +
+      'color:#1d4ed8;' +
+      'outline:none;' +
+      '}' +
+      '.documents-search-popover__option.is-active{' +
+      'background:#dbeafe;' +
+      'color:#1d4ed8;' +
+      '}' +
+      '.documents-search-popover__option-label{' +
+      'min-width:0;' +
+      'overflow:hidden;' +
+      'text-overflow:ellipsis;' +
+      'white-space:nowrap;' +
+      '}' +
+      '.documents-search-popover__option-count{' +
+      'flex:0 0 auto;' +
+      'color:#64748b;' +
+      'font-size:12px;' +
+      'font-weight:800;' +
+      'font-variant-numeric:tabular-nums;' +
       '}' +
       '.documents-search-popover__check{' +
       'display:flex;' +
       'align-items:flex-start;' +
       'gap:8px;' +
-      'padding:6px 8px;' +
-      'border-radius:8px;' +
+      'padding:5px 6px;' +
+      'border-radius:5px;' +
       'font-size:13px;' +
       'line-height:1.35;' +
       'color:#172554;' +
@@ -3360,6 +3622,11 @@
       '}' +
       '.documents-search-popover__check:hover{' +
       'background:#ffffff;' +
+      '}' +
+      '.documents-search-popover__check--all{' +
+      'font-weight:800;' +
+      'border-bottom:1px solid #eef2f7;' +
+      'border-radius:5px 5px 0 0;' +
       '}' +
       '.documents-search-popover__check input{' +
       'margin:1px 0 0;' +
@@ -3369,6 +3636,12 @@
       '.documents-search-popover__check span{' +
       'min-width:0;' +
       'overflow-wrap:anywhere;' +
+      '}' +
+      '.documents-search-popover__loading{' +
+      'padding:12px 8px;' +
+      'font-size:13px;' +
+      'line-height:1.4;' +
+      'color:#64748b;' +
       '}' +
       '.documents-search-popover__tools{' +
       'display:flex;' +
@@ -3392,31 +3665,52 @@
       '.documents-search-popover__tool--danger{' +
       'color:#dc2626;' +
       '}' +
+      '.documents-search-popover__resize{' +
+      'position:absolute;' +
+      'right:0;' +
+      'bottom:0;' +
+      'width:18px;' +
+      'height:18px;' +
+      'cursor:nwse-resize;' +
+      'touch-action:none;' +
+      '}' +
+      '.documents-search-popover__resize::after{' +
+      'content:"";' +
+      'position:absolute;' +
+      'right:4px;' +
+      'bottom:4px;' +
+      'width:9px;' +
+      'height:9px;' +
+      'border-right:2px solid #94a3b8;' +
+      'border-bottom:2px solid #94a3b8;' +
+      '}' +
       '.documents-search-popover__button{' +
-      'flex:1 1 auto;' +
-      'padding:10px 12px;' +
-      'border-radius:12px;' +
-      'font-weight:600;' +
-      'font-size:14px;' +
+      'flex:0 0 auto;' +
+      'min-width:76px;' +
+      'height:34px;' +
+      'padding:0 12px;' +
+      'border-radius:6px;' +
+      'font-weight:700;' +
+      'font-size:13px;' +
       'cursor:pointer;' +
-      'border:none;' +
-      'transition:transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;' +
+      'border:1px solid rgba(148,163,184,0.45);' +
+      'transition:box-shadow 0.2s ease, background 0.2s ease,border-color 0.2s ease;' +
       '}' +
       '.documents-search-popover__button--apply{' +
-      'background:linear-gradient(120deg, rgba(37,99,235,0.95), rgba(14,165,233,0.9));' +
+      'background:#2563eb;' +
+      'border-color:#2563eb;' +
       'color:#ffffff;' +
-      'box-shadow:0 14px 28px rgba(37,99,235,0.28);' +
       '}' +
       '.documents-search-popover__button--reset{' +
-      'background:rgba(148,163,184,0.18);' +
+      'background:#ffffff;' +
       'color:#1e293b;' +
       '}' +
       '.documents-search-popover__button--clear{' +
-      'background:rgba(254,242,242,0.96);' +
+      'background:#fff;' +
       'color:#b91c1c;' +
       '}' +
       '.documents-search-popover__button:hover{' +
-      'transform:translateY(-1px);' +
+      'box-shadow:0 6px 16px rgba(15,23,42,.12);' +
       '}' +
       '.documents-filter-bar{' +
       'display:flex;' +
@@ -3921,16 +4215,17 @@
       'display:flex;' +
       'align-items:center;' +
       'flex-direction:row;' +
-      'gap:5px;' +
+      'gap:4px;' +
       'width:auto;' +
       'min-width:0;' +
+      'max-width:100%;' +
       '}' +
       '.documents-action-icon{' +
       'display:inline-flex;' +
       'align-items:center;' +
       'justify-content:center;' +
-      'width:28px;' +
-      'height:28px;' +
+      'width:24px;' +
+      'height:24px;' +
       'padding:0;' +
       'border:1px solid #dbeafe;' +
       'border-radius:6px;' +
@@ -3938,6 +4233,11 @@
       'color:#172554;' +
       'cursor:pointer;' +
       'transition:background .16s ease,border-color .16s ease,color .16s ease;' +
+      '}' +
+      '.documents-action-icon__svg{' +
+      'width:14px;' +
+      'height:14px;' +
+      'flex:0 0 auto;' +
       '}' +
       '.documents-action-icon:hover,.documents-action-icon:focus-visible{' +
       'background:#eff6ff;' +
@@ -3948,6 +4248,10 @@
       '.documents-action-icon:disabled{' +
       'opacity:.45;' +
       'cursor:default;' +
+      '}' +
+      '.documents-action-icon[aria-busy="true"]{' +
+      'opacity:.72;' +
+      'cursor:wait;' +
       '}' +
       '.documents-action-icon--delete:hover,.documents-action-icon--delete:focus-visible{' +
       'background:#fef2f2;' +
@@ -3992,25 +4296,23 @@
       '.documents-table__head th{background:#fff;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;color:#0f172a;font-size:12px;font-weight:800;text-align:left;}' +
       '.documents-table__header-row th{height:48px;padding:0 12px;z-index:9;overflow:visible;}' +
       '.documents-table__filter-row th{position:sticky;top:var(--documents-sticky-top,48px);z-index:8;height:52px;padding:8px 10px;background:#fff;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;}' +
-      '.documents-table__header-cell--select,.documents-table__filter-cell--select{left:0;z-index:12;text-align:center;}' +
       '.documents-table .documents-table__header-cell--sortable{cursor:default;}' +
       '.documents-workspace--sort-mode .documents-table .documents-table__header-cell--sortable{cursor:pointer;}' +
       '.documents-workspace--sort-mode .documents-table .documents-table__header-cell--sortable:hover{background:#f8fafc;}' +
-      '.documents-header-content{gap:8px;}' +
-      '.documents-header-label{font-size:12px;line-height:1.25;color:#0f172a;}' +
-      '.documents-header-tools{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;}' +
+      '.documents-header-content{gap:8px;align-items:flex-start;}' +
+      '.documents-header-label{font-size:12px;line-height:1.25;color:#0f172a;white-space:normal;word-break:normal;overflow-wrap:normal;hyphens:none;}' +
+      '.documents-header-tools{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;min-width:max-content;}' +
+      '.documents-header-filter-marker{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:#94a3b8;transition:color .16s ease,transform .16s ease;}' +
+      '.documents-header-filter-icon{width:14px;height:14px;}' +
+      '.documents-table__header-cell--searchable:hover .documents-header-filter-marker,.documents-table__header-cell--searchable:focus-visible .documents-header-filter-marker,.documents-table__header-cell--searchable.is-active .documents-header-filter-marker,.documents-table__header-cell--active .documents-header-filter-marker{color:#2563eb;transform:translateY(-1px);}' +
       '.documents-header-sort-icon{display:inline-flex;align-items:center;justify-content:center;min-width:12px;color:#94a3b8;font-size:11px;line-height:1;}' +
       '.documents-table__header-cell[data-sort-direction="asc"] .documents-header-sort-icon,.documents-table__header-cell[data-sort-direction="desc"] .documents-header-sort-icon{color:#2563eb;}' +
       '.documents-workspace:not(.documents-workspace--sort-mode) .documents-header-sort-icon:not(.is-active){display:none;}' +
       '.documents-header-sort-icon.is-active{color:#2563eb;}' +
-      '.documents-header-filter-button{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:#94a3b8;cursor:pointer;}' +
-      '.documents-header-filter-button:hover,.documents-header-filter-button:focus-visible{background:#eff6ff;color:#2563eb;outline:none;}' +
-      '.documents-workspace:not(.documents-workspace--filter-mode) .documents-header-filter-button:not(.is-active){display:none;}' +
-      '.documents-header-filter-button.is-active{background:#eff6ff;color:#2563eb;}' +
       '.documents-column-drag-handle{display:none;width:20px;height:20px;min-width:20px;border:0;background:transparent;color:#94a3b8;border-radius:4px;font-size:12px;}' +
       '.documents-workspace--move-mode .documents-column-drag-handle{display:inline-flex;align-items:center;justify-content:center;}' +
       '.documents-column-drag-handle:hover{background:#f1f5f9;color:#2563eb;}' +
-      '.documents-workspace--move-mode .documents-table__header-row th:not(.documents-table__header-cell--select){background:#f8fbff;}' +
+      '.documents-workspace--move-mode .documents-table__header-row th{background:#f8fbff;}' +
       '.documents-workspace--move-mode .documents-header-label{color:#1d4ed8;}' +
       '.documents-column-filter{width:100%;height:32px;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;font-size:12px;outline:none;}' +
       '.documents-column-filter--input{padding:0 9px;}' +
@@ -4020,17 +4322,12 @@
       '.documents-table tbody td{height:auto;min-height:48px;padding:7px 12px;border-bottom:1px solid #edf2f7;border-right:1px solid #f1f5f9;vertical-align:top;background:#fff;color:#172554;overflow-wrap:anywhere;word-break:normal;}' +
       '.documents-workspace--density-compact .documents-table__header-row th{height:42px;padding:0 10px;}' +
       '.documents-workspace--density-compact .documents-table tbody td{min-height:40px;padding:5px 10px;font-size:12px;}' +
-      '.documents-workspace--density-compact .documents-action-icon{width:26px;height:26px;}' +
+      '.documents-workspace--density-compact .documents-action-icon{width:22px;height:22px;}' +
       '.documents-table tbody tr:hover td{background:#f8fbff;}' +
       '.documents-row--overdue td{background:#fff7f7;color:#ef4444;}' +
       '.documents-row--overdue:hover td{background:#fff1f2;}' +
       '.documents-row--overdue td:first-child{box-shadow:inset 3px 0 0 #ef4444;}' +
       '.documents-row--overdue td[data-column-key="entryNumber"],.documents-row--overdue td[data-column-key="registrationDate"],.documents-row--overdue td[data-column-key="dueDate"]{color:#ef4444;font-weight:800;}' +
-      '.documents-table tbody td.documents-cell--select{position:sticky;left:0;z-index:4;text-align:center;padding:0 10px;background:#fff;}' +
-      '.documents-table tbody .documents-row--overdue td.documents-cell--select{background:#fff7f7;}' +
-      '.documents-table tbody .documents-row--overdue:hover td.documents-cell--select{background:#fff1f2;}' +
-      '.documents-row-select{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin:0;}' +
-      '.documents-row-select__checkbox{width:16px;height:16px;margin:0;border:1px solid #cbd5e1;border-radius:4px;accent-color:#2563eb;cursor:pointer;}' +
       '.documents-status{display:flex;flex-direction:column;align-items:flex-start;gap:4px;}' +
       '.documents-status__value{font-weight:700;color:#64748b;}' +
       '.documents-status__value--overdue{display:inline-flex;align-items:center;min-height:24px;padding:2px 7px;border:1px solid #f87171;border-radius:6px;background:#fff;color:#ef4444;font-size:12px;line-height:1;}' +
@@ -4056,7 +4353,7 @@
       '.documents-actions__toggle::after{content:\"⌄\";margin-left:8px;font-size:11px;color:#64748b;}' +
       '.documents-actions__panel{position:static;width:auto;min-width:0;margin-top:0;z-index:auto;box-shadow:none;border:0;background:transparent;padding:0;}' +
       '.documents-actions__panel[hidden]:not(.documents-actions__panel--open){display:none;}' +
-      '.documents-actions--icons .documents-actions__panel{display:flex;flex-wrap:wrap;gap:5px;}' +
+      '.documents-actions--icons .documents-actions__panel{display:flex;flex-wrap:wrap;gap:4px;max-width:100%;}' +
       '.documents-files__summary{font-weight:700;color:#172554;}' +
       '.documents-files__list,.documents-instruction__list,.documents-due__list,.documents-status__meta{display:none;}' +
       '.documents-row--expanded .documents-files__list,.documents-row--expanded .documents-instruction__list,.documents-row--expanded .documents-due__list,.documents-row--expanded .documents-status__meta{display:block;}' +
@@ -4154,55 +4451,111 @@
     }
     var popover = createElement('div', 'documents-search-popover documents-search-popover--hidden');
     var content = createElement('div', 'documents-search-popover__content');
+    var titlebar = createElement('div', 'documents-search-popover__titlebar');
     var label = createElement('div', 'documents-search-popover__label', 'Поиск');
+    var windowActions = createElement('div', 'documents-search-popover__window-actions');
+    var collapseButton = createElement('button', 'documents-search-popover__window-button', '−');
+    collapseButton.type = 'button';
+    collapseButton.title = 'Свернуть или развернуть фильтр';
+    collapseButton.setAttribute('aria-label', 'Свернуть или развернуть фильтр');
+    var closeButton = createElement('button', 'documents-search-popover__window-button', '×');
+    closeButton.type = 'button';
+    closeButton.title = 'Закрыть фильтр';
+    closeButton.setAttribute('aria-label', 'Закрыть фильтр');
+    windowActions.appendChild(collapseButton);
+    windowActions.appendChild(closeButton);
+    titlebar.appendChild(label);
+    titlebar.appendChild(windowActions);
+    var body = createElement('div', 'documents-search-popover__body');
+    var sortActions = createElement('div', 'documents-search-popover__sort');
+    var sortAscButton = createElement('button', 'documents-search-popover__sort-button', '');
+    sortAscButton.type = 'button';
+    sortAscButton.appendChild(createElement('span', 'documents-search-popover__sort-icon', 'A↓'));
+    sortAscButton.appendChild(createElement('span', '', 'Сортировка А-Я / по возрастанию'));
+    var sortDescButton = createElement('button', 'documents-search-popover__sort-button', '');
+    sortDescButton.type = 'button';
+    sortDescButton.appendChild(createElement('span', 'documents-search-popover__sort-icon', 'Я↓'));
+    sortDescButton.appendChild(createElement('span', '', 'Сортировка Я-А / по убыванию'));
+    var sortResetButton = createElement('button', 'documents-search-popover__sort-button', '');
+    sortResetButton.type = 'button';
+    sortResetButton.appendChild(createElement('span', 'documents-search-popover__sort-icon', '×'));
+    sortResetButton.appendChild(createElement('span', '', 'Сбросить сортировку'));
+    sortActions.appendChild(sortAscButton);
+    sortActions.appendChild(sortDescButton);
+    sortActions.appendChild(sortResetButton);
     var input = document.createElement('input');
     input.type = 'search';
     input.className = 'documents-search-popover__input';
-    input.placeholder = 'Введите запрос';
+    input.placeholder = 'Поиск по значениям';
     input.setAttribute('autocapitalize', 'off');
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('spellcheck', 'false');
 
     var summary = createElement('div', 'documents-search-popover__summary', 'Значения загружаются...');
-    var optionTools = createElement('div', 'documents-search-popover__tools');
-    var selectAllButton = createElement('button', 'documents-search-popover__tool', 'Выбрать всё');
-    selectAllButton.type = 'button';
-    var clearButton = createElement('button', 'documents-search-popover__tool documents-search-popover__tool--danger', 'Очистить');
-    clearButton.type = 'button';
-    optionTools.appendChild(selectAllButton);
-    optionTools.appendChild(clearButton);
+    var progress = createElement('div', 'documents-search-popover__progress');
+    var progressTrack = createElement('div', 'documents-search-popover__progress-track');
+    var progressBar = createElement('span', 'documents-search-popover__progress-bar');
+    var progressLabel = createElement('div', 'documents-search-popover__progress-label', '0%');
+    progressTrack.appendChild(progressBar);
+    progress.appendChild(progressTrack);
+    progress.appendChild(progressLabel);
+    var selectAllLabel = createElement('label', 'documents-search-popover__check documents-search-popover__check--all');
+    var selectAllCheckbox = document.createElement('input');
+    selectAllCheckbox.type = 'checkbox';
+    selectAllCheckbox.setAttribute('aria-label', 'Выделить все значения фильтра');
+    selectAllLabel.appendChild(selectAllCheckbox);
+    selectAllLabel.appendChild(createElement('span', '', 'Выделить всё'));
     var optionsList = createElement('div', 'documents-search-popover__checks');
     optionsList.setAttribute('role', 'group');
     optionsList.setAttribute('aria-label', 'Значения фильтра');
 
     var actions = createElement('div', 'documents-search-popover__actions');
-    var applyButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--apply', 'Применить');
-    applyButton.type = 'button';
-    var resetButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--reset', 'Сброс');
+    var resetButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--clear', 'Сбросить фильтр');
     resetButton.type = 'button';
+    var cancelButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--reset', 'Отмена');
+    cancelButton.type = 'button';
+    var applyButton = createElement('button', 'documents-search-popover__button documents-search-popover__button--apply', 'OK');
+    applyButton.type = 'button';
 
-    actions.appendChild(applyButton);
     actions.appendChild(resetButton);
+    actions.appendChild(cancelButton);
+    actions.appendChild(applyButton);
 
-    content.appendChild(label);
-    content.appendChild(input);
-    content.appendChild(summary);
-    content.appendChild(optionTools);
-    content.appendChild(optionsList);
-    content.appendChild(actions);
+    body.appendChild(sortActions);
+    body.appendChild(input);
+    body.appendChild(summary);
+    body.appendChild(progress);
+    body.appendChild(selectAllLabel);
+    body.appendChild(optionsList);
+    body.appendChild(actions);
+    content.appendChild(titlebar);
+    content.appendChild(body);
     popover.appendChild(content);
+    var resizeHandle = createElement('span', 'documents-search-popover__resize');
+    resizeHandle.setAttribute('aria-hidden', 'true');
+    popover.appendChild(resizeHandle);
 
     container.appendChild(popover);
 
     elements.searchPopover = popover;
+    elements.searchTitlebar = titlebar;
+    elements.searchBody = body;
+    elements.searchCollapse = collapseButton;
     elements.searchLabel = label;
     elements.searchInput = input;
     elements.searchApply = applyButton;
     elements.searchReset = resetButton;
+    elements.searchCancel = cancelButton;
     elements.searchOptions = optionsList;
+    elements.searchOptionsInner = null;
     elements.searchOptionSummary = summary;
-    elements.searchSelectAll = selectAllButton;
-    elements.searchClear = clearButton;
+    elements.searchProgress = progress;
+    elements.searchProgressBar = progressBar;
+    elements.searchProgressLabel = progressLabel;
+    elements.searchSelectAllCheckbox = selectAllCheckbox;
+    elements.searchSortAsc = sortAscButton;
+    elements.searchSortDesc = sortDescButton;
+    elements.searchSortReset = sortResetButton;
 
     popover.setAttribute('aria-hidden', 'true');
     popover.setAttribute('role', 'dialog');
@@ -4214,18 +4567,48 @@
     resetButton.addEventListener('click', function() {
       resetPopoverFilter();
     });
-    selectAllButton.addEventListener('click', function() {
-      setSearchPopoverOptionChecks(true);
+    cancelButton.addEventListener('click', function() {
+      closeSearchPopover();
     });
-    clearButton.addEventListener('click', function() {
-      if (elements.searchInput) {
-        elements.searchInput.value = '';
+    closeButton.addEventListener('click', function() {
+      closeSearchPopover();
+    });
+    collapseButton.addEventListener('click', function() {
+      toggleSearchPopoverCollapsed();
+    });
+    titlebar.addEventListener('pointerdown', startSearchPopoverMove);
+    resizeHandle.addEventListener('pointerdown', startSearchPopoverResize);
+    sortAscButton.addEventListener('click', function() {
+      applyPopoverSorting('asc');
+    });
+    sortDescButton.addEventListener('click', function() {
+      applyPopoverSorting('desc');
+    });
+    sortResetButton.addEventListener('click', function() {
+      resetPopoverSorting();
+    });
+    selectAllCheckbox.addEventListener('change', function() {
+      setSearchPopoverAllOptionsChecked(selectAllCheckbox.checked);
+    });
+    optionsList.addEventListener('scroll', scheduleSearchPopoverVirtualRender);
+    optionsList.addEventListener('change', function(event) {
+      var target = event.target || null;
+      if (!target || target.type !== 'checkbox' || target.dataset.filterOption !== 'true') {
+        return;
       }
-      setSearchPopoverOptionChecks(false);
+      setSearchPopoverOptionChecked(target.value || '', target.checked);
     });
     input.addEventListener('input', function() {
       var columnKey = elements.searchPopover ? (elements.searchPopover.dataset.columnKey || state.activeSearchColumn) : '';
-      renderSearchPopoverOptions(columnKey, input.value);
+      if (columnFilterInputTimer) {
+        window.clearTimeout(columnFilterInputTimer);
+      }
+      columnFilterInputTimer = window.setTimeout(function() {
+        columnFilterInputTimer = null;
+        if (!updateSearchPopoverVisibleOptions(input.value)) {
+          renderSearchPopoverOptions(columnKey, input.value);
+        }
+      }, 120);
     });
     input.addEventListener('keydown', function(event) {
       if (event.key === 'Enter') {
@@ -4254,76 +4637,186 @@
     searchEventsBound = true;
   }
 
-  function positionSearchPopover(anchor) {
-    if (!elements.searchPopover || !anchor) {
-      return;
-    }
-    var rect = anchor.getBoundingClientRect();
-    var popover = elements.searchPopover;
-    var width = popover.offsetWidth || 300;
-    var height = popover.offsetHeight || 160;
-    var top = rect.bottom + 8;
-    var left = rect.left + rect.width / 2 - width / 2;
-    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || width;
-    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || height;
-
-    if (left + width > viewportWidth - 16) {
-      left = viewportWidth - width - 16;
-    }
-    if (left < 16) {
-      left = 16;
-    }
-    if (top + height > viewportHeight - 16) {
-      top = rect.top - height - 8;
-    }
-    if (top < 16) {
-      top = 16;
-    }
-
-    popover.style.left = left + 'px';
-    popover.style.top = top + 'px';
+  function clampSearchPopoverLayout(layout) {
+    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 340;
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 420;
+    var gap = viewportWidth <= 640 ? 8 : 12;
+    var maxWidth = Math.max(SEARCH_POPOVER_MIN_WIDTH, viewportWidth - gap * 2);
+    var maxHeight = Math.max(SEARCH_POPOVER_MIN_HEIGHT, viewportHeight - gap * 2);
+    var width = Math.min(Math.max(layout.width || searchPopoverLayout.width || SEARCH_POPOVER_MIN_WIDTH, SEARCH_POPOVER_MIN_WIDTH), maxWidth);
+    var height = Math.min(Math.max(layout.height || searchPopoverLayout.height || SEARCH_POPOVER_MIN_HEIGHT, SEARCH_POPOVER_MIN_HEIGHT), maxHeight);
+    var left = layout.left === null || layout.left === undefined ? viewportWidth - width - gap : layout.left;
+    var top = layout.top === null || layout.top === undefined ? gap : layout.top;
+    left = Math.min(Math.max(gap, left), Math.max(gap, viewportWidth - width - gap));
+    top = Math.min(Math.max(gap, top), Math.max(gap, viewportHeight - (searchPopoverLayout.collapsed ? 48 : height) - gap));
+    return {
+      left: left,
+      top: top,
+      width: width,
+      height: height
+    };
   }
 
-  function getColumnFilterOptions(columnKey, optionQuery) {
-    if (!columnKey) {
-      return [];
+  function applySearchPopoverLayout() {
+    if (!elements.searchPopover) {
+      return;
     }
-    var query = normalizeValueForMatch(optionQuery);
-    var documents = Array.isArray(state.documents) ? state.documents : [];
-    var lookup = Object.create(null);
-    var options = [];
+    var layout = clampSearchPopoverLayout(searchPopoverLayout);
+    searchPopoverLayout.left = layout.left;
+    searchPopoverLayout.top = layout.top;
+    searchPopoverLayout.width = layout.width;
+    searchPopoverLayout.height = layout.height;
+    elements.searchPopover.style.left = layout.left + 'px';
+    elements.searchPopover.style.top = layout.top + 'px';
+    elements.searchPopover.style.right = 'auto';
+    elements.searchPopover.style.bottom = 'auto';
+    elements.searchPopover.style.width = layout.width + 'px';
+    elements.searchPopover.style.height = searchPopoverLayout.collapsed ? 'auto' : (layout.height + 'px');
+    elements.searchPopover.style.minWidth = SEARCH_POPOVER_MIN_WIDTH + 'px';
+    elements.searchPopover.style.maxWidth = 'calc(100vw - 16px)';
+    elements.searchPopover.style.maxHeight = 'calc(100vh - 16px)';
+  }
 
-    for (var i = 0; i < documents.length; i += 1) {
-      var doc = documents[i];
-      if (!documentVisibleForCurrentUser(doc)) {
-        continue;
-      }
-      var values = computeFilterValues(doc, i);
-      if (!matchesActiveDocumentTab(doc, values)) {
-        continue;
-      }
-      if (!matchesDocumentFilters(values, columnKey)) {
-        continue;
-      }
-      var candidates = getColumnFilterOptionValues(values, columnKey);
-      for (var j = 0; j < candidates.length; j += 1) {
-        var label = normalizeTextInputValue(candidates[j]) || '—';
-        if (query && normalizeValueForMatch(label).indexOf(query) === -1) {
-          continue;
-        }
-        var key = normalizeValueForMatch(label) || '__empty';
-        if (!lookup[key]) {
-          lookup[key] = {
-            value: label,
-            label: label,
-            count: 0
-          };
-          options.push(lookup[key]);
-        }
-        lookup[key].count += 1;
+  function startSearchPopoverPointer(event, mode) {
+    if (!elements.searchPopover || !event || event.button !== 0) {
+      return;
+    }
+    if (mode === 'move' && event.target && typeof event.target.closest === 'function'
+      && event.target.closest('button, input, select, textarea, a')) {
+      return;
+    }
+    var rect = elements.searchPopover.getBoundingClientRect();
+    searchPopoverPointerState = {
+      mode: mode,
+      startX: event.clientX,
+      startY: event.clientY,
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: Math.max(rect.height, searchPopoverLayout.height || SEARCH_POPOVER_MIN_HEIGHT)
+    };
+    event.preventDefault();
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === 'function') {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch (captureError) {}
+    }
+    document.addEventListener('pointermove', handleSearchPopoverPointerMove);
+    document.addEventListener('pointerup', finishSearchPopoverPointer, true);
+    document.addEventListener('pointercancel', finishSearchPopoverPointer, true);
+  }
+
+  function startSearchPopoverMove(event) {
+    startSearchPopoverPointer(event, 'move');
+  }
+
+  function startSearchPopoverResize(event) {
+    startSearchPopoverPointer(event, 'resize');
+  }
+
+  function handleSearchPopoverPointerMove(event) {
+    if (!searchPopoverPointerState) {
+      return;
+    }
+    var dx = event.clientX - searchPopoverPointerState.startX;
+    var dy = event.clientY - searchPopoverPointerState.startY;
+    if (searchPopoverPointerState.mode === 'move') {
+      searchPopoverLayout.left = searchPopoverPointerState.left + dx;
+      searchPopoverLayout.top = searchPopoverPointerState.top + dy;
+    } else {
+      searchPopoverLayout.width = searchPopoverPointerState.width + dx;
+      searchPopoverLayout.height = searchPopoverPointerState.height + dy;
+      searchPopoverLayout.collapsed = false;
+      if (elements.searchPopover) {
+        elements.searchPopover.classList.remove('documents-search-popover--collapsed');
       }
     }
+    applySearchPopoverLayout();
+    scheduleSearchPopoverVirtualRender();
+  }
 
+  function finishSearchPopoverPointer() {
+    searchPopoverPointerState = null;
+    document.removeEventListener('pointermove', handleSearchPopoverPointerMove);
+    document.removeEventListener('pointerup', finishSearchPopoverPointer, true);
+    document.removeEventListener('pointercancel', finishSearchPopoverPointer, true);
+  }
+
+  function toggleSearchPopoverCollapsed() {
+    searchPopoverLayout.collapsed = !searchPopoverLayout.collapsed;
+    if (elements.searchPopover) {
+      elements.searchPopover.classList.toggle('documents-search-popover--collapsed', searchPopoverLayout.collapsed);
+    }
+    if (elements.searchCollapse) {
+      elements.searchCollapse.textContent = searchPopoverLayout.collapsed ? '+' : '−';
+      elements.searchCollapse.setAttribute('aria-expanded', searchPopoverLayout.collapsed ? 'false' : 'true');
+    }
+    applySearchPopoverLayout();
+    scheduleSearchPopoverVirtualRender();
+  }
+
+  function positionSearchPopover() {
+    if (!elements.searchPopover) {
+      return;
+    }
+    var popover = elements.searchPopover;
+    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 340;
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 420;
+    var horizontalGap = viewportWidth <= 640 ? 8 : 12;
+    var verticalGap = viewportHeight <= 520 ? 8 : 12;
+    var width = viewportWidth <= 640
+      ? Math.max(300, viewportWidth - horizontalGap * 2)
+      : Math.min(380, Math.max(320, Math.floor(viewportWidth * 0.3)));
+
+    if (searchPopoverLayout.left === null || searchPopoverLayout.top === null) {
+      searchPopoverLayout.width = Math.min(width, viewportWidth - horizontalGap * 2);
+      searchPopoverLayout.height = Math.max(SEARCH_POPOVER_MIN_HEIGHT, viewportHeight - verticalGap * 2);
+      searchPopoverLayout.left = viewportWidth - searchPopoverLayout.width - horizontalGap;
+      searchPopoverLayout.top = verticalGap;
+    }
+    popover.classList.toggle('documents-search-popover--collapsed', searchPopoverLayout.collapsed);
+    applySearchPopoverLayout();
+  }
+
+  function createColumnFilterOptionsCollector(columnKey, optionQuery) {
+    return {
+      columnKey: columnKey,
+      query: normalizeValueForMatch(optionQuery),
+      documents: Array.isArray(state.documents) ? state.documents : [],
+      lookup: Object.create(null),
+      options: [],
+      index: 0
+    };
+  }
+
+  function collectColumnFilterOptionFromDocument(collector, doc, index) {
+    if (!collector || !doc || !documentVisibleForCurrentUser(doc)) {
+      return;
+    }
+    var values = getDocumentFilterValues(doc, index);
+    if (!matchesActiveDocumentTab(doc, values)) {
+      return;
+    }
+    if (!matchesDocumentFilters(values, collector.columnKey)) {
+      return;
+    }
+    var candidates = getColumnFilterOptionValues(values, collector.columnKey);
+    for (var j = 0; j < candidates.length; j += 1) {
+      var label = normalizeTextInputValue(candidates[j]) || '—';
+      var key = normalizeValueForMatch(label) || '__empty';
+      if (!collector.lookup[key]) {
+        collector.lookup[key] = {
+          value: label,
+          label: label,
+          count: 0
+        };
+        collector.options.push(collector.lookup[key]);
+      }
+      collector.lookup[key].count += 1;
+    }
+  }
+
+  function sortColumnFilterOptions(options) {
     options.sort(function(a, b) {
       if (a.label === '—') {
         return 1;
@@ -4333,35 +4826,28 @@
       }
       return String(a.label).localeCompare(String(b.label), 'ru', { sensitivity: 'base', numeric: true });
     });
-    return options;
   }
 
-  function getSearchPopoverSelectedValues() {
-    if (!elements.searchOptions) {
-      return [];
+  function filterSearchPopoverDisplayOptions(options, query) {
+    var normalizedQuery = normalizeValueForMatch(query);
+    if (!normalizedQuery) {
+      return options.slice();
     }
-    var selected = [];
-    var checkboxes = elements.searchOptions.querySelectorAll('input[type="checkbox"]');
-    for (var i = 0; i < checkboxes.length; i += 1) {
-      if (checkboxes[i].checked) {
-        selected.push(checkboxes[i].value);
-      }
-    }
-    return selected;
+    return options.filter(function(option) {
+      return option && normalizeValueForMatch(option.label).indexOf(normalizedQuery) !== -1;
+    });
   }
 
-  function setSearchPopoverOptionChecks(checked) {
-    if (!elements.searchOptions) {
-      return;
+  function setSearchPopoverProgress(percent, label, visible) {
+    var safePercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+    if (elements.searchProgress) {
+      elements.searchProgress.classList.toggle('is-visible', visible !== false);
     }
-    var checkboxes = elements.searchOptions.querySelectorAll('input[type="checkbox"]');
-    for (var i = 0; i < checkboxes.length; i += 1) {
-      checkboxes[i].checked = Boolean(checked);
+    if (elements.searchProgressBar) {
+      elements.searchProgressBar.style.width = safePercent + '%';
     }
-    if (elements.searchOptionSummary) {
-      elements.searchOptionSummary.textContent = checked
-        ? 'Выбраны все видимые значения: ' + checkboxes.length
-        : 'Значения не выбраны';
+    if (elements.searchProgressLabel) {
+      elements.searchProgressLabel.textContent = (label || ('Загрузка значений: ' + safePercent + '%'));
     }
   }
 
@@ -4369,35 +4855,444 @@
     if (!elements.searchOptions) {
       return;
     }
-    var options = getColumnFilterOptions(columnKey, query);
-    var selectedLookup = Object.create(null);
-    getFilterSelectionList(columnKey).forEach(function(value) {
-      var key = normalizeValueForMatch(value);
-      if (key) {
-        selectedLookup[key] = true;
-      }
-    });
+    if (searchOptionsVirtualState && searchOptionsVirtualState.columnKey === columnKey) {
+      searchSelectionDraft = {
+        columnKey: columnKey,
+        lookup: cloneSearchPopoverSelectionLookup(searchOptionsVirtualState.pendingSelectedLookup),
+        valueMap: cloneSearchPopoverOptionValueMap(searchOptionsVirtualState.optionValueMap),
+        totalCount: searchOptionsVirtualState.allOptions ? searchOptionsVirtualState.allOptions.length : 0
+      };
+    }
+    var token = searchOptionsRenderToken + 1;
+    searchOptionsRenderToken = token;
+    searchOptionsVirtualState = null;
+    elements.searchOptions.dataset.visibleCount = '0';
     elements.searchOptions.innerHTML = '';
-    if (!options.length) {
-      elements.searchOptions.appendChild(createElement('div', 'documents-search-popover__summary', 'Нет значений для выбора'));
-    } else {
-      options.forEach(function(option) {
-        var label = createElement('label', 'documents-search-popover__check');
-        var checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.value = option.value;
-        checkbox.checked = Boolean(selectedLookup[normalizeValueForMatch(option.value)]);
-        label.appendChild(checkbox);
-        label.appendChild(createElement('span', '', option.label + ' (' + option.count + ')'));
-        elements.searchOptions.appendChild(label);
-      });
+    elements.searchOptionsInner = null;
+    if (elements.searchSelectAllCheckbox) {
+      elements.searchSelectAllCheckbox.checked = false;
+      elements.searchSelectAllCheckbox.indeterminate = false;
+      elements.searchSelectAllCheckbox.disabled = true;
     }
+    setSearchPopoverProgress(0, 'Загрузка значений: 0%', true);
+    if (!columnKey) {
+      elements.searchOptions.appendChild(createElement('div', 'documents-search-popover__summary', 'Столбец не выбран'));
+      setSearchPopoverProgress(0, '', false);
+      return;
+    }
+    elements.searchOptions.appendChild(createElement('div', 'documents-search-popover__loading', 'Значения загружаются...'));
     if (elements.searchOptionSummary) {
-      var selectedCount = getFilterSelectionList(columnKey).length;
-      elements.searchOptionSummary.textContent = selectedCount
-        ? 'Выбрано значений: ' + selectedCount + '. Показано: ' + options.length
-        : 'Показано значений: ' + options.length;
+      elements.searchOptionSummary.textContent = 'Подготавливаем список значений';
     }
+
+    var collector = createColumnFilterOptionsCollector(columnKey, query);
+    var startedAt = Date.now();
+
+    function runBatch() {
+      if (token !== searchOptionsRenderToken || !isPopoverVisible()) {
+        return;
+      }
+      var limit = Math.min(collector.index + SEARCH_OPTIONS_BATCH_SIZE, collector.documents.length);
+      for (; collector.index < limit; collector.index += 1) {
+        collectColumnFilterOptionFromDocument(collector, collector.documents[collector.index], collector.index);
+      }
+      var totalDocuments = collector.documents.length || 1;
+      var percent = Math.min(100, Math.round((collector.index / totalDocuments) * 100));
+      setSearchPopoverProgress(percent, 'Загрузка значений: ' + percent + '%', true);
+      if (collector.index < collector.documents.length) {
+        if (elements.searchOptionSummary && (Date.now() - startedAt > 140 || collector.index % (SEARCH_OPTIONS_BATCH_SIZE * 4) === 0)) {
+          elements.searchOptionSummary.textContent = 'Загружаем значения: ' + percent + '% (' + collector.index + ' из ' + collector.documents.length + ')';
+        }
+        window.setTimeout(runBatch, 0);
+        return;
+      }
+      sortColumnFilterOptions(collector.options);
+      setSearchPopoverProgress(100, 'Загрузка значений: 100%', true);
+      var finalQuery = elements.searchInput ? elements.searchInput.value : query;
+      renderSearchPopoverOptionList(columnKey, filterSearchPopoverDisplayOptions(collector.options, finalQuery), token, collector.options);
+    }
+
+    window.setTimeout(runBatch, 0);
+  }
+
+  function renderSearchPopoverOptionList(columnKey, options, token, allOptions) {
+    if (!elements.searchOptions || token !== searchOptionsRenderToken) {
+      return;
+    }
+    var optionUniverse = Array.isArray(allOptions) && allOptions.length ? allOptions : options;
+    var totalCount = options.length;
+    var selectedLookup = searchSelectionDraft && searchSelectionDraft.columnKey === columnKey
+      ? cloneSearchPopoverSelectionLookup(searchSelectionDraft.lookup)
+      : buildSearchPopoverSelectedLookup(columnKey, optionUniverse);
+    var selectedList = getFilterSelectionList(columnKey);
+    var hasEmptySelection = selectedList.length === 1 && selectedList[0] === FILTER_EMPTY_SELECTION_VALUE;
+    elements.searchOptions.innerHTML = '';
+    elements.searchOptions.scrollTop = 0;
+    elements.searchOptions.dataset.visibleCount = String(totalCount);
+    elements.searchOptionsInner = null;
+    searchOptionsVirtualState = {
+      columnKey: columnKey,
+      token: token,
+      options: options,
+      allOptions: optionUniverse,
+      pendingSelectedLookup: selectedLookup,
+      optionValueMap: mergeSearchPopoverOptionValueMap(
+        searchSelectionDraft && searchSelectionDraft.columnKey === columnKey ? searchSelectionDraft.valueMap : null,
+        optionUniverse
+      ),
+      rowHeight: SEARCH_OPTION_ROW_HEIGHT,
+      renderedStart: -1,
+      renderedEnd: -1
+    };
+    if (!options.length) {
+      elements.searchOptions.appendChild(createElement('div', 'documents-search-popover__summary', optionUniverse.length ? 'По поиску значений не найдено' : 'Нет значений для выбора'));
+    } else {
+      var inner = createElement('div', 'documents-search-popover__virtual');
+      inner.style.height = Math.max(1, options.length * SEARCH_OPTION_ROW_HEIGHT) + 'px';
+      elements.searchOptions.appendChild(inner);
+      elements.searchOptionsInner = inner;
+      renderSearchPopoverVirtualOptions();
+    }
+    syncSearchPopoverSelectAllState();
+    setSearchPopoverProgress(100, 'Значения загружены: 100%', false);
+    if (elements.searchOptionSummary) {
+      elements.searchOptionSummary.textContent = buildSearchPopoverSelectionSummary(options, optionUniverse, selectedLookup, hasEmptySelection);
+    }
+  }
+
+  function updateSearchPopoverVisibleOptions(query) {
+    if (!searchOptionsVirtualState || !searchOptionsVirtualState.allOptions) {
+      return false;
+    }
+    var token = searchOptionsVirtualState.token;
+    var columnKey = searchOptionsVirtualState.columnKey;
+    var allOptions = searchOptionsVirtualState.allOptions;
+    saveSearchPopoverSelectionDraft();
+    renderSearchPopoverOptionList(
+      columnKey,
+      filterSearchPopoverDisplayOptions(allOptions, query),
+      token,
+      allOptions
+    );
+    return true;
+  }
+
+  function cloneSearchPopoverSelectionLookup(source) {
+    var clone = Object.create(null);
+    if (!source || typeof source !== 'object') {
+      return clone;
+    }
+    for (var key in source) {
+      if (Object.prototype.hasOwnProperty.call(source, key) && source[key]) {
+        clone[key] = true;
+      }
+    }
+    return clone;
+  }
+
+  function buildSearchPopoverOptionValueMap(options) {
+    var map = Object.create(null);
+    for (var i = 0; i < options.length; i += 1) {
+      map[normalizeFilterOptionKey(options[i].value)] = options[i].value;
+    }
+    return map;
+  }
+
+  function cloneSearchPopoverOptionValueMap(source) {
+    var clone = Object.create(null);
+    if (!source || typeof source !== 'object') {
+      return clone;
+    }
+    for (var key in source) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        clone[key] = source[key];
+      }
+    }
+    return clone;
+  }
+
+  function mergeSearchPopoverOptionValueMap(source, options) {
+    var map = cloneSearchPopoverOptionValueMap(source);
+    var current = buildSearchPopoverOptionValueMap(options);
+    for (var key in current) {
+      if (Object.prototype.hasOwnProperty.call(current, key)) {
+        map[key] = current[key];
+      }
+    }
+    return map;
+  }
+
+  function saveSearchPopoverSelectionDraft() {
+    if (!searchOptionsVirtualState) {
+      return;
+    }
+    searchSelectionDraft = {
+      columnKey: searchOptionsVirtualState.columnKey,
+      lookup: cloneSearchPopoverSelectionLookup(searchOptionsVirtualState.pendingSelectedLookup),
+      valueMap: cloneSearchPopoverOptionValueMap(searchOptionsVirtualState.optionValueMap),
+      totalCount: searchOptionsVirtualState.allOptions ? searchOptionsVirtualState.allOptions.length : 0
+    };
+  }
+
+  function buildSearchPopoverSelectedLookup(columnKey, options) {
+    var lookup = Object.create(null);
+    var selectedList = getFilterSelectionList(columnKey);
+    var selectionMode = parseFilterSelectionMode(selectedList);
+    var hasNoSelectionFilter = selectedList.length === 0;
+    var hasEmptySelection = selectedList.length === 1 && selectedList[0] === FILTER_EMPTY_SELECTION_VALUE;
+    if (hasNoSelectionFilter) {
+      for (var i = 0; i < options.length; i += 1) {
+        lookup[normalizeFilterOptionKey(options[i].value)] = true;
+      }
+      return lookup;
+    }
+    if (selectionMode.mode === 'exclude') {
+      var excludedLookup = Object.create(null);
+      for (var excludeIndex = 0; excludeIndex < selectionMode.values.length; excludeIndex += 1) {
+        excludedLookup[normalizeFilterOptionKey(selectionMode.values[excludeIndex])] = true;
+      }
+      for (var optionIndex = 0; optionIndex < options.length; optionIndex += 1) {
+        var optionKey = normalizeFilterOptionKey(options[optionIndex].value);
+        if (!excludedLookup[optionKey]) {
+          lookup[optionKey] = true;
+        }
+      }
+      return lookup;
+    }
+    if (hasEmptySelection) {
+      return lookup;
+    }
+    for (var j = 0; j < selectionMode.values.length; j += 1) {
+      lookup[normalizeFilterOptionKey(selectionMode.values[j])] = true;
+    }
+    return lookup;
+  }
+
+  function countSearchPopoverSelectedOptions(options, selectedLookup) {
+    var count = 0;
+    for (var i = 0; i < options.length; i += 1) {
+      if (selectedLookup[normalizeFilterOptionKey(options[i].value)]) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  function syncSearchPopoverSelectAllState() {
+    if (!elements.searchSelectAllCheckbox) {
+      return;
+    }
+    var stateData = searchOptionsVirtualState;
+    var options = stateData && Array.isArray(stateData.options) ? stateData.options : [];
+    var selectedLookup = stateData && stateData.pendingSelectedLookup ? stateData.pendingSelectedLookup : Object.create(null);
+    var selectedCount = countSearchPopoverSelectedOptions(options, selectedLookup);
+    elements.searchSelectAllCheckbox.disabled = options.length === 0;
+    elements.searchSelectAllCheckbox.checked = options.length > 0 && selectedCount === options.length;
+    elements.searchSelectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < options.length;
+  }
+
+  function buildSearchPopoverSelectionSummary(visibleOptions, allOptions, selectedLookup, emptySelection) {
+    var allCount = allOptions.length;
+    var visibleCount = visibleOptions.length;
+    var selectedCount = countSearchPopoverSelectedOptions(allOptions, selectedLookup);
+    var hiddenCount = Math.max(0, allCount - selectedCount);
+    var prefix = visibleCount === allCount
+      ? 'Всего значений: ' + allCount
+      : 'Найдено: ' + visibleCount + ' из ' + allCount;
+    if (emptySelection || selectedCount === 0) {
+      return prefix + '. Значения не выбраны. Нажмите OK.';
+    }
+    if (hiddenCount > 0) {
+      return prefix + '. Скрыто значений: ' + hiddenCount + '. Нажмите OK.';
+    }
+    return prefix + '. Выбраны все значения. Нажмите OK.';
+  }
+
+  function refreshSearchPopoverSelectionSummary() {
+    if (!elements.searchOptionSummary || !searchOptionsVirtualState) {
+      return;
+    }
+    var options = searchOptionsVirtualState.options || [];
+    var allOptions = searchOptionsVirtualState.allOptions || options;
+    elements.searchOptionSummary.textContent = buildSearchPopoverSelectionSummary(
+      options,
+      allOptions,
+      searchOptionsVirtualState.pendingSelectedLookup || Object.create(null),
+      false
+    );
+  }
+
+  function rerenderSearchPopoverVisibleOptions() {
+    if (!searchOptionsVirtualState) {
+      return;
+    }
+    searchOptionsVirtualState.renderedStart = -1;
+    searchOptionsVirtualState.renderedEnd = -1;
+    renderSearchPopoverVirtualOptions();
+  }
+
+  function setSearchPopoverOptionChecked(value, checked) {
+    if (!searchOptionsVirtualState || !searchOptionsVirtualState.pendingSelectedLookup) {
+      return;
+    }
+    var key = normalizeFilterOptionKey(value);
+    if (checked) {
+      searchOptionsVirtualState.pendingSelectedLookup[key] = true;
+    } else if (Object.prototype.hasOwnProperty.call(searchOptionsVirtualState.pendingSelectedLookup, key)) {
+      delete searchOptionsVirtualState.pendingSelectedLookup[key];
+    }
+    if (!searchOptionsVirtualState.optionValueMap) {
+      searchOptionsVirtualState.optionValueMap = Object.create(null);
+    }
+    searchOptionsVirtualState.optionValueMap[key] = value;
+    syncSearchPopoverSelectAllState();
+    refreshSearchPopoverSelectionSummary();
+    saveSearchPopoverSelectionDraft();
+    rerenderSearchPopoverVisibleOptions();
+  }
+
+  function setSearchPopoverAllOptionsChecked(checked) {
+    if (!searchOptionsVirtualState) {
+      return;
+    }
+    var lookup = cloneSearchPopoverSelectionLookup(searchOptionsVirtualState.pendingSelectedLookup);
+    var options = searchOptionsVirtualState.options || [];
+    for (var i = 0; i < options.length; i += 1) {
+      var key = normalizeFilterOptionKey(options[i].value);
+      if (checked) {
+        lookup[key] = true;
+      } else if (Object.prototype.hasOwnProperty.call(lookup, key)) {
+        delete lookup[key];
+      }
+    }
+    searchOptionsVirtualState.pendingSelectedLookup = lookup;
+    searchOptionsVirtualState.optionValueMap = mergeSearchPopoverOptionValueMap(searchOptionsVirtualState.optionValueMap, searchOptionsVirtualState.allOptions || options);
+    syncSearchPopoverSelectAllState();
+    refreshSearchPopoverSelectionSummary();
+    saveSearchPopoverSelectionDraft();
+    rerenderSearchPopoverVisibleOptions();
+  }
+
+  function getSearchPopoverSelectedValuesForApply() {
+    if (!searchOptionsVirtualState) {
+      return [];
+    }
+    var selectedLookup = searchOptionsVirtualState.pendingSelectedLookup || Object.create(null);
+    var valueMap = searchSelectionDraft && searchSelectionDraft.columnKey === searchOptionsVirtualState.columnKey
+      ? searchSelectionDraft.valueMap
+      : searchOptionsVirtualState.optionValueMap;
+    var keys = Object.keys(valueMap || {});
+    var selectedValues = [];
+    for (var i = 0; i < keys.length; i += 1) {
+      if (selectedLookup[keys[i]]) {
+        selectedValues.push(valueMap[keys[i]]);
+      }
+    }
+    if (!selectedValues.length && keys.length) {
+      return [FILTER_EMPTY_SELECTION_VALUE];
+    }
+    if (selectedValues.length >= keys.length) {
+      return [];
+    }
+    var excludedValues = [];
+    for (var j = 0; j < keys.length; j += 1) {
+      if (!selectedLookup[keys[j]]) {
+        excludedValues.push(valueMap[keys[j]]);
+      }
+    }
+    if (excludedValues.length > 0 && excludedValues.length <= FILTER_SELECTION_MAX_VALUES && excludedValues.length <= selectedValues.length) {
+      return excludedValues.map(encodeExcludedFilterValue);
+    }
+    return selectedValues;
+  }
+
+  function getSearchPopoverSelectionMetaForApply() {
+    if (!searchOptionsVirtualState) {
+      return null;
+    }
+    var allOptions = searchOptionsVirtualState.allOptions || searchOptionsVirtualState.options || [];
+    var selectedLookup = searchOptionsVirtualState.pendingSelectedLookup || Object.create(null);
+    var selectedCount = countSearchPopoverSelectedOptions(allOptions, selectedLookup);
+    return {
+      total: allOptions.length,
+      selected: selectedCount,
+      hidden: Math.max(0, allOptions.length - selectedCount)
+    };
+  }
+
+  function scheduleSearchPopoverVirtualRender() {
+    if (searchOptionsScrollFrame || typeof window === 'undefined') {
+      return;
+    }
+    var schedule = typeof window.requestAnimationFrame === 'function'
+      ? function(callback) { return window.requestAnimationFrame(callback); }
+      : function(callback) { return window.setTimeout(callback, 16); };
+    searchOptionsScrollFrame = schedule(function() {
+      searchOptionsScrollFrame = 0;
+      renderSearchPopoverVirtualOptions();
+    });
+  }
+
+  function renderSearchPopoverVirtualOptions() {
+    if (!elements.searchOptions || !elements.searchOptionsInner || !searchOptionsVirtualState) {
+      return;
+    }
+    if (searchOptionsVirtualState.token !== searchOptionsRenderToken) {
+      return;
+    }
+    var options = searchOptionsVirtualState.options || [];
+    var rowHeight = searchOptionsVirtualState.rowHeight || SEARCH_OPTION_ROW_HEIGHT;
+    var viewportHeight = elements.searchOptions.clientHeight || 220;
+    var scrollTop = elements.searchOptions.scrollTop || 0;
+    var start = Math.max(0, Math.floor(scrollTop / rowHeight) - SEARCH_OPTION_OVERSCAN);
+    var end = Math.min(options.length, Math.ceil((scrollTop + viewportHeight) / rowHeight) + SEARCH_OPTION_OVERSCAN);
+    if (start === searchOptionsVirtualState.renderedStart && end === searchOptionsVirtualState.renderedEnd) {
+      return;
+    }
+    searchOptionsVirtualState.renderedStart = start;
+    searchOptionsVirtualState.renderedEnd = end;
+    elements.searchOptionsInner.innerHTML = '';
+    var fragment = document.createDocumentFragment();
+    for (var i = start; i < end; i += 1) {
+      var option = options[i];
+      if (!option) {
+        continue;
+      }
+      var button = createElement('label', 'documents-search-popover__option documents-search-popover__check');
+      button.style.top = (i * rowHeight) + 'px';
+      var checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = option.value;
+      checkbox.dataset.filterOption = 'true';
+      var optionActive = searchOptionsVirtualState.pendingSelectedLookup[normalizeFilterOptionKey(option.value)] === true;
+      checkbox.checked = optionActive;
+      if (optionActive) {
+        button.classList.add('is-active');
+      }
+      button.appendChild(checkbox);
+      button.appendChild(createElement('span', 'documents-search-popover__option-label', option.label));
+      button.appendChild(createElement('span', 'documents-search-popover__option-count', String(option.count)));
+      fragment.appendChild(button);
+    }
+    elements.searchOptionsInner.appendChild(fragment);
+  }
+
+  function updateSearchPopoverSortingState(columnKey) {
+    var sortable = isSortableTableColumn(columnKey);
+    var activeRule = getActiveSortRule(columnKey);
+    var direction = activeRule ? normalizeSortDirection(activeRule.direction) : '';
+    [
+      { button: elements.searchSortAsc, active: direction === 'asc' },
+      { button: elements.searchSortDesc, active: direction === 'desc' },
+      { button: elements.searchSortReset, active: false }
+    ].forEach(function(item) {
+      if (!item.button) {
+        return;
+      }
+      item.button.disabled = !sortable || (item.button === elements.searchSortReset && !direction);
+      item.button.classList.toggle('is-active', item.active);
+      item.button.setAttribute('aria-disabled', item.button.disabled ? 'true' : 'false');
+    });
   }
 
   function openSearchPopover(columnKey, button) {
@@ -4409,6 +5304,7 @@
 
     state.activeSearchColumn = columnKey;
     state.activeSearchButton = button;
+    searchSelectionDraft = null;
 
     var popover = elements.searchPopover;
     var definition = getColumnDefinition(columnKey);
@@ -4419,12 +5315,11 @@
       popover.setAttribute('aria-hidden', 'false');
     }
     if (elements.searchLabel) {
-      elements.searchLabel.textContent = definition ? 'Поиск: ' + definition.label : 'Поиск';
+      elements.searchLabel.textContent = definition ? 'Столбец: ' + definition.label : 'Столбец';
     }
+    updateSearchPopoverSortingState(columnKey);
     if (elements.searchInput) {
-      elements.searchInput.placeholder = definition && definition.searchHint
-        ? definition.searchHint
-        : 'Введите запрос';
+      elements.searchInput.placeholder = 'Поиск по значениям';
       elements.searchInput.value = state.filters[columnKey] || '';
       renderSearchPopoverOptions(columnKey, '');
       window.setTimeout(function() {
@@ -4436,12 +5331,29 @@
     }
 
     if (popover) {
-      positionSearchPopover(button);
+      positionSearchPopover();
     }
     updateSearchButtonStates();
   }
 
   function closeSearchPopover() {
+    searchOptionsRenderToken += 1;
+    searchOptionsVirtualState = null;
+    searchSelectionDraft = null;
+    if (elements.searchOptions) {
+      elements.searchOptions.innerHTML = '';
+      elements.searchOptions.scrollTop = 0;
+    }
+    if (elements.searchSelectAllCheckbox) {
+      elements.searchSelectAllCheckbox.checked = false;
+      elements.searchSelectAllCheckbox.indeterminate = false;
+      elements.searchSelectAllCheckbox.disabled = true;
+    }
+    elements.searchOptionsInner = null;
+    if (columnFilterInputTimer) {
+      window.clearTimeout(columnFilterInputTimer);
+      columnFilterInputTimer = null;
+    }
     if (!elements.searchPopover) {
       state.activeSearchColumn = '';
       state.activeSearchButton = null;
@@ -4776,14 +5688,14 @@
       var key = column.key;
       var isCurrent = state.activeSearchColumn === key && isPopoverVisible();
       var filterActive = hasActiveColumnFilter(key);
+      var sortRule = getActiveSortRule(key);
       hasColumnFilters = hasColumnFilters || filterActive;
       var filterButton = elements.filterButtons && elements.filterButtons[key];
       if (filterButton) {
-        filterButton.classList.toggle('is-active', isCurrent || filterActive);
+        filterButton.classList.toggle('is-active', isCurrent || filterActive || Boolean(sortRule));
         filterButton.setAttribute('aria-pressed', filterActive ? 'true' : 'false');
       }
       var sortIndicator = elements.sortIndicators && elements.sortIndicators[key];
-      var sortRule = getActiveSortRule(key);
       if (sortIndicator) {
         sortIndicator.classList.toggle('is-active', Boolean(sortRule));
       }
@@ -4796,7 +5708,9 @@
         } else {
           headerCell.title = state.headerSortMode
             ? 'Сортировка: сброшена. Клик включит сортировку по возрастанию.'
-            : 'Включите режим «Сортировка», чтобы сортировать по этому столбцу.';
+            : (TABLE_COLUMN_MAP[key] && (TABLE_COLUMN_MAP[key].searchable || key === 'files')
+              ? 'Нажмите, чтобы открыть фильтр «' + TABLE_COLUMN_MAP[key].label + '»'
+              : 'Включите режим «Сортировка», чтобы сортировать по этому столбцу.');
         }
       }
     });
@@ -4840,7 +5754,7 @@
   function toggleHeaderFilterMode() {
     state.headerFilterMode = !state.headerFilterMode;
     updateHeaderToolModes();
-    showMessage('info', state.headerFilterMode ? 'Иконки фильтров показаны.' : 'Неактивные иконки фильтров скрыты.', MESSAGE_INFO_DURATION_MS);
+    showMessage('info', state.headerFilterMode ? 'Фильтры в заголовках активны.' : 'Фильтры доступны через иконки в заголовках.', MESSAGE_INFO_DURATION_MS);
   }
 
   function toggleHeaderSortMode() {
@@ -5106,21 +6020,11 @@
         closeToolbarMenu();
       }
     }
-    if (!isPopoverVisible()) {
-      return;
-    }
-    if (elements.searchPopover && elements.searchPopover.contains(event.target)) {
-      return;
-    }
-    if (state.activeSearchButton && state.activeSearchButton.contains(event.target)) {
-      return;
-    }
-    closeSearchPopover();
   }
 
   function handleWindowPositionChange() {
-    if (isPopoverVisible() && state.activeSearchButton) {
-      positionSearchPopover(state.activeSearchButton);
+    if (isPopoverVisible()) {
+      positionSearchPopover();
     }
     if (isColumnsPopoverVisible() && elements.columnsButton) {
       positionColumnsPopover(elements.columnsButton);
@@ -5143,10 +6047,31 @@
       closeSearchPopover();
       return;
     }
-    var value = elements.searchInput ? elements.searchInput.value : '';
-    applyFilter(columnKey, value);
-    applyFilterSelection(columnKey, getSearchPopoverSelectedValues());
+    applyFilter(columnKey, '', { render: false });
+    applyFilterSelection(columnKey, getSearchPopoverSelectedValuesForApply(), {
+      render: false,
+      meta: getSearchPopoverSelectionMetaForApply()
+    });
+    updateTable();
     closeSearchPopover();
+  }
+
+  function applyPopoverSorting(direction) {
+    if (!elements.searchPopover) {
+      return;
+    }
+    var columnKey = elements.searchPopover.dataset.columnKey || state.activeSearchColumn;
+    setColumnSorting(columnKey, direction, { keepOpen: true });
+    updateSearchPopoverSortingState(columnKey);
+  }
+
+  function resetPopoverSorting() {
+    if (!elements.searchPopover) {
+      return;
+    }
+    var columnKey = elements.searchPopover.dataset.columnKey || state.activeSearchColumn;
+    clearColumnSorting(columnKey, { keepOpen: true });
+    updateSearchPopoverSortingState(columnKey);
   }
 
   function resetPopoverFilter() {
@@ -5155,7 +6080,9 @@
     }
     var columnKey = elements.searchPopover.dataset.columnKey || state.activeSearchColumn;
     if (columnKey) {
-      clearColumnFilter(columnKey);
+      applyFilter(columnKey, '', { render: false });
+      applyFilterSelection(columnKey, [], { render: false });
+      updateTable();
     }
     closeSearchPopover();
   }
@@ -5189,6 +6116,55 @@
     return string.replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase();
   }
 
+  function normalizeFilterOptionKey(value) {
+    var normalized = normalizeValueForMatch(value);
+    return normalized || '__empty';
+  }
+
+  function encodeExcludedFilterValue(value) {
+    return FILTER_EXCLUDE_SELECTION_PREFIX + String(value === undefined || value === null ? '' : value);
+  }
+
+  function isExcludedFilterToken(value) {
+    return String(value || '').indexOf(FILTER_EXCLUDE_SELECTION_PREFIX) === 0;
+  }
+
+  function decodeExcludedFilterValue(value) {
+    var text = String(value || '');
+    return isExcludedFilterToken(text) ? text.slice(FILTER_EXCLUDE_SELECTION_PREFIX.length) : '';
+  }
+
+  function parseFilterSelectionMode(selectedValues) {
+    var result = {
+      mode: 'include',
+      values: []
+    };
+    if (!Array.isArray(selectedValues) || !selectedValues.length) {
+      return result;
+    }
+    var excluded = [];
+    var hasExcludeToken = false;
+    for (var i = 0; i < selectedValues.length; i += 1) {
+      var value = selectedValues[i];
+      if (isExcludedFilterToken(value)) {
+        hasExcludeToken = true;
+        var decoded = decodeExcludedFilterValue(value);
+        if (normalizeTextInputValue(decoded) !== '') {
+          excluded.push(decoded);
+        }
+      } else {
+        result.values.push(value);
+      }
+    }
+    if (hasExcludeToken) {
+      return {
+        mode: 'exclude',
+        values: excluded
+      };
+    }
+    return result;
+  }
+
   function valueMatchesQuery(value, query) {
     var normalizedValue = normalizeValueForMatch(value);
     var normalizedQuery = normalizeValueForMatch(query);
@@ -5214,7 +6190,7 @@
     }
   }
 
-  function getDocumentSelectionId(doc) {
+  function getDocumentRowId(doc) {
     if (!doc || typeof doc !== 'object') {
       return '';
     }
@@ -5222,70 +6198,6 @@
       return String(doc.id);
     }
     return '';
-  }
-
-  function setDocumentSelected(docId, selected) {
-    var id = docId ? String(docId) : '';
-    if (!id) {
-      return;
-    }
-    if (selected) {
-      state.selectedDocumentIds[id] = true;
-    } else if (Object.prototype.hasOwnProperty.call(state.selectedDocumentIds, id)) {
-      delete state.selectedDocumentIds[id];
-    }
-  }
-
-  function isDocumentSelected(docId) {
-    var id = docId ? String(docId) : '';
-    return Boolean(id && state.selectedDocumentIds && state.selectedDocumentIds[id]);
-  }
-
-  function setCurrentPageSelection(selected) {
-    var ids = Array.isArray(state.currentPageDocumentIds) ? state.currentPageDocumentIds : [];
-    for (var i = 0; i < ids.length; i += 1) {
-      setDocumentSelected(ids[i], selected);
-    }
-    syncRenderedRowSelectionStates();
-    updateSelectionControls();
-  }
-
-  function syncRenderedRowSelectionStates() {
-    if (!elements.tableBody || typeof elements.tableBody.querySelectorAll !== 'function') {
-      return;
-    }
-    var checkboxes = elements.tableBody.querySelectorAll('.documents-row .documents-row-select__checkbox');
-    for (var i = 0; i < checkboxes.length; i += 1) {
-      var checkbox = checkboxes[i];
-      var row = checkbox && typeof checkbox.closest === 'function' ? checkbox.closest('.documents-row') : null;
-      var docId = row && row.dataset ? row.dataset.docId || '' : '';
-      var checked = isDocumentSelected(docId);
-      checkbox.checked = checked;
-      if (checked) {
-        checkbox.setAttribute('checked', 'checked');
-      } else {
-        checkbox.removeAttribute('checked');
-      }
-    }
-  }
-
-  function updateSelectionControls() {
-    if (!elements.selectAllCheckbox) {
-      return;
-    }
-    var ids = Array.isArray(state.currentPageDocumentIds) ? state.currentPageDocumentIds : [];
-    var selectedCount = 0;
-    for (var i = 0; i < ids.length; i += 1) {
-      if (isDocumentSelected(ids[i])) {
-        selectedCount += 1;
-      }
-    }
-    elements.selectAllCheckbox.checked = ids.length > 0 && selectedCount === ids.length;
-    elements.selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < ids.length;
-    elements.selectAllCheckbox.disabled = ids.length === 0;
-    elements.selectAllCheckbox.setAttribute('aria-label', ids.length
-      ? 'Выбрать строки на текущей странице'
-      : 'На текущей странице нет строк для выбора');
   }
 
   function filterMatchesSpecialValue(values, columnKey, query) {
@@ -5336,17 +6248,42 @@
     if (!Array.isArray(selectedValues) || !selectedValues.length) {
       return true;
     }
+    if (selectedValues.length === 1 && selectedValues[0] === FILTER_EMPTY_SELECTION_VALUE) {
+      return false;
+    }
+    var selectionMode = parseFilterSelectionMode(selectedValues);
+    if (selectionMode.mode === 'exclude') {
+      if (!selectionMode.values.length) {
+        return true;
+      }
+      var excludedLookup = Object.create(null);
+      for (var excludedIndex = 0; excludedIndex < selectionMode.values.length; excludedIndex += 1) {
+        excludedLookup[normalizeFilterOptionKey(selectionMode.values[excludedIndex])] = true;
+      }
+      var optionValues = getColumnFilterOptionValues(values, columnKey);
+      for (var optionIndex = 0; optionIndex < optionValues.length; optionIndex += 1) {
+        if (excludedLookup[normalizeFilterOptionKey(optionValues[optionIndex])]) {
+          return false;
+        }
+      }
+      return true;
+    }
     var selectedLookup = Object.create(null);
-    for (var i = 0; i < selectedValues.length; i += 1) {
-      var normalizedSelection = normalizeValueForMatch(selectedValues[i]);
+    for (var i = 0; i < selectionMode.values.length; i += 1) {
+      var normalizedSelection = normalizeValueForMatch(selectionMode.values[i]);
       if (normalizedSelection) {
         selectedLookup[normalizedSelection] = true;
+      } else if (String(selectionMode.values[i] || '').trim() === '—') {
+        selectedLookup.__empty = true;
       }
     }
     var candidates = getColumnFilterOptionValues(values, columnKey);
     for (var j = 0; j < candidates.length; j += 1) {
       var normalizedCandidate = normalizeValueForMatch(candidates[j]);
       if (normalizedCandidate && selectedLookup[normalizedCandidate]) {
+        return true;
+      }
+      if (!normalizedCandidate && selectedLookup.__empty) {
         return true;
       }
     }
@@ -5392,7 +6329,21 @@
     }
     var selected = getFilterSelectionList(columnKey);
     if (selected.length) {
-      parts.push(selected.length <= 2 ? selected.join(', ') : ('выбрано: ' + selected.length));
+      if (selected.length === 1 && selected[0] === FILTER_EMPTY_SELECTION_VALUE) {
+        parts.push('значения не выбраны');
+      } else {
+        var selectionMode = parseFilterSelectionMode(selected);
+        var meta = state.filterSelectionMeta && state.filterSelectionMeta[columnKey]
+          ? state.filterSelectionMeta[columnKey]
+          : null;
+        if (selectionMode.mode === 'exclude') {
+          parts.push('скрыто: ' + (meta && Number(meta.hidden) > 0 ? Number(meta.hidden) : selectionMode.values.length));
+        } else if (meta && Number(meta.hidden) > 0) {
+          parts.push('скрыто: ' + Number(meta.hidden));
+        } else {
+          parts.push(selectionMode.values.length <= 2 ? selectionMode.values.join(', ') : ('выбрано: ' + selectionMode.values.length));
+        }
+      }
     }
     return parts.join('; ');
   }
@@ -5406,17 +6357,7 @@
       return false;
     }
     var parts = query.split(' ');
-    var haystackParts = [];
-    TABLE_COLUMNS.forEach(function(column) {
-      if (!column || !column.key) {
-        return;
-      }
-      var value = values[column.key];
-      if (value !== undefined && value !== null) {
-        haystackParts.push(String(value));
-      }
-    });
-    var haystack = normalizeValueForMatch(haystackParts.join(' '));
+    var haystack = values.__globalSearch || '';
     for (var i = 0; i < parts.length; i += 1) {
       if (parts[i] && haystack.indexOf(parts[i]) === -1) {
         return false;
@@ -5646,7 +6587,73 @@
     values.__unviewedSubordinateCount = viewState.unviewedSubordinates.length;
     values.__hasUnviewed = isDocumentUnviewed(viewState);
     values.__overdue = isDocumentOverdueForTab(doc);
+    values.__globalSearch = buildFilterValuesSearchText(values);
 
+    return values;
+  }
+
+  function buildFilterValuesSearchText(values) {
+    if (!values || typeof values !== 'object') {
+      return '';
+    }
+    var parts = [];
+    TABLE_COLUMNS.forEach(function(column) {
+      if (!column || !column.key) {
+        return;
+      }
+      var value = values[column.key];
+      if (value !== undefined && value !== null && value !== '') {
+        parts.push(String(value));
+      }
+    });
+    return normalizeValueForMatch(parts.join(' '));
+  }
+
+  function invalidateDocumentFilterValues(doc) {
+    if (!doc || typeof doc !== 'object') {
+      return;
+    }
+    try {
+      delete doc.__docsFilterValuesCache;
+    } catch (error) {
+      doc.__docsFilterValuesCache = null;
+    }
+  }
+
+  function invalidateFilterValuesCache() {
+    if (!state || typeof state !== 'object') {
+      return;
+    }
+    state.filterValuesCacheVersion = (Number(state.filterValuesCacheVersion) || 0) + 1;
+    state.documentTabsDirty = true;
+  }
+
+  function getDocumentFilterValues(doc, originalIndex) {
+    if (!doc || typeof doc !== 'object') {
+      return computeFilterValues(doc, originalIndex);
+    }
+    var index = typeof originalIndex === 'number' ? originalIndex : 0;
+    var version = Number(state.filterValuesCacheVersion) || 0;
+    var cache = doc.__docsFilterValuesCache;
+    if (cache && cache.version === version && cache.index === index && cache.values) {
+      return cache.values;
+    }
+    var values = computeFilterValues(doc, index);
+    var nextCache = {
+      version: version,
+      index: index,
+      values: values
+    };
+    try {
+      Object.defineProperty(doc, '__docsFilterValuesCache', {
+        value: nextCache,
+        configurable: true,
+        enumerable: false,
+        writable: true
+      });
+    } catch (error) {
+      doc.__docsFilterValuesCache = nextCache;
+    }
     return values;
   }
 
@@ -5890,6 +6897,7 @@
   function loadCustomDocumentTabs() {
     var key = getDocumentTabsStorageKey();
     state.documentTabsProfileKey = key;
+    state.documentTabsDirty = true;
     if (!key || typeof window === 'undefined' || !window.localStorage) {
       state.customDocumentTabs = [];
       return state.customDocumentTabs;
@@ -5912,7 +6920,9 @@
       return;
     }
     loadCustomDocumentTabs();
-    renderDocumentTabs();
+    if (state.documentTabsDirty || !elements.tabsBar || !elements.tabsBar.querySelector('.documents-tabs__list')) {
+      renderDocumentTabs();
+    }
   }
 
   function getCustomDocumentTab(tabId) {
@@ -6097,7 +7107,7 @@
         counts.withoutStatus += 1;
       }
       if (customTabs.length) {
-        var values = computeFilterValues(doc, i);
+        var values = getDocumentFilterValues(doc, i);
         customTabs.forEach(function(tab) {
           if (tab && tab.id && matchesDocumentTabDefinition(tab, doc, values)) {
             counts[tab.id] = (counts[tab.id] || 0) + 1;
@@ -6272,6 +7282,7 @@
     tabsBar.innerHTML = '';
     tabsBar.appendChild(list);
     tabsBar.appendChild(addButton);
+    state.documentTabsDirty = false;
   }
 
   function buildCurrentDocumentTabSnapshot() {
@@ -6336,7 +7347,8 @@
       if (column && data.filters[key]) {
         parts.push(column.label + ': ' + data.filters[key]);
       } else if (column && data.filterSelections[key] && data.filterSelections[key].length) {
-        parts.push(column.label + ': выбрано ' + data.filterSelections[key].length);
+        var selectionMode = parseFilterSelectionMode(data.filterSelections[key]);
+        parts.push(column.label + ': ' + (selectionMode.mode === 'exclude' ? 'скрыто ' : 'выбрано ') + selectionMode.values.length);
       }
     }
     if (data.globalSearchQuery) {
@@ -6487,10 +7499,11 @@
     return chip;
   }
 
-  function applyFilter(columnKey, query) {
+  function applyFilter(columnKey, query, options) {
     if (!columnKey) {
       return;
     }
+    var config = options && typeof options === 'object' ? options : {};
     deactivateCustomDocumentTabForFilterChange();
     var trimmed = typeof query === 'string' ? query.trim() : '';
     if (trimmed) {
@@ -6511,13 +7524,16 @@
     updateSearchButtonStates();
     updateFilterBar();
     scheduleTablePreferencesSave();
-    updateTable();
+    if (config.render !== false) {
+      updateTable();
+    }
   }
 
-  function applyFilterSelection(columnKey, selectedValues) {
+  function applyFilterSelection(columnKey, selectedValues, options) {
     if (!columnKey) {
       return;
     }
+    var config = options && typeof options === 'object' ? options : {};
     deactivateCustomDocumentTabForFilterChange();
     var selected = normalizeFilterSelections((function() {
       var map = {};
@@ -6527,13 +7543,30 @@
     if (!state.filterSelections || typeof state.filterSelections !== 'object') {
       state.filterSelections = {};
     }
+    if (!state.filterSelectionMeta || typeof state.filterSelectionMeta !== 'object') {
+      state.filterSelectionMeta = {};
+    }
     if (selected[columnKey] && selected[columnKey].length) {
       state.filterSelections[columnKey] = selected[columnKey];
+      if (config.meta && typeof config.meta === 'object') {
+        state.filterSelectionMeta[columnKey] = {
+          total: Math.max(0, Number(config.meta.total) || 0),
+          selected: Math.max(0, Number(config.meta.selected) || 0),
+          hidden: Math.max(0, Number(config.meta.hidden) || 0)
+        };
+      } else if (Object.prototype.hasOwnProperty.call(state.filterSelectionMeta, columnKey)) {
+        delete state.filterSelectionMeta[columnKey];
+      }
       if (state.filterOrder.indexOf(columnKey) === -1) {
         state.filterOrder.push(columnKey);
       }
-    } else if (Object.prototype.hasOwnProperty.call(state.filterSelections, columnKey)) {
-      delete state.filterSelections[columnKey];
+    } else {
+      if (Object.prototype.hasOwnProperty.call(state.filterSelections, columnKey)) {
+        delete state.filterSelections[columnKey];
+      }
+      if (Object.prototype.hasOwnProperty.call(state.filterSelectionMeta, columnKey)) {
+        delete state.filterSelectionMeta[columnKey];
+      }
       if (!state.filters[columnKey]) {
         state.filterOrder = state.filterOrder.filter(function(key) {
           return key !== columnKey;
@@ -6544,7 +7577,9 @@
     updateSearchButtonStates();
     updateFilterBar();
     scheduleTablePreferencesSave();
-    updateTable();
+    if (config.render !== false) {
+      updateTable();
+    }
   }
 
   function clearColumnFilter(columnKey) {
@@ -6557,6 +7592,9 @@
     }
     if (state.filterSelections && Object.prototype.hasOwnProperty.call(state.filterSelections, columnKey)) {
       delete state.filterSelections[columnKey];
+    }
+    if (state.filterSelectionMeta && Object.prototype.hasOwnProperty.call(state.filterSelectionMeta, columnKey)) {
+      delete state.filterSelectionMeta[columnKey];
     }
     state.filterOrder = state.filterOrder.filter(function(key) {
       return key !== columnKey;
@@ -6586,6 +7624,7 @@
     state.filters = {};
     state.filterOrder = [];
     state.filterSelections = {};
+    state.filterSelectionMeta = {};
     state.globalSearchQuery = '';
     state.showUnassignedOnly = false;
     state.showUnviewedOnly = false;
@@ -6640,6 +7679,7 @@
     state.filters = {};
     state.filterOrder = [];
     state.filterSelections = {};
+    state.filterSelectionMeta = {};
     state.globalSearchQuery = '';
     state.showUnassignedOnly = false;
     state.showUnviewedOnly = false;
@@ -7046,10 +8086,16 @@
 
   function handleGlobalSearchInput() {
     state.globalSearchQuery = elements.globalSearchInput ? elements.globalSearchInput.value : '';
-    resetTablePage();
-    updateFilterBar();
-    scheduleTablePreferencesSave();
-    updateTable();
+    if (globalSearchInputTimer) {
+      window.clearTimeout(globalSearchInputTimer);
+    }
+    globalSearchInputTimer = window.setTimeout(function() {
+      globalSearchInputTimer = null;
+      resetTablePage();
+      updateFilterBar();
+      scheduleTablePreferencesSave();
+      updateTable();
+    }, 180);
   }
 
   function setColumnFilterControlValue(control, value) {
@@ -7109,7 +8155,13 @@
       input.inputMode = 'numeric';
     }
     input.addEventListener('input', function() {
-      applyFilter(column.key, input.value);
+      if (tableFilterInputTimer) {
+        window.clearTimeout(tableFilterInputTimer);
+      }
+      tableFilterInputTimer = window.setTimeout(function() {
+        tableFilterInputTimer = null;
+        applyFilter(column.key, input.value);
+      }, 180);
     });
     return input;
   }
@@ -7247,6 +8299,58 @@
     updateTable();
     scheduleTablePreferencesSave();
     showMessage('info', message, MESSAGE_INFO_DURATION_MS);
+  }
+
+  function setColumnSorting(columnKey, direction, options) {
+    if (!isSortableTableColumn(columnKey)) {
+      return;
+    }
+    var normalizedDirection = normalizeSortDirection(direction);
+    if (!normalizedDirection) {
+      return;
+    }
+    var config = options && typeof options === 'object' ? options : {};
+    var column = getColumnDefinition(columnKey);
+    var columnLabel = column ? column.label : columnKey;
+    var nextSettings = cloneVisualSettings(state.visualSettings);
+    nextSettings.sorting = {
+      enabled: true,
+      rules: [{ column: columnKey, direction: normalizedDirection }]
+    };
+    state.visualSettings = nextSettings;
+    resetTablePage();
+    updateHeaderSortIndicators();
+    updateFilterBar();
+    updateTable();
+    scheduleTablePreferencesSave();
+    if (!config.silent) {
+      showMessage('info', 'Сортировка «' + columnLabel + '»: '
+        + (normalizedDirection === 'desc' ? 'по убыванию' : 'по возрастанию'), MESSAGE_INFO_DURATION_MS);
+    }
+  }
+
+  function clearColumnSorting(columnKey, options) {
+    if (!isSortableTableColumn(columnKey)) {
+      return;
+    }
+    var currentRule = getActiveSortRule(columnKey);
+    if (!currentRule) {
+      return;
+    }
+    var config = options && typeof options === 'object' ? options : {};
+    var column = getColumnDefinition(columnKey);
+    var columnLabel = column ? column.label : columnKey;
+    var nextSettings = cloneVisualSettings(state.visualSettings);
+    nextSettings.sorting = buildDefaultSortingSettings();
+    state.visualSettings = nextSettings;
+    resetTablePage();
+    updateHeaderSortIndicators();
+    updateFilterBar();
+    updateTable();
+    scheduleTablePreferencesSave();
+    if (!config.silent) {
+      showMessage('info', 'Сортировка «' + columnLabel + '» сброшена', MESSAGE_INFO_DURATION_MS);
+    }
   }
 
   function focusColumnFilterControl(columnKey) {
@@ -8699,6 +9803,43 @@
     });
   }
 
+  function getVisibleTableColumnCount() {
+    var count = 0;
+    var orderedColumns = getOrderedColumns();
+    for (var i = 0; i < orderedColumns.length; i += 1) {
+      if (isColumnVisible(orderedColumns[i].key)) {
+        count += 1;
+      }
+    }
+    return Math.max(1, count);
+  }
+
+  function setColumnElementVisibility(element, visible) {
+    if (!element) {
+      return;
+    }
+    element.style.display = visible ? '' : 'none';
+  }
+
+  function updateTableUtilityColspans() {
+    var count = getVisibleTableColumnCount();
+    if (elements.tableTopSpacer && elements.tableTopSpacer.firstChild) {
+      elements.tableTopSpacer.firstChild.colSpan = count;
+      elements.tableTopSpacer.firstChild.setAttribute('colspan', String(count));
+    }
+    if (elements.tableBottomSpacer && elements.tableBottomSpacer.firstChild) {
+      elements.tableBottomSpacer.firstChild.colSpan = count;
+      elements.tableBottomSpacer.firstChild.setAttribute('colspan', String(count));
+    }
+    if (elements.tableBody) {
+      var groupCells = elements.tableBody.querySelectorAll('.documents-group-row > td');
+      for (var i = 0; i < groupCells.length; i += 1) {
+        groupCells[i].colSpan = count;
+        groupCells[i].setAttribute('colspan', String(count));
+      }
+    }
+  }
+
   function applyColumnVisibility(visibilityMap) {
     var visibleCounts = {};
     TABLE_GROUPS.forEach(function(group) {
@@ -8713,20 +9854,20 @@
       }
       var headerCell = elements.headerCells[column.key];
       if (headerCell) {
-        headerCell.style.display = visible ? '' : 'none';
+        setColumnElementVisibility(headerCell, visible);
       }
       var filterCell = elements.filterCells && elements.filterCells[column.key];
       if (filterCell) {
-        filterCell.style.display = visible ? '' : 'none';
+        setColumnElementVisibility(filterCell, visible);
       }
       var col = elements.columnCols && elements.columnCols[column.key];
       if (col) {
-        col.style.display = visible ? '' : 'none';
+        setColumnElementVisibility(col, visible);
       }
       if (elements.tableBody) {
         var cells = elements.tableBody.querySelectorAll('td[data-column-key="' + column.key + '"]');
         for (var i = 0; i < cells.length; i += 1) {
-          cells[i].style.display = visible ? '' : 'none';
+          setColumnElementVisibility(cells[i], visible);
         }
       }
     });
@@ -8745,6 +9886,7 @@
         }
       });
     }
+    updateTableUtilityColspans();
   }
 
   function areSortingSettingsEqual(left, right) {
@@ -8813,8 +9955,9 @@
       };
     }
     nextSettings.columns[columnKey].visible = visible !== false;
-    state.visualSettings = nextSettings;
     applyVisualSettings(nextSettings);
+    applyColumnVisibility(nextSettings.columns);
+    applyColumnWidths();
     updateFilterBar();
     scheduleTablePreferencesSave();
   }
@@ -9797,16 +10940,51 @@
     if (!section || !section.tableBody) {
       return;
     }
-    section.tableBody.innerHTML = '';
     var list = Array.isArray(rows) && rows.length ? rows : [createEmptyAdminEntry(sectionKey)];
     list = sortAdminEntriesByResponsible(list);
-    list.forEach(function(entry, index) {
-      section.tableBody.appendChild(createAdminRow(entry, index, sectionKey));
-    });
-    sortAdminTableRows(sectionKey);
-    if (shouldFocus) {
-      focusFirstAdminInput(sectionKey);
+
+    var token = Date.now() + ':' + Math.random();
+    adminRenderTokens[sectionKey] = token;
+    section.tableBody.innerHTML = '';
+
+    var index = 0;
+    var batchSize = list.length > 120 ? 40 : list.length;
+
+    function finishRender() {
+      if (adminRenderTokens[sectionKey] !== token) {
+        return;
+      }
+      renumberAdminRows(sectionKey);
+      if (shouldFocus) {
+        var focus = function() {
+          focusFirstAdminInput(sectionKey);
+        };
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(focus);
+        } else {
+          window.setTimeout(focus, 0);
+        }
+      }
     }
+
+    function renderBatch() {
+      if (adminRenderTokens[sectionKey] !== token) {
+        return;
+      }
+      var fragment = document.createDocumentFragment();
+      var limit = Math.min(index + batchSize, list.length);
+      for (; index < limit; index += 1) {
+        fragment.appendChild(createAdminRow(list[index], index, sectionKey));
+      }
+      section.tableBody.appendChild(fragment);
+      if (index < list.length) {
+        window.setTimeout(renderBatch, 0);
+        return;
+      }
+      finishRender();
+    }
+
+    renderBatch();
   }
 
   function focusFirstAdminInput(sectionKey) {
@@ -10737,40 +11915,54 @@
   }
 
   function openAdminModal() {
-    if (!state.organization) {
-      showMessage('error', 'Организация для этой страницы не определена.');
-      return;
+    try {
+      if (!state.organization) {
+        showMessage('error', 'Организация для этой страницы не определена.');
+        return;
+      }
+      var adminScope = state.access && typeof state.access.adminScope === 'string'
+        ? state.access.adminScope.toLowerCase()
+        : '';
+      if (!isCurrentUserAdmin() || adminScope === 'director') {
+        showMessage('error', 'Доступ к настройкам документов ограничен.');
+        return;
+      }
+      ensureAdminModal();
+      lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      ensureAdminUserLogState().visible = false;
+      ensureAdminTemplateState().visible = false;
+      closeAdminTemplateModal({ skipFocus: true });
+      updateAdminLogPanel();
+      updateAdminTemplatePanel();
+      adminElements.modal.classList.add('is-visible');
+      adminElements.modal.setAttribute('aria-hidden', 'false');
+      document.addEventListener('keydown', handleAdminKeydown, true);
+      renderAdminRows('responsibles', state.admin.settings.responsibles, true);
+      renderAdminRows('block2', state.admin.settings.block2, false);
+      renderAdminRows('block3', state.admin.settings.block3, false);
+      updateAdminMessage(state.admin.loaded ? '' : 'Загружаем настройки...', false);
+      loadAdminSettings({ focus: !state.admin.loaded }).catch(function() {
+        // сообщение уже показано в updateAdminMessage
+      });
+    } catch (error) {
+      var message = error && error.message ? error.message : 'Неизвестная ошибка.';
+      if (typeof docsLogger.error === 'function') {
+        docsLogger.error('Не удалось открыть админку документов:', error);
+      }
+      showMessage('error', 'Не удалось открыть админку: ' + message);
+      if (adminElements && adminElements.modal) {
+        try {
+          updateAdminMessage('Не удалось открыть админку: ' + message, true);
+        } catch (messageError) {}
+      }
     }
-    var adminScope = state.access && typeof state.access.adminScope === 'string'
-      ? state.access.adminScope.toLowerCase()
-      : '';
-    if (!isCurrentUserAdmin() || adminScope === 'director') {
-      showMessage('error', 'Доступ к настройкам документов ограничен.');
-      return;
-    }
-    ensureAdminModal();
-    lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    ensureAdminUserLogState().visible = false;
-    ensureAdminTemplateState().visible = false;
-    closeAdminTemplateModal({ skipFocus: true });
-    updateAdminLogPanel();
-    updateAdminTemplatePanel();
-    adminElements.modal.classList.add('is-visible');
-    adminElements.modal.setAttribute('aria-hidden', 'false');
-    document.addEventListener('keydown', handleAdminKeydown, true);
-    renderAdminRows('responsibles', state.admin.settings.responsibles, true);
-    renderAdminRows('block2', state.admin.settings.block2, false);
-    renderAdminRows('block3', state.admin.settings.block3, false);
-    updateAdminMessage(state.admin.loaded ? '' : 'Загружаем настройки...', false);
-    loadAdminSettings({ focus: !state.admin.loaded }).catch(function() {
-      // сообщение уже показано в updateAdminMessage
-    });
   }
 
   function closeAdminModal() {
     if (!adminElements.modal) {
       return;
     }
+    adminRenderTokens = {};
     adminElements.modal.classList.remove('is-visible');
     adminElements.modal.setAttribute('aria-hidden', 'true');
     document.removeEventListener('keydown', handleAdminKeydown, true);
@@ -10808,6 +12000,9 @@
         return data;
       })
       .catch(function(error) {
+        if (typeof docsLogger.error === 'function') {
+          docsLogger.error('Не удалось загрузить настройки администратора:', error);
+        }
         updateAdminMessage('Не удалось загрузить настройки: ' + error.message, true);
         throw error;
       });
@@ -10865,6 +12060,9 @@
         closeAdminModal();
       })
       .catch(function(error) {
+        if (typeof docsLogger.error === 'function') {
+          docsLogger.error('Ошибка сохранения настроек администратора:', error);
+        }
         updateAdminMessage('Ошибка сохранения: ' + error.message, true);
       })
       .finally(function() {
@@ -15930,7 +17128,7 @@
         if (!documentVisibleForCurrentUser(doc)) {
           continue;
         }
-        var values = computeFilterValues(doc, i);
+        var values = getDocumentFilterValues(doc, i);
         if (matchesActiveDocumentTab(doc, values) && matchesDocumentFilters(values)) {
           entries.push({ doc: doc, values: values, index: i });
         }
@@ -15967,20 +17165,10 @@
   function applyColumnWidths(previewWidths) {
     var overrides = previewWidths || state.columnWidthOverrides || null;
     var widthMap = buildColumnWidthMap(overrides);
-    var totalWidth = TABLE_SELECTION_COLUMN_WIDTH;
+    var totalWidth = 0;
 
     if (!elements.headerCells) {
       elements.headerCells = {};
-    }
-
-    if (elements.selectionCol) {
-      setElementColumnWidth(elements.selectionCol, TABLE_SELECTION_COLUMN_WIDTH);
-    }
-    if (elements.selectAllHeaderCell) {
-      setElementColumnWidth(elements.selectAllHeaderCell, TABLE_SELECTION_COLUMN_WIDTH);
-    }
-    if (elements.selectFilterCell) {
-      setElementColumnWidth(elements.selectFilterCell, TABLE_SELECTION_COLUMN_WIDTH);
     }
 
     TABLE_COLUMNS.forEach(function(column) {
@@ -15995,14 +17183,29 @@
       }
       var headerCell = elements.headerCells[key];
       if (headerCell) {
-        setElementColumnWidth(headerCell, visible ? width : 1);
+        if (visible) {
+          setElementColumnWidth(headerCell, width);
+        } else {
+          setElementColumnWidth(headerCell, null);
+        }
+        setColumnElementVisibility(headerCell, visible);
       }
       var filterCell = elements.filterCells && elements.filterCells[key];
       if (filterCell) {
-        setElementColumnWidth(filterCell, visible ? width : 1);
+        if (visible) {
+          setElementColumnWidth(filterCell, width);
+        } else {
+          setElementColumnWidth(filterCell, null);
+        }
+        setColumnElementVisibility(filterCell, visible);
       }
       if (elements.columnCols && elements.columnCols[key]) {
-        setElementColumnWidth(elements.columnCols[key], visible ? width : 1);
+        if (visible) {
+          setElementColumnWidth(elements.columnCols[key], width);
+        } else {
+          setElementColumnWidth(elements.columnCols[key], null);
+        }
+        setColumnElementVisibility(elements.columnCols[key], visible);
       }
     });
 
@@ -16011,6 +17214,7 @@
       elements.table.style.width = tableWidth || '';
       elements.table.style.minWidth = tableWidth || '100%';
     }
+    updateTableUtilityColspans();
   }
 
   function startColumnResize(columnKey, event) {
@@ -16145,10 +17349,17 @@
       }
       var values = [];
       var seen = Object.create(null);
-      for (var i = 0; i < source.length && values.length < 200; i += 1) {
+      for (var i = 0; i < source.length && values.length < FILTER_SELECTION_MAX_VALUES; i += 1) {
         var value = normalizeTextInputValue(source[i]);
         if (!value) {
           continue;
+        }
+        if (isExcludedFilterToken(value)) {
+          var excludedValue = normalizeTextInputValue(decodeExcludedFilterValue(value));
+          if (!excludedValue) {
+            continue;
+          }
+          value = encodeExcludedFilterValue(excludedValue.length > 180 ? excludedValue.slice(0, 180).trim() : excludedValue);
         }
         var key = normalizeValueForMatch(value);
         if (seen[key]) {
@@ -16649,12 +17860,8 @@
       elements.groupRow.textContent = '';
     }
 
-    if (elements.tableTopSpacer && elements.tableTopSpacer.firstChild) {
-      elements.tableTopSpacer.firstChild.colSpan = orderedColumns.length + 1;
-    }
-    if (elements.tableBottomSpacer && elements.tableBottomSpacer.firstChild) {
-      elements.tableBottomSpacer.firstChild.colSpan = orderedColumns.length + 1;
-    }
+    updateTableUtilityColspans();
+    applyColumnVisibility(state.visualSettings && state.visualSettings.columns ? state.visualSettings.columns : null);
     updateHeaderSortIndicators();
   }
 
@@ -17176,10 +18383,10 @@
 
   function createTableRow(doc, index, filterValues, rowStateKey) {
     var tr = createElement('tr', '');
-    var expandedKey = rowStateKey ? String(rowStateKey) : getDocumentSelectionId(doc);
+    var expandedKey = rowStateKey ? String(rowStateKey) : getDocumentRowId(doc);
     tr.classList.add('documents-row');
     tr.setAttribute('tabindex', '0');
-    tr.dataset.docId = getDocumentSelectionId(doc);
+    tr.dataset.docId = getDocumentRowId(doc);
     tr.dataset.rowKey = expandedKey;
     tr._cellSignatures = {};
 
@@ -17261,21 +18468,18 @@
     }
     var columnKey = descriptor.columnKey || '';
     var previousSignature = td.dataset.renderSignature || '';
+    setColumnElementVisibility(td, columnKey ? isColumnVisible(columnKey) : true);
     if (!force && previousSignature === signature) {
       return false;
     }
     td.className = descriptor.className || '';
     if (columnKey) {
       td.dataset.columnKey = columnKey;
-      if (columnKey === TABLE_SELECTION_COLUMN_KEY) {
-        td.style.fontSize = '';
-      } else {
-        td.style.fontSize = getColumnFontSize(
-          columnKey,
-          state.visualSettings && state.visualSettings.columns,
-          state.visualSettings && state.visualSettings.fontSize
-        ) + 'px';
-      }
+      td.style.fontSize = getColumnFontSize(
+        columnKey,
+        state.visualSettings && state.visualSettings.columns,
+        state.visualSettings && state.visualSettings.fontSize
+      ) + 'px';
     } else {
       delete td.dataset.columnKey;
       td.style.fontSize = '';
@@ -17290,33 +18494,6 @@
     }
     td.dataset.renderSignature = signature;
     return true;
-  }
-
-  function createRowSelectionCell(doc) {
-    var docId = getDocumentSelectionId(doc);
-    var label = createElement('label', 'documents-row-select');
-    var checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'documents-row-select__checkbox';
-    checkbox.checked = isDocumentSelected(docId);
-    checkbox.disabled = !docId;
-    if (checkbox.checked) {
-      checkbox.setAttribute('checked', 'checked');
-    }
-    if (checkbox.disabled) {
-      checkbox.setAttribute('disabled', 'disabled');
-    }
-    checkbox.setAttribute('aria-label', docId ? 'Выбрать документ' : 'Документ нельзя выбрать');
-    checkbox.addEventListener('click', function(event) {
-      event.stopPropagation();
-    });
-    checkbox.addEventListener('change', function(event) {
-      event.stopPropagation();
-      setDocumentSelected(docId, checkbox.checked);
-      updateSelectionControls();
-    });
-    label.appendChild(checkbox);
-    return label;
   }
 
   function createRowActionIconButton(iconName, label, className) {
@@ -17539,9 +18716,7 @@
     descriptorsByKey.dueDate = buildCellDescriptor(createDueDateCell(doc), '', 'dueDate');
     descriptorsByKey.instruction = buildCellDescriptor(createInstructionCell(doc), 'documents-cell--instruction', 'instruction');
 
-    var descriptors = [
-      buildCellDescriptor(createRowSelectionCell(doc), 'documents-cell--select', TABLE_SELECTION_COLUMN_KEY)
-    ];
+    var descriptors = [];
     getOrderedColumns().forEach(function(column) {
       if (descriptorsByKey[column.key]) {
         descriptors.push(descriptorsByKey[column.key]);
@@ -17797,7 +18972,7 @@
     var groupCount = Number(entry && entry.groupCount) || 0;
     row.dataset.groupKey = entry && entry.groupKey ? entry.groupKey : '';
     var cell = document.createElement('td');
-    cell.colSpan = normalizeColumnOrder(state.columnOrder).length + 1;
+    cell.colSpan = getVisibleTableColumnCount();
 
     var content = createElement('div', 'documents-group-row__content');
     var label = createElement('span', 'documents-group-row__label', entry && entry.groupLabel ? entry.groupLabel : 'Без значения');
@@ -17829,7 +19004,7 @@
     var row = createElement('tr', className);
     row.setAttribute('aria-hidden', 'true');
     var cell = document.createElement('td');
-    cell.colSpan = normalizeColumnOrder(state.columnOrder).length + 1;
+    cell.colSpan = getVisibleTableColumnCount();
     cell.style.padding = '0';
     cell.style.border = '0';
     cell.style.height = '0px';
@@ -18025,7 +19200,7 @@
       row = createTableRow(filteredDoc, displayIndex, valueSet, cacheKey);
       state.rowCache.set(cacheKey, row);
     } else {
-      row.dataset.docId = getDocumentSelectionId(filteredDoc);
+      row.dataset.docId = getDocumentRowId(filteredDoc);
       row.dataset.rowKey = cacheKey;
       renderTableRowCells(row, filteredDoc, displayIndex, valueSet, false);
     }
@@ -18107,8 +19282,6 @@
       if (!state.virtualTable.rowHeight && state.rowCache.size) {
         state.virtualTable.rowHeight = ensureVirtualRowHeight();
       }
-      syncRenderedRowSelectionStates();
-      updateSelectionControls();
     }
 
     appendBatch();
@@ -18262,7 +19435,7 @@
       if (!documentVisibleForCurrentUser(doc)) {
         continue;
       }
-      var values = computeFilterValues(doc, i);
+      var values = getDocumentFilterValues(doc, i);
       if (matchesActiveDocumentTab(doc, values) && matchesDocumentFilters(values)) {
         filteredEntries.push({ doc: doc, values: values, index: i });
       }
@@ -18274,15 +19447,15 @@
     }
     state.tableFilteredEntries = filteredEntries;
     state.tableTotalEntries = filteredEntries.length;
-    renderDocumentTabs();
+    if (state.documentTabsDirty || !elements.tabsBar || !elements.tabsBar.querySelector('.documents-tabs__list')) {
+      renderDocumentTabs();
+    }
 
     var filtersActive = hasActiveDocumentTab() || hasActiveFilters() || state.showUnassignedOnly;
 
     if (!filteredEntries.length) {
       var waitingForRegistry = Boolean(state.organization && (state.registryLoading || (!state.registryLoaded && !state.registryLoadError)));
-      state.currentPageDocumentIds = [];
       renderPaginationControls(0, 0);
-      updateSelectionControls();
       clearVirtualTableRows(true);
       if (waitingForRegistry) {
         setTableEmptyState('loading', 'Загружаем реестр документов...');
@@ -18314,18 +19487,11 @@
     var pageEntries = pageSize === 'all'
       ? filteredEntries.slice()
       : filteredEntries.slice((state.tablePage - 1) * pageSize, (state.tablePage - 1) * pageSize + pageSize);
-    state.currentPageDocumentIds = pageEntries.map(function(entry) {
-      return getDocumentSelectionId(entry && entry.doc);
-    }).filter(function(id) {
-      return Boolean(id);
-    });
-
     hideTableEmptyState();
 
     state.virtualTable.filteredEntries = buildGroupedPageEntries(pageEntries);
     renderVirtualTableRows();
     renderPaginationControls(filteredEntries.length, pageEntries.length);
-    updateSelectionControls();
 
     applyColumnWidths();
     setToolbarState();
@@ -18475,38 +19641,60 @@
     return [];
   }
 
-  function updateStateFromPayload(data) {
-    if (!state.directorCache || typeof state.directorCache !== 'object') {
-      state.directorCache = {};
+  function hasDocumentsCollectionPayload(payload) {
+    return Boolean(
+      payload
+      && typeof payload === 'object'
+      && Object.prototype.hasOwnProperty.call(payload, 'documents')
+      && payload.documents !== undefined
+      && payload.documents !== null
+    );
+  }
+
+  function prepareDocumentForState(doc, activeDirectorKeys) {
+    if (!doc || typeof doc !== 'object') {
+      return doc;
     }
 
-    var rawDocuments = resolveDocumentsCollection(data);
+    var cacheKey = getDocumentDirectorCacheKey(doc);
+    if (!cacheKey) {
+      return doc;
+    }
+
+    if (activeDirectorKeys) {
+      activeDirectorKeys[cacheKey] = true;
+    }
+
+    var directorEntry = resolveDirectorEntry(doc);
+    if (directorEntry) {
+      state.directorCache[cacheKey] = cloneDirectorEntry(directorEntry) || directorEntry;
+      return doc;
+    }
+
+    if (!state.directorCache || !state.directorCache[cacheKey]) {
+      return doc;
+    }
+
+    var cachedDirector = cloneDirectorEntry(state.directorCache[cacheKey]) || state.directorCache[cacheKey];
+    if (cachedDirector && typeof cachedDirector === 'object') {
+      if (!doc.director || typeof doc.director !== 'object') {
+        doc.director = cloneDirectorEntry(cachedDirector) || cachedDirector;
+      }
+      if (!Array.isArray(doc.directors) || !doc.directors.length) {
+        doc.directors = [cloneDirectorEntry(cachedDirector) || cachedDirector];
+      }
+    }
+
+    return doc;
+  }
+
+  function replaceStateDocuments(rawDocuments) {
+    invalidateFilterValuesCache();
     var processedDocuments = [];
     var activeDirectorKeys = {};
 
     for (var i = 0; i < rawDocuments.length; i += 1) {
-      var doc = rawDocuments[i];
-      if (doc && typeof doc === 'object') {
-        var cacheKey = getDocumentDirectorCacheKey(doc);
-        if (cacheKey) {
-          activeDirectorKeys[cacheKey] = true;
-          var directorEntry = resolveDirectorEntry(doc);
-          if (directorEntry) {
-            state.directorCache[cacheKey] = cloneDirectorEntry(directorEntry) || directorEntry;
-          } else if (state.directorCache && state.directorCache[cacheKey]) {
-            var cachedDirector = cloneDirectorEntry(state.directorCache[cacheKey]) || state.directorCache[cacheKey];
-            if (cachedDirector && typeof cachedDirector === 'object') {
-              if (!doc.director || typeof doc.director !== 'object') {
-                doc.director = cloneDirectorEntry(cachedDirector) || cachedDirector;
-              }
-              if (!Array.isArray(doc.directors) || !doc.directors.length) {
-                doc.directors = [cloneDirectorEntry(cachedDirector) || cachedDirector];
-              }
-            }
-          }
-        }
-      }
-      processedDocuments.push(doc);
+      processedDocuments.push(prepareDocumentForState(rawDocuments[i], activeDirectorKeys));
     }
 
     state.documents = processedDocuments;
@@ -18518,6 +19706,45 @@
       if (!Object.prototype.hasOwnProperty.call(activeDirectorKeys, cacheKey)) {
         delete state.directorCache[cacheKey];
       }
+    }
+  }
+
+  function mergeTaskIntoStateDocuments(task) {
+    if (!task || typeof task !== 'object' || !task.id) {
+      return false;
+    }
+    if (!Array.isArray(state.documents)) {
+      state.documents = [];
+    }
+
+    var preparedTask = prepareDocumentForState(task, null);
+    invalidateDocumentFilterValues(preparedTask);
+    state.documentTabsDirty = true;
+    var replaced = false;
+    for (var i = 0; i < state.documents.length; i += 1) {
+      var current = state.documents[i];
+      if (current && current.id && String(current.id) === String(preparedTask.id)) {
+        state.documents[i] = preparedTask;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      state.documents.push(preparedTask);
+    }
+
+    return true;
+  }
+
+  function updateStateFromPayload(data) {
+    if (!state.directorCache || typeof state.directorCache !== 'object') {
+      state.directorCache = {};
+    }
+
+    if (hasDocumentsCollectionPayload(data)) {
+      replaceStateDocuments(resolveDocumentsCollection(data));
+    } else if (data && data.task && typeof data.task === 'object') {
+      mergeTaskIntoStateDocuments(data.task);
     }
 
     if (data && typeof data.storagePath === 'string') {
@@ -18597,6 +19824,8 @@
     if (!target) {
       return;
     }
+    invalidateDocumentFilterValues(target);
+    state.documentTabsDirty = true;
 
     var stringFields = [
       'registryNumber',
@@ -18745,21 +19974,10 @@
 
   function applyTaskMutationPayload(data) {
     var task = data && data.task && typeof data.task === 'object' ? data.task : null;
-    if (!task || !task.id || !Array.isArray(state.documents)) {
+    if (!task || !task.id) {
       return;
     }
-    var replaced = false;
-    for (var i = 0; i < state.documents.length; i += 1) {
-      var current = state.documents[i];
-      if (current && current.id && String(current.id) === String(task.id)) {
-        state.documents[i] = task;
-        replaced = true;
-        break;
-      }
-    }
-    if (!replaced) {
-      state.documents.push(task);
-    }
+    mergeTaskIntoStateDocuments(task);
     refreshUserAssignmentKeys();
     recalculateUnviewedCounters();
     updateClockUserDisplay();
@@ -21664,22 +22882,6 @@
     var tableToolbar = createElement('div', 'documents-table-toolbar');
     var tabsBar = createElement('div', 'documents-tabs');
     var tableTools = createElement('div', 'documents-table-tools');
-    var filterModeButton = createToolbarButton('filter', 'Фильтр', { pressed: true });
-    filterModeButton.addEventListener('click', function(event) {
-      event.preventDefault();
-      event.stopPropagation();
-      closeToolbarMenu();
-      closeColumnsPopover();
-      toggleHeaderFilterMode();
-    });
-    var sortModeButton = createToolbarButton('sort', 'Сортировка', { pressed: true });
-    sortModeButton.addEventListener('click', function(event) {
-      event.preventDefault();
-      event.stopPropagation();
-      closeToolbarMenu();
-      closeColumnsPopover();
-      toggleHeaderSortMode();
-    });
     var moveModeButton = createToolbarButton('move', 'Перемещение', { pressed: true });
     moveModeButton.addEventListener('click', function(event) {
       event.preventDefault();
@@ -21752,8 +22954,6 @@
     globalSearchIcon.appendChild(createSvgIcon('search', 'documents-global-search__svg'));
     globalSearchWrap.appendChild(globalSearchIcon);
     tableToolbar.appendChild(tabsBar);
-    tableTools.appendChild(filterModeButton);
-    tableTools.appendChild(sortModeButton);
     tableTools.appendChild(moveModeButton);
     tableTools.appendChild(columnsButton);
     tableTools.appendChild(groupButton);
@@ -21770,10 +22970,6 @@
     tableWrapper.style.webkitOverflowScrolling = 'touch';
     var table = createElement('table', 'documents-table');
     var colgroup = createElement('colgroup', 'documents-table__colgroup');
-    var selectionCol = document.createElement('col');
-    selectionCol.dataset.columnKey = TABLE_SELECTION_COLUMN_KEY;
-    setElementColumnWidth(selectionCol, TABLE_SELECTION_COLUMN_WIDTH);
-    colgroup.appendChild(selectionCol);
     elements.columnCols = {};
     getOrderedColumns().forEach(function(column) {
       var col = document.createElement('col');
@@ -21795,25 +22991,6 @@
     elements.filterCells = {};
     elements.filterControls = {};
 
-    var selectHeaderCell = createElement('th', 'documents-table__header-cell documents-table__header-cell--select');
-    selectHeaderCell.setAttribute('scope', 'col');
-    selectHeaderCell.dataset.columnKey = TABLE_SELECTION_COLUMN_KEY;
-    var selectAllLabel = createElement('label', 'documents-row-select documents-row-select--all');
-    var selectAllCheckbox = document.createElement('input');
-    selectAllCheckbox.type = 'checkbox';
-    selectAllCheckbox.className = 'documents-row-select__checkbox';
-    selectAllCheckbox.setAttribute('aria-label', 'Выбрать строки на текущей странице');
-    selectAllCheckbox.addEventListener('click', function(event) {
-      event.stopPropagation();
-    });
-    selectAllCheckbox.addEventListener('change', function() {
-      setCurrentPageSelection(selectAllCheckbox.checked);
-    });
-    selectAllLabel.appendChild(selectAllCheckbox);
-    selectHeaderCell.appendChild(selectAllLabel);
-    setElementColumnWidth(selectHeaderCell, TABLE_SELECTION_COLUMN_WIDTH);
-    headerRow.appendChild(selectHeaderCell);
-
     getOrderedColumns().forEach(function(column) {
       var headerCell = createElement('th', 'documents-table__header-cell');
       headerCell.setAttribute('scope', 'col');
@@ -21829,18 +23006,14 @@
       elements.sortIndicators[column.key] = sortIndicator;
       headerTools.appendChild(sortIndicator);
       if (column.searchable || column.key === 'files') {
-        var filterButton = createElement('button', 'documents-header-filter-button');
-        filterButton.type = 'button';
-        filterButton.title = 'Открыть фильтр «' + column.label + '»';
-        filterButton.setAttribute('aria-label', 'Открыть фильтр «' + column.label + '»');
-        filterButton.appendChild(createSvgIcon('filter', 'documents-header-filter-icon'));
-        filterButton.addEventListener('click', function(event) {
-          event.preventDefault();
-          event.stopPropagation();
-          openSearchPopover(column.key, filterButton);
-        });
-        elements.filterButtons[column.key] = filterButton;
-        headerTools.appendChild(filterButton);
+        headerCell.classList.add('documents-table__header-cell--searchable');
+        headerCell.title = 'Нажмите, чтобы открыть фильтр «' + column.label + '»';
+        headerCell.setAttribute('aria-label', 'Нажмите, чтобы открыть фильтр «' + column.label + '»');
+        var filterMarker = createElement('span', 'documents-header-filter-marker');
+        filterMarker.setAttribute('aria-hidden', 'true');
+        filterMarker.appendChild(createSvgIcon('filter', 'documents-header-filter-icon'));
+        headerTools.appendChild(filterMarker);
+        elements.filterButtons[column.key] = headerCell;
       }
       var dragHandle = createElement('button', 'documents-column-drag-handle', '⋮⋮');
       dragHandle.type = 'button';
@@ -21870,16 +23043,18 @@
       if (isSortableTableColumn(column.key)) {
         headerCell.classList.add('documents-table__header-cell--sortable');
         headerCell.setAttribute('tabindex', '0');
-        headerCell.title = 'Сортировать по столбцу «' + column.label + '»';
         headerCell.addEventListener('click', function(event) {
-          if (!state.headerSortMode) {
-            return;
-          }
           if (event.target && typeof event.target.closest === 'function'
             && event.target.closest('button, input, select, textarea, a, label, .documents-column-resize-handle')) {
             return;
           }
-          toggleColumnSorting(column.key);
+          if (state.headerSortMode) {
+            toggleColumnSorting(column.key);
+            return;
+          }
+          if (column.searchable || column.key === 'files') {
+            openSearchPopover(column.key, headerCell);
+          }
         });
         headerCell.addEventListener('keydown', function(event) {
           var key = event.key || '';
@@ -21889,11 +23064,34 @@
           if (event.target !== headerCell) {
             return;
           }
-          if (!state.headerSortMode) {
+          event.preventDefault();
+          if (state.headerSortMode) {
+            toggleColumnSorting(column.key);
+            return;
+          }
+          if (column.searchable || column.key === 'files') {
+            openSearchPopover(column.key, headerCell);
+          }
+        });
+      } else if (column.searchable || column.key === 'files') {
+        headerCell.setAttribute('tabindex', '0');
+        headerCell.addEventListener('click', function(event) {
+          if (event.target && typeof event.target.closest === 'function'
+            && event.target.closest('button, input, select, textarea, a, label, .documents-column-resize-handle')) {
+            return;
+          }
+          openSearchPopover(column.key, headerCell);
+        });
+        headerCell.addEventListener('keydown', function(event) {
+          var key = event.key || '';
+          if (key !== 'Enter' && key !== ' ' && key !== 'Spacebar' && key !== 'Space') {
+            return;
+          }
+          if (event.target !== headerCell) {
             return;
           }
           event.preventDefault();
-          toggleColumnSorting(column.key);
+          openSearchPopover(column.key, headerCell);
         });
       }
       if (column.searchable || column.key === 'files' || column.key === 'actions') {
@@ -21961,8 +23159,8 @@
     elements.settingsButton = settingsButton;
     elements.message = message;
     elements.tableToolbar = tableToolbar;
-    elements.filterModeButton = filterModeButton;
-    elements.sortModeButton = sortModeButton;
+    elements.filterModeButton = null;
+    elements.sortModeButton = null;
     elements.moveModeButton = moveModeButton;
     elements.columnsButton = columnsButton;
     elements.groupButton = groupButton;
@@ -21977,10 +23175,6 @@
     elements.tableScroll = tableWrapper;
     elements.emptyState = empty;
     elements.columnDropLine = dropLine;
-    elements.selectionCol = selectionCol;
-    elements.selectAllHeaderCell = selectHeaderCell;
-    elements.selectFilterCell = null;
-    elements.selectAllCheckbox = selectAllCheckbox;
     elements.filterRow = null;
     elements.pagination = pagination;
     elements.paginationInfo = paginationInfo;

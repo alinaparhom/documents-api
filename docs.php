@@ -37,6 +37,7 @@ const REGISTRY_FILENAME = 'registry.json';
 const SETTINGS_FILENAME = 'settingsdocs.json';
 const DOCS_COLUMN_WIDTH_MIN = 1;
 const DOCS_COLUMN_WIDTH_MAX = 420;
+const DOCS_FILTER_SELECTION_MAX_VALUES = 5000;
 const DOCS_COLUMN_WIDTH_DEFAULTS = [
     'entryNumber' => 80,
     'registryNumber' => 140,
@@ -6102,7 +6103,7 @@ function docs_sanitize_table_filter_selections($input): array
             }
             $seen[$lookup] = true;
             $selected[] = $text;
-            if (count($selected) >= 200) {
+            if (count($selected) >= DOCS_FILTER_SELECTION_MAX_VALUES) {
                 break;
             }
         }
