@@ -1839,21 +1839,6 @@ function applyEntryTaskId(entryTaskId, source, startParam) {
   if (!normalized) {
     return;
   }
-  const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
-  const comboPalette = isLightTheme
-    ? {
-      optionBg: 'rgba(84, 126, 212, 0.07)',
-      optionBorder: 'rgba(94, 136, 219, 0.22)',
-      optionColor: '#1d2d4c',
-      optionHover: 'rgba(84, 126, 212, 0.16)',
-    }
-    : {
-      optionBg: 'rgba(255, 255, 255, 0.04)',
-      optionBorder: 'rgba(141, 181, 255, 0.18)',
-      optionColor: '#eff5ff',
-      optionHover: 'rgba(123, 173, 255, 0.24)',
-    };
-
   if (!state.entryTaskId) {
     state.entryTaskId = normalized;
   }
@@ -12561,7 +12546,9 @@ function setupStatusControls(card, task) {
   }
 
   const canManageByAssignment = userIsResponsibleForTask(task);
-  if (!canManageByAssignment) {
+  const roleButtonRule = getRoleButtonRuleForTask(task);
+  const statusOptions = getStatusOptionsForCurrentRole(task);
+  if (!canManageByAssignment || !roleActionAllowedForTask(task, 'status') || !statusOptions.length) {
     container.remove();
     return;
   }
@@ -12576,7 +12563,7 @@ function setupStatusControls(card, task) {
   const normalizedCurrent = normalizeName(currentStatus);
   optionsContainer.innerHTML = '';
 
-  STATUS_OPTIONS.forEach((option) => {
+  statusOptions.forEach((option) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appdosc-card__status-button';
@@ -12588,7 +12575,8 @@ function setupStatusControls(card, task) {
     optionsContainer.appendChild(button);
   });
 
-  if (!optionsContainer.querySelector('[aria-pressed="true"]') && currentStatus) {
+  const hasExplicitStatusList = Boolean(roleButtonRule && roleButtonRule.explicit && roleButtonRule.statuses.length);
+  if (!hasExplicitStatusList && !optionsContainer.querySelector('[aria-pressed="true"]') && currentStatus) {
     const fallback = document.createElement('button');
     fallback.type = 'button';
     fallback.className = 'appdosc-card__status-button';
@@ -14278,6 +14266,290 @@ function userIsListedAsResponsible() {
       return normalized && names.includes(normalized);
     });
   });
+}
+
+
+function getCurrentUserRoleLabel() {
+  return normalizeValue(state.telegram && state.telegram.role)
+    || getCurrentUserPositionFromAccess()
+    || getCurrentUserPositionFromTasks();
+}
+
+function normalizeRoleButtonToken(value) {
+  return normalizeValue(value)
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[\s_\-–—]+/g, ' ')
+    .trim();
+}
+
+function getOrganizationSummaryForTask(task) {
+  const organization = getTaskOrganization(task);
+  const key = getOrganizationKey(organization);
+  if (!key || !Array.isArray(state.organizations)) {
+    return null;
+  }
+  return state.organizations.find((summary) => {
+    if (!summary || typeof summary !== 'object') {
+      return false;
+    }
+    return getOrganizationKey(summary.name || summary.organization) === key;
+  }) || null;
+}
+
+function valuesLookLikeRoleRules(list) {
+  return Array.isArray(list) && list.some((item) => item && typeof item === 'object' && !Array.isArray(item));
+}
+
+function roleMatchesCurrentUser(candidate, currentRoleKey) {
+  if (!candidate || !currentRoleKey) {
+    return false;
+  }
+  return normalizeRoleButtonToken(candidate) === currentRoleKey;
+}
+
+function extractRuleForRole(source, currentRoleKey) {
+  if (!source || !currentRoleKey) {
+    return null;
+  }
+
+  if (Array.isArray(source)) {
+    if (!valuesLookLikeRoleRules(source)) {
+      return source;
+    }
+    for (let index = 0; index < source.length; index += 1) {
+      const item = source[index];
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const roleCandidate = item.role || item.position || item.name || item.title || item.label;
+      if (roleMatchesCurrentUser(roleCandidate, currentRoleKey)) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  if (typeof source !== 'object') {
+    return null;
+  }
+
+  const directRole = source.role || source.position || source.name || source.title || source.label;
+  if (directRole && roleMatchesCurrentUser(directRole, currentRoleKey)) {
+    return source;
+  }
+
+  const keys = Object.keys(source);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (roleMatchesCurrentUser(key, currentRoleKey)) {
+      return source[key];
+    }
+  }
+
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = source[keys[index]];
+    if (!value || typeof value !== 'object') {
+      continue;
+    }
+    const nestedRole = value.role || value.position || value.name || value.title || value.label;
+    if (roleMatchesCurrentUser(nestedRole, currentRoleKey)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function collectRoleButtonSources(container) {
+  if (!container || typeof container !== 'object') {
+    return [];
+  }
+  const sources = [];
+  const keys = [
+    'roleButtons',
+    'buttonsByRole',
+    'statusButtonsByRole',
+    'actionsByRole',
+    'allowedButtonsByRole',
+    'roleActions',
+    'roleSettings',
+    'roles',
+    'permissionsByRole',
+    'buttons',
+    'actions',
+  ];
+  keys.forEach((key) => {
+    if (container[key] !== undefined && container[key] !== null) {
+      sources.push(container[key]);
+    }
+  });
+  if (container.settings && typeof container.settings === 'object') {
+    sources.push(...collectRoleButtonSources(container.settings));
+  }
+  if (container.permissions && typeof container.permissions === 'object') {
+    sources.push(...collectRoleButtonSources(container.permissions));
+  }
+  return sources;
+}
+
+function isKnownActionButtonLabel(value) {
+  const token = normalizeRoleButtonToken(value);
+  if (!token) {
+    return false;
+  }
+  const aliases = [
+    'status', 'statuses', 'статус', 'статусы', 'смена статуса', 'изменить статус',
+    'response', 'responses', 'ответ', 'ответы', 'загрузить ответ', 'загрузка ответа', 'upload response',
+    'ai', 'ии', 'ответ с помощью ии', 'ответ ии',
+    'text', 'текст', 'сохранить текст', 'текстовый ответ',
+    'view response', 'просмотр ответа', 'посмотреть ответ', 'ответы исполнителей',
+    'assign', 'назначить', 'назначение', 'ответственные', 'назначить ответственных',
+    'instruction', 'поручение',
+    'complete', 'выполнить', 'завершить', 'завершить назначение', 'проверено',
+  ];
+  return aliases.some((alias) => token === normalizeRoleButtonToken(alias));
+}
+
+function normalizeRoleButtonRule(rawRule) {
+  if (!rawRule) {
+    return null;
+  }
+
+  const result = {
+    explicit: true,
+    buttons: new Set(),
+    statuses: [],
+  };
+  const seenStatuses = new Set();
+
+  const addButton = (value) => {
+    const token = normalizeRoleButtonToken(value);
+    if (token) {
+      result.buttons.add(token);
+    }
+  };
+  const addStatus = (value) => {
+    const label = normalizeValue(value);
+    const token = normalizeRoleButtonToken(label);
+    if (label && token && !seenStatuses.has(token)) {
+      seenStatuses.add(token);
+      result.statuses.push(label);
+    }
+  };
+  const addButtonOrStatus = (value) => {
+    const label = normalizeValue(value);
+    if (!label) {
+      return;
+    }
+    addButton(label);
+    if (!isKnownActionButtonLabel(label)) {
+      addStatus(label);
+    }
+  };
+  const consumeArray = (list, mode) => {
+    if (!Array.isArray(list)) {
+      return;
+    }
+    list.forEach((item) => {
+      if (item && typeof item === 'object') {
+        const label = item.status || item.value || item.label || item.name || item.title || item.text;
+        if (mode === 'status') {
+          addStatus(label);
+        } else {
+          addButtonOrStatus(label);
+        }
+        return;
+      }
+      if (mode === 'status') {
+        addStatus(item);
+      } else {
+        addButtonOrStatus(item);
+      }
+    });
+  };
+
+  if (Array.isArray(rawRule)) {
+    consumeArray(rawRule, 'auto');
+    return result;
+  }
+
+  if (typeof rawRule === 'string') {
+    addButtonOrStatus(rawRule);
+    return result;
+  }
+
+  if (typeof rawRule !== 'object') {
+    return null;
+  }
+
+  consumeArray(rawRule.statuses || rawRule.statusButtons || rawRule.statusOptions || rawRule.status_buttons || rawRule['Статусы'], 'status');
+  consumeArray(rawRule.buttons || rawRule.actions || rawRule.allowedButtons || rawRule.allowed || rawRule['Кнопки'], 'auto');
+
+  if (rawRule.status || rawRule.statusButton) {
+    addStatus(rawRule.status || rawRule.statusButton);
+  }
+  if (rawRule.button || rawRule.action) {
+    addButtonOrStatus(rawRule.button || rawRule.action);
+  }
+
+  return result;
+}
+
+function getRoleButtonRuleForTask(task) {
+  const currentRoleKey = normalizeRoleButtonToken(getCurrentUserRoleLabel());
+  if (!currentRoleKey) {
+    return null;
+  }
+  const containers = [task, getOrganizationSummaryForTask(task)].filter(Boolean);
+  for (let containerIndex = 0; containerIndex < containers.length; containerIndex += 1) {
+    const sources = collectRoleButtonSources(containers[containerIndex]);
+    for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+      const matched = extractRuleForRole(sources[sourceIndex], currentRoleKey);
+      const normalized = normalizeRoleButtonRule(matched);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+  return null;
+}
+
+function roleActionAllowedForTask(task, action) {
+  const rule = getRoleButtonRuleForTask(task);
+  if (!rule || !rule.explicit) {
+    return true;
+  }
+  const actionToken = normalizeRoleButtonToken(action);
+  const aliasesByAction = {
+    status: ['status', 'statuses', 'статус', 'статусы', 'смена статуса', 'изменить статус'],
+    responseUpload: ['response', 'responses', 'ответ', 'ответы', 'загрузить ответ', 'загрузка ответа', 'upload response'],
+    responseAi: ['ai', 'ии', 'ответ с помощью ии', 'ответ ии'],
+    responseText: ['text', 'текст', 'сохранить текст', 'текстовый ответ'],
+    responseView: ['view response', 'просмотр ответа', 'посмотреть ответ', 'ответы исполнителей'],
+    assign: ['assign', 'назначить', 'назначение', 'ответственные', 'назначить ответственных'],
+    instruction: ['instruction', 'поручение'],
+    complete: ['complete', 'выполнить', 'завершить', 'завершить назначение', 'проверено'],
+  };
+  const aliases = aliasesByAction[action] || [actionToken];
+  if (action === 'status' && rule.statuses.length) {
+    return true;
+  }
+  return aliases.some((alias) => rule.buttons.has(normalizeRoleButtonToken(alias)));
+}
+
+function getStatusOptionsForCurrentRole(task) {
+  const rule = getRoleButtonRuleForTask(task);
+  if (!rule || !rule.explicit) {
+    return STATUS_OPTIONS.slice();
+  }
+  if (rule.statuses.length) {
+    return rule.statuses.slice();
+  }
+  if (roleActionAllowedForTask(task, 'status')) {
+    return STATUS_OPTIONS.slice();
+  }
+  return [];
 }
 
 function userCanManageInstructionsForOrganization(organization) {
@@ -19399,6 +19671,12 @@ function createResponseUploadControls(task, entry, setStatus) {
   if (!taskUserCanUploadResponse(task, entry)) {
     return null;
   }
+  const allowFileUpload = roleActionAllowedForTask(task, 'responseUpload');
+  const allowAiResponse = roleActionAllowedForTask(task, 'responseAi');
+  const allowTextResponse = roleActionAllowedForTask(task, 'responseText');
+  if (!allowFileUpload && !allowAiResponse && !allowTextResponse) {
+    return null;
+  }
 
   const wrapper = document.createElement('div');
   wrapper.className = 'appdosc-card__assign-response';
@@ -19422,6 +19700,7 @@ function createResponseUploadControls(task, entry, setStatus) {
   textInput.placeholder = 'Ввести текст ответа';
   textInput.maxLength = 12000;
   textInput.rows = 3;
+  textInput.hidden = !allowTextResponse;
   let editingTextResponse = null;
 
   const applyAutoHeight = (textarea) => {
@@ -19611,6 +19890,9 @@ function createResponseUploadControls(task, entry, setStatus) {
   });
 
   textActions.append(textSaveButton, textCounter);
+  button.hidden = !allowFileUpload;
+  aiButton.hidden = !allowAiResponse;
+  textActions.hidden = !allowTextResponse;
   wrapper.append(button, aiButton, meta, textInput, textActions, input);
   return wrapper;
 }
@@ -19631,8 +19913,14 @@ function setupAssignmentControls(card, task) {
     return;
   }
 
-  const canManageResponsibles = userIsDirectorForOrganization(organization)
-    || userIsResponsibleForTask(task);
+  const canAssignByRole = roleActionAllowedForTask(task, 'assign');
+  const canUseResponseActions = roleActionAllowedForTask(task, 'responseUpload')
+    || roleActionAllowedForTask(task, 'responseAi')
+    || roleActionAllowedForTask(task, 'responseText')
+    || roleActionAllowedForTask(task, 'responseView');
+  const canManageResponsibles = (userIsDirectorForOrganization(organization)
+    || userIsResponsibleForTask(task))
+    && (canAssignByRole || canUseResponseActions);
   if (!canManageResponsibles) {
     container.remove();
     return;
@@ -19672,6 +19960,16 @@ function setupAssignmentControls(card, task) {
   ) {
     container.remove();
     return;
+  }
+  if (!canAssignByRole) {
+    const selector = comboButton.closest('.appdosc-card__assign-selector');
+    if (selector) {
+      selector.remove();
+    }
+    const bulk = bulkButton.closest('.appdosc-card__assign-bulk');
+    if (bulk) {
+      bulk.remove();
+    }
   }
   const isLightTheme = normalizeThemeMode(state.themeMode) === 'light';
   const comboPalette = isLightTheme
@@ -20094,6 +20392,7 @@ function setupAssignmentControls(card, task) {
     commentInput.style.fontFamily = 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
     commentInput.style.fontSize = '14px';
     commentInput.style.lineHeight = '1.35';
+    commentInput.hidden = !canAssignByRole;
     if (comment) {
       commentInput.value = comment;
     }
@@ -20108,6 +20407,7 @@ function setupAssignmentControls(card, task) {
 
     const instructionBlock = document.createElement('div');
     instructionBlock.className = 'appdosc-card__assign-instruction';
+    instructionBlock.hidden = !canAssignByRole;
 
     const instructionLabel = document.createElement('div');
     instructionLabel.className = 'appdosc-card__assign-instruction-label';
@@ -20123,6 +20423,7 @@ function setupAssignmentControls(card, task) {
 
     const deadline = document.createElement('div');
     deadline.className = 'appdosc-card__assign-deadline';
+    deadline.hidden = !canAssignByRole;
 
     const deadlineLabel = document.createElement('div');
     deadlineLabel.className = 'appdosc-card__assign-deadline-label';
@@ -20173,7 +20474,9 @@ function setupAssignmentControls(card, task) {
         }
       }
     });
-    info.appendChild(responseViewButton);
+    if (roleActionAllowedForTask(task, 'responseView')) {
+      info.appendChild(responseViewButton);
+    }
 
     const responseControls = createResponseUploadControls(task, referenceEntry || { value, label, normalized, role: 'responsible' }, setStatus);
     if (responseControls) {
@@ -20187,7 +20490,8 @@ function setupAssignmentControls(card, task) {
     removeButton.className = 'appdosc-card__action appdosc-card__action--ghost';
     removeButton.dataset.assignmentAction = 'remove';
     removeButton.textContent = 'Отозвать';
-    removeButton.disabled = false;
+    removeButton.disabled = !canAssignByRole;
+    removeButton.hidden = !canAssignByRole;
     removeButton.style.border = '2px solid var(--appdosc-assign-remove-border)';
     removeButton.style.background = 'var(--appdosc-assign-remove-bg)';
     removeButton.style.boxShadow = 'var(--appdosc-assign-remove-shadow)';
@@ -21170,7 +21474,9 @@ function setupSubordinateControls(card, task) {
         }
       }
     });
-    info.appendChild(responseViewButton);
+    if (roleActionAllowedForTask(task, 'responseView')) {
+      info.appendChild(responseViewButton);
+    }
 
     const responseControls = createResponseUploadControls(task, referenceEntry || { value, label, normalized, role: 'subordinate' }, setStatus);
     if (responseControls) {
