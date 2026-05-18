@@ -11,6 +11,7 @@
   var TELEGRAM_MISSING_MESSAGE = '\u0423 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f \u043d\u0435\u0442 Telegram ID \u2014 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u0440\u0438\u0434\u0451\u0442.';
   var TELEGRAM_MISSING_OPTION_NOTE = '\u0431\u0435\u0437 TG';
   var activeRowActionsMenu = null;
+  var columnWidthPopoverState = null;
 
   try {
     DATE_TIME_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
@@ -4147,6 +4148,81 @@
       '.documents-column-resize-handle:hover::after,.documents-column-resize-handle.is-resizing::after{' +
       'background:#2563eb;' +
       '}' +
+      '.documents-column-width-popover{' +
+      'position:fixed;' +
+      'z-index:2700;' +
+      'width:220px;' +
+      'box-sizing:border-box;' +
+      'padding:10px;' +
+      'border:1px solid rgba(148,163,184,0.35);' +
+      'border-radius:10px;' +
+      'background:#ffffff;' +
+      'box-shadow:0 18px 42px rgba(15,23,42,0.18);' +
+      'color:#172554;' +
+      '}' +
+      '.documents-column-width-popover__title{' +
+      'font-size:12px;' +
+      'font-weight:800;' +
+      'line-height:1.35;' +
+      'color:#0f172a;' +
+      'margin-bottom:8px;' +
+      '}' +
+      '.documents-column-width-popover__field{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'gap:8px;' +
+      '}' +
+      '.documents-column-width-popover__input{' +
+      'width:100%;' +
+      'height:34px;' +
+      'box-sizing:border-box;' +
+      'padding:0 8px;' +
+      'border:1px solid #cbd5e1;' +
+      'border-radius:6px;' +
+      'background:#fff;' +
+      'color:#172554;' +
+      'font-size:13px;' +
+      'font-weight:700;' +
+      'outline:none;' +
+      '}' +
+      '.documents-column-width-popover__input:focus{' +
+      'border-color:#2563eb;' +
+      'box-shadow:0 0 0 3px rgba(37,99,235,0.12);' +
+      '}' +
+      '.documents-column-width-popover__unit{' +
+      'font-size:12px;' +
+      'font-weight:700;' +
+      'color:#64748b;' +
+      '}' +
+      '.documents-column-width-popover__actions{' +
+      'display:flex;' +
+      'justify-content:flex-end;' +
+      'gap:8px;' +
+      'margin-top:10px;' +
+      '}' +
+      '.documents-column-width-popover__button{' +
+      'height:30px;' +
+      'padding:0 10px;' +
+      'border:1px solid #cbd5e1;' +
+      'border-radius:6px;' +
+      'background:#fff;' +
+      'color:#172554;' +
+      'font-size:12px;' +
+      'font-weight:800;' +
+      'cursor:pointer;' +
+      '}' +
+      '.documents-column-width-popover__button:hover,.documents-column-width-popover__button:focus-visible{' +
+      'background:#f8fafc;' +
+      'outline:none;' +
+      '}' +
+      '.documents-column-width-popover__button--apply{' +
+      'border-color:#2563eb;' +
+      'background:#2563eb;' +
+      'color:#fff;' +
+      '}' +
+      '.documents-column-width-popover__button--apply:hover,.documents-column-width-popover__button--apply:focus-visible{' +
+      'background:#1d4ed8;' +
+      '}' +
       '.documents-columns-menu{' +
       'position:fixed;' +
       'z-index:2600;' +
@@ -4392,8 +4468,10 @@
       '#documents-admin-button:hover,#documents-admin-button:focus-visible{color:#1e40af!important;border-color:#60a5fa!important;background:#dbeafe!important;}' +
       '#documents-responsible-button{color:#047857!important;border-color:rgba(52,211,153,.62)!important;background:#ecfdf5!important;font-weight:800!important;}' +
       '#documents-responsible-button:hover,#documents-responsible-button:focus-visible,#documents-responsible-button.documents-panel__admin--toggled{color:#065f46!important;border-color:#34d399!important;background:#d1fae5!important;}' +
-      '#documents-unviewed-button{color:#be123c!important;border-color:rgba(251,113,133,.62)!important;background:#fff1f2!important;font-weight:800!important;}' +
+      '#documents-unviewed-button{position:relative;display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:6px;color:#be123c!important;border-color:rgba(251,113,133,.62)!important;background:#fff1f2!important;font-weight:800!important;overflow:visible!important;}' +
       '#documents-unviewed-button:hover,#documents-unviewed-button:focus-visible,#documents-unviewed-button.documents-panel__admin--toggled{color:#9f1239!important;border-color:#fb7185!important;background:#ffe4e6!important;}' +
+      '.documents-unviewed-button__counter{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:#be123c;color:#fff;font-size:11px;font-weight:900;line-height:1;font-variant-numeric:tabular-nums;box-shadow:0 4px 10px rgba(190,18,60,.22);}' +
+      '.documents-unviewed-button__counter--hidden{display:inline-flex;}' +
       '.documents-online__counter{position:absolute;top:-5px;right:-5px;display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#10b981;color:#fff;font-size:10px;font-weight:800;line-height:1;border:1px solid #fff;box-shadow:0 4px 10px rgba(16,185,129,.28);}' +
       '.documents-table-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:10px;min-width:0;}' +
       '.documents-tools-toggle{display:inline-flex;align-items:center;justify-content:center;gap:7px;width:max-content;max-width:100%;min-height:34px;padding:0 12px;border:1px solid #dbeafe;border-radius:9px;background:#fff;color:#172554;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 8px 18px rgba(15,23,42,.06);transition:background .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease;}' +
@@ -4543,6 +4621,8 @@
       '.documents-panel-control-group{gap:2px;}' +
       '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle,#documents-add-button,#documents-admin-button,#documents-responsible-button,#documents-unviewed-button{width:26px!important;min-width:26px!important;max-width:26px!important;height:28px!important;min-height:28px!important;padding:0!important;border-radius:7px!important;}' +
       '#documents-admin-button,#documents-responsible-button,#documents-unviewed-button{font-size:0!important;overflow:hidden!important;}' +
+      '#documents-unviewed-button{overflow:visible!important;}' +
+      '#documents-unviewed-button .documents-unviewed-button__counter{position:absolute;top:-7px;right:-7px;min-width:16px;height:16px;padding:0 4px;border:1px solid #fff;font-size:10px;}' +
       '#documents-admin-button::before{content:"A";font-size:11px;font-weight:900;line-height:1;}' +
       '#documents-responsible-button::before{content:"О";font-size:11px;font-weight:900;line-height:1;}' +
       '#documents-unviewed-button::before{content:"!";font-size:13px;font-weight:900;line-height:1;}' +
@@ -8278,7 +8358,7 @@
     var count = typeof state.unviewedCount === 'number' ? state.unviewedCount : 0;
     if (elements.unviewedCounter) {
       elements.unviewedCounter.textContent = String(count);
-      elements.unviewedCounter.classList.toggle('documents-unviewed-button__counter--hidden', count === 0);
+      elements.unviewedCounter.classList.remove('documents-unviewed-button__counter--hidden');
     }
     var disable = !state.organization || count === 0;
     elements.unviewedButton.disabled = disable;
@@ -17587,6 +17667,148 @@
     persistColumnWidthMap(widthMap, 'Ширина «' + (column ? column.label : columnKey) + '» подобрана.');
   }
 
+  function positionColumnWidthPopover(popover, anchor) {
+    if (!popover || !anchor || typeof anchor.getBoundingClientRect !== 'function') {
+      return;
+    }
+    var rect = anchor.getBoundingClientRect();
+    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 340;
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 420;
+    var gap = viewportWidth <= 640 ? 8 : 10;
+    var popoverWidth = popover.offsetWidth || 220;
+    var popoverHeight = popover.offsetHeight || 120;
+    var left = rect.left + rect.width - popoverWidth;
+    var top = rect.bottom + 8;
+
+    if (top + popoverHeight + gap > viewportHeight) {
+      top = rect.top - popoverHeight - 8;
+    }
+
+    left = Math.min(Math.max(gap, left), Math.max(gap, viewportWidth - popoverWidth - gap));
+    top = Math.min(Math.max(gap, top), Math.max(gap, viewportHeight - popoverHeight - gap));
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+  }
+
+  function closeColumnWidthPopover() {
+    if (!columnWidthPopoverState) {
+      return;
+    }
+    var stateSnapshot = columnWidthPopoverState;
+    columnWidthPopoverState = null;
+    document.removeEventListener('mousedown', stateSnapshot.handleDocumentMouseDown, true);
+    document.removeEventListener('keydown', stateSnapshot.handleDocumentKeydown, true);
+    window.removeEventListener('resize', stateSnapshot.reposition);
+    window.removeEventListener('scroll', stateSnapshot.reposition, true);
+    if (stateSnapshot.popover && stateSnapshot.popover.parentNode) {
+      stateSnapshot.popover.parentNode.removeChild(stateSnapshot.popover);
+    }
+  }
+
+  function applyColumnWidthValue(columnKey, value) {
+    var width = clampColumnWidth(value);
+    if (width === null) {
+      showMessage('warning', 'Введите ширину столбца числом от ' + COLUMN_WIDTH_MIN + ' до ' + COLUMN_WIDTH_MAX + ' px.', MESSAGE_INFO_DURATION_MS);
+      return false;
+    }
+    var column = getColumnDefinition(columnKey);
+    var widthMap = buildColumnWidthMap(state.columnWidthOverrides || state.columnWidths || null);
+    widthMap[columnKey] = width;
+    persistColumnWidthMap(widthMap, 'Ширина «' + (column ? column.label : columnKey) + '»: ' + width + ' px.');
+    return true;
+  }
+
+  function openColumnWidthPopover(columnKey, anchor) {
+    if (!Object.prototype.hasOwnProperty.call(TABLE_COLUMN_MAP, columnKey)) {
+      return;
+    }
+    closeColumnWidthPopover();
+    closeSearchPopover();
+    closeColumnsPopover();
+    closeToolbarMenu();
+
+    var column = getColumnDefinition(columnKey);
+    var label = column ? column.label : columnKey;
+    var popover = createElement('form', 'documents-column-width-popover');
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', 'Задать ширину столбца «' + label + '»');
+
+    var title = createElement('div', 'documents-column-width-popover__title', 'Ширина «' + label + '»');
+    var field = createElement('label', 'documents-column-width-popover__field');
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'documents-column-width-popover__input';
+    input.min = String(COLUMN_WIDTH_MIN);
+    input.max = String(COLUMN_WIDTH_MAX);
+    input.step = String(COLUMN_WIDTH_STEP);
+    input.value = String(getEffectiveColumnWidth(columnKey));
+    input.setAttribute('aria-label', 'Ширина столбца «' + label + '» в пикселях');
+    var unit = createElement('span', 'documents-column-width-popover__unit', 'px');
+    var actions = createElement('div', 'documents-column-width-popover__actions');
+    var cancelButton = createElement('button', 'documents-column-width-popover__button', 'Отмена');
+    var applyButton = createElement('button', 'documents-column-width-popover__button documents-column-width-popover__button--apply', 'OK');
+
+    cancelButton.type = 'button';
+    applyButton.type = 'submit';
+    field.appendChild(input);
+    field.appendChild(unit);
+    actions.appendChild(cancelButton);
+    actions.appendChild(applyButton);
+    popover.appendChild(title);
+    popover.appendChild(field);
+    popover.appendChild(actions);
+    document.body.appendChild(popover);
+
+    function reposition() {
+      positionColumnWidthPopover(popover, anchor);
+    }
+
+    function handleDocumentMouseDown(event) {
+      var target = event.target || null;
+      if (target && (popover.contains(target) || (anchor && anchor.contains && anchor.contains(target)))) {
+        return;
+      }
+      closeColumnWidthPopover();
+    }
+
+    function handleDocumentKeydown(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeColumnWidthPopover();
+      }
+    }
+
+    popover.addEventListener('submit', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (applyColumnWidthValue(columnKey, input.value)) {
+        closeColumnWidthPopover();
+      }
+    });
+    cancelButton.addEventListener('click', function() {
+      closeColumnWidthPopover();
+    });
+
+    columnWidthPopoverState = {
+      popover: popover,
+      anchor: anchor,
+      handleDocumentMouseDown: handleDocumentMouseDown,
+      handleDocumentKeydown: handleDocumentKeydown,
+      reposition: reposition
+    };
+
+    reposition();
+    document.addEventListener('mousedown', handleDocumentMouseDown, true);
+    document.addEventListener('keydown', handleDocumentKeydown, true);
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+
+    window.setTimeout(function() {
+      input.focus();
+      input.select();
+    }, 0);
+  }
+
   function applyColumnWidths(previewWidths) {
     var overrides = previewWidths || state.columnWidthOverrides || null;
     var widthMap = buildColumnWidthMap(overrides);
@@ -17668,6 +17890,7 @@
     closeSearchPopover();
     closeColumnsPopover();
     closeToolbarMenu();
+    closeColumnWidthPopover();
 
     var handle = event.currentTarget;
     var startX = Number(event.clientX) || 0;
@@ -23899,6 +24122,13 @@
       }
     } else if (unviewedButton) {
       unviewedCounter = unviewedButton.querySelector('.documents-unviewed-button__counter');
+      if (!unviewedCounter) {
+        unviewedCounter = createElement('span', 'documents-unviewed-button__counter', '0');
+        unviewedCounter.setAttribute('role', 'status');
+        unviewedCounter.setAttribute('aria-live', 'polite');
+        unviewedCounter.setAttribute('aria-atomic', 'true');
+        unviewedButton.appendChild(unviewedCounter);
+      }
     }
     if (unviewedButton && !unviewedButton.dataset.toggleBound) {
       unviewedButton.dataset.toggleBound = 'true';
@@ -24077,15 +24307,15 @@
       var resizeHandle = createElement('span', 'documents-column-resize-handle');
       resizeHandle.setAttribute('role', 'separator');
       resizeHandle.setAttribute('aria-orientation', 'vertical');
-      resizeHandle.setAttribute('aria-label', 'Изменить ширину столбца «' + column.label + '»');
-      resizeHandle.title = 'Изменить ширину столбца. Двойной клик — автоподбор.';
+      resizeHandle.setAttribute('aria-label', 'Изменить ширину столбца «' + column.label + '». Двойной клик — задать ширину числом.');
+      resizeHandle.title = 'Изменить ширину столбца. Двойной клик — задать ширину числом.';
       resizeHandle.addEventListener('pointerdown', function(event) {
         startColumnResize(column.key, event);
       });
       resizeHandle.addEventListener('dblclick', function(event) {
         event.preventDefault();
         event.stopPropagation();
-        autoFitColumnWidth(column.key);
+        openColumnWidthPopover(column.key, resizeHandle);
       });
       headerCell.appendChild(resizeHandle);
       if (isSortableTableColumn(column.key)) {
