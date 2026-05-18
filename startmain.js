@@ -14,6 +14,22 @@
     }
   }
 
+  function refreshLoginInputForAutofill(input) {
+    if (!input) {
+      return input;
+    }
+    try {
+      input.value = '';
+    } catch (clearError) {}
+    if (input.disabled) {
+      input.disabled = false;
+    }
+    if (input.hasAttribute('readonly')) {
+      input.removeAttribute('readonly');
+    }
+    return input;
+  }
+
   var bcryptPromise = null;
   var detectedOrganization = '';
 
@@ -1713,6 +1729,9 @@
         return Promise.resolve({ success: false });
       }
 
+      loginInput = refreshLoginInputForAutofill(loginInput);
+      passwordInput = refreshLoginInputForAutofill(passwordInput);
+
       isVisible = true;
       lastFocusedElement = document.activeElement;
       overlay.classList.add('is-visible');
@@ -1723,8 +1742,6 @@
       document.addEventListener('keydown', handleKeydown, true);
 
       setError('');
-      loginInput.value = '';
-      passwordInput.value = '';
       setLoading(false);
       isProcessing = false;
 
@@ -1970,11 +1987,7 @@
       close({ success: false, cancelled: true });
     });
 
-    overlay.addEventListener('mousedown', function(event) {
-      if (event.target === overlay) {
-        close({ success: false, cancelled: true });
-      }
-    });
+    // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
 
     form.addEventListener('submit', handleSubmit);
 
@@ -2195,10 +2208,19 @@
         });
     }
 
+    function handleInputClearError() {
+      if (errorNode.classList.contains('is-visible')) {
+        setError('');
+      }
+    }
+
     function open() {
       if (isVisible) {
         return Promise.resolve({ success: false, cancelled: true });
       }
+
+      loginInput = refreshLoginInputForAutofill(loginInput, { input: handleInputClearError });
+      passwordInput = refreshLoginInputForAutofill(passwordInput, { input: handleInputClearError });
 
       isVisible = true;
       overlay.classList.add('is-visible');
@@ -2222,25 +2244,12 @@
       close();
     });
 
-    overlay.addEventListener('mousedown', function(event) {
-      if (event.target === overlay) {
-        close();
-      }
-    });
+    // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
 
     form.addEventListener('submit', handleSubmit);
 
-    loginInput.addEventListener('input', function() {
-      if (errorNode.classList.contains('is-visible')) {
-        setError('');
-      }
-    });
-
-    passwordInput.addEventListener('input', function() {
-      if (errorNode.classList.contains('is-visible')) {
-        setError('');
-      }
-    });
+    loginInput.addEventListener('input', handleInputClearError);
+    passwordInput.addEventListener('input', handleInputClearError);
 
     return {
       open: open,
@@ -2480,6 +2489,9 @@
         return Promise.resolve({ cancelled: false });
       }
 
+      loginInput = refreshLoginInputForAutofill(loginInput);
+      passwordInput = refreshLoginInputForAutofill(passwordInput);
+
       isVisible = true;
       lastFocusedElement = document.activeElement;
       overlay.classList.add('is-visible');
@@ -2491,8 +2503,6 @@
 
       setError('');
       setLoading(false);
-      loginInput.value = '';
-      passwordInput.value = '';
 
       setTimeout(function() {
         try {
@@ -2512,11 +2522,7 @@
       close(null, new Error('Вход отменён'));
     });
 
-    overlay.addEventListener('mousedown', function(event) {
-      if (event.target === overlay) {
-        close(null, new Error('Вход отменён'));
-      }
-    });
+    // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
 
     form.addEventListener('submit', handleSubmit);
 
@@ -2758,6 +2764,9 @@
         return Promise.resolve({ cancelled: false });
       }
 
+      loginInput = refreshLoginInputForAutofill(loginInput);
+      passwordInput = refreshLoginInputForAutofill(passwordInput);
+
       isVisible = true;
       lastFocusedElement = document.activeElement;
       overlay.classList.add('is-visible');
@@ -2769,8 +2778,6 @@
 
       setError('');
       setLoading(false);
-      loginInput.value = '';
-      passwordInput.value = '';
 
       setTimeout(function() {
         try {
@@ -2790,11 +2797,7 @@
       close(null, new Error('Вход отменён'));
     });
 
-    overlay.addEventListener('mousedown', function(event) {
-      if (event.target === overlay) {
-        close(null, new Error('Вход отменён'));
-      }
-    });
+    // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
 
     form.addEventListener('submit', handleSubmit);
 
@@ -3036,6 +3039,9 @@
         return Promise.resolve({ cancelled: false });
       }
 
+      loginInput = refreshLoginInputForAutofill(loginInput);
+      passwordInput = refreshLoginInputForAutofill(passwordInput);
+
       isVisible = true;
       lastFocusedElement = document.activeElement;
       overlay.classList.add('is-visible');
@@ -3047,8 +3053,6 @@
 
       setError('');
       setLoading(false);
-      loginInput.value = '';
-      passwordInput.value = '';
 
       setTimeout(function() {
         try {
@@ -3068,11 +3072,7 @@
       close(null, new Error('Вход отменён'));
     });
 
-    overlay.addEventListener('mousedown', function(event) {
-      if (event.target === overlay) {
-        close(null, new Error('Вход отменён'));
-      }
-    });
+    // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
 
     form.addEventListener('submit', handleSubmit);
 
@@ -3299,6 +3299,9 @@
         return Promise.resolve({ cancelled: false });
       }
 
+      loginInput = refreshLoginInputForAutofill(loginInput);
+      passwordInput = refreshLoginInputForAutofill(passwordInput);
+
       isVisible = true;
       lastFocusedElement = document.activeElement;
       overlay.classList.add('is-visible');
@@ -3309,8 +3312,6 @@
       document.addEventListener('keydown', handleKeydown, true);
       setError('');
       setLoading(false);
-      loginInput.value = '';
-      passwordInput.value = '';
       setTimeout(function() { loginInput.focus(); }, 40);
 
       return new Promise(function(resolve, reject) {
@@ -3322,11 +3323,7 @@
     closeButton.addEventListener('click', function() {
       close(null, new Error('Вход отменён'));
     });
-    overlay.addEventListener('mousedown', function(event) {
-      if (event.target === overlay) {
-        close(null, new Error('Вход отменён'));
-      }
-    });
+    // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
     form.addEventListener('submit', handleSubmit);
 
     return { open: open, close: close, showError: setError };
@@ -3563,6 +3560,9 @@
         return Promise.resolve({ cancelled: false });
       }
 
+      loginInput = refreshLoginInputForAutofill(loginInput);
+      passwordInput = refreshLoginInputForAutofill(passwordInput);
+
       isVisible = true;
       lastFocusedElement = document.activeElement;
       overlay.classList.add('is-visible');
@@ -3574,8 +3574,6 @@
 
       setError('');
       setLoading(false);
-      loginInput.value = '';
-      passwordInput.value = '';
 
       setTimeout(function() {
         try {
@@ -3595,11 +3593,7 @@
       close(null, new Error('Вход отменён'));
     });
 
-    overlay.addEventListener('mousedown', function(event) {
-      if (event.target === overlay) {
-        close(null, new Error('Вход отменён'));
-      }
-    });
+    // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
 
     form.addEventListener('submit', handleSubmit);
 
@@ -3757,10 +3751,20 @@
       }
     }
 
+    function handleInputClearError() {
+      if (errorNode.classList.contains('is-visible')) {
+        setError('');
+      }
+    }
+
     function open() {
       if (isVisible) {
         return;
       }
+
+      loginInput = refreshLoginInputForAutofill(loginInput, { input: handleInputClearError });
+      passwordInput = refreshLoginInputForAutofill(passwordInput, { input: handleInputClearError });
+
       isVisible = true;
       lastFocusedElement = document.activeElement;
       overlay.classList.add('is-visible');
@@ -3896,23 +3900,11 @@
       close();
     });
 
-    overlay.addEventListener('mousedown', function(event) {
-      if (event.target === overlay) {
-        close();
-      }
-    });
+    // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой или Escape.
 
     form.addEventListener('submit', handleSubmit);
-    loginInput.addEventListener('input', function() {
-      if (errorNode.classList.contains('is-visible')) {
-        setError('');
-      }
-    });
-    passwordInput.addEventListener('input', function() {
-      if (errorNode.classList.contains('is-visible')) {
-        setError('');
-      }
-    });
+    loginInput.addEventListener('input', handleInputClearError);
+    passwordInput.addEventListener('input', handleInputClearError);
 
     return {
       open: open,
@@ -4672,6 +4664,8 @@
   }
 
   ready(function() {
+    bindRoleMenuObjectAuth();
+
     var mapTile = document.getElementById('map-tile');
     var materialsTile = document.getElementById('materials-tile');
     var materialsRequestTile = document.getElementById('materials-request-tile');
@@ -4772,6 +4766,309 @@
     var tabelDeleteSheetButton = null;
     var tabelOnlineButton = null;
     var tabelOnlineCounter = null;
+
+
+    var objectAccessStorageKey = 'object.access.state';
+    var objectAccessState = (function() {
+      var state = Object.create(null);
+      try {
+        if (window.sessionStorage) {
+          var raw = window.sessionStorage.getItem(objectAccessStorageKey);
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+              Object.keys(parsed).forEach(function(k) {
+                var v = parsed[k];
+                if (v && v.authenticated) {
+                  state[k] = {
+                    authenticated: true,
+                    login: typeof v.login === 'string' ? v.login : '',
+                    name: typeof v.name === 'string' ? v.name : '',
+                    ts: typeof v.ts === 'number' ? v.ts : 0
+                  };
+                }
+              });
+            }
+          }
+        }
+      } catch (e) {}
+      return state;
+    })();
+
+    function persistObjectAccessState() {
+      try {
+        if (window.sessionStorage) {
+          window.sessionStorage.setItem(objectAccessStorageKey, JSON.stringify(objectAccessState));
+        }
+      } catch (e) {}
+    }
+
+    function sanitizeObjectForAuth(name) {
+      return String(name || '').replace(/[^a-zA-Z0-9_\-а-яА-ЯёЁ]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+    }
+
+    function showObjectLoginModal(objectName) {
+      return new Promise(function(resolve) {
+        var overlay = document.createElement('div');
+        overlay.className = 'documents-login-modal';
+        overlay.setAttribute('aria-hidden', 'true');
+
+        var dialog = document.createElement('div');
+        dialog.className = 'documents-login-modal__dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+
+        var closeButton = document.createElement('button');
+        closeButton.type = 'button';
+        closeButton.className = 'documents-login-modal__close';
+        closeButton.setAttribute('aria-label', 'Закрыть окно входа');
+        closeButton.textContent = '×';
+
+        var title = document.createElement('h2');
+        title.className = 'documents-login-modal__title';
+        title.textContent = 'Единый вход';
+
+        var subtitle = document.createElement('p');
+        subtitle.className = 'documents-login-modal__subtitle';
+        subtitle.textContent = 'Укажите логи и пароль для доступа к объекту: ' + objectName;
+
+        var form = document.createElement('form');
+        form.className = 'documents-login-modal__form';
+        form.id = 'object-login-form';
+        form.method = 'post';
+        form.action = '#';
+        form.setAttribute('autocomplete', 'on');
+
+        var loginField = document.createElement('label');
+        loginField.className = 'documents-login-modal__field';
+        loginField.setAttribute('for', 'object-login-input');
+        var loginCaption = document.createElement('span');
+        loginCaption.className = 'documents-login-modal__label';
+        loginCaption.textContent = 'Логин';
+        var loginInput = document.createElement('input');
+        loginInput.className = 'documents-login-modal__input';
+        loginInput.type = 'text';
+        loginInput.id = 'object-login-input';
+        loginInput.name = 'object-login';
+        loginInput.autocomplete = 'username';
+        loginInput.placeholder = 'Введите логин';
+
+        var passwordField = document.createElement('label');
+        passwordField.className = 'documents-login-modal__field';
+        passwordField.setAttribute('for', 'object-password-input');
+        var passwordCaption = document.createElement('span');
+        passwordCaption.className = 'documents-login-modal__label';
+        passwordCaption.textContent = 'Пароль';
+        var passwordInput = document.createElement('input');
+        passwordInput.className = 'documents-login-modal__input';
+        passwordInput.type = 'password';
+        passwordInput.id = 'object-password-input';
+        passwordInput.name = 'object-password';
+        passwordInput.autocomplete = 'current-password';
+        passwordInput.placeholder = 'Введите пароль';
+
+        var errorNode = document.createElement('div');
+        errorNode.className = 'documents-login-modal__error';
+
+        var actions = document.createElement('div');
+        actions.className = 'documents-login-modal__actions';
+        var submitButton = document.createElement('button');
+        submitButton.type = 'submit';
+        submitButton.className = 'documents-login-modal__submit';
+        submitButton.textContent = 'Войти';
+
+        loginField.append(loginCaption, loginInput);
+        passwordField.append(passwordCaption, passwordInput);
+        actions.appendChild(submitButton);
+        form.append(loginField, passwordField, errorNode, actions);
+        dialog.append(closeButton, title, subtitle, form);
+        overlay.appendChild(dialog);
+
+        var resolved = false;
+        function finish(value) {
+          if (resolved) return;
+          resolved = true;
+          document.body.classList.remove('documents-login-modal-open');
+          overlay.classList.remove('is-visible');
+          overlay.setAttribute('aria-hidden', 'true');
+          setTimeout(function() {
+            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+          }, 160);
+          resolve(value);
+        }
+
+        function setError(message) {
+          errorNode.textContent = message;
+          errorNode.classList.toggle('is-visible', Boolean(message));
+        }
+
+        closeButton.addEventListener('click', function() { finish(null); });
+        // Клик по затемнению не закрывает окно: пользователь может закрыть его только кнопкой.
+
+        form.addEventListener('submit', function(event) {
+          event.preventDefault();
+          var login = String(loginInput.value || '').trim();
+          var password = String(passwordInput.value || '').trim();
+
+          if (!login || !password) {
+            setError('Введите логин и пароль.');
+            if (!login) {
+              loginInput.focus();
+            } else {
+              passwordInput.focus();
+            }
+            return;
+          }
+
+          finish({ login: login, password: password });
+        });
+
+        document.body.appendChild(overlay);
+        requestAnimationFrame(function() {
+          document.body.classList.add('documents-login-modal-open');
+          overlay.classList.add('is-visible');
+          overlay.setAttribute('aria-hidden', 'false');
+        });
+        setTimeout(function() {
+          try {
+            loginInput.focus({ preventScroll: true });
+          } catch (focusError) {
+            loginInput.focus();
+          }
+        }, 80);
+      });
+    }
+
+    function authenticateObjectAccess(objectName) {
+      var safeObject = sanitizeObjectForAuth(objectName);
+      if (!safeObject) {
+        console.warn('[ObjectAuth] Некорректное имя объекта', {
+          objectName: objectName,
+          safeObject: safeObject
+        });
+        return Promise.resolve({ success: false, error: 'Некорректное имя объекта.' });
+      }
+      return showObjectLoginModal(objectName).then(function(credentials) {
+        if (!credentials) {
+          console.info('[ObjectAuth] Пользователь отменил авторизацию', {
+            objectName: objectName,
+            safeObject: safeObject
+          });
+          return { success: false, cancelled: true };
+        }
+
+        var requestPayload = {
+          login: credentials.login,
+          password: credentials.password,
+          objectName: safeObject
+        };
+        console.info('[ObjectAuth] Отправка запроса авторизации', {
+          objectName: objectName,
+          safeObject: safeObject,
+          login: credentials.login,
+          endpoint: 'service_auth.php'
+        });
+
+        return fetch('service_auth.php?v=' + Date.now(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: JSON.stringify(requestPayload)
+        })
+          .then(function(response) {
+            return response.json().then(function(data) {
+              return {
+                data: data,
+                status: response.status,
+                ok: response.ok
+              };
+            });
+          })
+          .then(function(result) {
+            var data = result.data;
+            console.info('[ObjectAuth] Ответ авторизации', {
+              objectName: objectName,
+              safeObject: safeObject,
+              status: result.status,
+              ok: result.ok,
+              success: Boolean(data && data.success),
+              error: data && data.error ? data.error : ''
+            });
+
+            if (data && data.error === 'Файл пользователей не найден') {
+              console.warn('[ObjectAuth] Сервер не нашёл файл пользователей', {
+                objectName: objectName,
+                safeObject: safeObject,
+                hint: 'Проверьте имя файла в /lg и сравните с data-objectname у карточки объекта.'
+              });
+            }
+
+            if (data && data.success) {
+              var fio = String(data.name || credentials.login || '').trim();
+              objectAccessState[safeObject] = {
+                authenticated: true,
+                login: credentials.login,
+                name: fio,
+                ts: Date.now()
+              };
+              persistObjectAccessState();
+              window.unifiedServiceSession = window.unifiedServiceSession || {};
+              window.unifiedServiceSession.active = true;
+              window.unifiedServiceSession.name = fio;
+            }
+            return data;
+          })
+          .catch(function(error) {
+            console.error('[ObjectAuth] Ошибка сети при авторизации', {
+              objectName: objectName,
+              safeObject: safeObject,
+              message: error && error.message ? error.message : error
+            });
+            return { success: false, error: 'Ошибка сети. Повторите попытку.' };
+          });
+      });
+    }
+
+    function bindRoleMenuObjectAuth() {
+      var roleMenu = document.getElementById('role-menu');
+      if (!roleMenu) {
+        return;
+      }
+      roleMenu.addEventListener('click', function(event) {
+        var target = event.target && event.target.closest ? event.target.closest('.section') : null;
+        if (!target || !roleMenu.contains(target)) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation();
+        }
+
+        var objectName = String(target.getAttribute('data-objectname') || target.textContent || '').trim();
+        var serviceSite = String(target.getAttribute('data-service-site') || '').trim();
+        if (!objectName || !serviceSite) {
+          return;
+        }
+        var safeObject = sanitizeObjectForAuth(objectName);
+        var cached = safeObject ? objectAccessState[safeObject] : null;
+        if (cached && cached.authenticated) {
+          window.location.href = serviceSite;
+          return;
+        }
+
+        authenticateObjectAccess(objectName).then(function(result) {
+          if (!result || !result.success) {
+            if (!(result && result.cancelled)) {
+              window.alert(result && result.error ? result.error : 'Доступ к объекту не подтверждён.');
+            }
+            return;
+          }
+          window.location.href = serviceSite;
+        });
+      }, true);
+    }
     var tabelPresenceState = {
       sessionId: '',
       timerId: null,
@@ -5482,6 +5779,34 @@
     ohranaAccessState = loadOhranaAccessState();
     zavodAccessState = loadZavodAccessState();
 
+    var documentsCredentialsStorageKey = detectedOrganization ? 'bimmax.documents.credentials.' + detectedOrganization.toLowerCase() : null;
+
+    function persistDocumentsCredentials(login, password) {
+      if (!documentsCredentialsStorageKey || !window.localStorage) { return; }
+      try {
+        window.localStorage.setItem(documentsCredentialsStorageKey, JSON.stringify({ login: String(login || ''), password: String(password || '') }));
+      } catch (error) {}
+    }
+
+    function loadStoredDocumentsCredentials() {
+      if (!documentsCredentialsStorageKey || !window.localStorage) { return null; }
+      try {
+        var raw = window.localStorage.getItem(documentsCredentialsStorageKey);
+        if (!raw) { return null; }
+        var parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed.login !== 'string' || typeof parsed.password !== 'string') { return null; }
+        if (!parsed.login.trim() || !parsed.password) { return null; }
+        return { login: parsed.login.trim(), password: parsed.password };
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function clearStoredDocumentsCredentials() {
+      if (!documentsCredentialsStorageKey || !window.localStorage) { return; }
+      try { window.localStorage.removeItem(documentsCredentialsStorageKey); } catch (error) {}
+    }
+
     if (documentsAuthStorageKey && window.sessionStorage) {
       try {
         documentsAuthenticated = window.sessionStorage.getItem(documentsAuthStorageKey) === '1';
@@ -5493,10 +5818,33 @@
     documentsLoginManager = createDocumentsLoginModal();
     syncDocumentsControls();
 
+    function getDocumentsControlIcon(name) {
+      if (name === 'minus') {
+        return '<svg class="documents-panel-action-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path></svg>';
+      }
+      if (name === 'refresh') {
+        return '<svg class="documents-panel-action-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"></path><path d="M20 4v5h-5"></path></svg>';
+      }
+      return '<svg class="documents-panel-action-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>';
+    }
+
+    function setDocumentsIconButton(button, iconName, label) {
+      if (!button) {
+        return;
+      }
+      button.classList.add('documents-panel-icon-button');
+      button.innerHTML = getDocumentsControlIcon(iconName);
+      button.title = label;
+      button.setAttribute('aria-label', label);
+    }
+
     function syncDocumentsControls() {
       if (documentsLogoutButton) {
-        var defaultLabel = documentsLogoutButtonLabel || 'Выйти';
-        documentsLogoutButton.textContent = documentsLogoutInProgress ? 'Выходим...' : defaultLabel;
+        setDocumentsIconButton(
+          documentsLogoutButton,
+          'x',
+          documentsLogoutInProgress ? 'Выходим...' : (documentsLogoutButtonLabel || 'Выйти')
+        );
 
         var logoutVisible = documentsOpen && (documentsLogoutAvailable || documentsLogoutInProgress);
         documentsLogoutButton.disabled = !documentsLogoutAvailable || documentsLogoutInProgress;
@@ -5514,7 +5862,11 @@
 
       if (documentsRefreshButton) {
         var refreshDefaultLabel = documentsRefreshButtonLabel || 'Обновить';
-        documentsRefreshButton.textContent = documentsRefreshInProgress ? 'Обновляем...' : refreshDefaultLabel;
+        setDocumentsIconButton(
+          documentsRefreshButton,
+          'refresh',
+          documentsRefreshInProgress ? 'Обновляем...' : refreshDefaultLabel
+        );
 
         var refreshVisible = documentsOpen && (documentsLogoutAvailable || documentsRefreshInProgress);
         documentsRefreshButton.disabled = !documentsLogoutAvailable || documentsRefreshInProgress;
@@ -5555,6 +5907,7 @@
       } catch (error) {
         // ignore storage errors
       }
+      clearStoredDocumentsCredentials();
     }
 
     function updateDocumentsAccessContext(session) {
@@ -5862,11 +6215,10 @@
     }
 
     function loadDocumentsCredentials() {
-      if (documentsCredentialsCache !== null) {
-        return Promise.resolve(documentsCredentialsCache);
-      }
+      // Данные доступа берём заново при каждом открытии окна, чтобы изменения
+      // в JSON-файлах сразу работали без перезагрузки страницы.
+      documentsCredentialsCache = null;
       if (!detectedOrganization) {
-        documentsCredentialsCache = null;
         return Promise.resolve(null);
       }
       if (documentsCredentialsPromise) {
@@ -6015,6 +6367,66 @@
         return value.trim().toLowerCase();
       }
 
+      function fetchGlobalAdminUsersCredentials() {
+        return fetch('lg/user.json?_=' + Date.now(), {
+          cache: 'no-store',
+          credentials: 'same-origin'
+        })
+          .then(function(response) {
+            if (!response.ok) {
+              throw new Error('Не удалось получить общий список пользователей.');
+            }
+            return response.json();
+          })
+          .then(function(payload) {
+            var users = Array.isArray(payload)
+              ? payload
+              : (payload && Array.isArray(payload.users) ? payload.users : []);
+
+            var collected = [];
+            var seenLogins = Object.create(null);
+
+            for (var i = 0; i < users.length; i += 1) {
+              var user = users[i];
+              if (!user || typeof user !== 'object') {
+                continue;
+              }
+
+              var loginValue = typeof user.login === 'string' ? user.login.trim() : '';
+              var passwordValue = '';
+
+              if (typeof user.password === 'string' && user.password.trim() !== '') {
+                passwordValue = user.password;
+              } else if (typeof user.passwordHash === 'string' && user.passwordHash.trim() !== '') {
+                passwordValue = user.passwordHash;
+              } else if (typeof user.password_hash === 'string' && user.password_hash.trim() !== '') {
+                passwordValue = user.password_hash;
+              }
+
+              if (!loginValue || !passwordValue) {
+                continue;
+              }
+
+              var normalizedLogin = normalizeLoginForDocuments(loginValue);
+              if (!normalizedLogin || seenLogins[normalizedLogin]) {
+                continue;
+              }
+
+              seenLogins[normalizedLogin] = true;
+              collected.push({ login: loginValue, password: passwordValue });
+            }
+
+            if (collected.length > 0) {
+              return { allowedLogins: collected, allowAnyLogin: false };
+            }
+
+            return null;
+          })
+          .catch(function() {
+            return null;
+          });
+      }
+
       function fetchSettingsDocsCredentials() {
         var organizationSlug = normalizeOrganizationSlug(detectedOrganization);
         if (!organizationSlug) {
@@ -6151,6 +6563,12 @@
           if (hasAllowedLogins(settingsCredentials) || isAllowAny(settingsCredentials)) {
             includeCredentials(settingsCredentials, 'settingsdocs.json');
           }
+          return fetchGlobalAdminUsersCredentials();
+        })
+        .then(function(globalAdminCredentials) {
+          if (hasAllowedLogins(globalAdminCredentials) || isAllowAny(globalAdminCredentials)) {
+            includeCredentials(globalAdminCredentials, 'lg/user.json');
+          }
           return finalizeMergedCredentials();
         })
         .catch(function(error) {
@@ -6192,6 +6610,29 @@
           if (context && context.authenticated && context.accessGranted) {
             openDocuments();
             return null;
+          }
+
+          var savedCredentials = loadStoredDocumentsCredentials();
+          if (savedCredentials) {
+            return authenticateDocumentsSession(savedCredentials.login, savedCredentials.password)
+              .then(function(savedContext) {
+                if (savedContext && savedContext.authenticated && savedContext.accessGranted) {
+                  openDocuments();
+                  return null;
+                }
+                clearStoredDocumentsCredentials();
+                return null;
+              })
+              .catch(function() {
+                clearStoredDocumentsCredentials();
+                return null;
+              })
+              .then(function() {
+                if (documentsAccessContext && documentsAccessContext.authenticated && documentsAccessContext.accessGranted) {
+                  return null;
+                }
+                return loadDocumentsCredentials();
+              });
           }
 
           return loadDocumentsCredentials().then(function(credentials) {
@@ -6243,6 +6684,7 @@
                     accessGranted: Boolean(contextAfterLogin && contextAfterLogin.accessGranted)
                   });
                   if (contextAfterLogin && contextAfterLogin.authenticated && contextAfterLogin.accessGranted) {
+                    persistDocumentsCredentials(result.login, result.password);
                     openDocuments();
                     return null;
                   }
@@ -9194,6 +9636,7 @@
     }
 
     if (documentsClose) {
+      setDocumentsIconButton(documentsClose, 'minus', 'Свернуть документооборот');
       documentsClose.setAttribute('aria-hidden', 'true');
       documentsClose.setAttribute('tabindex', '-1');
       documentsClose.addEventListener('click', function(event) {
@@ -9480,9 +9923,11 @@
     }, true);
 
     // Если пользователь закрыл карточку клавишей Escape — фиксируем выход.
+    // Для окна "Документооборот" Escape не считается выходом: само окно остаётся открытым.
     document.addEventListener('keydown', function(event) {
       if (event.key !== 'Escape') return;
       if (!activeOrgCard) return;
+      if (activeOrgCard.cardId === 'documents-tile' && documentsOpen) return;
       sendOrgCardExit('escape');
     }, true);
 
@@ -9538,7 +9983,7 @@
           return;
         }
         if (documentsOpen) {
-          closeDocuments();
+          // Escape внутри #documents-panel не закрывает Документооборот.
           return;
         }
         if (summaryPanel && summaryPanel.style.display !== 'none') {

@@ -46,6 +46,34 @@
     console.info(SETTINGS_LOG_PREFIX + ': ' + message, details);
   }
 
+  function createSettingsSvgIcon(name) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('class', 'documents-panel-icon-button__icon');
+
+    function appendPath(d) {
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    }
+
+    if (name === 'x') {
+      appendPath('M18 6L6 18');
+      appendPath('M6 6l12 12');
+    }
+
+    return svg;
+  }
+
   function resolveUserKey(access) {
     if (!access || !access.user) {
       return '';
@@ -1001,8 +1029,10 @@
     actions.className = 'documents-modal__actions documents-modal__actions--with-save';
     var closeTop = document.createElement('button');
     closeTop.type = 'button';
-    closeTop.className = 'documents-panel__close docs-settings-actions__close';
-    closeTop.textContent = 'Закрыть';
+    closeTop.className = 'documents-panel__close docs-settings-actions__close documents-panel-icon-button';
+    closeTop.title = 'Закрыть';
+    closeTop.setAttribute('aria-label', 'Закрыть настройки');
+    closeTop.appendChild(createSettingsSvgIcon('x'));
     closeTop.addEventListener('click', closeModal);
     var saveTop = document.createElement('button');
     saveTop.type = 'button';

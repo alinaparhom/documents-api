@@ -2655,6 +2655,7 @@ const state = {
     firstName: '',
     lastName: '',
     fullName: '',
+    userId: '',
     photoUrl: '',
     role: '',
     chatId: '',
@@ -3558,6 +3559,9 @@ function initElements() {
   elements.settingsUserAvatar = document.querySelector('[data-settings-user-avatar]');
   elements.settingsUserName = document.querySelector('[data-settings-user-name]');
   elements.settingsUserRole = document.querySelector('[data-settings-user-role]');
+  elements.settingsUserId = document.querySelector('[data-settings-user-id]');
+  elements.settingsTelegramId = document.querySelector('[data-settings-telegram-id]');
+  elements.settingsOrganizations = document.querySelector('[data-settings-organizations]');
   elements.themeOptionButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
   elements.listModeOptionButtons = Array.from(document.querySelectorAll('[data-list-mode-option]'));
   elements.userAvatarImage = document.querySelector('[data-user-avatar-image]');
@@ -3999,6 +4003,7 @@ function renderThemeToggle() {
 }
 
 function openSettingsSheet() {
+  updateSettingsProfileDetails();
   if (elements.settingsSheet instanceof HTMLElement) {
     elements.settingsSheet.hidden = false;
   }
@@ -4594,6 +4599,22 @@ function updateStateFromPayload(payload) {
 
   if (payload.user && typeof payload.user === 'object') {
     const user = payload.user;
+    const profileUserId = normalizeValue(
+      user.userId
+      || user.user_id
+      || user.profileUserId
+      || user.siteUserId
+      || user.responsibleNumber
+      || user.number
+      || user.login
+    );
+    if (profileUserId) {
+      state.telegram.userId = profileUserId;
+    }
+    const payloadTelegramId = normalizeTelegramUserId(user.telegramId || user.telegram_id || user.telegram || user.id);
+    if (payloadTelegramId) {
+      state.telegram.id = payloadTelegramId;
+    }
     if (!state.telegram.id && user.id) {
       state.telegram.id = String(user.id);
     }
@@ -4654,6 +4675,61 @@ function updateStateFromPayload(payload) {
       computedStats: statsSnapshot,
       sampleTasks,
     });
+  }
+}
+
+function collectSettingsOrganizationNames() {
+  const names = [];
+  const seen = new Set();
+
+  const pushName = (candidate) => {
+    const value = normalizeValue(candidate);
+    if (!value) {
+      return;
+    }
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    names.push(value);
+  };
+
+  if (Array.isArray(state.organizations)) {
+    state.organizations.forEach((summary) => {
+      if (!summary || typeof summary !== 'object') {
+        return;
+      }
+      pushName(summary.name || summary.organization || summary.title || summary.id);
+    });
+  }
+
+  if (!names.length && Array.isArray(state.director && state.director.organizations)) {
+    state.director.organizations.forEach(pushName);
+  }
+
+  if (!names.length && Array.isArray(state.tasks)) {
+    state.tasks.forEach((task) => {
+      if (names.length >= 5) {
+        return;
+      }
+      pushName(getTaskOrganization(task));
+    });
+  }
+
+  return names;
+}
+
+function updateSettingsProfileDetails() {
+  if (elements.settingsUserId) {
+    elements.settingsUserId.textContent = normalizeValue(state.telegram.userId) || '—';
+  }
+  if (elements.settingsTelegramId) {
+    elements.settingsTelegramId.textContent = normalizeTelegramUserId(state.telegram.id) || normalizeValue(state.telegram.id) || '—';
+  }
+  if (elements.settingsOrganizations) {
+    const organizationNames = collectSettingsOrganizationNames();
+    elements.settingsOrganizations.textContent = organizationNames.length ? organizationNames.join(', ') : '—';
   }
 }
 
@@ -4742,6 +4818,7 @@ function updateUserPanel() {
   }
 
   updateVersionPanel();
+  updateSettingsProfileDetails();
 }
 
 function updateVersionPanel() {

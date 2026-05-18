@@ -1211,6 +1211,28 @@
         color: var(--appdosc-text-muted);
       }
 
+      .appdosc-settings-sheet__user-meta {
+        display: grid;
+        gap: 4px;
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--appdosc-text-muted);
+      }
+
+      .appdosc-settings-sheet__user-meta-row {
+        display: grid;
+        grid-template-columns: 94px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+      }
+
+      .appdosc-settings-sheet__user-meta-value {
+        color: var(--appdosc-text-primary);
+        font: inherit;
+        font-weight: 650;
+        word-break: break-word;
+      }
+
       .appdosc-settings-sheet__item {
         width: 100%;
         min-height: 48px;
@@ -6970,6 +6992,20 @@
           <div>
             <div class="appdosc-settings-sheet__user-name" data-settings-user-name>Арсений</div>
             <div class="appdosc-settings-sheet__user-role" data-settings-user-role>Директор</div>
+            <div class="appdosc-settings-sheet__user-meta" aria-label="Данные профиля">
+              <div class="appdosc-settings-sheet__user-meta-row">
+                <span>ID пользователя</span>
+                <code class="appdosc-settings-sheet__user-meta-value" data-settings-user-id>—</code>
+              </div>
+              <div class="appdosc-settings-sheet__user-meta-row">
+                <span>ID Telegram</span>
+                <code class="appdosc-settings-sheet__user-meta-value" data-settings-telegram-id>—</code>
+              </div>
+              <div class="appdosc-settings-sheet__user-meta-row">
+                <span>Организация</span>
+                <span class="appdosc-settings-sheet__user-meta-value" data-settings-organizations>—</span>
+              </div>
+            </div>
           </div>
         </div>
         <button type="button" class="appdosc-settings-sheet__item">

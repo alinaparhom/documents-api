@@ -693,8 +693,17 @@
   var lastFocusedElement = null;
   var diagnosticsState = {
     startSent: false,
-    sessionRequested: false
+    sessionRequested: false,
+    inFlight: false,
+    queue: [],
+    sentAt: [],
+    recentKeys: Object.create(null),
+    disabledUntil: 0
   };
+  var CLIENT_DIAGNOSTICS_MAX_PER_MINUTE = 2;
+  var CLIENT_DIAGNOSTICS_MAX_QUEUE = 1;
+  var CLIENT_DIAGNOSTICS_DEDUP_TTL = 30000;
+  var CLIENT_DIAGNOSTICS_BACKOFF = 120000;
   var docsSettingsBootstrapStarted = false;
   var docsSettingsBootstrapPending = false;
   var settingsUserKey = '';
@@ -1353,7 +1362,7 @@
       var directValue = params.get(directKeys[i]);
       if (directValue !== null) {
         var trimmed = String(directValue).trim();
-        if (trimmed) {
+        if (/^-?\d{4,20}$/.test(trimmed)) {
           return trimmed;
         }
       }
@@ -1364,7 +1373,7 @@
         var parsedUser = JSON.parse(userParam);
         if (parsedUser && parsedUser.id !== undefined && parsedUser.id !== null) {
           var id = String(parsedUser.id).trim();
-          if (id) {
+          if (/^-?\d{4,20}$/.test(id)) {
             return id;
           }
         }
@@ -1448,11 +1457,14 @@
 
   function getTelegramUserId() {
     var cached = state.telegramUserId ? String(state.telegramUserId).trim() : '';
-    if (cached) {
+    if (/^-?\d{4,20}$/.test(cached)) {
       return cached;
     }
+    if (cached) {
+      state.telegramUserId = '';
+    }
     var detected = detectTelegramUserId();
-    if (detected) {
+    if (detected && /^-?\d{4,20}$/.test(detected)) {
       state.telegramUserId = detected;
       return detected;
     }
@@ -1565,68 +1577,124 @@
     return result;
   }
 
-  function sendClientDiagnostics(eventName, diagnostics) {
-    if (typeof fetch !== 'function') {
+  function compactDiagnosticsValue(value, depth) {
+    if (depth > 2) {
+      return '…';
+    }
+    if (value === null || value === undefined) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      return value.length > 300 ? value.slice(0, 300) + '…' : value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return value;
+    }
+    if (Array.isArray && Array.isArray(value)) {
+      return value.slice(0, 8).map(function(item) {
+        return compactDiagnosticsValue(item, depth + 1);
+      });
+    }
+    if (typeof value === 'object') {
+      var result = {};
+      var count = 0;
+      for (var key in value) {
+        if (!Object.prototype.hasOwnProperty.call(value, key)) {
+          continue;
+        }
+        if (count >= 12) {
+          result.__truncated__ = true;
+          break;
+        }
+        result[key] = compactDiagnosticsValue(value[key], depth + 1);
+        count += 1;
+      }
+      return result;
+    }
+    return String(value);
+  }
+
+  function buildDiagnosticsKey(payload) {
+    var details = payload && payload.diagnostics && typeof payload.diagnostics === 'object'
+      ? payload.diagnostics
+      : {};
+    var action = details && details.action ? String(details.action) : '';
+    var message = details && details.message ? String(details.message) : '';
+    return [
+      payload && payload.event ? String(payload.event) : '',
+      action,
+      message,
+      payload && payload.organization ? String(payload.organization) : ''
+    ].join('|');
+  }
+
+  function cleanupDiagnosticsRateWindow(now) {
+    diagnosticsState.sentAt = diagnosticsState.sentAt.filter(function(timestamp) {
+      return now - timestamp < 60000;
+    });
+    for (var key in diagnosticsState.recentKeys) {
+      if (!Object.prototype.hasOwnProperty.call(diagnosticsState.recentKeys, key)) {
+        continue;
+      }
+      if (now - diagnosticsState.recentKeys[key] > CLIENT_DIAGNOSTICS_DEDUP_TTL) {
+        delete diagnosticsState.recentKeys[key];
+      }
+    }
+  }
+
+  function flushClientDiagnosticsQueue() {
+    if (diagnosticsState.inFlight || !diagnosticsState.queue.length || typeof fetch !== 'function') {
       return;
     }
 
-    var normalizedEvent = '';
-    if (typeof eventName === 'string' && eventName.trim) {
-      normalizedEvent = eventName.trim();
-    }
-    if (!normalizedEvent) {
-      normalizedEvent = 'client_event';
+    var now = Date.now();
+    if (diagnosticsState.disabledUntil && now < diagnosticsState.disabledUntil) {
+      diagnosticsState.queue = [];
+      return;
     }
 
-    var details = {};
-    if (diagnostics && typeof diagnostics === 'object') {
-      if (Array.isArray && Array.isArray(diagnostics)) {
-        details.sample = diagnostics.slice(0, 5);
-      } else {
-        details = cloneDiagnosticsObject(diagnostics);
-      }
-    } else if (typeof diagnostics === 'string') {
-      details.message = diagnostics;
-    } else if (diagnostics !== undefined && diagnostics !== null) {
-      details.value = diagnostics;
+    cleanupDiagnosticsRateWindow(now);
+    if (diagnosticsState.sentAt.length >= CLIENT_DIAGNOSTICS_MAX_PER_MINUTE) {
+      return;
     }
 
-    var href = '';
-    if (typeof window !== 'undefined' && window.location && typeof window.location.href === 'string') {
-      href = window.location.href;
-    }
-
-    var agent = '';
-    if (typeof navigator !== 'undefined' && navigator.userAgent) {
-      agent = navigator.userAgent;
-    }
-
-    var payload = {
-      event: normalizedEvent,
-      organization: state.organization || '',
-      diagnostics: details,
-      location: href,
-      userAgent: agent
-    };
-
-    mergeTelegramUserId(payload);
+    var payload = diagnosticsState.queue.shift();
+    diagnosticsState.inFlight = true;
+    diagnosticsState.sentAt.push(now);
 
     try {
       fetch(buildApiUrl('client_diagnostics'), {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      }).catch(function(error) {
-        if (typeof docsLogger.warn === 'function') {
-          docsLogger.warn('Не удалось отправить диагностику документов:', error);
-        }
-      });
+        body: JSON.stringify(payload),
+        keepalive: true
+      })
+        .catch(function(error) {
+          var message = error && error.message ? String(error.message) : String(error || '');
+          if (/insufficient|resource|network|failed/i.test(message)) {
+            diagnosticsState.disabledUntil = Date.now() + CLIENT_DIAGNOSTICS_BACKOFF;
+            diagnosticsState.queue = [];
+          }
+        })
+        .finally(function() {
+          diagnosticsState.inFlight = false;
+          if (diagnosticsState.queue.length) {
+            var schedule = typeof window !== 'undefined' && typeof window.setTimeout === 'function'
+              ? window.setTimeout
+              : setTimeout;
+            schedule(flushClientDiagnosticsQueue, 1000);
+          }
+        });
     } catch (error) {
-      if (typeof docsLogger.warn === 'function') {
-        docsLogger.warn('Ошибка подготовки диагностики документов:', error);
-      }
+      diagnosticsState.inFlight = false;
+      diagnosticsState.disabledUntil = Date.now() + CLIENT_DIAGNOSTICS_BACKOFF;
+      diagnosticsState.queue = [];
     }
+  }
+
+  function sendClientDiagnostics(eventName, diagnostics) {
+    return;
   }
 
   function requestSessionDiagnostics() {
@@ -1831,6 +1899,26 @@
       append('path', { d: 'M6 9l6 6 6-6' });
       return svg;
     }
+    if (name === 'chevron-up') {
+      append('path', { d: 'M18 15l-6-6-6 6' });
+      return svg;
+    }
+    if (name === 'settings') {
+      append('circle', { cx: '12', cy: '12', r: '3' });
+      append('path', { d: 'M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 .9-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z' });
+      return svg;
+    }
+    if (name === 'users') {
+      append('path', { d: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2' });
+      append('circle', { cx: '9', cy: '7', r: '4' });
+      append('path', { d: 'M22 21v-2a4 4 0 0 0-3-3.87' });
+      append('path', { d: 'M16 3.13a4 4 0 0 1 0 7.75' });
+      return svg;
+    }
+    if (name === 'minus') {
+      append('path', { d: 'M5 12h14' });
+      return svg;
+    }
     if (name === 'x') {
       append('path', { d: 'M18 6L6 18' });
       append('path', { d: 'M6 6l12 12' });
@@ -1918,15 +2006,17 @@
       '.documents-clock{' +
       'display:flex;' +
       'align-items:center;' +
-      'gap:12px;' +
-      'padding:8px 16px;' +
-      'border-radius:14px;' +
+      'gap:6px;' +
+      'padding:4px 8px;' +
+      'border-radius:9px;' +
       'background:rgba(15,23,42,0.06);' +
       'color:var(--documents-text,#0f172a);' +
-      'font-size:14px;' +
+      'font-size:11px;' +
       'font-weight:500;' +
-      'letter-spacing:0.02em;' +
-      'box-shadow:0 6px 18px rgba(15,23,42,0.08);' +
+      'letter-spacing:0;' +
+      'line-height:1.15;' +
+      'box-shadow:none;' +
+      'white-space:nowrap;' +
       '}' +
       '.documents-clock__time{' +
       'font-variant-numeric:tabular-nums;' +
@@ -1941,7 +2031,7 @@
       '}' +
       '.documents-clock__separator{' +
       'opacity:0.35;' +
-      'font-size:18px;' +
+      'font-size:11px;' +
       '}';
     document.head.appendChild(style);
   }
@@ -4276,7 +4366,45 @@
     style.id = 'documents-registry-table-view-style';
     style.textContent = '' +
       '.documents-workspace{display:flex;flex-direction:column;gap:12px;color:#172554;}' +
+      '.documents-panel__header{display:flex!important;flex-wrap:nowrap!important;align-items:center!important;gap:8px!important;height:48px!important;min-height:48px!important;max-height:48px!important;padding:7px 12px!important;box-sizing:border-box;min-width:0;overflow:hidden!important;}' +
+      '.documents-panel__header>*{flex:0 0 auto;}' +
+      '.documents-panel-control-group{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px;margin-left:auto;flex:0 0 auto;min-width:max-content;white-space:nowrap;}' +
+      '#documents-title,.documents-panel__title{flex:1 1 0!important;min-width:0!important;max-width:100%;font-size:clamp(15px,1.8vw,20px)!important;line-height:1.15!important;font-weight:800!important;letter-spacing:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-panel__header .documents-clock{flex:0 0 auto;min-height:32px;height:32px;padding:0 9px;border:1px solid #dbeafe;border-radius:9px;background:#fff;color:#172554;font-size:11px;box-shadow:none;}' +
+      '.documents-panel__header button,.documents-panel-control-group button{box-sizing:border-box!important;border:1px solid #dbeafe!important;background:#fff!important;color:#172554!important;box-shadow:none!important;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
+      '.documents-panel__header button:hover,.documents-panel__header button:focus-visible,.documents-panel-control-group button:hover,.documents-panel-control-group button:focus-visible{background:#eff6ff!important;border-color:#93c5fd!important;color:#1d4ed8!important;outline:none!important;}' +
+      '.documents-panel__admin,.documents-panel__close,#documents-add-button,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{min-height:32px!important;height:32px!important;padding:0 10px!important;border-radius:9px!important;font-size:12px!important;line-height:1!important;white-space:nowrap!important;}' +
+      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{position:relative;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:34px!important;min-width:34px!important;max-width:34px!important;padding:0!important;gap:0!important;overflow:visible!important;}' +
+      '.documents-panel-icon-button__icon,.documents-panel-action-icon{width:17px;height:17px;display:block;flex:0 0 auto;}' +
+      '#documents-add-button{flex:0 1 auto!important;max-width:160px!important;border-color:rgba(34,197,94,.55)!important;background:#16a34a!important;color:#fff!important;font-weight:800!important;box-shadow:0 8px 18px rgba(22,163,74,.18)!important;overflow:hidden;text-overflow:ellipsis;}' +
+      '#documents-add-button:hover,#documents-add-button:focus-visible{border-color:#15803d!important;background:#15803d!important;color:#fff!important;}' +
+      '#documents-logout-button{color:#dc2626!important;border-color:rgba(248,113,113,.55)!important;background:#fff!important;}' +
+      '#documents-logout-button:hover,#documents-logout-button:focus-visible{color:#b91c1c!important;border-color:rgba(239,68,68,.7)!important;background:#fff5f5!important;}' +
+      '#documents-close{color:#334155!important;background:#fff!important;}' +
+      '#documents-close:hover,#documents-close:focus-visible{color:#0f172a!important;border-color:#cbd5e1!important;background:#f8fafc!important;}' +
+      '#documents-refresh-button{color:#1d4ed8!important;background:#fff!important;}' +
+      '#documents-refresh-button:hover,#documents-refresh-button:focus-visible{color:#1e40af!important;border-color:#93c5fd!important;background:#eff6ff!important;}' +
+      '#documents-settings-button{color:#7c3aed!important;border-color:rgba(167,139,250,.62)!important;background:#faf5ff!important;}' +
+      '#documents-settings-button:hover,#documents-settings-button:focus-visible{color:#6d28d9!important;border-color:#a78bfa!important;background:#f3e8ff!important;}' +
+      '#documents-online-button{color:#047857!important;border-color:rgba(52,211,153,.62)!important;background:#ecfdf5!important;}' +
+      '#documents-online-button:hover,#documents-online-button:focus-visible{color:#065f46!important;border-color:#34d399!important;background:#d1fae5!important;}' +
+      '#documents-admin-button{color:#1d4ed8!important;border-color:rgba(96,165,250,.62)!important;background:#eff6ff!important;font-weight:800!important;}' +
+      '#documents-admin-button:hover,#documents-admin-button:focus-visible{color:#1e40af!important;border-color:#60a5fa!important;background:#dbeafe!important;}' +
+      '#documents-responsible-button{color:#047857!important;border-color:rgba(52,211,153,.62)!important;background:#ecfdf5!important;font-weight:800!important;}' +
+      '#documents-responsible-button:hover,#documents-responsible-button:focus-visible,#documents-responsible-button.documents-panel__admin--toggled{color:#065f46!important;border-color:#34d399!important;background:#d1fae5!important;}' +
+      '#documents-unviewed-button{color:#be123c!important;border-color:rgba(251,113,133,.62)!important;background:#fff1f2!important;font-weight:800!important;}' +
+      '#documents-unviewed-button:hover,#documents-unviewed-button:focus-visible,#documents-unviewed-button.documents-panel__admin--toggled{color:#9f1239!important;border-color:#fb7185!important;background:#ffe4e6!important;}' +
+      '.documents-online__counter{position:absolute;top:-5px;right:-5px;display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#10b981;color:#fff;font-size:10px;font-weight:800;line-height:1;border:1px solid #fff;box-shadow:0 4px 10px rgba(16,185,129,.28);}' +
       '.documents-table-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:10px;min-width:0;}' +
+      '.documents-tools-toggle{display:inline-flex;align-items:center;justify-content:center;gap:7px;width:max-content;max-width:100%;min-height:34px;padding:0 12px;border:1px solid #dbeafe;border-radius:9px;background:#fff;color:#172554;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 8px 18px rgba(15,23,42,.06);transition:background .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease;}' +
+      '.documents-tools-toggle:hover,.documents-tools-toggle:focus-visible{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;outline:none;box-shadow:0 10px 22px rgba(37,99,235,.12);}' +
+      '.documents-tools-toggle__icon,.documents-tools-toggle__chevron{width:16px;height:16px;flex:0 0 auto;}' +
+      '.documents-panel-control-group .documents-tools-toggle{width:34px;min-width:34px;max-width:34px;min-height:32px;height:32px;padding:0;gap:0;border-radius:9px;box-shadow:none;}' +
+      '.documents-panel-control-group .documents-tools-toggle{color:#b45309!important;border-color:rgba(251,191,36,.72)!important;background:#fffbeb!important;}' +
+      '.documents-panel-control-group .documents-tools-toggle:hover,.documents-panel-control-group .documents-tools-toggle:focus-visible{color:#92400e!important;border-color:#f59e0b!important;background:#fef3c7!important;}' +
+      '.documents-panel-control-group .documents-tools-toggle__label,.documents-panel-control-group .documents-tools-toggle__chevron{display:none;}' +
+      '.documents-tools-toggle__label{white-space:nowrap;}' +
+      '.documents-table-toolbar--collapsed .documents-tabs,.documents-table-toolbar--collapsed .documents-table-tools{display:none!important;}' +
       '.documents-table-toolbar .documents-tabs{flex:0 0 auto;width:100%;margin:0;padding:0;border-bottom:1px solid #dbeafe;overflow-x:auto;}' +
       '.documents-table-tools{width:100%;justify-content:flex-start;}' +
       '.documents-global-search{position:relative;display:block;flex:0 0 min(320px,34vw);min-width:220px;margin-left:auto;}' +
@@ -4355,9 +4483,22 @@
       '.documents-actions__panel{position:static;width:auto;min-width:0;margin-top:0;z-index:auto;box-shadow:none;border:0;background:transparent;padding:0;}' +
       '.documents-actions__panel[hidden]:not(.documents-actions__panel--open){display:none;}' +
       '.documents-actions--icons .documents-actions__panel{display:flex;flex-wrap:wrap;gap:4px;max-width:100%;}' +
-      '.documents-files__summary{font-weight:700;color:#172554;}' +
+      '.documents-files{display:flex;flex-direction:column;gap:6px;min-width:0;}' +
+      '.documents-files__summary{display:inline-flex;align-items:center;width:max-content;max-width:100%;min-height:22px;padding:2px 7px;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:800;line-height:1;}' +
       '.documents-files__list,.documents-instruction__list,.documents-due__list,.documents-status__meta{display:none;}' +
-      '.documents-row--expanded .documents-files__list,.documents-row--expanded .documents-instruction__list,.documents-row--expanded .documents-due__list,.documents-row--expanded .documents-status__meta{display:block;}' +
+      '.documents-row--expanded .documents-files__list{display:flex;flex-direction:column;gap:3px;min-width:0;}' +
+      '.documents-file-item{min-width:0;}' +
+      '.documents-file-link{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:center;gap:4px;min-width:0;padding:2px 4px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;color:#172554;text-decoration:none;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease;}' +
+      '.documents-file-link:hover,.documents-file-link:focus-visible{background:#f8fbff;border-color:#bfdbfe;box-shadow:0 6px 16px rgba(37,99,235,.12);outline:none;}' +
+      '.documents-file-link__icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:18px;border-radius:4px;background:#e0f2fe;color:#0369a1;font-size:7px;font-weight:900;line-height:1;letter-spacing:0;text-transform:uppercase;font-variant-numeric:tabular-nums;}' +
+      '.documents-file-link[data-file-kind="pdf"] .documents-file-link__icon{background:#ef4444;color:#ffffff;}' +
+      '.documents-file-link[data-file-kind="doc"] .documents-file-link__icon{background:#2563eb;color:#ffffff;}' +
+      '.documents-file-link[data-file-kind="sheet"] .documents-file-link__icon{background:#16a34a;color:#ffffff;}' +
+      '.documents-file-link[data-file-kind="image"] .documents-file-link__icon{background:#f59e0b;color:#ffffff;}' +
+      '.documents-file-link[data-file-kind="archive"] .documents-file-link__icon{background:#7e22ce;color:#ffffff;}' +
+      '.documents-file-link__body{display:block;min-width:0;}' +
+      '.documents-file-link__name{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:700;line-height:1.1;color:#172554;}' +
+      '.documents-row--expanded .documents-instruction__list,.documents-row--expanded .documents-due__list,.documents-row--expanded .documents-status__meta{display:block;}' +
       '.documents-row--expanded .documents-status[data-overdue="true"] .documents-status__meta{display:none;}' +
       '.documents-group-row td{position:sticky;left:0;z-index:3;padding:8px 12px;background:#f8fafc;border-bottom:1px solid #dbeafe;border-right:0;color:#172554;font-weight:800;}' +
       '.documents-group-row__content{display:flex;align-items:center;gap:10px;min-height:26px;}' +
@@ -4378,6 +4519,35 @@
       '.documents-pagination__button.is-active{background:#2563eb;color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.25);}' +
       '.documents-pagination__button:disabled{opacity:.35;cursor:default;}' +
       '.documents-pagination__ellipsis{min-width:28px;text-align:center;color:#64748b;}' +
+      '@media (max-width:900px){' +
+      '.documents-panel__header{height:44px!important;min-height:44px!important;max-height:44px!important;gap:5px!important;padding:6px 7px!important;}' +
+      '.documents-panel-control-group{gap:4px;}' +
+      '.documents-panel__header .documents-clock{height:30px;min-height:30px;max-width:82px;padding:0 7px;font-size:10px;overflow:hidden;}' +
+      '.documents-clock__user,.documents-clock__date,.documents-clock__separator{display:none!important;}' +
+      '.documents-panel__admin,.documents-panel__close,#documents-add-button,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{height:30px!important;min-height:30px!important;border-radius:8px!important;font-size:11px!important;}' +
+      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle{width:30px!important;min-width:30px!important;max-width:30px!important;height:30px!important;min-height:30px!important;}' +
+      '#documents-title,.documents-panel__title{font-size:14px!important;}' +
+      '#documents-add-button{max-width:112px!important;padding:0 8px!important;}' +
+      '}' +
+      '@media (max-width:640px){' +
+      '.documents-panel__header{gap:4px!important;padding:6px 5px!important;}' +
+      '#documents-title,.documents-panel__title{max-width:18vw;font-size:13px!important;}' +
+      '.documents-panel__header .documents-clock{width:52px;min-width:52px;max-width:52px;padding:0 4px;justify-content:center;}' +
+      '#documents-add-button{width:30px!important;min-width:30px!important;max-width:30px!important;padding:0!important;font-size:0!important;}' +
+      '#documents-add-button::before{content:"+";font-size:20px;line-height:1;font-weight:900;}' +
+      '.documents-panel__admin:not(#documents-add-button){max-width:84px!important;padding:0 7px!important;overflow:hidden;text-overflow:ellipsis;}' +
+      '}' +
+      '@media (max-width:420px){' +
+      '#documents-title,.documents-panel__title{max-width:1px;color:transparent!important;}' +
+      '.documents-panel__header .documents-clock{display:none!important;}' +
+      '.documents-panel-control-group{gap:2px;}' +
+      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle,#documents-add-button,#documents-admin-button,#documents-responsible-button,#documents-unviewed-button{width:26px!important;min-width:26px!important;max-width:26px!important;height:28px!important;min-height:28px!important;padding:0!important;border-radius:7px!important;}' +
+      '#documents-admin-button,#documents-responsible-button,#documents-unviewed-button{font-size:0!important;overflow:hidden!important;}' +
+      '#documents-admin-button::before{content:"A";font-size:11px;font-weight:900;line-height:1;}' +
+      '#documents-responsible-button::before{content:"О";font-size:11px;font-weight:900;line-height:1;}' +
+      '#documents-unviewed-button::before{content:"!";font-size:13px;font-weight:900;line-height:1;}' +
+      '.documents-panel-icon-button__icon,.documents-panel-action-icon{width:14px;height:14px;}' +
+      '}' +
       '@media (max-width:760px){' +
       '.documents-table-toolbar{align-items:stretch;flex-direction:column;}' +
       '.documents-table-tools{width:100%;justify-content:space-between;}' +
@@ -5178,10 +5348,16 @@
     if (!searchOptionsVirtualState) {
       return [];
     }
+    var query = elements.searchInput ? normalizeTextInputValue(elements.searchInput.value) : '';
+    var applyVisibleOnly = query !== '';
     var selectedLookup = searchOptionsVirtualState.pendingSelectedLookup || Object.create(null);
-    var valueMap = searchSelectionDraft && searchSelectionDraft.columnKey === searchOptionsVirtualState.columnKey
-      ? searchSelectionDraft.valueMap
-      : searchOptionsVirtualState.optionValueMap;
+    var valueMap = applyVisibleOnly
+      ? buildSearchPopoverOptionValueMap(searchOptionsVirtualState.options || [])
+      : (
+        searchSelectionDraft && searchSelectionDraft.columnKey === searchOptionsVirtualState.columnKey
+          ? searchSelectionDraft.valueMap
+          : searchOptionsVirtualState.optionValueMap
+      );
     var keys = Object.keys(valueMap || {});
     var selectedValues = [];
     for (var i = 0; i < keys.length; i += 1) {
@@ -5189,11 +5365,14 @@
         selectedValues.push(valueMap[keys[i]]);
       }
     }
+    if (applyVisibleOnly && !keys.length) {
+      return [FILTER_EMPTY_SELECTION_VALUE];
+    }
     if (!selectedValues.length && keys.length) {
       return [FILTER_EMPTY_SELECTION_VALUE];
     }
     if (selectedValues.length >= keys.length) {
-      return [];
+      return applyVisibleOnly ? selectedValues : [];
     }
     var excludedValues = [];
     for (var j = 0; j < keys.length; j += 1) {
@@ -5212,8 +5391,10 @@
       return null;
     }
     var allOptions = searchOptionsVirtualState.allOptions || searchOptionsVirtualState.options || [];
+    var query = elements.searchInput ? normalizeTextInputValue(elements.searchInput.value) : '';
+    var countOptions = query ? (searchOptionsVirtualState.options || []) : allOptions;
     var selectedLookup = searchOptionsVirtualState.pendingSelectedLookup || Object.create(null);
-    var selectedCount = countSearchPopoverSelectedOptions(allOptions, selectedLookup);
+    var selectedCount = countSearchPopoverSelectedOptions(countOptions, selectedLookup);
     return {
       total: allOptions.length,
       selected: selectedCount,
@@ -5501,6 +5682,86 @@
       button.appendChild(createSvgIcon('chevron-down', 'documents-table-tool__chevron'));
     }
     return button;
+  }
+
+  function createDocumentsToolsToggle() {
+    var button = createElement('button', 'documents-tools-toggle');
+    button.type = 'button';
+    button.dataset.documentsToolsToggle = 'true';
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-label', 'Раскрыть инструменты таблицы');
+    button.title = 'Инструменты';
+    button.appendChild(createSvgIcon('sliders', 'documents-tools-toggle__icon'));
+    button.appendChild(createElement('span', 'documents-tools-toggle__label', 'Инструменты'));
+    button.appendChild(createSvgIcon('chevron-down', 'documents-tools-toggle__chevron'));
+    return button;
+  }
+
+  function syncDocumentsToolsToggle(button, expanded) {
+    if (!button) {
+      return;
+    }
+    button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    button.setAttribute('aria-label', expanded ? 'Свернуть инструменты таблицы' : 'Раскрыть инструменты таблицы');
+    var chevron = button.querySelector('.documents-tools-toggle__chevron');
+    if (chevron) {
+      chevron.replaceWith(createSvgIcon(expanded ? 'chevron-up' : 'chevron-down', 'documents-tools-toggle__chevron'));
+    }
+  }
+
+  function configureHeaderIconButton(button, iconName, label) {
+    if (!button || !iconName || !label) {
+      return;
+    }
+    button.classList.add('documents-panel-icon-button');
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.textContent = '';
+    button.appendChild(createSvgIcon(iconName, 'documents-panel-icon-button__icon'));
+  }
+
+  function ensureDocumentsHeaderControlGroup(anchorContainer) {
+    var header = document.querySelector('.documents-panel__header');
+    var container = header || anchorContainer;
+    if (!container) {
+      return null;
+    }
+    var group = container.querySelector('.documents-panel-control-group');
+    if (group) {
+      if (header && group.parentNode !== header) {
+        header.appendChild(group);
+      }
+      return group;
+    }
+    group = createElement('div', 'documents-panel-control-group');
+    group.setAttribute('aria-label', 'Инструменты документооборота');
+    if (header && container === header) {
+      header.appendChild(group);
+    } else {
+      container.appendChild(group);
+    }
+    return group;
+  }
+
+  function arrangeDocumentsHeaderControls(toolsToggle, anchorContainer) {
+    var group = ensureDocumentsHeaderControlGroup(anchorContainer);
+    if (!group) {
+      return false;
+    }
+    var controls = [
+      document.getElementById('documents-settings-button'),
+      toolsToggle || null,
+      document.getElementById('documents-online-button'),
+      document.getElementById('documents-refresh-button'),
+      document.getElementById('documents-close'),
+      document.getElementById('documents-logout-button')
+    ];
+    controls.forEach(function(control) {
+      if (control) {
+        group.appendChild(control);
+      }
+    });
+    return true;
   }
 
   function setToolbarButtonBadge(button, text) {
@@ -6047,6 +6308,10 @@
     if (!columnKey) {
       closeSearchPopover();
       return;
+    }
+    var query = elements.searchInput ? normalizeTextInputValue(elements.searchInput.value) : '';
+    if (query) {
+      updateSearchPopoverVisibleOptions(query);
     }
     applyFilter(columnKey, '', { render: false });
     applyFilterSelection(columnKey, getSearchPopoverSelectedValuesForApply(), {
@@ -10161,8 +10426,11 @@
     var panel = createElement('div', 'documents-online-panel');
     var header = createElement('div', 'documents-online-panel__header');
     var title = createElement('div', 'documents-online-panel__title', 'Кто сейчас онлайн');
-    var closeBtn = createElement('button', 'documents-online-panel__close', 'Закрыть');
+    var closeBtn = createElement('button', 'documents-online-panel__close documents-panel-icon-button');
     closeBtn.type = 'button';
+    closeBtn.title = 'Закрыть';
+    closeBtn.setAttribute('aria-label', 'Закрыть список онлайн');
+    closeBtn.appendChild(createSvgIcon('x', 'documents-panel-icon-button__icon'));
     closeBtn.addEventListener('click', closeOnlineModal);
     header.appendChild(title);
     header.appendChild(closeBtn);
@@ -12800,6 +13068,9 @@
   var pdfLibLoadingPromise = null;
   var pdfFontBytesPromise = null;
   var pdfFontkitPromise = null;
+  var pdfPreviewAssetPreloadStarted = false;
+  var attachmentPreviewCache = new Map();
+  var ATTACHMENT_PREVIEW_CACHE_LIMIT = 6;
 
   function ensurePdfLib() {
     if (window.PDFLib && window.PDFLib.PDFDocument) {
@@ -12960,6 +13231,29 @@
     return pdfFontBytesPromise;
   }
 
+  function preloadPdfPreviewAssets() {
+    if (pdfPreviewAssetPreloadStarted) {
+      return;
+    }
+    pdfPreviewAssetPreloadStarted = true;
+
+    var run = function() {
+      Promise.allSettled([
+        ensurePdfLib(),
+        ensurePdfFontkit(),
+        loadPdfFontBytes()
+      ]).catch(function(error) {
+        docsLogger.warn('Не удалось заранее подготовить PDF-предпросмотр:', error);
+      });
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(run, { timeout: 3500 });
+      return;
+    }
+    window.setTimeout(run, 900);
+  }
+
   function sanitizeFileName(value) {
     if (!value) {
       return '';
@@ -13106,6 +13400,10 @@
       name = file.originalName;
     } else if (file.storedName) {
       name = file.storedName;
+    } else if (file.fileName) {
+      name = file.fileName;
+    } else if (file.name) {
+      name = file.name;
     }
     if (!name) {
       return '';
@@ -13122,6 +13420,42 @@
       return fallbackIndex ? 'Файл ' + fallbackIndex : 'Файл';
     }
     return file.originalName || file.storedName || file.fileName || file.name || (fallbackIndex ? 'Файл ' + fallbackIndex : 'Файл');
+  }
+
+  function getAttachmentExtensionLabel(file) {
+    var extension = getFileExtension(file);
+    if (!extension) {
+      extension = inferUploadExtensionFromType(file && (file.type || file.mimeType || file.contentType)
+        ? (file.type || file.mimeType || file.contentType)
+        : '');
+    }
+    if (!extension) {
+      return 'FILE';
+    }
+    return extension.slice(0, 5).toUpperCase();
+  }
+
+  function getAttachmentKind(file) {
+    var extension = getFileExtension(file);
+    var type = file && (file.type || file.mimeType || file.contentType)
+      ? String(file.type || file.mimeType || file.contentType).toLowerCase()
+      : '';
+    if (extension === 'pdf' || type.indexOf('pdf') !== -1) {
+      return 'pdf';
+    }
+    if (['doc', 'docx', 'docm', 'rtf'].indexOf(extension) !== -1 || type.indexOf('word') !== -1 || type.indexOf('msword') !== -1) {
+      return 'doc';
+    }
+    if (['xls', 'xlsx', 'xlsm', 'csv'].indexOf(extension) !== -1 || type.indexOf('excel') !== -1 || type.indexOf('spreadsheet') !== -1) {
+      return 'sheet';
+    }
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'heic', 'heif'].indexOf(extension) !== -1 || type.indexOf('image/') === 0) {
+      return 'image';
+    }
+    if (['zip', 'rar', '7z', 'tar', 'gz'].indexOf(extension) !== -1) {
+      return 'archive';
+    }
+    return 'file';
   }
 
   function getAttachmentSummaryList(list) {
@@ -13552,9 +13886,9 @@
       if (isOfficeAttachment(file)) {
         continue;
       }
-      var resolvedUrl = resolveAttachmentUrl(file, { bustCache: true });
+      var resolvedUrl = resolveAttachmentUrl(file);
       try {
-        var response = await fetch(resolvedUrl, { credentials: 'include', cache: 'no-store' });
+        var response = await fetch(resolvedUrl, { credentials: 'include' });
         if (!response.ok) {
           throw new Error('Статус ' + response.status);
         }
@@ -13651,18 +13985,31 @@
     if (!appendAttachments.length && Array.isArray(doc.files)) {
       appendAttachments = doc.files;
     }
-    var PDFLib = await ensurePdfLib();
+    var pdfLibPromise = ensurePdfLib();
+    var fontkitLoadPromise = ensurePdfFontkit()
+      .then(function(instance) {
+        return { instance: instance, error: null };
+      })
+      .catch(function(error) {
+        return { instance: null, error: error };
+      });
+    var fontBytesLoadPromise = loadPdfFontBytes()
+      .then(function(fontBytes) {
+        return { fontBytes: fontBytes, error: null };
+      })
+      .catch(function(error) {
+        return { fontBytes: null, error: error };
+      });
+    var PDFLib = await pdfLibPromise;
     if (!PDFLib || !PDFLib.PDFDocument) {
       throw new Error('PDF библиотека недоступна.');
     }
     var pdfDoc = await PDFLib.PDFDocument.create();
-    try {
-      var fontkitInstance = await ensurePdfFontkit();
-      if (fontkitInstance && typeof pdfDoc.registerFontkit === 'function') {
-        pdfDoc.registerFontkit(fontkitInstance);
-      }
-    } catch (fontkitError) {
-      docsLogger.warn('Не удалось подключить fontkit для PDF, будут использоваться встроенные шрифты библиотеки.', fontkitError);
+    var fontkitResult = await fontkitLoadPromise;
+    if (fontkitResult.error) {
+      docsLogger.warn('Не удалось подключить fontkit для PDF, будут использоваться встроенные шрифты библиотеки.', fontkitResult.error);
+    } else if (fontkitResult.instance && typeof pdfDoc.registerFontkit === 'function') {
+      pdfDoc.registerFontkit(fontkitResult.instance);
     }
     var page = pdfDoc.addPage([595.28, 841.89]);
     var size = page.getSize();
@@ -13671,7 +14018,11 @@
     var margin = 48;
     var fonts;
     try {
-      var fontBytes = await loadPdfFontBytes();
+      var fontBytesResult = await fontBytesLoadPromise;
+      if (fontBytesResult.error) {
+        throw fontBytesResult.error;
+      }
+      var fontBytes = fontBytesResult.fontBytes;
       fonts = {
         regular: await pdfDoc.embedFont(fontBytes.regular, { subset: true }),
         bold: await pdfDoc.embedFont(fontBytes.bold, { subset: true })
@@ -13873,8 +14224,64 @@
     return baseName + '_вложение.pdf';
   }
 
+  function buildAttachmentPreviewCacheKey(doc, file, mode) {
+    var docStamp = stableStringify({
+      organization: state.organization || '',
+      id: doc && doc.id ? String(doc.id) : '',
+      entryNumber: doc && doc.entryNumber ? String(doc.entryNumber) : '',
+      registryNumber: doc && doc.registryNumber ? String(doc.registryNumber) : '',
+      documentNumber: doc && doc.documentNumber ? String(doc.documentNumber) : '',
+      status: doc && doc.status ? String(doc.status) : '',
+      updatedAt: doc && doc.updatedAt ? String(doc.updatedAt) : '',
+      assignees: doc && doc.assignees ? doc.assignees : null,
+      responsibles: doc && doc.responsibles ? doc.responsibles : null,
+      subordinates: doc && doc.subordinates ? doc.subordinates : null,
+      directors: doc && doc.directors ? doc.directors : (doc && doc.director ? doc.director : null),
+      summary: doc && doc.summary ? String(doc.summary) : '',
+      resolution: doc && doc.resolution ? String(doc.resolution) : '',
+      instruction: doc && doc.instruction ? String(doc.instruction) : '',
+      dueDate: doc && doc.dueDate ? String(doc.dueDate) : '',
+      storagePath: state.storageDisplayPath || state.storagePath || ''
+    });
+    var fileStamp = stableStringify({
+      storedName: file && file.storedName ? String(file.storedName) : '',
+      originalName: file && file.originalName ? String(file.originalName) : '',
+      url: file && file.url ? String(file.url) : '',
+      size: file && file.size ? String(file.size) : '',
+      uploadedAt: file && file.uploadedAt ? String(file.uploadedAt) : ''
+    });
+    return [mode || 'preview', docStamp, fileStamp].join('|');
+  }
+
+  function getCachedAttachmentPreviewBlob(cacheKey) {
+    if (!cacheKey || !attachmentPreviewCache.has(cacheKey)) {
+      return null;
+    }
+    var cached = attachmentPreviewCache.get(cacheKey);
+    attachmentPreviewCache.delete(cacheKey);
+    attachmentPreviewCache.set(cacheKey, cached);
+    return cached && cached.blob ? cached.blob : null;
+  }
+
+  function rememberAttachmentPreviewBlob(cacheKey, blob) {
+    if (!cacheKey || !blob) {
+      return;
+    }
+    attachmentPreviewCache.set(cacheKey, {
+      blob: blob,
+      createdAt: Date.now()
+    });
+    while (attachmentPreviewCache.size > ATTACHMENT_PREVIEW_CACHE_LIMIT) {
+      var oldestKey = attachmentPreviewCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      attachmentPreviewCache.delete(oldestKey);
+    }
+  }
+
   function triggerAttachmentDownload(file) {
-    var url = resolveAttachmentUrl(file, { bustCache: true });
+    var url = resolveAttachmentUrl(file);
     if (!url) {
       return;
     }
@@ -13939,7 +14346,7 @@
     var isHeic = isHeicAttachment(file);
 
     if (isHeic) {
-      var heicUrl = resolveAttachmentUrl(file, { bustCache: true });
+      var heicUrl = resolveAttachmentUrl(file);
       if (heicUrl) {
         var heicLink = document.createElement('a');
         heicLink.href = heicUrl;
@@ -13958,6 +14365,22 @@
       return;
     }
 
+    var cacheKey = buildAttachmentPreviewCacheKey(doc, file, isOffice ? 'office' : 'preview');
+    var cachedBlob = getCachedAttachmentPreviewBlob(cacheKey);
+    if (cachedBlob) {
+      openBlobInNewTab(cachedBlob);
+      if (isOffice) {
+        triggerAttachmentDownload(file);
+        showMessage('success', 'Информация и офисный файл открыты отдельно.');
+      } else {
+        showMessage('success', 'Предпросмотр открыт.');
+      }
+      if (link) {
+        link.removeAttribute('aria-busy');
+      }
+      return;
+    }
+
     var summaryAttachments = [file];
     var appendAttachments = isOffice ? [] : [file];
     generateDocumentPdf(doc, {
@@ -13965,6 +14388,7 @@
       appendAttachments: appendAttachments
     })
       .then(function(blob) {
+        rememberAttachmentPreviewBlob(cacheKey, blob);
         if (isOffice) {
           openBlobInNewTab(blob);
           triggerAttachmentDownload(file);
@@ -13976,7 +14400,7 @@
       })
       .catch(function(error) {
         docsLogger.error('Ошибка предпросмотра файла:', error);
-        showMessage('error', 'Не удалось подготовить файл: ' + error.message);
+        showMessage('error', 'Не удалось подготовить файл: ' + (error && error.message ? error.message : 'повторите попытку.'));
       })
       .finally(function() {
         if (link) {
@@ -17401,31 +17825,6 @@
     var source = preferences && typeof preferences === 'object' ? preferences : {};
     var filters = {};
     var filterSelections = {};
-    var rawFilters = source.filters && typeof source.filters === 'object' ? source.filters : {};
-
-    TABLE_COLUMNS.forEach(function(column) {
-      var value = rawFilters[column.key];
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        var text = normalizeTextInputValue(value.text);
-        if (text) {
-          filters[column.key] = text.length > 180 ? text.slice(0, 180).trim() : text;
-        }
-        if (Array.isArray(value.selected)) {
-          filterSelections[column.key] = value.selected;
-        }
-        return;
-      }
-      var legacy = normalizeTextInputValue(value);
-      if (legacy) {
-        filters[column.key] = legacy.length > 180 ? legacy.slice(0, 180).trim() : legacy;
-      }
-    });
-
-    filterSelections = normalizeFilterSelections(
-      source.filterSelections && typeof source.filterSelections === 'object'
-        ? Object.assign({}, source.filterSelections, filterSelections)
-        : filterSelections
-    );
 
     var columns = {};
     var rawColumns = source.columns && typeof source.columns === 'object' ? source.columns : {};
@@ -17443,11 +17842,6 @@
       }
     });
 
-    var orderSource = Object.assign({}, filters);
-    Object.keys(filterSelections).forEach(function(key) {
-      orderSource[key] = filterSelections[key];
-    });
-
     var view = source.view && typeof source.view === 'object' ? source.view : {};
     var viewPageSize = view.pageSize !== undefined ? view.pageSize : source.tablePageSize;
     var grouping = source.grouping && typeof source.grouping === 'object' ? source.grouping : {};
@@ -17455,9 +17849,9 @@
 
     return {
       filters: filters,
-      filterOrder: normalizeFilterOrder(orderSource, source.filterOrder),
+      filterOrder: [],
       filterSelections: filterSelections,
-      globalSearchQuery: normalizeTextInputValue(source.globalSearchQuery),
+      globalSearchQuery: '',
       sorting: normalizeSortingSettings(source.sorting),
       columns: columns,
       columnOrder: normalizeColumnOrder(source.columnOrder),
@@ -17472,26 +17866,12 @@
       },
       groupingColumn: groupingColumn,
       tableDensity: normalizeTableDensity(view.density || source.tableDensity),
-      showUnassignedOnly: source.showUnassignedOnly === true,
-      showUnviewedOnly: source.showUnviewedOnly === true
+      showUnassignedOnly: false,
+      showUnviewedOnly: false
     };
   }
 
   function buildTablePreferencesPayload() {
-    var filters = {};
-    TABLE_COLUMNS.forEach(function(column) {
-      var text = state.filters && state.filters[column.key] ? String(state.filters[column.key]) : '';
-      var selected = state.filterSelections && Array.isArray(state.filterSelections[column.key])
-        ? state.filterSelections[column.key].slice()
-        : [];
-      if (text || selected.length) {
-        filters[column.key] = {
-          text: text,
-          selected: selected
-        };
-      }
-    });
-
     var columns = {};
     var currentWidths = buildColumnWidthMap(state.columnWidthOverrides || state.columnWidths || null);
     TABLE_COLUMNS.forEach(function(column) {
@@ -17504,20 +17884,14 @@
       };
     });
 
-    var orderSource = Object.assign({}, state.filters);
-    if (state.filterSelections && typeof state.filterSelections === 'object') {
-      Object.keys(state.filterSelections).forEach(function(key) {
-        orderSource[key] = state.filterSelections[key];
-      });
-    }
-
     var pageSize = normalizeTablePageSize(state.tablePageSize);
     var density = normalizeTableDensity(state.tableDensity);
 
     return {
-      filters: filters,
-      filterOrder: normalizeFilterOrder(orderSource, state.filterOrder),
-      globalSearchQuery: state.globalSearchQuery || '',
+      filters: {},
+      filterOrder: [],
+      filterSelections: {},
+      globalSearchQuery: '',
       sorting: state.visualSettings && state.visualSettings.sorting
         ? normalizeSortingSettings(state.visualSettings.sorting)
         : buildDefaultSortingSettings(),
@@ -17532,8 +17906,8 @@
       grouping: {
         column: normalizeGroupingColumn(state.groupingColumn)
       },
-      showUnassignedOnly: state.showUnassignedOnly === true,
-      showUnviewedOnly: state.showUnviewedOnly === true
+      showUnassignedOnly: false,
+      showUnviewedOnly: false
     };
   }
 
@@ -18686,22 +19060,22 @@
 
     var filesList = createElement('div', 'documents-files__list');
     if (attachments.length) {
-      attachments.forEach(function(file) {
+      attachments.forEach(function(file, attachmentIndex) {
         var itemWrap = createElement('div', 'documents-file-item');
-        var link = createElement('a', 'documents-file-link', getAttachmentName(file));
+        var fileName = getAttachmentName(file, attachmentIndex + 1);
+        var link = createElement('a', 'documents-file-link');
         link.href = resolveAttachmentUrl(file, { bustCache: true }) || '';
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
-        var meta = [];
-        if (file.size) {
-          meta.push(formatSize(file.size));
-        }
-        if (file.uploadedAt) {
-          meta.push(formatDateTime(file.uploadedAt));
-        }
-        if (meta.length) {
-          link.title = meta.join(' • ');
-        }
+        link.setAttribute('aria-label', 'Открыть файл ' + fileName);
+        link.title = fileName;
+        link.dataset.fileKind = getAttachmentKind(file);
+        var icon = createElement('span', 'documents-file-link__icon', getAttachmentExtensionLabel(file));
+        var body = createElement('span', 'documents-file-link__body');
+        var name = createElement('span', 'documents-file-link__name', fileName);
+        body.appendChild(name);
+        link.appendChild(icon);
+        link.appendChild(body);
         link.addEventListener('click', function(event) {
           event.preventDefault();
           handleAttachmentPreview(doc, file, link);
@@ -19602,7 +19976,90 @@
     });
   }
 
-  var DOCUMENTS_UPLOAD_BATCH_SIZE = 8;
+  var DOCUMENTS_UPLOAD_BATCH_SIZE = 1;
+  var DOCUMENTS_UPLOAD_STEP_DELAY = 450;
+  var DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT = 30;
+  var DOCUMENTS_ATTACHMENT_MAX_FILE_SIZE = 25 * 1024 * 1024;
+  var DOCUMENTS_ATTACHMENT_TOTAL_MAX_SIZE = 120 * 1024 * 1024;
+  var DOCUMENTS_BLOCKED_ATTACHMENT_EXTENSIONS = {
+    exe: true,
+    msi: true,
+    com: true,
+    bat: true,
+    cmd: true,
+    ps1: true,
+    vbs: true,
+    js: true,
+    jse: true,
+    scr: true,
+    dll: true,
+    php: true,
+    html: true,
+    htm: true
+  };
+
+  function formatFileSize(size) {
+    var bytes = Number(size) || 0;
+    if (bytes >= 1024 * 1024) {
+      return (bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1) + ' МБ';
+    }
+    if (bytes >= 1024) {
+      return Math.ceil(bytes / 1024) + ' КБ';
+    }
+    return bytes + ' Б';
+  }
+
+  function getFileExtension(name) {
+    var source = name;
+    if (source && typeof source === 'object') {
+      source = source.originalName
+        || source.storedName
+        || source.fileName
+        || source.name
+        || source.url
+        || '';
+    }
+    var text = String(source || '').split(/[?#]/)[0].trim().toLowerCase();
+    var match = text.match(/\.([a-z0-9]{1,12})$/i);
+    return match && match[1] ? match[1] : '';
+  }
+
+  function validateAttachmentFile(file) {
+    if (!file || typeof file !== 'object') {
+      return 'Не удалось прочитать выбранный файл.';
+    }
+    var fileName = file.name ? String(file.name) : 'Файл';
+    var extension = getFileExtension(fileName);
+    if (extension && DOCUMENTS_BLOCKED_ATTACHMENT_EXTENSIONS[extension]) {
+      return 'Файл «' + fileName + '» не похож на документ. Загрузите PDF, изображение, DOCX/XLSX или архив.';
+    }
+    if (file.size > DOCUMENTS_ATTACHMENT_MAX_FILE_SIZE) {
+      return 'Файл «' + fileName + '» слишком большой: ' + formatFileSize(file.size)
+        + '. Максимум для одного файла — ' + formatFileSize(DOCUMENTS_ATTACHMENT_MAX_FILE_SIZE) + '.';
+    }
+    return '';
+  }
+
+  function validateAttachmentFiles(files, existingFiles) {
+    var safeFiles = Array.isArray(files) ? files : [];
+    var errors = [];
+    var totalSize = 0;
+    safeFiles.forEach(function(file) {
+      totalSize += Number(file && file.size) || 0;
+      var error = validateAttachmentFile(file);
+      if (error) {
+        errors.push(error);
+      }
+    });
+    (Array.isArray(existingFiles) ? existingFiles : []).forEach(function(file) {
+      totalSize += Number(file && file.size) || 0;
+    });
+    if (totalSize > DOCUMENTS_ATTACHMENT_TOTAL_MAX_SIZE) {
+      errors.push('Общий размер файлов слишком большой: ' + formatFileSize(totalSize)
+        + '. Максимум — ' + formatFileSize(DOCUMENTS_ATTACHMENT_TOTAL_MAX_SIZE) + '.');
+    }
+    return errors;
+  }
 
   function splitFilesToBatches(files, batchSize) {
     if (!Array.isArray(files) || !files.length) {
@@ -19614,6 +20071,115 @@
       batches.push(files.slice(i, i + size));
     }
     return batches;
+  }
+
+  function ensureDocumentDraftUploadStyle() {
+    if (document.getElementById('documents-draft-upload-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-draft-upload-style';
+    style.textContent = '' +
+      '.documents-draft-file{' +
+      'display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:7px 9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-sizing:border-box;' +
+      '}' +
+      '.documents-file__group-title--status{' +
+      'display:flex;align-items:center;justify-content:space-between;gap:10px;' +
+      '}' +
+      '.documents-file__group-count{' +
+      'font-size:12px;font-weight:800;color:#2563eb;white-space:nowrap;' +
+      '}' +
+      '.documents-file__group-count--ready{' +
+      'color:#15803d;' +
+      '}' +
+      '.documents-file__group-count--error{' +
+      'color:#dc2626;' +
+      '}' +
+      '.documents-draft-file__progress{' +
+      '--progress:0%;position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;min-width:28px;border-radius:999px;background:conic-gradient(#2563eb var(--progress),#dbeafe 0);color:#2563eb;font-size:12px;font-weight:800;' +
+      '}' +
+      '.documents-draft-file__progress::after{' +
+      'content:"";position:absolute;inset:4px;border-radius:inherit;background:#fff;' +
+      '}' +
+      '.documents-draft-file__progress-text{' +
+      'position:relative;z-index:1;' +
+      '}' +
+      '.documents-draft-file__body{' +
+      'display:flex;flex-direction:column;gap:3px;min-width:0;flex:1 1 auto;' +
+      '}' +
+      '.documents-draft-file__name{' +
+      'font-size:13px;font-weight:700;color:#172554;line-height:1.25;overflow-wrap:anywhere;' +
+      '}' +
+      '.documents-draft-file__meta{' +
+      'font-size:12px;line-height:1.25;color:#64748b;' +
+      '}' +
+      '.documents-draft-file__remove{' +
+      'display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;min-width:26px;border:0;border-radius:999px;background:#f8fafc;color:#64748b;font-size:18px;line-height:1;cursor:pointer;' +
+      '}' +
+      '.documents-draft-file__remove:hover,.documents-draft-file__remove:focus-visible{' +
+      'background:#fee2e2;color:#dc2626;outline:none;' +
+      '}' +
+      '.documents-draft-file--uploading .documents-draft-file__progress-text{' +
+      'font-size:0;' +
+      '}' +
+      '.documents-draft-file--uploading .documents-draft-file__progress-text::before{' +
+      'content:"";display:block;width:8px;height:8px;border-radius:999px;background:#2563eb;' +
+      '}' +
+      '.documents-draft-file--ready .documents-draft-file__progress{' +
+      'background:#22c55e;color:#fff;' +
+      '}' +
+      '.documents-draft-file--ready .documents-draft-file__progress::after{' +
+      'display:none;' +
+      '}' +
+      '.documents-draft-file--error{' +
+      'border-color:#fecaca;background:#fff7f7;' +
+      '}' +
+      '.documents-draft-file--error .documents-draft-file__progress{' +
+      'background:#ef4444;color:#fff;' +
+      '}' +
+      '.documents-draft-file--error .documents-draft-file__progress::after{' +
+      'display:none;' +
+      '}' +
+      '.documents-draft-file--removed{' +
+      'opacity:.55;' +
+      '}' +
+      '.documents-upload-progress.is-active{' +
+      'display:block;' +
+      '}' +
+      '.documents-upload-progress:not(.is-active){' +
+      'display:none;' +
+      '}';
+    document.head.appendChild(style);
+  }
+
+  function delay(ms) {
+    return new Promise(function(resolve) {
+      setTimeout(resolve, Math.max(0, Number(ms) || 0));
+    });
+  }
+
+  function waitForBrowserFrame() {
+    return new Promise(function(resolve) {
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          resolve();
+        });
+        return;
+      }
+      setTimeout(resolve, 0);
+    });
+  }
+
+  function runSequentialUploadStep(stepFactory) {
+    return Promise.resolve().then(stepFactory).then(function(result) {
+      return waitForBrowserFrame()
+        .then(function() {
+          return delay(DOCUMENTS_UPLOAD_STEP_DELAY);
+        })
+        .then(function() {
+          return result;
+        });
+    });
   }
 
   function resolveDocumentsCollection(payload) {
@@ -19806,14 +20372,14 @@
     }
     if (data && data.userId !== undefined && data.userId !== null) {
       var resolvedId = String(data.userId).trim();
-      if (resolvedId) {
+      if (/^-?\d{4,20}$/.test(resolvedId)) {
         state.telegramUserId = resolvedId;
       }
     } else if (data && data.user && typeof data.user === 'object') {
       var candidateId = data.user.id !== undefined && data.user.id !== null
         ? String(data.user.id).trim()
         : '';
-      if (candidateId) {
+      if (/^-?\d{4,20}$/.test(candidateId)) {
         state.telegramUserId = candidateId;
       }
     }
@@ -20369,7 +20935,13 @@
       }
       var nextFiles = pendingFiles.slice();
       var addedCount = 0;
+      var rejectedMessages = [];
       files.forEach(function(file) {
+        var validationError = validateAttachmentFile(file);
+        if (validationError) {
+          rejectedMessages.push(validationError);
+          return;
+        }
         var duplicate = nextFiles.some(function(item) {
           return item.name === file.name && item.size === file.size && item.lastModified === file.lastModified;
         });
@@ -20378,9 +20950,18 @@
           addedCount += 1;
         }
       });
+      var totalErrors = validateAttachmentFiles(nextFiles, []);
+      if (totalErrors.length) {
+        rejectedMessages = rejectedMessages.concat(totalErrors);
+        nextFiles = pendingFiles.slice();
+        addedCount = 0;
+      }
       pendingFiles = nextFiles;
       renderTable();
-      if (addedCount && sourceLabel) {
+      if (rejectedMessages.length) {
+        showMessage('warning', rejectedMessages.slice(0, 3).join(' '));
+      }
+      if (addedCount && sourceLabel && !rejectedMessages.length) {
         showMessage('success', 'Добавлено файлов: ' + addedCount + ' (' + sourceLabel + ').');
       }
       return addedCount;
@@ -20551,7 +21132,7 @@
         tbody.appendChild(row);
       });
 
-      pendingFiles.forEach(function(file, index) {
+      pendingFiles.slice(0, DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT).forEach(function(file, index) {
         var row = createElement('tr', '');
         var nameCell = createElement('td', '');
         var fileBox = createElement('div', 'documents-responses-file');
@@ -20575,6 +21156,13 @@
         row.appendChild(actionCell);
         tbody.appendChild(row);
       });
+      if (pendingFiles.length > DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT) {
+        var hiddenRow = createElement('tr', '');
+        var hiddenCell = createElement('td', '', 'Ещё файлов ожидает загрузки: ' + (pendingFiles.length - DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT));
+        hiddenCell.colSpan = 4;
+        hiddenRow.appendChild(hiddenCell);
+        tbody.appendChild(hiddenRow);
+      }
 
       var pendingMessage = normalizeTextInputValue(messageInput.value);
       if (pendingMessage) {
@@ -20670,36 +21258,52 @@
           renderTable();
         });
       }
+      var pendingFileErrors = validateAttachmentFiles(pendingFiles, []);
+      if (pendingFileErrors.length) {
+        showMessage('error', pendingFileErrors.slice(0, 3).join(' '));
+        return Promise.reject(new Error(pendingFileErrors[0]));
+      }
       saveButton.disabled = true;
       addButton.disabled = true;
       aiButton.disabled = true;
       closeButton.disabled = true;
-      var formData = new FormData();
-      formData.append('action', 'response_upload');
-      formData.append('organization', state.organization);
-      formData.append('documentId', currentDoc.id);
-      if (responseMessage) {
-        formData.append('responseMessage', responseMessage);
-      }
-      pendingFiles.forEach(function(file) {
-        formData.append('attachments[]', file);
-      });
-      appendTelegramUserIdToFormData(formData);
-      return fetch(buildApiUrl('response_upload', { organization: state.organization }), {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: formData
-      })
-        .then(handleResponse)
-        .then(function(data) {
+      var uploadBatches = pendingFiles.length
+        ? splitFilesToBatches(pendingFiles, DOCUMENTS_UPLOAD_BATCH_SIZE)
+        : [[]];
+      var latestData = null;
+      return uploadBatches.reduce(function(chain, batch, batchIndex) {
+        return chain.then(function() {
+          return runSequentialUploadStep(function() {
+            var formData = new FormData();
+            formData.append('action', 'response_upload');
+            formData.append('organization', state.organization);
+            formData.append('documentId', currentDoc.id);
+            if (responseMessage && batchIndex === 0) {
+              formData.append('responseMessage', responseMessage);
+            }
+            batch.forEach(function(file) {
+              formData.append('attachments[]', file);
+            });
+            appendTelegramUserIdToFormData(formData);
+            return uploadFormDataWithProgress(buildApiUrl('response_upload', { organization: state.organization }), formData)
+              .then(function(data) {
+                latestData = data;
+                return data;
+              });
+          });
+        });
+      }, Promise.resolve())
+        .then(function() {
+          if (latestData) {
+            updateStateFromPayload(latestData);
+          }
           pendingFiles = [];
           messageInput.value = '';
           editingResponse = null;
           updateMessageCounter();
-          updateStateFromPayload(data);
           syncCurrentDoc();
           renderTable();
-          showMessage('success', data && data.message ? data.message : 'Ответы загружены.');
+          showMessage('success', latestData && latestData.message ? latestData.message : 'Ответы загружены.');
         })
         .finally(function() {
           saveButton.disabled = false;
@@ -21251,6 +21855,7 @@
 
     runWithResponsibles(function() {
       var isEditMode = Boolean(doc && doc.id);
+      ensureDocumentDraftUploadStyle();
       var modal = createElement('div', 'documents-modal');
       var shell = createElement('div', 'documents-modal__shell');
       var title = createElement('h3', 'documents-modal__title', 'Добавить документ');
@@ -21395,6 +22000,7 @@
 
       var attachmentsField = addField({ name: 'attachments[]', label: 'Файлы', type: 'file' });
       attachmentsField.input.multiple = true;
+      attachmentsField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
       attachmentsField.field.classList.add('documents-form__field--file');
       attachmentsField.input.classList.add('documents-file-input');
 
@@ -21457,10 +22063,221 @@
 
       attachmentsField.field.appendChild(attachmentsWrapper);
 
-      var attachmentsDataTransfer = new DataTransfer();
+      var attachmentsDataTransfer = typeof DataTransfer === 'function' ? new DataTransfer() : null;
       var attachmentsStore = [];
       var existingAttachments = Array.isArray(doc && doc.files) ? doc.files.slice() : [];
       var removedAttachmentKeys = Object.create(null);
+      var draftUploadSummaryNode = null;
+      var selectedAttachmentStates = Object.create(null);
+      var selectedAttachmentRowsByKey = Object.create(null);
+      var formSubmitting = false;
+
+      function getSelectedFileKey(file) {
+        if (!file || typeof file !== 'object') {
+          return '';
+        }
+        return [
+          file.name || '',
+          file.size || 0,
+          file.lastModified || 0
+        ].join('::');
+      }
+
+      function clampAttachmentProgress(progress) {
+        return Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+      }
+
+      function getSelectedAttachmentState(file) {
+        var key = getSelectedFileKey(file);
+        if (!key || !selectedAttachmentStates[key]) {
+          return {
+            status: 'queued',
+            progress: 0,
+            message: ''
+          };
+        }
+
+        return selectedAttachmentStates[key];
+      }
+
+      function resolveSelectedAttachmentDisplay(file) {
+        var stateData = getSelectedAttachmentState(file);
+        var status = stateData.status || 'queued';
+        var progress = clampAttachmentProgress(stateData.progress);
+        var statusLabel = stateData.message || '';
+        var progressText = '•';
+
+        if (status === 'uploading') {
+          statusLabel = statusLabel || ('Загружается: ' + progress + '%');
+          progressText = String(progress);
+        } else if (status === 'ready') {
+          progress = 100;
+          statusLabel = statusLabel || 'Загружен в задачу';
+          progressText = '✓';
+        } else if (status === 'error') {
+          progress = 100;
+          statusLabel = statusLabel || 'Не загружен';
+          progressText = '!';
+        } else {
+          status = 'queued';
+          statusLabel = statusLabel || (isEditMode ? 'Ожидает сохранения изменений' : 'Ожидает сохранения в задачу');
+        }
+
+        return {
+          status: status,
+          progress: progress,
+          statusLabel: statusLabel,
+          progressText: progressText
+        };
+      }
+
+      function refreshSelectedAttachmentRow(file) {
+        var key = getSelectedFileKey(file);
+        if (!key || !selectedAttachmentRowsByKey[key]) {
+          return;
+        }
+        var row = selectedAttachmentRowsByKey[key];
+        var display = resolveSelectedAttachmentDisplay(file);
+        row.item.classList.remove(
+          'documents-draft-file--queued',
+          'documents-draft-file--local',
+          'documents-draft-file--uploading',
+          'documents-draft-file--ready',
+          'documents-draft-file--error'
+        );
+        row.item.classList.add('documents-draft-file--' + display.status);
+        row.progress.style.setProperty('--progress', display.progress + '%');
+        row.progressText.textContent = display.progressText;
+        row.meta.textContent = formatFileSize(file.size || 0) + ' · ' + display.statusLabel;
+        if (row.removeButton) {
+          row.removeButton.disabled = formSubmitting;
+        }
+      }
+
+      function setSelectedAttachmentState(file, status, progress, message, options) {
+        var key = getSelectedFileKey(file);
+        if (!key) {
+          return;
+        }
+        selectedAttachmentStates[key] = {
+          status: status || 'queued',
+          progress: clampAttachmentProgress(progress),
+          message: message || ''
+        };
+        if (!options || options.refresh !== false) {
+          refreshSelectedAttachmentRow(file);
+          refreshDraftUploadSummary();
+        }
+      }
+
+      function setSelectedAttachmentStates(files, status, progress, message, options) {
+        (Array.isArray(files) ? files : []).forEach(function(file) {
+          setSelectedAttachmentState(file, status, progress, message, options);
+        });
+        if (!options || options.refresh !== false) {
+          refreshDraftUploadSummary();
+        }
+      }
+
+      function markPendingSelectedAttachmentsError(files, message) {
+        (Array.isArray(files) ? files : []).forEach(function(file) {
+          var stateData = getSelectedAttachmentState(file);
+          if (stateData.status === 'ready') {
+            return;
+          }
+          setSelectedAttachmentState(file, 'error', 100, message || 'Не загружен', { refresh: false });
+          refreshSelectedAttachmentRow(file);
+        });
+        refreshDraftUploadSummary();
+      }
+
+      function pruneSelectedAttachmentStates(files) {
+        var keep = Object.create(null);
+        (Array.isArray(files) ? files : []).forEach(function(file) {
+          var key = getSelectedFileKey(file);
+          if (key) {
+            keep[key] = true;
+          }
+        });
+        for (var key in selectedAttachmentStates) {
+          if (Object.prototype.hasOwnProperty.call(selectedAttachmentStates, key) && !keep[key]) {
+            delete selectedAttachmentStates[key];
+          }
+        }
+      }
+
+      function buildDraftUploadSummary(files) {
+        var total = Array.isArray(files) ? files.length : 0;
+
+        if (!total) {
+          return { text: '', variant: 'loading' };
+        }
+
+        var readyCount = 0;
+        var errorCount = 0;
+        var uploadingCount = 0;
+        var waitingCount = 0;
+
+        files.forEach(function(file) {
+          var stateData = getSelectedAttachmentState(file);
+          if (stateData.status === 'ready') {
+            readyCount += 1;
+          } else if (stateData.status === 'error') {
+            errorCount += 1;
+          } else if (stateData.status === 'uploading') {
+            uploadingCount += 1;
+          } else {
+            waitingCount += 1;
+          }
+        });
+
+        if (errorCount > 0) {
+          return {
+            text: 'Не загружено: ' + errorCount + ' из ' + total,
+            variant: 'error'
+          };
+        }
+
+        if (readyCount === total) {
+          return {
+            text: 'Загружено: ' + readyCount + ' из ' + total,
+            variant: 'ready'
+          };
+        }
+
+        if (uploadingCount > 0) {
+          return {
+            text: 'Загрузка: ' + readyCount + ' из ' + total,
+            variant: 'loading'
+          };
+        }
+
+        return {
+          text: 'Ожидает: ' + waitingCount + ' из ' + total,
+          variant: 'loading'
+        };
+      }
+
+      function refreshDraftUploadSummary() {
+        if (!draftUploadSummaryNode) {
+          return;
+        }
+        var summary = buildDraftUploadSummary(attachmentsStore);
+        draftUploadSummaryNode.textContent = summary.text;
+        draftUploadSummaryNode.classList.remove(
+          'documents-file__group-count--ready',
+          'documents-file__group-count--error',
+          'documents-file__group-count--loading'
+        );
+        draftUploadSummaryNode.classList.add('documents-file__group-count--' + summary.variant);
+      }
+
+      function updateSubmitButtonForDraftUploads() {
+        if (isEditMode || formSubmitting) {
+          return;
+        }
+        submitButton.textContent = 'Добавить';
+      }
 
       function openAiBriefPreviewModal(fileName, briefText) {
         openAttachmentAiBriefModal(fileName, briefText);
@@ -21468,6 +22285,9 @@
 
       function logFilesDiagnostics(action, details) {
         if (typeof sendClientDiagnostics !== 'function') {
+          return;
+        }
+        if (['submit-create', 'submit-update'].indexOf(action) === -1) {
           return;
         }
         var payload = {
@@ -21557,6 +22377,8 @@
 
       function renderAttachmentsSummary(files) {
         attachmentsSummary.innerHTML = '';
+        draftUploadSummaryNode = null;
+        selectedAttachmentRowsByKey = Object.create(null);
 
         var existingVisible = existingAttachments.filter(function(file) {
           var keys = collectAttachmentKeys(file);
@@ -21584,7 +22406,7 @@
           var existingTitle = createElement('div', 'documents-file__group-title', 'Текущие');
           existingGroup.appendChild(existingTitle);
           var existingList = createElement('div', 'documents-file__group-list');
-          existingVisible.forEach(function(file) {
+          existingVisible.slice(0, DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT).forEach(function(file) {
             var name = file.originalName || file.storedName || file.fileName || resolveAttachmentUrlName(file) || 'Файл';
             var key = resolveAttachmentKey(file) || name;
             var badge = buildAttachmentBadge(name, {
@@ -21617,66 +22439,131 @@
             });
             existingList.appendChild(badge);
           });
+          if (existingVisible.length > DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT) {
+            existingList.appendChild(createElement(
+              'span',
+              'documents-file__badge documents-file__badge--existing',
+              'Ещё файлов: ' + (existingVisible.length - DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT)
+            ));
+          }
           existingGroup.appendChild(existingList);
           attachmentsSummary.appendChild(existingGroup);
         }
 
         if (files.length) {
           var newGroup = createElement('div', 'documents-file__group');
-          var newTitle = createElement('div', 'documents-file__group-title', 'Новые');
+          var newTitle = createElement('div', 'documents-file__group-title documents-file__group-title--status');
+          newTitle.appendChild(createElement('span', '', 'Новые'));
+          draftUploadSummaryNode = createElement('span', 'documents-file__group-count');
+          newTitle.appendChild(draftUploadSummaryNode);
+          refreshDraftUploadSummary();
           newGroup.appendChild(newTitle);
           var newList = createElement('div', 'documents-file__group-list');
-          files.forEach(function(file, index) {
-            var itemWrap = createElement('div', 'documents-file__item');
-            var badge = buildAttachmentBadge(file.name, {
-              variant: 'new',
-              removable: true,
-              onRemove: function() {
-                if (index < 0 || index >= attachmentsStore.length) {
-                  return;
-                }
-                var beforeCount = attachmentsStore.length;
-                attachmentsStore.splice(index, 1);
-                syncAttachmentsInput();
-                logFilesDiagnostics('remove-new', {
-                  name: file.name,
-                  index: index,
-                  beforeCount: beforeCount,
-                  afterCount: attachmentsStore.length
-                });
-                renderAttachmentsSummary(attachmentsStore);
+          files.slice(0, DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT).forEach(function(file, index) {
+            var fileKey = getSelectedFileKey(file);
+            var display = resolveSelectedAttachmentDisplay(file);
+            var itemWrap = createElement('div', 'documents-draft-file documents-draft-file--' + display.status);
+            var progressRing = createElement('span', 'documents-draft-file__progress');
+            progressRing.style.setProperty('--progress', display.progress + '%');
+            var progressTextNode = createElement('span', 'documents-draft-file__progress-text', display.progressText);
+            progressRing.appendChild(progressTextNode);
+            var itemBody = createElement('div', 'documents-draft-file__body');
+            itemBody.appendChild(createElement('div', 'documents-draft-file__name', file.name || 'Файл'));
+            var metaNode = createElement('div', 'documents-draft-file__meta', formatFileSize(file.size || 0) + ' · ' + display.statusLabel);
+            itemBody.appendChild(metaNode);
+            var removeButton = createElement('button', 'documents-draft-file__remove', '×');
+            removeButton.type = 'button';
+            removeButton.disabled = formSubmitting;
+            removeButton.setAttribute('aria-label', 'Удалить файл');
+            removeButton.addEventListener('click', function(event) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (index < 0 || index >= attachmentsStore.length) {
+                return;
               }
+              var removedFile = attachmentsStore[index];
+              var removedKey = getSelectedFileKey(removedFile);
+              var beforeCount = attachmentsStore.length;
+              attachmentsStore.splice(index, 1);
+              if (removedKey && selectedAttachmentStates[removedKey]) {
+                delete selectedAttachmentStates[removedKey];
+              }
+              syncAttachmentsInput();
+              updateSubmitButtonForDraftUploads();
+              logFilesDiagnostics('remove-new', {
+                name: file.name,
+                index: index,
+                beforeCount: beforeCount,
+                afterCount: attachmentsStore.length
+              });
+              renderAttachmentsSummary(attachmentsStore);
             });
-            itemWrap.appendChild(badge);
+            itemWrap.appendChild(progressRing);
+            itemWrap.appendChild(itemBody);
+            itemWrap.appendChild(removeButton);
+            if (fileKey) {
+              selectedAttachmentRowsByKey[fileKey] = {
+                item: itemWrap,
+                progress: progressRing,
+                progressText: progressTextNode,
+                meta: metaNode,
+                removeButton: removeButton
+              };
+            }
             newList.appendChild(itemWrap);
           });
+          if (files.length > DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT) {
+            newList.appendChild(createElement(
+              'span',
+              'documents-file__badge documents-file__badge--new',
+              'Ещё файлов: ' + (files.length - DOCUMENTS_ATTACHMENT_VISIBLE_LIMIT)
+            ));
+          }
           newGroup.appendChild(newList);
           attachmentsSummary.appendChild(newGroup);
         }
+        updateSubmitButtonForDraftUploads();
       }
 
       function syncAttachmentsInput() {
-        attachmentsDataTransfer = new DataTransfer();
-        attachmentsStore.forEach(function(file) {
-          attachmentsDataTransfer.items.add(file);
-        });
-        attachmentsField.input.files = attachmentsDataTransfer.files;
+        if (typeof DataTransfer !== 'function') {
+          return;
+        }
+        try {
+          attachmentsDataTransfer = new DataTransfer();
+          attachmentsStore.forEach(function(file) {
+            attachmentsDataTransfer.items.add(file);
+          });
+          attachmentsField.input.files = attachmentsDataTransfer.files;
+        } catch (error) {
+          docsLogger.warn('Не удалось синхронизировать input.files:', error);
+        }
       }
 
       function syncAttachments(files, append, source) {
         if (!append) {
           attachmentsStore = [];
+          selectedAttachmentStates = Object.create(null);
+          selectedAttachmentRowsByKey = Object.create(null);
         }
 
         var currentFiles = attachmentsStore.slice();
         var addedCount = 0;
         var duplicateCount = 0;
+        var rejectedCount = 0;
         var addedFiles = [];
         var incomingNames = [];
         var duplicateNames = [];
+        var rejectedMessages = [];
 
         files.forEach(function(file) {
           incomingNames.push(file.name);
+          var validationError = validateAttachmentFile(file);
+          if (validationError) {
+            rejectedCount += 1;
+            rejectedMessages.push(validationError);
+            return;
+          }
           var isDuplicate = currentFiles.some(function(existingFile) {
             return (
               existingFile.name === file.name &&
@@ -21695,9 +22582,37 @@
           }
         });
 
+        var totalErrors = validateAttachmentFiles(currentFiles, existingAttachments);
+        if (totalErrors.length) {
+          addedFiles.forEach(function(file) {
+            var index = currentFiles.indexOf(file);
+            if (index !== -1) {
+              currentFiles.splice(index, 1);
+            }
+          });
+          addedCount = 0;
+          rejectedCount += addedFiles.length;
+          rejectedMessages = rejectedMessages.concat(totalErrors);
+        }
+
         attachmentsStore = currentFiles.slice();
+        addedFiles.forEach(function(file) {
+          var key = getSelectedFileKey(file);
+          if (key && !selectedAttachmentStates[key]) {
+            selectedAttachmentStates[key] = {
+              status: 'queued',
+              progress: 0,
+              message: ''
+            };
+          }
+        });
+        pruneSelectedAttachmentStates(attachmentsStore);
         syncAttachmentsInput();
         renderAttachmentsSummary(attachmentsStore);
+
+        if (rejectedMessages.length) {
+          showMessage('warning', rejectedMessages.slice(0, 3).join(' '));
+        }
 
         logFilesDiagnostics('sync', {
           source: source || 'unknown',
@@ -21705,9 +22620,11 @@
           incomingCount: files.length,
           addedCount: addedCount,
           duplicateCount: duplicateCount,
+          rejectedCount: rejectedCount,
           totalCount: attachmentsStore.length,
           incomingNames: incomingNames.slice(0, 10),
-          duplicateNames: duplicateNames.slice(0, 10)
+          duplicateNames: duplicateNames.slice(0, 10),
+          rejectedMessages: rejectedMessages.slice(0, 5)
         });
       }
 
@@ -21860,17 +22777,39 @@
         return combinedAssignees;
       }
 
-      form.addEventListener('submit', function(event) {
+      form.addEventListener('submit', async function(event) {
         event.preventDefault();
         clearMessage();
+        formSubmitting = true;
         submitButton.disabled = true;
         setUploadProgressActive(true);
         updateUploadProgress(5, 'Подготавливаем данные формы…', 'is-stage-preparing');
         var formData = new FormData();
         var attachmentFiles = attachmentsStore.slice();
+        var attachmentErrors = validateAttachmentFiles(attachmentFiles, existingAttachments.filter(function(file) {
+          var keys = collectAttachmentKeys(file);
+          if (!keys.length) {
+            return true;
+          }
+          for (var i = 0; i < keys.length; i += 1) {
+            if (removedAttachmentKeys[keys[i]]) {
+              return false;
+            }
+          }
+          return true;
+        }));
         var updateFields = null;
 
+        if (attachmentErrors.length) {
+          formSubmitting = false;
+          submitButton.disabled = false;
+          setUploadProgressActive(false);
+          showMessage('error', attachmentErrors.slice(0, 3).join(' '));
+          return;
+        }
+
         if (!isEditMode && !directorSelect.value) {
+          formSubmitting = false;
           submitButton.disabled = false;
           setUploadProgressActive(false);
           directorSelect.focus();
@@ -21879,6 +22818,7 @@
         }
 
         if (assigneesEditor.hasMissingTelegramSelection()) {
+          formSubmitting = false;
           submitButton.disabled = false;
           setUploadProgressActive(false);
           showMessage('error', TELEGRAM_MISSING_MESSAGE);
@@ -21887,6 +22827,7 @@
 
         correspondentField.input.value = normalizeTextInputValue(correspondentField.input.value);
         if (!correspondentField.input.value) {
+          formSubmitting = false;
           submitButton.disabled = false;
           setUploadProgressActive(false);
           correspondentField.input.focus();
@@ -21958,6 +22899,14 @@
           formData.append('action', 'create');
           formData.append('organization', state.organization);
           setFormDataValue(formData, 'correspondent', createFields.correspondent);
+          if (typeof formData.delete === 'function') {
+            formData.delete('attachments[]');
+          }
+          if (attachmentFiles.length) {
+            attachmentFiles.forEach(function(file) {
+              formData.append('attachments[]', file);
+            });
+          }
 
           if (typeof formData.delete === 'function') {
             formData.delete('assignee_name');
@@ -22002,32 +22951,68 @@
               formData.append('assignee_status', primaryAssignee.status);
             }
           }
-          if (typeof formData.delete === 'function') {
-            formData.delete('attachments[]');
-          }
-          attachmentFiles.forEach(function(file) {
-            formData.append('attachments[]', file);
-          });
           logFilesDiagnostics('submit-create', {
             newFilesCount: attachmentFiles.length,
-            newFileNames: attachmentFiles.map(function(file) { return file.name; }).slice(0, 10)
+            newFileNames: attachmentFiles.map(function(file) { return file.name; }).slice(0, 10),
+            directUploadCount: attachmentFiles.length
           });
         }
 
         appendTelegramUserIdToFormData(formData);
 
-        updateUploadProgress(12, 'Сохраняем карточку документа…', 'is-stage-uploading');
+        var directCreateUploadActive = !isEditMode && attachmentFiles.length > 0;
+        if (attachmentFiles.length) {
+          setSelectedAttachmentStates(
+            attachmentFiles,
+            'queued',
+            0,
+            isEditMode ? 'Ожидает сохранения карточки' : 'Ожидает отправки в задачу'
+          );
+        }
+
+        submitButton.textContent = isEditMode ? 'Сохраняем...' : 'Добавляем...';
+        if (directCreateUploadActive) {
+          setSelectedAttachmentStates(attachmentFiles, 'uploading', 0, 'Загружается: 0%');
+        }
+        updateUploadProgress(
+          12,
+          directCreateUploadActive ? 'Загружаем файлы сразу в задачу…' : 'Сохраняем карточку документа…',
+          'is-stage-uploading'
+        );
 
         uploadFormDataWithProgress(buildApiUrl(isEditMode ? 'update' : 'create'), formData, function(progress) {
-          var uploadPercent = 12;
+          var progressInsideRequest = 0;
           if (progress && progress.lengthComputable && progress.total > 0) {
-            uploadPercent = 12 + Math.round((progress.loaded / progress.total) * 18);
+            progressInsideRequest = progress.loaded / progress.total;
           }
-          uploadPercent = Math.max(12, Math.min(30, uploadPercent));
-          updateUploadProgress(uploadPercent, 'Сохраняем карточку документа…', 'is-stage-uploading');
+          var uploadPercent = directCreateUploadActive
+            ? 12 + Math.round(progressInsideRequest * 73)
+            : 12 + Math.round(progressInsideRequest * 18);
+          uploadPercent = Math.max(12, Math.min(directCreateUploadActive ? 85 : 30, uploadPercent));
+          if (directCreateUploadActive) {
+            var attachmentPercent = Math.max(1, Math.min(99, Math.round(progressInsideRequest * 100)));
+            setSelectedAttachmentStates(
+              attachmentFiles,
+              'uploading',
+              attachmentPercent,
+              'Загружается: ' + attachmentPercent + '%'
+            );
+          }
+          updateUploadProgress(
+            uploadPercent,
+            directCreateUploadActive ? 'Загружаем файлы сразу в задачу…' : 'Сохраняем карточку документа…',
+            'is-stage-uploading'
+          );
         })
           .then(function(data) {
-            updateUploadProgress(34, 'Документ сохранён. Готовим загрузку файлов…', 'is-stage-processing');
+            if (directCreateUploadActive) {
+              setSelectedAttachmentStates(attachmentFiles, 'ready', 100, 'Загружен в задачу');
+            }
+            updateUploadProgress(
+              isEditMode ? 34 : 95,
+              isEditMode ? 'Документ сохранён. Готовим загрузку файлов…' : 'Документ и файлы сохранены. Обновляем таблицу…',
+              'is-stage-processing'
+            );
             if (isEditMode) {
               docsLogger.log('Перезапись', {
                 action: 'submit-update-response',
@@ -22078,11 +23063,12 @@
             }
 
             var uploadPromise = Promise.resolve();
+            var latestUploadData = null;
             if (isEditMode && attachmentFiles.length && createdOrUpdatedDocumentId) {
               var batches = splitFilesToBatches(attachmentFiles, DOCUMENTS_UPLOAD_BATCH_SIZE);
               uploadPromise = batches.reduce(function(chain, batch, batchIndex) {
                 return chain.then(function() {
-                  return Promise.resolve().then(function() {
+                  return runSequentialUploadStep(function() {
                     var batchFormData = new FormData();
                     batchFormData.append('action', 'update');
                     batchFormData.append('organization', state.organization);
@@ -22091,18 +23077,34 @@
                       batchFormData.append('attachments[]', file);
                     });
                     appendTelegramUserIdToFormData(batchFormData);
+                    batch.forEach(function(file) {
+                      setSelectedAttachmentState(file, 'uploading', 0, 'Загружается: 0%');
+                    });
 
                     return uploadFormDataWithProgress(buildApiUrl('update'), batchFormData, function(progress) {
                       var progressInsideBatch = 0;
                       if (progress && progress.lengthComputable && progress.total > 0) {
                         progressInsideBatch = progress.loaded / progress.total;
                       }
+                      var attachmentPercent = Math.max(1, Math.min(99, Math.round(progressInsideBatch * 100)));
+                      batch.forEach(function(file) {
+                        setSelectedAttachmentState(
+                          file,
+                          'uploading',
+                          attachmentPercent,
+                          'Загружается: ' + attachmentPercent + '%'
+                        );
+                      });
                       var overallProgress = (batchIndex + progressInsideBatch) / batches.length;
                       var uploadPercent = 65 + Math.round(overallProgress * 30);
                       uploadPercent = Math.max(65, Math.min(95, uploadPercent));
                       updateUploadProgress(uploadPercent, 'Загружаем файлы: ' + (batchIndex + 1) + '/' + batches.length, 'is-stage-uploading');
                     }).then(function(batchData) {
-                      updateStateFromPayload(batchData);
+                      batch.forEach(function(file) {
+                        setSelectedAttachmentState(file, 'ready', 100, 'Загружен в задачу');
+                      });
+                      latestUploadData = batchData;
+                      return batchData;
                     });
                   });
                 });
@@ -22110,6 +23112,9 @@
             }
 
             return uploadPromise.then(function() {
+              if (latestUploadData) {
+                updateStateFromPayload(latestUploadData);
+              }
               closeModal(modal);
               if (data && data.message) {
                 showMessage('success', data.message);
@@ -22117,38 +23122,27 @@
                 showMessage('success', isEditMode ? 'Документ обновлён.' : 'Документ добавлен.');
               }
               updateUploadProgress(100, 'Готово. Документ и файлы успешно сохранены.', 'is-stage-success');
-              return refreshRegistrySilently().catch(function(error) {
-                docsLogger.warn('Перезапись', {
-                  action: 'refresh-after-save-error',
-                  documentId: doc && doc.id ? doc.id : null,
-                  message: error && error.message ? error.message : String(error)
-                });
-                if (typeof window !== 'undefined' && window.refreshDocumentsRegistry) {
-                  return window.refreshDocumentsRegistry().catch(function(fallbackError) {
-                    docsLogger.warn('Перезапись', {
-                      action: 'refresh-after-save-fallback-error',
-                      documentId: doc && doc.id ? doc.id : null,
-                      message: fallbackError && fallbackError.message ? fallbackError.message : String(fallbackError)
-                    });
-                    return null;
-                  });
-                }
-                return null;
-              });
+              return null;
             });
           })
           .catch(function(error) {
+            var errorMessage = error && error.message ? error.message : 'повторите попытку.';
+            formSubmitting = false;
             submitButton.disabled = false;
+            updateSubmitButtonForDraftUploads();
+            if (attachmentFiles.length) {
+              markPendingSelectedAttachmentsError(attachmentFiles, 'Не загружен: ' + errorMessage);
+            }
             setUploadProgressActive(true);
-            updateUploadProgress(Math.max(uploadState.percent, 12), 'Ошибка загрузки: ' + (error && error.message ? error.message : 'повторите попытку.'), 'is-stage-error');
+            updateUploadProgress(Math.max(uploadState.percent, 12), 'Ошибка загрузки: ' + errorMessage, 'is-stage-error');
             if (isEditMode) {
               docsLogger.warn('Перезапись', {
                 action: 'submit-update-error',
                 documentId: doc && doc.id ? doc.id : null,
-                message: error && error.message ? error.message : String(error)
+                message: errorMessage
               });
             }
-            showMessage('error', 'Не удалось сохранить документ: ' + error.message);
+            showMessage('error', 'Не удалось сохранить документ: ' + errorMessage);
           });
       });
 
@@ -22820,22 +23814,35 @@
 
     var settingsButton = document.getElementById('documents-settings-button');
     if (settingsButton && !settingsButton.dataset.settingsBound) {
+      configureHeaderIconButton(settingsButton, 'settings', 'Настройки документооборота');
       settingsButton.dataset.settingsBound = 'true';
       settingsButton.addEventListener('click', function() {
         if (window.docsSettings && typeof window.docsSettings.open === 'function') {
           window.docsSettings.open();
         }
       });
+    } else if (settingsButton) {
+      configureHeaderIconButton(settingsButton, 'settings', 'Настройки документооборота');
     }
 
     var onlineButton = document.getElementById('documents-online-button');
     if (onlineButton && !onlineButton.dataset.onlineBound) {
       onlineButton.dataset.onlineBound = 'true';
       var counter = onlineButton.querySelector('.documents-online__counter');
+      configureHeaderIconButton(onlineButton, 'users', 'Показать пользователей онлайн');
+      if (counter) {
+        onlineButton.appendChild(counter);
+      }
       elements.onlineCounter = counter;
       onlineButton.addEventListener('click', function() {
         openOnlineModal();
       });
+    } else if (onlineButton) {
+      var existingCounter = onlineButton.querySelector('.documents-online__counter');
+      configureHeaderIconButton(onlineButton, 'users', 'Показать пользователей онлайн');
+      if (existingCounter) {
+        onlineButton.appendChild(existingCounter);
+      }
     }
 
     var buttonContainer = null;
@@ -22866,6 +23873,10 @@
         toggleResponsibleFilter();
       });
     }
+    if (responsibleButton) {
+      responsibleButton.title = 'Показать документы ответственного';
+      responsibleButton.setAttribute('aria-label', 'Показать документы ответственного');
+    }
 
     var unviewedButton = document.getElementById('documents-unviewed-button');
     var unviewedCounter = null;
@@ -22895,9 +23906,15 @@
         toggleUnviewedFilter();
       });
     }
+    if (unviewedButton) {
+      unviewedButton.title = 'Показать непросмотренные документы';
+      unviewedButton.setAttribute('aria-label', 'Показать непросмотренные документы');
+    }
 
     var message = createElement('div', 'documents-message');
     var tableToolbar = createElement('div', 'documents-table-toolbar');
+    tableToolbar.classList.add('documents-table-toolbar--collapsed');
+    var toolsToggle = createDocumentsToolsToggle();
     var tabsBar = createElement('div', 'documents-tabs');
     var tableTools = createElement('div', 'documents-table-tools');
     var moveModeButton = createToolbarButton('move', 'Перемещение', { pressed: true });
@@ -22971,6 +23988,19 @@
     var globalSearchIcon = createElement('span', 'documents-global-search__icon');
     globalSearchIcon.appendChild(createSvgIcon('search', 'documents-global-search__svg'));
     globalSearchWrap.appendChild(globalSearchIcon);
+    toolsToggle.addEventListener('click', function(event) {
+      event.preventDefault();
+      var expanded = tableToolbar.classList.contains('documents-table-toolbar--collapsed');
+      tableToolbar.classList.toggle('documents-table-toolbar--collapsed', !expanded);
+      syncDocumentsToolsToggle(toolsToggle, expanded);
+      if (!expanded) {
+        closeToolbarMenu();
+        closeColumnsPopover();
+      }
+    });
+    if (!arrangeDocumentsHeaderControls(toolsToggle, buttonContainer)) {
+      tableToolbar.appendChild(toolsToggle);
+    }
     tableToolbar.appendChild(tabsBar);
     tableTools.appendChild(moveModeButton);
     tableTools.appendChild(columnsButton);
@@ -23177,6 +24207,7 @@
     elements.settingsButton = settingsButton;
     elements.message = message;
     elements.tableToolbar = tableToolbar;
+    elements.toolsToggle = toolsToggle;
     elements.filterModeButton = null;
     elements.sortModeButton = null;
     elements.moveModeButton = moveModeButton;
@@ -23253,7 +24284,6 @@
       }
       sendClientDiagnostics('start_documents', startDetails);
     }
-    requestSessionDiagnostics();
     state.admin.loaded = false;
     state.admin.settings = {
       responsibles: [],
@@ -23283,6 +24313,7 @@
       applyTablePreferences(initialTablePreferences, { render: false });
     }
     buildLayout(host);
+    preloadPdfPreviewAssets();
     applyVisualSettings(state.visualSettings);
     setToolbarState();
 

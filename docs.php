@@ -93,6 +93,23 @@ const DOCS_DOC_LOAD_LOG_FILE = DOCS_SERVER_LOG_DIRECTORY . '/1ЗагрузкаД
 const DOCS_VIEW_TRACE_LOG_FILE = DOCS_SERVER_LOG_DIRECTORY . '/Просмотреть.log';
 const DOCS_RESPONSE_LOG_FILE = DOCS_SERVER_LOG_DIRECTORY . '/Ответ.log';
 const DOCS_KRUGLIK_LOG_FILE = DOCS_SERVER_LOG_DIRECTORY . '/Kruglik.log';
+const DOCS_ATTACHMENT_MAX_FILE_SIZE = 26214400; // 25 МБ
+const DOCS_ATTACHMENT_BLOCKED_EXTENSIONS = [
+    'exe' => true,
+    'msi' => true,
+    'com' => true,
+    'bat' => true,
+    'cmd' => true,
+    'ps1' => true,
+    'vbs' => true,
+    'js' => true,
+    'jse' => true,
+    'scr' => true,
+    'dll' => true,
+    'php' => true,
+    'html' => true,
+    'htm' => true,
+];
 const TELEGRAM_BOT_TOKEN_SECURE_DIRECTORY = '/var/www/www-root/data/www/1/.ev';
 const TELEGRAM_INIT_DATA_MAX_AGE = 86400; // 24 часа
 const MINI_APP_PDF_CACHE_DIRECTORY = __DIR__ . '/cache/miniapp_pdf';
@@ -4072,6 +4089,39 @@ function docs_normalize_uploaded_filename(?string $name): string
     $normalized = trim($normalized);
 
     return $normalized !== '' ? $normalized : 'attachment';
+}
+
+function docs_format_file_size(int $size): string
+{
+    if ($size >= 1024 * 1024) {
+        $value = $size / (1024 * 1024);
+        return rtrim(rtrim(number_format($value, $value >= 10 ? 0 : 1, '.', ''), '0'), '.') . ' МБ';
+    }
+
+    if ($size >= 1024) {
+        return (string) ceil($size / 1024) . ' КБ';
+    }
+
+    return $size . ' Б';
+}
+
+function docs_validate_uploaded_attachment(string $originalName, int $size): ?string
+{
+    if ($size <= 0) {
+        return 'Файл «' . $originalName . '» пустой или повреждён.';
+    }
+
+    if ($size > DOCS_ATTACHMENT_MAX_FILE_SIZE) {
+        return 'Файл «' . $originalName . '» слишком большой: ' . docs_format_file_size($size)
+            . '. Максимум для одного файла — ' . docs_format_file_size(DOCS_ATTACHMENT_MAX_FILE_SIZE) . '.';
+    }
+
+    $extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
+    if ($extension !== '' && isset(DOCS_ATTACHMENT_BLOCKED_EXTENSIONS[$extension])) {
+        return 'Файл «' . $originalName . '» не похож на документ. Загрузите PDF, изображение, DOCX/XLSX или архив.';
+    }
+
+    return null;
 }
 
 function sanitize_status(?string $value, bool $useDefault = false): string
@@ -15671,12 +15721,28 @@ switch ($action) {
             }
         }
 
+        $matchedUserId = '';
+        if (is_array($matchedDirectoryEntry)) {
+            foreach (['id', 'userId', 'user_id', 'number', 'responsibleNumber', 'responsible_number', 'login'] as $field) {
+                if (!isset($matchedDirectoryEntry[$field])) {
+                    continue;
+                }
+                $candidate = sanitize_text_field((string) $matchedDirectoryEntry[$field], 120);
+                if ($candidate !== '') {
+                    $matchedUserId = $candidate;
+                    break;
+                }
+            }
+        }
+
         $userInfo = null;
         if (isset($requestContext['user']) && is_array($requestContext['user']) && !empty($requestContext['user'])) {
             $userInfo = array_filter([
                 'id' => isset($requestContext['user']['id']) && $requestContext['user']['id'] !== ''
                     ? (string) $requestContext['user']['id']
                     : ($telegramUserId !== '' ? $telegramUserId : null),
+                'userId' => $matchedUserId !== '' ? $matchedUserId : null,
+                'telegramId' => $telegramUserId !== '' ? $telegramUserId : null,
                 'username' => $requestContext['user']['username'] ?? null,
                 'firstName' => $requestContext['user']['firstName'] ?? null,
                 'lastName' => $requestContext['user']['lastName'] ?? null,
@@ -15692,6 +15758,8 @@ switch ($action) {
         } elseif ($telegramUserId !== '') {
             $userInfo = [
                 'id' => $telegramUserId,
+                'userId' => $matchedUserId !== '' ? $matchedUserId : null,
+                'telegramId' => $telegramUserId,
                 'position' => $resolvedUserPosition,
             ];
         }
@@ -18541,6 +18609,19 @@ switch ($action) {
             static fn($value): string => sanitize_text_field((string) $value, 2000),
             $attachmentsAiBriefRaw
         );
+        $createdUploadTargets = [];
+        $failCreateUpload = static function (string $message, int $status = 500, array $details = []) use (&$createdUploadTargets, &$registryHandle): void {
+            foreach ($createdUploadTargets as $createdUploadTarget) {
+                if (is_string($createdUploadTarget) && $createdUploadTarget !== '' && is_file($createdUploadTarget)) {
+                    @unlink($createdUploadTarget);
+                }
+            }
+            if ($registryHandle !== null) {
+                docs_unlock_registry($registryHandle);
+                $registryHandle = null;
+            }
+            respond_error($message, $status, $details);
+        };
 
         if (!empty($_FILES['attachments']) && isset($_FILES['attachments']['name'])) {
             $names = $_FILES['attachments']['name'];
@@ -18562,16 +18643,36 @@ switch ($action) {
                 $count = count($names);
                 for ($i = 0; $i < $count; $i++) {
                     if (!isset($errors[$i]) || $errors[$i] !== UPLOAD_ERR_OK) {
+                        $uploadError = isset($errors[$i]) ? (int) $errors[$i] : UPLOAD_ERR_NO_FILE;
+                        $uploadName = isset($names[$i]) ? docs_normalize_uploaded_filename((string) $names[$i]) : 'Файл';
                         docs_log_file_debug('files:create skipped upload error', [
                             'documentId' => $documentId,
                             'index' => $i,
                             'name' => $names[$i] ?? '',
-                            'error' => $errors[$i] ?? null,
+                            'error' => $uploadError,
                         ]);
-                        continue;
+                        if ($uploadError === UPLOAD_ERR_NO_FILE && trim((string) ($names[$i] ?? '')) === '') {
+                            continue;
+                        }
+                        $failCreateUpload(
+                            'Задача не создана: не удалось загрузить файл «' . $uploadName . '». Повторите сохранение.',
+                            500,
+                            ['reason' => 'upload_error', 'uploadError' => $uploadError]
+                        );
                     }
 
                     $originalName = docs_normalize_uploaded_filename((string) $names[$i]);
+                    $validationError = docs_validate_uploaded_attachment($originalName, (int) ($sizes[$i] ?? 0));
+                    if ($validationError !== null) {
+                        docs_log_file_debug('files:create validation failed', [
+                            'documentId' => $documentId,
+                            'index' => $i,
+                            'name' => $originalName,
+                            'size' => $sizes[$i] ?? null,
+                            'error' => $validationError,
+                        ]);
+                        $failCreateUpload('Задача не создана: ' . $validationError, 422, ['reason' => 'invalid_attachment']);
+                    }
                     $tmpPath = (string) $tmpNames[$i];
                     if (!is_uploaded_file($tmpPath)) {
                         docs_log_file_debug('files:create temp file missing', [
@@ -18580,13 +18681,18 @@ switch ($action) {
                             'name' => $originalName,
                             'tmpPath' => $tmpPath,
                         ]);
-                        continue;
+                        $failCreateUpload(
+                            'Задача не создана: сервер не получил файл «' . $originalName . '». Повторите сохранение.',
+                            500,
+                            ['reason' => 'upload_tmp_missing']
+                        );
                     }
 
-                    $storedName = normalize_file_name($originalName, $record, $i + 1);
+                    $storedName = normalize_file_name($originalName, $record, count($record['files']) + 1);
                     $target = $dir . '/' . $storedName;
 
                     if (move_uploaded_file($tmpPath, $target)) {
+                        $createdUploadTargets[] = $target;
                         $aiBrief = isset($attachmentsAiBrief[$i]) ? trim((string) $attachmentsAiBrief[$i]) : '';
                         $record['files'][] = [
                             'originalName' => $originalName,
@@ -18611,15 +18717,31 @@ switch ($action) {
                             'storedName' => $storedName,
                             'target' => $target,
                         ]);
+                        $failCreateUpload(
+                            'Задача не создана: не удалось сохранить файл «' . $originalName . '» в хранилище.',
+                            500,
+                            ['reason' => 'upload_move_failed']
+                        );
                     }
                 }
             } elseif ($errors === UPLOAD_ERR_OK) {
                 $originalNameSingle = docs_normalize_uploaded_filename((string) $names);
+                $validationErrorSingle = docs_validate_uploaded_attachment($originalNameSingle, (int) ($sizes ?? 0));
+                if ($validationErrorSingle !== null) {
+                    docs_log_file_debug('files:create validation failed single', [
+                        'documentId' => $documentId,
+                        'name' => $originalNameSingle,
+                        'size' => $sizes ?? null,
+                        'error' => $validationErrorSingle,
+                    ]);
+                    $failCreateUpload('Задача не создана: ' . $validationErrorSingle, 422, ['reason' => 'invalid_attachment']);
+                }
                 $tmpPathSingle = (string) $tmpNames;
                 if (is_uploaded_file($tmpPathSingle)) {
-                    $storedNameSingle = normalize_file_name($originalNameSingle, $record);
+                    $storedNameSingle = normalize_file_name($originalNameSingle, $record, count($record['files']) + 1);
                     $targetSingle = $dir . '/' . $storedNameSingle;
                     if (move_uploaded_file($tmpPathSingle, $targetSingle)) {
+                        $createdUploadTargets[] = $targetSingle;
                         $aiBriefSingle = isset($attachmentsAiBrief[0]) ? trim((string) $attachmentsAiBrief[0]) : '';
                         $record['files'][] = [
                             'originalName' => $originalNameSingle,
@@ -18642,6 +18764,11 @@ switch ($action) {
                             'storedName' => $storedNameSingle,
                             'target' => $targetSingle,
                         ]);
+                        $failCreateUpload(
+                            'Задача не создана: не удалось сохранить файл «' . $originalNameSingle . '» в хранилище.',
+                            500,
+                            ['reason' => 'upload_move_failed']
+                        );
                     }
                 } else {
                     docs_log_file_debug('files:create temp file missing single', [
@@ -18649,13 +18776,29 @@ switch ($action) {
                         'name' => $originalNameSingle,
                         'tmpPath' => $tmpPathSingle,
                     ]);
+                    $failCreateUpload(
+                        'Задача не создана: сервер не получил файл «' . $originalNameSingle . '». Повторите сохранение.',
+                        500,
+                        ['reason' => 'upload_tmp_missing']
+                    );
                 }
             } else {
+                $uploadErrorSingle = (int) $errors;
+                $uploadNameSingle = is_string($names) && trim($names) !== ''
+                    ? docs_normalize_uploaded_filename($names)
+                    : 'Файл';
                 docs_log_file_debug('files:create skipped upload error single', [
                     'documentId' => $documentId,
                     'name' => is_string($names) ? $names : '',
-                    'error' => $errors,
+                    'error' => $uploadErrorSingle,
                 ]);
+                if ($uploadErrorSingle !== UPLOAD_ERR_NO_FILE || (is_string($names) && trim($names) !== '')) {
+                    $failCreateUpload(
+                        'Задача не создана: не удалось загрузить файл «' . $uploadNameSingle . '». Повторите сохранение.',
+                        500,
+                        ['reason' => 'upload_error', 'uploadError' => $uploadErrorSingle]
+                    );
+                }
             }
         } else {
             docs_log_file_debug('files:create no attachments', [
@@ -20111,6 +20254,20 @@ switch ($action) {
                             }
 
                             $originalName = docs_normalize_uploaded_filename((string) $names[$i]);
+                            $validationError = docs_validate_uploaded_attachment($originalName, (int) ($sizes[$i] ?? 0));
+                            if ($validationError !== null) {
+                                docs_log_file_debug('files:update validation failed', [
+                                    'documentId' => $documentId,
+                                    'index' => $i,
+                                    'name' => $originalName,
+                                    'size' => $sizes[$i] ?? null,
+                                    'error' => $validationError,
+                                ]);
+                                if ($registryHandle !== null) {
+                                    docs_unlock_registry($registryHandle);
+                                }
+                                respond_error($validationError, 422, ['reason' => 'invalid_attachment']);
+                            }
                             $tmpPath = (string) $tmpNames[$i];
                             if (!is_uploaded_file($tmpPath)) {
                                 docs_log_file_debug('files:update temp file missing', [
@@ -20155,6 +20312,19 @@ switch ($action) {
                         }
                     } elseif ($errors === UPLOAD_ERR_OK) {
                         $originalNameSingle = docs_normalize_uploaded_filename((string) $names);
+                        $validationErrorSingle = docs_validate_uploaded_attachment($originalNameSingle, (int) ($sizes ?? 0));
+                        if ($validationErrorSingle !== null) {
+                            docs_log_file_debug('files:update validation failed single', [
+                                'documentId' => $documentId,
+                                'name' => $originalNameSingle,
+                                'size' => $sizes ?? null,
+                                'error' => $validationErrorSingle,
+                            ]);
+                            if ($registryHandle !== null) {
+                                docs_unlock_registry($registryHandle);
+                            }
+                            respond_error($validationErrorSingle, 422, ['reason' => 'invalid_attachment']);
+                        }
                         $tmpPathSingle = (string) $tmpNames;
                         if (is_uploaded_file($tmpPathSingle)) {
                             $storedNameSingle = normalize_file_name($originalNameSingle, $record, $existingFileCount + 1);
@@ -20524,6 +20694,28 @@ switch ($action) {
                 return;
             }
 
+            $validationError = docs_validate_uploaded_attachment($normalizedName, (int) $size);
+            if ($validationError !== null) {
+                $uploadErrors[] = [
+                    'name' => $normalizedName,
+                    'error' => 'invalid_attachment',
+                    'message' => $validationError,
+                ];
+                docs_write_response_log('Ошибка загрузки файла Ответ к задаче: validation failed', [
+                    'organization' => $organization,
+                    'folder' => $folder,
+                    'documentId' => $documentId,
+                    'file' => [
+                        'name' => $normalizedName,
+                        'size' => (int) $size,
+                        'tmpPath' => (string) $tmpPath,
+                        'sequence' => (int) $sequence,
+                    ],
+                    'error' => $validationError,
+                ]);
+                return;
+            }
+
             if (!is_uploaded_file($tmpPath)) {
                 $uploadErrors[] = [
                     'name' => $normalizedName,
@@ -20642,6 +20834,12 @@ switch ($action) {
             }
 
             $uploadErrorMessage = 'Не удалось загрузить файлы ответа.';
+            foreach ($uploadErrors as $uploadError) {
+                if (isset($uploadError['message']) && is_string($uploadError['message']) && trim($uploadError['message']) !== '') {
+                    $uploadErrorMessage = trim($uploadError['message']);
+                    break;
+                }
+            }
             if ($uploadErrorCode === UPLOAD_ERR_INI_SIZE || $uploadErrorCode === UPLOAD_ERR_FORM_SIZE) {
                 $uploadErrorMessage = 'Файл слишком большой. Уменьшите размер фото или отправьте файл до 2 МБ.';
             } elseif ($uploadErrorCode === UPLOAD_ERR_PARTIAL) {
