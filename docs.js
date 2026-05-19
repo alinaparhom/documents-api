@@ -2037,6 +2037,175 @@
     document.head.appendChild(style);
   }
 
+  function ensureOnlineModalStyle() {
+    if (document.getElementById('documents-online-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-online-style';
+    style.textContent = '' +
+      '.documents-online-modal{' +
+      'position:fixed;' +
+      'inset:0;' +
+      'z-index:1900;' +
+      'display:flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'padding:16px;' +
+      'background:rgba(15,23,42,0.28);' +
+      'backdrop-filter:blur(10px);' +
+      '-webkit-backdrop-filter:blur(10px);' +
+      'box-sizing:border-box;' +
+      '}' +
+      '.documents-online-panel{' +
+      'width:min(760px,100%);' +
+      'max-height:min(88vh,820px);' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'border-radius:20px;' +
+      'border:1px solid rgba(226,232,240,0.95);' +
+      'background:rgba(255,255,255,0.96);' +
+      'box-shadow:0 24px 54px rgba(15,23,42,0.22);' +
+      'overflow:hidden;' +
+      '}' +
+      '.documents-online-panel__header{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'justify-content:space-between;' +
+      'gap:10px;' +
+      'padding:12px 14px;' +
+      'border-bottom:1px solid rgba(226,232,240,0.95);' +
+      '}' +
+      '.documents-online-panel__title{' +
+      'font-size:16px;' +
+      'font-weight:800;' +
+      'line-height:1.3;' +
+      'color:#0f172a;' +
+      '}' +
+      '.documents-online-panel__body{' +
+      'padding:12px 14px 14px;' +
+      'overflow:auto;' +
+      '}' +
+      '.documents-online-empty{' +
+      'padding:18px 10px;' +
+      'text-align:center;' +
+      'color:#64748b;' +
+      'font-size:13px;' +
+      'font-weight:600;' +
+      '}' +
+      '.documents-online-table{' +
+      'width:100%;' +
+      'border-collapse:collapse;' +
+      'table-layout:fixed;' +
+      'font-size:13px;' +
+      'color:#0f172a;' +
+      '}' +
+      '.documents-online-table thead th{' +
+      'position:sticky;' +
+      'top:0;' +
+      'z-index:1;' +
+      'padding:9px 10px;' +
+      'text-align:left;' +
+      'font-size:12px;' +
+      'font-weight:800;' +
+      'line-height:1.3;' +
+      'color:#475569;' +
+      'background:#f8fafc;' +
+      'border-bottom:1px solid rgba(226,232,240,0.95);' +
+      '}' +
+      '.documents-online-table tbody td{' +
+      'padding:9px 10px;' +
+      'border-bottom:1px solid rgba(241,245,249,0.95);' +
+      'vertical-align:middle;' +
+      'line-height:1.35;' +
+      '}' +
+      '.documents-online-table tbody tr:last-child td{' +
+      'border-bottom:none;' +
+      '}' +
+      '.documents-online-table__identity{' +
+      'min-width:0;' +
+      '}' +
+      '.documents-online-user{' +
+      'display:flex;' +
+      'align-items:center;' +
+      'gap:10px;' +
+      'min-width:0;' +
+      '}' +
+      '.documents-online-user__avatar{' +
+      'display:inline-flex;' +
+      'align-items:center;' +
+      'justify-content:center;' +
+      'width:34px;' +
+      'height:34px;' +
+      'min-width:34px;' +
+      'border-radius:999px;' +
+      'overflow:hidden;' +
+      'border:1px solid rgba(191,219,254,0.95);' +
+      'background:rgba(239,246,255,0.9);' +
+      'color:#1d4ed8;' +
+      '}' +
+      '.documents-online-user__avatar-image{' +
+      'display:block;' +
+      'width:100%;' +
+      'height:100%;' +
+      'object-fit:cover;' +
+      '}' +
+      '.documents-online-user__avatar-icon{' +
+      'width:16px;' +
+      'height:16px;' +
+      '}' +
+      '.documents-online-user__identity{' +
+      'display:flex;' +
+      'flex-direction:column;' +
+      'gap:2px;' +
+      'min-width:0;' +
+      '}' +
+      '.documents-online-user__name{' +
+      'font-weight:700;' +
+      'color:#0f172a;' +
+      'min-width:0;' +
+      'white-space:nowrap;' +
+      'overflow:hidden;' +
+      'text-overflow:ellipsis;' +
+      '}' +
+      '.documents-online-user__meta{' +
+      'font-size:11px;' +
+      'line-height:1.3;' +
+      'color:#64748b;' +
+      'min-width:0;' +
+      'white-space:nowrap;' +
+      'overflow:hidden;' +
+      'text-overflow:ellipsis;' +
+      '}' +
+      '@media (max-width: 760px){' +
+      '.documents-online-modal{' +
+      'padding:8px;' +
+      'align-items:flex-end;' +
+      '}' +
+      '.documents-online-panel{' +
+      'width:100%;' +
+      'max-height:calc(100vh - 16px);' +
+      'border-radius:18px;' +
+      '}' +
+      '.documents-online-panel__header{' +
+      'padding:10px 12px;' +
+      '}' +
+      '.documents-online-panel__body{' +
+      'padding:10px 12px 12px;' +
+      '}' +
+      '.documents-online-table thead th,' +
+      '.documents-online-table tbody td{' +
+      'padding:8px;' +
+      '}' +
+      '.documents-online-user__avatar{' +
+      'width:30px;' +
+      'height:30px;' +
+      'min-width:30px;' +
+      '}' +
+      '}';
+    document.head.appendChild(style);
+  }
+
   function formatClockTime(date) {
     return date
       .toLocaleTimeString('ru-RU', {
@@ -4530,6 +4699,7 @@
       '.documents-workspace--density-compact .documents-table__header-row th{height:42px;padding:0 10px;}' +
       '.documents-workspace--density-compact .documents-table tbody td{min-height:40px;padding:5px 10px;font-size:12px;}' +
       '.documents-workspace--density-compact .documents-action-icon{width:22px;height:22px;}' +
+      '.documents-workspace--density-compact .documents-assignee__avatar{width:22px;height:22px;min-width:22px;}' +
       '.documents-table tbody tr:hover td{background:#f8fbff;}' +
       '.documents-row--overdue td{background:#fff7f7;color:#ef4444;}' +
       '.documents-row--overdue:hover td{background:#fff1f2;}' +
@@ -4540,12 +4710,16 @@
       '.documents-status__value--overdue{display:inline-flex;align-items:center;min-height:24px;padding:2px 7px;border:1px solid #f87171;border-radius:6px;background:#fff;color:#ef4444;font-size:12px;line-height:1;}' +
       '.documents-status__meta{font-size:11px;color:#94a3b8;}' +
       '.documents-status[data-overdue=\"true\"] .documents-status__meta{display:none;}' +
-      '.documents-table tbody td.documents-cell--assignee{position:relative;padding-right:32px;}' +
+      '.documents-table tbody td.documents-cell--assignee{position:relative;}' +
       '.documents-assignee{position:relative;min-height:28px;}' +
+      '.documents-assignee--editable{padding-right:30px;}' +
       '.documents-assignee__info{display:flex;flex-direction:column;gap:4px;min-width:0;}' +
       '.documents-assignee__entry{display:flex;flex-direction:column;gap:3px;min-width:0;}' +
       '.documents-assignee__line{display:flex;align-items:center;gap:7px;min-width:0;line-height:1.25;}' +
-      '.documents-assignee__name{display:inline;min-width:0;color:#172554;font-weight:700;overflow-wrap:anywhere;}' +
+      '.documents-assignee__avatar{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;min-width:26px;border-radius:999px;overflow:hidden;border:1px solid rgba(191,219,254,0.95);background:#eff6ff;color:#1d4ed8;flex:0 0 auto;}' +
+      '.documents-assignee__avatar-image{display:block;width:100%;height:100%;object-fit:cover;}' +
+      '.documents-assignee__avatar-icon{width:13px;height:13px;}' +
+      '.documents-assignee__name{display:block;min-width:0;flex:1 1 auto;color:#172554;font-size:12px;line-height:1.2;font-weight:700;overflow-wrap:anywhere;}' +
       '.documents-assignee__entry--unviewed .documents-assignee__name{color:#172554;text-decoration:underline;text-decoration-color:#ef4444;text-decoration-thickness:2px;text-underline-offset:3px;}' +
       '.documents-assignee__view-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:#334155;}' +
       '.documents-assignee__view-icon--unviewed{color:#334155;}' +
@@ -10452,6 +10626,159 @@
     elements.onlineCounter.textContent = safe;
   }
 
+  function resolveOnlineUserDisplayName(user) {
+    if (!user || typeof user !== 'object') {
+      return 'Без имени';
+    }
+    var candidates = [
+      user.userName,
+      user.fullName,
+      user.displayName,
+      user.name,
+      user.userLogin,
+      user.login
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = normalizeTextInputValue(candidates[i]);
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return 'Без имени';
+  }
+
+  function resolveOnlineUserLogin(user) {
+    if (!user || typeof user !== 'object') {
+      return '';
+    }
+    var candidates = [user.userLogin, user.login, user.username, user.userName];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = normalizeTextInputValue(candidates[i]);
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
+  function resolveOnlineUserTelegramId(user) {
+    if (!user || typeof user !== 'object') {
+      return '';
+    }
+    var directCandidates = [
+      user.telegramUserId,
+      user.telegram_user_id,
+      user.telegramId,
+      user.telegram_id,
+      user.telegram,
+      user.userId,
+      user.user_id,
+      user.id,
+      user.chatId,
+      user.chat_id
+    ];
+    for (var i = 0; i < directCandidates.length; i += 1) {
+      var directResolved = parseTelegramUserIdFromCandidate(directCandidates[i]);
+      if (directResolved) {
+        return directResolved;
+      }
+    }
+
+    var indexCandidates = [
+      user.userLogin,
+      user.login,
+      user.username,
+      user.userName,
+      user.fullName,
+      user.name
+    ];
+    for (var j = 0; j < indexCandidates.length; j += 1) {
+      var indexValue = indexCandidates[j];
+      if (indexValue === null || indexValue === undefined || indexValue === '') {
+        continue;
+      }
+      var responsibleEntry = findResponsibleById(indexValue);
+      if (!responsibleEntry || typeof responsibleEntry !== 'object') {
+        continue;
+      }
+      var fallbackCandidates = [
+        responsibleEntry.telegram,
+        responsibleEntry.chatId,
+        responsibleEntry.id,
+        responsibleEntry.number
+      ];
+      for (var k = 0; k < fallbackCandidates.length; k += 1) {
+        var fallbackResolved = parseTelegramUserIdFromCandidate(fallbackCandidates[k]);
+        if (fallbackResolved) {
+          return fallbackResolved;
+        }
+      }
+    }
+
+    return '';
+  }
+
+  function buildOnlineUserAvatarUrl(telegramId) {
+    var normalized = parseTelegramUserIdFromCandidate(telegramId);
+    if (!normalized) {
+      return '';
+    }
+    return buildApiUrl('mini_app_telegram_avatar', { user_id: normalized });
+  }
+
+  function resetOnlineAvatarNode(avatarNode) {
+    if (!avatarNode) {
+      return;
+    }
+    while (avatarNode.firstChild) {
+      avatarNode.removeChild(avatarNode.firstChild);
+    }
+  }
+
+  function renderOnlineDefaultAvatar(avatarNode) {
+    if (!avatarNode) {
+      return;
+    }
+    avatarNode.classList.add('documents-online-user__avatar--fallback');
+    resetOnlineAvatarNode(avatarNode);
+    avatarNode.appendChild(createSvgIcon('users', 'documents-online-user__avatar-icon'));
+  }
+
+  function createOnlineUserIdentityCell(user) {
+    var cell = createElement('td', 'documents-online-table__identity');
+    var userCard = createElement('div', 'documents-online-user');
+    var avatarNode = createElement('span', 'documents-online-user__avatar');
+    var identity = createElement('div', 'documents-online-user__identity');
+    var displayName = resolveOnlineUserDisplayName(user);
+    var telegramId = resolveOnlineUserTelegramId(user);
+
+    identity.appendChild(createElement('span', 'documents-online-user__name', displayName));
+    if (telegramId) {
+      identity.appendChild(createElement('span', 'documents-online-user__meta', 'TG ID: ' + telegramId));
+    }
+
+    if (telegramId) {
+      var avatarImage = document.createElement('img');
+      avatarImage.className = 'documents-online-user__avatar-image';
+      avatarImage.loading = 'lazy';
+      avatarImage.decoding = 'async';
+      avatarImage.referrerPolicy = 'no-referrer';
+      avatarImage.alt = displayName ? ('Аватар: ' + displayName) : 'Аватар пользователя';
+      avatarImage.src = buildOnlineUserAvatarUrl(telegramId);
+      avatarImage.addEventListener('error', function() {
+        renderOnlineDefaultAvatar(avatarNode);
+      });
+      avatarNode.appendChild(avatarImage);
+    } else {
+      renderOnlineDefaultAvatar(avatarNode);
+    }
+
+    userCard.appendChild(avatarNode);
+    userCard.appendChild(identity);
+    cell.appendChild(userCard);
+    return cell;
+  }
+
   function closeOnlineModal() {
     if (presenceState.modal) {
       presenceState.modal.remove();
@@ -10474,7 +10801,7 @@
     var table = createElement('table', 'documents-online-table');
     var thead = createElement('thead', '');
     var headRow = createElement('tr', '');
-    ['ФИО', 'Логин', 'Время на странице'].forEach(function(label) {
+    ['Пользователь', 'Логин', 'Время на странице'].forEach(function(label) {
       var th = createElement('th', '', label);
       headRow.appendChild(th);
     });
@@ -10483,8 +10810,9 @@
     var tbody = createElement('tbody', '');
     users.forEach(function(user) {
       var row = createElement('tr', '');
-      var nameCell = createElement('td', '', user.userName || 'Без имени');
-      var loginCell = createElement('td', '', user.userLogin || '—');
+      var nameCell = createOnlineUserIdentityCell(user);
+      var loginValue = resolveOnlineUserLogin(user);
+      var loginCell = createElement('td', '', loginValue || '—');
       var durationCell = createElement('td', '', formatOnlineDuration(user.onlineSeconds || 0));
       row.appendChild(nameCell);
       row.appendChild(loginCell);
@@ -10501,6 +10829,7 @@
     }
     presenceState.buttonBusy = true;
     closeOnlineModal();
+    ensureOnlineModalStyle();
 
     var modal = createElement('div', 'documents-online-modal');
     var panel = createElement('div', 'documents-online-panel');
@@ -10623,6 +10952,22 @@
       userName: user.fullName || user.username || user.login || 'Пользователь',
       userLogin: user.login || user.username || ''
     };
+    var telegramId = parseTelegramUserIdFromCandidate(
+      user.telegramId
+      || user.telegram
+      || user.chatId
+      || user.id
+      || state.telegramUserId
+      || getTelegramUserId()
+    );
+    if (telegramId) {
+      payload.userId = telegramId;
+      payload.telegramId = telegramId;
+      payload.telegram_user_id = telegramId;
+    }
+    if (user.username) {
+      payload.userUsername = String(user.username).replace(/^@/, '');
+    }
 
     return fetch('documents_presence.php', {
       method: 'POST',
@@ -14489,6 +14834,106 @@
       });
   }
 
+  function resolveTelegramIdFromAssigneeEntry(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return '';
+    }
+
+    function resolveFromObject(candidateObject) {
+      if (!candidateObject || typeof candidateObject !== 'object') {
+        return '';
+      }
+      var directCandidates = [
+        candidateObject.telegram,
+        candidateObject.telegramId,
+        candidateObject.telegram_id,
+        candidateObject.chatId,
+        candidateObject.chat_id
+      ];
+      for (var i = 0; i < directCandidates.length; i += 1) {
+        var resolved = parseTelegramUserIdFromCandidate(directCandidates[i]);
+        if (resolved) {
+          return resolved;
+        }
+      }
+      return '';
+    }
+
+    var direct = resolveFromObject(entry);
+    if (direct) {
+      return direct;
+    }
+
+    var lookupCandidates = [
+      entry.id,
+      entry.number,
+      entry.login,
+      entry.username,
+      entry.email,
+      entry.responsible,
+      entry.name
+    ];
+
+    for (var j = 0; j < lookupCandidates.length; j += 1) {
+      var candidate = lookupCandidates[j];
+      if (candidate === null || candidate === undefined || candidate === '') {
+        continue;
+      }
+      var responsibleEntry = findResponsibleById(candidate);
+      var resolvedResponsible = resolveFromObject(responsibleEntry);
+      if (resolvedResponsible) {
+        return resolvedResponsible;
+      }
+      var subordinateEntry = findSubordinateById(candidate);
+      var resolvedSubordinate = resolveFromObject(subordinateEntry);
+      if (resolvedSubordinate) {
+        return resolvedSubordinate;
+      }
+    }
+
+    return '';
+  }
+
+  function resetAssigneeAvatarNode(avatarNode) {
+    if (!avatarNode) {
+      return;
+    }
+    while (avatarNode.firstChild) {
+      avatarNode.removeChild(avatarNode.firstChild);
+    }
+  }
+
+  function renderDefaultAssigneeAvatar(avatarNode) {
+    if (!avatarNode) {
+      return;
+    }
+    resetAssigneeAvatarNode(avatarNode);
+    avatarNode.appendChild(createSvgIcon('users', 'documents-assignee__avatar-icon'));
+  }
+
+  function createAssigneeAvatarNode(assignee, nameText) {
+    var avatarNode = createElement('span', 'documents-assignee__avatar');
+    var telegramId = resolveTelegramIdFromAssigneeEntry(assignee);
+    if (!telegramId) {
+      renderDefaultAssigneeAvatar(avatarNode);
+      return avatarNode;
+    }
+
+    var avatarImage = document.createElement('img');
+    avatarImage.className = 'documents-assignee__avatar-image';
+    avatarImage.loading = 'lazy';
+    avatarImage.decoding = 'async';
+    avatarImage.referrerPolicy = 'no-referrer';
+    avatarImage.alt = nameText ? ('Аватар: ' + nameText) : 'Аватар пользователя';
+    avatarImage.src = buildOnlineUserAvatarUrl(telegramId);
+    avatarImage.addEventListener('error', function() {
+      renderDefaultAssigneeAvatar(avatarNode);
+    });
+    avatarNode.appendChild(avatarImage);
+
+    return avatarNode;
+  }
+
   function createAssigneeEntryNode(assignee, options) {
     var entryNode = createElement('div', 'documents-assignee__entry');
     var config = options && typeof options === 'object' ? options : {};
@@ -14499,12 +14944,14 @@
       ? assignee.name
       : (assignee && assignee.id ? 'Ответственный #' + assignee.id : 'Не назначен');
     var line = createElement('div', 'documents-assignee__line');
+    var avatarNode = createAssigneeAvatarNode(assignee, nameText);
     var nameNode = createElement('span', 'documents-assignee__name', nameText);
     var viewIcon = createElement('span', config.unviewed
       ? 'documents-assignee__view-icon documents-assignee__view-icon--unviewed'
       : 'documents-assignee__view-icon');
     viewIcon.title = config.unviewed ? 'Не просмотрел' : 'Просмотрел';
     viewIcon.appendChild(createSvgIcon(config.unviewed ? 'eye-off' : 'eye', 'documents-assignee__view-svg'));
+    line.appendChild(avatarNode);
     line.appendChild(nameNode);
     line.appendChild(viewIcon);
     entryNode.appendChild(line);
@@ -15408,6 +15855,7 @@
 
     var canManageAssignees = isCurrentUserAdmin();
     if (canManageAssignees) {
+      container.classList.add('documents-assignee--editable');
       container.appendChild(createAssignmentEditButton(
         primaryAssignee ? 'Изменить ответственных' : 'Назначить ответственных',
         function() {
@@ -15753,6 +16201,7 @@
     }
 
     if (canManageSubordinates()) {
+      container.classList.add('documents-assignee--editable');
       container.appendChild(createAssignmentEditButton(
         subordinates.length ? 'Изменить подчинённых' : 'Назначить подчинённых',
         function() {
