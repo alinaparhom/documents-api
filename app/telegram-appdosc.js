@@ -957,6 +957,8 @@ const STATUS_FILTERS = Object.values(STATUS_SUMMARY_CONFIG).map((config) => conf
 const DIRECTOR_LOG_TASK_LIMIT = 15;
 const SUMMARY_FILE_LABEL = 'Общее';
 const SUMMARY_FILE_PDF_NAME = 'Общее.pdf';
+const VIEWER_SEND_ICON_SVG = '<svg class="appdosc-viewer__control-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M22 2 11 13" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path><path d="m22 2-7 20-4-9-9-4 20-7Z" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+const VIEWER_DELETE_ICON_SVG = '<svg class="appdosc-viewer__control-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path><path d="M8 6V4h8v2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6 6l1 15h10l1-15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v5M14 11v5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg>';
 
 let pdfLogThrottleAt = 0;
 let lastTasksLoadAt = 0;
@@ -3635,8 +3637,10 @@ function initElements() {
   elements.viewerTabsList = document.querySelector('[data-viewer-tabs-list]');
   elements.viewerFileOwner = document.querySelector('[data-viewer-file-owner]');
   elements.viewerDownload = document.querySelector('[data-viewer-download]');
+  renderViewerSendActionIcon(elements.viewerDownload);
   elements.viewerBrief = document.querySelector('[data-viewer-brief]');
   elements.viewerDeleteResponse = document.querySelector('[data-viewer-delete-response]');
+  renderViewerDeleteActionIcon(elements.viewerDeleteResponse);
   setTaskFilterPanelExpanded(false);
   initCompactRangeCalendar();
 
@@ -12638,10 +12642,36 @@ function getDownloadActionTitle(fileName = '') {
   return `Скачать файл${suffix}`;
 }
 
+function renderViewerSendActionIcon(button) {
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+  if (button.dataset.sendIconApplied === 'true' && button.querySelector('.appdosc-viewer__control-icon')) {
+    return;
+  }
+  button.innerHTML = VIEWER_SEND_ICON_SVG;
+  button.dataset.sendIconApplied = 'true';
+}
+
+function renderViewerDeleteActionIcon(button) {
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+  if (button.dataset.deleteIconApplied === 'true' && button.querySelector('.appdosc-viewer__control-icon')) {
+    return;
+  }
+  button.innerHTML = VIEWER_DELETE_ICON_SVG;
+  button.classList.add('appdosc-viewer__control--delete');
+  button.title = 'Удалить ответ';
+  button.setAttribute('aria-label', 'Удалить ответ');
+  button.dataset.deleteIconApplied = 'true';
+}
+
 function updateViewerDownloadState(file) {
   if (!elements.viewerDownload) {
     return;
   }
+  renderViewerSendActionIcon(elements.viewerDownload);
   const hasFile = Boolean(file && (file.isSummary || file.resolvedUrl || file.url || file.previewUrl));
   elements.viewerDownload.disabled = !hasFile;
   elements.viewerDownload.setAttribute('aria-disabled', hasFile ? 'false' : 'true');
@@ -12679,6 +12709,7 @@ function updateViewerDeleteState(file) {
   if (!elements.viewerDeleteResponse) {
     return;
   }
+  renderViewerDeleteActionIcon(elements.viewerDeleteResponse);
   const canDelete = canDeleteResponseFromViewer(file);
   elements.viewerDeleteResponse.hidden = !canDelete;
   elements.viewerDeleteResponse.disabled = !canDelete;
@@ -13117,13 +13148,6 @@ async function handleViewerDownloadClick() {
   }, 2500);
 
   try {
-    if (isAndroidPlatform()) {
-      const directDownloaded = await fallbackDownloadViewerFile(task, file, fileName, downloadUrl, isSummary, { direct: true });
-      if (directDownloaded) {
-        return;
-      }
-    }
-
     if (isTelegramWebAppAvailable()) {
       setStatus('info', 'Открываем пересылку в Telegram...');
       const quickShareUrl = buildTelegramShareUrl(file);

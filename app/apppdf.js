@@ -3144,17 +3144,17 @@ export function createPdfViewer(root = document) {
     elements.zoomIn.addEventListener('click', (event) => {
       event.preventDefault();
       if (pdfZoomState.active && !zoomState.enabled) {
-        adjustPdfZoom(10);
+        adjustPdfZoom(25);
         logZoomEvent('кнопка', {
           mode: 'pdf',
-          delta: 10,
+          delta: 25,
           zoom: pdfZoomState.zoom,
           fit: pdfZoomState.fit,
         });
       } else if (viewerMode === 'frame') {
-        applyFrameZoom(zoomState.scale + 0.2);
+        applyFrameZoom(zoomState.scale + 0.25);
       } else {
-        zoomStep(0.2);
+        zoomStep(0.25);
       }
     });
   }
@@ -3163,17 +3163,17 @@ export function createPdfViewer(root = document) {
     elements.zoomOut.addEventListener('click', (event) => {
       event.preventDefault();
       if (pdfZoomState.active && !zoomState.enabled) {
-        adjustPdfZoom(-10);
+        adjustPdfZoom(-25);
         logZoomEvent('кнопка', {
           mode: 'pdf',
-          delta: -10,
+          delta: -25,
           zoom: pdfZoomState.zoom,
           fit: pdfZoomState.fit,
         });
       } else if (viewerMode === 'frame') {
-        applyFrameZoom(zoomState.scale - 0.2);
+        applyFrameZoom(zoomState.scale - 0.25);
       } else {
-        zoomStep(-0.2);
+        zoomStep(-0.25);
       }
     });
   }

@@ -153,17 +153,58 @@
       <link rel="stylesheet" href="/css/telegram-appdosc.css" />
     </noscript>
     <style>
+      .appdosc-viewer__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      [data-viewer-file-owner] {
+        flex: 0 1 32vw;
+        min-width: 0;
+        max-width: 32vw !important;
+        margin-right: 0 !important;
+      }
+
       .appdosc-viewer__controls {
         display: flex;
         align-items: center;
         gap: 8px;
-        flex-wrap: wrap;
+        flex: 1 1 0;
+        flex-wrap: nowrap;
+        max-width: 100%;
+        min-width: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        white-space: nowrap;
+      }
+
+      .appdosc-viewer__controls::-webkit-scrollbar {
+        display: none;
       }
 
       .appdosc-viewer__control {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
         min-width: 40px;
         min-height: 40px;
         border-radius: 12px;
+      }
+
+      .appdosc-viewer__control--delete {
+        color: #dc2626;
+      }
+
+      .appdosc-viewer__control-icon {
+        display: block;
+        width: 20px;
+        height: 20px;
       }
 
       .appdosc-viewer__control--fit {
@@ -215,7 +256,7 @@
       .appdosc-pdf-viewer__page {
         display: flex;
         justify-content: center;
-        max-width: 100%;
+        max-width: none;
         margin: 0 auto 12px;
         border-radius: 8px;
         background: #ffffff;
@@ -230,7 +271,7 @@
       .appdosc-pdf-viewer__page-image,
       .appdosc-pdf-viewer__page canvas {
         display: block;
-        max-width: 100%;
+        max-width: none;
         height: auto;
         background: #ffffff;
         user-select: none;
@@ -956,6 +997,7 @@
       .appdosc-viewer__zoom-group {
         display: inline-flex;
         align-items: center;
+        flex: 0 0 auto;
         border-radius: 12px;
         background: var(--appdosc-surface-glass);
         backdrop-filter: blur(8px);
@@ -974,7 +1016,6 @@
       }
 
       .appdosc-viewer__control--close {
-        margin-inline-start: auto;
         color: #ffffff !important;
         font-weight: 700;
         background-color: #e53935 !important;
@@ -4253,9 +4294,17 @@
 
         .appdosc-viewer__controls {
           gap: 6px;
+          flex: 1 1 0;
+          flex-wrap: nowrap;
+        }
+
+        [data-viewer-file-owner] {
+          flex-basis: 22vw;
+          max-width: 22vw !important;
         }
 
         .appdosc-viewer__control {
+          flex: 0 0 auto;
           min-width: 36px;
           min-height: 36px;
           border-radius: 10px;
@@ -6631,7 +6680,10 @@
               aria-label="Переслать файл в Telegram или скачать"
               title="Переслать / скачать"
             >
-              💾
+              <svg class="appdosc-viewer__control-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M22 2 11 13" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="m22 2-7 20-4-9-9-4 20-7Z" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
             </button>
             <button
               type="button"
@@ -6644,12 +6696,18 @@
             </button>
             <button
               type="button"
-              class="appdosc-viewer__control"
+              class="appdosc-viewer__control appdosc-viewer__control--delete"
               data-viewer-delete-response
               aria-label="Удалить ответ"
+              title="Удалить ответ"
               hidden
             >
-              Удалить
+              <svg class="appdosc-viewer__control-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
+                <path d="M8 6V4h8v2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="M6 6l1 15h10l1-15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="M10 11v5M14 11v5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
+              </svg>
             </button>
             <button
               type="button"
