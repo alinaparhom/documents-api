@@ -251,12 +251,16 @@
       borderWidth: 1,
       borderOpacity: 0.85,
       columns: buildDefaultColumnSettings(DEFAULT_COLUMN_FONT_SIZE),
-      sorting: buildDefaultSortingSettings()
+      sorting: buildDefaultSortingSettings(),
+      mailing: {
+        notifyDirectorAboutAttachedReplies: false
+      }
     };
   }
 
   function cloneVisualSettings(settings) {
     var base = settings || buildDefaultVisualSettings();
+    var mailing = base.mailing && typeof base.mailing === 'object' ? base.mailing : {};
     return {
       fontSize: base.fontSize,
       lineHeight: base.lineHeight,
@@ -264,7 +268,10 @@
       borderWidth: base.borderWidth,
       borderOpacity: base.borderOpacity,
       columns: normalizeColumnSettings(base.columns, base.fontSize),
-      sorting: normalizeSortingSettings(base.sorting)
+      sorting: normalizeSortingSettings(base.sorting),
+      mailing: {
+        notifyDirectorAboutAttachedReplies: mailing.notifyDirectorAboutAttachedReplies === true
+      }
     };
   }
 
@@ -909,6 +916,9 @@
       },
       getTelegramId: function() {
         return state.telegramUserId || '';
+      },
+      getTablePreferences: function() {
+        return buildTablePreferencesPayload();
       }
     });
     if (typeof window.docsSettings.ready === 'function') {
@@ -993,7 +1003,11 @@
       return normalized;
     }
 
+    var hadAccess = Boolean(state.access && state.access.authenticated && state.access.accessGranted);
     state.access = normalized;
+    if (hadAccess && (!normalized.authenticated || !normalized.accessGranted)) {
+      resetDocumentsRuntimeCache({ clearLocalStorage: true });
+    }
     invalidateFilterValuesCache();
     refreshUserAssignmentKeys();
     if (normalized.permissions && typeof normalized.permissions === 'object') {
@@ -1018,7 +1032,7 @@
     updateTable();
     refreshColumnWidthsIfNeeded();
     refreshColumnOrderIfNeeded();
-    if (state.organization) {
+    if (state.organization && normalized.authenticated && normalized.accessGranted) {
       loadTablePreferences(state.organization, true).catch(function(error) {
         if (typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось обновить настройки таблицы после смены доступа:', error);
@@ -1126,8 +1140,8 @@
     }
     return map;
   })();
-  var COLUMN_WIDTH_MIN = 1;
-  var COLUMN_WIDTH_MAX = 420;
+  var COLUMN_WIDTH_MIN = 72;
+  var COLUMN_WIDTH_MAX = 360;
   var COLUMN_WIDTH_STEP = 10;
   var COLUMN_WIDTH_DEFAULTS = {
     entryNumber: 80,
@@ -1205,6 +1219,8 @@
     columnWidthProfileKey: '',
     columnWidthsLoaded: false,
     columnWidthsLoadingPromise: null,
+    columnWidthsLoadingOrganization: '',
+    columnWidthsLoadingProfileKey: '',
     columnWidthsRenderSignature: '',
     rowCache: new Map(),
     rowExpandedState: new Map(),
@@ -1289,7 +1305,8 @@
     tablePreferencesLoadingPromise: null,
     tablePreferencesSavingTimer: null,
     tablePreferencesApplying: false,
-    filterValuesCacheVersion: 1
+    filterValuesCacheVersion: 1,
+    runtimeCacheVersion: 1
   };
 
   function readCookieValue(name) {
@@ -3519,12 +3536,14 @@
       'vertical-align:middle;' +
       '}' +
       '.documents-header-content{' +
-      'display:flex;' +
-      'align-items:center;' +
-      'justify-content:space-between;' +
+      'display:grid;' +
+      'grid-template-columns:minmax(24px,1fr) max-content;' +
+      'align-items:start;' +
+      'justify-content:stretch;' +
       'width:100%;' +
-      'gap:4px;' +
-      'flex-wrap:nowrap;' +
+      'min-width:0;' +
+      'gap:3px 5px;' +
+      'overflow:hidden;' +
       '}' +
       '.documents-table__header-cell .documents-header-label{' +
       'display:block;' +
@@ -3534,8 +3553,8 @@
       'word-break:normal;' +
       'overflow-wrap:normal;' +
       'hyphens:none;' +
-      'flex:1 1 auto;' +
       'min-width:0;' +
+      'max-width:100%;' +
       'transition:color 0.2s ease;' +
       '}' +
       '.documents-table__header-cell--searchable{' +
@@ -4667,21 +4686,21 @@
       '.documents-tab-shell:nth-child(2) .documents-tab__count{background:#fff1f2;color:#ef4444;}' +
       '.documents-tab-shell:nth-child(3) .documents-tab__count{background:#ecfdf5;color:#10b981;}' +
       '.documents-tabs__add{width:38px;height:40px;margin:0;border-color:#e2e8f0;border-radius:6px 6px 0 0;background:#fff;box-shadow:none;font-size:20px;}' +
-      '.documents-table-wrapper{border:1px solid #e2e8f0;border-radius:6px;background:#fff;box-shadow:0 14px 35px rgba(15,23,42,.06);overflow-x:auto;overflow-y:visible;}' +
+      '.documents-table-wrapper{border:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:6px;background:#fff;box-shadow:0 14px 35px rgba(15,23,42,.06);overflow-x:auto;overflow-y:visible;}' +
       '.documents-table{border-collapse:separate;border-spacing:0;table-layout:fixed;background:#fff;color:#172554;font-size:13px;}' +
-      '.documents-table__head th{background:#fff;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;color:#0f172a;font-size:12px;font-weight:800;text-align:left;}' +
+      '.documents-table__head th{background:#fff;border-bottom:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-right:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);color:#0f172a;font-size:12px;font-weight:800;text-align:left;}' +
       '.documents-table__header-row th{height:48px;padding:0 12px;z-index:9;overflow:visible;}' +
-      '.documents-table__filter-row th{position:sticky;top:var(--documents-sticky-top,48px);z-index:8;height:52px;padding:8px 10px;background:#fff;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;}' +
+      '.documents-table__filter-row th{position:sticky;top:var(--documents-sticky-top,48px);z-index:8;height:52px;padding:8px 10px;background:#fff;border-bottom:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-right:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);}' +
       '.documents-table .documents-table__header-cell--sortable{cursor:default;}' +
       '.documents-workspace--sort-mode .documents-table .documents-table__header-cell--sortable{cursor:pointer;}' +
       '.documents-workspace--sort-mode .documents-table .documents-table__header-cell--sortable:hover{background:#f8fafc;}' +
-      '.documents-header-content{gap:8px;align-items:flex-start;}' +
-      '.documents-header-label{font-size:12px;line-height:1.25;color:#0f172a;white-space:normal;word-break:normal;overflow-wrap:normal;hyphens:none;}' +
-      '.documents-header-tools{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;min-width:max-content;}' +
-      '.documents-header-filter-marker{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:#94a3b8;transition:color .16s ease,transform .16s ease;}' +
-      '.documents-header-filter-icon{width:14px;height:14px;}' +
+      '.documents-header-content{display:grid;grid-template-columns:minmax(24px,1fr) max-content;align-items:start;gap:3px 5px;min-width:0;width:100%;overflow:hidden;}' +
+      '.documents-header-label{display:block;min-width:0;max-width:100%;font-size:12px;line-height:1.25;color:#0f172a;white-space:normal;word-break:normal;overflow-wrap:anywhere;hyphens:none;}' +
+      '.documents-header-tools{display:inline-flex;align-items:center;justify-content:flex-end;gap:3px;flex:0 0 auto;min-width:16px;max-width:52px;flex-wrap:wrap;}' +
+      '.documents-header-filter-marker{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:0 0 auto;color:#94a3b8;transition:color .16s ease,transform .16s ease;}' +
+      '.documents-header-filter-icon{width:13px;height:13px;}' +
       '.documents-table__header-cell--searchable:hover .documents-header-filter-marker,.documents-table__header-cell--searchable:focus-visible .documents-header-filter-marker,.documents-table__header-cell--searchable.is-active .documents-header-filter-marker,.documents-table__header-cell--active .documents-header-filter-marker{color:#2563eb;transform:translateY(-1px);}' +
-      '.documents-header-sort-icon{display:inline-flex;align-items:center;justify-content:center;min-width:12px;color:#94a3b8;font-size:11px;line-height:1;}' +
+      '.documents-header-sort-icon{display:inline-flex;align-items:center;justify-content:center;min-width:11px;flex:0 0 auto;color:#94a3b8;font-size:10px;line-height:1;}' +
       '.documents-table__header-cell[data-sort-direction="asc"] .documents-header-sort-icon,.documents-table__header-cell[data-sort-direction="desc"] .documents-header-sort-icon{color:#2563eb;}' +
       '.documents-workspace:not(.documents-workspace--sort-mode) .documents-header-sort-icon:not(.is-active){display:none;}' +
       '.documents-header-sort-icon.is-active{color:#2563eb;}' +
@@ -4695,7 +4714,7 @@
       '.documents-column-filter--select{padding:0 28px 0 9px;}' +
       '.documents-column-filter:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(37,99,235,.1);}' +
       '.documents-column-filter--static{color:#475569;}' +
-      '.documents-table tbody td{height:auto;min-height:48px;padding:7px 12px;border-bottom:1px solid #edf2f7;border-right:1px solid #f1f5f9;vertical-align:top;background:#fff;color:#172554;overflow-wrap:anywhere;word-break:normal;}' +
+      '.documents-table tbody td{height:auto;min-height:48px;padding:7px 12px;border-bottom:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-right:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);vertical-align:top;background:#fff;color:#172554;overflow-wrap:anywhere;word-break:normal;}' +
       '.documents-workspace--density-compact .documents-table__header-row th{height:42px;padding:0 10px;}' +
       '.documents-workspace--density-compact .documents-table tbody td{min-height:40px;padding:5px 10px;font-size:12px;}' +
       '.documents-workspace--density-compact .documents-action-icon{width:22px;height:22px;}' +
@@ -4705,10 +4724,29 @@
       '.documents-row--overdue:hover td{background:#fff1f2;}' +
       '.documents-row--overdue td:first-child{box-shadow:inset 3px 0 0 #ef4444;}' +
       '.documents-row--overdue td[data-column-key="entryNumber"],.documents-row--overdue td[data-column-key="registrationDate"],.documents-row--overdue td[data-column-key="dueDate"]{color:#ef4444;font-weight:800;}' +
-      '.documents-status{display:flex;flex-direction:column;align-items:flex-start;gap:4px;}' +
-      '.documents-status__value{font-weight:700;color:#64748b;}' +
-      '.documents-status__value--overdue{display:inline-flex;align-items:center;min-height:24px;padding:2px 7px;border:1px solid #f87171;border-radius:6px;background:#fff;color:#ef4444;font-size:12px;line-height:1;}' +
-      '.documents-status__meta{font-size:11px;color:#94a3b8;}' +
+      '.documents-status{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0;}' +
+      '.documents-status__badge{display:inline-grid;grid-template-columns:8px minmax(0,1fr);align-items:center;gap:7px;max-width:100%;min-height:26px;padding:4px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;color:#334155;font-size:12px;font-weight:900;line-height:1.2;box-sizing:border-box;}' +
+      '.documents-status__badge-dot{width:8px;height:8px;border-radius:999px;background:currentColor;box-shadow:0 0 0 3px rgba(148,163,184,.16);}' +
+      '.documents-status__badge-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-status__badge--work{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}' +
+      '.documents-status__badge--review{background:#f0f9ff;border-color:#bae6fd;color:#0369a1;}' +
+      '.documents-status__badge--revision{background:#fffbeb;border-color:#fde68a;color:#b45309;}' +
+      '.documents-status__badge--done{background:#ecfdf5;border-color:#bbf7d0;color:#047857;}' +
+      '.documents-status__badge--cancelled{background:#f8fafc;border-color:#cbd5e1;color:#64748b;}' +
+      '.documents-status__badge--neutral{background:#eef2ff;border-color:#c7d2fe;color:#3730a3;}' +
+      '.documents-status__badge--overdue{background:#fef2f2;border-color:#fecaca;color:#dc2626;}' +
+      '.documents-status__badge--empty{background:#f8fafc;border-color:#e2e8f0;color:#94a3b8;}' +
+      '.documents-status__select{width:100%;min-width:120px;max-width:100%;height:30px;padding:0 28px 0 9px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#334155;font-size:12px;font-weight:900;line-height:1.1;outline:none;cursor:pointer;box-sizing:border-box;}' +
+      '.documents-status__select:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(37,99,235,.12);}' +
+      '.documents-status__select--work{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}' +
+      '.documents-status__select--review{background:#f0f9ff;border-color:#bae6fd;color:#0369a1;}' +
+      '.documents-status__select--revision{background:#fffbeb;border-color:#fde68a;color:#b45309;}' +
+      '.documents-status__select--done{background:#ecfdf5;border-color:#bbf7d0;color:#047857;}' +
+      '.documents-status__select--cancelled{background:#f8fafc;border-color:#cbd5e1;color:#64748b;}' +
+      '.documents-status__select--neutral{background:#eef2ff;border-color:#c7d2fe;color:#3730a3;}' +
+      '.documents-status__select--empty{background:#fff;color:#64748b;}' +
+      '.documents-status__select--pending{opacity:.72;cursor:wait;}' +
+      '.documents-status__meta{font-size:11px;line-height:1.35;color:#94a3b8;white-space:pre-wrap;}' +
       '.documents-status[data-overdue=\"true\"] .documents-status__meta{display:none;}' +
       '.documents-table tbody td.documents-cell--assignee{position:relative;}' +
       '.documents-assignee{position:relative;min-height:28px;}' +
@@ -4736,7 +4774,10 @@
       '.documents-actions__panel[hidden]:not(.documents-actions__panel--open){display:none;}' +
       '.documents-actions--icons .documents-actions__panel{display:flex;flex-wrap:wrap;gap:4px;max-width:100%;}' +
       '.documents-files{display:flex;flex-direction:column;gap:6px;min-width:0;}' +
-      '.documents-files__summary{display:inline-flex;align-items:center;width:max-content;max-width:100%;min-height:22px;padding:2px 7px;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:800;line-height:1;}' +
+      '.documents-files__summary{display:inline-flex;align-items:center;gap:5px;width:max-content;max-width:100%;min-height:22px;padding:2px 7px;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:800;line-height:1;}' +
+      '.documents-files__open-all{display:none;align-self:flex-start;align-items:center;justify-content:center;min-height:22px;padding:2px 7px;border:1px solid rgba(37,99,235,.22);border-radius:5px;background:#fff;color:#1d4ed8;font-size:10px;font-weight:900;line-height:1;cursor:pointer;white-space:nowrap;}' +
+      '.documents-row--expanded .documents-files__open-all{display:inline-flex;}' +
+      '.documents-files__open-all:hover,.documents-files__open-all:focus-visible{background:#dbeafe;border-color:#93c5fd;outline:none;}' +
       '.documents-files__list,.documents-instruction__list,.documents-due__list,.documents-status__meta{display:none;}' +
       '.documents-row--expanded .documents-files__list{display:flex;flex-direction:column;gap:3px;min-width:0;}' +
       '.documents-file-item{min-width:0;}' +
@@ -4752,7 +4793,7 @@
       '.documents-file-link__name{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:700;line-height:1.1;color:#172554;}' +
       '.documents-row--expanded .documents-instruction__list,.documents-row--expanded .documents-due__list,.documents-row--expanded .documents-status__meta{display:block;}' +
       '.documents-row--expanded .documents-status[data-overdue="true"] .documents-status__meta{display:none;}' +
-      '.documents-group-row td{position:sticky;left:0;z-index:3;padding:8px 12px;background:#f8fafc;border-bottom:1px solid #dbeafe;border-right:0;color:#172554;font-weight:800;}' +
+      '.documents-group-row td{position:sticky;left:0;z-index:3;padding:8px 12px;background:#f8fafc;border-bottom:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-right:0;color:#172554;font-weight:800;}' +
       '.documents-group-row__content{display:flex;align-items:center;gap:10px;min-height:26px;}' +
       '.documents-group-row__label{display:inline-flex;align-items:center;padding:3px 8px;border-radius:6px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:800;}' +
       '.documents-group-row__count{color:#64748b;font-size:12px;font-weight:700;}' +
@@ -4760,11 +4801,11 @@
       '.documents-empty--loading::before{content:"";width:18px;height:18px;border:2px solid #dbeafe;border-top-color:#2563eb;border-radius:999px;animation:documents-empty-spin .75s linear infinite;}' +
       '.documents-empty--error{color:#b91c1c;background:#fef2f2;}' +
       '@keyframes documents-empty-spin{to{transform:rotate(360deg);}}' +
-      '.documents-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:100%;box-sizing:border-box;padding:12px 16px;border-top:1px solid #e2e8f0;border-radius:0 0 6px 6px;background:#fff;color:#172554;font-size:13px;}' +
+      '.documents-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:100%;box-sizing:border-box;padding:12px 16px;border-top:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:0 0 6px 6px;background:#fff;color:#172554;font-size:13px;}' +
       '.documents-pagination[hidden]{display:none;}' +
       '.documents-pagination__left{display:flex;align-items:center;gap:18px;flex-wrap:wrap;}' +
       '.documents-pagination__size{display:inline-flex;align-items:center;gap:8px;}' +
-      '.documents-pagination__select{height:32px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;padding:0 26px 0 8px;}' +
+      '.documents-pagination__select{height:32px;border:var(--docs-border-width,1px) solid var(--docs-border-color,#e2e8f0);border-radius:6px;background:#fff;color:#172554;padding:0 26px 0 8px;}' +
       '.documents-pagination__buttons{display:flex;align-items:center;gap:6px;}' +
       '.documents-pagination__button{min-width:32px;height:32px;padding:0 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:#172554;font-weight:700;cursor:pointer;}' +
       '.documents-pagination__button:hover:not(:disabled){background:#eff6ff;color:#2563eb;}' +
@@ -6308,7 +6349,8 @@
     showMessage('info', nextDensity === 'compact' ? 'Вид: компактный.' : 'Вид: обычный.', MESSAGE_INFO_DURATION_MS);
   }
 
-  function persistColumnWidthMap(widthMap, message) {
+  function syncColumnWidthState(widthMap, options) {
+    var config = options && typeof options === 'object' ? options : {};
     var normalized = buildColumnWidthMap(widthMap);
     state.columnWidthOverrides = normalized;
     var nextVisual = cloneVisualSettings(state.visualSettings);
@@ -6323,7 +6365,41 @@
       nextVisual.columns[column.key].width = normalized[column.key];
     });
     state.visualSettings = nextVisual;
-    applyColumnWidths(normalized);
+    if (config.apply !== false) {
+      applyColumnWidths(normalized);
+    }
+    return normalized;
+  }
+
+  function syncDocsSettingsWithCurrentVisualSettings() {
+    if (typeof window === 'undefined'
+      || !window.docsSettings
+      || typeof window.docsSettings.syncCurrent !== 'function') {
+      return;
+    }
+    try {
+      window.docsSettings.syncCurrent(injectCurrentColumnWidthsIntoSettings(state.visualSettings));
+    } catch (error) {
+      if (typeof docsLogger.warn === 'function') {
+        docsLogger.warn('Не удалось синхронизировать ширины с окном настроек:', error);
+      }
+    }
+  }
+
+  function saveCurrentTablePreferencesLocally() {
+    try {
+      saveTablePreferencesToLocalStorage(buildTablePreferencesPayload());
+    } catch (error) {
+      if (typeof docsLogger.warn === 'function') {
+        docsLogger.warn('Не удалось локально сохранить текущие настройки таблицы:', error);
+      }
+    }
+  }
+
+  function persistColumnWidthMap(widthMap, message) {
+    var normalized = syncColumnWidthState(widthMap);
+    syncDocsSettingsWithCurrentVisualSettings();
+    saveCurrentTablePreferencesLocally();
     if (state.organization) {
       saveColumnWidths(normalized).catch(function(error) {
         if (typeof docsLogger.warn === 'function') {
@@ -9503,17 +9579,23 @@
     if (state.admin.loadingPromise) {
       return state.admin.loadingPromise;
     }
+    var requestCacheVersion = state.runtimeCacheVersion;
     var request = fetch(buildApiUrl('get_admin_settings', { organization: state.organization }), {
       credentials: 'same-origin'
     })
       .then(handleResponse)
       .then(function(data) {
+        if (requestCacheVersion !== state.runtimeCacheVersion) {
+          return data;
+        }
         var settings = data && data.settings ? data.settings : { responsibles: [], block2: [], block3: [] };
         applyAdminSettings(settings);
         return data;
       })
       .finally(function() {
-        state.admin.loadingPromise = null;
+        if (requestCacheVersion === state.runtimeCacheVersion) {
+          state.admin.loadingPromise = null;
+        }
       });
 
     state.admin.loadingPromise = request;
@@ -10285,6 +10367,11 @@
     }
     if (settings.sorting !== undefined) {
       normalized.sorting = normalizeSortingSettings(settings.sorting);
+    }
+    if (settings.mailing && typeof settings.mailing === 'object') {
+      normalized.mailing = {
+        notifyDirectorAboutAttachedReplies: settings.mailing.notifyDirectorAboutAttachedReplies === true
+      };
     }
 
     return normalized;
@@ -14233,6 +14320,10 @@
     }
   }
 
+  function buildAttachmentReferencePage(pdfDoc, PDFLib, fonts, colors, margin, file, message, fileUrl) {
+    buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file, message, fileUrl);
+  }
+
   function drawAttachmentHeader(page, fonts, colors, file, options) {
     var margin = options && options.margin ? options.margin : 40;
     var headerHeight = options && options.headerHeight ? options.headerHeight : 72;
@@ -14308,10 +14399,17 @@
       if (!file || !file.url) {
         continue;
       }
-      if (isOfficeAttachment(file)) {
+      var resolvedUrl = resolveAttachmentUrl(file);
+      var initialExtension = getFileExtension(file);
+      var initialKind = getAttachmentKind(file);
+      var isKnownUnsupported = isOfficeAttachment(file)
+        || initialKind === 'archive'
+        || isHeicAttachment(file)
+        || ['webp', 'gif', 'bmp', 'tif', 'tiff'].indexOf(initialExtension) !== -1;
+      if (isKnownUnsupported) {
+        buildAttachmentReferencePage(pdfDoc, PDFLib, fonts, colors, margin, file, 'Файл доступен по ссылке на оригинал.', resolvedUrl);
         continue;
       }
-      var resolvedUrl = resolveAttachmentUrl(file);
       try {
         var response = await fetch(resolvedUrl, { credentials: 'include' });
         if (!response.ok) {
@@ -14330,6 +14428,7 @@
         var isTxt = mimeType.indexOf('text/plain') !== -1 || extension === 'txt';
 
         if (isOffice) {
+          buildAttachmentReferencePage(pdfDoc, PDFLib, fonts, colors, margin, file, 'Файл доступен по ссылке на оригинал.', resolvedUrl);
           continue;
         }
         if (isPdf) {
@@ -14388,7 +14487,7 @@
           var textContent = decodeTextAttachmentBuffer(buffer);
           buildAttachmentTextPage(pdfDoc, fonts, colors, margin, file, textContent);
         } else {
-          buildAttachmentErrorPage(pdfDoc, PDFLib, fonts, colors, margin, file, 'Формат вложения не поддерживается в предпросмотре.', resolvedUrl);
+          buildAttachmentReferencePage(pdfDoc, PDFLib, fonts, colors, margin, file, 'Формат вложения не поддерживается в общем просмотре.', resolvedUrl);
         }
       } catch (attachmentError) {
         docsLogger.error('Ошибка обработки вложения:', attachmentError);
@@ -16742,6 +16841,38 @@
     return '';
   }
 
+  function shouldUsePersonalStatusForCurrentUser(doc) {
+    return Boolean(
+      state.access
+      && state.access.role === 'user'
+      && !isCurrentUserAdmin()
+      && isDocumentAssignedToCurrentUser(doc)
+    );
+  }
+
+  function shouldUseTaskStatusMutationForCurrentUser(doc) {
+    if (isCurrentUserAdmin()) {
+      return false;
+    }
+    if (documentHasResponsibleSubordinateReviewFlow(doc)) {
+      return true;
+    }
+    if (state.access && state.access.role === 'user') {
+      return true;
+    }
+    if (state.permissions && state.permissions.canManageInstructions === true) {
+      return true;
+    }
+    return isDocumentAssignedToCurrentUser(doc);
+  }
+
+  function resolveEditableStatusForCurrentUser(doc) {
+    if (shouldUsePersonalStatusForCurrentUser(doc)) {
+      return resolveCurrentUserStatus(doc);
+    }
+    return resolveDocumentStatus(doc);
+  }
+
   function resolveDocumentStatus(doc) {
     var userStatus = resolveCurrentUserStatus(doc);
     if (userStatus) {
@@ -17737,6 +17868,56 @@
     }
   }
 
+  function getStatusTone(status, isOverdue) {
+    if (isOverdue) {
+      return 'overdue';
+    }
+    var normalized = normalizeRoleValue(status || '');
+    if (!normalized || normalized === '—') {
+      return 'empty';
+    }
+    if (normalized.indexOf('выполн') !== -1 || normalized === 'done' || normalized === 'complete' || normalized === 'completed' || normalized === 'accepted') {
+      return 'done';
+    }
+    if (normalized.indexOf('провер') !== -1 || normalized.indexOf('review') !== -1) {
+      return 'review';
+    }
+    if (normalized.indexOf('доработ') !== -1 || normalized.indexOf('revision') !== -1) {
+      return 'revision';
+    }
+    if (normalized.indexOf('отмен') !== -1 || normalized.indexOf('cancel') !== -1) {
+      return 'cancelled';
+    }
+    if (normalized.indexOf('работ') !== -1 || normalized.indexOf('progress') !== -1 || normalized.indexOf('pending') !== -1) {
+      return 'work';
+    }
+    return 'neutral';
+  }
+
+  function createStatusBadge(status, tone) {
+    var text = status ? String(status).trim() : '';
+    if (!text) {
+      text = '—';
+    }
+    var badgeTone = tone || getStatusTone(text, false);
+    var badge = createElement('div', 'documents-status__badge documents-status__badge--' + badgeTone);
+    badge.title = text;
+    badge.appendChild(createElement('span', 'documents-status__badge-dot'));
+    badge.appendChild(createElement('span', 'documents-status__badge-text', text));
+    return badge;
+  }
+
+  function setStatusSelectTone(select, status) {
+    if (!select || !select.classList) {
+      return;
+    }
+    var tones = ['work', 'review', 'revision', 'done', 'cancelled', 'neutral', 'empty'];
+    for (var i = 0; i < tones.length; i += 1) {
+      select.classList.remove('documents-status__select--' + tones[i]);
+    }
+    select.classList.add('documents-status__select--' + getStatusTone(status, false));
+  }
+
   function clampColumnWidth(value) {
     if (value === undefined || value === null) {
       return null;
@@ -18189,7 +18370,7 @@
     input.className = 'documents-column-width-popover__input';
     input.min = String(COLUMN_WIDTH_MIN);
     input.max = String(COLUMN_WIDTH_MAX);
-    input.step = String(COLUMN_WIDTH_STEP);
+    input.step = '1';
     input.value = String(getEffectiveColumnWidth(columnKey));
     input.setAttribute('aria-label', 'Ширина столбца «' + label + '» в пикселях');
     var unit = createElement('span', 'documents-column-width-popover__unit', 'px');
@@ -18360,13 +18541,7 @@
         return;
       }
       previewWidths[columnKey] = width;
-      state.columnWidthOverrides = previewWidths;
-      var nextVisual = cloneVisualSettings(state.visualSettings);
-      if (nextVisual.columns[columnKey]) {
-        nextVisual.columns[columnKey].width = width;
-      }
-      state.visualSettings = nextVisual;
-      applyColumnWidths(previewWidths);
+      previewWidths = syncColumnWidthState(previewWidths);
     }
 
     function handleMove(moveEvent) {
@@ -18381,7 +18556,9 @@
       if (handle && handle.classList) {
         handle.classList.remove('is-resizing');
       }
-      state.columnWidthOverrides = buildColumnWidthMap(previewWidths);
+      state.columnWidthOverrides = syncColumnWidthState(previewWidths);
+      syncDocsSettingsWithCurrentVisualSettings();
+      saveCurrentTablePreferencesLocally();
       saveColumnWidths(state.columnWidthOverrides).catch(function(error) {
         if (typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось сохранить ширину столбца:', error);
@@ -18440,6 +18617,17 @@
     var canManage = state.permissions && state.permissions.canManageInstructions ? '1' : '0';
     var userKey = getCurrentUserKey();
     return role + ':' + canManage + ':' + (userKey || 'guest');
+  }
+
+  function buildPersonalColumnSettingsParams(organization) {
+    var params = {
+      organization: organization || state.organization || ''
+    };
+    var userKey = getCurrentUserKey();
+    if (userKey) {
+      params.user_key = userKey;
+    }
+    return params;
   }
 
   function getTablePreferencesStorageKey() {
@@ -18526,6 +18714,7 @@
       globalSearchQuery: '',
       sorting: normalizeSortingSettings(source.sorting),
       columns: columns,
+      visualSettings: normalizeVisualSettings(source.visualSettings || source),
       columnOrder: normalizeColumnOrder(source.columnOrder),
       customDocumentTabs: normalizeCustomDocumentTabs(source.customDocumentTabs),
       tablePageSize: normalizeTablePageSize(viewPageSize),
@@ -18568,6 +18757,7 @@
         ? normalizeSortingSettings(state.visualSettings.sorting)
         : buildDefaultSortingSettings(),
       columns: columns,
+      visualSettings: injectCurrentColumnWidthsIntoSettings(state.visualSettings),
       columnOrder: normalizeColumnOrder(state.columnOrder),
       customDocumentTabs: normalizeCustomDocumentTabs(state.customDocumentTabs),
       tablePageSize: pageSize,
@@ -18638,8 +18828,12 @@
     state.customDocumentTabs = normalized.customDocumentTabs;
     saveCustomDocumentTabs();
 
-    var nextVisual = cloneVisualSettings(state.visualSettings);
-    nextVisual.sorting = normalizeSortingSettings(normalized.sorting);
+    var nextVisual = cloneVisualSettings(normalized.visualSettings || state.visualSettings);
+    nextVisual.sorting = normalizeSortingSettings(
+      normalized.visualSettings && normalized.visualSettings.sorting
+        ? normalized.visualSettings.sorting
+        : normalized.sorting
+    );
     TABLE_COLUMNS.forEach(function(column) {
       var source = normalized.columns[column.key];
       if (!source) {
@@ -18744,6 +18938,7 @@
       return state.tablePreferencesLoadingPromise;
     }
 
+    var requestCacheVersion = state.runtimeCacheVersion;
     var local = loadTablePreferencesFromLocalStorage();
     if (local) {
       applyTablePreferences(local, { render: false });
@@ -18755,6 +18950,9 @@
     }), { credentials: 'same-origin' })
       .then(handleResponse)
       .then(function(data) {
+        if (requestCacheVersion !== state.runtimeCacheVersion) {
+          return null;
+        }
         var preferences = data && data.preferences ? normalizeTablePreferences(data.preferences) : null;
         if (preferences) {
           saveTablePreferencesToLocalStorage(preferences);
@@ -18766,6 +18964,9 @@
         return preferences;
       })
       .catch(function(error) {
+        if (requestCacheVersion !== state.runtimeCacheVersion) {
+          return null;
+        }
         if (typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось загрузить серверные настройки таблицы:', error);
         }
@@ -18785,32 +18986,50 @@
   }
 
   function loadColumnWidths(organization, force) {
+    var requestProfileKey = getAccessProfileKey(state.access);
+    var requestParams = buildPersonalColumnSettingsParams(organization);
     if (!organization) {
       state.columnWidths = {};
       state.columnWidthOrganization = '';
+      state.columnWidthProfileKey = '';
       state.columnWidthsLoaded = false;
       applyColumnWidths();
       return Promise.resolve({});
     }
-    if (!force && state.columnWidthsLoaded && state.columnWidthOrganization === organization) {
+    if (!force
+      && state.columnWidthsLoaded
+      && state.columnWidthOrganization === organization
+      && state.columnWidthProfileKey === requestProfileKey) {
       return Promise.resolve(state.columnWidths);
     }
-    if (!force && state.columnWidthsLoadingPromise) {
+    if (!force
+      && state.columnWidthsLoadingPromise
+      && state.columnWidthsLoadingOrganization === organization
+      && state.columnWidthsLoadingProfileKey === requestProfileKey) {
       return state.columnWidthsLoadingPromise;
     }
-    var promise = fetch(buildApiUrl('load_column_widths', { organization: organization }), { credentials: 'same-origin' })
+    var requestCacheVersion = state.runtimeCacheVersion;
+    var promise = fetch(buildApiUrl('load_column_widths', requestParams), { credentials: 'same-origin' })
       .then(handleResponse)
       .then(function(data) {
         var normalized = normalizeColumnWidthResponse(data && data.columns);
+        if (requestCacheVersion !== state.runtimeCacheVersion
+          || state.organization !== organization
+          || getAccessProfileKey(state.access) !== requestProfileKey) {
+          return normalized;
+        }
         state.columnWidths = normalized;
         state.columnWidthProfile = data && data.profile ? String(data.profile) : state.columnWidthProfile;
         state.columnWidthOrganization = organization;
         state.columnWidthsLoaded = true;
-        state.columnWidthProfileKey = getAccessProfileKey(state.access);
+        state.columnWidthProfileKey = requestProfileKey;
         applyColumnWidths();
         return normalized;
       })
       .catch(function(error) {
+        if (requestCacheVersion !== state.runtimeCacheVersion) {
+          return {};
+        }
         state.columnWidthsLoaded = false;
         if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось загрузить настройки ширины столбцов:', error);
@@ -18818,11 +19037,15 @@
         throw error;
       })
       .finally(function() {
-        if (state.columnWidthsLoadingPromise === promise) {
+        if (requestCacheVersion === state.runtimeCacheVersion && state.columnWidthsLoadingPromise === promise) {
           state.columnWidthsLoadingPromise = null;
+          state.columnWidthsLoadingOrganization = '';
+          state.columnWidthsLoadingProfileKey = '';
         }
       });
     state.columnWidthsLoadingPromise = promise;
+    state.columnWidthsLoadingOrganization = organization;
+    state.columnWidthsLoadingProfileKey = requestProfileKey;
     return promise;
   }
 
@@ -18830,12 +19053,19 @@
     if (!state.organization) {
       return Promise.reject(new Error('Организация не определена.'));
     }
+    var requestOrganization = state.organization;
+    var requestProfileKey = getAccessProfileKey(state.access);
+    var requestParams = buildPersonalColumnSettingsParams(requestOrganization);
     var payload = {
       action: 'save_column_widths',
-      organization: state.organization,
+      organization: requestOrganization,
       columns: widths || {}
     };
-    return fetch(buildApiUrl('save_column_widths', { organization: state.organization }), {
+    if (requestParams.user_key) {
+      payload.user_key = requestParams.user_key;
+    }
+    mergeTelegramUserId(payload);
+    return fetch(buildApiUrl('save_column_widths', requestParams), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -18844,11 +19074,14 @@
       .then(handleResponse)
       .then(function(data) {
         var normalized = normalizeColumnWidthResponse(data && data.columns);
+        if (state.organization !== requestOrganization || getAccessProfileKey(state.access) !== requestProfileKey) {
+          return normalized;
+        }
         state.columnWidths = normalized;
         state.columnWidthProfile = data && data.profile ? String(data.profile) : state.columnWidthProfile;
-        state.columnWidthOrganization = state.organization;
+        state.columnWidthOrganization = requestOrganization;
         state.columnWidthsLoaded = true;
-        state.columnWidthProfileKey = getAccessProfileKey(state.access);
+        state.columnWidthProfileKey = requestProfileKey;
         applyColumnWidths();
         return normalized;
       });
@@ -18960,12 +19193,16 @@
     }
 
     var userKey = getCurrentUserKey();
+    var requestCacheVersion = state.runtimeCacheVersion;
     var promise = fetch(buildApiUrl('load_column_order', {
       organization: organization,
       user_key: userKey || ''
     }), { credentials: 'same-origin' })
       .then(handleResponse)
       .then(function(data) {
+        if (requestCacheVersion !== state.runtimeCacheVersion) {
+          return state.columnOrder;
+        }
         var normalized = normalizeColumnOrder(data && data.columns);
         var defaults = getDefaultColumnOrder();
         var localDiffersFromDefault = Boolean(localOrder && localOrder.length && !columnOrdersEqual(localOrder, defaults));
@@ -18982,6 +19219,9 @@
         return effectiveOrder;
       })
       .catch(function(error) {
+        if (requestCacheVersion !== state.runtimeCacheVersion) {
+          return state.columnOrder;
+        }
         state.columnOrderLoaded = false;
         if (typeof console !== 'undefined' && typeof docsLogger.warn === 'function') {
           docsLogger.warn('Не удалось загрузить порядок столбцов:', error);
@@ -18989,7 +19229,7 @@
         throw error;
       })
       .finally(function() {
-        if (state.columnOrderLoadingPromise === promise) {
+        if (requestCacheVersion === state.runtimeCacheVersion && state.columnOrderLoadingPromise === promise) {
           state.columnOrderLoadingPromise = null;
         }
       });
@@ -19345,7 +19585,7 @@
     if (!doc || !doc.id || !select) {
       return;
     }
-    var previous = resolveDocumentStatus(doc);
+    var previous = resolveEditableStatusForCurrentUser(doc);
     if (previous === '—') {
       previous = '';
     }
@@ -19356,11 +19596,13 @@
     }
     var previousMeta = meta ? meta.textContent : '';
     select.disabled = true;
+    setStatusSelectTone(select, nextStatus);
     select.classList.add('documents-status__select--pending');
     if (meta) {
       meta.textContent = 'Сохраняем...';
     }
-    var request = documentHasResponsibleSubordinateReviewFlow(doc)
+    var shouldUseTaskMutation = shouldUseTaskStatusMutationForCurrentUser(doc);
+    var request = shouldUseTaskMutation
       ? sendTaskMutation({
         documentId: doc.id,
         updateType: 'status',
@@ -19373,6 +19615,7 @@
         showMessage('error', 'Не удалось обновить статус: ' + error.message);
         if (select) {
           select.value = previous;
+          setStatusSelectTone(select, previous);
         }
         if (meta) {
           meta.textContent = previousMeta || formatStatusMetaText(doc);
@@ -19389,7 +19632,8 @@
 
   function createStatusCell(doc) {
     var container = createElement('div', 'documents-status');
-    var statusText = resolveDocumentStatus(doc);
+    var canUsePersonalStatus = shouldUsePersonalStatusForCurrentUser(doc);
+    var statusText = canUsePersonalStatus ? resolveCurrentUserStatus(doc) : resolveDocumentStatus(doc);
     var isOverdue = isDocumentOverdueForTab(doc);
     var role = state.access ? state.access.role : '';
     var hasPermission = state.permissions && state.permissions.canManageInstructions && role !== 'admin';
@@ -19398,7 +19642,7 @@
 
     if (isOverdue) {
       container.dataset.overdue = 'true';
-      container.appendChild(createElement('div', 'documents-status__value documents-status__value--overdue', 'Просрочено'));
+      container.appendChild(createStatusBadge('Просрочено', 'overdue'));
       container.appendChild(meta);
       return container;
     }
@@ -19408,12 +19652,13 @@
       select.className = 'documents-status__select';
       select.setAttribute('aria-label', 'Статус документа');
       buildStatusSelectOptions(select, statusText !== '—' ? statusText : '');
+      setStatusSelectTone(select, select.value || statusText);
       select.addEventListener('change', function() {
         handleStatusSelectChange(doc, select, meta);
       });
       container.appendChild(select);
     } else if (!isOverdue) {
-      container.appendChild(createElement('div', 'documents-status__value', statusText));
+      container.appendChild(createStatusBadge(statusText, getStatusTone(statusText, false)));
     }
 
     container.appendChild(meta);
@@ -19432,6 +19677,88 @@
     if (isDocumentOverdueForTab(doc)) {
       tr.classList.add('documents-row--overdue');
     }
+  }
+
+  function captureTableScrollAnchor(row) {
+    if (!row || typeof row.getBoundingClientRect !== 'function') {
+      return null;
+    }
+    var rect = row.getBoundingClientRect();
+    var scrollContainer = elements.tableScroll || elements.tableWrapper || null;
+    var useDocumentScroll = scrollContainer
+      && scrollContainer.style
+      && scrollContainer.style.overflowY === 'visible'
+      && typeof window !== 'undefined';
+    return {
+      row: row,
+      rowKey: row.dataset && row.dataset.rowKey ? String(row.dataset.rowKey) : '',
+      docId: row.dataset && row.dataset.docId ? String(row.dataset.docId) : '',
+      top: rect.top,
+      scrollContainer: scrollContainer,
+      useDocumentScroll: Boolean(useDocumentScroll)
+    };
+  }
+
+  function escapeTableRowSelectorValue(value) {
+    var text = String(value || '');
+    if (typeof CSS !== 'undefined' && CSS.escape) {
+      return CSS.escape(text);
+    }
+    return text.replace(/["\\]/g, '\\$&');
+  }
+
+  function resolveTableScrollAnchorRow(anchor) {
+    if (!anchor) {
+      return null;
+    }
+    if (anchor.row && anchor.row.isConnected && typeof anchor.row.getBoundingClientRect === 'function') {
+      return anchor.row;
+    }
+    if (!elements.tableBody || typeof elements.tableBody.querySelector !== 'function') {
+      return null;
+    }
+    if (anchor.rowKey) {
+      var rowByKey = elements.tableBody.querySelector('tr.documents-row[data-row-key="' + escapeTableRowSelectorValue(anchor.rowKey) + '"]');
+      if (rowByKey) {
+        return rowByKey;
+      }
+    }
+    if (anchor.docId) {
+      return elements.tableBody.querySelector('tr.documents-row[data-doc-id="' + escapeTableRowSelectorValue(anchor.docId) + '"]');
+    }
+    return null;
+  }
+
+  function restoreTableScrollAnchor(anchor) {
+    if (!anchor) {
+      return;
+    }
+    var applyRestore = function() {
+      var row = resolveTableScrollAnchorRow(anchor);
+      if (!row || typeof row.getBoundingClientRect !== 'function') {
+        return;
+      }
+      var nextRect = row.getBoundingClientRect();
+      var delta = nextRect.top - anchor.top;
+      if (Math.abs(delta) < 1) {
+        return;
+      }
+      if (anchor.useDocumentScroll && typeof window !== 'undefined' && typeof window.scrollBy === 'function') {
+        window.scrollBy(0, delta);
+        return;
+      }
+      if (anchor.scrollContainer) {
+        anchor.scrollContainer.scrollTop += delta;
+      }
+    };
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(function() {
+        applyRestore();
+        window.requestAnimationFrame(applyRestore);
+      });
+      return;
+    }
+    applyRestore();
   }
 
   function setTableRowExpanded(tr, docId, expanded) {
@@ -19458,11 +19785,13 @@
       var nextExpanded = typeof forceState === 'boolean'
         ? forceState
         : tr.getAttribute('aria-expanded') !== 'true';
-      if (typeof forceState === 'boolean') {
-        setTableRowExpanded(tr, expandedKey, forceState);
-      } else {
-        var currentlyExpanded = tr.getAttribute('aria-expanded') === 'true';
-        setTableRowExpanded(tr, expandedKey, !currentlyExpanded);
+      var currentlyExpanded = tr.getAttribute('aria-expanded') === 'true';
+      if (nextExpanded !== currentlyExpanded) {
+        var scrollAnchor = captureTableScrollAnchor(tr);
+        setTableRowExpanded(tr, expandedKey, nextExpanded);
+        state.virtualTable.rowHeight = 0;
+        scheduleVirtualTableRender();
+        restoreTableScrollAnchor(scrollAnchor);
       }
       if (nextExpanded) {
         recordDocumentView(doc, 'row_expand_auto_view');
@@ -19484,11 +19813,8 @@
         try {
           tr.focus({ preventScroll: true });
         } catch (error) {
-          try {
-            tr.focus();
-          } catch (focusError) {
-            // ignore focus errors
-          }
+          // Старые браузеры без preventScroll лучше оставить без принудительного focus,
+          // чем спровоцировать скачок длинной виртуальной таблицы.
         }
       }
       toggleRowExpanded();
@@ -19727,8 +20053,45 @@
     descriptorsByKey.actions = buildCellDescriptor(actions, '', 'actions');
 
     var filesCell = createElement('div', 'documents-files');
-    var filesSummary = createElement('div', 'documents-files__summary', 'Файлы (' + attachments.length + ')');
+    var filesSummary = createElement('div', 'documents-files__summary');
+    filesSummary.appendChild(createElement('span', 'documents-files__summary-text', 'Файлы (' + attachments.length + ')'));
     filesCell.appendChild(filesSummary);
+    if (attachments.length > 1) {
+      var openAllButton = createElement('button', 'documents-files__open-all', 'Открыть всё');
+      openAllButton.type = 'button';
+      openAllButton.title = 'Открыть карточку и все файлы в одной вкладке';
+      openAllButton.setAttribute('aria-label', 'Открыть карточку и все файлы в одной вкладке');
+      openAllButton.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (openAllButton.dataset.loading === '1') {
+          return;
+        }
+        recordDocumentView(doc, 'open_all_files');
+        openAllButton.dataset.loading = '1';
+        openAllButton.disabled = true;
+        openAllButton.setAttribute('aria-busy', 'true');
+        showMessage('info', 'Готовим общий просмотр…', MESSAGE_INFO_DURATION_MS);
+        generateDocumentPdf(doc, {
+          summaryAttachments: attachments,
+          appendAttachments: attachments
+        })
+          .then(function(blob) {
+            openBlobInNewTab(blob);
+            showMessage('success', 'Открыт общий просмотр: карточка документа и файлы.', MESSAGE_INFO_DURATION_MS);
+          })
+          .catch(function(error) {
+            docsLogger.error('Ошибка общего просмотра файлов:', error);
+            showMessage('error', 'Не удалось открыть общий просмотр: ' + (error && error.message ? error.message : 'повторите попытку.'), MESSAGE_LONG_DURATION_MS);
+          })
+          .finally(function() {
+            openAllButton.dataset.loading = '0';
+            openAllButton.disabled = false;
+            openAllButton.removeAttribute('aria-busy');
+          });
+      });
+      filesCell.appendChild(openAllButton);
+    }
 
     var filesList = createElement('div', 'documents-files__list');
     if (attachments.length) {
@@ -21166,6 +21529,7 @@
     clearMessage();
     state.registryLoading = true;
     state.registryLoadError = '';
+    var requestCacheVersion = state.runtimeCacheVersion;
     updateTable();
 
     return fetch(buildApiUrl('list', { organization: organization }), {
@@ -21174,6 +21538,9 @@
     })
       .then(handleResponse)
       .then(function(data) {
+        if (requestCacheVersion !== state.runtimeCacheVersion) {
+          return state.documents;
+        }
         state.registryLoading = false;
         state.registryLoaded = true;
         state.registryLoadError = '';
@@ -21203,6 +21570,9 @@
         return documents;
       })
       .catch(function(error) {
+        if (requestCacheVersion !== state.runtimeCacheVersion) {
+          return state.documents;
+        }
         var message = error && error.message ? error.message : String(error);
         state.registryLoading = false;
         state.registryLoadError = message;
@@ -25044,6 +25414,131 @@
 
     host.dataset.initialized = 'true';
   };
+
+  function clearDocumentsLocalCacheForOrganization(organization) {
+    if (typeof window === 'undefined' || !window.localStorage || !organization) {
+      return;
+    }
+    var prefixes = [
+      TABLE_PREFERENCES_STORAGE_PREFIX + organization + ':',
+      COLUMN_ORDER_STORAGE_PREFIX + organization + ':',
+      DOCUMENT_TABS_STORAGE_PREFIX + organization + ':'
+    ];
+    try {
+      var keys = [];
+      for (var i = 0; i < window.localStorage.length; i += 1) {
+        var key = window.localStorage.key(i);
+        if (!key) {
+          continue;
+        }
+        for (var prefixIndex = 0; prefixIndex < prefixes.length; prefixIndex += 1) {
+          if (key.indexOf(prefixes[prefixIndex]) === 0) {
+            keys.push(key);
+            break;
+          }
+        }
+      }
+      keys.forEach(function(key) {
+        window.localStorage.removeItem(key);
+      });
+    } catch (error) {
+      if (typeof docsLogger.warn === 'function') {
+        docsLogger.warn('Не удалось очистить локальный кэш документооборота:', error);
+      }
+    }
+  }
+
+  function resetDocumentsRuntimeCache(options) {
+    var config = options && typeof options === 'object' ? options : {};
+    state.runtimeCacheVersion += 1;
+
+    if (state.tablePreferencesSavingTimer && typeof window !== 'undefined') {
+      window.clearTimeout(state.tablePreferencesSavingTimer);
+    }
+    state.tablePreferencesSavingTimer = null;
+    state.tablePreferencesLoadingPromise = null;
+    state.columnOrderLoadingPromise = null;
+    state.columnWidthsLoadingPromise = null;
+    state.columnWidthsLoadingOrganization = '';
+    state.columnWidthsLoadingProfileKey = '';
+
+    if (state.virtualTable.renderFrame && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(state.virtualTable.renderFrame);
+    }
+    if (state.virtualTable.progressiveFrame && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(state.virtualTable.progressiveFrame);
+    }
+
+    state.documents = [];
+    state.registryLoading = false;
+    state.registryLoaded = false;
+    state.registryLoadError = '';
+    state.storagePath = '';
+    state.storageDisplayPath = '';
+    state.rowCache = new Map();
+    state.rowExpandedState = new Map();
+    state.virtualTable.filteredEntries = [];
+    state.virtualTable.renderFrame = 0;
+    state.virtualTable.progressiveFrame = 0;
+    state.virtualTable.progressiveToken += 1;
+    state.tableFilteredEntries = [];
+    state.tableTotalEntries = 0;
+    state.tablePage = 1;
+    state.directorCache = {};
+    state.responsiblesIndex = {};
+    state.subordinatesIndex = {};
+    state.directorsIndex = {};
+    state.userAssignmentKeyMap = null;
+    state.hasUserAssignmentKeys = false;
+    state.effectiveUserRole = '';
+    state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false, canManageSubordinates: false };
+    state.admin.settings = { responsibles: [], block2: [], block3: [] };
+    state.admin.loaded = false;
+    state.admin.saving = false;
+    state.admin.loadingPromise = null;
+    state.admin.userLog = {
+      entries: [],
+      loading: false,
+      error: '',
+      visible: false,
+      promise: null,
+      lastLoadedAt: 0
+    };
+    state.admin.template = {
+      exists: false,
+      fileName: '',
+      templateUrl: '',
+      viewerUrl: '',
+      size: 0,
+      updatedAt: '',
+      loading: false,
+      uploading: false,
+      error: '',
+      visible: false,
+      promise: null
+    };
+
+    if (config.clearLocalStorage !== false) {
+      clearDocumentsLocalCacheForOrganization(state.organization);
+    }
+    if (window.docsSettings && typeof window.docsSettings.reset === 'function') {
+      window.docsSettings.reset({ apply: false });
+    }
+
+    resetSettingsUserKeyRetry();
+    settingsUserKey = '';
+    docsSettingsBootstrapPending = false;
+    clearMessage();
+    applyVisualSettings(DEFAULT_VISUAL_SETTINGS);
+    setToolbarState();
+    updateResponsibleButtonState();
+    updateUnviewedButtonState();
+    renderDocumentTabs();
+    updateFilterBar();
+    updateTable();
+  }
+
+  window.clearDocumentsRuntimeCache = resetDocumentsRuntimeCache;
 
   window.refreshDocumentsRegistry = function() {
     if (!state.organization) {

@@ -35,8 +35,8 @@ function resolve_documents_root(): string
 define('DOCUMENTS_ROOT', resolve_documents_root());
 const REGISTRY_FILENAME = 'registry.json';
 const SETTINGS_FILENAME = 'settingsdocs.json';
-const DOCS_COLUMN_WIDTH_MIN = 1;
-const DOCS_COLUMN_WIDTH_MAX = 420;
+const DOCS_COLUMN_WIDTH_MIN = 72;
+const DOCS_COLUMN_WIDTH_MAX = 360;
 const DOCS_FILTER_SELECTION_MAX_VALUES = 5000;
 const DOCS_COLUMN_WIDTH_DEFAULTS = [
     'entryNumber' => 80,
@@ -6026,7 +6026,7 @@ function docs_normalize_column_width_map($map): array
             continue;
         }
 
-        $profileKey = preg_replace('/[^a-z0-9_-]/i', '', strtolower($profile));
+        $profileKey = docs_normalize_table_preferences_profile_key($profile);
         if ($profileKey === '') {
             continue;
         }
@@ -6097,7 +6097,7 @@ function docs_normalize_column_order_map($map): array
         if (!is_string($profile) || $profile === '') {
             continue;
         }
-        $profileKey = preg_replace('/[^a-z0-9_-]/i', '', strtolower($profile));
+        $profileKey = docs_normalize_table_preferences_profile_key($profile);
         if ($profileKey === '') {
             continue;
         }
@@ -6124,6 +6124,13 @@ function docs_normalize_table_preferences_profile_key(string $profile): string
     $key = preg_replace('/[^a-z0-9:_-]/i', '', strtolower(trim($profile)));
 
     return is_string($key) && $key !== '' ? $key : 'default';
+}
+
+function docs_normalize_legacy_profile_key_without_colon(string $profile): string
+{
+    $key = preg_replace('/[^a-z0-9_-]/i', '', strtolower(trim($profile)));
+
+    return is_string($key) ? $key : '';
 }
 
 function docs_sanitize_table_filter_selections($input): array
@@ -6312,6 +6319,63 @@ function docs_sanitize_table_page_size($value): int|string
     return $pageSize;
 }
 
+function docs_sanitize_visual_hex_color($value, string $fallback = '#e2e8f0'): string
+{
+    $color = is_string($value) ? trim($value) : '';
+    if (preg_match('/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i', $color, $matches) !== 1) {
+        return $fallback;
+    }
+
+    $hex = strtolower($matches[1]);
+    if (strlen($hex) === 3) {
+        $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+    }
+
+    return '#' . $hex;
+}
+
+function docs_sanitize_visual_settings($input): array
+{
+    $source = is_array($input) ? $input : [];
+    $fontSize = (int) round((float) ($source['fontSize'] ?? 14));
+    $fontSize = max(12, min(22, $fontSize));
+    $lineHeight = (float) ($source['lineHeight'] ?? 1.45);
+    $lineHeight = max(1.2, min(2.0, $lineHeight));
+    $borderWidth = (float) ($source['borderWidth'] ?? 1);
+    $borderWidth = max(0, min(4, $borderWidth));
+    $borderOpacity = (float) ($source['borderOpacity'] ?? 0.85);
+    $borderOpacity = max(0, min(1, $borderOpacity));
+    $columnsSource = isset($source['columns']) && is_array($source['columns']) ? $source['columns'] : [];
+    $columns = [];
+
+    foreach (DOCS_COLUMN_WIDTH_DEFAULTS as $key => $defaultWidth) {
+        $entry = isset($columnsSource[$key]) && is_array($columnsSource[$key]) ? $columnsSource[$key] : [];
+        $width = docs_sanitize_column_widths([$key => $entry['width'] ?? $defaultWidth]);
+        $columnFontSize = (int) round((float) ($entry['fontSize'] ?? $fontSize));
+        $columnFontSize = max(12, min(22, $columnFontSize));
+        $columns[$key] = [
+            'width' => $width[$key] ?? $defaultWidth,
+            'fontSize' => $columnFontSize,
+            'visible' => !array_key_exists('visible', $entry) || $entry['visible'] !== false,
+        ];
+    }
+
+    $mailingSource = isset($source['mailing']) && is_array($source['mailing']) ? $source['mailing'] : [];
+
+    return [
+        'fontSize' => $fontSize,
+        'lineHeight' => round($lineHeight, 2),
+        'borderColor' => docs_sanitize_visual_hex_color($source['borderColor'] ?? '#e2e8f0'),
+        'borderWidth' => $borderWidth,
+        'borderOpacity' => $borderOpacity,
+        'columns' => $columns,
+        'sorting' => docs_sanitize_table_sorting($source['sorting'] ?? []),
+        'mailing' => [
+            'notifyDirectorAboutAttachedReplies' => !empty($mailingSource['notifyDirectorAboutAttachedReplies']),
+        ],
+    ];
+}
+
 function docs_table_filter_texts(array $filters): array
 {
     $texts = [];
@@ -6412,6 +6476,7 @@ function docs_sanitize_table_preferences($input): array
         'globalSearchQuery' => sanitize_text_field((string) ($source['globalSearchQuery'] ?? ''), 180),
         'sorting' => docs_sanitize_table_sorting($source['sorting'] ?? []),
         'columns' => docs_sanitize_table_columns($source['columns'] ?? []),
+        'visualSettings' => docs_sanitize_visual_settings($source['visualSettings'] ?? []),
         'columnOrder' => docs_sanitize_column_order($source['columnOrder'] ?? []),
         'customDocumentTabs' => docs_sanitize_custom_document_tabs($source['customDocumentTabs'] ?? []),
         'tablePageSize' => $pageSize,
@@ -10596,6 +10661,40 @@ function docs_append_assignee_status_history(array &$record, string $assigneeKey
     $map[$normalizedKey]['entries'] = docs_sanitize_assignee_status_history_entry_collection($entries);
 
     $record['assigneeStatusHistory'] = docs_sanitize_assignee_status_history_collection(array_values($map));
+}
+
+function docs_clear_assignee_status_history(array &$record, string $assigneeKey): void
+{
+    $normalizedKey = mb_strtolower(trim($assigneeKey), 'UTF-8');
+    if ($normalizedKey === '') {
+        return;
+    }
+
+    $existing = [];
+    if (isset($record['assigneeStatusHistory']) && is_array($record['assigneeStatusHistory'])) {
+        $existing = docs_sanitize_assignee_status_history_collection($record['assigneeStatusHistory']);
+    }
+
+    if (empty($existing)) {
+        unset($record['assigneeStatusHistory']);
+        return;
+    }
+
+    $next = [];
+    foreach ($existing as $historyEntry) {
+        $key = mb_strtolower((string) ($historyEntry['assigneeKey'] ?? ''), 'UTF-8');
+        if ($key === '' || $key === $normalizedKey) {
+            continue;
+        }
+        $next[] = $historyEntry;
+    }
+
+    if (empty($next)) {
+        unset($record['assigneeStatusHistory']);
+        return;
+    }
+
+    $record['assigneeStatusHistory'] = docs_sanitize_assignee_status_history_collection($next);
 }
 
 function docs_match_status_change_assignee_key(array $record, array $requestContext, ?array $sessionAuth, string $statusChangeAuthor): ?string
@@ -17500,20 +17599,24 @@ switch ($action) {
                     $records[$recordIndex]['statusUpdatedAt'],
                     $statusAssigneeKey
                 );
-            } elseif ($nextStatus !== '') {
-                docs_append_assignee_status_history($records[$recordIndex], $statusAssigneeKey, [
-                    'status' => $nextStatus,
-                    'changedAt' => date('c'),
-                    'changedBy' => $statusAuthor,
-                ]);
+            } else {
+                if ($nextStatus !== '') {
+                    docs_append_assignee_status_history($records[$recordIndex], $statusAssigneeKey, [
+                        'status' => $nextStatus,
+                        'changedAt' => date('c'),
+                        'changedBy' => $statusAuthor,
+                    ]);
+                } else {
+                    docs_clear_assignee_status_history($records[$recordIndex], $statusAssigneeKey);
+                }
             }
 
             $existingCompleted = isset($records[$recordIndex]['completedAt'])
                 ? sanitize_date_field((string) $records[$recordIndex]['completedAt'])
                 : '';
-            if ($isCompletedStatus) {
+            if ($shouldUpdateSharedStatus && $isCompletedStatus) {
                 $records[$recordIndex]['completedAt'] = $existingCompleted !== '' ? $existingCompleted : date('Y-m-d');
-            } elseif (isset($records[$recordIndex]['completedAt'])) {
+            } elseif ($shouldUpdateSharedStatus && isset($records[$recordIndex]['completedAt'])) {
                 unset($records[$recordIndex]['completedAt']);
             }
 
@@ -18118,6 +18221,13 @@ switch ($action) {
             ? $widthMap[$profile]
             : [];
 
+        if (empty($profileSettings)) {
+            $legacyProfile = docs_normalize_legacy_profile_key_without_colon($profile);
+            if ($legacyProfile !== '' && isset($widthMap[$legacyProfile]) && is_array($widthMap[$legacyProfile])) {
+                $profileSettings = $widthMap[$legacyProfile];
+            }
+        }
+
         if (empty($profileSettings) && strpos($profile, ':') !== false) {
             $fallbackProfile = strstr($profile, ':', true);
             if ($fallbackProfile !== false && isset($widthMap[$fallbackProfile]) && is_array($widthMap[$fallbackProfile])) {
@@ -18259,6 +18369,12 @@ switch ($action) {
         $profileSettings = isset($orderMap[$profile]) && is_array($orderMap[$profile])
             ? $orderMap[$profile]
             : [];
+        if (empty($profileSettings)) {
+            $legacyProfile = docs_normalize_legacy_profile_key_without_colon($profile);
+            if ($legacyProfile !== '' && isset($orderMap[$legacyProfile]) && is_array($orderMap[$legacyProfile])) {
+                $profileSettings = $orderMap[$legacyProfile];
+            }
+        }
         if (empty($profileSettings) && strpos($profile, ':') !== false) {
             $fallbackProfile = strstr($profile, ':', true);
             if ($fallbackProfile !== false && isset($orderMap[$fallbackProfile]) && is_array($orderMap[$fallbackProfile])) {

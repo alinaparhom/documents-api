@@ -5898,6 +5898,10 @@
       documentsAuthenticated = false;
       documentsLogoutAvailable = false;
       documentsLogoutInProgress = false;
+      documentsAccessContext = null;
+      documentsSessionPromise = null;
+      documentsCredentialsCache = null;
+      documentsCredentialsPromise = null;
       syncDocumentsControls();
       if (!documentsAuthStorageKey || !window.sessionStorage) {
         return;
@@ -6144,6 +6148,9 @@
           });
         })
         .then(function(payload) {
+          if (typeof window !== 'undefined' && typeof window.clearDocumentsRuntimeCache === 'function') {
+            window.clearDocumentsRuntimeCache({ clearLocalStorage: true });
+          }
           clearDocumentsAuthentication();
           applySessionAuthenticationFlag(null);
           closeDocuments();
