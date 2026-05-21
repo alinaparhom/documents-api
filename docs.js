@@ -4664,6 +4664,7 @@
       '.documents-table-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:10px;min-width:0;}' +
       '.documents-tools-toggle{display:inline-flex;align-items:center;justify-content:center;gap:7px;width:max-content;max-width:100%;min-height:34px;padding:0 12px;border:1px solid #dbeafe;border-radius:9px;background:#fff;color:#172554;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 8px 18px rgba(15,23,42,.06);transition:background .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease;}' +
       '.documents-tools-toggle:hover,.documents-tools-toggle:focus-visible{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;outline:none;box-shadow:0 10px 22px rgba(37,99,235,.12);}' +
+      '.documents-tools-toggle[aria-expanded="true"]{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;box-shadow:0 10px 22px rgba(37,99,235,.12);}' +
       '.documents-tools-toggle__icon,.documents-tools-toggle__chevron{width:16px;height:16px;flex:0 0 auto;}' +
       '.documents-panel-control-group .documents-tools-toggle{width:34px;min-width:34px;max-width:34px;min-height:32px;height:32px;padding:0;gap:0;border-radius:9px;box-shadow:none;}' +
       '.documents-panel-control-group .documents-tools-toggle{color:#b45309!important;border-color:rgba(251,191,36,.72)!important;background:#fffbeb!important;}' +
@@ -4724,6 +4725,13 @@
       '.documents-row--overdue:hover td{background:#fff1f2;}' +
       '.documents-row--overdue td:first-child{box-shadow:inset 3px 0 0 #ef4444;}' +
       '.documents-row--overdue td[data-column-key="entryNumber"],.documents-row--overdue td[data-column-key="registrationDate"],.documents-row--overdue td[data-column-key="dueDate"]{color:#ef4444;font-weight:800;}' +
+      '.documents-row--overdue td[data-column-key="dueDate"]{box-shadow:inset 0 0 0 999px rgba(239,68,68,.035);}' +
+      '.documents-due{display:flex;flex-direction:column;gap:5px;min-width:0;}' +
+      '.documents-due__compact,.documents-due__list{min-width:0;}' +
+      '.documents-due__compact-item,.documents-due__item{overflow-wrap:anywhere;}' +
+      '.documents-due--overdue .documents-due__compact-item:first-child{display:inline-flex;align-items:center;gap:6px;width:max-content;max-width:100%;min-height:24px;padding:3px 8px;border:1px solid #fecaca;border-radius:7px;background:#fef2f2;color:#b91c1c;font-weight:900;line-height:1.2;box-sizing:border-box;}' +
+      '.documents-due--overdue .documents-due__compact-item:first-child::before{content:"!";display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;min-width:16px;border-radius:999px;background:#dc2626;color:#fff;font-size:11px;font-weight:900;line-height:1;}' +
+      '.documents-due__overdue-note{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:2px 7px;border-radius:999px;background:#dc2626;color:#fff;font-size:10px;font-weight:900;line-height:1.4;text-transform:uppercase;letter-spacing:0;}' +
       '.documents-status{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0;}' +
       '.documents-status__badge{display:inline-grid;grid-template-columns:8px minmax(0,1fr);align-items:center;gap:7px;max-width:100%;min-height:26px;padding:4px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;color:#334155;font-size:12px;font-weight:900;line-height:1.2;box-sizing:border-box;}' +
       '.documents-status__badge-dot{width:8px;height:8px;border-radius:999px;background:currentColor;box-shadow:0 0 0 3px rgba(148,163,184,.16);}' +
@@ -4734,7 +4742,6 @@
       '.documents-status__badge--done{background:#ecfdf5;border-color:#bbf7d0;color:#047857;}' +
       '.documents-status__badge--cancelled{background:#f8fafc;border-color:#cbd5e1;color:#64748b;}' +
       '.documents-status__badge--neutral{background:#eef2ff;border-color:#c7d2fe;color:#3730a3;}' +
-      '.documents-status__badge--overdue{background:#fef2f2;border-color:#fecaca;color:#dc2626;}' +
       '.documents-status__badge--empty{background:#f8fafc;border-color:#e2e8f0;color:#94a3b8;}' +
       '.documents-status__select{width:100%;min-width:120px;max-width:100%;height:30px;padding:0 28px 0 9px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#334155;font-size:12px;font-weight:900;line-height:1.1;outline:none;cursor:pointer;box-sizing:border-box;}' +
       '.documents-status__select:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(37,99,235,.12);}' +
@@ -6495,9 +6502,6 @@
       return values.__hasFiles === true ? 'Есть файлы' : 'Без файлов';
     }
     if (key === 'status') {
-      if (values.__overdue === true) {
-        return 'Просрочено';
-      }
       return values.status ? String(values.status) : 'Без статуса';
     }
     var value = values[key];
@@ -6808,9 +6812,6 @@
         return values.__hasFiles !== true;
       }
     }
-    if (columnKey === 'status' && query === '__overdue__') {
-      return values.__overdue === true;
-    }
     return null;
   }
 
@@ -6823,9 +6824,6 @@
     }
     if (columnKey === 'status') {
       var statusValues = [];
-      if (values.__overdue === true) {
-        statusValues.push('Просрочено');
-      }
       if (values.status) {
         statusValues.push(String(values.status));
       } else {
@@ -8780,7 +8778,7 @@
       ]);
     }
     if (column.key === 'status') {
-      var statusOptions = [{ value: '__overdue__', label: 'Просрочено' }];
+      var statusOptions = [];
       STATUS_OPTIONS.forEach(function(status) {
         statusOptions.push({ value: status, label: status });
       });
@@ -17868,10 +17866,7 @@
     }
   }
 
-  function getStatusTone(status, isOverdue) {
-    if (isOverdue) {
-      return 'overdue';
-    }
+  function getStatusTone(status) {
     var normalized = normalizeRoleValue(status || '');
     if (!normalized || normalized === '—') {
       return 'empty';
@@ -17899,7 +17894,7 @@
     if (!text) {
       text = '—';
     }
-    var badgeTone = tone || getStatusTone(text, false);
+    var badgeTone = tone || getStatusTone(text);
     var badge = createElement('div', 'documents-status__badge documents-status__badge--' + badgeTone);
     badge.title = text;
     badge.appendChild(createElement('span', 'documents-status__badge-dot'));
@@ -17915,7 +17910,7 @@
     for (var i = 0; i < tones.length; i += 1) {
       select.classList.remove('documents-status__select--' + tones[i]);
     }
-    select.classList.add('documents-status__select--' + getStatusTone(status, false));
+    select.classList.add('documents-status__select--' + getStatusTone(status));
   }
 
   function clampColumnWidth(value) {
@@ -19558,6 +19553,12 @@
     var compact = createElement('div', 'documents-due__compact');
     var list = createElement('div', 'documents-due__list');
     var entries = buildDueDateAssignments(doc);
+    var isOverdue = isDocumentOverdueForTab(doc);
+
+    if (isOverdue) {
+      container.classList.add('documents-due--overdue');
+      container.setAttribute('title', 'Срок исполнения прошёл');
+    }
 
     if (!entries.length) {
       var fallback = formatDueDateValue(doc && doc.dueDate ? String(doc.dueDate).trim() : '');
@@ -19577,6 +19578,9 @@
     }
 
     container.appendChild(compact);
+    if (isOverdue) {
+      container.appendChild(createElement('div', 'documents-due__overdue-note', 'Срок прошёл'));
+    }
     container.appendChild(list);
     return container;
   }
@@ -19642,9 +19646,6 @@
 
     if (isOverdue) {
       container.dataset.overdue = 'true';
-      container.appendChild(createStatusBadge('Просрочено', 'overdue'));
-      container.appendChild(meta);
-      return container;
     }
 
     if (canEditStatus) {
@@ -19657,8 +19658,8 @@
         handleStatusSelectChange(doc, select, meta);
       });
       container.appendChild(select);
-    } else if (!isOverdue) {
-      container.appendChild(createStatusBadge(statusText, getStatusTone(statusText, false)));
+    } else {
+      container.appendChild(createStatusBadge(statusText, getStatusTone(statusText)));
     }
 
     container.appendChild(meta);
@@ -24962,7 +24963,6 @@
 
     var message = createElement('div', 'documents-message');
     var tableToolbar = createElement('div', 'documents-table-toolbar');
-    tableToolbar.classList.add('documents-table-toolbar--collapsed');
     var toolsToggle = createDocumentsToolsToggle();
     var tabsBar = createElement('div', 'documents-tabs');
     var tableTools = createElement('div', 'documents-table-tools');
@@ -25047,6 +25047,7 @@
         closeColumnsPopover();
       }
     });
+    syncDocumentsToolsToggle(toolsToggle, true);
     if (!arrangeDocumentsHeaderControls(toolsToggle, buttonContainer)) {
       tableToolbar.appendChild(toolsToggle);
     }
