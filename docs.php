@@ -3203,6 +3203,11 @@ function docs_build_subordinate_review_notification_message(
     $name = docs_extract_assignee_display_name($subordinate);
     $decisionLabel = docs_subordinate_review_status_label($status);
 
+    if ($status === 'revision') {
+        $lines[] = '⛔️ НА ДОРАБОТКУ ⛔️';
+        $lines[] = '';
+    }
+
     $lines[] = $name !== ''
         ? $name . ', по вашей задаче принято решение.'
         : 'По вашей задаче принято решение.';

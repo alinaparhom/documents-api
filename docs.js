@@ -19790,8 +19790,6 @@
       if (nextExpanded !== currentlyExpanded) {
         var scrollAnchor = captureTableScrollAnchor(tr);
         setTableRowExpanded(tr, expandedKey, nextExpanded);
-        state.virtualTable.rowHeight = 0;
-        scheduleVirtualTableRender();
         restoreTableScrollAnchor(scrollAnchor);
       }
       if (nextExpanded) {
