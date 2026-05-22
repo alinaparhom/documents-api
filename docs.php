@@ -4944,12 +4944,24 @@ function docs_collect_view_candidate_keys(array $requestContext, array $details)
     $addIdCandidate($details['assigneeId'] ?? '');
     $addIdCandidate($details['viewerId'] ?? '');
     $addIdCandidate($details['id'] ?? '');
+    $addIdCandidate($details['userId'] ?? '');
+    $addIdCandidate($details['user_id'] ?? '');
     $addIdCandidate($details['telegram'] ?? '');
+    $addIdCandidate($details['telegramId'] ?? '');
+    $addIdCandidate($details['telegram_id'] ?? '');
+    $addIdCandidate($details['telegram_user_id'] ?? '');
     $addIdCandidate($details['chatId'] ?? '');
+    $addIdCandidate($details['chat_id'] ?? '');
+    $addIdCandidate($details['responsibleNumber'] ?? '');
+    $addIdCandidate($details['responsible_number'] ?? '');
     $addIdCandidate($details['login'] ?? '');
+    $addIdCandidate($details['username'] ?? '');
+    $addIdCandidate($details['email'] ?? '');
     $addNameCandidate($details['viewerName'] ?? '');
     $addNameCandidate($details['name'] ?? '');
     $addNameCandidate($details['fullName'] ?? '');
+    $addNameCandidate($details['fio'] ?? '');
+    $addNameCandidate($details['displayName'] ?? '');
 
     $keys = [];
 
@@ -10364,32 +10376,11 @@ function docs_index_assignees(array $assignees): array
             continue;
         }
 
-        foreach (['id', 'telegram', 'chatId', 'number', 'email', 'login'] as $field) {
-            if (!isset($entry[$field])) {
-                continue;
+        foreach (docs_collect_assignee_index_keys($entry) as $key) {
+            $normalizedKey = mb_strtolower(trim((string) $key), 'UTF-8');
+            if ($normalizedKey !== '') {
+                $index[$normalizedKey] = $entry;
             }
-
-            $normalized = docs_normalize_identifier_candidate_value($entry[$field]);
-            if ($normalized !== '') {
-                $index['id::' . $normalized] = $entry;
-            }
-        }
-
-        foreach (['name', 'responsible'] as $field) {
-            if (!isset($entry[$field])) {
-                continue;
-            }
-
-            $normalizedName = docs_normalize_name_candidate_value($entry[$field]);
-            if ($normalizedName !== '') {
-                $index['name::' . $normalizedName] = $entry;
-            }
-        }
-
-        $compositeName = $entry['responsible'] ?? ($entry['name'] ?? '');
-        $compositeKey = docs_build_responsible_composite_key($entry['number'] ?? '', $compositeName);
-        if ($compositeKey !== '') {
-            $index['combo::' . $compositeKey] = $entry;
         }
 
         $roleCandidates = [
@@ -19376,16 +19367,45 @@ switch ($action) {
             'viewerName',
             'name',
             'fullName',
+            'displayName',
+            'fio',
             'login',
+            'username',
+            'email',
             'id',
+            'userId',
+            'user_id',
             'telegram',
+            'telegramId',
+            'telegram_id',
+            'telegram_user_id',
             'chatId',
+            'chat_id',
+            'responsibleNumber',
+            'responsible_number',
         ] as $field) {
             if (isset($payload[$field]) && is_string($payload[$field])) {
                 $value = trim($payload[$field]);
                 if ($value !== '') {
                     $details[$field] = $value;
                 }
+            }
+        }
+
+        foreach ([
+            'telegramId',
+            'chatId',
+            'responsibleNumber',
+            'login',
+            'fullName',
+        ] as $sessionField) {
+            if (!empty($details[$sessionField]) || !isset($sessionAuth[$sessionField])) {
+                continue;
+            }
+
+            $value = trim((string) $sessionAuth[$sessionField]);
+            if ($value !== '') {
+                $details[$sessionField] = $value;
             }
         }
 

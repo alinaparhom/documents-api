@@ -382,6 +382,7 @@
       var idCandidates = [
         user.id,
         user.userId,
+        user.user_id,
         user.telegramId,
         user.telegram_id,
         user.telegram,
@@ -390,7 +391,10 @@
         user.login,
         user.username,
         user.userName,
+        user.telegramUsername,
+        user.telegram_username,
         user.responsibleNumber,
+        user.responsible_number,
         user.responsibleId,
         user.number,
         user.email,
@@ -1086,6 +1090,7 @@
           docsLogger.error('Не удалось обновить реестр документов после смены пользователя:', error);
         }
       });
+      startRealtimeRegistrySync();
     }
   }
 
@@ -1119,6 +1124,9 @@
   var FILTER_EMPTY_SELECTION_VALUE = '__documents_empty_filter_selection__';
   var FILTER_EXCLUDE_SELECTION_PREFIX = '__documents_exclude_filter_v1__::';
   var FILTER_SELECTION_MAX_VALUES = 5000;
+  var REALTIME_SYNC_INTERVAL_MS = 3000;
+  var REALTIME_SYNC_MIN_GAP_MS = 1200;
+  var REALTIME_VIEW_EVENT_KEY_PREFIX = 'documents.viewed.event.';
   var DOCUMENT_TABS_STORAGE_PREFIX = 'documents:tabs:';
   var TABLE_PREFERENCES_STORAGE_PREFIX = 'documents:table-preferences:';
   var COLUMN_ORDER_STORAGE_PREFIX = 'documents:column-order:';
@@ -1306,7 +1314,16 @@
     tablePreferencesSavingTimer: null,
     tablePreferencesApplying: false,
     filterValuesCacheVersion: 1,
-    runtimeCacheVersion: 1
+    runtimeCacheVersion: 1,
+    realtime: {
+      timerId: null,
+      inFlight: false,
+      lastSyncAt: 0,
+      registrySignature: '',
+      broadcastChannel: null,
+      storageListenerAttached: false,
+      visibilityListenerAttached: false
+    }
   };
 
   function readCookieValue(name) {
@@ -16326,15 +16343,23 @@
     var seen = Object.create(null);
     var idCandidates = [
       entry.id,
+      entry.userId,
+      entry.user_id,
       entry.telegram,
       entry.telegramId,
+      entry.telegram_id,
+      entry.telegram_user_id,
       entry.telegramUsername,
+      entry.telegram_username,
       entry.chatId,
+      entry.chat_id,
       entry.number,
       entry.responsibleNumber,
+      entry.responsible_number,
       entry.email,
       entry.login,
-      entry.username
+      entry.username,
+      entry.userName
     ];
     for (var i = 0; i < idCandidates.length; i += 1) {
       var normalizedId = normalizeAssigneeIdentifier(idCandidates[i]);
@@ -16353,6 +16378,12 @@
     }
     if (entry.fullName && entry.fullName !== entry.name) {
       nameCandidates.push(entry.fullName);
+    }
+    if (entry.fio && entry.fio !== entry.name) {
+      nameCandidates.push(entry.fio);
+    }
+    if (entry.displayName && entry.displayName !== entry.name) {
+      nameCandidates.push(entry.displayName);
     }
     if (entry.responsible && entry.responsible !== entry.name) {
       nameCandidates.push(entry.responsible);
@@ -17549,10 +17580,34 @@
     if (accessUser && typeof accessUser === 'object') {
       if (accessUser.id) {
         payload.viewerId = accessUser.id;
+      } else if (accessUser.telegramId) {
+        payload.viewerId = accessUser.telegramId;
+      } else if (accessUser.chatId) {
+        payload.viewerId = accessUser.chatId;
+      } else if (accessUser.responsibleNumber) {
+        payload.viewerId = accessUser.responsibleNumber;
       } else if (accessUser.login) {
         payload.viewerId = accessUser.login;
       } else if (accessUser.username) {
         payload.viewerId = accessUser.username;
+      }
+      if (accessUser.telegramId) {
+        payload.telegramId = accessUser.telegramId;
+      }
+      if (accessUser.telegram) {
+        payload.telegram = accessUser.telegram;
+      }
+      if (accessUser.chatId) {
+        payload.chatId = accessUser.chatId;
+      }
+      if (accessUser.responsibleNumber) {
+        payload.responsibleNumber = accessUser.responsibleNumber;
+      }
+      if (accessUser.email) {
+        payload.email = accessUser.email;
+      }
+      if (accessUser.username) {
+        payload.username = accessUser.username;
       }
       if (accessUser.login) {
         payload.login = accessUser.login;
@@ -17595,6 +17650,15 @@
         });
         recalculateUnviewedCounters();
         updateTable();
+        syncRealtimeRegistrySignature();
+        publishRealtimeViewEvent({
+          organization: state.organization,
+          documentId: doc.id,
+          viewedAt: recordedAt,
+          assigneeKey: result.assigneeKey,
+          id: result.id,
+          name: result.name
+        });
       })
       .catch(function(error) {
         docsLogger.error('Не удалось зафиксировать просмотр документа:', error);
@@ -17602,6 +17666,238 @@
       .finally(function() {
         doc.__recordViewPending = false;
       });
+  }
+
+  function getRealtimeClientId() {
+    if (state.realtime.clientId) {
+      return state.realtime.clientId;
+    }
+
+    var key = 'documents.realtime.client';
+    var stored = '';
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        stored = window.sessionStorage.getItem(key) || '';
+      }
+    } catch (error) {
+      stored = '';
+    }
+
+    if (!stored) {
+      stored = 'rt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+      try {
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          window.sessionStorage.setItem(key, stored);
+        }
+      } catch (error) {
+        // sessionStorage may be unavailable in private mode.
+      }
+    }
+
+    state.realtime.clientId = stored;
+    return stored;
+  }
+
+  function getRealtimeChannelName() {
+    return state.organization
+      ? 'documents-viewed-' + String(state.organization)
+      : 'documents-viewed';
+  }
+
+  function normalizeRealtimeViewEvent(rawEvent) {
+    if (!rawEvent || typeof rawEvent !== 'object') {
+      return null;
+    }
+
+    var documentId = rawEvent.documentId !== undefined && rawEvent.documentId !== null
+      ? String(rawEvent.documentId).trim()
+      : '';
+    if (!documentId) {
+      return null;
+    }
+
+    var organization = rawEvent.organization !== undefined && rawEvent.organization !== null
+      ? String(rawEvent.organization).trim()
+      : '';
+    if (organization && state.organization && organization !== state.organization) {
+      return null;
+    }
+
+    return {
+      organization: organization,
+      documentId: documentId,
+      viewedAt: rawEvent.viewedAt ? String(rawEvent.viewedAt) : new Date().toISOString(),
+      assigneeKey: rawEvent.assigneeKey ? String(rawEvent.assigneeKey) : '',
+      id: rawEvent.id ? String(rawEvent.id) : '',
+      name: rawEvent.name ? String(rawEvent.name) : '',
+      sourceId: rawEvent.sourceId ? String(rawEvent.sourceId) : ''
+    };
+  }
+
+  function applyRealtimeViewEvent(rawEvent) {
+    var event = normalizeRealtimeViewEvent(rawEvent);
+    if (!event || event.sourceId === getRealtimeClientId()) {
+      return;
+    }
+
+    var doc = findDocumentById(event.documentId);
+    if (!doc) {
+      runRealtimeRegistrySync({ force: true });
+      return;
+    }
+
+    applyLocalDocumentViewUpdate(doc, event.viewedAt, {
+      assigneeKey: event.assigneeKey,
+      id: event.id,
+      name: event.name
+    });
+    recalculateUnviewedCounters();
+    updateTable();
+    syncRealtimeRegistrySignature();
+  }
+
+  function publishRealtimeViewEvent(event) {
+    var normalized = normalizeRealtimeViewEvent(event);
+    if (!normalized) {
+      return;
+    }
+
+    normalized.sourceId = getRealtimeClientId();
+    normalized.sentAt = Date.now();
+
+    if (state.realtime.broadcastChannel && typeof state.realtime.broadcastChannel.postMessage === 'function') {
+      try {
+        state.realtime.broadcastChannel.postMessage(normalized);
+      } catch (error) {
+        // Fall back to localStorage below.
+      }
+    }
+
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        var storageKey = REALTIME_VIEW_EVENT_KEY_PREFIX + (state.organization || 'global');
+        window.localStorage.setItem(storageKey, JSON.stringify(normalized));
+        window.setTimeout(function() {
+          try {
+            window.localStorage.removeItem(storageKey);
+          } catch (removeError) {
+            // Ignore cleanup failures.
+          }
+        }, 1000);
+      }
+    } catch (error) {
+      // localStorage may be blocked; polling still covers other clients.
+    }
+  }
+
+  function runRealtimeRegistrySync(options) {
+    var config = options && typeof options === 'object' ? options : {};
+    if (!state.organization || !state.registryLoaded || state.realtime.inFlight) {
+      return Promise.resolve(state.documents);
+    }
+    if (typeof document !== 'undefined' && document.hidden && config.force !== true) {
+      return Promise.resolve(state.documents);
+    }
+
+    var now = Date.now();
+    if (config.force !== true && now - state.realtime.lastSyncAt < REALTIME_SYNC_MIN_GAP_MS) {
+      return Promise.resolve(state.documents);
+    }
+
+    state.realtime.inFlight = true;
+    state.realtime.lastSyncAt = now;
+    return refreshRegistrySilently()
+      .catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось выполнить realtime-синхронизацию просмотров:', error);
+        }
+        return state.documents;
+      })
+      .finally(function() {
+        state.realtime.inFlight = false;
+      });
+  }
+
+  function ensureRealtimeChannel() {
+    if (state.realtime.broadcastChannel || typeof window === 'undefined' || typeof window.BroadcastChannel !== 'function') {
+      return;
+    }
+
+    try {
+      state.realtime.broadcastChannel = new window.BroadcastChannel(getRealtimeChannelName());
+      state.realtime.broadcastChannel.onmessage = function(event) {
+        applyRealtimeViewEvent(event && event.data);
+      };
+    } catch (error) {
+      state.realtime.broadcastChannel = null;
+    }
+  }
+
+  function handleRealtimeStorageEvent(event) {
+    if (!event || !event.key || event.newValue === null) {
+      return;
+    }
+    var expectedKey = REALTIME_VIEW_EVENT_KEY_PREFIX + (state.organization || 'global');
+    if (event.key !== expectedKey) {
+      return;
+    }
+
+    try {
+      applyRealtimeViewEvent(JSON.parse(event.newValue));
+    } catch (error) {
+      // Ignore malformed cross-tab payloads.
+    }
+  }
+
+  function handleRealtimeVisibilityChange() {
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
+    runRealtimeRegistrySync({ force: true });
+  }
+
+  function startRealtimeRegistrySync() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    ensureRealtimeChannel();
+
+    if (!state.realtime.storageListenerAttached && typeof window.addEventListener === 'function') {
+      window.addEventListener('storage', handleRealtimeStorageEvent);
+      state.realtime.storageListenerAttached = true;
+    }
+
+    if (!state.realtime.visibilityListenerAttached && typeof document !== 'undefined'
+      && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', handleRealtimeVisibilityChange);
+      state.realtime.visibilityListenerAttached = true;
+    }
+
+    if (state.realtime.timerId) {
+      return;
+    }
+
+    state.realtime.timerId = window.setInterval(function() {
+      runRealtimeRegistrySync();
+    }, REALTIME_SYNC_INTERVAL_MS);
+  }
+
+  function stopRealtimeRegistrySync() {
+    if (typeof window !== 'undefined' && state.realtime.timerId) {
+      window.clearInterval(state.realtime.timerId);
+    }
+    state.realtime.timerId = null;
+    state.realtime.inFlight = false;
+
+    if (state.realtime.broadcastChannel && typeof state.realtime.broadcastChannel.close === 'function') {
+      try {
+        state.realtime.broadcastChannel.close();
+      } catch (error) {
+        // Ignore close failures.
+      }
+    }
+    state.realtime.broadcastChannel = null;
   }
 
   function isDocumentAssignedToAdminRole(doc) {
@@ -17663,7 +17959,24 @@
         continue;
       }
 
-      var idCandidates = [entry.id, entry.telegram, entry.chatId, entry.number, entry.login, entry.email];
+      var idCandidates = [
+        entry.id,
+        entry.userId,
+        entry.user_id,
+        entry.telegram,
+        entry.telegramId,
+        entry.telegram_id,
+        entry.telegram_user_id,
+        entry.chatId,
+        entry.chat_id,
+        entry.number,
+        entry.responsibleNumber,
+        entry.responsible_number,
+        entry.login,
+        entry.username,
+        entry.userName,
+        entry.email
+      ];
       for (var j = 0; j < idCandidates.length; j += 1) {
         var idCandidate = normalizeUserIdentifier(idCandidates[j]);
         if (idCandidate && identifiers.ids.indexOf(idCandidate) !== -1) {
@@ -17671,7 +17984,7 @@
         }
       }
 
-      var nameCandidates = [entry.name, entry.responsible];
+      var nameCandidates = [entry.name, entry.responsible, entry.fullName, entry.fio, entry.displayName];
       for (var k = 0; k < nameCandidates.length; k += 1) {
         var nameCandidate = normalizeUserIdentifier(nameCandidates[k]);
         if (nameCandidate && identifiers.names.indexOf(nameCandidate) !== -1) {
@@ -21422,6 +21735,7 @@
     recalculateUnviewedCounters();
     updateClockUserDisplay();
     updateTable();
+    syncRealtimeRegistrySignature();
     return state.documents;
   }
 
@@ -21593,8 +21907,66 @@
     })
       .then(handleResponse)
       .then(function(data) {
-        return updateStateFromPayload(data);
+        var documents = resolveDocumentsCollection(data);
+        var nextSignature = buildRealtimeRegistrySignature(documents);
+        if (nextSignature && nextSignature === state.realtime.registrySignature) {
+          return state.documents;
+        }
+
+        var updatedDocuments = updateStateFromPayload(data);
+        state.realtime.registrySignature = nextSignature || buildRealtimeRegistrySignature(updatedDocuments);
+        return updatedDocuments;
       });
+  }
+
+  function buildRealtimeRegistrySignature(documents) {
+    var list = Array.isArray(documents) ? documents : [];
+    if (!list.length) {
+      return 'empty';
+    }
+
+    var parts = [];
+    for (var i = 0; i < list.length; i += 1) {
+      var doc = list[i];
+      if (!doc || typeof doc !== 'object') {
+        continue;
+      }
+
+      var id = doc.id !== undefined && doc.id !== null
+        ? String(doc.id)
+        : getDocumentRowId(doc);
+      var views = Array.isArray(doc.assigneeViews) ? doc.assigneeViews : [];
+      var statusHistory = Array.isArray(doc.assigneeStatusHistory) ? doc.assigneeStatusHistory : [];
+      var responses = Array.isArray(doc.responses) ? doc.responses : [];
+      var responsesStamp = responses.map(function(response) {
+        if (!response || typeof response !== 'object') {
+          return '';
+        }
+        return [
+          response.storedName || '',
+          response.uploadedAt || '',
+          response.uploadedByKey || '',
+          response.uploadedBy || ''
+        ].join(':');
+      }).join(',');
+
+      parts.push([
+        id,
+        doc.updatedAt || '',
+        doc.status || '',
+        doc.statusUpdatedAt || '',
+        JSON.stringify(views),
+        JSON.stringify(statusHistory),
+        responses.length,
+        responsesStamp
+      ].join('|'));
+    }
+
+    return parts.join('\n');
+  }
+
+  function syncRealtimeRegistrySignature() {
+    state.realtime.registrySignature = buildRealtimeRegistrySignature(state.documents);
   }
 
   function applyTaskMutationPayload(data) {
@@ -25316,7 +25688,9 @@
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       window.addEventListener('documentsAccessContextChanged', handleAccessContextChange);
       window.addEventListener('beforeunload', stopPresenceTracking);
+      window.addEventListener('beforeunload', stopRealtimeRegistrySync);
       window.addEventListener('pagehide', stopPresenceTracking);
+      window.addEventListener('pagehide', stopRealtimeRegistrySync);
     }
     state.telegramUserId = getTelegramUserId();
     if (!diagnosticsState.startSent) {
@@ -25403,6 +25777,7 @@
           docsLogger.error('Не удалось загрузить реестр документов при инициализации:', error);
         }
       });
+      startRealtimeRegistrySync();
     } else {
       state.registryLoading = false;
       state.registryLoaded = true;
@@ -25450,6 +25825,7 @@
   function resetDocumentsRuntimeCache(options) {
     var config = options && typeof options === 'object' ? options : {};
     state.runtimeCacheVersion += 1;
+    stopRealtimeRegistrySync();
 
     if (state.tablePreferencesSavingTimer && typeof window !== 'undefined') {
       window.clearTimeout(state.tablePreferencesSavingTimer);
@@ -25490,6 +25866,8 @@
     state.userAssignmentKeyMap = null;
     state.hasUserAssignmentKeys = false;
     state.effectiveUserRole = '';
+    state.realtime.lastSyncAt = 0;
+    state.realtime.registrySignature = '';
     state.permissions = { canManageInstructions: false, canCreateDocuments: false, canDeleteDocuments: false, canManageSubordinates: false };
     state.admin.settings = { responsibles: [], block2: [], block3: [] };
     state.admin.loaded = false;
