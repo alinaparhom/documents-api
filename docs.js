@@ -4645,6 +4645,10 @@
       '.documents-outgoing-modal__title{margin:0;color:#0f172a;font-size:20px;line-height:1.2;font-weight:900;}' +
       '.documents-outgoing-modal__summary{margin:6px 0 0;color:#64748b;font-size:13px;line-height:1.4;font-weight:700;}' +
       '.documents-outgoing-modal__actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;}' +
+      '.documents-outgoing-modal__notice{display:none;margin:12px 18px 0;padding:11px 13px;border:1px solid #fde68a;border-radius:10px;background:#fffbeb;color:#92400e;font-size:13px;font-weight:800;line-height:1.4;box-shadow:0 10px 22px rgba(146,64,14,.08);}' +
+      '.documents-outgoing-modal__notice--visible{display:block;}' +
+      '.documents-outgoing-modal__notice--error{border-color:#fecaca;background:#fff1f2;color:#9f1239;}' +
+      '.documents-outgoing-modal__notice--success{border-color:#bbf7d0;background:#ecfdf5;color:#047857;}' +
       '.documents-outgoing-modal__add{min-height:36px;border:1px solid #2458ff;border-radius:10px;background:#2458ff;color:#fff;padding:0 12px;font:inherit;font-size:12px;font-weight:900;cursor:pointer;transition:background .16s ease,border-color .16s ease,transform .16s ease;}' +
       '.documents-outgoing-modal__add:hover,.documents-outgoing-modal__add:focus-visible{border-color:#1f4fdc;background:#1f4fdc;outline:0;transform:translateY(-1px);}' +
       '.documents-outgoing-modal__close{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #dbeafe;border-radius:10px;background:#fff;color:#334155;font-size:22px;line-height:1;cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
@@ -4713,6 +4717,10 @@
       '.documents-outgoing-form-modal .documents-form__field textarea{min-height:132px;resize:vertical;}' +
       '.documents-outgoing-form-modal .documents-form__field input:hover,.documents-outgoing-form-modal .documents-form__field select:hover,.documents-outgoing-form-modal .documents-form__field textarea:hover{border-color:#aebfda;background:#fbfdff;}' +
       '.documents-outgoing-form-modal .documents-form__field input:focus,.documents-outgoing-form-modal .documents-form__field select:focus,.documents-outgoing-form-modal .documents-form__field textarea:focus{border-color:#2458ff;box-shadow:0 0 0 3px rgba(36,88,255,.13);outline:0;}' +
+      '.documents-outgoing-form-modal .documents-form__field--invalid input,.documents-outgoing-form-modal .documents-form__field--invalid select,.documents-outgoing-form-modal .documents-form__field--invalid textarea{border-color:#dc2626;background:#fff7f7;}' +
+      '.documents-outgoing-form-modal .documents-form__field--invalid input:focus,.documents-outgoing-form-modal .documents-form__field--invalid select:focus,.documents-outgoing-form-modal .documents-form__field--invalid textarea:focus{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.13);}' +
+      '.documents-outgoing-form-error{display:none;margin-top:7px;color:#b91c1c;font-size:12px;line-height:1.35;font-weight:800;}' +
+      '.documents-form__field--invalid .documents-outgoing-form-error{display:block;}' +
       '.documents-outgoing-form-modal__file-hint{margin-top:7px;color:#64748b;font-size:12px;line-height:1.35;font-weight:700;}' +
       '.documents-outgoing-file-upload{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px;width:100%;min-height:54px;padding:10px;border:1px dashed #bdd0ea;border-radius:12px;background:#fff;box-sizing:border-box;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease;}' +
       '.documents-outgoing-file-upload:hover,.documents-outgoing-file-upload:focus-within{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(36,88,255,.09);}' +
@@ -4742,7 +4750,7 @@
       '.documents-outgoing-form-modal__footer .documents-button--primary{border:1px solid #2458ff;background:#2458ff;color:#fff;box-shadow:0 10px 24px rgba(36,88,255,.22);}' +
       '.documents-outgoing-form-modal__footer .documents-button--primary:hover,.documents-outgoing-form-modal__footer .documents-button--primary:focus-visible{border-color:#1f4fdc;background:#1f4fdc;outline:0;}' +
       '.documents-outgoing-form-modal__footer .documents-button:disabled{opacity:.55;cursor:wait;box-shadow:none;}' +
-      '@media (max-width:720px){.documents-outgoing-modal__header{display:grid;padding:12px;}.documents-outgoing-modal__actions{justify-content:flex-start;}.documents-outgoing-modal__title{font-size:18px;}.documents-outgoing-modal__body{padding:10px 12px 14px;}.documents-outgoing-table{min-width:1020px;}.documents-outgoing-form-modal{align-items:flex-end;padding:8px;}.documents-outgoing-form-modal__shell{max-height:calc(100dvh - 16px);border-radius:14px;}.documents-outgoing-form-modal__header{padding:15px 14px 13px;}.documents-outgoing-form-modal__title{font-size:19px;}.documents-outgoing-form-modal__body{padding:14px;}.documents-outgoing-form-modal__grid{grid-template-columns:1fr;gap:12px;}.documents-outgoing-form__wide{grid-column:auto;}.documents-outgoing-file-upload{grid-template-columns:1fr;align-items:stretch;}.documents-outgoing-file-upload__button{width:100%;}.documents-outgoing-file-upload__summary{white-space:normal;}.documents-outgoing-form-modal__footer{display:grid;grid-template-columns:1fr;gap:8px;padding:12px 14px;}.documents-outgoing-form-modal__footer .documents-button{width:100%;}}';
+      '@media (max-width:720px){.documents-outgoing-modal__header{display:grid;padding:12px;}.documents-outgoing-modal__actions{justify-content:flex-start;}.documents-outgoing-modal__title{font-size:18px;}.documents-outgoing-modal__notice{margin:10px 12px 0;}.documents-outgoing-modal__body{padding:10px 12px 14px;}.documents-outgoing-table{min-width:1020px;}.documents-outgoing-form-modal{align-items:flex-end;padding:8px;}.documents-outgoing-form-modal__shell{max-height:calc(100dvh - 16px);border-radius:14px;}.documents-outgoing-form-modal__header{padding:15px 14px 13px;}.documents-outgoing-form-modal__title{font-size:19px;}.documents-outgoing-form-modal__body{padding:14px;}.documents-outgoing-form-modal__grid{grid-template-columns:1fr;gap:12px;}.documents-outgoing-form__wide{grid-column:auto;}.documents-outgoing-file-upload{grid-template-columns:1fr;align-items:stretch;}.documents-outgoing-file-upload__button{width:100%;}.documents-outgoing-file-upload__summary{white-space:normal;}.documents-outgoing-form-modal__footer{display:grid;grid-template-columns:1fr;gap:8px;padding:12px 14px;}.documents-outgoing-form-modal__footer .documents-button{width:100%;}}';
     document.head.appendChild(style);
   }
 
@@ -21359,7 +21367,13 @@
           var message = data && typeof data === 'object'
             ? (data.error || data.message || '')
             : '';
-          throw new Error(message || ('Статус ответа: ' + response.status));
+          var error = new Error(message || ('Статус ответа: ' + response.status));
+          if (data && typeof data === 'object') {
+            error.responseData = data;
+            error.reason = data.reason || '';
+          }
+          error.status = response.status;
+          throw error;
         }).catch(function(error) {
           if (error instanceof Error) {
             throw error;
@@ -22787,14 +22801,78 @@
     input.setAttribute('autocomplete', 'off');
     label.appendChild(input);
     field.appendChild(label);
+    var errorNode = createElement('div', 'documents-outgoing-form-error');
+    errorNode.setAttribute('aria-live', 'polite');
+    field.appendChild(errorNode);
 
     return {
       field: field,
-      input: input
+      input: input,
+      error: errorNode
     };
   }
 
-  function openOutgoingRecordForm(record, onSaved) {
+  function normalizeOutgoingNumberForCompare(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  function findOutgoingNumberDuplicate(records, value, excludeId) {
+    var normalized = normalizeOutgoingNumberForCompare(value);
+    if (!normalized || !Array.isArray(records)) {
+      return null;
+    }
+
+    for (var i = 0; i < records.length; i += 1) {
+      var item = records[i];
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      if (excludeId && String(item.id || '') === String(excludeId)) {
+        continue;
+      }
+      if (normalizeOutgoingNumberForCompare(item.outgoingNumber) === normalized) {
+        return item;
+      }
+    }
+
+    return null;
+  }
+
+  function setOutgoingFormFieldError(field, message) {
+    if (!field || !field.input || !field.error) {
+      return;
+    }
+
+    var text = message ? String(message) : '';
+    field.error.textContent = text;
+    field.field.classList.toggle('documents-form__field--invalid', text !== '');
+    field.input.setAttribute('aria-invalid', text !== '' ? 'true' : 'false');
+  }
+
+  function acquireOutgoingRecordEditLock(record) {
+    if (!record || !record.id) {
+      return Promise.reject(new Error('Запись исходящей корреспонденции не найдена.'));
+    }
+
+    return postOutgoingRegistryAction('outgoing_edit_lock_acquire', {
+      organization: state.organization,
+      id: record.id
+    });
+  }
+
+  function releaseOutgoingRecordEditLock(recordId, lockToken) {
+    if (!recordId || !lockToken) {
+      return;
+    }
+
+    postOutgoingRegistryAction('outgoing_edit_lock_release', {
+      organization: state.organization,
+      id: recordId,
+      lockToken: lockToken
+    }).catch(function() {});
+  }
+
+  function openOutgoingRecordForm(record, onSaved, knownRecords, editLock) {
     if (!state.organization) {
       showMessage('error', 'Организация не определена.');
       return;
@@ -22803,6 +22881,15 @@
     ensureOutgoingRegistryStyle();
 
     var isEditMode = Boolean(record && record.id);
+    var editLockToken = editLock && editLock.token ? String(editLock.token) : '';
+    var editLockReleased = false;
+    var releaseEditLockOnce = function() {
+      if (!isEditMode || editLockReleased || !editLockToken) {
+        return;
+      }
+      editLockReleased = true;
+      releaseOutgoingRecordEditLock(record.id, editLockToken);
+    };
     var modal = createElement('div', 'documents-outgoing-form-modal');
     modal.setAttribute('role', 'dialog');
     modal.setAttribute('aria-modal', 'true');
@@ -22831,6 +22918,7 @@
         modal.parentNode.removeChild(modal);
       }
       document.removeEventListener('keydown', outgoingFormEscapeHandler);
+      releaseEditLockOnce();
     };
     var outgoingFormEscapeHandler = function(event) {
       if (event.key === 'Escape') {
@@ -22858,8 +22946,9 @@
     header.appendChild(subtitle);
 
     var grid = createElement('div', 'documents-form__grid documents-outgoing-form-modal__grid');
+    var registryNumberField = createOutgoingFormField({ name: 'registryNumber', label: 'Исходящий номер *', value: record && record.outgoingNumber, required: true });
     var fields = [
-      createOutgoingFormField({ name: 'registryNumber', label: 'Исходящий номер *', value: record && record.outgoingNumber, required: true }),
+      registryNumberField,
       createOutgoingFormField({ name: 'correspondent', label: 'Адресат *', value: record && record.addressee, required: true }),
       createOutgoingFormField({ name: 'registrationDate', label: 'Дата регистрации *', type: 'date', value: record && record.sendingDate, required: true }),
       createOutgoingFormField({ name: 'documentNumber', label: 'Индекс', value: record && record.documentIndexNumber, placeholder: 'Например, 45/1' }),
@@ -22867,6 +22956,14 @@
       createOutgoingFormField({ name: 'executor', label: 'ФИО исполнителя', value: record && record.executor, placeholder: 'Введите ФИО исполнителя' }),
       createOutgoingFormField({ name: 'summary', label: 'Содержание', type: 'textarea', value: record && record.summary, wide: true, rows: 5 })
     ];
+    var validateOutgoingNumberField = function() {
+      var duplicate = findOutgoingNumberDuplicate(knownRecords, registryNumberField.input.value, isEditMode ? record.id : '');
+      var message = duplicate ? 'Этот исходящий номер уже занят.' : '';
+      setOutgoingFormFieldError(registryNumberField, message);
+      return !duplicate;
+    };
+    registryNumberField.input.addEventListener('input', validateOutgoingNumberField);
+    registryNumberField.input.addEventListener('blur', validateOutgoingNumberField);
     var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : 'Файлы', type: 'file', wide: true });
     filesField.input.multiple = true;
     filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
@@ -22988,10 +23085,17 @@
       };
       if (isEditMode) {
         payload.id = record.id;
+        payload.updatedAt = record.updatedAt || '';
+        payload.editLockToken = editLockToken;
       }
       fields.forEach(function(item) {
         payload[item.input.name] = normalizeTextInputValue(item.input.value);
       });
+      if (!validateOutgoingNumberField()) {
+        submitButton.disabled = false;
+        registryNumberField.input.focus();
+        return;
+      }
       var selectedFiles = Array.from(filesField.input.files || []);
       var fileErrors = validateAttachmentFiles(selectedFiles, existingFiles);
       if (fileErrors.length) {
@@ -23034,6 +23138,15 @@
         })
         .catch(function(error) {
           submitButton.disabled = false;
+          if (error && error.reason === 'outgoing_number_exists') {
+            setOutgoingFormFieldError(registryNumberField, error.message || 'Этот исходящий номер уже занят.');
+            registryNumberField.input.focus();
+            return;
+          }
+          if (error && (error.reason === 'outgoing_record_locked' || error.reason === 'outgoing_record_conflict')) {
+            showMessage('warning', error.message || 'Эту строку сейчас редактирует другой пользователь. Подождите.');
+            return;
+          }
           showMessage('error', error && error.message ? error.message : 'Не удалось сохранить запись.');
         });
     });
@@ -23129,6 +23242,10 @@
     headerActions.appendChild(closeButton);
     header.appendChild(headerActions);
 
+    var notice = createElement('div', 'documents-outgoing-modal__notice');
+    notice.setAttribute('role', 'status');
+    notice.setAttribute('aria-live', 'polite');
+
     var body = createElement('div', 'documents-outgoing-modal__body');
     var table = createElement('table', 'documents-outgoing-table');
     var thead = document.createElement('thead');
@@ -23142,6 +23259,7 @@
     var dropLine = createElement('div', 'documents-outgoing-column-drop-line');
     body.appendChild(dropLine);
     panel.appendChild(header);
+    panel.appendChild(notice);
     panel.appendChild(body);
     modal.appendChild(panel);
     document.body.appendChild(modal);
@@ -23157,6 +23275,26 @@
     };
     var columnDragState = null;
 
+    function showOutgoingNotice(type, text) {
+      var message = text ? String(text).trim() : '';
+      notice.textContent = message;
+      notice.classList.remove(
+        'documents-outgoing-modal__notice--visible',
+        'documents-outgoing-modal__notice--error',
+        'documents-outgoing-modal__notice--success'
+      );
+      if (!message) {
+        return;
+      }
+      notice.classList.add('documents-outgoing-modal__notice--visible');
+      if (type === 'error') {
+        notice.classList.add('documents-outgoing-modal__notice--error');
+      } else if (type === 'success') {
+        notice.classList.add('documents-outgoing-modal__notice--success');
+      }
+      notice.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
     function refreshOutgoingView() {
       var filteredRecords = filterOutgoingRegistryRecords(modalState.records, modalState.filters);
       var hasFilters = outgoingHasActiveFilters(modalState.filters);
@@ -23169,7 +23307,27 @@
         columnOrder: modalState.columnOrder,
         emptyMessage: hasFilters ? 'По выбранным фильтрам записей нет.' : 'Записей исходящей корреспонденции пока нет.',
         onEdit: function(row) {
-          openOutgoingRecordForm(row, syncOutgoingRows);
+          showOutgoingNotice('', '');
+          acquireOutgoingRecordEditLock(row)
+            .then(function(data) {
+              if (!data || !data.lockToken) {
+                var openErrorMessage = 'Не удалось открыть запись для редактирования. Повторите действие.';
+                showOutgoingNotice('error', openErrorMessage);
+                showMessage('error', openErrorMessage);
+                return;
+              }
+              openOutgoingRecordForm(row, syncOutgoingRows, modalState.records, {
+                token: data.lockToken
+              });
+            })
+            .catch(function(error) {
+              var message = error && error.message
+                ? error.message
+                : 'Эту строку сейчас редактирует другой пользователь. Подождите.';
+              var messageType = error && error.reason === 'outgoing_record_locked' ? 'warning' : 'error';
+              showOutgoingNotice(messageType, message);
+              showMessage(messageType, message, MESSAGE_LONG_DURATION_MS);
+            });
         },
         onDelete: function(row) {
           deleteOutgoingRecord(row, syncOutgoingRows);
@@ -23348,7 +23506,7 @@
     }
 
     addRecordButton.addEventListener('click', function() {
-      openOutgoingRecordForm(null, syncOutgoingRows);
+      openOutgoingRecordForm(null, syncOutgoingRows, modalState.records);
     });
     closeButton.addEventListener('click', function() {
       stopOutgoingColumnDrag();

@@ -141,6 +141,7 @@ const DOCS_TELEGRAM_API_TIMEOUT_SECONDS = 3;
 const DOCS_TELEGRAM_FILE_TIMEOUT_SECONDS = 4;
 const DOCS_TELEGRAM_SEND_TIMEOUT_SECONDS = 4;
 const DOCS_TELEGRAM_AVATAR_MISS_TTL = 300;
+const DOCS_OUTGOING_EDIT_LOCK_TTL = 300;
 
 function sanitize_instruction(?string $value): string
 {
@@ -4485,7 +4486,7 @@ function docs_outgoing_pick_first(array $record, array $fields, int $maxLength =
     return '';
 }
 
-function docs_prepare_outgoing_record(array $record, string $source = 'outgoing'): array
+function docs_prepare_outgoing_record(array $record, string $source = 'outgoing', bool $includeInternal = false): array
 {
     $files = docs_prepare_outgoing_files_payload($record['files'] ?? []);
     $fileNames = [];
@@ -4529,6 +4530,13 @@ function docs_prepare_outgoing_record(array $record, string $source = 'outgoing'
 
     if ($prepared['documentType'] === '') {
         $prepared['documentType'] = 'Исходящий';
+    }
+
+    if ($includeInternal) {
+        $editLock = docs_prepare_outgoing_edit_lock($record['editLock'] ?? null);
+        if (!empty($editLock) && docs_outgoing_edit_lock_is_active($editLock)) {
+            $prepared['editLock'] = $editLock;
+        }
     }
 
     return $prepared;
@@ -4780,15 +4788,8 @@ function docs_save_outgoing_registry(string $folder, array $records): void
 {
     $dir = ensure_organization_directory($folder);
     $file = $dir . '/' . OUTGOING_REGISTRY_FILENAME;
-    $prepared = [];
-    foreach ($records as $record) {
-        if (is_array($record)) {
-            $prepared[] = docs_prepare_outgoing_record($record);
-        }
-    }
-
-    $json = json_encode(array_values($prepared), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($json === false) {
+    $json = docs_encode_outgoing_registry_records($records);
+    if ($json === null) {
         return;
     }
 
@@ -4796,17 +4797,384 @@ function docs_save_outgoing_registry(string $folder, array $records): void
     @chmod($file, 0644);
 }
 
+function docs_encode_outgoing_registry_records(array $records): ?string
+{
+    $prepared = [];
+    foreach ($records as $record) {
+        if (is_array($record)) {
+            $prepared[] = docs_prepare_outgoing_record($record, 'outgoing', true);
+        }
+    }
+
+    $json = json_encode(array_values($prepared), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        return null;
+    }
+
+    return $json;
+}
+
+function docs_lock_outgoing_registry(string $folder): array
+{
+    $dir = ensure_organization_directory($folder);
+    $file = $dir . '/' . OUTGOING_REGISTRY_FILENAME;
+    $handle = @fopen($file, 'c+');
+    if ($handle === false) {
+        log_docs_event('Outgoing registry file open failed', [
+            'file' => $file,
+            'folder' => $folder,
+        ]);
+        return [null, []];
+    }
+
+    if (!flock($handle, LOCK_EX)) {
+        log_docs_event('Outgoing registry file lock failed', [
+            'file' => $file,
+            'folder' => $folder,
+        ]);
+        fclose($handle);
+        return [null, []];
+    }
+
+    $raw = stream_get_contents($handle);
+    if ($raw === false || trim($raw) === '') {
+        $records = [];
+    } else {
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            log_docs_event('Outgoing registry decode error (locked)', [
+                'file' => $file,
+                'folder' => $folder,
+                'jsonError' => json_last_error_msg(),
+            ]);
+            $records = [];
+        } else {
+            $records = [];
+            foreach ($decoded as $record) {
+                if (is_array($record)) {
+                    $records[] = docs_prepare_outgoing_record($record, 'outgoing', true);
+                }
+            }
+        }
+    }
+
+    register_shutdown_function(function () use ($handle) {
+        if (is_resource($handle)) {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
+    });
+
+    return [$handle, $records];
+}
+
+function docs_save_outgoing_registry_locked($handle, array $records): bool
+{
+    if (!is_resource($handle)) {
+        return false;
+    }
+
+    $json = docs_encode_outgoing_registry_records($records);
+    if ($json === null) {
+        return false;
+    }
+
+    rewind($handle);
+    ftruncate($handle, 0);
+    fwrite($handle, $json . PHP_EOL);
+    fflush($handle);
+
+    return true;
+}
+
+function docs_unlock_outgoing_registry($handle): void
+{
+    if (!is_resource($handle)) {
+        return;
+    }
+
+    flock($handle, LOCK_UN);
+    fclose($handle);
+}
+
+function docs_normalize_outgoing_number_for_unique(string $value): string
+{
+    $normalized = sanitize_text_field($value, 160);
+    $normalized = preg_replace('/\s+/u', ' ', trim($normalized));
+    if (!is_string($normalized) || $normalized === '') {
+        return '';
+    }
+
+    return function_exists('mb_strtolower') ? mb_strtolower($normalized, 'UTF-8') : strtolower($normalized);
+}
+
+function docs_outgoing_number_exists(array $records, string $outgoingNumber, string $excludeId = ''): bool
+{
+    $normalizedNumber = docs_normalize_outgoing_number_for_unique($outgoingNumber);
+    if ($normalizedNumber === '') {
+        return false;
+    }
+
+    foreach ($records as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+
+        $recordId = sanitize_text_field((string) ($record['id'] ?? ''), 160);
+        if ($excludeId !== '' && $recordId === $excludeId) {
+            continue;
+        }
+
+        $candidate = docs_normalize_outgoing_number_for_unique((string) ($record['outgoingNumber'] ?? ''));
+        if ($candidate !== '' && $candidate === $normalizedNumber) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_prepare_outgoing_records_response(array $records): array
+{
+    $prepared = [];
+    foreach ($records as $record) {
+        if (is_array($record)) {
+            $prepared[] = docs_prepare_outgoing_record($record);
+        }
+    }
+
+    return $prepared;
+}
+
+function docs_prepare_outgoing_edit_lock($value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $token = sanitize_text_field((string) ($value['token'] ?? ''), 120);
+    $userLabel = sanitize_text_field((string) ($value['userLabel'] ?? ''), 220);
+    $userKey = sanitize_text_field((string) ($value['userKey'] ?? ''), 200);
+    $lockedAt = docs_normalize_datetime_iso(isset($value['lockedAt']) ? (string) $value['lockedAt'] : null) ?? '';
+    $expiresAt = isset($value['expiresAt']) ? (int) $value['expiresAt'] : 0;
+
+    if ($token === '' || $userKey === '' || $expiresAt <= 0) {
+        return [];
+    }
+
+    return array_filter([
+        'token' => $token,
+        'userLabel' => $userLabel !== '' ? $userLabel : 'другой пользователь',
+        'userKey' => $userKey,
+        'lockedAt' => $lockedAt,
+        'expiresAt' => $expiresAt,
+    ], static function ($item) {
+        return $item !== '';
+    });
+}
+
+function docs_create_outgoing_edit_lock_token(): string
+{
+    try {
+        return bin2hex(random_bytes(16));
+    } catch (Throwable $exception) {
+        return str_replace('.', '', uniqid('', true));
+    }
+}
+
+function docs_outgoing_edit_lock_is_active(array $lock): bool
+{
+    $prepared = docs_prepare_outgoing_edit_lock($lock);
+
+    return !empty($prepared) && (int) ($prepared['expiresAt'] ?? 0) > time();
+}
+
+function docs_outgoing_edit_lock_matches(array $lock, string $token): bool
+{
+    $prepared = docs_prepare_outgoing_edit_lock($lock);
+    if ($token === '' || empty($prepared) || !docs_outgoing_edit_lock_is_active($prepared)) {
+        return false;
+    }
+
+    return hash_equals((string) ($prepared['token'] ?? ''), $token);
+}
+
+function docs_acquire_outgoing_record_edit_lock(string $folder, string $recordId, string $userLabel, string $userKey): array
+{
+    [$handle, $records] = docs_lock_outgoing_registry($folder);
+    if ($handle === null) {
+        return [
+            'ok' => false,
+            'status' => 503,
+            'message' => 'Не удалось проверить блокировку записи. Повторите действие.',
+            'reason' => 'outgoing_registry_lock_failed',
+        ];
+    }
+
+    $recordIndex = null;
+    foreach ($records as $index => $record) {
+        if (is_array($record) && (string) ($record['id'] ?? '') === $recordId) {
+            $recordIndex = $index;
+            break;
+        }
+    }
+
+    if ($recordIndex === null) {
+        docs_unlock_outgoing_registry($handle);
+        return [
+            'ok' => false,
+            'status' => 404,
+            'message' => 'Запись исходящей корреспонденции не найдена.',
+            'reason' => 'outgoing_record_not_found',
+        ];
+    }
+
+    $existingLock = docs_prepare_outgoing_edit_lock($records[$recordIndex]['editLock'] ?? null);
+    if (!empty($existingLock) && docs_outgoing_edit_lock_is_active($existingLock)) {
+        $lockedBy = sanitize_text_field((string) ($existingLock['userLabel'] ?? 'другой пользователь'), 220);
+        docs_unlock_outgoing_registry($handle);
+
+        return [
+            'ok' => false,
+            'status' => 409,
+            'message' => 'Эту строку сейчас редактирует ' . $lockedBy . '. Подождите.',
+            'reason' => 'outgoing_record_locked',
+            'lockedBy' => $lockedBy,
+        ];
+    }
+
+    $now = time();
+    $token = docs_create_outgoing_edit_lock_token();
+    $records[$recordIndex]['editLock'] = [
+        'token' => $token,
+        'userLabel' => $userLabel,
+        'userKey' => $userKey,
+        'lockedAt' => date('c', $now),
+        'expiresAt' => $now + DOCS_OUTGOING_EDIT_LOCK_TTL,
+    ];
+
+    if (!docs_save_outgoing_registry_locked($handle, $records)) {
+        docs_unlock_outgoing_registry($handle);
+        return [
+            'ok' => false,
+            'status' => 500,
+            'message' => 'Не удалось заблокировать запись для редактирования. Повторите действие.',
+            'reason' => 'outgoing_registry_save_failed',
+        ];
+    }
+
+    docs_unlock_outgoing_registry($handle);
+
+    return [
+        'ok' => true,
+        'token' => $token,
+        'expiresAt' => $records[$recordIndex]['editLock']['expiresAt'],
+    ];
+}
+
+function docs_release_outgoing_record_edit_lock(string $folder, string $recordId, string $token): void
+{
+    if ($recordId === '' || $token === '') {
+        return;
+    }
+
+    [$handle, $records] = docs_lock_outgoing_registry($folder);
+    if ($handle === null) {
+        return;
+    }
+
+    foreach ($records as $index => $record) {
+        if (!is_array($record) || (string) ($record['id'] ?? '') !== $recordId) {
+            continue;
+        }
+
+        if (docs_outgoing_edit_lock_matches($record['editLock'] ?? [], $token)) {
+            unset($records[$index]['editLock']);
+            docs_save_outgoing_registry_locked($handle, $records);
+        }
+        break;
+    }
+
+    docs_unlock_outgoing_registry($handle);
+}
+
+function docs_build_outgoing_number_sort_key(string $value): array
+{
+    $normalized = docs_normalize_outgoing_number_for_unique($value);
+    if ($normalized === '') {
+        return [
+            'hasNumber' => false,
+            'base' => 0,
+            'hasSuffix' => false,
+            'suffix' => 0,
+            'text' => '',
+        ];
+    }
+
+    if (preg_match('/^(\d+)(?:\D+(\d+))?/u', $normalized, $matches) === 1) {
+        $suffix = isset($matches[2]) && $matches[2] !== '' ? (int) $matches[2] : 0;
+
+        return [
+            'hasNumber' => true,
+            'base' => (int) $matches[1],
+            'hasSuffix' => isset($matches[2]) && $matches[2] !== '',
+            'suffix' => $suffix,
+            'text' => $normalized,
+        ];
+    }
+
+    return [
+        'hasNumber' => false,
+        'base' => 0,
+        'hasSuffix' => false,
+        'suffix' => 0,
+        'text' => $normalized,
+    ];
+}
+
+function docs_compare_outgoing_numbers_desc(string $left, string $right): int
+{
+    $leftKey = docs_build_outgoing_number_sort_key($left);
+    $rightKey = docs_build_outgoing_number_sort_key($right);
+
+    if ($leftKey['hasNumber'] !== $rightKey['hasNumber']) {
+        return $leftKey['hasNumber'] ? -1 : 1;
+    }
+
+    if ($leftKey['hasNumber'] && $rightKey['hasNumber']) {
+        $baseCompare = $rightKey['base'] <=> $leftKey['base'];
+        if ($baseCompare !== 0) {
+            return $baseCompare;
+        }
+
+        if ($leftKey['hasSuffix'] !== $rightKey['hasSuffix']) {
+            return $leftKey['hasSuffix'] ? 1 : -1;
+        }
+
+        $suffixCompare = $leftKey['suffix'] <=> $rightKey['suffix'];
+        if ($suffixCompare !== 0) {
+            return $suffixCompare;
+        }
+    }
+
+    return strcmp((string) $rightKey['text'], (string) $leftKey['text']);
+}
+
 function docs_sort_outgoing_records(array $records): array
 {
     usort($records, static function (array $a, array $b): int {
-        $dateA = !empty($a['registeredAt']) ? (string) $a['registeredAt'] : (string) ($a['sendingDate'] ?? '');
-        $dateB = !empty($b['registeredAt']) ? (string) $b['registeredAt'] : (string) ($b['sendingDate'] ?? '');
-        $dateCompare = strcmp($dateB, $dateA);
-        if ($dateCompare !== 0) {
-            return $dateCompare;
+        $numberCompare = docs_compare_outgoing_numbers_desc(
+            (string) ($a['outgoingNumber'] ?? ''),
+            (string) ($b['outgoingNumber'] ?? '')
+        );
+        if ($numberCompare !== 0) {
+            return $numberCompare;
         }
 
-        return strcmp((string) ($b['outgoingNumber'] ?? ''), (string) ($a['outgoingNumber'] ?? ''));
+        $dateA = !empty($a['registeredAt']) ? (string) $a['registeredAt'] : (string) ($a['sendingDate'] ?? '');
+        $dateB = !empty($b['registeredAt']) ? (string) $b['registeredAt'] : (string) ($b['sendingDate'] ?? '');
+
+        return strcmp($dateB, $dateA);
     });
 
     return $records;
@@ -19460,6 +19828,86 @@ switch ($action) {
         ]);
         break;
 
+    case 'outgoing_edit_lock_acquire':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $sessionAuth = docs_get_session_auth();
+        if (!docs_user_can_manage_outgoing_records($accessContext, $sessionAuth)) {
+            respond_error('Изменение записей доступно только администратору.', 403, [
+                'reason' => 'outgoing_update_admin_required',
+            ]);
+        }
+
+        $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
+        if ($recordId === '') {
+            respond_error('Не указан идентификатор записи.');
+        }
+
+        $requestContext = docs_build_request_user_context();
+        $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
+        $userLabel = docs_resolve_current_user_label($requestContext, $sessionAuthForIdentity);
+        $userKey = docs_resolve_current_user_key($requestContext, $sessionAuthForIdentity);
+        if ($userKey === '') {
+            $userKey = 'name:' . mb_strtolower($userLabel, 'UTF-8');
+        }
+
+        $lockResult = docs_acquire_outgoing_record_edit_lock(
+            sanitize_folder_name($accessContext['active']),
+            $recordId,
+            $userLabel,
+            $userKey
+        );
+        if (empty($lockResult['ok'])) {
+            respond_error(
+                (string) ($lockResult['message'] ?? 'Эту строку сейчас редактирует другой пользователь. Подождите.'),
+                (int) ($lockResult['status'] ?? 409),
+                [
+                    'reason' => $lockResult['reason'] ?? 'outgoing_record_locked',
+                    'lockedBy' => $lockResult['lockedBy'] ?? null,
+                ]
+            );
+        }
+
+        respond_success([
+            'lockToken' => $lockResult['token'] ?? '',
+            'expiresAt' => $lockResult['expiresAt'] ?? null,
+        ]);
+        break;
+
+    case 'outgoing_edit_lock_release':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
+        $lockToken = sanitize_text_field((string) ($payload['lockToken'] ?? ''), 120);
+        docs_release_outgoing_record_edit_lock(sanitize_folder_name($accessContext['active']), $recordId, $lockToken);
+
+        respond_success();
+        break;
+
     case 'outgoing_save':
         if ($method !== 'POST') {
             respond_error('Некорректный метод запроса.', 405);
@@ -19491,14 +19939,32 @@ switch ($action) {
             ]);
         }
 
-        $records = docs_load_outgoing_registry($folder);
+        [$outgoingRegistryHandle, $records] = docs_lock_outgoing_registry($folder);
+        if ($outgoingRegistryHandle === null) {
+            respond_error('Не удалось заблокировать реестр исходящей корреспонденции. Повторите сохранение.', 503, [
+                'reason' => 'outgoing_registry_lock_failed',
+            ]);
+        }
+        $failOutgoingSave = static function (string $message, int $status = 400, array $details = []) use (&$outgoingRegistryHandle): void {
+            if ($outgoingRegistryHandle !== null) {
+                docs_unlock_outgoing_registry($outgoingRegistryHandle);
+                $outgoingRegistryHandle = null;
+            }
+            respond_error($message, $status, $details);
+        };
         $savedRecord = null;
 
         if ($recordId === '') {
             $savedRecord = docs_sanitize_outgoing_record_payload($payload, null, $authorLabel, $authorKey);
             $validationError = docs_validate_outgoing_record($savedRecord);
             if ($validationError !== null) {
-                respond_error($validationError, 422);
+                $failOutgoingSave($validationError, 422);
+            }
+            if (docs_outgoing_number_exists($records, (string) ($savedRecord['outgoingNumber'] ?? ''))) {
+                $failOutgoingSave('Исходящий номер уже зарегистрирован.', 409, [
+                    'reason' => 'outgoing_number_exists',
+                    'outgoingNumber' => $savedRecord['outgoingNumber'] ?? '',
+                ]);
             }
 
             docs_attach_uploaded_outgoing_files_to_record(
@@ -19517,13 +19983,35 @@ switch ($action) {
             }
 
             if ($recordIndex === null) {
-                respond_error('Запись исходящей корреспонденции не найдена.', 404);
+                $failOutgoingSave('Запись исходящей корреспонденции не найдена.', 404);
+            }
+
+            $editLockToken = sanitize_text_field((string) ($payload['editLockToken'] ?? ''), 120);
+            if (!docs_outgoing_edit_lock_matches($records[$recordIndex]['editLock'] ?? [], $editLockToken)) {
+                $failOutgoingSave('Эту строку сейчас редактирует другой пользователь. Подождите.', 409, [
+                    'reason' => 'outgoing_record_locked',
+                ]);
+            }
+
+            $clientUpdatedAt = sanitize_text_field((string) ($payload['updatedAt'] ?? ''), 80);
+            $currentUpdatedAt = sanitize_text_field((string) ($records[$recordIndex]['updatedAt'] ?? ''), 80);
+            if ($clientUpdatedAt !== '' && $currentUpdatedAt !== '' && $clientUpdatedAt !== $currentUpdatedAt) {
+                $failOutgoingSave('Запись уже изменена другим пользователем. Закройте форму и откройте запись заново.', 409, [
+                    'reason' => 'outgoing_record_conflict',
+                    'currentUpdatedAt' => $currentUpdatedAt,
+                ]);
             }
 
             $savedRecord = docs_sanitize_outgoing_record_payload($payload, $records[$recordIndex], $authorLabel, $authorKey);
             $validationError = docs_validate_outgoing_record($savedRecord);
             if ($validationError !== null) {
-                respond_error($validationError, 422);
+                $failOutgoingSave($validationError, 422);
+            }
+            if (docs_outgoing_number_exists($records, (string) ($savedRecord['outgoingNumber'] ?? ''), $recordId)) {
+                $failOutgoingSave('Исходящий номер уже зарегистрирован.', 409, [
+                    'reason' => 'outgoing_number_exists',
+                    'outgoingNumber' => $savedRecord['outgoingNumber'] ?? '',
+                ]);
             }
 
             docs_apply_outgoing_file_mutation($savedRecord, $folder, $payload);
@@ -19532,17 +20020,25 @@ switch ($action) {
                 $folder,
                 'Запись исходящей корреспонденции не обновлена'
             );
+            unset($savedRecord['editLock']);
             $records[$recordIndex] = $savedRecord;
         }
 
-        docs_save_outgoing_registry($folder, $records);
-        $outgoingRecords = docs_sort_outgoing_records(docs_load_outgoing_registry($folder));
+        if (!docs_save_outgoing_registry_locked($outgoingRegistryHandle, $records)) {
+            $failOutgoingSave('Не удалось сохранить реестр исходящей корреспонденции. Повторите действие.', 500, [
+                'reason' => 'outgoing_registry_save_failed',
+            ]);
+        }
+        docs_unlock_outgoing_registry($outgoingRegistryHandle);
+        $outgoingRegistryHandle = null;
+        $outgoingRecords = docs_sort_outgoing_records($records);
+        $outgoingRecordsResponse = docs_prepare_outgoing_records_response($outgoingRecords);
 
         respond_success([
             'message' => $recordId === '' ? 'Запись добавлена.' : 'Запись обновлена.',
             'organization' => $organization,
-            'savedRecord' => $savedRecord,
-            'records' => array_values($outgoingRecords),
+            'savedRecord' => docs_prepare_outgoing_record($savedRecord),
+            'records' => array_values($outgoingRecordsResponse),
             'documentsCount' => count($outgoingRecords),
             'manualCount' => count($outgoingRecords),
             'canAddOutgoingRecords' => true,
@@ -19579,7 +20075,12 @@ switch ($action) {
             respond_error('Не указан идентификатор записи.');
         }
 
-        $records = docs_load_outgoing_registry($folder);
+        [$outgoingRegistryHandle, $records] = docs_lock_outgoing_registry($folder);
+        if ($outgoingRegistryHandle === null) {
+            respond_error('Не удалось заблокировать реестр исходящей корреспонденции. Повторите удаление.', 503, [
+                'reason' => 'outgoing_registry_lock_failed',
+            ]);
+        }
         $found = false;
         foreach ($records as $index => $record) {
             if (!is_array($record) || (string) ($record['id'] ?? '') !== $recordId) {
@@ -19593,16 +20094,24 @@ switch ($action) {
         }
 
         if (!$found) {
+            docs_unlock_outgoing_registry($outgoingRegistryHandle);
             respond_error('Запись исходящей корреспонденции не найдена.', 404);
         }
 
-        docs_save_outgoing_registry($folder, $records);
-        $outgoingRecords = docs_sort_outgoing_records(docs_load_outgoing_registry($folder));
+        if (!docs_save_outgoing_registry_locked($outgoingRegistryHandle, $records)) {
+            docs_unlock_outgoing_registry($outgoingRegistryHandle);
+            respond_error('Не удалось сохранить реестр исходящей корреспонденции. Повторите действие.', 500, [
+                'reason' => 'outgoing_registry_save_failed',
+            ]);
+        }
+        docs_unlock_outgoing_registry($outgoingRegistryHandle);
+        $outgoingRecords = docs_sort_outgoing_records($records);
+        $outgoingRecordsResponse = docs_prepare_outgoing_records_response($outgoingRecords);
 
         respond_success([
             'message' => 'Запись удалена.',
             'organization' => $organization,
-            'records' => array_values($outgoingRecords),
+            'records' => array_values($outgoingRecordsResponse),
             'deletedRecordId' => $recordId,
             'documentsCount' => count($outgoingRecords),
             'manualCount' => count($outgoingRecords),
