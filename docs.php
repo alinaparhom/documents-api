@@ -34,6 +34,7 @@ function resolve_documents_root(): string
 
 define('DOCUMENTS_ROOT', resolve_documents_root());
 const REGISTRY_FILENAME = 'registry.json';
+const OUTGOING_REGISTRY_FILENAME = 'outgoing_registry.json';
 const SETTINGS_FILENAME = 'settingsdocs.json';
 const DOCS_COLUMN_WIDTH_MIN = 72;
 const DOCS_COLUMN_WIDTH_MAX = 360;
@@ -125,6 +126,10 @@ const DOCS_REVIEW_FLOW_RESPONSIBLE_SUBORDINATE = 'responsible_subordinate_v1';
 const OVERDUE_DIGEST_STATE_FILENAME = 'overdue_digest_state.json';
 const DOCS_OVERDUE_DIGEST_TIMEZONE = 'Europe/Minsk';
 const DOCS_OVERDUE_DIGEST_MAX_ITEMS = 10;
+const DOCS_TELEGRAM_API_TIMEOUT_SECONDS = 3;
+const DOCS_TELEGRAM_FILE_TIMEOUT_SECONDS = 4;
+const DOCS_TELEGRAM_SEND_TIMEOUT_SECONDS = 4;
+const DOCS_TELEGRAM_AVATAR_MISS_TTL = 300;
 
 function sanitize_instruction(?string $value): string
 {
@@ -747,6 +752,42 @@ function docs_resolve_application_base_url(): string
     return $scheme . '://' . $host;
 }
 
+function docs_fetch_remote_url(string $url, array $httpOptions, int $timeout): array
+{
+    $timeout = max(1, min($timeout, 10));
+    $method = isset($httpOptions['method']) && is_string($httpOptions['method'])
+        ? strtoupper($httpOptions['method'])
+        : 'GET';
+
+    $options = $httpOptions;
+    $options['method'] = $method;
+    $options['timeout'] = $timeout;
+    $options['ignore_errors'] = true;
+
+    $context = stream_context_create(['http' => $options]);
+    $startedAt = microtime(true);
+    $response = @file_get_contents($url, false, $context);
+    $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+
+    if ($response === false) {
+        $error = error_get_last();
+
+        return [
+            'ok' => false,
+            'body' => '',
+            'durationMs' => $durationMs,
+            'error' => $error['message'] ?? 'request_failed',
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'body' => $response,
+        'durationMs' => $durationMs,
+        'error' => '',
+    ];
+}
+
 function docs_send_telegram_message(string $chatId, string $text, ?string $botToken = null, ?array $replyMarkup = null, ?string $parseMode = null): array
 {
     $chatId = trim($chatId);
@@ -789,27 +830,19 @@ function docs_send_telegram_message(string $chatId, string $text, ?string $botTo
         }
     }
 
-    $options = [
-        'http' => [
-            'method' => 'POST',
-            'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
-            'content' => http_build_query($payload, '', '&', PHP_QUERY_RFC3986),
-            'timeout' => 8,
-        ],
-    ];
-
-    $context = stream_context_create($options);
-    $response = @file_get_contents($endpoint, false, $context);
-    if ($response === false) {
-        $error = error_get_last();
-
+    $request = docs_fetch_remote_url($endpoint, [
+        'method' => 'POST',
+        'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
+        'content' => http_build_query($payload, '', '&', PHP_QUERY_RFC3986),
+    ], DOCS_TELEGRAM_SEND_TIMEOUT_SECONDS);
+    if (empty($request['ok'])) {
         return [
             'success' => false,
-            'error' => $error['message'] ?? 'request_failed',
+            'error' => $request['error'] ?? 'request_failed',
         ];
     }
 
-    $decoded = json_decode($response, true);
+    $decoded = json_decode((string) $request['body'], true);
     $success = is_array($decoded) ? !empty($decoded['ok']) : false;
 
     if ($success) {
@@ -842,13 +875,12 @@ function docs_request_telegram_api(string $method, array $params = [], ?string $
             . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
     }
 
-    $response = @file_get_contents($endpoint);
-    if ($response === false) {
-        $error = error_get_last();
-        return ['ok' => false, 'error' => $error['message'] ?? 'request_failed'];
+    $request = docs_fetch_remote_url($endpoint, ['method' => 'GET'], DOCS_TELEGRAM_API_TIMEOUT_SECONDS);
+    if (empty($request['ok'])) {
+        return ['ok' => false, 'error' => $request['error'] ?? 'request_failed'];
     }
 
-    $decoded = json_decode($response, true);
+    $decoded = json_decode((string) $request['body'], true);
     if (!is_array($decoded) || empty($decoded['ok'])) {
         return [
             'ok' => false,
@@ -858,6 +890,42 @@ function docs_request_telegram_api(string $method, array $params = [], ?string $
     }
 
     return ['ok' => true, 'result' => $decoded['result'] ?? null];
+}
+
+function docs_telegram_avatar_miss_path(string $cacheDir, string $telegramUserId): string
+{
+    return rtrim($cacheDir, "/\\") . '/' . $telegramUserId . '.miss';
+}
+
+function docs_telegram_avatar_lock_path(string $cacheDir, string $telegramUserId): string
+{
+    return rtrim($cacheDir, "/\\") . '/' . $telegramUserId . '.lock';
+}
+
+function docs_is_telegram_avatar_miss_cached(string $cacheDir, string $telegramUserId): bool
+{
+    $missFile = docs_telegram_avatar_miss_path($cacheDir, $telegramUserId);
+    if (!is_file($missFile)) {
+        return false;
+    }
+
+    $mtime = @filemtime($missFile);
+    if ($mtime === false) {
+        return false;
+    }
+
+    if ((time() - (int) $mtime) <= DOCS_TELEGRAM_AVATAR_MISS_TTL) {
+        return true;
+    }
+
+    @unlink($missFile);
+
+    return false;
+}
+
+function docs_mark_telegram_avatar_miss(string $cacheDir, string $telegramUserId): void
+{
+    @file_put_contents(docs_telegram_avatar_miss_path($cacheDir, $telegramUserId), (string) time(), LOCK_EX);
 }
 
 function docs_stream_telegram_avatar(string $telegramUserId): bool
@@ -886,48 +954,80 @@ function docs_stream_telegram_avatar(string $telegramUserId): bool
         return true;
     }
 
-    $photos = docs_request_telegram_api('getUserProfilePhotos', [
-        'user_id' => $telegramUserId,
-        'limit' => 1,
-    ], $botToken);
-    if (empty($photos['ok']) || !isset($photos['result']['photos'][0]) || !is_array($photos['result']['photos'][0])) {
+    if (docs_is_telegram_avatar_miss_cached($cacheDir, $telegramUserId)) {
         return false;
     }
 
-    $sizes = $photos['result']['photos'][0];
-    $best = end($sizes);
-    if (!is_array($best) || empty($best['file_id'])) {
+    $lockHandle = @fopen(docs_telegram_avatar_lock_path($cacheDir, $telegramUserId), 'c');
+    if (!is_resource($lockHandle)) {
         return false;
     }
 
-    $fileInfo = docs_request_telegram_api('getFile', ['file_id' => (string) $best['file_id']], $botToken);
-    if (empty($fileInfo['ok']) || empty($fileInfo['result']['file_path'])) {
+    if (!@flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        @fclose($lockHandle);
         return false;
     }
 
-    $filePath = (string) $fileInfo['result']['file_path'];
-    $fileUrl = 'https://api.telegram.org/file/bot' . $botToken . '/' . ltrim($filePath, '/');
-    $binary = @file_get_contents($fileUrl);
-    if (!is_string($binary) || $binary === '') {
-        return false;
-    }
-
-    @file_put_contents($cacheFile, $binary);
-
-    $finfo = function_exists('finfo_open') ? @finfo_open(FILEINFO_MIME_TYPE) : false;
-    $mime = 'image/jpeg';
-    if ($finfo) {
-        $detected = @finfo_buffer($finfo, $binary);
-        @finfo_close($finfo);
-        if (is_string($detected) && strpos($detected, 'image/') === 0) {
-            $mime = $detected;
+    try {
+        if (is_file($cacheFile) && (time() - (int) @filemtime($cacheFile)) <= $cacheTtl) {
+            header('Content-Type: image/jpeg');
+            header('Cache-Control: public, max-age=3600');
+            readfile($cacheFile);
+            return true;
         }
-    }
 
-    header('Content-Type: ' . $mime);
-    header('Cache-Control: public, max-age=3600');
-    echo $binary;
-    return true;
+        $photos = docs_request_telegram_api('getUserProfilePhotos', [
+            'user_id' => $telegramUserId,
+            'limit' => 1,
+        ], $botToken);
+        if (empty($photos['ok']) || !isset($photos['result']['photos'][0]) || !is_array($photos['result']['photos'][0])) {
+            docs_mark_telegram_avatar_miss($cacheDir, $telegramUserId);
+            return false;
+        }
+
+        $sizes = $photos['result']['photos'][0];
+        $best = end($sizes);
+        if (!is_array($best) || empty($best['file_id'])) {
+            docs_mark_telegram_avatar_miss($cacheDir, $telegramUserId);
+            return false;
+        }
+
+        $fileInfo = docs_request_telegram_api('getFile', ['file_id' => (string) $best['file_id']], $botToken);
+        if (empty($fileInfo['ok']) || empty($fileInfo['result']['file_path'])) {
+            docs_mark_telegram_avatar_miss($cacheDir, $telegramUserId);
+            return false;
+        }
+
+        $filePath = (string) $fileInfo['result']['file_path'];
+        $fileUrl = 'https://api.telegram.org/file/bot' . $botToken . '/' . ltrim($filePath, '/');
+        $request = docs_fetch_remote_url($fileUrl, ['method' => 'GET'], DOCS_TELEGRAM_FILE_TIMEOUT_SECONDS);
+        $binary = !empty($request['ok']) ? (string) $request['body'] : '';
+        if ($binary === '') {
+            docs_mark_telegram_avatar_miss($cacheDir, $telegramUserId);
+            return false;
+        }
+
+        @file_put_contents($cacheFile, $binary, LOCK_EX);
+        @unlink(docs_telegram_avatar_miss_path($cacheDir, $telegramUserId));
+
+        $finfo = function_exists('finfo_open') ? @finfo_open(FILEINFO_MIME_TYPE) : false;
+        $mime = 'image/jpeg';
+        if ($finfo) {
+            $detected = @finfo_buffer($finfo, $binary);
+            @finfo_close($finfo);
+            if (is_string($detected) && strpos($detected, 'image/') === 0) {
+                $mime = $detected;
+            }
+        }
+
+        header('Content-Type: ' . $mime);
+        header('Cache-Control: public, max-age=3600');
+        echo $binary;
+        return true;
+    } finally {
+        @flock($lockHandle, LOCK_UN);
+        @fclose($lockHandle);
+    }
 }
 
 function docs_build_task_start_param(array $record): string
@@ -3796,6 +3896,27 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+$sessionActionForLock = $preloadedAction;
+if ($sessionActionForLock === '' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    $sessionActionPayload = load_json_payload();
+    if (isset($sessionActionPayload['action']) && is_string($sessionActionPayload['action'])) {
+        $sessionActionForLock = trim($sessionActionPayload['action']);
+    }
+}
+
+$GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT_SET'] = true;
+$GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT'] = isset($_SESSION[DOCS_SESSION_KEY]) && is_array($_SESSION[DOCS_SESSION_KEY])
+    ? $_SESSION[DOCS_SESSION_KEY]
+    : null;
+
+$sessionWriteActions = [
+    'login' => true,
+    'logout' => true,
+];
+if (!isset($sessionWriteActions[$sessionActionForLock]) && session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
+
 register_shutdown_function(static function () use ($preloadedAction): void {
     $error = error_get_last();
     if (!is_array($error)) {
@@ -4327,9 +4448,592 @@ function get_registry_path(string $folder): string
     return DOCUMENTS_ROOT . '/' . $folder . '/' . REGISTRY_FILENAME;
 }
 
+function get_outgoing_registry_path(string $folder): string
+{
+    return DOCUMENTS_ROOT . '/' . $folder . '/' . OUTGOING_REGISTRY_FILENAME;
+}
+
 function get_settings_path(string $folder): string
 {
     return DOCUMENTS_ROOT . '/' . $folder . '/' . SETTINGS_FILENAME;
+}
+
+function docs_outgoing_pick_first(array $record, array $fields, int $maxLength = 220): string
+{
+    foreach ($fields as $field) {
+        if (!is_string($field) || $field === '' || !array_key_exists($field, $record)) {
+            continue;
+        }
+
+        $value = sanitize_text_field((string) $record[$field], $maxLength);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
+}
+
+function docs_prepare_outgoing_record(array $record, string $source = 'outgoing'): array
+{
+    $files = docs_prepare_outgoing_files_payload($record['files'] ?? []);
+    $fileNames = [];
+    foreach ($files as $file) {
+        $fileName = sanitize_text_field((string) ($file['originalName'] ?? ($file['storedName'] ?? '')), 220);
+        if ($fileName !== '') {
+            $fileNames[] = $fileName;
+        }
+    }
+
+    $prepared = [
+        'id' => sanitize_text_field((string) ($record['id'] ?? ''), 160),
+        'source' => sanitize_text_field($source, 40),
+        'outgoingNumber' => sanitize_text_field((string) ($record['outgoingNumber'] ?? ''), 160),
+        'sendingDate' => sanitize_date_field(isset($record['sendingDate']) ? (string) $record['sendingDate'] : ''),
+        'documentIndexNumber' => sanitize_text_field((string) ($record['documentIndexNumber'] ?? ''), 220),
+        'documentType' => sanitize_text_field((string) ($record['documentType'] ?? 'Исходящий'), 80),
+        'addressee' => sanitize_text_field((string) ($record['addressee'] ?? ''), 260),
+        'summary' => sanitize_text_field((string) ($record['summary'] ?? ''), 1000),
+        'files' => $files,
+        'filesLabel' => !empty($fileNames)
+            ? sanitize_text_field(implode(', ', $fileNames), 500)
+            : sanitize_text_field((string) ($record['filesLabel'] ?? ''), 500),
+        'filesCount' => count($files),
+        'executor' => sanitize_text_field((string) ($record['executor'] ?? ''), 220),
+        'note' => sanitize_text_field((string) ($record['note'] ?? ''), 500),
+        'registeredBy' => sanitize_text_field((string) ($record['registeredBy'] ?? ''), 220),
+        'registeredAt' => docs_normalize_datetime_iso(isset($record['registeredAt']) ? (string) $record['registeredAt'] : null) ?? '',
+        'createdBy' => sanitize_text_field((string) ($record['createdBy'] ?? ''), 220),
+        'createdByKey' => sanitize_text_field((string) ($record['createdByKey'] ?? ''), 200),
+        'createdAt' => docs_normalize_datetime_iso(isset($record['createdAt']) ? (string) $record['createdAt'] : null) ?? '',
+        'updatedBy' => sanitize_text_field((string) ($record['updatedBy'] ?? ''), 220),
+        'updatedByKey' => sanitize_text_field((string) ($record['updatedByKey'] ?? ''), 200),
+        'updatedAt' => docs_normalize_datetime_iso(isset($record['updatedAt']) ? (string) $record['updatedAt'] : null) ?? '',
+        'deleted' => !empty($record['deleted']),
+    ];
+
+    if ($prepared['id'] === '') {
+        $prepared['id'] = docs_create_outgoing_record_id();
+    }
+
+    if ($prepared['documentType'] === '') {
+        $prepared['documentType'] = 'Исходящий';
+    }
+
+    return $prepared;
+}
+
+function docs_payload_first_text(array $payload, array $fields, int $maxLength = 220): string
+{
+    foreach ($fields as $field) {
+        if (!is_string($field) || $field === '' || !array_key_exists($field, $payload)) {
+            continue;
+        }
+
+        $value = sanitize_text_field((string) $payload[$field], $maxLength);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
+}
+
+function docs_payload_first_date(array $payload, array $fields): string
+{
+    foreach ($fields as $field) {
+        if (!is_string($field) || $field === '' || !array_key_exists($field, $payload)) {
+            continue;
+        }
+
+        $value = sanitize_date_field((string) $payload[$field]);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
+}
+
+function docs_create_outgoing_record_id(): string
+{
+    try {
+        return 'outgoing_' . bin2hex(random_bytes(8));
+    } catch (Throwable $exception) {
+        return 'outgoing_' . str_replace('.', '', uniqid('', true));
+    }
+}
+
+function docs_prepare_outgoing_files_payload($value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $files = [];
+    foreach ($value as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+
+        $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+        $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+        if ($storedName === '' && $url === '') {
+            continue;
+        }
+
+        $files[] = array_filter([
+            'originalName' => sanitize_text_field((string) ($file['originalName'] ?? ($file['name'] ?? $storedName)), 255),
+            'storedName' => $storedName,
+            'size' => isset($file['size']) ? max(0, (int) $file['size']) : 0,
+            'uploadedAt' => docs_normalize_datetime_iso(isset($file['uploadedAt']) ? (string) $file['uploadedAt'] : null) ?? '',
+            'url' => $url,
+        ], static function ($item) {
+            return $item !== '' && $item !== 0;
+        });
+    }
+
+    return $files;
+}
+
+function docs_decode_outgoing_file_key_list($value): array
+{
+    if (is_string($value)) {
+        $decoded = json_decode($value, true);
+        if (is_array($decoded)) {
+            $value = $decoded;
+        } elseif (trim($value) !== '') {
+            $value = [$value];
+        } else {
+            $value = [];
+        }
+    }
+
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $keys = [];
+    foreach ($value as $item) {
+        if (is_array($item)) {
+            foreach (docs_collect_outgoing_file_keys($item) as $key) {
+                $keys[$key] = true;
+            }
+            continue;
+        }
+
+        $key = sanitize_text_field((string) $item, 500);
+        if ($key !== '') {
+            $keys[$key] = true;
+        }
+    }
+
+    return array_keys($keys);
+}
+
+function docs_collect_outgoing_file_keys(array $file): array
+{
+    $candidates = [
+        $file['storedName'] ?? '',
+        $file['originalName'] ?? '',
+        $file['url'] ?? '',
+    ];
+
+    $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+    if ($url !== '') {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (is_string($path) && $path !== '') {
+            $basename = rawurldecode((string) basename($path));
+            if ($basename !== '') {
+                $candidates[] = $basename;
+            }
+        }
+    }
+
+    $keys = [];
+    foreach ($candidates as $candidate) {
+        $key = sanitize_text_field((string) $candidate, 500);
+        if ($key !== '') {
+            $keys[$key] = true;
+        }
+    }
+
+    return array_keys($keys);
+}
+
+function docs_outgoing_file_matches_keys(array $file, array $lookup): bool
+{
+    if (empty($lookup)) {
+        return false;
+    }
+
+    foreach (docs_collect_outgoing_file_keys($file) as $key) {
+        if (isset($lookup[$key])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function docs_get_outgoing_file_path_candidates(string $folder, array $file): array
+{
+    $paths = [];
+    $storedName = sanitize_text_field((string) ($file['storedName'] ?? ''), 255);
+    if ($storedName !== '') {
+        $paths[] = ensure_organization_directory($folder) . '/' . $storedName;
+        $paths[] = ensure_organization_directory($folder) . '/Исходящие/' . $storedName;
+    }
+
+    $url = sanitize_text_field((string) ($file['url'] ?? ''), 500);
+    if ($url !== '') {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (is_string($path) && $path !== '') {
+            $decodedPath = rawurldecode($path);
+            $marker = '/documents/' . $folder . '/';
+            $position = strpos($decodedPath, $marker);
+            if ($position !== false) {
+                $relative = substr($decodedPath, $position + strlen($marker));
+                $relative = str_replace(['../', '..\\'], '', ltrim($relative, '/\\'));
+                if ($relative !== '') {
+                    $paths[] = ensure_organization_directory($folder) . '/' . $relative;
+                }
+            }
+        }
+    }
+
+    return array_values(array_unique(array_filter($paths, static function ($path): bool {
+        return is_string($path) && $path !== '';
+    })));
+}
+
+function docs_delete_outgoing_file_from_storage(string $folder, array $file): void
+{
+    foreach (docs_get_outgoing_file_path_candidates($folder, $file) as $path) {
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+}
+
+function docs_user_can_manage_outgoing_records(array $accessContext, ?array $sessionAuth = null): bool
+{
+    if (is_array($sessionAuth)) {
+        $role = docs_normalize_assignment_role((string) ($sessionAuth['role'] ?? ''));
+        if ($role === 'admin') {
+            return true;
+        }
+
+        $responsibleRole = docs_normalize_assignment_role((string) ($sessionAuth['responsibleRole'] ?? ''));
+        if ($responsibleRole === 'admin') {
+            return true;
+        }
+    }
+
+    return !empty($accessContext['forceAccess']);
+}
+
+function docs_load_outgoing_registry(string $folder): array
+{
+    $file = get_outgoing_registry_path($folder);
+    if (!is_file($file)) {
+        return [];
+    }
+
+    $raw = @file_get_contents($file);
+    if (!is_string($raw) || trim($raw) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        log_docs_event('Outgoing registry decode error', [
+            'folder' => $folder,
+            'path' => $file,
+            'jsonError' => json_last_error_msg(),
+        ]);
+        return [];
+    }
+
+    $records = [];
+    foreach ($decoded as $record) {
+        if (is_array($record)) {
+            $records[] = docs_prepare_outgoing_record($record);
+        }
+    }
+
+    return $records;
+}
+
+function docs_save_outgoing_registry(string $folder, array $records): void
+{
+    $dir = ensure_organization_directory($folder);
+    $file = $dir . '/' . OUTGOING_REGISTRY_FILENAME;
+    $prepared = [];
+    foreach ($records as $record) {
+        if (is_array($record)) {
+            $prepared[] = docs_prepare_outgoing_record($record);
+        }
+    }
+
+    $json = json_encode(array_values($prepared), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        return;
+    }
+
+    @file_put_contents($file, $json . PHP_EOL, LOCK_EX);
+    @chmod($file, 0644);
+}
+
+function docs_sort_outgoing_records(array $records): array
+{
+    usort($records, static function (array $a, array $b): int {
+        $dateA = !empty($a['registeredAt']) ? (string) $a['registeredAt'] : (string) ($a['sendingDate'] ?? '');
+        $dateB = !empty($b['registeredAt']) ? (string) $b['registeredAt'] : (string) ($b['sendingDate'] ?? '');
+        $dateCompare = strcmp($dateB, $dateA);
+        if ($dateCompare !== 0) {
+            return $dateCompare;
+        }
+
+        return strcmp((string) ($b['outgoingNumber'] ?? ''), (string) ($a['outgoingNumber'] ?? ''));
+    });
+
+    return $records;
+}
+
+function docs_sanitize_outgoing_record_payload(array $payload, ?array $existing, string $authorLabel, string $authorKey): array
+{
+    $now = date('c');
+    $base = is_array($existing) ? $existing : [];
+    $isNew = empty($base['id']);
+
+    $record = [
+        'id' => $isNew ? docs_create_outgoing_record_id() : sanitize_text_field((string) $base['id'], 160),
+        'source' => 'outgoing',
+        'outgoingNumber' => docs_payload_first_text($payload, ['registryNumber', 'registry_number', 'outgoingNumber'], 160),
+        'sendingDate' => docs_payload_first_date($payload, ['registrationDate', 'registration_date', 'sendingDate']),
+        'documentIndexNumber' => docs_payload_first_text($payload, ['documentNumber', 'document_number', 'documentIndexNumber'], 220),
+        'documentType' => 'Исходящий',
+        'addressee' => docs_payload_first_text($payload, ['correspondent', 'sender', 'addressee'], 260),
+        'summary' => docs_payload_first_text($payload, ['summary'], 1000),
+        'files' => docs_prepare_outgoing_files_payload($base['files'] ?? []),
+        'executor' => docs_payload_first_text($payload, ['executor'], 220),
+        'note' => docs_payload_first_text($payload, ['note'], 500),
+        'registeredBy' => $base['registeredBy'] ?? $authorLabel,
+        'registeredAt' => $base['registeredAt'] ?? $now,
+        'createdBy' => $base['createdBy'] ?? $authorLabel,
+        'createdByKey' => $base['createdByKey'] ?? $authorKey,
+        'createdAt' => $base['createdAt'] ?? $now,
+        'updatedBy' => $authorLabel,
+        'updatedByKey' => $authorKey,
+        'updatedAt' => $now,
+        'deleted' => false,
+    ];
+
+    return docs_prepare_outgoing_record($record);
+}
+
+function docs_validate_outgoing_record(array $record): ?string
+{
+    if (sanitize_text_field((string) ($record['outgoingNumber'] ?? ''), 160) === '') {
+        return 'Поле «Регистрационный номер» обязательно для заполнения.';
+    }
+
+    if (sanitize_date_field((string) ($record['sendingDate'] ?? '')) === '') {
+        return 'Поле «Дата регистрации» обязательно для заполнения.';
+    }
+
+    if (sanitize_text_field((string) ($record['addressee'] ?? ''), 260) === '') {
+        return 'Поле «Отправитель» обязательно для заполнения.';
+    }
+
+    return null;
+}
+
+function docs_get_outgoing_files_root(string $folder, bool $create = true): string
+{
+    $dir = ensure_organization_directory($folder);
+    if ($create && !is_dir($dir)) {
+        @mkdir($dir, 0775, true);
+    }
+
+    return $dir;
+}
+
+function docs_build_outgoing_file_public_path(string $folder, string $storedName): string
+{
+    return build_public_path($folder, $storedName);
+}
+
+function docs_normalize_outgoing_file_name(string $originalName, array $record, int $sequence, string $folder = ''): string
+{
+    return normalize_file_name($originalName, [
+        'organization' => (string) ($record['organization'] ?? $folder),
+        'registryNumber' => (string) ($record['outgoingNumber'] ?? $record['id'] ?? 'outgoing'),
+        'registrationDate' => (string) ($record['sendingDate'] ?? ''),
+        'createdAt' => (string) ($record['createdAt'] ?? ''),
+    ], $sequence);
+}
+
+function docs_apply_outgoing_file_mutation(array &$record, string $folder, array $payload): void
+{
+    if (!isset($record['files']) || !is_array($record['files'])) {
+        $record['files'] = [];
+    }
+
+    $deleteKeys = docs_decode_outgoing_file_key_list($payload['filesToDelete'] ?? []);
+    $hasRemainingPayload = array_key_exists('filesRemaining', $payload);
+    $remainingKeys = docs_decode_outgoing_file_key_list($payload['filesRemaining'] ?? []);
+    if (empty($deleteKeys) && !$hasRemainingPayload) {
+        return;
+    }
+
+    $deleteLookup = array_fill_keys($deleteKeys, true);
+    $remainingLookup = array_fill_keys($remainingKeys, true);
+    $nextFiles = [];
+
+    foreach ($record['files'] as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+
+        $shouldDelete = docs_outgoing_file_matches_keys($file, $deleteLookup);
+        if ($hasRemainingPayload && !docs_outgoing_file_matches_keys($file, $remainingLookup)) {
+            $shouldDelete = true;
+        }
+
+        if ($shouldDelete) {
+            docs_delete_outgoing_file_from_storage($folder, $file);
+            continue;
+        }
+
+        $nextFiles[] = $file;
+    }
+
+    $record['files'] = $nextFiles;
+}
+
+function docs_attach_uploaded_outgoing_files_to_record(array &$record, string $folder, string $errorPrefix): void
+{
+    if (empty($_FILES['attachments']) || !isset($_FILES['attachments']['name'])) {
+        return;
+    }
+
+    if (!isset($record['files']) || !is_array($record['files'])) {
+        $record['files'] = [];
+    }
+
+    $dir = docs_get_outgoing_files_root($folder);
+    $names = $_FILES['attachments']['name'];
+    $tmpNames = $_FILES['attachments']['tmp_name'];
+    $errors = $_FILES['attachments']['error'];
+    $sizes = $_FILES['attachments']['size'];
+    $createdUploadTargets = [];
+
+    $failUpload = static function (string $message, int $status = 500, array $details = []) use (&$createdUploadTargets): void {
+        foreach ($createdUploadTargets as $createdUploadTarget) {
+            if (is_string($createdUploadTarget) && $createdUploadTarget !== '' && is_file($createdUploadTarget)) {
+                @unlink($createdUploadTarget);
+            }
+        }
+        respond_error($message, $status, $details);
+    };
+
+    $storeFile = static function (string $originalName, string $tmpPath, int $size) use (&$record, $folder, $dir, &$createdUploadTargets, $failUpload, $errorPrefix): void {
+        $validationError = docs_validate_uploaded_attachment($originalName, $size);
+        if ($validationError !== null) {
+            $failUpload($errorPrefix . ': ' . $validationError, 422, ['reason' => 'invalid_attachment']);
+        }
+
+        if (!is_uploaded_file($tmpPath)) {
+            $failUpload(
+                $errorPrefix . ': сервер не получил файл «' . $originalName . '». Повторите сохранение.',
+                500,
+                ['reason' => 'upload_tmp_missing']
+            );
+        }
+
+        $storedName = docs_normalize_outgoing_file_name($originalName, $record, count($record['files']) + 1, $folder);
+        $target = $dir . '/' . $storedName;
+        $duplicateIndex = 2;
+        while (is_file($target)) {
+            $pathInfo = pathinfo($storedName);
+            $extension = isset($pathInfo['extension']) && $pathInfo['extension'] !== '' ? '.' . $pathInfo['extension'] : '';
+            $filename = $pathInfo['filename'] ?? $storedName;
+            $storedName = $filename . '_' . $duplicateIndex . $extension;
+            $target = $dir . '/' . $storedName;
+            $duplicateIndex++;
+        }
+
+        if (!move_uploaded_file($tmpPath, $target)) {
+            $failUpload(
+                $errorPrefix . ': не удалось сохранить файл «' . $originalName . '» в хранилище.',
+                500,
+                ['reason' => 'upload_move_failed']
+            );
+        }
+
+        $createdUploadTargets[] = $target;
+        $record['files'][] = [
+            'originalName' => $originalName,
+            'storedName' => $storedName,
+            'size' => $size > 0 ? $size : (int) (filesize($target) ?: 0),
+            'uploadedAt' => date('c'),
+            'url' => docs_build_outgoing_file_public_path($folder, $storedName),
+        ];
+    };
+
+    if (is_array($names)) {
+        $count = count($names);
+        for ($i = 0; $i < $count; $i++) {
+            $uploadError = isset($errors[$i]) ? (int) $errors[$i] : UPLOAD_ERR_NO_FILE;
+            $uploadName = isset($names[$i]) ? docs_normalize_uploaded_filename((string) $names[$i]) : 'Файл';
+            if ($uploadError !== UPLOAD_ERR_OK) {
+                if ($uploadError === UPLOAD_ERR_NO_FILE && trim((string) ($names[$i] ?? '')) === '') {
+                    continue;
+                }
+                $failUpload(
+                    $errorPrefix . ': не удалось загрузить файл «' . $uploadName . '». Повторите сохранение.',
+                    500,
+                    ['reason' => 'upload_error', 'uploadError' => $uploadError]
+                );
+            }
+
+            $storeFile($uploadName, (string) ($tmpNames[$i] ?? ''), (int) ($sizes[$i] ?? 0));
+        }
+        return;
+    }
+
+    $uploadError = (int) $errors;
+    $uploadName = is_string($names) && trim($names) !== ''
+        ? docs_normalize_uploaded_filename($names)
+        : 'Файл';
+    if ($uploadError === UPLOAD_ERR_NO_FILE && (!is_string($names) || trim($names) === '')) {
+        return;
+    }
+    if ($uploadError !== UPLOAD_ERR_OK) {
+        $failUpload(
+            $errorPrefix . ': не удалось загрузить файл «' . $uploadName . '». Повторите сохранение.',
+            500,
+            ['reason' => 'upload_error', 'uploadError' => $uploadError]
+        );
+    }
+
+    $storeFile($uploadName, (string) $tmpNames, (int) $sizes);
+}
+
+function docs_delete_outgoing_record_files(string $folder, array $record): void
+{
+    if (empty($record['files']) || !is_array($record['files'])) {
+        return;
+    }
+
+    foreach ($record['files'] as $file) {
+        if (!is_array($file)) {
+            continue;
+        }
+        docs_delete_outgoing_file_from_storage($folder, $file);
+    }
 }
 
 function docs_get_organization_template_filename(string $folder): string
@@ -11516,15 +12220,37 @@ function docs_build_session_user_filter(): ?array
     return is_array($filter) ? $filter : null;
 }
 
+function docs_ensure_session_write_open(): void
+{
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+}
+
+function docs_close_session_write_if_active(): void
+{
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+}
+
 function docs_clear_session_auth(): void
 {
+    docs_ensure_session_write_open();
+
     if (isset($_SESSION[DOCS_SESSION_KEY])) {
         unset($_SESSION[DOCS_SESSION_KEY]);
     }
+
+    $GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT_SET'] = true;
+    $GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT'] = null;
+    docs_close_session_write_if_active();
 }
 
 function docs_set_session_auth(array $auth): void
 {
+    docs_ensure_session_write_open();
+
     $role = strtolower((string) ($auth['role'] ?? ''));
     if ($role !== 'admin' && $role !== 'user') {
         $role = 'user';
@@ -11570,15 +12296,27 @@ function docs_set_session_auth(array $auth): void
     if ($responsibleRole !== '') {
         $_SESSION[DOCS_SESSION_KEY]['responsibleRole'] = $responsibleRole;
     }
+
+    $GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT_SET'] = true;
+    $GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT'] = $_SESSION[DOCS_SESSION_KEY];
+    docs_close_session_write_if_active();
 }
 
 function docs_get_session_auth(): ?array
 {
-    if (!isset($_SESSION[DOCS_SESSION_KEY]) || !is_array($_SESSION[DOCS_SESSION_KEY])) {
+    $raw = null;
+    if (session_status() !== PHP_SESSION_ACTIVE && !empty($GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT_SET'])) {
+        if (isset($GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT']) && is_array($GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT'])) {
+            $raw = $GLOBALS['DOCS_SESSION_AUTH_SNAPSHOT'];
+        }
+    } elseif (isset($_SESSION[DOCS_SESSION_KEY]) && is_array($_SESSION[DOCS_SESSION_KEY])) {
+        $raw = $_SESSION[DOCS_SESSION_KEY];
+    }
+
+    if (!is_array($raw)) {
         return null;
     }
 
-    $raw = $_SESSION[DOCS_SESSION_KEY];
     $roleRaw = isset($raw['role']) && is_string($raw['role']) ? strtolower($raw['role']) : '';
     if ($roleRaw !== 'admin' && $roleRaw !== 'user') {
         return null;
@@ -14918,6 +15656,9 @@ switch ($action) {
 
         http_response_code(404);
         header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: public, max-age=' . DOCS_TELEGRAM_AVATAR_MISS_TTL);
+        header_remove('Pragma');
+        header_remove('Expires');
         echo json_encode([
             'success' => false,
             'error' => 'avatar_not_found',
@@ -18472,6 +19213,192 @@ switch ($action) {
             $response['updatedBy'] = $entry['updatedBy'];
         }
         respond_success($response);
+        break;
+
+    case 'outgoing_list':
+        $requestContext = docs_build_request_user_context();
+        $resolvedUserId = $requestContext['primaryId'] ?? null;
+        $requestedOrganization = docs_normalize_organization_candidate($_GET['organization'] ?? '');
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, $sessionAuth);
+        $outgoingRecords = docs_sort_outgoing_records(docs_load_outgoing_registry($folder));
+
+        log_docs_event('Outgoing registry prepared', [
+            'organization' => $organization,
+            'folder' => $folder,
+            'outgoingTotal' => count($outgoingRecords),
+            'filterSource' => $accessContext['filterSource'] ?? null,
+            'userId' => $resolvedUserId,
+            'registryPath' => get_outgoing_registry_path($folder),
+        ]);
+
+        respond_success([
+            'organization' => $organization,
+            'organizations' => $accessContext['accessible'],
+            'records' => array_values($outgoingRecords),
+            'documentsCount' => count($outgoingRecords),
+            'manualCount' => count($outgoingRecords),
+            'registryDisplayPath' => 'documents/' . $folder . '/' . OUTGOING_REGISTRY_FILENAME,
+            'filterSource' => $accessContext['filterSource'] ?? null,
+            'userId' => $resolvedUserId,
+            'canAddOutgoingRecords' => true,
+            'canManageOutgoingRecords' => $canManageOutgoing,
+        ]);
+        break;
+
+    case 'outgoing_save':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, $sessionAuth);
+        $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
+        $requestContext = docs_build_request_user_context();
+        $sessionAuthForIdentity = is_array($sessionAuth) ? $sessionAuth : null;
+        $authorLabel = docs_resolve_current_user_label($requestContext, $sessionAuthForIdentity);
+        $authorKey = docs_resolve_current_user_key($requestContext, $sessionAuthForIdentity);
+
+        if ($recordId !== '' && !$canManageOutgoing) {
+            respond_error('Изменение записей доступно только администратору.', 403, [
+                'reason' => 'outgoing_update_admin_required',
+            ]);
+        }
+
+        $records = docs_load_outgoing_registry($folder);
+        $savedRecord = null;
+
+        if ($recordId === '') {
+            $savedRecord = docs_sanitize_outgoing_record_payload($payload, null, $authorLabel, $authorKey);
+            $validationError = docs_validate_outgoing_record($savedRecord);
+            if ($validationError !== null) {
+                respond_error($validationError, 422);
+            }
+
+            docs_attach_uploaded_outgoing_files_to_record(
+                $savedRecord,
+                $folder,
+                'Запись исходящей корреспонденции не создана'
+            );
+            $records[] = $savedRecord;
+        } else {
+            $recordIndex = null;
+            foreach ($records as $index => $record) {
+                if (is_array($record) && (string) ($record['id'] ?? '') === $recordId) {
+                    $recordIndex = $index;
+                    break;
+                }
+            }
+
+            if ($recordIndex === null) {
+                respond_error('Запись исходящей корреспонденции не найдена.', 404);
+            }
+
+            $savedRecord = docs_sanitize_outgoing_record_payload($payload, $records[$recordIndex], $authorLabel, $authorKey);
+            $validationError = docs_validate_outgoing_record($savedRecord);
+            if ($validationError !== null) {
+                respond_error($validationError, 422);
+            }
+
+            docs_apply_outgoing_file_mutation($savedRecord, $folder, $payload);
+            docs_attach_uploaded_outgoing_files_to_record(
+                $savedRecord,
+                $folder,
+                'Запись исходящей корреспонденции не обновлена'
+            );
+            $records[$recordIndex] = $savedRecord;
+        }
+
+        docs_save_outgoing_registry($folder, $records);
+        $outgoingRecords = docs_sort_outgoing_records(docs_load_outgoing_registry($folder));
+
+        respond_success([
+            'message' => $recordId === '' ? 'Запись добавлена.' : 'Запись обновлена.',
+            'organization' => $organization,
+            'savedRecord' => $savedRecord,
+            'records' => array_values($outgoingRecords),
+            'documentsCount' => count($outgoingRecords),
+            'manualCount' => count($outgoingRecords),
+            'canAddOutgoingRecords' => true,
+            'canManageOutgoingRecords' => $canManageOutgoing,
+        ]);
+        break;
+
+    case 'outgoing_delete':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $sessionAuth = docs_get_session_auth();
+        $canManageOutgoing = docs_user_can_manage_outgoing_records($accessContext, $sessionAuth);
+        if (!$canManageOutgoing) {
+            respond_error('Удаление записей доступно только администратору.', 403, [
+                'reason' => 'outgoing_delete_admin_required',
+            ]);
+        }
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $recordId = sanitize_text_field((string) ($payload['id'] ?? ''), 160);
+        if ($recordId === '') {
+            respond_error('Не указан идентификатор записи.');
+        }
+
+        $records = docs_load_outgoing_registry($folder);
+        $found = false;
+        foreach ($records as $index => $record) {
+            if (!is_array($record) || (string) ($record['id'] ?? '') !== $recordId) {
+                continue;
+            }
+
+            docs_delete_outgoing_record_files($folder, $record);
+            unset($records[$index]);
+            $found = true;
+            break;
+        }
+
+        if (!$found) {
+            respond_error('Запись исходящей корреспонденции не найдена.', 404);
+        }
+
+        docs_save_outgoing_registry($folder, $records);
+        $outgoingRecords = docs_sort_outgoing_records(docs_load_outgoing_registry($folder));
+
+        respond_success([
+            'message' => 'Запись удалена.',
+            'organization' => $organization,
+            'records' => array_values($outgoingRecords),
+            'deletedRecordId' => $recordId,
+            'documentsCount' => count($outgoingRecords),
+            'manualCount' => count($outgoingRecords),
+            'canAddOutgoingRecords' => true,
+            'canManageOutgoingRecords' => $canManageOutgoing,
+            'adminScope' => is_array($sessionAuth) ? ($sessionAuth['adminScope'] ?? null) : null,
+        ]);
         break;
 
     case 'list':

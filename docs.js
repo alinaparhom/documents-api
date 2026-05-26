@@ -600,6 +600,8 @@
   var MESSAGE_LONG_DURATION_MS = 9500;
   var MESSAGE_INFO_DURATION_MS = 4500;
   var messageTimerId = null;
+  var outgoingRegistryEscapeHandler = null;
+  var outgoingFilterPopoverOutsideHandler = null;
   var elements = {
     addButton: null,
     adminButton: null,
@@ -609,6 +611,7 @@
     responsibleButton: null,
     unviewedButton: null,
     unviewedCounter: null,
+    outgoingButton: null,
     filterModeButton: null,
     sortModeButton: null,
     moveModeButton: null,
@@ -3160,12 +3163,6 @@
       var formData = new FormData();
       formData.append('extractedTexts', JSON.stringify(extractedTexts));
       formData.append('mode', aiMode === 'paid' ? 'paid' : 'free');
-      console.log('[AI][docs-brief-text] Отправка запроса', {
-        endpoint: endpoint,
-        mode: aiMode === 'paid' ? 'paid' : 'free',
-        source: sourceLabel,
-        ts: new Date().toISOString()
-      });
       return fetch(endpoint, {
         method: 'POST',
         credentials: 'same-origin',
@@ -3264,10 +3261,6 @@
     var lastError = null;
     return endpoints.reduce(function(chain, endpoint) {
       return chain.catch(function() {
-        console.log('[AI][groq-paid-brief] Отправка запроса', {
-          endpoint: endpoint,
-          ts: new Date().toISOString()
-        });
         return fetch(endpoint, {
           method: 'POST',
           credentials: 'same-origin',
@@ -3671,7 +3664,7 @@
       '}' +
       '.documents-search-popover--collapsed{' +
       'min-height:0;' +
-      'height:auto!important;' +
+      'height:auto;' +
       '}' +
       '.documents-search-popover__content{' +
       'display:flex;' +
@@ -4639,6 +4632,113 @@
     document.head.appendChild(style);
   }
 
+  function ensureOutgoingRegistryStyle() {
+    if (document.getElementById('documents-outgoing-registry-style')) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = 'documents-outgoing-registry-style';
+    style.textContent = '' +
+      '.documents-outgoing-modal{position:fixed;inset:0;z-index:2800;display:flex;align-items:stretch;justify-content:stretch;padding:0;background:rgba(15,23,42,.32);backdrop-filter:blur(10px);box-sizing:border-box;}' +
+      '.documents-outgoing-modal__panel{width:100%;height:100vh;max-height:100vh;height:100dvh;max-height:100dvh;display:flex;flex-direction:column;overflow:hidden;border:0;border-radius:0;background:#fff;box-shadow:none;color:#172554;}' +
+      '.documents-outgoing-modal__header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid #e2e8f0;padding:14px 18px 12px;}' +
+      '.documents-outgoing-modal__title{margin:0;color:#0f172a;font-size:20px;line-height:1.2;font-weight:900;}' +
+      '.documents-outgoing-modal__summary{margin:6px 0 0;color:#64748b;font-size:13px;line-height:1.4;font-weight:700;}' +
+      '.documents-outgoing-modal__actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;}' +
+      '.documents-outgoing-modal__add{min-height:36px;border:1px solid #2458ff;border-radius:10px;background:#2458ff;color:#fff;padding:0 12px;font:inherit;font-size:12px;font-weight:900;cursor:pointer;transition:background .16s ease,border-color .16s ease,transform .16s ease;}' +
+      '.documents-outgoing-modal__add:hover,.documents-outgoing-modal__add:focus-visible{border-color:#1f4fdc;background:#1f4fdc;outline:0;transform:translateY(-1px);}' +
+      '.documents-outgoing-modal__close{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #dbeafe;border-radius:10px;background:#fff;color:#334155;font-size:22px;line-height:1;cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
+      '.documents-outgoing-modal__close:hover,.documents-outgoing-modal__close:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:0;}' +
+      '.documents-outgoing-modal__body{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 18px 18px;}' +
+      '.documents-outgoing-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;border:1px solid #dbeafe;border-radius:12px;overflow:hidden;background:#fff;font-size:12px;}' +
+      '.documents-outgoing-table th,.documents-outgoing-table td{border-bottom:1px solid #e2e8f0;border-right:1px solid #edf2f7;padding:10px 12px;text-align:left;vertical-align:top;}' +
+      '.documents-outgoing-table th:last-child,.documents-outgoing-table td:last-child{border-right:0;}' +
+      '.documents-outgoing-table tr:last-child td{border-bottom:0;}' +
+      '.documents-outgoing-table th{position:sticky;top:0;z-index:1;background:#f8fafc;color:#475569;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.02em;}' +
+      '.documents-outgoing-table__filter{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:24px;padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;text-transform:inherit;letter-spacing:inherit;cursor:pointer;}' +
+      '.documents-outgoing-table__filter:hover,.documents-outgoing-table__filter:focus-visible{color:#1d4ed8;outline:none;}' +
+      '.documents-outgoing-table__filter-label{min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
+      '.documents-outgoing-table__filter-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;border:1px solid #dbeafe;border-radius:6px;background:#fff;color:#94a3b8;font-size:11px;line-height:1;}' +
+      '.documents-outgoing-table__filter.is-active .documents-outgoing-table__filter-icon{border-color:#93c5fd;background:#eff6ff;color:#2563eb;}' +
+      '.documents-outgoing-table td{color:#172554;line-height:1.35;overflow-wrap:anywhere;}' +
+      '.documents-outgoing-table__muted{color:#64748b;}' +
+      '.documents-outgoing-table__empty{padding:22px;text-align:center;color:#64748b;font-weight:800;}' +
+      '.documents-outgoing-table__summary{max-width:320px;}' +
+      '.documents-outgoing-table__actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}' +
+      '.documents-outgoing-table__action{min-height:30px;border:1px solid #dbeafe;border-radius:8px;background:#fff;color:#172554;padding:0 8px;font:inherit;font-size:11px;font-weight:900;cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
+      '.documents-outgoing-table__action:hover,.documents-outgoing-table__action:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:0;}' +
+      '.documents-outgoing-table__action--danger{border-color:#fecaca;color:#dc2626;}' +
+      '.documents-outgoing-table__action--danger:hover,.documents-outgoing-table__action--danger:focus-visible{border-color:#fca5a5;background:#fff1f0;color:#b91c1c;}' +
+      '.documents-outgoing-file-list{display:flex;flex-direction:column;gap:5px;min-width:0;}' +
+      '.documents-outgoing-file-item{display:block;min-width:0;}' +
+      '.documents-outgoing-file-link{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:center;gap:5px;min-width:0;padding:3px 5px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#172554;text-decoration:none;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease;}' +
+      '.documents-outgoing-file-link:hover,.documents-outgoing-file-link:focus-visible{background:#f8fbff;border-color:#bfdbfe;box-shadow:0 6px 16px rgba(37,99,235,.12);outline:0;}' +
+      '.documents-outgoing-file-link__icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:18px;border-radius:4px;background:#e0f2fe;color:#0369a1;font-size:7px;font-weight:900;line-height:1;text-transform:uppercase;}' +
+      '.documents-outgoing-file-link__name{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:800;color:#172554;}' +
+      '.documents-outgoing-filter-popover{position:fixed;z-index:31000;width:min(340px,calc(100vw - 24px));max-height:min(520px,calc(100vh - 24px));display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid #cbd8ec;border-radius:12px;background:#fff;box-shadow:0 22px 54px rgba(15,23,42,.2);box-sizing:border-box;color:#172554;}' +
+      '.documents-outgoing-filter-popover__title{font-size:13px;font-weight:900;line-height:1.3;color:#0f172a;}' +
+      '.documents-outgoing-filter-popover__input{width:100%;height:34px;box-sizing:border-box;border:1px solid #cbd8ec;border-radius:8px;background:#fff;color:#0f172a;padding:0 10px;font:inherit;font-size:13px;outline:0;}' +
+      '.documents-outgoing-filter-popover__input:focus{border-color:#2458ff;box-shadow:0 0 0 3px rgba(36,88,255,.13);}' +
+      '.documents-outgoing-filter-popover__list{display:flex;flex-direction:column;gap:3px;min-height:120px;max-height:280px;overflow:auto;border:1px solid #edf2f7;border-radius:10px;padding:6px;background:#f8fafc;scrollbar-width:thin;}' +
+      '.documents-outgoing-filter-popover__item{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:8px;color:#172554;font-size:13px;line-height:1.3;cursor:pointer;}' +
+      '.documents-outgoing-filter-popover__item:hover{background:#eff6ff;}' +
+      '.documents-outgoing-filter-popover__item input{flex:0 0 auto;margin:1px 0 0;accent-color:#2458ff;}' +
+      '.documents-outgoing-filter-popover__item span{min-width:0;overflow-wrap:anywhere;}' +
+      '.documents-outgoing-filter-popover__empty{padding:14px 8px;text-align:center;color:#64748b;font-size:13px;font-weight:700;}' +
+      '.documents-outgoing-filter-popover__actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;border-top:1px solid #edf2f7;padding-top:10px;}' +
+      '.documents-outgoing-filter-popover__button{height:32px;border:1px solid #cbd8ec;border-radius:8px;background:#fff;color:#334155;padding:0 10px;font:inherit;font-size:12px;font-weight:900;cursor:pointer;}' +
+      '.documents-outgoing-filter-popover__button:hover,.documents-outgoing-filter-popover__button:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:0;}' +
+      '.documents-outgoing-filter-popover__button--primary{border-color:#2458ff;background:#2458ff;color:#fff;}' +
+      '.documents-outgoing-filter-popover__button--primary:hover,.documents-outgoing-filter-popover__button--primary:focus-visible{border-color:#1f4fdc;background:#1f4fdc;color:#fff;}' +
+      '.documents-outgoing-form__wide{grid-column:1 / -1;}' +
+      '.documents-outgoing-form-modal{position:fixed;inset:0;z-index:32000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.48);backdrop-filter:blur(12px);box-sizing:border-box;}' +
+      '.documents-outgoing-form-modal__shell{width:min(760px,100%);max-height:calc(100dvh - 36px);display:flex;flex-direction:column;overflow:hidden;border:1px solid #d8e4f4;border-radius:16px;background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);box-shadow:0 28px 80px rgba(15,23,42,.26);color:#172554;}' +
+      '.documents-outgoing-form-modal__header{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;border-bottom:1px solid #e2e8f0;background:#fff;padding:18px 20px 16px;}' +
+      '.documents-outgoing-form-modal__eyebrow{margin:0;color:#2458ff;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;}' +
+      '.documents-outgoing-form-modal__title{margin:0;color:#0f172a;font-size:22px;line-height:1.16;font-weight:900;letter-spacing:0;}' +
+      '.documents-outgoing-form-modal__subtitle{max-width:560px;margin:4px 0 0;color:#64748b;font-size:13px;line-height:1.42;font-weight:700;}' +
+      '.documents-outgoing-form-modal__body{min-height:0;overflow:auto;padding:18px 20px 20px;}' +
+      '.documents-outgoing-form-modal__form{margin:0;}' +
+      '.documents-outgoing-form-modal__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px;}' +
+      '.documents-outgoing-form-modal .documents-form__field{min-width:0;}' +
+      '.documents-outgoing-form-modal .documents-form__field label{display:grid;gap:7px;margin:0;color:#344054;font-size:12px;font-weight:900;line-height:1.25;}' +
+      '.documents-outgoing-form-modal .documents-form__field input,.documents-outgoing-form-modal .documents-form__field select,.documents-outgoing-form-modal .documents-form__field textarea{width:100%;min-height:42px;border:1px solid #cbd8ec;border-radius:10px;background:#fff;color:#0f172a;padding:10px 12px;font:inherit;font-size:14px;line-height:1.35;box-sizing:border-box;box-shadow:0 1px 0 rgba(15,23,42,.03);transition:border-color .16s ease,box-shadow .16s ease,background .16s ease;}' +
+      '.documents-outgoing-form-modal .documents-form__field textarea{min-height:132px;resize:vertical;}' +
+      '.documents-outgoing-form-modal .documents-form__field input:hover,.documents-outgoing-form-modal .documents-form__field select:hover,.documents-outgoing-form-modal .documents-form__field textarea:hover{border-color:#aebfda;background:#fbfdff;}' +
+      '.documents-outgoing-form-modal .documents-form__field input:focus,.documents-outgoing-form-modal .documents-form__field select:focus,.documents-outgoing-form-modal .documents-form__field textarea:focus{border-color:#2458ff;box-shadow:0 0 0 3px rgba(36,88,255,.13);outline:0;}' +
+      '.documents-outgoing-form-modal__file-hint{margin-top:7px;color:#64748b;font-size:12px;line-height:1.35;font-weight:700;}' +
+      '.documents-outgoing-file-upload{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px;width:100%;min-height:54px;padding:10px;border:1px dashed #bdd0ea;border-radius:12px;background:#fff;box-sizing:border-box;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease;}' +
+      '.documents-outgoing-file-upload:hover,.documents-outgoing-file-upload:focus-within{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(36,88,255,.09);}' +
+      '.documents-outgoing-file-upload__input{position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;}' +
+      '.documents-outgoing-file-upload__button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;border:1px solid #2458ff;border-radius:10px;background:#2458ff;color:#fff;padding:0 13px;font:inherit;font-size:12px;font-weight:900;line-height:1;cursor:pointer;white-space:nowrap;transition:background .16s ease,border-color .16s ease,transform .16s ease,box-shadow .16s ease;}' +
+      '.documents-outgoing-file-upload__button:hover,.documents-outgoing-file-upload__button:focus-visible{border-color:#1f4fdc;background:#1f4fdc;box-shadow:0 10px 22px rgba(36,88,255,.2);outline:0;transform:translateY(-1px);}' +
+      '.documents-outgoing-file-upload__button-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:0 0 auto;font-size:15px;line-height:1;}' +
+      '.documents-outgoing-file-upload__summary{min-width:0;color:#475569;font-size:13px;font-weight:800;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-outgoing-file-upload__summary.is-filled{color:#172554;}' +
+      '.documents-outgoing-file-manager{display:grid;gap:9px;padding:12px;border:1px solid #dbeafe;border-radius:14px;background:linear-gradient(180deg,#f8fbff 0%,#fff 100%);}' +
+      '.documents-outgoing-file-manager__title{color:#0f172a;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;}' +
+      '.documents-outgoing-file-manager__list{display:grid;gap:8px;}' +
+      '.documents-outgoing-file-manager__empty{padding:10px;border:1px dashed #cbd8ec;border-radius:10px;background:#fff;color:#64748b;font-size:13px;font-weight:700;text-align:center;}' +
+      '.documents-outgoing-file-manager__item{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:9px 10px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;box-shadow:0 8px 18px rgba(15,23,42,.05);}' +
+      '.documents-outgoing-file-manager__info{display:flex;align-items:center;gap:10px;min-width:0;}' +
+      '.documents-outgoing-file-manager__icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:28px;flex:0 0 auto;border-radius:8px;background:#e0f2fe;color:#0369a1;font-size:10px;font-weight:900;line-height:1;text-transform:uppercase;}' +
+      '.documents-outgoing-file-manager__text{display:grid;gap:2px;min-width:0;}' +
+      '.documents-outgoing-file-manager__name{display:block;min-width:0;padding:0;border:0;background:transparent;color:#172554;font:inherit;font-size:13px;font-weight:900;line-height:1.25;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}' +
+      '.documents-outgoing-file-manager__name:hover,.documents-outgoing-file-manager__name:focus-visible{color:#2458ff;outline:none;text-decoration:underline;text-underline-offset:3px;}' +
+      '.documents-outgoing-file-manager__meta{min-width:0;color:#64748b;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-outgoing-file-manager__remove{flex:0 0 auto;min-height:30px;padding:0 10px;border:1px solid #fecaca;border-radius:9px;background:#fff;color:#dc2626;font:inherit;font-size:12px;font-weight:900;cursor:pointer;}' +
+      '.documents-outgoing-file-manager__remove:hover,.documents-outgoing-file-manager__remove:focus-visible{border-color:#fca5a5;background:#fff1f0;color:#b91c1c;outline:0;}' +
+      '.documents-outgoing-form-modal__footer{display:flex;align-items:center;justify-content:flex-end;gap:10px;border-top:1px solid #e2e8f0;background:#fff;padding:14px 20px;}' +
+      '.documents-outgoing-form-modal__footer .documents-button{min-height:40px;border-radius:10px;padding:0 16px;font-weight:900;}' +
+      '.documents-outgoing-form-modal__footer .documents-button--secondary{border:1px solid #cbd8ec;background:#fff;color:#334155;}' +
+      '.documents-outgoing-form-modal__footer .documents-button--secondary:hover,.documents-outgoing-form-modal__footer .documents-button--secondary:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:0;}' +
+      '.documents-outgoing-form-modal__footer .documents-button--primary{border:1px solid #2458ff;background:#2458ff;color:#fff;box-shadow:0 10px 24px rgba(36,88,255,.22);}' +
+      '.documents-outgoing-form-modal__footer .documents-button--primary:hover,.documents-outgoing-form-modal__footer .documents-button--primary:focus-visible{border-color:#1f4fdc;background:#1f4fdc;outline:0;}' +
+      '.documents-outgoing-form-modal__footer .documents-button:disabled{opacity:.55;cursor:wait;box-shadow:none;}' +
+      '@media (max-width:720px){.documents-outgoing-modal__header{display:grid;padding:12px;}.documents-outgoing-modal__actions{justify-content:flex-start;}.documents-outgoing-modal__title{font-size:18px;}.documents-outgoing-modal__body{padding:10px 12px 14px;}.documents-outgoing-table{min-width:1020px;}.documents-outgoing-form-modal{align-items:flex-end;padding:8px;}.documents-outgoing-form-modal__shell{max-height:calc(100dvh - 16px);border-radius:14px;}.documents-outgoing-form-modal__header{padding:15px 14px 13px;}.documents-outgoing-form-modal__title{font-size:19px;}.documents-outgoing-form-modal__body{padding:14px;}.documents-outgoing-form-modal__grid{grid-template-columns:1fr;gap:12px;}.documents-outgoing-form__wide{grid-column:auto;}.documents-outgoing-file-upload{grid-template-columns:1fr;align-items:stretch;}.documents-outgoing-file-upload__button{width:100%;}.documents-outgoing-file-upload__summary{white-space:normal;}.documents-outgoing-form-modal__footer{display:grid;grid-template-columns:1fr;gap:8px;padding:12px 14px;}.documents-outgoing-form-modal__footer .documents-button{width:100%;}}';
+    document.head.appendChild(style);
+  }
+
   function ensureRegistryTableViewStyle() {
     if (document.getElementById('documents-registry-table-view-style')) {
       return;
@@ -4647,34 +4747,34 @@
     style.id = 'documents-registry-table-view-style';
     style.textContent = '' +
       '.documents-workspace{display:flex;flex-direction:column;gap:12px;color:#172554;}' +
-      '.documents-panel__header{display:flex!important;flex-wrap:nowrap!important;align-items:center!important;gap:8px!important;height:48px!important;min-height:48px!important;max-height:48px!important;padding:7px 12px!important;box-sizing:border-box;min-width:0;overflow:hidden!important;}' +
+      '.documents-panel__header{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-height:44px;height:44px;padding:6px 10px;box-sizing:border-box;min-width:0;overflow:visible;}' +
       '.documents-panel__header>*{flex:0 0 auto;}' +
-      '.documents-panel-control-group{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px;margin-left:auto;flex:0 0 auto;min-width:max-content;white-space:nowrap;}' +
-      '#documents-title,.documents-panel__title{flex:1 1 0!important;min-width:0!important;max-width:100%;font-size:clamp(15px,1.8vw,20px)!important;line-height:1.15!important;font-weight:800!important;letter-spacing:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-      '.documents-panel__header .documents-clock{flex:0 0 auto;min-height:32px;height:32px;padding:0 9px;border:1px solid #dbeafe;border-radius:9px;background:#fff;color:#172554;font-size:11px;box-shadow:none;}' +
-      '.documents-panel__header button,.documents-panel-control-group button{box-sizing:border-box!important;border:1px solid #dbeafe!important;background:#fff!important;color:#172554!important;box-shadow:none!important;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
-      '.documents-panel__header button:hover,.documents-panel__header button:focus-visible,.documents-panel-control-group button:hover,.documents-panel-control-group button:focus-visible{background:#eff6ff!important;border-color:#93c5fd!important;color:#1d4ed8!important;outline:none!important;}' +
-      '.documents-panel__admin,.documents-panel__close,#documents-add-button,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{min-height:32px!important;height:32px!important;padding:0 10px!important;border-radius:9px!important;font-size:12px!important;line-height:1!important;white-space:nowrap!important;}' +
-      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{position:relative;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:34px!important;min-width:34px!important;max-width:34px!important;padding:0!important;gap:0!important;overflow:visible!important;}' +
-      '.documents-panel-icon-button__icon,.documents-panel-action-icon{width:17px;height:17px;display:block;flex:0 0 auto;}' +
-      '#documents-add-button{flex:0 1 auto!important;max-width:160px!important;border-color:rgba(34,197,94,.55)!important;background:#16a34a!important;color:#fff!important;font-weight:800!important;box-shadow:0 8px 18px rgba(22,163,74,.18)!important;overflow:hidden;text-overflow:ellipsis;}' +
-      '#documents-add-button:hover,#documents-add-button:focus-visible{border-color:#15803d!important;background:#15803d!important;color:#fff!important;}' +
-      '#documents-logout-button{color:#dc2626!important;border-color:rgba(248,113,113,.55)!important;background:#fff!important;}' +
-      '#documents-logout-button:hover,#documents-logout-button:focus-visible{color:#b91c1c!important;border-color:rgba(239,68,68,.7)!important;background:#fff5f5!important;}' +
-      '#documents-close{color:#334155!important;background:#fff!important;}' +
-      '#documents-close:hover,#documents-close:focus-visible{color:#0f172a!important;border-color:#cbd5e1!important;background:#f8fafc!important;}' +
-      '#documents-refresh-button{color:#1d4ed8!important;background:#fff!important;}' +
-      '#documents-refresh-button:hover,#documents-refresh-button:focus-visible{color:#1e40af!important;border-color:#93c5fd!important;background:#eff6ff!important;}' +
-      '#documents-settings-button{color:#7c3aed!important;border-color:rgba(167,139,250,.62)!important;background:#faf5ff!important;}' +
-      '#documents-settings-button:hover,#documents-settings-button:focus-visible{color:#6d28d9!important;border-color:#a78bfa!important;background:#f3e8ff!important;}' +
-      '#documents-online-button{color:#047857!important;border-color:rgba(52,211,153,.62)!important;background:#ecfdf5!important;}' +
-      '#documents-online-button:hover,#documents-online-button:focus-visible{color:#065f46!important;border-color:#34d399!important;background:#d1fae5!important;}' +
-      '#documents-admin-button{color:#1d4ed8!important;border-color:rgba(96,165,250,.62)!important;background:#eff6ff!important;font-weight:800!important;}' +
-      '#documents-admin-button:hover,#documents-admin-button:focus-visible{color:#1e40af!important;border-color:#60a5fa!important;background:#dbeafe!important;}' +
-      '#documents-responsible-button{color:#047857!important;border-color:rgba(52,211,153,.62)!important;background:#ecfdf5!important;font-weight:800!important;}' +
-      '#documents-responsible-button:hover,#documents-responsible-button:focus-visible,#documents-responsible-button.documents-panel__admin--toggled{color:#065f46!important;border-color:#34d399!important;background:#d1fae5!important;}' +
-      '#documents-unviewed-button{position:relative;display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:6px;color:#be123c!important;border-color:rgba(251,113,133,.62)!important;background:#fff1f2!important;font-weight:800!important;overflow:visible!important;}' +
-      '#documents-unviewed-button:hover,#documents-unviewed-button:focus-visible,#documents-unviewed-button.documents-panel__admin--toggled{color:#9f1239!important;border-color:#fb7185!important;background:#ffe4e6!important;}' +
+      '.documents-panel-control-group{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;margin-left:auto;flex:0 0 auto;min-width:0;white-space:nowrap;}' +
+      '#documents-title,.documents-panel__title{flex:1 1 auto;min-width:0;max-width:100%;font-size:clamp(14px,1.6vw,18px);line-height:1.15;font-weight:800;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.documents-panel__header .documents-clock{flex:0 0 auto;min-height:30px;height:30px;padding:0 7px;border:1px solid #dbeafe;border-radius:8px;background:#fff;color:#172554;font-size:10px;box-shadow:none;}' +
+      '.documents-panel__header button,.documents-panel-control-group button{box-sizing:border-box;border:1px solid #dbeafe;background:#fff;color:#172554;box-shadow:none;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
+      '.documents-panel__header button:hover,.documents-panel__header button:focus-visible,.documents-panel-control-group button:hover,.documents-panel-control-group button:focus-visible{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;outline:none;}' +
+      '.documents-panel__admin,.documents-panel__close,#documents-add-button,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{min-height:30px;height:30px;padding:0 8px;border-radius:8px;font-size:11px;line-height:1;white-space:nowrap;}' +
+      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;min-width:30px;max-width:30px;padding:0;gap:0;overflow:visible;}' +
+      '.documents-panel-icon-button__icon,.documents-panel-action-icon{width:15px;height:15px;display:block;flex:0 0 auto;}' +
+      '#documents-add-button{flex:0 1 auto;max-width:128px;border-color:rgba(34,197,94,.55);background:#16a34a;color:#fff;font-weight:800;box-shadow:0 8px 18px rgba(22,163,74,.18);overflow:hidden;text-overflow:ellipsis;}' +
+      '#documents-add-button:hover,#documents-add-button:focus-visible{border-color:#15803d;background:#15803d;color:#fff;}' +
+      '#documents-logout-button{color:#dc2626;border-color:rgba(248,113,113,.55);background:#fff;}' +
+      '#documents-logout-button:hover,#documents-logout-button:focus-visible{color:#b91c1c;border-color:rgba(239,68,68,.7);background:#fff5f5;}' +
+      '#documents-close{color:#334155;background:#fff;}' +
+      '#documents-close:hover,#documents-close:focus-visible{color:#0f172a;border-color:#cbd5e1;background:#f8fafc;}' +
+      '#documents-refresh-button{color:#1d4ed8;background:#fff;}' +
+      '#documents-refresh-button:hover,#documents-refresh-button:focus-visible{color:#1e40af;border-color:#93c5fd;background:#eff6ff;}' +
+      '#documents-settings-button{color:#7c3aed;border-color:rgba(167,139,250,.62);background:#faf5ff;}' +
+      '#documents-settings-button:hover,#documents-settings-button:focus-visible{color:#6d28d9;border-color:#a78bfa;background:#f3e8ff;}' +
+      '#documents-online-button{color:#047857;border-color:rgba(52,211,153,.62);background:#ecfdf5;}' +
+      '#documents-online-button:hover,#documents-online-button:focus-visible{color:#065f46;border-color:#34d399;background:#d1fae5;}' +
+      '#documents-admin-button{color:#1d4ed8;border-color:rgba(96,165,250,.62);background:#eff6ff;font-weight:800;}' +
+      '#documents-admin-button:hover,#documents-admin-button:focus-visible{color:#1e40af;border-color:#60a5fa;background:#dbeafe;}' +
+      '#documents-responsible-button{color:#047857;border-color:rgba(52,211,153,.62);background:#ecfdf5;font-weight:800;}' +
+      '#documents-responsible-button:hover,#documents-responsible-button:focus-visible,#documents-responsible-button.documents-panel__admin--toggled{color:#065f46;border-color:#34d399;background:#d1fae5;}' +
+      '#documents-unviewed-button{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:6px;color:#be123c;border-color:rgba(251,113,133,.62);background:#fff1f2;font-weight:800;overflow:visible;}' +
+      '#documents-unviewed-button:hover,#documents-unviewed-button:focus-visible,#documents-unviewed-button.documents-panel__admin--toggled{color:#9f1239;border-color:#fb7185;background:#ffe4e6;}' +
       '.documents-unviewed-button__counter{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:#be123c;color:#fff;font-size:11px;font-weight:900;line-height:1;font-variant-numeric:tabular-nums;box-shadow:0 4px 10px rgba(190,18,60,.22);}' +
       '.documents-unviewed-button__counter--hidden{display:inline-flex;}' +
       '.documents-online__counter{position:absolute;top:-5px;right:-5px;display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#10b981;color:#fff;font-size:10px;font-weight:800;line-height:1;border:1px solid #fff;box-shadow:0 4px 10px rgba(16,185,129,.28);}' +
@@ -4683,12 +4783,12 @@
       '.documents-tools-toggle:hover,.documents-tools-toggle:focus-visible{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;outline:none;box-shadow:0 10px 22px rgba(37,99,235,.12);}' +
       '.documents-tools-toggle[aria-expanded="true"]{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;box-shadow:0 10px 22px rgba(37,99,235,.12);}' +
       '.documents-tools-toggle__icon,.documents-tools-toggle__chevron{width:16px;height:16px;flex:0 0 auto;}' +
-      '.documents-panel-control-group .documents-tools-toggle{width:34px;min-width:34px;max-width:34px;min-height:32px;height:32px;padding:0;gap:0;border-radius:9px;box-shadow:none;}' +
-      '.documents-panel-control-group .documents-tools-toggle{color:#b45309!important;border-color:rgba(251,191,36,.72)!important;background:#fffbeb!important;}' +
-      '.documents-panel-control-group .documents-tools-toggle:hover,.documents-panel-control-group .documents-tools-toggle:focus-visible{color:#92400e!important;border-color:#f59e0b!important;background:#fef3c7!important;}' +
+      '.documents-panel-control-group .documents-tools-toggle{width:30px;min-width:30px;max-width:30px;min-height:30px;height:30px;padding:0;gap:0;border-radius:8px;box-shadow:none;}' +
+      '.documents-panel-control-group .documents-tools-toggle{color:#b45309;border-color:rgba(251,191,36,.72);background:#fffbeb;}' +
+      '.documents-panel-control-group .documents-tools-toggle:hover,.documents-panel-control-group .documents-tools-toggle:focus-visible{color:#92400e;border-color:#f59e0b;background:#fef3c7;}' +
       '.documents-panel-control-group .documents-tools-toggle__label,.documents-panel-control-group .documents-tools-toggle__chevron{display:none;}' +
       '.documents-tools-toggle__label{white-space:nowrap;}' +
-      '.documents-table-toolbar--collapsed .documents-tabs,.documents-table-toolbar--collapsed .documents-table-tools{display:none!important;}' +
+      '.documents-table-toolbar--collapsed .documents-tabs,.documents-table-toolbar--collapsed .documents-table-tools{display:none;}' +
       '.documents-table-toolbar .documents-tabs{flex:0 0 auto;width:100%;margin:0;padding:0;border-bottom:1px solid #dbeafe;overflow-x:auto;}' +
       '.documents-table-tools{width:100%;justify-content:flex-start;}' +
       '.documents-global-search{position:relative;display:block;flex:0 0 min(320px,34vw);min-width:220px;margin-left:auto;}' +
@@ -4837,34 +4937,34 @@
       '.documents-pagination__button:disabled{opacity:.35;cursor:default;}' +
       '.documents-pagination__ellipsis{min-width:28px;text-align:center;color:#64748b;}' +
       '@media (max-width:900px){' +
-      '.documents-panel__header{height:44px!important;min-height:44px!important;max-height:44px!important;gap:5px!important;padding:6px 7px!important;}' +
-      '.documents-panel-control-group{gap:4px;}' +
-      '.documents-panel__header .documents-clock{height:30px;min-height:30px;max-width:82px;padding:0 7px;font-size:10px;overflow:hidden;}' +
-      '.documents-clock__user,.documents-clock__date,.documents-clock__separator{display:none!important;}' +
-      '.documents-panel__admin,.documents-panel__close,#documents-add-button,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{height:30px!important;min-height:30px!important;border-radius:8px!important;font-size:11px!important;}' +
-      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle{width:30px!important;min-width:30px!important;max-width:30px!important;height:30px!important;min-height:30px!important;}' +
-      '#documents-title,.documents-panel__title{font-size:14px!important;}' +
-      '#documents-add-button{max-width:112px!important;padding:0 8px!important;}' +
+      '.documents-panel__header{gap:4px;padding:6px 7px;}' +
+      '.documents-panel-control-group{gap:3px;}' +
+      '.documents-panel__header .documents-clock{height:28px;min-height:28px;max-width:64px;padding:0 5px;font-size:10px;overflow:hidden;}' +
+      '.documents-clock__user,.documents-clock__date,.documents-clock__separator{display:none;}' +
+      '.documents-panel__admin,.documents-panel__close,#documents-add-button,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button{height:28px;min-height:28px;border-radius:7px;font-size:10px;padding:0 6px;}' +
+      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle{width:28px;min-width:28px;max-width:28px;height:28px;min-height:28px;}' +
+      '#documents-title,.documents-panel__title{font-size:13px;}' +
+      '#documents-add-button{max-width:92px;padding:0 7px;}' +
       '}' +
       '@media (max-width:640px){' +
-      '.documents-panel__header{gap:4px!important;padding:6px 5px!important;}' +
-      '#documents-title,.documents-panel__title{max-width:18vw;font-size:13px!important;}' +
-      '.documents-panel__header .documents-clock{width:52px;min-width:52px;max-width:52px;padding:0 4px;justify-content:center;}' +
-      '#documents-add-button{width:30px!important;min-width:30px!important;max-width:30px!important;padding:0!important;font-size:0!important;}' +
-      '#documents-add-button::before{content:"+";font-size:20px;line-height:1;font-weight:900;}' +
-      '.documents-panel__admin:not(#documents-add-button){max-width:84px!important;padding:0 7px!important;overflow:hidden;text-overflow:ellipsis;}' +
+      '.documents-panel__header{gap:3px;padding:5px 4px;}' +
+      '#documents-title,.documents-panel__title{max-width:10vw;font-size:12px;}' +
+      '.documents-panel__header .documents-clock{display:none;}' +
+      '#documents-add-button{width:28px;min-width:28px;max-width:28px;padding:0;font-size:0;}' +
+      '#documents-add-button::before{content:"+";font-size:19px;line-height:1;font-weight:900;}' +
+      '.documents-panel__admin:not(#documents-add-button){max-width:72px;padding:0 5px;overflow:hidden;text-overflow:ellipsis;}' +
       '}' +
       '@media (max-width:420px){' +
-      '#documents-title,.documents-panel__title{max-width:1px;color:transparent!important;}' +
-      '.documents-panel__header .documents-clock{display:none!important;}' +
+      '#documents-title,.documents-panel__title{max-width:1px;flex-basis:1px;color:transparent;}' +
       '.documents-panel-control-group{gap:2px;}' +
-      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle,#documents-add-button,#documents-admin-button,#documents-responsible-button,#documents-unviewed-button{width:26px!important;min-width:26px!important;max-width:26px!important;height:28px!important;min-height:28px!important;padding:0!important;border-radius:7px!important;}' +
-      '#documents-admin-button,#documents-responsible-button,#documents-unviewed-button{font-size:0!important;overflow:hidden!important;}' +
-      '#documents-unviewed-button{overflow:visible!important;}' +
+      '.documents-panel-icon-button,#documents-close,#documents-logout-button,#documents-refresh-button,#documents-settings-button,#documents-online-button,.documents-panel-control-group .documents-tools-toggle,#documents-add-button,#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button{width:25px;min-width:25px;max-width:25px;height:27px;min-height:27px;padding:0;border-radius:7px;}' +
+      '#documents-admin-button,#documents-responsible-button,#documents-unviewed-button,#documents-outgoing-button{font-size:0;overflow:hidden;}' +
+      '#documents-unviewed-button{overflow:visible;}' +
       '#documents-unviewed-button .documents-unviewed-button__counter{position:absolute;top:-7px;right:-7px;min-width:16px;height:16px;padding:0 4px;border:1px solid #fff;font-size:10px;}' +
       '#documents-admin-button::before{content:"A";font-size:11px;font-weight:900;line-height:1;}' +
       '#documents-responsible-button::before{content:"О";font-size:11px;font-weight:900;line-height:1;}' +
       '#documents-unviewed-button::before{content:"!";font-size:13px;font-weight:900;line-height:1;}' +
+      '#documents-outgoing-button::before{content:"И";font-size:11px;font-weight:900;line-height:1;}' +
       '.documents-panel-icon-button__icon,.documents-panel-action-icon{width:14px;height:14px;}' +
       '}' +
       '@media (max-width:760px){' +
@@ -10691,6 +10791,13 @@
     }
     if (elements.unviewedButton) {
       updateUnviewedButtonState();
+    }
+    if (elements.outgoingButton) {
+      var canUseOutgoing = organizationReady && (accessContext.forceAccess || accessContext.accessGranted || !!resolveUserKey(accessContext));
+      elements.outgoingButton.disabled = !canUseOutgoing;
+      elements.outgoingButton.setAttribute('aria-hidden', canUseOutgoing ? 'false' : 'true');
+      elements.outgoingButton.tabIndex = canUseOutgoing ? 0 : -1;
+      elements.outgoingButton.classList.toggle('documents-button--hidden', !canUseOutgoing);
     }
     if (elements.settingsButton) {
       var canUseSettings = organizationReady && (accessContext.forceAccess || accessContext.accessGranted);
@@ -21828,6 +21935,1198 @@
     }
   }
 
+  var OUTGOING_REGISTRY_COLUMNS = [
+    { key: 'outgoingNumber', label: 'Рег. №' },
+    { key: 'addressee', label: 'Отправитель' },
+    { key: 'executor', label: 'Исполнитель' },
+    { key: 'sendingDate', label: 'Дата регистрации' },
+    { key: 'documentIndexNumber', label: 'Номер документа' },
+    { key: 'documentType', label: 'Тип документа' },
+    { key: 'summary', label: 'Содержание' },
+    { key: 'files', label: 'Файлы' },
+    { key: 'registeredBy', label: 'Кто зарегистрировал' },
+    { key: 'actions', label: 'Действия' }
+  ];
+
+  function requestOutgoingRegistryRecords() {
+    if (!state.organization) {
+      return Promise.reject(new Error('Организация не определена.'));
+    }
+
+    return fetch(buildApiUrl('outgoing_list', {
+      organization: state.organization,
+      cacheBust: Date.now()
+    }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    }).then(handleResponse);
+  }
+
+  function getOutgoingRecordValue(record, key) {
+    if (!record || typeof record !== 'object') {
+      return '—';
+    }
+
+    var value = record[key];
+    if (key === 'sendingDate') {
+      return value ? formatDate(value) : '—';
+    }
+
+    if (key === 'registeredBy') {
+      var author = value ? String(value) : '';
+      var registeredAt = record.registeredAt ? formatDateTime(record.registeredAt) : '';
+      if (author && registeredAt) {
+        return author + '\n' + registeredAt;
+      }
+      return author || registeredAt || '—';
+    }
+
+    if (key === 'files') {
+      if (Array.isArray(record.files) && record.files.length) {
+        return record.files.map(function(file, index) {
+          return getAttachmentName(file, index + 1);
+        }).join('\n');
+      }
+      if (record.filesLabel) {
+        return String(record.filesLabel);
+      }
+      if (record.filesCount) {
+        return 'Файлы: ' + String(record.filesCount);
+      }
+      return '—';
+    }
+
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return '—';
+    }
+
+    return String(value);
+  }
+
+  function renderOutgoingFilesCell(cell, record) {
+    var files = record && Array.isArray(record.files) ? record.files : [];
+    if (!files.length) {
+      cell.classList.add('documents-outgoing-table__muted');
+      cell.textContent = '—';
+      return;
+    }
+
+    var list = createElement('div', 'documents-outgoing-file-list');
+    files.forEach(function(file, index) {
+      if (!file || typeof file !== 'object') {
+        return;
+      }
+      var url = resolveAttachmentUrl(file, { bustCache: true });
+      var fileName = getAttachmentName(file, index + 1);
+      if (!url) {
+        return;
+      }
+      var item = createElement('div', 'documents-outgoing-file-item');
+      var link = createElement('a', 'documents-outgoing-file-link');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.title = fileName;
+      link.setAttribute('aria-label', 'Предпросмотр файла ' + fileName);
+      link.appendChild(createElement('span', 'documents-outgoing-file-link__icon', getAttachmentExtensionLabel(file)));
+      link.appendChild(createElement('span', 'documents-outgoing-file-link__name', fileName));
+      link.addEventListener('click', function(event) {
+        event.preventDefault();
+        openOutgoingAttachmentInNewTab(file, url);
+      });
+
+      item.appendChild(link);
+      list.appendChild(item);
+    });
+
+    if (!list.childNodes.length) {
+      cell.classList.add('documents-outgoing-table__muted');
+      cell.textContent = '—';
+      return;
+    }
+
+    cell.appendChild(list);
+  }
+
+  function buildOutgoingFileKey(file) {
+    if (!file || typeof file !== 'object') {
+      return '';
+    }
+    return String(file.storedName || file.url || file.originalName || file.name || '').trim();
+  }
+
+  function normalizeOutgoingFileList(files) {
+    return (Array.isArray(files) ? files : []).filter(function(file) {
+      return file && typeof file === 'object' && (file.storedName || file.url || file.originalName || file.name);
+    });
+  }
+
+  var outgoingDocxPreviewLoader = null;
+
+  function ensureOutgoingDocxPreviewRenderer() {
+    if (window.docx && typeof window.docx.renderAsync === 'function') {
+      return Promise.resolve(window.docx);
+    }
+    if (window.docxPreview && typeof window.docxPreview.renderAsync === 'function') {
+      return Promise.resolve(window.docxPreview);
+    }
+    if (outgoingDocxPreviewLoader) {
+      return outgoingDocxPreviewLoader;
+    }
+    outgoingDocxPreviewLoader = new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js';
+      script.async = true;
+      script.onload = function() {
+        var renderer = window.docx && typeof window.docx.renderAsync === 'function'
+          ? window.docx
+          : (window.docxPreview && typeof window.docxPreview.renderAsync === 'function' ? window.docxPreview : null);
+        if (renderer) {
+          resolve(renderer);
+          return;
+        }
+        reject(new Error('Модуль предпросмотра DOCX не найден.'));
+      };
+      script.onerror = function() {
+        reject(new Error('Не удалось загрузить модуль предпросмотра DOCX.'));
+      };
+      document.head.appendChild(script);
+    });
+    return outgoingDocxPreviewLoader;
+  }
+
+  function getOutgoingPreviewMimeType(file, fallbackType) {
+    var type = fallbackType ? String(fallbackType).toLowerCase() : '';
+    if (type && type !== 'application/octet-stream') {
+      return type;
+    }
+
+    var extension = getFileExtension(file);
+    var mimeByExtension = {
+      pdf: 'application/pdf',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      webp: 'image/webp',
+      gif: 'image/gif',
+      bmp: 'image/bmp',
+      svg: 'image/svg+xml',
+      txt: 'text/plain;charset=utf-8',
+      csv: 'text/csv;charset=utf-8'
+    };
+
+    return mimeByExtension[extension] || type || 'application/octet-stream';
+  }
+
+  function writeOutgoingPreviewStatus(previewWindow, title, message) {
+    if (!previewWindow || !previewWindow.document) {
+      return;
+    }
+    var safeTitle = escapeOutgoingPreviewHtml(title || 'Файл');
+    var safeMessage = escapeOutgoingPreviewHtml(message || '');
+    previewWindow.document.open();
+    previewWindow.document.write(
+      '<!doctype html><html><head><meta charset="utf-8"><title>' + safeTitle + '</title>' +
+      '<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;' +
+      'font:600 14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172554;background:#f8fafc;}' +
+      '.box{max-width:520px;padding:18px 20px;border:1px solid #dbeafe;border-radius:12px;background:#fff;box-shadow:0 18px 42px rgba(15,23,42,.12);}' +
+      '.title{margin:0 0 6px;font-size:16px;font-weight:900;color:#0f172a;overflow-wrap:anywhere;}' +
+      '.message{margin:0;color:#64748b;overflow-wrap:anywhere;}</style></head><body><div class="box">' +
+      '<p class="title">' + safeTitle + '</p><p class="message">' + safeMessage + '</p>' +
+      '</div></body></html>'
+    );
+    previewWindow.document.close();
+  }
+
+  function escapeOutgoingPreviewHtml(value) {
+    return String(value || '').replace(/[<>&"]/g, function(char) {
+      return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[char];
+    });
+  }
+
+  function renderOutgoingPreviewBlob(previewWindow, fileName, blob, mimeType, sourceUrl) {
+    var safeTitle = escapeOutgoingPreviewHtml(fileName || 'Файл');
+    var type = String(mimeType || blob.type || '').toLowerCase();
+    var blobUrl = URL.createObjectURL(blob);
+    var extension = getFileExtension(fileName);
+
+    function writePreview(content) {
+      previewWindow.document.open();
+      previewWindow.document.write(
+        '<!doctype html><html><head><meta charset="utf-8"><title>' + safeTitle + '</title>' +
+        '<style>html,body{width:100%;height:100%;margin:0;background:#111827;color:#e2e8f0;' +
+        'font:500 13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+        '.top{height:38px;display:flex;align-items:center;padding:0 12px;background:#0f172a;border-bottom:1px solid rgba(255,255,255,.08);box-sizing:border-box;}' +
+        '.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+        '.stage{height:calc(100% - 38px);display:flex;align-items:center;justify-content:center;overflow:auto;background:#111827;}' +
+        'iframe{width:100%;height:100%;border:0;background:#fff;}img{display:block;max-width:100%;max-height:100%;object-fit:contain;}' +
+        'pre{box-sizing:border-box;width:100%;min-height:100%;margin:0;padding:18px;white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;color:#0f172a;}' +
+        '</style></head><body><div class="top"><div class="name">' + safeTitle + '</div></div><div class="stage">' +
+        content +
+        '</div></body></html>'
+      );
+      previewWindow.document.close();
+    }
+
+    if (extension === 'docx' || type.indexOf('wordprocessingml.document') !== -1) {
+      previewWindow.document.open();
+      previewWindow.document.write(
+        '<!doctype html><html><head><meta charset="utf-8"><title>' + safeTitle + '</title>' +
+        '<style>html,body{width:100%;height:100%;margin:0;background:#e2e8f0;color:#0f172a;' +
+        'font:500 13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+        '.top{min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:#fff;border-bottom:1px solid #cbd5e1;box-sizing:border-box;}' +
+        '.name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:900;}.actions{display:flex;gap:8px;flex:0 0 auto;}' +
+        '.btn{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#172554;text-decoration:none;font-weight:800;}' +
+        '.btn:hover{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;}.stage{height:calc(100% - 44px);overflow:auto;padding:14px;box-sizing:border-box;}' +
+        '.paper{max-width:980px;min-height:calc(100% - 28px);margin:0 auto;background:#fff;border:1px solid #cbd5e1;border-radius:14px;padding:10px;box-shadow:0 16px 34px rgba(15,23,42,.14);box-sizing:border-box;}' +
+        '.status{display:grid;place-items:center;min-height:220px;color:#475569;font-weight:800;text-align:center;}.docx-wrapper{background:transparent;box-shadow:none;padding:0;}' +
+        '</style></head><body><div class="top"><div class="name">' + safeTitle + '</div><div class="actions">' +
+        '<a class="btn" href="' + blobUrl + '" download="' + safeTitle + '">Скачать</a>' +
+        (sourceUrl ? '<a class="btn" href="' + escapeOutgoingPreviewHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">Оригинал</a>' : '') +
+        '</div></div><div class="stage"><div class="paper" id="docx-preview"><div class="status">Готовим предпросмотр DOCX...</div></div></div></body></html>'
+      );
+      previewWindow.document.close();
+      blob.arrayBuffer()
+        .then(function(buffer) {
+          return ensureOutgoingDocxPreviewRenderer().then(function(renderer) {
+            var container = previewWindow.document.getElementById('docx-preview');
+            if (!container) {
+              throw new Error('Окно предпросмотра закрыто.');
+            }
+            container.textContent = '';
+            return renderer.renderAsync(buffer, container, null, {
+              className: 'docx',
+              inWrapper: true,
+              ignoreWidth: false,
+              ignoreHeight: false,
+              breakPages: true,
+              renderHeaders: true,
+              renderFooters: true
+            });
+          });
+        })
+        .catch(function(error) {
+          if (/^https?:\/\//i.test(String(sourceUrl || ''))) {
+            writePreview('<iframe src="https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl) + '"></iframe>');
+            return;
+          }
+          writeOutgoingPreviewStatus(
+            previewWindow,
+            fileName,
+            (error && error.message ? error.message : 'Не удалось отрисовать DOCX.') + ' Файл можно скачать или открыть как оригинал.'
+          );
+        });
+      return;
+    }
+
+    if ((extension === 'doc' || extension === 'docm') && /^https?:\/\//i.test(String(sourceUrl || ''))) {
+      writePreview('<iframe src="https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(sourceUrl) + '"></iframe>');
+      return;
+    }
+
+    if (type.indexOf('pdf') !== -1) {
+      writePreview('<iframe src="' + blobUrl + '"></iframe>');
+      return;
+    }
+    if (type.indexOf('image/') === 0) {
+      writePreview('<img src="' + blobUrl + '" alt="' + safeTitle + '">');
+      return;
+    }
+    if (type.indexOf('text/') === 0 || extension === 'txt' || extension === 'csv') {
+      blob.text()
+        .then(function(text) {
+          writePreview('<pre>' + escapeOutgoingPreviewHtml(text) + '</pre>');
+        })
+        .catch(function() {
+          writeOutgoingPreviewStatus(previewWindow, fileName, 'Не удалось прочитать текст файла.');
+        });
+      return;
+    }
+
+    URL.revokeObjectURL(blobUrl);
+    writeOutgoingPreviewStatus(previewWindow, fileName, 'Быстрый просмотр для этого типа файла недоступен в браузере.');
+  }
+
+  function openOutgoingAttachmentInNewTab(file, resolvedUrl) {
+    var url = resolvedUrl || resolveAttachmentUrl(file, { bustCache: true });
+    var fileName = getAttachmentName(file);
+    if (!url) {
+      showMessage('error', 'Не удалось открыть файл: ссылка недоступна.');
+      return;
+    }
+
+    var previewWindow = window.open('', '_blank');
+    if (!previewWindow) {
+      showMessage('warning', 'Браузер заблокировал новую вкладку. Разрешите всплывающие окна для просмотра файла.');
+      return;
+    }
+    try {
+      previewWindow.opener = null;
+      writeOutgoingPreviewStatus(previewWindow, fileName, 'Открываем файл...');
+    } catch (error) {}
+
+    fetch(url, { credentials: 'include', cache: 'no-store' })
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error('Статус ' + response.status);
+        }
+        return response.blob().then(function(blob) {
+          var responseType = response.headers && response.headers.get
+            ? response.headers.get('Content-Type')
+            : '';
+          var mimeType = getOutgoingPreviewMimeType(file, responseType || blob.type);
+          return {
+            blob: mimeType && blob.type !== mimeType ? new Blob([blob], { type: mimeType }) : blob,
+            mimeType: mimeType
+          };
+        });
+      })
+      .then(function(result) {
+        renderOutgoingPreviewBlob(previewWindow, fileName, result.blob, result.mimeType, url);
+      })
+      .catch(function(error) {
+        writeOutgoingPreviewStatus(
+          previewWindow,
+          fileName,
+          'Не удалось открыть файл для просмотра: ' + (error && error.message ? error.message : 'повторите попытку.')
+        );
+        showMessage('warning', 'Не удалось открыть файл для просмотра.');
+      });
+  }
+
+  function normalizeOutgoingFilterValue(value) {
+    return String(value === undefined || value === null ? '' : value)
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function outgoingColumnCanFilter(column) {
+    return Boolean(column && column.key && column.key !== 'actions');
+  }
+
+  function outgoingFilterIsActive(filters, key) {
+    return Boolean(filters && key && Array.isArray(filters[key]) && filters[key].length > 0);
+  }
+
+  function outgoingHasActiveFilters(filters) {
+    if (!filters || typeof filters !== 'object') {
+      return false;
+    }
+    for (var key in filters) {
+      if (Object.prototype.hasOwnProperty.call(filters, key) && outgoingFilterIsActive(filters, key)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function filterOutgoingRegistryRecords(records, filters) {
+    var list = Array.isArray(records) ? records : [];
+    if (!outgoingHasActiveFilters(filters)) {
+      return list.slice();
+    }
+
+    return list.filter(function(record) {
+      for (var key in filters) {
+        if (!Object.prototype.hasOwnProperty.call(filters, key) || !outgoingFilterIsActive(filters, key)) {
+          continue;
+        }
+        var allowed = filters[key].map(normalizeOutgoingFilterValue);
+        var value = normalizeOutgoingFilterValue(getOutgoingRecordValue(record, key));
+        if (allowed.indexOf(value) === -1) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  function collectOutgoingFilterOptions(records, key) {
+    var map = Object.create(null);
+    var options = [];
+    (Array.isArray(records) ? records : []).forEach(function(record) {
+      var label = getOutgoingRecordValue(record, key);
+      var normalized = normalizeOutgoingFilterValue(label);
+      if (normalized === '') {
+        normalized = normalizeOutgoingFilterValue('—');
+        label = '—';
+      }
+      if (map[normalized]) {
+        map[normalized].count += 1;
+        return;
+      }
+      map[normalized] = {
+        label: String(label),
+        normalized: normalized,
+        count: 1
+      };
+      options.push(map[normalized]);
+    });
+    options.sort(function(a, b) {
+      if (a.label === '—') {
+        return 1;
+      }
+      if (b.label === '—') {
+        return -1;
+      }
+      return a.label.localeCompare(b.label, 'ru');
+    });
+    return options;
+  }
+
+  function closeOutgoingFilterPopover() {
+    var popover = document.querySelector('.documents-outgoing-filter-popover');
+    if (popover && popover.parentNode) {
+      popover.parentNode.removeChild(popover);
+    }
+    if (outgoingFilterPopoverOutsideHandler) {
+      document.removeEventListener('pointerdown', outgoingFilterPopoverOutsideHandler);
+      outgoingFilterPopoverOutsideHandler = null;
+    }
+  }
+
+  function positionOutgoingFilterPopover(popover, anchor) {
+    var rect = anchor.getBoundingClientRect();
+    var width = Math.min(340, Math.max(280, window.innerWidth - 24));
+    var left = Math.min(Math.max(12, rect.left), window.innerWidth - width - 12);
+    var top = Math.min(rect.bottom + 8, window.innerHeight - 120);
+    popover.style.left = left + 'px';
+    popover.style.top = Math.max(12, top) + 'px';
+    popover.style.width = width + 'px';
+  }
+
+  function openOutgoingFilterPopover(anchor, column, modalState, onChange) {
+    if (!anchor || !column || !modalState) {
+      return;
+    }
+
+    closeOutgoingFilterPopover();
+
+    var key = column.key;
+    var options = collectOutgoingFilterOptions(modalState.records, key);
+    var selected = Object.create(null);
+    var hasFilter = outgoingFilterIsActive(modalState.filters, key);
+    if (hasFilter) {
+      modalState.filters[key].forEach(function(value) {
+        selected[normalizeOutgoingFilterValue(value)] = true;
+      });
+    } else {
+      options.forEach(function(option) {
+        selected[option.normalized] = true;
+      });
+    }
+
+    var popover = createElement('div', 'documents-outgoing-filter-popover');
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', 'Фильтр: ' + column.label);
+    var title = createElement('div', 'documents-outgoing-filter-popover__title', column.label);
+    var input = document.createElement('input');
+    input.type = 'search';
+    input.className = 'documents-outgoing-filter-popover__input';
+    input.placeholder = 'Найти значение';
+    input.setAttribute('autocomplete', 'off');
+    var list = createElement('div', 'documents-outgoing-filter-popover__list');
+    var actions = createElement('div', 'documents-outgoing-filter-popover__actions');
+    var resetButton = createElement('button', 'documents-outgoing-filter-popover__button', 'Сбросить');
+    var allButton = createElement('button', 'documents-outgoing-filter-popover__button', 'Все');
+    var applyButton = createElement('button', 'documents-outgoing-filter-popover__button documents-outgoing-filter-popover__button--primary', 'Применить');
+
+    resetButton.type = 'button';
+    allButton.type = 'button';
+    applyButton.type = 'button';
+
+    function renderOptions() {
+      var query = normalizeOutgoingFilterValue(input.value);
+      list.textContent = '';
+      var visible = options.filter(function(option) {
+        return query === '' || option.normalized.indexOf(query) !== -1;
+      });
+      if (!visible.length) {
+        list.appendChild(createElement('div', 'documents-outgoing-filter-popover__empty', 'Значения не найдены.'));
+        return;
+      }
+      visible.forEach(function(option) {
+        var label = createElement('label', 'documents-outgoing-filter-popover__item');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = option.label;
+        checkbox.checked = selected[option.normalized] === true;
+        checkbox.addEventListener('change', function() {
+          if (checkbox.checked) {
+            selected[option.normalized] = true;
+          } else {
+            delete selected[option.normalized];
+          }
+        });
+        label.appendChild(checkbox);
+        label.appendChild(createElement('span', '', option.label + ' (' + option.count + ')'));
+        list.appendChild(label);
+      });
+    }
+
+    input.addEventListener('input', renderOptions);
+    allButton.addEventListener('click', function() {
+      options.forEach(function(option) {
+        selected[option.normalized] = true;
+      });
+      renderOptions();
+    });
+    resetButton.addEventListener('click', function() {
+      if (modalState.filters && Object.prototype.hasOwnProperty.call(modalState.filters, key)) {
+        delete modalState.filters[key];
+      }
+      closeOutgoingFilterPopover();
+      if (typeof onChange === 'function') {
+        onChange();
+      }
+    });
+    applyButton.addEventListener('click', function() {
+      var selectedValues = options
+        .filter(function(option) {
+          return selected[option.normalized] === true;
+        })
+        .map(function(option) {
+          return option.label;
+        });
+      if (!modalState.filters || typeof modalState.filters !== 'object') {
+        modalState.filters = {};
+      }
+      if (!selectedValues.length || selectedValues.length === options.length) {
+        delete modalState.filters[key];
+      } else {
+        modalState.filters[key] = selectedValues;
+      }
+      closeOutgoingFilterPopover();
+      if (typeof onChange === 'function') {
+        onChange();
+      }
+    });
+
+    actions.appendChild(resetButton);
+    actions.appendChild(allButton);
+    actions.appendChild(applyButton);
+    popover.appendChild(title);
+    popover.appendChild(input);
+    popover.appendChild(list);
+    popover.appendChild(actions);
+    popover.addEventListener('pointerdown', function(event) {
+      event.stopPropagation();
+    });
+    document.body.appendChild(popover);
+    positionOutgoingFilterPopover(popover, anchor);
+    renderOptions();
+    input.focus();
+
+    var outsideHandler = function(event) {
+      if (!popover.contains(event.target) && event.target !== anchor && !anchor.contains(event.target)) {
+        closeOutgoingFilterPopover();
+      }
+    };
+    outgoingFilterPopoverOutsideHandler = outsideHandler;
+    window.setTimeout(function() {
+      if (outgoingFilterPopoverOutsideHandler === outsideHandler) {
+        document.addEventListener('pointerdown', outsideHandler);
+      }
+    }, 0);
+  }
+
+  function renderOutgoingRegistryRows(tbody, records, options) {
+    tbody.textContent = '';
+    var list = Array.isArray(records) ? records : [];
+    var config = options && typeof options === 'object' ? options : {};
+    var canManage = Boolean(config.canManage);
+    if (!list.length) {
+      var emptyRow = document.createElement('tr');
+      var emptyText = config.emptyMessage || 'Записей исходящей корреспонденции пока нет.';
+      var emptyCell = createElement('td', 'documents-outgoing-table__empty', emptyText);
+      emptyCell.colSpan = OUTGOING_REGISTRY_COLUMNS.length;
+      emptyRow.appendChild(emptyCell);
+      tbody.appendChild(emptyRow);
+      return;
+    }
+
+    list.forEach(function(record) {
+      var row = document.createElement('tr');
+      OUTGOING_REGISTRY_COLUMNS.forEach(function(column) {
+        var cell = document.createElement('td');
+        if (column.key === 'actions') {
+          var actions = createElement('div', 'documents-outgoing-table__actions');
+          if (canManage && record && record.id) {
+            var editButton = createElement('button', 'documents-outgoing-table__action', 'Редактировать');
+            editButton.type = 'button';
+            editButton.setAttribute('aria-label', 'Редактировать запись исходящей корреспонденции');
+            editButton.addEventListener('click', function() {
+              if (typeof config.onEdit === 'function') {
+                config.onEdit(record);
+              }
+            });
+            var deleteButton = createElement('button', 'documents-outgoing-table__action documents-outgoing-table__action--danger', 'Удалить');
+            deleteButton.type = 'button';
+            deleteButton.setAttribute('aria-label', 'Удалить запись исходящей корреспонденции');
+            deleteButton.addEventListener('click', function() {
+              if (typeof config.onDelete === 'function') {
+                config.onDelete(record);
+              }
+            });
+            actions.appendChild(editButton);
+            actions.appendChild(deleteButton);
+          } else {
+            actions.appendChild(createElement('span', 'documents-outgoing-table__muted', '—'));
+          }
+          cell.appendChild(actions);
+          row.appendChild(cell);
+          return;
+        }
+        if (column.key === 'summary') {
+          cell.className = 'documents-outgoing-table__summary';
+        }
+        if (column.key === 'files') {
+          renderOutgoingFilesCell(cell, record);
+          row.appendChild(cell);
+          return;
+        }
+        var value = getOutgoingRecordValue(record, column.key);
+        if (value === '—') {
+          cell.classList.add('documents-outgoing-table__muted');
+        }
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+      tbody.appendChild(row);
+    });
+  }
+
+  function postOutgoingRegistryAction(action, payload) {
+    if (typeof FormData !== 'undefined' && payload instanceof FormData) {
+      return fetch(buildApiUrl(action), {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: {
+          'Accept': 'application/json'
+        },
+        body: payload
+      }).then(handleResponse);
+    }
+
+    var body = payload && typeof payload === 'object' ? payload : {};
+    return fetch(buildApiUrl(action), {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }).then(handleResponse);
+  }
+
+  function createOutgoingFormField(options) {
+    var field = createElement('div', 'documents-form__field' + (options.wide ? ' documents-outgoing-form__wide' : ''));
+    var label = createElement('label', '', options.label);
+    var input;
+    if (options.type === 'textarea') {
+      input = document.createElement('textarea');
+      input.rows = options.rows || 4;
+    } else if (options.type === 'select') {
+      input = document.createElement('select');
+      (options.choices || []).forEach(function(choice) {
+        var option = createElement('option', '', choice);
+        option.value = choice;
+        input.appendChild(option);
+      });
+    } else {
+      input = document.createElement('input');
+      input.type = options.type || 'text';
+    }
+    input.name = options.name;
+    input.value = options.value || '';
+    if (options.required) {
+      input.required = true;
+    }
+    if (options.placeholder) {
+      input.placeholder = options.placeholder;
+    }
+    input.setAttribute('autocomplete', 'off');
+    label.appendChild(input);
+    field.appendChild(label);
+
+    return {
+      field: field,
+      input: input
+    };
+  }
+
+  function openOutgoingRecordForm(record, onSaved) {
+    if (!state.organization) {
+      showMessage('error', 'Организация не определена.');
+      return;
+    }
+
+    ensureOutgoingRegistryStyle();
+
+    var isEditMode = Boolean(record && record.id);
+    var modal = createElement('div', 'documents-outgoing-form-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'documents-outgoing-form-title');
+
+    var shell = createElement('div', 'documents-modal__shell documents-outgoing-form-modal__shell');
+    var header = createElement('div', 'documents-modal__header documents-outgoing-form-modal__header');
+    var eyebrow = createElement('p', 'documents-outgoing-form-modal__eyebrow', 'Исходящая корреспонденция');
+    var title = createElement('h3', 'documents-modal__title documents-outgoing-form-modal__title', isEditMode ? 'Изменить запись' : 'Добавить исходящий документ');
+    title.id = 'documents-outgoing-form-title';
+    var subtitle = createElement(
+      'p',
+      'documents-outgoing-form-modal__subtitle',
+      isEditMode
+        ? 'Обновите реквизиты исходящего документа и при необходимости добавьте файлы.'
+        : 'Заполните основные реквизиты исходящего документа и прикрепите файлы при необходимости.'
+    );
+    var body = createElement('div', 'documents-outgoing-form-modal__body');
+    var form = createElement('form', 'documents-form documents-outgoing-form-modal__form');
+    var formId = 'documents-outgoing-form-' + Date.now();
+    form.id = formId;
+    form.setAttribute('autocomplete', 'off');
+
+    var closeOutgoingForm = function() {
+      if (modal.parentNode) {
+        modal.parentNode.removeChild(modal);
+      }
+      document.removeEventListener('keydown', outgoingFormEscapeHandler);
+    };
+    var outgoingFormEscapeHandler = function(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeOutgoingForm();
+      }
+    };
+
+    var cancelButton = createElement('button', 'documents-button documents-button--secondary', 'Отмена');
+    cancelButton.type = 'button';
+    cancelButton.addEventListener('click', function() {
+      closeOutgoingForm();
+    });
+
+    var submitButton = createElement('button', 'documents-button documents-button--primary', isEditMode ? 'Сохранить' : 'Добавить');
+    submitButton.type = 'submit';
+    submitButton.setAttribute('form', formId);
+
+    var actions = createElement('div', 'documents-modal__actions documents-outgoing-form-modal__footer');
+    actions.appendChild(cancelButton);
+    actions.appendChild(submitButton);
+    header.appendChild(eyebrow);
+    header.appendChild(title);
+    header.appendChild(subtitle);
+
+    var grid = createElement('div', 'documents-form__grid documents-outgoing-form-modal__grid');
+    var fields = [
+      createOutgoingFormField({ name: 'registryNumber', label: 'Регистрационный номер *', value: record && record.outgoingNumber, required: true }),
+      createOutgoingFormField({ name: 'correspondent', label: 'Отправитель *', value: record && record.addressee, required: true }),
+      createOutgoingFormField({ name: 'executor', label: 'Исполнитель', value: record && record.executor }),
+      createOutgoingFormField({ name: 'registrationDate', label: 'Дата регистрации *', type: 'date', value: record && record.sendingDate, required: true }),
+      createOutgoingFormField({ name: 'documentNumber', label: 'Номер документа', value: record && record.documentIndexNumber, placeholder: 'Например, № 45/1' }),
+      createOutgoingFormField({ name: 'documentType', label: 'Тип документа *', type: 'select', value: record && (record.documentType || record.direction) || 'Исходящий', required: true, choices: ['Исходящий'] }),
+      createOutgoingFormField({ name: 'summary', label: 'Содержание', type: 'textarea', value: record && record.summary, wide: true, rows: 5 })
+    ];
+    var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : 'Файлы', type: 'file', wide: true });
+    filesField.input.multiple = true;
+    filesField.input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt,.rtf,.odt,.ods,.zip';
+    filesField.input.classList.add('documents-outgoing-file-upload__input');
+    filesField.field.classList.add('documents-form__field--file');
+    var filesUploadParent = filesField.input.parentNode;
+    var filesUploadControl = createElement('div', 'documents-outgoing-file-upload');
+    var filesUploadButton = createElement('button', 'documents-outgoing-file-upload__button');
+    filesUploadButton.type = 'button';
+    filesUploadButton.appendChild(createElement('span', 'documents-outgoing-file-upload__button-icon', '+'));
+    filesUploadButton.appendChild(createElement('span', '', 'Выбрать файлы'));
+    var filesUploadSummary = createElement('span', 'documents-outgoing-file-upload__summary', 'Файлы не выбраны');
+    filesUploadControl.appendChild(filesField.input);
+    filesUploadControl.appendChild(filesUploadButton);
+    filesUploadControl.appendChild(filesUploadSummary);
+    if (filesUploadParent) {
+      filesUploadParent.appendChild(filesUploadControl);
+    }
+    filesUploadButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      filesField.input.click();
+    });
+    filesField.input.addEventListener('change', function() {
+      var selected = Array.from(filesField.input.files || []);
+      filesUploadSummary.classList.toggle('is-filled', selected.length > 0);
+      if (!selected.length) {
+        filesUploadSummary.textContent = 'Файлы не выбраны';
+        return;
+      }
+
+      var totalSize = selected.reduce(function(sum, file) {
+        return sum + (Number(file && file.size) || 0);
+      }, 0);
+      var firstName = selected[0] && selected[0].name ? selected[0].name : 'Файл';
+      filesUploadSummary.textContent = selected.length === 1
+        ? firstName + ' · ' + formatFileSize(totalSize)
+        : selected.length + ' файлов · ' + formatFileSize(totalSize);
+    });
+    var filesHint = createElement('div', 'documents-outgoing-form-modal__file-hint', 'PDF, изображения, DOCX/XLSX, TXT, RTF, ODT/ODS или ZIP до 25 МБ на файл.');
+    filesField.field.appendChild(filesHint);
+    var existingFiles = normalizeOutgoingFileList(record && record.files);
+    var removedFileKeys = [];
+    var existingFilesPanel = null;
+
+    function renderExistingOutgoingFiles() {
+      if (!existingFilesPanel) {
+        return;
+      }
+      existingFilesPanel.textContent = '';
+      if (!existingFiles.length) {
+        existingFilesPanel.appendChild(createElement('div', 'documents-outgoing-file-manager__empty', 'Прикреплённых файлов нет.'));
+        return;
+      }
+      existingFiles.forEach(function(file, index) {
+        var fileName = getAttachmentName(file, index + 1);
+        var fileKey = buildOutgoingFileKey(file);
+        var row = createElement('div', 'documents-outgoing-file-manager__item');
+        var info = createElement('div', 'documents-outgoing-file-manager__info');
+        var icon = createElement('span', 'documents-outgoing-file-manager__icon', getAttachmentExtensionLabel(file));
+        var text = createElement('div', 'documents-outgoing-file-manager__text');
+        var nameNode = createElement('button', 'documents-outgoing-file-manager__name', fileName);
+        var metaParts = [];
+        var sizeText = Number(file.size) > 0 ? formatFileSize(file.size) : '';
+        if (sizeText) {
+          metaParts.push(sizeText);
+        }
+        if (file.uploadedAt) {
+          metaParts.push(formatDateTime(file.uploadedAt));
+        }
+        nameNode.type = 'button';
+        nameNode.addEventListener('click', function() {
+          openOutgoingAttachmentInNewTab(file);
+        });
+        text.appendChild(nameNode);
+        text.appendChild(createElement('div', 'documents-outgoing-file-manager__meta', metaParts.join(' · ') || 'Файл исходящего документа'));
+        info.appendChild(icon);
+        info.appendChild(text);
+        row.appendChild(info);
+        var removeButton = createElement('button', 'documents-outgoing-file-manager__remove', 'Удалить');
+        removeButton.type = 'button';
+        removeButton.addEventListener('click', function() {
+          if (fileKey) {
+            removedFileKeys.push(fileKey);
+          }
+          existingFiles = existingFiles.filter(function(candidate) {
+            return candidate !== file;
+          });
+          renderExistingOutgoingFiles();
+        });
+        row.appendChild(removeButton);
+        existingFilesPanel.appendChild(row);
+      });
+    }
+
+    if (isEditMode) {
+      var existingFilesField = createElement('div', 'documents-form__field documents-outgoing-form__wide documents-outgoing-file-manager');
+      var existingFilesTitle = createElement('div', 'documents-outgoing-file-manager__title', 'Текущие файлы');
+      existingFilesPanel = createElement('div', 'documents-outgoing-file-manager__list');
+      existingFilesField.appendChild(existingFilesTitle);
+      existingFilesField.appendChild(existingFilesPanel);
+      renderExistingOutgoingFiles();
+    }
+
+    fields.forEach(function(item) {
+      grid.appendChild(item.field);
+    });
+    if (existingFilesField) {
+      grid.appendChild(existingFilesField);
+    }
+    grid.appendChild(filesField.field);
+    form.appendChild(grid);
+    body.appendChild(form);
+
+    form.addEventListener('submit', function(event) {
+      event.preventDefault();
+      submitButton.disabled = true;
+      var payload = {
+        organization: state.organization
+      };
+      if (isEditMode) {
+        payload.id = record.id;
+      }
+      fields.forEach(function(item) {
+        payload[item.input.name] = normalizeTextInputValue(item.input.value);
+      });
+      var selectedFiles = Array.from(filesField.input.files || []);
+      var fileErrors = validateAttachmentFiles(selectedFiles, existingFiles);
+      if (fileErrors.length) {
+        submitButton.disabled = false;
+        showMessage('error', fileErrors.slice(0, 3).join(' '));
+        return;
+      }
+      var remainingFileKeys = existingFiles.map(buildOutgoingFileKey).filter(Boolean);
+      var uniqueRemovedFileKeys = removedFileKeys.filter(function(key, index, list) {
+        return key && list.indexOf(key) === index;
+      });
+
+      var requestPayload = payload;
+      if (selectedFiles.length) {
+        requestPayload = new FormData();
+        requestPayload.append('action', 'outgoing_save');
+        Object.keys(payload).forEach(function(key) {
+          requestPayload.append(key, payload[key]);
+        });
+        selectedFiles.forEach(function(file) {
+          requestPayload.append('attachments[]', file);
+        });
+        if (isEditMode) {
+          requestPayload.append('filesToDelete', JSON.stringify(uniqueRemovedFileKeys));
+          requestPayload.append('filesRemaining', JSON.stringify(remainingFileKeys));
+        }
+        appendTelegramUserIdToFormData(requestPayload);
+      } else if (isEditMode) {
+        requestPayload.filesToDelete = uniqueRemovedFileKeys;
+        requestPayload.filesRemaining = remainingFileKeys;
+      }
+
+      postOutgoingRegistryAction('outgoing_save', requestPayload)
+        .then(function(data) {
+          closeOutgoingForm();
+          showMessage('success', data && data.message ? data.message : 'Запись сохранена.');
+          if (typeof onSaved === 'function') {
+            onSaved(data);
+          }
+        })
+        .catch(function(error) {
+          submitButton.disabled = false;
+          showMessage('error', error && error.message ? error.message : 'Не удалось сохранить запись.');
+        });
+    });
+
+    shell.appendChild(header);
+    shell.appendChild(body);
+    shell.appendChild(actions);
+    modal.appendChild(shell);
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeOutgoingForm();
+      }
+    });
+    document.addEventListener('keydown', outgoingFormEscapeHandler);
+    document.body.appendChild(modal);
+    var firstInput = fields[0] && fields[0].input;
+    if (firstInput && typeof firstInput.focus === 'function') {
+      firstInput.focus();
+    }
+  }
+
+  function deleteOutgoingRecord(record, onDeleted) {
+    if (!record || !record.id) {
+      return;
+    }
+
+    if (!window.confirm('Удалить запись исходящей корреспонденции?')) {
+      return;
+    }
+
+    postOutgoingRegistryAction('outgoing_delete', {
+      organization: state.organization,
+      id: record.id
+    })
+      .then(function(data) {
+        showMessage('success', data && data.message ? data.message : 'Запись удалена.');
+        if (typeof onDeleted === 'function') {
+          onDeleted(data);
+        }
+      })
+      .catch(function(error) {
+        showMessage('error', error && error.message ? error.message : 'Не удалось удалить запись.');
+      });
+  }
+
+  function closeOutgoingRegistryModal(modal) {
+    if (!modal) {
+      return;
+    }
+
+    closeOutgoingFilterPopover();
+
+    if (outgoingRegistryEscapeHandler) {
+      document.removeEventListener('keydown', outgoingRegistryEscapeHandler);
+      outgoingRegistryEscapeHandler = null;
+    }
+
+    if (modal.parentNode) {
+      modal.parentNode.removeChild(modal);
+    }
+  }
+
+  function openOutgoingRegistryModal() {
+    ensureOutgoingRegistryStyle();
+
+    var existingModal = document.querySelector('.documents-outgoing-modal');
+    if (existingModal) {
+      closeOutgoingRegistryModal(existingModal);
+    }
+
+    var modal = createElement('div', 'documents-outgoing-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'documents-outgoing-title');
+
+    var panel = createElement('div', 'documents-outgoing-modal__panel');
+    var header = createElement('div', 'documents-outgoing-modal__header');
+    var titleWrap = createElement('div', 'documents-outgoing-modal__title-wrap');
+    var title = createElement('h3', 'documents-outgoing-modal__title', 'Исходящая корреспонденция');
+    title.id = 'documents-outgoing-title';
+    var summary = createElement('p', 'documents-outgoing-modal__summary', 'Загружаем исходящую корреспонденцию...');
+    var headerActions = createElement('div', 'documents-outgoing-modal__actions');
+    var addRecordButton = createElement('button', 'documents-outgoing-modal__add', 'Добавить запись');
+    addRecordButton.type = 'button';
+    var closeButton = createElement('button', 'documents-outgoing-modal__close', '×');
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', 'Закрыть исходящую корреспонденцию');
+
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(summary);
+    header.appendChild(titleWrap);
+    headerActions.appendChild(addRecordButton);
+    headerActions.appendChild(closeButton);
+    header.appendChild(headerActions);
+
+    var body = createElement('div', 'documents-outgoing-modal__body');
+    var table = createElement('table', 'documents-outgoing-table');
+    var thead = document.createElement('thead');
+    var headerRow = document.createElement('tr');
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    table.appendChild(tbody);
+    body.appendChild(table);
+    panel.appendChild(header);
+    panel.appendChild(body);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+
+    var modalState = {
+      records: [],
+      canManage: false,
+      documentsCount: 0,
+      filters: {},
+      organization: state.organization || ''
+    };
+
+    function refreshOutgoingView() {
+      var filteredRecords = filterOutgoingRegistryRecords(modalState.records, modalState.filters);
+      var hasFilters = outgoingHasActiveFilters(modalState.filters);
+      var organization = modalState.organization || state.organization || '';
+      summary.textContent = 'Организация: ' + (organization || 'не выбрана')
+        + ' · записей: ' + modalState.records.length
+        + (hasFilters ? ' · показано: ' + filteredRecords.length : '');
+      renderOutgoingRegistryRows(tbody, filteredRecords, {
+        canManage: modalState.canManage,
+        emptyMessage: hasFilters ? 'По выбранным фильтрам записей нет.' : 'Записей исходящей корреспонденции пока нет.',
+        onEdit: function(row) {
+          openOutgoingRecordForm(row, syncOutgoingRows);
+        },
+        onDelete: function(row) {
+          deleteOutgoingRecord(row, syncOutgoingRows);
+        }
+      });
+      renderOutgoingHeader();
+    }
+
+    function renderOutgoingHeader() {
+      headerRow.textContent = '';
+      OUTGOING_REGISTRY_COLUMNS.forEach(function(column) {
+        var cell = document.createElement('th');
+        cell.scope = 'col';
+        if (outgoingColumnCanFilter(column)) {
+          var button = createElement('button', 'documents-outgoing-table__filter');
+          button.type = 'button';
+          button.classList.toggle('is-active', outgoingFilterIsActive(modalState.filters, column.key));
+          button.setAttribute('aria-label', 'Фильтр: ' + column.label);
+          button.appendChild(createElement('span', 'documents-outgoing-table__filter-label', column.label));
+          button.appendChild(createElement('span', 'documents-outgoing-table__filter-icon', '⌕'));
+          button.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            openOutgoingFilterPopover(button, column, modalState, refreshOutgoingView);
+          });
+          cell.appendChild(button);
+        } else {
+          cell.textContent = column.label;
+        }
+        headerRow.appendChild(cell);
+      });
+    }
+
+    function syncOutgoingRows(data) {
+      if (data && Array.isArray(data.records)) {
+        modalState.records = data.records;
+      }
+      if (data && typeof data.canManageOutgoingRecords === 'boolean') {
+        modalState.canManage = data.canManageOutgoingRecords;
+      }
+      if (data && typeof data.documentsCount === 'number') {
+        modalState.documentsCount = data.documentsCount;
+      }
+      if (data && data.organization) {
+        modalState.organization = String(data.organization);
+      }
+      refreshOutgoingView();
+    }
+
+    addRecordButton.addEventListener('click', function() {
+      openOutgoingRecordForm(null, syncOutgoingRows);
+    });
+    closeButton.addEventListener('click', function() {
+      closeOutgoingRegistryModal(modal);
+    });
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        closeOutgoingRegistryModal(modal);
+      }
+    });
+    outgoingRegistryEscapeHandler = function(event) {
+      if (event.key === 'Escape') {
+        if (document.querySelector('.documents-outgoing-form-modal')) {
+          return;
+        }
+        if (document.querySelector('.documents-outgoing-filter-popover')) {
+          event.preventDefault();
+          closeOutgoingFilterPopover();
+          return;
+        }
+        event.preventDefault();
+        closeOutgoingRegistryModal(modal);
+      }
+    };
+    document.addEventListener('keydown', outgoingRegistryEscapeHandler);
+
+    renderOutgoingHeader();
+    renderOutgoingRegistryRows(tbody, [], {
+      canManage: false
+    });
+
+    requestOutgoingRegistryRecords()
+      .then(function(data) {
+        syncOutgoingRows(data);
+      })
+      .catch(function(error) {
+        var message = error && error.message ? error.message : String(error);
+        summary.textContent = 'Не удалось загрузить исходящую корреспонденцию.';
+        tbody.textContent = '';
+        var row = document.createElement('tr');
+        var cell = createElement('td', 'documents-outgoing-table__empty', message);
+        cell.colSpan = OUTGOING_REGISTRY_COLUMNS.length;
+        row.appendChild(cell);
+        tbody.appendChild(row);
+        showMessage('error', 'Не удалось загрузить исходящую корреспонденцию: ' + message);
+      });
+  }
+
   function loadRegistry(organization) {
     if (!organization) {
       state.documents = [];
@@ -22159,14 +23458,7 @@
   }
 
   function logResponseDeletion(message, payload) {
-    if (typeof console === 'undefined' || typeof console.log !== 'function') {
-      return;
-    }
-    if (payload === undefined) {
-      console.log('[Удаление] ' + message);
-      return;
-    }
-    console.log('[Удаление] ' + message, payload);
+    return;
   }
 
   function getCurrentResponseUserKeys() {
@@ -25331,6 +26623,29 @@
       unviewedButton.setAttribute('aria-label', 'Показать непросмотренные документы');
     }
 
+    var outgoingButton = document.getElementById('documents-outgoing-button');
+    if (!outgoingButton && buttonContainer) {
+      outgoingButton = createElement('button', 'documents-panel__admin documents-panel__admin--outgoing', 'Исходящая');
+      outgoingButton.id = 'documents-outgoing-button';
+      outgoingButton.type = 'button';
+      var outgoingAnchor = adminButton || settingsButton || null;
+      if (outgoingAnchor && outgoingAnchor.parentElement === buttonContainer) {
+        buttonContainer.insertBefore(outgoingButton, outgoingAnchor);
+      } else {
+        buttonContainer.appendChild(outgoingButton);
+      }
+    }
+    if (outgoingButton && !outgoingButton.dataset.outgoingBound) {
+      outgoingButton.dataset.outgoingBound = 'true';
+      outgoingButton.addEventListener('click', function() {
+        openOutgoingRegistryModal();
+      });
+    }
+    if (outgoingButton) {
+      outgoingButton.title = 'Открыть исходящую корреспонденцию';
+      outgoingButton.setAttribute('aria-label', 'Открыть исходящую корреспонденцию');
+    }
+
     var message = createElement('div', 'documents-message');
     var tableToolbar = createElement('div', 'documents-table-toolbar');
     var toolsToggle = createDocumentsToolsToggle();
@@ -25624,6 +26939,7 @@
     elements.responsibleButton = responsibleButton;
     elements.unviewedButton = unviewedButton;
     elements.unviewedCounter = unviewedCounter;
+    elements.outgoingButton = outgoingButton;
     elements.settingsButton = settingsButton;
     elements.message = message;
     elements.tableToolbar = tableToolbar;
