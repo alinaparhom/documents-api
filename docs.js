@@ -4649,17 +4649,24 @@
       '.documents-outgoing-modal__add:hover,.documents-outgoing-modal__add:focus-visible{border-color:#1f4fdc;background:#1f4fdc;outline:0;transform:translateY(-1px);}' +
       '.documents-outgoing-modal__close{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid #dbeafe;border-radius:10px;background:#fff;color:#334155;font-size:22px;line-height:1;cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease;}' +
       '.documents-outgoing-modal__close:hover,.documents-outgoing-modal__close:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;outline:0;}' +
-      '.documents-outgoing-modal__body{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 18px 18px;}' +
+      '.documents-outgoing-modal__body{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:12px 18px 18px;}' +
       '.documents-outgoing-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;border:1px solid #dbeafe;border-radius:12px;overflow:hidden;background:#fff;font-size:12px;}' +
       '.documents-outgoing-table th,.documents-outgoing-table td{border-bottom:1px solid #e2e8f0;border-right:1px solid #edf2f7;padding:10px 12px;text-align:left;vertical-align:top;}' +
       '.documents-outgoing-table th:last-child,.documents-outgoing-table td:last-child{border-right:0;}' +
       '.documents-outgoing-table tr:last-child td{border-bottom:0;}' +
       '.documents-outgoing-table th{position:sticky;top:0;z-index:1;background:#f8fafc;color:#475569;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.02em;}' +
-      '.documents-outgoing-table__filter{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:24px;padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;text-transform:inherit;letter-spacing:inherit;cursor:pointer;}' +
+      '.documents-outgoing-table__header{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;}' +
+      '.documents-outgoing-table__header-label{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
+      '.documents-outgoing-table__filter{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1 1 auto;min-width:0;min-height:24px;padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;text-transform:inherit;letter-spacing:inherit;cursor:pointer;}' +
       '.documents-outgoing-table__filter:hover,.documents-outgoing-table__filter:focus-visible{color:#1d4ed8;outline:none;}' +
       '.documents-outgoing-table__filter-label{min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
       '.documents-outgoing-table__filter-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;border:1px solid #dbeafe;border-radius:6px;background:#fff;color:#94a3b8;font-size:11px;line-height:1;}' +
       '.documents-outgoing-table__filter.is-active .documents-outgoing-table__filter-icon{border-color:#93c5fd;background:#eff6ff;color:#2563eb;}' +
+      '.documents-outgoing-column-drag{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border:1px solid #dbeafe;border-radius:7px;background:#fff;color:#94a3b8;font-size:12px;font-weight:900;line-height:1;cursor:grab;touch-action:none;}' +
+      '.documents-outgoing-column-drag:hover,.documents-outgoing-column-drag:focus-visible{border-color:#93c5fd;background:#eff6ff;color:#2563eb;outline:0;}' +
+      '.documents-outgoing-column-drag.is-dragging{cursor:grabbing;border-color:#2458ff;color:#2458ff;background:#eff6ff;}' +
+      '.documents-outgoing-column-ghost{position:fixed;z-index:33000;pointer-events:none;padding:8px 10px;border:1px solid #bfdbfe;border-radius:10px;background:rgba(255,255,255,.92);box-shadow:0 16px 32px rgba(15,23,42,.2);color:#172554;font-size:12px;font-weight:900;}' +
+      '.documents-outgoing-column-drop-line{position:absolute;top:0;width:2px;height:100%;z-index:5;display:none;pointer-events:none;background:#2458ff;box-shadow:0 0 0 1px rgba(255,255,255,.8);}' +
       '.documents-outgoing-table td{color:#172554;line-height:1.35;overflow-wrap:anywhere;}' +
       '.documents-outgoing-table__muted{color:#64748b;}' +
       '.documents-outgoing-table__empty{padding:22px;text-align:center;color:#64748b;font-weight:800;}' +
@@ -21936,17 +21943,153 @@
   }
 
   var OUTGOING_REGISTRY_COLUMNS = [
-    { key: 'outgoingNumber', label: 'Рег. №' },
-    { key: 'addressee', label: 'Отправитель' },
-    { key: 'executor', label: 'Исполнитель' },
+    { key: 'outgoingNumber', label: 'Исходящий номер' },
+    { key: 'addressee', label: 'Адресат' },
     { key: 'sendingDate', label: 'Дата регистрации' },
-    { key: 'documentIndexNumber', label: 'Номер документа' },
+    { key: 'documentIndexNumber', label: 'Индекс' },
     { key: 'documentType', label: 'Тип документа' },
     { key: 'summary', label: 'Содержание' },
     { key: 'files', label: 'Файлы' },
-    { key: 'registeredBy', label: 'Кто зарегистрировал' },
+    { key: 'executor', label: 'ФИО исполнителя' },
     { key: 'actions', label: 'Действия' }
   ];
+  var OUTGOING_COLUMN_ORDER_STORAGE_PREFIX = 'documents:outgoing-column-order:';
+  var OUTGOING_REGISTRY_COLUMN_MAP = (function() {
+    var map = {};
+    OUTGOING_REGISTRY_COLUMNS.forEach(function(column) {
+      map[column.key] = column;
+    });
+    return map;
+  })();
+
+  function getDefaultOutgoingColumnOrder() {
+    return OUTGOING_REGISTRY_COLUMNS.map(function(column) {
+      return column.key;
+    });
+  }
+
+  function normalizeOutgoingColumnOrder(order) {
+    var defaults = getDefaultOutgoingColumnOrder();
+    var source = Array.isArray(order) ? order : defaults;
+    var allowed = {};
+    var seen = {};
+    var normalized = [];
+
+    defaults.forEach(function(key) {
+      allowed[key] = true;
+    });
+
+    source.forEach(function(candidate) {
+      var key = String(candidate || '');
+      if (!key || !allowed[key] || seen[key]) {
+        return;
+      }
+      seen[key] = true;
+      normalized.push(key);
+    });
+
+    defaults.forEach(function(key) {
+      if (!seen[key]) {
+        normalized.push(key);
+      }
+    });
+
+    return normalized;
+  }
+
+  function getOrderedOutgoingColumns(order) {
+    return normalizeOutgoingColumnOrder(order).map(function(key) {
+      return OUTGOING_REGISTRY_COLUMN_MAP[key];
+    }).filter(Boolean);
+  }
+
+  function getOutgoingColumnOrderStorageKey() {
+    var organization = state.organization || '';
+    if (!organization) {
+      return '';
+    }
+    var userKey = getOutgoingColumnOrderUserKey();
+    return OUTGOING_COLUMN_ORDER_STORAGE_PREFIX + organization + ':' + userKey;
+  }
+
+  function getOutgoingColumnOrderUserKey() {
+    return getCurrentUserKey() || getAccessProfileKey(state.access) || state.telegramUserId || 'guest';
+  }
+
+  function loadOutgoingColumnOrderFromLocalStorage() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return getDefaultOutgoingColumnOrder();
+    }
+    var key = getOutgoingColumnOrderStorageKey();
+    if (!key) {
+      return getDefaultOutgoingColumnOrder();
+    }
+    try {
+      var raw = window.localStorage.getItem(key);
+      return raw ? normalizeOutgoingColumnOrder(JSON.parse(raw)) : getDefaultOutgoingColumnOrder();
+    } catch (error) {
+      return getDefaultOutgoingColumnOrder();
+    }
+  }
+
+  function saveOutgoingColumnOrderToLocalStorage(order) {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    var key = getOutgoingColumnOrderStorageKey();
+    if (!key) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, JSON.stringify(normalizeOutgoingColumnOrder(order)));
+    } catch (error) {
+      if (typeof docsLogger.warn === 'function') {
+        docsLogger.warn('Не удалось сохранить порядок столбцов исходящей таблицы:', error);
+      }
+    }
+  }
+
+  function requestOutgoingColumnOrder() {
+    if (!state.organization) {
+      return Promise.resolve(getDefaultOutgoingColumnOrder());
+    }
+
+    return fetch(buildApiUrl('outgoing_column_order_load', {
+      organization: state.organization,
+      user_key: getOutgoingColumnOrderUserKey(),
+      cacheBust: Date.now()
+    }), {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    }).then(handleResponse).then(function(data) {
+      return normalizeOutgoingColumnOrder(data && data.columns);
+    });
+  }
+
+  function saveOutgoingColumnOrder(order) {
+    var columns = normalizeOutgoingColumnOrder(order);
+    saveOutgoingColumnOrderToLocalStorage(columns);
+    if (!state.organization) {
+      return Promise.resolve(columns);
+    }
+
+    return fetch(buildApiUrl('outgoing_column_order_save'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        organization: state.organization,
+        user_key: getOutgoingColumnOrderUserKey(),
+        columns: columns
+      })
+    }).then(handleResponse).then(function(data) {
+      return normalizeOutgoingColumnOrder(data && data.columns);
+    });
+  }
 
   function requestOutgoingRegistryRecords() {
     if (!state.organization) {
@@ -21970,15 +22113,6 @@
     var value = record[key];
     if (key === 'sendingDate') {
       return value ? formatDate(value) : '—';
-    }
-
-    if (key === 'registeredBy') {
-      var author = value ? String(value) : '';
-      var registeredAt = record.registeredAt ? formatDateTime(record.registeredAt) : '';
-      if (author && registeredAt) {
-        return author + '\n' + registeredAt;
-      }
-      return author || registeredAt || '—';
     }
 
     if (key === 'files') {
@@ -22536,11 +22670,12 @@
     var list = Array.isArray(records) ? records : [];
     var config = options && typeof options === 'object' ? options : {};
     var canManage = Boolean(config.canManage);
+    var columns = getOrderedOutgoingColumns(config.columnOrder);
     if (!list.length) {
       var emptyRow = document.createElement('tr');
       var emptyText = config.emptyMessage || 'Записей исходящей корреспонденции пока нет.';
       var emptyCell = createElement('td', 'documents-outgoing-table__empty', emptyText);
-      emptyCell.colSpan = OUTGOING_REGISTRY_COLUMNS.length;
+      emptyCell.colSpan = columns.length;
       emptyRow.appendChild(emptyCell);
       tbody.appendChild(emptyRow);
       return;
@@ -22548,7 +22683,7 @@
 
     list.forEach(function(record) {
       var row = document.createElement('tr');
-      OUTGOING_REGISTRY_COLUMNS.forEach(function(column) {
+      columns.forEach(function(column) {
         var cell = document.createElement('td');
         if (column.key === 'actions') {
           var actions = createElement('div', 'documents-outgoing-table__actions');
@@ -22724,12 +22859,12 @@
 
     var grid = createElement('div', 'documents-form__grid documents-outgoing-form-modal__grid');
     var fields = [
-      createOutgoingFormField({ name: 'registryNumber', label: 'Регистрационный номер *', value: record && record.outgoingNumber, required: true }),
-      createOutgoingFormField({ name: 'correspondent', label: 'Отправитель *', value: record && record.addressee, required: true }),
-      createOutgoingFormField({ name: 'executor', label: 'Исполнитель', value: record && record.executor }),
+      createOutgoingFormField({ name: 'registryNumber', label: 'Исходящий номер *', value: record && record.outgoingNumber, required: true }),
+      createOutgoingFormField({ name: 'correspondent', label: 'Адресат *', value: record && record.addressee, required: true }),
       createOutgoingFormField({ name: 'registrationDate', label: 'Дата регистрации *', type: 'date', value: record && record.sendingDate, required: true }),
-      createOutgoingFormField({ name: 'documentNumber', label: 'Номер документа', value: record && record.documentIndexNumber, placeholder: 'Например, № 45/1' }),
+      createOutgoingFormField({ name: 'documentNumber', label: 'Индекс', value: record && record.documentIndexNumber, placeholder: 'Например, 45/1' }),
       createOutgoingFormField({ name: 'documentType', label: 'Тип документа *', type: 'select', value: record && (record.documentType || record.direction) || 'Исходящий', required: true, choices: ['Исходящий'] }),
+      createOutgoingFormField({ name: 'executor', label: 'ФИО исполнителя', value: record && record.executor, placeholder: 'Введите ФИО исполнителя' }),
       createOutgoingFormField({ name: 'summary', label: 'Содержание', type: 'textarea', value: record && record.summary, wide: true, rows: 5 })
     ];
     var filesField = createOutgoingFormField({ name: 'attachments[]', label: isEditMode ? 'Добавить файлы' : 'Файлы', type: 'file', wide: true });
@@ -23004,6 +23139,8 @@
     var tbody = document.createElement('tbody');
     table.appendChild(tbody);
     body.appendChild(table);
+    var dropLine = createElement('div', 'documents-outgoing-column-drop-line');
+    body.appendChild(dropLine);
     panel.appendChild(header);
     panel.appendChild(body);
     modal.appendChild(panel);
@@ -23014,8 +23151,11 @@
       canManage: false,
       documentsCount: 0,
       filters: {},
-      organization: state.organization || ''
+      organization: state.organization || '',
+      columnOrder: loadOutgoingColumnOrderFromLocalStorage(),
+      columnOrderDirty: false
     };
+    var columnDragState = null;
 
     function refreshOutgoingView() {
       var filteredRecords = filterOutgoingRegistryRecords(modalState.records, modalState.filters);
@@ -23026,6 +23166,7 @@
         + (hasFilters ? ' · показано: ' + filteredRecords.length : '');
       renderOutgoingRegistryRows(tbody, filteredRecords, {
         canManage: modalState.canManage,
+        columnOrder: modalState.columnOrder,
         emptyMessage: hasFilters ? 'По выбранным фильтрам записей нет.' : 'Записей исходящей корреспонденции пока нет.',
         onEdit: function(row) {
           openOutgoingRecordForm(row, syncOutgoingRows);
@@ -23039,9 +23180,11 @@
 
     function renderOutgoingHeader() {
       headerRow.textContent = '';
-      OUTGOING_REGISTRY_COLUMNS.forEach(function(column) {
+      getOrderedOutgoingColumns(modalState.columnOrder).forEach(function(column) {
         var cell = document.createElement('th');
         cell.scope = 'col';
+        cell.dataset.columnKey = column.key;
+        var content = createElement('div', 'documents-outgoing-table__header');
         if (outgoingColumnCanFilter(column)) {
           var button = createElement('button', 'documents-outgoing-table__filter');
           button.type = 'button';
@@ -23054,13 +23197,139 @@
             event.stopPropagation();
             openOutgoingFilterPopover(button, column, modalState, refreshOutgoingView);
           });
-          cell.appendChild(button);
+          content.appendChild(button);
         } else {
-          cell.textContent = column.label;
+          content.appendChild(createElement('span', 'documents-outgoing-table__header-label', column.label));
         }
+        var dragButton = createElement('button', 'documents-outgoing-column-drag', '⋮⋮');
+        dragButton.type = 'button';
+        dragButton.dataset.columnKey = column.key;
+        dragButton.setAttribute('aria-label', 'Переместить столбец «' + column.label + '»');
+        dragButton.title = 'Переместить столбец';
+        content.appendChild(dragButton);
+        cell.appendChild(content);
         headerRow.appendChild(cell);
       });
     }
+
+    function getOutgoingColumnDropIndex(clientX) {
+      var cells = Array.from(headerRow.querySelectorAll('th[data-column-key]'));
+      if (!cells.length) {
+        return 0;
+      }
+      for (var i = 0; i < cells.length; i += 1) {
+        var rect = cells[i].getBoundingClientRect();
+        if (clientX < rect.left + rect.width / 2) {
+          return i;
+        }
+      }
+      return cells.length;
+    }
+
+    function positionOutgoingDropLine(clientX) {
+      var cells = Array.from(headerRow.querySelectorAll('th[data-column-key]'));
+      if (!cells.length) {
+        dropLine.style.display = 'none';
+        return;
+      }
+      var dropIndex = getOutgoingColumnDropIndex(clientX);
+      var targetCell = cells[Math.min(dropIndex, cells.length - 1)];
+      var targetRect = targetCell.getBoundingClientRect();
+      var bodyRect = body.getBoundingClientRect();
+      var left = dropIndex >= cells.length ? targetRect.right : targetRect.left;
+      dropLine.style.left = (left - bodyRect.left + body.scrollLeft) + 'px';
+      dropLine.style.display = 'block';
+    }
+
+    function stopOutgoingColumnDrag() {
+      if (!columnDragState) {
+        return;
+      }
+      document.removeEventListener('pointermove', handleOutgoingColumnDragMove);
+      document.removeEventListener('pointerup', handleOutgoingColumnDragEnd);
+      document.removeEventListener('pointercancel', handleOutgoingColumnDragCancel);
+      if (columnDragState.ghost && columnDragState.ghost.parentNode) {
+        columnDragState.ghost.parentNode.removeChild(columnDragState.ghost);
+      }
+      if (columnDragState.handle) {
+        columnDragState.handle.classList.remove('is-dragging');
+      }
+      dropLine.style.display = 'none';
+      columnDragState = null;
+    }
+
+    function handleOutgoingColumnDragMove(event) {
+      if (!columnDragState) {
+        return;
+      }
+      event.preventDefault();
+      columnDragState.currentClientX = event.clientX;
+      if (columnDragState.ghost) {
+        columnDragState.ghost.style.left = (event.clientX + 12) + 'px';
+        columnDragState.ghost.style.top = (event.clientY + 12) + 'px';
+      }
+      positionOutgoingDropLine(event.clientX);
+    }
+
+    function handleOutgoingColumnDragEnd(event) {
+      if (!columnDragState) {
+        return;
+      }
+      event.preventDefault();
+      var draggedKey = columnDragState.columnKey;
+      var order = normalizeOutgoingColumnOrder(modalState.columnOrder);
+      var fromIndex = order.indexOf(draggedKey);
+      var dropIndex = getOutgoingColumnDropIndex(event.clientX);
+      if (fromIndex !== -1) {
+        order.splice(fromIndex, 1);
+        if (dropIndex > fromIndex) {
+          dropIndex -= 1;
+        }
+        order.splice(Math.max(0, Math.min(dropIndex, order.length)), 0, draggedKey);
+        modalState.columnOrder = normalizeOutgoingColumnOrder(order);
+        modalState.columnOrderDirty = true;
+        refreshOutgoingView();
+        saveOutgoingColumnOrder(modalState.columnOrder).catch(function(error) {
+          showMessage('warning', error && error.message ? error.message : 'Порядок сохранён локально, но не записан в JSON.');
+        });
+      }
+      stopOutgoingColumnDrag();
+    }
+
+    function handleOutgoingColumnDragCancel() {
+      stopOutgoingColumnDrag();
+    }
+
+    headerRow.addEventListener('pointerdown', function(event) {
+      var handle = event.target && event.target.closest
+        ? event.target.closest('.documents-outgoing-column-drag')
+        : null;
+      if (!handle) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      var columnKey = handle.dataset.columnKey || '';
+      var column = OUTGOING_REGISTRY_COLUMN_MAP[columnKey];
+      if (!column) {
+        return;
+      }
+      var ghost = createElement('div', 'documents-outgoing-column-ghost', column.label);
+      ghost.style.left = (event.clientX + 12) + 'px';
+      ghost.style.top = (event.clientY + 12) + 'px';
+      document.body.appendChild(ghost);
+      handle.classList.add('is-dragging');
+      columnDragState = {
+        columnKey: columnKey,
+        handle: handle,
+        ghost: ghost,
+        currentClientX: event.clientX
+      };
+      document.addEventListener('pointermove', handleOutgoingColumnDragMove);
+      document.addEventListener('pointerup', handleOutgoingColumnDragEnd);
+      document.addEventListener('pointercancel', handleOutgoingColumnDragCancel);
+      positionOutgoingDropLine(event.clientX);
+    });
 
     function syncOutgoingRows(data) {
       if (data && Array.isArray(data.records)) {
@@ -23082,10 +23351,12 @@
       openOutgoingRecordForm(null, syncOutgoingRows);
     });
     closeButton.addEventListener('click', function() {
+      stopOutgoingColumnDrag();
       closeOutgoingRegistryModal(modal);
     });
     modal.addEventListener('click', function(event) {
       if (event.target === modal) {
+        stopOutgoingColumnDrag();
         closeOutgoingRegistryModal(modal);
       }
     });
@@ -23100,6 +23371,7 @@
           return;
         }
         event.preventDefault();
+        stopOutgoingColumnDrag();
         closeOutgoingRegistryModal(modal);
       }
     };
@@ -23107,8 +23379,24 @@
 
     renderOutgoingHeader();
     renderOutgoingRegistryRows(tbody, [], {
-      canManage: false
+      canManage: false,
+      columnOrder: modalState.columnOrder
     });
+
+    requestOutgoingColumnOrder()
+      .then(function(order) {
+        if (modalState.columnOrderDirty) {
+          return;
+        }
+        modalState.columnOrder = normalizeOutgoingColumnOrder(order);
+        saveOutgoingColumnOrderToLocalStorage(modalState.columnOrder);
+        refreshOutgoingView();
+      })
+      .catch(function(error) {
+        if (typeof docsLogger.warn === 'function') {
+          docsLogger.warn('Не удалось загрузить порядок столбцов исходящей таблицы:', error);
+        }
+      });
 
     requestOutgoingRegistryRecords()
       .then(function(data) {
@@ -23120,7 +23408,7 @@
         tbody.textContent = '';
         var row = document.createElement('tr');
         var cell = createElement('td', 'documents-outgoing-table__empty', message);
-        cell.colSpan = OUTGOING_REGISTRY_COLUMNS.length;
+        cell.colSpan = getOrderedOutgoingColumns(modalState.columnOrder).length;
         row.appendChild(cell);
         tbody.appendChild(row);
         showMessage('error', 'Не удалось загрузить исходящую корреспонденцию: ' + message);

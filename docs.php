@@ -79,6 +79,17 @@ const DOCS_COLUMN_ORDER_DEFAULTS = [
     'dueDate',
     'instruction',
 ];
+const DOCS_OUTGOING_COLUMN_ORDER_DEFAULTS = [
+    'outgoingNumber',
+    'addressee',
+    'sendingDate',
+    'documentIndexNumber',
+    'documentType',
+    'summary',
+    'files',
+    'executor',
+    'actions',
+];
 const MINI_APP_USER_LOG_FILENAME = 'miniappuser.json';
 const LOG_DIRECTORY = __DIR__ . '/Прочее';
 const DOCS_SERVER_LOG_DIRECTORY = __DIR__ . '/Прочее/Документооборот';
@@ -4836,7 +4847,7 @@ function docs_sanitize_outgoing_record_payload(array $payload, ?array $existing,
 function docs_validate_outgoing_record(array $record): ?string
 {
     if (sanitize_text_field((string) ($record['outgoingNumber'] ?? ''), 160) === '') {
-        return 'Поле «Регистрационный номер» обязательно для заполнения.';
+        return 'Поле «Исходящий номер» обязательно для заполнения.';
     }
 
     if (sanitize_date_field((string) ($record['sendingDate'] ?? '')) === '') {
@@ -4844,7 +4855,7 @@ function docs_validate_outgoing_record(array $record): ?string
     }
 
     if (sanitize_text_field((string) ($record['addressee'] ?? ''), 260) === '') {
-        return 'Поле «Отправитель» обязательно для заполнения.';
+        return 'Поле «Адресат» обязательно для заполнения.';
     }
 
     return null;
@@ -6806,6 +6817,84 @@ function docs_sanitize_column_order($input): array
     return $normalized;
 }
 
+function docs_sanitize_outgoing_column_order($input): array
+{
+    $defaults = DOCS_OUTGOING_COLUMN_ORDER_DEFAULTS;
+    if (!is_array($input)) {
+        return $defaults;
+    }
+
+    $allowed = array_fill_keys($defaults, true);
+    $seen = [];
+    $normalized = [];
+
+    foreach ($input as $value) {
+        if (!is_string($value) && !is_int($value)) {
+            continue;
+        }
+        $key = trim((string) $value);
+        if ($key === '' || !isset($allowed[$key]) || isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $normalized[] = $key;
+    }
+
+    foreach ($defaults as $key) {
+        if (!isset($seen[$key])) {
+            $normalized[] = $key;
+        }
+    }
+
+    return $normalized;
+}
+
+function docs_normalize_outgoing_column_order_user_key(string $userKey): string
+{
+    $raw = trim($userKey);
+    if ($raw === '') {
+        return 'default';
+    }
+
+    $normalized = preg_replace('/[^a-z0-9:_-]/i', '', strtolower($raw));
+    if (is_string($normalized) && trim($normalized, ':_-') !== '') {
+        return $normalized;
+    }
+
+    return 'user:' . sha1($raw);
+}
+
+function docs_normalize_outgoing_column_order_map($map): array
+{
+    if (!is_array($map)) {
+        return [];
+    }
+
+    $source = isset($map['orders']) && is_array($map['orders']) ? $map['orders'] : $map;
+    $normalized = [];
+
+    foreach ($source as $profile => $entry) {
+        if (!is_string($profile) || trim($profile) === '') {
+            continue;
+        }
+        $profileKey = docs_normalize_outgoing_column_order_user_key($profile);
+        $entryArray = is_array($entry) ? $entry : [];
+        $columnsPayload = isset($entryArray['columns']) ? $entryArray['columns'] : $entryArray;
+        $normalizedEntry = [
+            'columns' => docs_sanitize_outgoing_column_order($columnsPayload),
+        ];
+        if (isset($entryArray['updatedAt']) && is_string($entryArray['updatedAt']) && $entryArray['updatedAt'] !== '') {
+            $normalizedEntry['updatedAt'] = $entryArray['updatedAt'];
+        }
+        if (isset($entryArray['updatedBy']) && $entryArray['updatedBy'] !== '') {
+            $normalizedEntry['updatedBy'] = sanitize_text_field((string) $entryArray['updatedBy'], 200);
+        }
+        $normalized[$profileKey] = $normalizedEntry;
+    }
+
+    return $normalized;
+}
+
 function docs_normalize_column_order_map($map): array
 {
     if (!is_array($map)) {
@@ -8090,6 +8179,7 @@ function load_admin_settings(string $folder): array
         'block3' => [],
         'columnWidths' => [],
         'columnOrders' => [],
+        'outgoingColumnOrders' => [],
         'tablePreferences' => [],
     ];
 
@@ -8115,11 +8205,19 @@ function load_admin_settings(string $folder): array
     $sanitized['columnOrders'] = isset($decoded['columnOrders'])
         ? docs_normalize_column_order_map($decoded['columnOrders'])
         : [];
+    $sanitized['outgoingColumnOrders'] = isset($decoded['outgoingColumnOrders'])
+        ? docs_normalize_outgoing_column_order_map($decoded['outgoingColumnOrders'])
+        : [];
     $sanitized['tablePreferences'] = isset($decoded['tablePreferences'])
         ? docs_normalize_table_preferences_map($decoded['tablePreferences'])
         : [];
 
-    return $sanitized + ['columnWidths' => [], 'columnOrders' => [], 'tablePreferences' => []];
+    return $sanitized + [
+        'columnWidths' => [],
+        'columnOrders' => [],
+        'outgoingColumnOrders' => [],
+        'tablePreferences' => [],
+    ];
 }
 
 function load_responsibles_for_folder(string $folder): array
@@ -10181,6 +10279,11 @@ function save_admin_settings(string $folder, array $settings): void
         $settings['columnOrders'] = docs_normalize_column_order_map($settings['columnOrders']);
     } elseif (isset($existing['columnOrders']) && is_array($existing['columnOrders'])) {
         $settings['columnOrders'] = docs_normalize_column_order_map($existing['columnOrders']);
+    }
+    if (isset($settings['outgoingColumnOrders'])) {
+        $settings['outgoingColumnOrders'] = docs_normalize_outgoing_column_order_map($settings['outgoingColumnOrders']);
+    } elseif (isset($existing['outgoingColumnOrders']) && is_array($existing['outgoingColumnOrders'])) {
+        $settings['outgoingColumnOrders'] = docs_normalize_outgoing_column_order_map($existing['outgoingColumnOrders']);
     }
     if (isset($settings['tablePreferences'])) {
         $settings['tablePreferences'] = docs_normalize_table_preferences_map($settings['tablePreferences']);
@@ -19212,6 +19315,114 @@ switch ($action) {
         if (isset($entry['updatedBy'])) {
             $response['updatedBy'] = $entry['updatedBy'];
         }
+        respond_success($response);
+        break;
+
+    case 'outgoing_column_order_load':
+        if ($method !== 'GET') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($_GET['organization'] ?? ''));
+        if ($requestedOrganization === '') {
+            respond_error('Не указана организация.');
+        }
+
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $requestContext = docs_build_request_user_context();
+        $sessionAuth = docs_get_session_auth();
+        $requestedUserKey = sanitize_text_field((string) ($_GET['user_key'] ?? ($_GET['userKey'] ?? '')), 240);
+        $resolvedUserKey = $requestedUserKey !== ''
+            ? $requestedUserKey
+            : docs_resolve_current_user_key($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $profile = docs_normalize_outgoing_column_order_user_key($resolvedUserKey);
+        $settings = load_admin_settings($folder);
+        $orders = isset($settings['outgoingColumnOrders']) && is_array($settings['outgoingColumnOrders'])
+            ? docs_normalize_outgoing_column_order_map($settings['outgoingColumnOrders'])
+            : [];
+        $profileSettings = isset($orders[$profile]) && is_array($orders[$profile])
+            ? $orders[$profile]
+            : [];
+        $columns = isset($profileSettings['columns'])
+            ? docs_sanitize_outgoing_column_order($profileSettings['columns'])
+            : DOCS_OUTGOING_COLUMN_ORDER_DEFAULTS;
+
+        $response = [
+            'organization' => $organization,
+            'profile' => $profile,
+            'columns' => $columns,
+            'settingsDisplayPath' => 'documents/' . $folder . '/' . SETTINGS_FILENAME,
+        ];
+        if (isset($profileSettings['updatedAt']) && is_string($profileSettings['updatedAt'])) {
+            $response['updatedAt'] = $profileSettings['updatedAt'];
+        }
+        if (isset($profileSettings['updatedBy']) && is_string($profileSettings['updatedBy']) && $profileSettings['updatedBy'] !== '') {
+            $response['updatedBy'] = $profileSettings['updatedBy'];
+        }
+
+        respond_success($response);
+        break;
+
+    case 'outgoing_column_order_save':
+        if ($method !== 'POST') {
+            respond_error('Некорректный метод запроса.', 405);
+        }
+
+        $payload = load_json_payload();
+        if (!is_array($payload) || empty($payload)) {
+            $payload = $_POST;
+        }
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $requestedOrganization = docs_normalize_organization_candidate((string) ($payload['organization'] ?? ''));
+        if ($requestedOrganization === '') {
+            respond_error('Не указана организация.');
+        }
+
+        $accessContext = docs_resolve_access_context($requestedOrganization);
+        $organization = $accessContext['active'];
+        $folder = sanitize_folder_name($organization);
+        $requestContext = docs_build_request_user_context();
+        $sessionAuth = docs_get_session_auth();
+        $requestedUserKey = sanitize_text_field((string) ($payload['user_key'] ?? ($payload['userKey'] ?? '')), 240);
+        $resolvedUserKey = $requestedUserKey !== ''
+            ? $requestedUserKey
+            : docs_resolve_current_user_key($requestContext, is_array($sessionAuth) ? $sessionAuth : null);
+        $profile = docs_normalize_outgoing_column_order_user_key($resolvedUserKey);
+        $columnsPayload = isset($payload['columns']) && is_array($payload['columns']) ? $payload['columns'] : [];
+        $columns = docs_sanitize_outgoing_column_order($columnsPayload);
+        $settings = load_admin_settings($folder);
+        $orders = isset($settings['outgoingColumnOrders']) && is_array($settings['outgoingColumnOrders'])
+            ? docs_normalize_outgoing_column_order_map($settings['outgoingColumnOrders'])
+            : [];
+        $entry = [
+            'columns' => $columns,
+            'updatedAt' => date('c'),
+        ];
+        $updatedBy = docs_build_assignment_author_label(is_array($sessionAuth) ? $sessionAuth : null);
+        if ($updatedBy !== '') {
+            $entry['updatedBy'] = $updatedBy;
+        }
+        $orders[$profile] = $entry;
+        $settings['outgoingColumnOrders'] = docs_normalize_outgoing_column_order_map($orders);
+        save_admin_settings($folder, $settings);
+
+        $response = [
+            'organization' => $organization,
+            'profile' => $profile,
+            'columns' => $columns,
+            'updatedAt' => $entry['updatedAt'],
+            'settingsDisplayPath' => 'documents/' . $folder . '/' . SETTINGS_FILENAME,
+            'message' => 'Порядок столбцов исходящей таблицы сохранён.',
+        ];
+        if (isset($entry['updatedBy'])) {
+            $response['updatedBy'] = $entry['updatedBy'];
+        }
+
         respond_success($response);
         break;
 
